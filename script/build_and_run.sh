@@ -37,6 +37,7 @@ OVERLAY
 CORE_SOURCES=(
   "Sources/MarkprevCore/Models/EditorMode.swift"
   "Sources/MarkprevCore/Models/ThemePreference.swift"
+  "Sources/MarkprevCore/Models/AppTheme.swift"
   "Sources/MarkprevCore/Models/MarkdownFile.swift"
   "Sources/MarkprevCore/Models/SidebarNode.swift"
   "Sources/MarkprevCore/Services/MarkdownFileScanner.swift"
@@ -46,6 +47,7 @@ CORE_SOURCES=(
 APP_SOURCES=(
   "Sources/Markprev/App/MarkprevApp.swift"
   "Sources/Markprev/Support/Notifications.swift"
+  "Sources/Markprev/Support/Color+Theme.swift"
   "Sources/Markprev/Support/ThemePreference+SwiftUI.swift"
   "Sources/Markprev/Stores/WorkspaceStore.swift"
   "Sources/Markprev/Views/ContentView.swift"

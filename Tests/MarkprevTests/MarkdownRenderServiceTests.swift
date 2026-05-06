@@ -29,4 +29,49 @@ final class MarkdownRenderServiceTests: XCTestCase {
 
         XCTAssertTrue(html.contains(#"quote \" slash \\ newline"#))
     }
+
+    func testHTMLDocumentInjectsAppThemeVariablesAfterStylesheetDefaults() throws {
+        let service = MarkdownRenderService(
+            stylesheet: """
+            :root { --bg: #AAAAAA; --fg: #BBBBBB; --link: #CCCCCC; }
+            :root[data-theme="dark"] { --bg: #DDDDDD; --fg: #EEEEEE; --link: #FFFFFF; }
+            a { color: var(--link); }
+            """,
+            rendererJavaScript: ""
+        )
+        let theme = AppTheme(
+            id: "test-dark",
+            name: "Test Dark",
+            background: "#010203",
+            foreground: "#FDFCFB",
+            cursor: "#445566",
+            selectionBackground: "#102030",
+            selectionForeground: "#FAFAFA",
+            palette: [
+                "#000000", "#111111", "#228833", "#AA7700",
+                "#445566", "#556677", "#66AACC", "#DDEEFF",
+                "#778899"
+            ]
+        )
+
+        let html = try service.htmlDocument(
+            markdown: "[Link](https://example.com)\n\n| A |\n| - |\n| B |\n\n> Quote",
+            appTheme: theme,
+            zoomScale: 1.25,
+            baseURL: nil
+        )
+
+        let stylesheetRange = try XCTUnwrap(html.range(of: #":root[data-theme="dark"] { --bg: #DDDDDD;"#))
+        let variableRange = try XCTUnwrap(html.range(of: "--bg: #010203;"))
+
+        XCTAssertTrue(stylesheetRange.lowerBound < variableRange.lowerBound)
+        XCTAssertTrue(html.contains(#"data-theme="dark""#))
+        XCTAssertTrue(html.contains(":root[data-theme=\"dark\"] {"))
+        XCTAssertTrue(html.contains("--fg: #FDFCFB;"))
+        XCTAssertTrue(html.contains("--link: #445566;"))
+        XCTAssertTrue(html.contains("--blockquote-border: #445566;"))
+        XCTAssertTrue(html.contains("--table-border: color-mix(in srgb, #FDFCFB 14%, transparent);"))
+        XCTAssertTrue(html.contains("--selection-bg: #102030;"))
+        XCTAssertTrue(html.contains("--base-font-size: 18.8px;"))
+    }
 }

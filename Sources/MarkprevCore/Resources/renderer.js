@@ -10,6 +10,7 @@
   if (!target) return;
 
   target.innerHTML = renderMarkdown(markdown);
+  target.addEventListener("dblclick", handleSourceJump);
 
   function renderMarkdown(source) {
     const footnotes = new Map();
@@ -59,6 +60,7 @@
 
       const fence = line.match(/^ {0,3}(```+|~~~+)\s*([\w.+-]*)\s*$/);
       if (fence) {
+        const startLine = index;
         const marker = fence[1][0];
         const lang = fence[2] || "";
         const codeLines = [];
@@ -68,58 +70,80 @@
           index += 1;
         }
         if (index < lines.length) index += 1;
-        blocks.push(`<pre><code class="language-${escapeAttr(lang)}">${highlightCode(codeLines.join("\n"), lang)}</code></pre>`);
+        blocks.push(markSource(`<pre><code class="language-${escapeAttr(lang)}">${highlightCode(codeLines.join("\n"), lang)}</code></pre>`, startLine));
         continue;
       }
 
       const heading = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
       if (heading) {
+        const startLine = index;
         const level = heading[1].length;
         const text = heading[2].trim();
-        blocks.push(`<h${level} id="${escapeAttr(slug(stripInline(text)))}">${inline(text, footnotes, footnoteOrder, refNumbers)}</h${level}>`);
+        blocks.push(markSource(`<h${level} id="${escapeAttr(slug(stripInline(text)))}">${inline(text, footnotes, footnoteOrder, refNumbers)}</h${level}>`, startLine));
         index += 1;
         continue;
       }
 
       if (/^ {0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
-        blocks.push("<hr>");
+        blocks.push(markSource("<hr>", index));
         index += 1;
         continue;
       }
 
       if (isTableStart(lines, index)) {
+        const startLine = index;
         const parsed = parseTable(lines, index, footnotes, footnoteOrder, refNumbers);
-        blocks.push(parsed.html);
+        blocks.push(markSource(parsed.html, startLine));
         index = parsed.nextIndex;
         continue;
       }
 
       if (/^ {0,3}>\s?/.test(line)) {
+        const startLine = index;
         const quoteLines = [];
         while (index < lines.length && (/^ {0,3}>\s?/.test(lines[index]) || isBlank(lines[index]))) {
           quoteLines.push(lines[index].replace(/^ {0,3}>\s?/, ""));
           index += 1;
         }
-        blocks.push(`<blockquote>${parseBlocks(quoteLines, footnotes, footnoteOrder, refNumbers)}</blockquote>`);
+        blocks.push(markSource(`<blockquote>${parseBlocks(quoteLines, footnotes, footnoteOrder, refNumbers)}</blockquote>`, startLine));
         continue;
       }
 
       if (isListLine(line)) {
+        const startLine = index;
         const parsed = parseList(lines, index, footnotes, footnoteOrder, refNumbers);
-        blocks.push(parsed.html);
+        blocks.push(markSource(parsed.html, startLine));
         index = parsed.nextIndex;
         continue;
       }
 
+      const startLine = index;
       const paragraph = [];
       while (index < lines.length && !isBlank(lines[index]) && !isBlockStart(lines, index)) {
         paragraph.push(lines[index]);
         index += 1;
       }
-      blocks.push(`<p>${inline(paragraph.join(" "), footnotes, footnoteOrder, refNumbers)}</p>`);
+      blocks.push(markSource(`<p>${inline(paragraph.join(" "), footnotes, footnoteOrder, refNumbers)}</p>`, startLine));
     }
 
     return blocks.join("\n");
+  }
+
+  function handleSourceJump(event) {
+    const targetElement = event.target instanceof Element ? event.target : event.target?.parentElement;
+    const quoteElement = targetElement?.closest("blockquote[data-source-line]");
+    const sourceElement = quoteElement || targetElement?.closest("[data-source-line]");
+
+    const line = sourceElement ? Number(sourceElement.dataset.sourceLine || "0") : estimateSourceLine(event);
+    if (!Number.isFinite(line) || line < 1) return;
+
+    event.preventDefault();
+    window.webkit?.messageHandlers?.markprevSourceJump?.postMessage({ line, offset: 0 });
+  }
+
+  function markSource(html, zeroBasedLine) {
+    const sourceLine = Math.max(1, zeroBasedLine + 1);
+    return html.replace(/^<([a-z0-9]+)(\s|>)/i, `<$1 data-source-line="${sourceLine}"$2`);
   }
 
   function isBlockStart(lines, index) {
@@ -154,7 +178,7 @@
         content = `<input type="checkbox" disabled${checked}> <span>${content}</span>`;
       }
 
-      items.push(`<li${className}>${content}</li>`);
+      items.push(markSource(`<li${className}>${content}</li>`, index));
       index += 1;
     }
 
@@ -288,6 +312,13 @@
 
   function isBlank(line) {
     return /^\s*$/.test(line);
+  }
+
+  function estimateSourceLine(event) {
+    const rect = target.getBoundingClientRect();
+    const lineCount = Math.max(1, markdown.replace(/\r\n?/g, "\n").split("\n").length);
+    const ratio = rect.height > 0 ? Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)) : 0;
+    return Math.max(1, Math.round(ratio * lineCount));
   }
 
   function stripInline(text) {

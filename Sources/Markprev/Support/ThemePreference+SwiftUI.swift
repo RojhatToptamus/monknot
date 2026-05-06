@@ -24,6 +24,17 @@ extension ThemePreference {
         }
     }
 
+    func appTheme(systemColorScheme: ColorScheme, lightThemeID: String, darkThemeID: String) -> AppTheme {
+        switch self {
+        case .system:
+            return systemColorScheme == .dark ? AppTheme.darkTheme(id: darkThemeID) : AppTheme.lightTheme(id: lightThemeID)
+        case .light:
+            return AppTheme.lightTheme(id: lightThemeID)
+        case .dark:
+            return AppTheme.darkTheme(id: darkThemeID)
+        }
+    }
+
     var systemImage: String {
         switch self {
         case .system:

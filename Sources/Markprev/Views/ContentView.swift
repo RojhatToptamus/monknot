@@ -6,6 +6,11 @@ struct ContentView: View {
     @ObservedObject var store: WorkspaceStore
     @AppStorage("Markprev.editorMode") private var editorModeRawValue = EditorMode.preview.rawValue
     @AppStorage("Markprev.themePreference") private var themePreferenceRawValue = ThemePreference.system.rawValue
+    @AppStorage("Markprev.lightThemeID") private var lightThemeID = AppTheme.codexLight.id
+    @AppStorage("Markprev.darkThemeID") private var darkThemeID = AppTheme.codexDark.id
+    @AppStorage("Markprev.zoomScale") private var zoomScale = 1.0
+    @AppStorage("Markprev.codeFontSize") private var codeFontSize = 15.0
+    @State private var pendingSourceLocation: MarkdownSourceLocation?
     @Environment(\.colorScheme) private var systemColorScheme
 
     private var editorMode: EditorMode {
@@ -18,20 +23,72 @@ struct ContentView: View {
         nonmutating set { themePreferenceRawValue = newValue.rawValue }
     }
 
+    private var activeTheme: AppTheme {
+        themePreference.appTheme(
+            systemColorScheme: systemColorScheme,
+            lightThemeID: lightThemeID,
+            darkThemeID: darkThemeID
+        )
+    }
+
     var body: some View {
-        NavigationSplitView {
-            SidebarView(store: store, openFolder: openFolderPanel)
-                .navigationSplitViewColumnWidth(min: 220, ideal: 286, max: 380)
-        } detail: {
-            EditorPaneView(
-                store: store,
-                editorMode: editorMode,
-                renderTheme: themePreference.renderTheme(systemColorScheme: systemColorScheme)
-            )
+        GeometryReader { proxy in
+            NavigationSplitView {
+                SidebarView(store: store, theme: activeTheme, openFolder: openFolderPanel)
+                    .navigationSplitViewColumnWidth(min: 236, ideal: 296, max: 360)
+            } detail: {
+                EditorPaneView(
+                    store: store,
+                    editorMode: editorMode,
+                    theme: activeTheme,
+                    zoomScale: 1,
+                    codeFontSize: CGFloat(codeFontSize),
+                    sourceLocation: $pendingSourceLocation,
+                    onPreviewSourceJump: openSourceFromPreview(location:)
+                )
+            }
+            .frame(width: proxy.size.width / zoomScale, height: proxy.size.height / zoomScale, alignment: .topLeading)
+            .scaleEffect(zoomScale, anchor: .topLeading)
         }
+        .background(activeTheme.surfaceColor)
         .preferredColorScheme(themePreference.preferredColorScheme)
+        .accentColor(activeTheme.accentColor)
+        .navigationTitle(store.selectedFile?.displayName ?? "Markprev")
         .toolbar {
+            ToolbarItemGroup(placement: .navigation) {
+                Button {
+                    openFolderPanel()
+                } label: {
+                    Label("Open Folder", systemImage: "folder")
+                }
+                .help("Open Folder")
+            }
+
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    store.createMarkdownFile()
+                } label: {
+                    Label("New Markdown", systemImage: "square.and.pencil")
+                }
+                .disabled(store.workspaceURL == nil)
+                .help("New Markdown")
+
+                Button {
+                    store.saveSelectedFile()
+                } label: {
+                    Label("Save", systemImage: store.hasUnsavedChanges ? "square.and.arrow.down.fill" : "square.and.arrow.down")
+                }
+                .disabled(store.selectedFile == nil || !store.hasUnsavedChanges)
+                .help("Save")
+
+                Button {
+                    store.refresh()
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(store.workspaceURL == nil)
+                .help("Refresh")
+
                 Picker("View Mode", selection: Binding(
                     get: { editorMode },
                     set: { editorMode = $0 }
@@ -41,33 +98,62 @@ struct ContentView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 164)
+                .frame(width: 148)
                 .disabled(store.selectedFile == nil)
 
-                Picker("Theme", selection: Binding(
-                    get: { themePreference },
-                    set: { themePreference = $0 }
-                )) {
-                    ForEach(ThemePreference.allCases) { theme in
-                        Label(theme.title, systemImage: theme.systemImage).tag(theme)
+                Menu {
+                    Picker("Base Theme", selection: Binding(
+                        get: { themePreference },
+                        set: { themePreference = $0 }
+                    )) {
+                        ForEach(ThemePreference.allCases) { preference in
+                            Label(preference.title, systemImage: preference.systemImage).tag(preference)
+                        }
                     }
+
+                    Divider()
+
+                    Picker("Light Theme", selection: $lightThemeID) {
+                        ForEach(AppTheme.lightThemes) { theme in
+                            Text(theme.name).tag(theme.id)
+                        }
+                    }
+
+                    Picker("Dark Theme", selection: $darkThemeID) {
+                        ForEach(AppTheme.darkThemes) { theme in
+                            Text(theme.name).tag(theme.id)
+                        }
+                    }
+                } label: {
+                    Label("Appearance", systemImage: "paintpalette")
                 }
-                .pickerStyle(.menu)
-                .frame(width: 118)
+                .help("Appearance")
+
+                Divider()
 
                 Button {
-                    store.saveSelectedFile()
+                    adjustZoom(by: -0.1)
                 } label: {
-                    Label("Save", systemImage: "square.and.arrow.down")
+                    Label("Zoom Out", systemImage: "minus.magnifyingglass")
                 }
-                .disabled(store.selectedFile == nil || !store.hasUnsavedChanges)
+                .help("Zoom Out")
 
                 Button {
-                    store.refresh()
+                    zoomScale = 1.0
                 } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    Text("\(Int((zoomScale * 100).rounded()))%")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .frame(width: 42)
                 }
-                .disabled(store.workspaceURL == nil)
+                .buttonStyle(.plain)
+                .help("Actual Size")
+
+                Button {
+                    adjustZoom(by: 0.1)
+                } label: {
+                    Label("Zoom In", systemImage: "plus.magnifyingglass")
+                }
+                .help("Zoom In")
             }
         }
         .task {
@@ -76,11 +162,23 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .markprevOpenFolder)) { _ in
             openFolderPanel()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .markprevNewMarkdown)) { _ in
+            store.createMarkdownFile()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .markprevSaveDocument)) { _ in
             store.saveSelectedFile()
         }
         .onReceive(NotificationCenter.default.publisher(for: .markprevRefreshWorkspace)) { _ in
             store.refresh()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .markprevZoomIn)) { _ in
+            adjustZoom(by: 0.1)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .markprevZoomOut)) { _ in
+            adjustZoom(by: -0.1)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .markprevResetZoom)) { _ in
+            zoomScale = 1.0
         }
         .alert("Markprev", isPresented: Binding(
             get: { store.errorMessage != nil },
@@ -106,5 +204,15 @@ struct ContentView: View {
         if panel.runModal() == .OK, let url = panel.url {
             store.openWorkspace(url)
         }
+    }
+
+    private func adjustZoom(by delta: Double) {
+        let stepped = ((zoomScale + delta) * 10).rounded() / 10
+        zoomScale = min(1.8, max(0.7, stepped))
+    }
+
+    private func openSourceFromPreview(location: MarkdownSourceLocation) {
+        pendingSourceLocation = location
+        editorMode = .source
     }
 }

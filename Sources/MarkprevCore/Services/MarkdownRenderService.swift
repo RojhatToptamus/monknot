@@ -15,13 +15,19 @@ public struct MarkdownRenderService: Sendable {
     }
 
     public func htmlDocument(markdown: String, theme: RenderTheme, baseURL: URL?) throws -> String {
+        let palette = theme == .dark ? AppTheme.codexDark : AppTheme.codexLight
+        return try htmlDocument(markdown: markdown, appTheme: palette, zoomScale: 1, baseURL: baseURL)
+    }
+
+    public func htmlDocument(markdown: String, appTheme: AppTheme, zoomScale: Double, baseURL: URL?) throws -> String {
         let markdownLiteral = try javaScriptLiteral(markdown)
-        let themeLiteral = try javaScriptLiteral(theme.rawValue)
+        let themeLiteral = try javaScriptLiteral(appTheme.isDark ? "dark" : "light")
         let baseTag = baseURL.map { #"<base href="\#(htmlAttributeEscaped(directoryURLString(for: $0)))">"# } ?? ""
+        let cssVariables = themeVariables(for: appTheme, zoomScale: zoomScale)
 
         return """
         <!doctype html>
-        <html lang="en" data-theme="\(theme.rawValue)">
+        <html lang="en" data-theme="\(appTheme.isDark ? "dark" : "light")">
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -29,6 +35,7 @@ public struct MarkdownRenderService: Sendable {
           \(baseTag)
           <style>
         \(stylesheet)
+        \(cssVariables)
           </style>
         </head>
         <body>
@@ -44,6 +51,49 @@ public struct MarkdownRenderService: Sendable {
           </script>
         </body>
         </html>
+        """
+    }
+
+    private func themeVariables(for theme: AppTheme, zoomScale: Double) -> String {
+        let baseFont = max(12, min(24, 15 * zoomScale))
+        let baseFontSize = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), baseFont)
+        let border = "color-mix(in srgb, \(theme.foreground) 14%, transparent)"
+        let soft = "color-mix(in srgb, \(theme.foreground) 6%, transparent)"
+        let softStrong = "color-mix(in srgb, \(theme.foreground) 10%, transparent)"
+        let blockquoteBackground = "color-mix(in srgb, \(theme.accent) 12%, transparent)"
+
+        return """
+        :root,
+        :root[data-theme="light"],
+        :root[data-theme="dark"] {
+          color-scheme: \(theme.isDark ? "dark" : "light");
+          --accent: \(theme.accent);
+          --link: \(theme.accent);
+          --bg: \(theme.background);
+          --fg: \(theme.foreground);
+          --muted: \(theme.palette[safe: 8] ?? theme.foreground);
+          --border: \(border);
+          --soft: \(soft);
+          --soft-strong: \(softStrong);
+          --code-bg: color-mix(in srgb, \(theme.background) 88%, \(theme.foreground) 12%);
+          --code-fg: \(theme.foreground);
+          --blockquote-bg: \(blockquoteBackground);
+          --blockquote-border: \(theme.accent);
+          --quote-bg: var(--blockquote-bg);
+          --quote-border: var(--blockquote-border);
+          --table-border: \(border);
+          --table-header-bg: \(softStrong);
+          --table-row-alt-bg: \(soft);
+          --shadow: rgba(0, 0, 0, \(theme.isDark ? "0.36" : "0.08"));
+          --selection-bg: \(theme.selectionBackground);
+          --selection-fg: \(theme.selectionForeground);
+          --tok-keyword: \(theme.codeKeyword);
+          --tok-string: \(theme.codeString);
+          --tok-number: \(theme.codeNumber);
+          --tok-comment: \(theme.codeComment);
+          --tok-builtin: \(theme.codeBuiltin);
+          --base-font-size: \(baseFontSize)px;
+        }
         """
     }
 

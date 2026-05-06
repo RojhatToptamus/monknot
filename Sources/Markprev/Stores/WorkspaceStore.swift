@@ -98,6 +98,30 @@ final class WorkspaceStore: ObservableObject {
         loadSelectedFile()
     }
 
+    func createMarkdownFile() {
+        guard let workspaceURL else {
+            errorMessage = "Open a workspace before creating a Markdown file."
+            return
+        }
+
+        saveIfNeeded()
+
+        do {
+            let fileURL = nextAvailableMarkdownURL(in: workspaceURL)
+            let title = fileURL.deletingPathExtension().lastPathComponent
+            let initialText = "# \(title)\n\n"
+            try initialText.write(to: fileURL, atomically: true, encoding: .utf8)
+
+            let result = try scanner.scan(rootURL: workspaceURL)
+            rootNode = result.root
+            files = result.files
+            selectedFileID = MarkdownFile(url: fileURL, rootURL: workspaceURL).id
+            loadSelectedFile()
+        } catch {
+            errorMessage = "Could not create a Markdown file: \(error.localizedDescription)"
+        }
+    }
+
     func setDocumentText(_ text: String) {
         guard text != documentText else { return }
 
@@ -183,6 +207,24 @@ final class WorkspaceStore: ObservableObject {
     private func saveIfNeeded() {
         guard hasUnsavedChanges else { return }
         saveSelectedFile()
+    }
+
+    private func nextAvailableMarkdownURL(in rootURL: URL) -> URL {
+        let fileManager = FileManager.default
+        let baseName = "Untitled"
+        var candidate = rootURL.appendingPathComponent("\(baseName).md")
+
+        guard fileManager.fileExists(atPath: candidate.path) else {
+            return candidate
+        }
+
+        var index = 2
+        repeat {
+            candidate = rootURL.appendingPathComponent("\(baseName) \(index).md")
+            index += 1
+        } while fileManager.fileExists(atPath: candidate.path)
+
+        return candidate
     }
 
     private func scheduleAutoSave() {
