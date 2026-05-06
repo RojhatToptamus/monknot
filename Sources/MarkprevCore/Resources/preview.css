@@ -1,0 +1,262 @@
+:root {
+  color-scheme: light dark;
+  --accent: #339cff;
+  --bg: #ffffff;
+  --fg: #1a1c1f;
+  --muted: #60646c;
+  --border: rgba(26, 28, 31, 0.14);
+  --soft: rgba(26, 28, 31, 0.055);
+  --soft-strong: rgba(26, 28, 31, 0.09);
+  --code-bg: #f6f8fa;
+  --code-fg: #24292f;
+  --quote-bg: rgba(51, 156, 255, 0.08);
+  --quote-border: rgba(51, 156, 255, 0.7);
+  --shadow: rgba(0, 0, 0, 0.08);
+  --ui-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  --code-font: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+:root[data-theme="dark"] {
+  --bg: #181818;
+  --fg: #ffffff;
+  --muted: #aaaeb7;
+  --border: rgba(255, 255, 255, 0.13);
+  --soft: rgba(255, 255, 255, 0.055);
+  --soft-strong: rgba(255, 255, 255, 0.09);
+  --code-bg: #111315;
+  --code-fg: #e7edf4;
+  --quote-bg: rgba(51, 156, 255, 0.13);
+  --quote-border: rgba(51, 156, 255, 0.82);
+  --shadow: rgba(0, 0, 0, 0.32);
+}
+
+html,
+body {
+  min-height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.62 var(--ui-font);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  box-sizing: border-box;
+}
+
+.markdown-body {
+  box-sizing: border-box;
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 40px 48px 64px;
+}
+
+.markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.markdown-body > :last-child {
+  margin-bottom: 0;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 1.45em 0 0.62em;
+  line-height: 1.18;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+h1 {
+  font-size: 2.1rem;
+  padding-bottom: 0.42em;
+  border-bottom: 1px solid var(--border);
+}
+
+h2 {
+  font-size: 1.55rem;
+  padding-bottom: 0.36em;
+  border-bottom: 1px solid var(--border);
+}
+
+h3 {
+  font-size: 1.22rem;
+}
+
+h4,
+h5,
+h6 {
+  font-size: 1rem;
+}
+
+p,
+ul,
+ol,
+blockquote,
+pre,
+table,
+details,
+figure {
+  margin: 0 0 1.08rem;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+strong {
+  font-weight: 680;
+}
+
+hr {
+  height: 1px;
+  margin: 1.8rem 0;
+  border: 0;
+  background: var(--border);
+}
+
+blockquote {
+  margin-left: 0;
+  padding: 0.85rem 1rem;
+  border-left: 3px solid var(--quote-border);
+  border-radius: 8px;
+  background: var(--quote-bg);
+  color: var(--fg);
+}
+
+ul,
+ol {
+  padding-left: 1.5rem;
+}
+
+li + li {
+  margin-top: 0.28rem;
+}
+
+.contains-task-list {
+  padding-left: 0.25rem;
+  list-style: none;
+}
+
+.task-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+
+.task-list-item input {
+  margin-top: 0.34rem;
+  accent-color: var(--accent);
+}
+
+code {
+  padding: 0.14em 0.36em;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--soft);
+  color: var(--code-fg);
+  font-family: var(--code-font);
+  font-size: 0.92em;
+}
+
+pre {
+  overflow: auto;
+  padding: 1rem 1.05rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--code-bg);
+  box-shadow: 0 10px 30px var(--shadow);
+}
+
+pre code {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--code-fg);
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.tok-keyword {
+  color: #bf7af0;
+}
+
+.tok-string {
+  color: #71d36f;
+}
+
+.tok-number {
+  color: #64d2ff;
+}
+
+.tok-comment {
+  color: #8d939f;
+  font-style: italic;
+}
+
+.tok-builtin {
+  color: #ff9f40;
+}
+
+table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  border-spacing: 0;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 0.58rem 0.72rem;
+  border: 1px solid var(--border);
+}
+
+th {
+  background: var(--soft-strong);
+  font-weight: 650;
+}
+
+tr:nth-child(even) td {
+  background: var(--soft);
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+
+.footnotes {
+  margin-top: 2.2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.footnotes ol {
+  padding-left: 1.25rem;
+}
+
+.footnote-ref,
+.footnote-backref {
+  font-size: 0.78em;
+}
+
+@media (max-width: 720px) {
+  .markdown-body {
+    padding: 24px 22px 48px;
+  }
+}

@@ -1,0 +1,40 @@
+import Foundation
+import MarkprevCore
+
+func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
+    if !condition() {
+        fputs("FAIL: \(message)\n", stderr)
+        exit(1)
+    }
+}
+
+func write(_ text: String, to url: URL) throws {
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try text.write(to: url, atomically: true, encoding: .utf8)
+}
+
+let root = FileManager.default.temporaryDirectory
+    .appendingPathComponent("markprev-smoke")
+    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+defer { try? FileManager.default.removeItem(at: root) }
+
+try write("# Markprev", to: root.appendingPathComponent("README.md"))
+try write("- [ ] item", to: root.appendingPathComponent("Notes/Todo.markdown"))
+try write("ignored", to: root.appendingPathComponent("Notes/image.png"))
+
+let scan = try MarkdownFileScanner().scan(rootURL: root)
+let paths = scan.files.map(\.relativePath).sorted()
+expect(paths == ["Notes/Todo.markdown", "README.md"], "scanner should include only supported Markdown files")
+expect(scan.root.children?.first?.name == "Notes", "folders should sort before files")
+
+let renderService = MarkdownRenderService(stylesheet: "body {}", rendererJavaScript: "window.ready = true;")
+let html = try renderService.htmlDocument(
+    markdown: "# Hello\n<script>alert(1)</script>",
+    theme: .dark,
+    baseURL: root
+)
+expect(html.contains(#"data-theme="dark""#), "render shell should include the selected theme")
+expect(!html.contains("</script>alert"), "render shell should safely encode script-closing Markdown")
+expect(html.contains("window.ready = true"), "render shell should embed local renderer JavaScript")
+
+print("Markprev smoke tests passed")
