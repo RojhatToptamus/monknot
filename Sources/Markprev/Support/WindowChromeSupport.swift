@@ -14,7 +14,11 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
 
     private func updateWindow(from view: NSView) {
         DispatchQueue.main.async {
-            view.window?.isMovableByWindowBackground = true
+            guard let window = view.window else { return }
+            window.isMovableByWindowBackground = true
+            window.toolbar = nil
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
         }
     }
 }

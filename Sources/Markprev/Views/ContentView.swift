@@ -11,6 +11,7 @@ struct ContentView: View {
     @AppStorage("Markprev.previewWidthPercent") private var previewWidthPercent = 88.0
     @SceneStorage("Markprev.isTerminalDrawerOpen") private var isTerminalDrawerOpen = false
     @State private var pendingSourceLocation: MarkdownSourceLocation?
+    @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
     @Environment(\.colorScheme) private var systemColorScheme
 
     private var editorMode: EditorMode {
@@ -31,7 +32,7 @@ struct ContentView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $sidebarVisibility) {
             SidebarView(
                 store: store,
                 theme: activeTheme,
@@ -53,6 +54,8 @@ struct ContentView: View {
                 previewWidthPercent: previewWidthPercent,
                 isTerminalPresented: $isTerminalDrawerOpen,
                 sourceLocation: $pendingSourceLocation,
+                isSidebarVisible: sidebarVisibility != .detailOnly,
+                toggleSidebar: toggleSidebar,
                 newMarkdown: { store.createMarkdownFile() },
                 openFolder: openFolderPanel,
                 zoomOut: { adjustZoom(by: -0.1) },
@@ -63,6 +66,7 @@ struct ContentView: View {
             )
         }
         .ignoresSafeArea(.container, edges: .top)
+        .toolbar(removing: .sidebarToggle)
         .background(activeTheme.surfaceColor)
         .background(WindowBackgroundDragEnabler())
         .preferredColorScheme(themePreference.preferredColorScheme)
@@ -124,6 +128,12 @@ struct ContentView: View {
     private func toggleTerminalDrawer() {
         withAnimation(.spring(response: 0.32, dampingFraction: 0.88, blendDuration: 0.08)) {
             isTerminalDrawerOpen.toggle()
+        }
+    }
+
+    private func toggleSidebar() {
+        withAnimation(.easeInOut(duration: 0.22)) {
+            sidebarVisibility = sidebarVisibility == .detailOnly ? .all : .detailOnly
         }
     }
 }

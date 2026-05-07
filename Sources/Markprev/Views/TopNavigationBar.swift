@@ -7,6 +7,8 @@ struct TopNavigationBar: View {
     let theme: AppTheme
     let zoomScale: Double
     let isTerminalPresented: Bool
+    let isSidebarVisible: Bool
+    let toggleSidebar: () -> Void
     let newMarkdown: () -> Void
     let openFolder: () -> Void
     let zoomOut: () -> Void
@@ -19,15 +21,25 @@ struct TopNavigationBar: View {
         store.selectedFile?.displayName ?? store.workspaceURL?.lastPathComponent ?? "Markprev"
     }
 
+    private var uiFontSize: Double { theme.uiFontSize }
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+    }
+
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: scaled(10)) {
+            leadingNavigation
+
             titleCluster
 
-            Spacer(minLength: 18)
+            Spacer(minLength: scaled(16))
 
             if store.isBusy || store.isDocumentLoading || store.isSaving {
                 ProgressView()
                     .controlSize(.small)
+                    .scaleEffect(zoomScale * (uiFontSize / 16))
+                    .frame(width: scaled(18), height: scaled(18))
                     .accessibilityLabel("Working")
             }
 
@@ -37,71 +49,72 @@ struct TopNavigationBar: View {
                 minimalControlSet
             }
         }
-        .padding(.leading, 26)
-        .padding(.trailing, 12)
-        .frame(height: 44)
-        .background(topBarBackground)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(theme.borderColor)
-                .frame(height: 1)
+        .padding(.horizontal, scaled(14))
+        .frame(height: scaled(44))
+    }
+
+    private var leadingNavigation: some View {
+        HStack(spacing: 4) {
+            if !isSidebarVisible {
+                Spacer()
+                    .frame(width: 76)
+            }
+
+            ChromeBarButton(
+                systemImage: "sidebar.left",
+                label: isSidebarVisible ? "Hide Sidebar" : "Show Sidebar",
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize,
+                isActive: isSidebarVisible,
+                action: toggleSidebar
+            )
+            .keyboardShortcut("s", modifiers: [.command, .control])
         }
     }
 
     private var titleCluster: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: scaled(6)) {
             Text(title)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: scaled(14), weight: .semibold))
                 .foregroundStyle(theme.foregroundColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .accessibilityAddTraits(.isHeader)
 
             Image(systemName: "ellipsis")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(theme.mutedForegroundColor)
-                .frame(width: 24, height: 24)
-            .accessibilityHidden(true)
+                .font(.system(size: scaled(11), weight: .semibold))
+                .foregroundStyle(theme.mutedForegroundColor.opacity(0.7))
+                .accessibilityHidden(true)
         }
-        .frame(minWidth: 120, maxWidth: 420, alignment: .leading)
+        .frame(minWidth: scaled(120), maxWidth: scaled(420), alignment: .leading)
     }
 
     private var fullControlSet: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: scaled(14)) {
             sourcePreviewSwitch
                 .disabled(store.selectedFile == nil || store.isDocumentLoading)
 
-            TopBarDivider(theme: theme)
-
             zoomCluster
-
-            TopBarDivider(theme: theme)
 
             utilityButtons
         }
     }
 
     private var compactControlSet: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: scaled(10)) {
             sourcePreviewSwitch
                 .disabled(store.selectedFile == nil || store.isDocumentLoading)
 
-            TopBarDivider(theme: theme)
-
-            TopBarIconButton(
-                systemImage: "folder",
-                accessibilityLabel: "Open Folder",
-                theme: theme,
-                isDisabled: store.isBusy,
-                action: openFolder
-            )
-
-            terminalButton
+            HStack(spacing: scaled(2)) {
+                iconButton(systemImage: "folder", label: "Open Folder", isDisabled: store.isBusy, action: openFolder)
+                terminalButton
+            }
         }
     }
 
     private var minimalControlSet: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: scaled(6)) {
             sourcePreviewSwitch
                 .disabled(store.selectedFile == nil || store.isDocumentLoading)
 
@@ -110,11 +123,13 @@ struct TopNavigationBar: View {
     }
 
     private var sourcePreviewSwitch: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 0) {
             TopBarSegment(
                 title: EditorMode.source.title,
                 isSelected: editorMode == .source,
-                theme: theme
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize
             ) {
                 editorMode = .source
             }
@@ -122,84 +137,65 @@ struct TopNavigationBar: View {
             TopBarSegment(
                 title: EditorMode.preview.title,
                 isSelected: editorMode == .preview,
-                theme: theme
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize
             ) {
                 editorMode = .preview
             }
         }
-        .padding(3)
-        .background(theme.elevatedSurfaceColor.opacity(theme.isDark ? 1.4 : 1.0), in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(theme.borderColor, lineWidth: 1)
-        }
+        .padding(scaled(2))
+        .background(
+            RoundedRectangle(cornerRadius: scaled(7))
+                .fill(theme.foregroundColor.opacity(theme.isDark ? 0.035 : 0.028))
+        )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Editor mode")
     }
 
     private var zoomCluster: some View {
-        HStack(spacing: 4) {
-            TopBarIconButton(
-                systemImage: "minus.magnifyingglass",
-                accessibilityLabel: "Zoom Out",
-                theme: theme,
-                action: zoomOut
-            )
+        HStack(spacing: 0) {
+            iconButton(systemImage: "minus.magnifyingglass", label: "Zoom Out", action: zoomOut)
 
             Button(action: resetZoom) {
                 Text("\(Int((zoomScale * 100).rounded()))%")
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(theme.foregroundColor.opacity(0.9))
-                    .frame(width: 46, height: 30)
-                    .contentShape(RoundedRectangle(cornerRadius: 8))
+                    .font(.system(size: scaled(11), weight: .medium, design: .rounded))
+                    .foregroundStyle(theme.mutedForegroundColor)
+                    .frame(width: scaled(40), height: scaled(26))
+                    .contentShape(RoundedRectangle(cornerRadius: scaled(6)))
             }
-            .buttonStyle(TopBarTextButtonStyle(theme: theme))
+            .buttonStyle(TopBarTextButtonStyle(theme: theme, cornerRadius: scaled(6)))
             .help("Actual Size")
             .accessibilityLabel("Actual Size")
 
-            TopBarIconButton(
-                systemImage: "plus.magnifyingglass",
-                accessibilityLabel: "Zoom In",
-                theme: theme,
-                action: zoomIn
-            )
+            iconButton(systemImage: "plus.magnifyingglass", label: "Zoom In", action: zoomIn)
         }
     }
 
     private var utilityButtons: some View {
-        HStack(spacing: 6) {
-            TopBarIconButton(
-                systemImage: "gearshape",
-                accessibilityLabel: "Open Settings",
-                theme: theme,
-                action: openSettings.callAsFunction
-            )
+        HStack(spacing: scaled(2)) {
+            iconButton(systemImage: "gearshape", label: "Open Settings", action: openSettings.callAsFunction)
 
-            TopBarIconButton(
+            iconButton(
                 systemImage: "square.and.pencil",
-                accessibilityLabel: "New Markdown",
-                theme: theme,
+                label: "New Markdown",
                 isDisabled: store.workspaceURL == nil || store.isBusy,
                 action: newMarkdown
             )
 
-            TopBarIconButton(
-                systemImage: "folder",
-                accessibilityLabel: "Open Folder",
-                theme: theme,
-                isDisabled: store.isBusy,
-                action: openFolder
-            )
+            iconButton(systemImage: "folder", label: "Open Folder", isDisabled: store.isBusy, action: openFolder)
 
             terminalButton
         }
     }
 
     private var terminalButton: some View {
-        TopBarIconButton(
+        ChromeBarButton(
             systemImage: "terminal",
-            accessibilityLabel: isTerminalPresented ? "Close Terminal" : "Open Terminal",
+            label: isTerminalPresented ? "Close Terminal" : "Open Terminal",
             theme: theme,
+            zoomScale: zoomScale,
+            uiFontSize: uiFontSize,
             isActive: isTerminalPresented,
             action: toggleTerminal
         )
@@ -207,18 +203,21 @@ struct TopNavigationBar: View {
         .accessibilityValue(isTerminalPresented ? "Open" : "Closed")
     }
 
-    @ViewBuilder
-    private var topBarBackground: some View {
-        if theme.opaqueWindows {
-            theme.surfaceColor
-        } else {
-            ZStack {
-                Rectangle()
-                    .fill(.regularMaterial)
-                theme.surfaceColor
-                    .opacity(theme.isDark ? 0.78 : 0.86)
-            }
-        }
+    private func iconButton(
+        systemImage: String,
+        label: String,
+        isDisabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        ChromeBarButton(
+            systemImage: systemImage,
+            label: label,
+            theme: theme,
+            zoomScale: zoomScale,
+            uiFontSize: uiFontSize,
+            isDisabled: isDisabled,
+            action: action
+        )
     }
 }
 
@@ -226,126 +225,61 @@ private struct TopBarSegment: View {
     let title: String
     let isSelected: Bool
     let theme: AppTheme
+    let zoomScale: Double
+    let uiFontSize: Double
     let action: () -> Void
     @State private var isHovered = false
     @FocusState private var isFocused: Bool
 
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+    }
+
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(isSelected ? theme.foregroundColor : theme.mutedForegroundColor)
-                .padding(.horizontal, 11)
-                .frame(height: 24)
-                .background(background, in: RoundedRectangle(cornerRadius: 6))
-                .overlay {
-                    if isFocused {
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(theme.accentColor.opacity(0.75), lineWidth: 1.4)
-                    }
-                }
-                .contentShape(RoundedRectangle(cornerRadius: 6))
+                .font(.system(size: scaled(12), weight: isSelected ? .medium : .regular))
+                .foregroundStyle(foreground)
+                .padding(.horizontal, scaled(10))
+                .frame(height: scaled(22))
+                .background(background, in: RoundedRectangle(cornerRadius: scaled(5)))
+                .contentShape(RoundedRectangle(cornerRadius: scaled(5)))
         }
         .buttonStyle(.plain)
         .focusable(true)
         .focused($isFocused)
         .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.14), value: isHovered)
-        .animation(.easeOut(duration: 0.14), value: isSelected)
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.easeOut(duration: 0.12), value: isSelected)
         .accessibilityLabel(title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
+    private var foreground: Color {
+        if isSelected {
+            return theme.foregroundColor
+        }
+        return theme.mutedForegroundColor.opacity(isHovered ? 1 : 0.85)
+    }
+
     private var background: Color {
         if isSelected {
-            return theme.foregroundColor.opacity(theme.isDark ? 0.14 : 0.09)
-        }
-
-        if isHovered {
             return theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.06)
         }
-
         return .clear
-    }
-}
-
-private struct TopBarIconButton: View {
-    let systemImage: String
-    let accessibilityLabel: String
-    let theme: AppTheme
-    var isActive = false
-    var isDisabled = false
-    let action: () -> Void
-    @State private var isHovered = false
-    @FocusState private var isFocused: Bool
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(iconColor)
-                .frame(width: 32, height: 30)
-                .background(background, in: RoundedRectangle(cornerRadius: 8))
-                .overlay {
-                    if isFocused {
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.accentColor.opacity(0.75), lineWidth: 1.4)
-                    }
-                }
-                .contentShape(RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
-        .disabled(isDisabled)
-        .focusable(!isDisabled)
-        .focused($isFocused)
-        .opacity(isDisabled ? 0.38 : 1)
-        .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.14), value: isHovered)
-        .animation(.easeOut(duration: 0.14), value: isActive)
-        .help(accessibilityLabel)
-        .accessibilityLabel(accessibilityLabel)
-    }
-
-    private var background: Color {
-        if isActive {
-            return theme.accentColor.opacity(theme.isDark ? 0.22 : 0.16)
-        }
-
-        if isHovered {
-            return theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.06)
-        }
-
-        return .clear
-    }
-
-    private var iconColor: Color {
-        if isActive {
-            return theme.accentColor
-        }
-
-        return theme.mutedForegroundColor
     }
 }
 
 private struct TopBarTextButtonStyle: ButtonStyle {
     let theme: AppTheme
+    let cornerRadius: CGFloat
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .background(
-                theme.foregroundColor.opacity(configuration.isPressed ? 0.11 : 0.0),
-                in: RoundedRectangle(cornerRadius: 8)
+                theme.foregroundColor.opacity(configuration.isPressed ? 0.08 : 0.0),
+                in: RoundedRectangle(cornerRadius: cornerRadius)
             )
-            .opacity(configuration.isPressed ? 0.76 : 1)
-    }
-}
-
-private struct TopBarDivider: View {
-    let theme: AppTheme
-
-    var body: some View {
-        Rectangle()
-            .fill(theme.borderColor)
-            .frame(width: 1, height: 22)
+            .opacity(configuration.isPressed ? 0.78 : 1)
     }
 }

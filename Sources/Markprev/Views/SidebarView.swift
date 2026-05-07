@@ -1,3 +1,4 @@
+import AppKit
 import MarkprevCore
 import SwiftUI
 import UniformTypeIdentifiers
@@ -84,16 +85,7 @@ struct SidebarView: View {
 
     @ViewBuilder
     private var sidebarBackground: some View {
-        if theme.opaqueWindows {
-            theme.surfaceColor
-        } else {
-            ZStack {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                theme.surfaceColor
-                    .opacity(theme.isDark ? 0.62 : 0.50)
-            }
-        }
+        theme.surfaceColor
     }
 
     private func flattenVisibleNodes(from nodes: [SidebarNode]) -> [VisibleSidebarNode] {
@@ -214,6 +206,9 @@ private struct SidebarHeader: View {
     }
 }
 
+/// Reserves the same 44pt height the detail-pane top nav uses, so the
+/// traffic lights have somewhere to sit and the sidebar header aligns
+/// with the toolbar on the right.
 private struct SidebarWindowChrome: View {
     let theme: AppTheme
     let zoomScale: Double
@@ -224,62 +219,69 @@ private struct SidebarWindowChrome: View {
     }
 
     var body: some View {
-        HStack(spacing: scaled(12)) {
-            Spacer()
-                .frame(width: scaled(86))
-
-            SidebarChromeIcon(systemImage: "sidebar.left", label: "Sidebar", theme: theme)
-            SidebarChromeIcon(systemImage: "chevron.left", label: "Back", theme: theme, isDisabled: true)
-            SidebarChromeIcon(systemImage: "chevron.right", label: "Forward", theme: theme, isDisabled: true)
-
-            Spacer(minLength: 0)
-        }
-        .padding(.trailing, scaled(10))
-        .frame(height: scaled(44))
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(theme.borderColor)
-                .frame(height: 1)
-        }
+        Color.clear
+            .frame(height: scaled(44))
     }
 }
 
-private struct SidebarChromeIcon: View {
+/// Shared chrome/toolbar button — used in both the sidebar window chrome
+/// and the right-pane top navigation bar so sizing/styling is identical.
+struct ChromeBarButton: View {
     let systemImage: String
     let label: String
     let theme: AppTheme
-    var isDisabled = false
+    let zoomScale: Double
+    let uiFontSize: Double
+    var isActive: Bool = false
+    var isDisabled: Bool = false
+    let action: () -> Void
+
     @State private var isHovered = false
     @FocusState private var isFocused: Bool
 
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+    }
+
     var body: some View {
-        Button {} label: {
+        Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: isDisabled ? 0.45 : 0.9))
-                .frame(width: 30, height: 30)
-                .background(background, in: RoundedRectangle(cornerRadius: 8))
-                .overlay {
-                    if isFocused {
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.accentColor.opacity(0.72), lineWidth: 1.4)
-                    }
-                }
-                .contentShape(RoundedRectangle(cornerRadius: 8))
+                .font(.system(size: scaled(13), weight: .regular))
+                .foregroundStyle(iconColor)
+                .frame(width: scaled(28), height: scaled(26))
+                .background(background, in: RoundedRectangle(cornerRadius: scaled(6)))
+                .contentShape(RoundedRectangle(cornerRadius: scaled(6)))
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
         .focusable(!isDisabled)
         .focused($isFocused)
+        .opacity(isDisabled ? 0.4 : 1)
         .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.14), value: isHovered)
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.easeOut(duration: 0.12), value: isActive)
         .help(label)
         .accessibilityLabel(label)
     }
 
     private var background: Color {
-        guard isHovered && !isDisabled else { return .clear }
-        return theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.06)
+        if isActive {
+            return theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.06)
+        }
+        if isHovered && !isDisabled {
+            return theme.foregroundColor.opacity(theme.isDark ? 0.06 : 0.04)
+        }
+        return .clear
+    }
+
+    private var iconColor: Color {
+        if isActive {
+            return theme.foregroundColor
+        }
+        if isHovered && !isDisabled {
+            return theme.foregroundColor.opacity(0.92)
+        }
+        return theme.mutedForegroundColor
     }
 }
 

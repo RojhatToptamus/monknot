@@ -13,6 +13,8 @@ struct EditorPaneView: View {
     let previewWidthPercent: Double
     @Binding var isTerminalPresented: Bool
     @Binding var sourceLocation: MarkdownSourceLocation?
+    let isSidebarVisible: Bool
+    let toggleSidebar: () -> Void
     let newMarkdown: () -> Void
     let openFolder: () -> Void
     let zoomOut: () -> Void
@@ -29,6 +31,8 @@ struct EditorPaneView: View {
                 theme: theme,
                 zoomScale: zoomScale,
                 isTerminalPresented: isTerminalPresented,
+                isSidebarVisible: isSidebarVisible,
+                toggleSidebar: toggleSidebar,
                 newMarkdown: newMarkdown,
                 openFolder: openFolder,
                 zoomOut: zoomOut,
@@ -41,6 +45,7 @@ struct EditorPaneView: View {
                 editorWithTerminalDrawer(in: proxy.size)
             }
         }
+        .ignoresSafeArea(.container, edges: .top)
         .background(theme.surfaceColor)
         .onExitCommand {
             guard isTerminalPresented else { return }
@@ -98,7 +103,7 @@ struct EditorPaneView: View {
     }
 
     private func resizableTerminalDrawer(width: CGFloat, maxWidth: CGFloat, close: @escaping () -> Void) -> some View {
-        TerminalDrawerView(session: terminalSession, theme: theme, close: close)
+        TerminalDrawerView(session: terminalSession, theme: theme, zoomScale: zoomScale, close: close)
             .frame(width: width)
             .overlay(alignment: .leading) {
                 TerminalResizeHandle(
