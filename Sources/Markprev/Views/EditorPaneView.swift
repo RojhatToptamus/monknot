@@ -48,6 +48,7 @@ struct EditorPaneView: View {
                 baseURL: store.workspaceURL,
                 theme: theme,
                 zoomScale: zoomScale,
+                codeFontSize: Double(codeFontSize),
                 onSourceJump: onPreviewSourceJump
             )
             .help(selectedFile.relativePath)

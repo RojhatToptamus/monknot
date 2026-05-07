@@ -15,7 +15,8 @@ struct PreferencesView: View {
         }
     }
 
-    @State private var selectedSection: Section = .general
+    @ObservedObject var themeStore: ThemeSettingsStore
+    @State private var selectedSection: Section = .appearance
 
     var body: some View {
         NavigationSplitView {
@@ -31,7 +32,7 @@ struct PreferencesView: View {
             case .general:
                 GeneralSettingsView()
             case .appearance:
-                AppearanceSettingsView()
+                AppearanceSettingsView(themeStore: themeStore)
             }
         }
         .frame(width: 780, height: 640)

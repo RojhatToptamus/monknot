@@ -50,6 +50,7 @@ APP_SOURCES=(
   "Sources/Markprev/Support/Color+Theme.swift"
   "Sources/Markprev/Support/ThemePreference+SwiftUI.swift"
   "Sources/Markprev/Stores/WorkspaceStore.swift"
+  "Sources/Markprev/Stores/ThemeSettingsStore.swift"
   "Sources/Markprev/Views/ContentView.swift"
   "Sources/Markprev/Views/SidebarView.swift"
   "Sources/Markprev/Views/EditorPaneView.swift"

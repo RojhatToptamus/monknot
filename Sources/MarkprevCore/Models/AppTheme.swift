@@ -9,6 +9,9 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
     public let selectionBackground: String
     public let selectionForeground: String
     public let palette: [String]
+    public let uiFontSize: Double
+    public let codeFontSize: Double
+    public let contrast: Double
 
     public init(
         id: String,
@@ -18,7 +21,10 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         cursor: String,
         selectionBackground: String,
         selectionForeground: String,
-        palette: [String]
+        palette: [String],
+        uiFontSize: Double = 16,
+        codeFontSize: Double = 15,
+        contrast: Double = 50
     ) {
         self.id = id
         self.name = name
@@ -28,6 +34,9 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         self.selectionBackground = selectionBackground
         self.selectionForeground = selectionForeground
         self.palette = palette
+        self.uiFontSize = uiFontSize
+        self.codeFontSize = codeFontSize
+        self.contrast = contrast
     }
 
     public var accent: String {
@@ -66,6 +75,41 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         return rgb.relativeLuminance < 0.45
     }
 
+    public func replacing(
+        background: String? = nil,
+        foreground: String? = nil,
+        accent: String? = nil,
+        uiFontSize: Double? = nil,
+        codeFontSize: Double? = nil,
+        contrast: Double? = nil
+    ) -> AppTheme {
+        var palette = self.palette
+        if let accent {
+            if palette.indices.contains(4) {
+                palette[4] = accent
+            } else {
+                while palette.count < 4 {
+                    palette.append(self.foreground)
+                }
+                palette.append(accent)
+            }
+        }
+
+        return AppTheme(
+            id: id,
+            name: name,
+            background: background ?? self.background,
+            foreground: foreground ?? self.foreground,
+            cursor: accent ?? cursor,
+            selectionBackground: selectionBackground,
+            selectionForeground: selectionForeground,
+            palette: palette,
+            uiFontSize: uiFontSize ?? self.uiFontSize,
+            codeFontSize: codeFontSize ?? self.codeFontSize,
+            contrast: contrast ?? self.contrast
+        )
+    }
+
     public static let codexLight = AppTheme(
         id: "codex-light",
         name: "Codex",
@@ -79,7 +123,8 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
             "#339CFF", "#8B5CF6", "#0EA5E9", "#3F444A",
             "#A4A9B2", "#D92D20", "#16A34A", "#CA8A04",
             "#2563EB", "#A855F7", "#0891B2", "#111315"
-        ]
+        ],
+        contrast: 45
     )
 
     public static let codexDark = AppTheme(
@@ -95,7 +140,8 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
             "#339CFF", "#B785FF", "#60D8FF", "#D7D7D9",
             "#6D7178", "#FF7A73", "#77F299", "#FFD98A",
             "#64B5FF", "#CB9DFF", "#86E7FF", "#FFFFFF"
-        ]
+        ],
+        contrast: 60
     )
 
     public static let lightThemes: [AppTheme] = [

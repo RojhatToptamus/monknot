@@ -4,12 +4,10 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var store: WorkspaceStore
+    @ObservedObject var themeStore: ThemeSettingsStore
     @AppStorage("Markprev.editorMode") private var editorModeRawValue = EditorMode.preview.rawValue
     @AppStorage("Markprev.themePreference") private var themePreferenceRawValue = ThemePreference.system.rawValue
-    @AppStorage("Markprev.lightThemeID") private var lightThemeID = AppTheme.codexLight.id
-    @AppStorage("Markprev.darkThemeID") private var darkThemeID = AppTheme.codexDark.id
     @AppStorage("Markprev.zoomScale") private var zoomScale = 1.0
-    @AppStorage("Markprev.codeFontSize") private var codeFontSize = 15.0
     @State private var pendingSourceLocation: MarkdownSourceLocation?
     @Environment(\.colorScheme) private var systemColorScheme
 
@@ -24,16 +22,18 @@ struct ContentView: View {
     }
 
     private var activeTheme: AppTheme {
-        themePreference.appTheme(
-            systemColorScheme: systemColorScheme,
-            lightThemeID: lightThemeID,
-            darkThemeID: darkThemeID
-        )
+        themeStore.activeTheme(themePreference: themePreference, systemColorScheme: systemColorScheme)
     }
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(store: store, theme: activeTheme, zoomScale: zoomScale, openFolder: openFolderPanel)
+            SidebarView(
+                store: store,
+                theme: activeTheme,
+                zoomScale: zoomScale,
+                uiFontSize: activeTheme.uiFontSize,
+                openFolder: openFolderPanel
+            )
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 440)
         } detail: {
             EditorPaneView(
@@ -41,7 +41,7 @@ struct ContentView: View {
                 editorMode: editorMode,
                 theme: activeTheme,
                 zoomScale: zoomScale,
-                codeFontSize: CGFloat(codeFontSize),
+                codeFontSize: CGFloat(activeTheme.codeFontSize),
                 sourceLocation: $pendingSourceLocation,
                 onPreviewSourceJump: openSourceFromPreview(location:)
             )

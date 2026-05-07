@@ -2,133 +2,164 @@ import MarkprevCore
 import SwiftUI
 
 struct AppearanceSettingsView: View {
+    @ObservedObject var themeStore: ThemeSettingsStore
     @AppStorage("Markprev.themePreference") private var themePreferenceRawValue = ThemePreference.system.rawValue
-    @AppStorage("Markprev.lightThemeID") private var lightThemeID = AppTheme.codexLight.id
-    @AppStorage("Markprev.darkThemeID") private var darkThemeID = AppTheme.codexDark.id
-    @AppStorage("Markprev.uiFontSize") private var uiFontSize = 16.0
-    @AppStorage("Markprev.codeFontSize") private var codeFontSize = 15.0
+    @State private var lightDraft = ThemeConfiguration(theme: AppTheme.codexLight)
+    @State private var darkDraft = ThemeConfiguration(theme: AppTheme.codexDark)
 
     private var themePreference: ThemePreference {
         get { ThemePreference(rawValue: themePreferenceRawValue) ?? .system }
         nonmutating set { themePreferenceRawValue = newValue.rawValue }
     }
 
-    private var lightTheme: AppTheme {
-        AppTheme.lightTheme(id: lightThemeID)
+    private var draftLightTheme: AppTheme {
+        lightDraft.applied(to: themeStore.presetTheme(for: .light))
     }
 
-    private var darkTheme: AppTheme {
-        AppTheme.darkTheme(id: darkThemeID)
+    private var draftDarkTheme: AppTheme {
+        darkDraft.applied(to: themeStore.presetTheme(for: .dark))
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                // --- Theme mode picker ---
                 SettingsRow(title: "Theme", detail: "Use light, dark, or match your system") {
                     Picker("Theme", selection: Binding(
                         get: { themePreference },
                         set: { themePreference = $0 }
                     )) {
                         ForEach(ThemePreference.allCases) { pref in
-                            Text(pref.title).tag(pref)
+                            Label(pref.title, systemImage: pref.systemImage)
+                                .tag(pref)
                         }
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 240)
+                    .frame(width: 260)
                 }
 
-                // --- Code preview ---
-                CodePreviewCard(lightTheme: lightTheme, darkTheme: darkTheme)
+                CodePreviewCard(lightTheme: draftLightTheme, darkTheme: draftDarkTheme)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 16)
 
-                Divider().padding(.leading, 20)
-
-                // --- Light theme section ---
-                themeSection(
-                    title: "Light theme",
-                    selectedThemeID: $lightThemeID,
-                    themes: AppTheme.lightThemes,
-                    theme: lightTheme,
-                    contrast: 45
-                )
-
-                // --- Dark theme section ---
-                themeSection(
-                    title: "Dark theme",
-                    selectedThemeID: $darkThemeID,
-                    themes: AppTheme.darkThemes,
-                    theme: darkTheme,
-                    contrast: 60
-                )
-
-                // --- Font sizes ---
-                SettingsStepperRow(
-                    title: "UI font size",
-                    detail: "Adjust the base size used for the Markprev UI",
-                    value: $uiFontSize,
-                    range: 12...22
-                )
-
-                SettingsStepperRow(
-                    title: "Code font size",
-                    detail: "Adjust the base size used for source and preview code",
-                    value: $codeFontSize,
-                    range: 11...24
-                )
+                ThemeEditorSection(slot: .light, themeStore: themeStore, draft: $lightDraft)
+                ThemeEditorSection(slot: .dark, themeStore: themeStore, draft: $darkDraft)
             }
             .padding(.vertical, 8)
         }
+        .onAppear(perform: reloadDrafts)
     }
 
-    /// A theme section: header with picker, then flat value rows, then contrast slider.
-    @ViewBuilder
-    private func themeSection(
-        title: String,
-        selectedThemeID: Binding<String>,
-        themes: [AppTheme],
-        theme: AppTheme,
-        contrast: Int
-    ) -> some View {
-        // Section header with picker
-        HStack {
-            Text(title)
-                .font(.system(size: 15, weight: .semibold))
-            Spacer()
-            HStack(spacing: 12) {
-                Button("Import") {}
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.tertiary)
-                    .disabled(true)
+    private func reloadDrafts() {
+        lightDraft = themeStore.configuration(for: .light)
+        darkDraft = themeStore.configuration(for: .dark)
+    }
+}
 
-                Button("Copy theme") {}
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.tertiary)
-                    .disabled(true)
+// MARK: - Theme Editing
 
-                Picker(title, selection: selectedThemeID) {
-                    ForEach(themes) { t in
-                        Text(t.name).tag(t.id)
-                    }
-                }
-                .pickerStyle(.menu)
-                .frame(width: 200)
+private struct ThemeEditorSection: View {
+    let slot: ThemeSlot
+    @ObservedObject var themeStore: ThemeSettingsStore
+    @Binding var draft: ThemeConfiguration
+
+    private var preset: AppTheme {
+        themeStore.presetTheme(for: slot)
+    }
+
+    private var savedConfiguration: ThemeConfiguration {
+        themeStore.configuration(for: slot).sanitized(for: preset)
+    }
+
+    private var sanitizedDraft: ThemeConfiguration {
+        draft.sanitized(for: preset)
+    }
+
+    private var hasUnsavedChanges: Bool {
+        sanitizedDraft != savedConfiguration
+    }
+
+    private var canReset: Bool {
+        hasUnsavedChanges || themeStore.hasCustomization(for: slot)
+    }
+
+    private var selectedThemeID: Binding<String> {
+        Binding(
+            get: { themeStore.selectedThemeID(for: slot) },
+            set: { id in
+                themeStore.setSelectedThemeID(id, for: slot)
+                draft = themeStore.configuration(for: slot)
             }
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+
+            EditableThemeColorRow(label: "Accent", hex: $draft.accent)
+            EditableThemeColorRow(label: "Background", hex: $draft.background)
+            EditableThemeColorRow(label: "Foreground", hex: $draft.foreground)
+
+            SettingsStepperRow(
+                title: "UI font size",
+                detail: "Base text size for Markprev controls using this theme",
+                value: $draft.uiFontSize,
+                range: 12...24
+            )
+
+            SettingsStepperRow(
+                title: "Code font size",
+                detail: "Base text size for source and Markdown preview code",
+                value: $draft.codeFontSize,
+                range: 11...28
+            )
+
+            SettingsSliderRow(title: "Contrast", value: $draft.contrast, range: 0...100)
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(slot.title)
+                    .font(.system(size: 15, weight: .semibold))
+
+                if hasUnsavedChanges {
+                    Text("Unsaved changes")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer(minLength: 16)
+
+            Button("Reset") {
+                themeStore.reset(slot)
+                draft = themeStore.configuration(for: slot)
+            }
+            .disabled(!canReset)
+
+            Button("Save") {
+                themeStore.save(draft, for: slot)
+                draft = themeStore.configuration(for: slot)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!hasUnsavedChanges)
+
+            Picker(slot.title, selection: selectedThemeID) {
+                ForEach(slot.themes) { theme in
+                    Text(theme.name).tag(theme.id)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(width: 200)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
         .overlay(alignment: .bottom) {
             Divider().padding(.leading, 20)
         }
-
-        // Theme values — flat rows
-        ThemeValueRow(label: "Accent", value: theme.accent, chipColor: Color(hex: theme.accent))
-        ThemeValueRow(label: "Background", value: theme.background, chipColor: Color(hex: theme.background))
-        ThemeValueRow(label: "Foreground", value: theme.foreground, chipColor: Color(hex: theme.foreground))
-        ThemeValueRow(label: "UI font", value: "-apple-system")
-        ThemeValueRow(label: "Code font", value: "ui-monospace")
-        SettingsSliderRow(title: "Contrast", value: .constant(Double(contrast)), range: 0...100)
     }
 }
 
@@ -140,14 +171,14 @@ private struct CodePreviewCard: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            codePane(theme: lightTheme, surface: "sidebar", contrast: "42")
-            codePane(theme: darkTheme, surface: "sidebar-editor", contrast: "68")
+            codePane(theme: lightTheme, surface: "sidebar", contrast: lightTheme.contrast)
+            codePane(theme: darkTheme, surface: "sidebar-editor", contrast: darkTheme.contrast)
         }
         .frame(height: 170)
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private func codePane(theme: AppTheme, surface: String, contrast: String) -> some View {
+    private func codePane(theme: AppTheme, surface: String, contrast: Double) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             codeLine(n: "1", text: "const themePreview: Theme = {", color: Color(hex: theme.codeKeyword), theme: theme)
             highlightedLine(theme: theme) {
@@ -157,7 +188,7 @@ private struct CodePreviewCard: View {
                 codeLine(n: "3", text: "  accent: \"\(theme.accent)\",", color: Color(hex: theme.codeString), theme: theme)
             }
             highlightedLine(theme: theme) {
-                codeLine(n: "4", text: "  contrast: \(contrast),", color: Color(hex: theme.codeNumber), theme: theme)
+                codeLine(n: "4", text: "  contrast: \(Int(contrast.rounded())),", color: Color(hex: theme.codeNumber), theme: theme)
             }
             codeLine(n: "5", text: "};", color: theme.mutedForegroundColor, theme: theme)
             Spacer()

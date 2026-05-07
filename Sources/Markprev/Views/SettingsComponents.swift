@@ -100,6 +100,59 @@ struct SettingsSliderRow: View {
     }
 }
 
+// MARK: - Editable Color Row
+
+struct EditableThemeColorRow: View {
+    let label: String
+    @Binding var hex: String
+
+    var body: some View {
+        SettingsRow(title: label) {
+            HStack(spacing: 8) {
+                ColorPicker(
+                    label,
+                    selection: Binding(
+                        get: { Color(hex: hex) },
+                        set: { color in
+                            if let nextHex = NSColor.markprevHexString(from: color) {
+                                hex = nextHex
+                            }
+                        }
+                    ),
+                    supportsOpacity: false
+                )
+                .labelsHidden()
+                .frame(width: 24)
+
+                TextField("#000000", text: Binding(
+                    get: { hex },
+                    set: { hex = Self.normalizedInput($0) }
+                ))
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                .frame(width: 108)
+            }
+        }
+    }
+
+    private static func normalizedInput(_ value: String) -> String {
+        var normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        normalized.removeAll { character in
+            character != "#" && !character.isHexDigit
+        }
+
+        if !normalized.hasPrefix("#") {
+            normalized = "#\(normalized)"
+        }
+
+        if normalized.count > 7 {
+            normalized = String(normalized.prefix(7))
+        }
+
+        return normalized
+    }
+}
+
 // MARK: - Theme Value Row
 
 /// A key-value row with an optional color chip — used inside theme panels.
@@ -151,5 +204,18 @@ struct SettingsSectionHeader: View {
             .padding(.horizontal, 20)
             .padding(.top, 24)
             .padding(.bottom, 8)
+    }
+}
+
+private extension NSColor {
+    static func markprevHexString(from color: Color) -> String? {
+        guard let rgb = NSColor(color).usingColorSpace(.sRGB) else { return nil }
+
+        return String(
+            format: "#%02X%02X%02X",
+            Int((Double(rgb.redComponent) * 255).rounded()),
+            Int((Double(rgb.greenComponent) * 255).rounded()),
+            Int((Double(rgb.blueComponent) * 255).rounded())
+        )
     }
 }

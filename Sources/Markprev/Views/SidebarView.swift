@@ -6,13 +6,14 @@ struct SidebarView: View {
     @ObservedObject var store: WorkspaceStore
     let theme: AppTheme
     let zoomScale: Double
+    let uiFontSize: Double
     let openFolder: () -> Void
     @State private var isDropTargeted = false
     @State private var expandedFolderIDs: Set<String> = []
 
     /// Scaled font size — all sidebar typography goes through this.
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale, base * 0.75)
+        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
     }
 
     private var visibleNodes: [VisibleSidebarNode] {
@@ -21,7 +22,7 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SidebarHeader(store: store, theme: theme, zoomScale: zoomScale)
+            SidebarHeader(store: store, theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize)
 
             Divider()
                 .overlay(theme.borderColor)
@@ -36,6 +37,7 @@ struct SidebarView: View {
                                 isExpanded: expandedFolderIDs.contains(visibleNode.node.id),
                                 theme: theme,
                                 zoomScale: zoomScale,
+                                uiFontSize: uiFontSize,
                                 toggleFolder: toggleFolder(_:),
                                 selectFile: store.selectFile(id:)
                             )
@@ -46,13 +48,13 @@ struct SidebarView: View {
                 }
                 .scrollContentBackground(.hidden)
             } else {
-                EmptySidebarView(theme: theme, zoomScale: zoomScale, openFolder: openFolder)
+                EmptySidebarView(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize, openFolder: openFolder)
             }
 
             Divider()
                 .overlay(theme.borderColor)
 
-            SidebarSettingsButton(theme: theme, zoomScale: zoomScale)
+            SidebarSettingsButton(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize)
         }
         .background(.ultraThinMaterial)
         .overlay {
@@ -169,9 +171,10 @@ private struct SidebarHeader: View {
     @ObservedObject var store: WorkspaceStore
     let theme: AppTheme
     let zoomScale: Double
+    let uiFontSize: Double
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale, base * 0.75)
+        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
     }
 
     var body: some View {
@@ -201,6 +204,7 @@ private struct SidebarNodeRow: View {
     let isExpanded: Bool
     let theme: AppTheme
     let zoomScale: Double
+    let uiFontSize: Double
     let toggleFolder: (String) -> Void
     let selectFile: (String?) -> Void
 
@@ -213,7 +217,7 @@ private struct SidebarNodeRow: View {
     }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale, base * 0.75)
+        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
     }
 
     var body: some View {
@@ -286,7 +290,7 @@ private struct SidebarNodeRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 isSelected
-                    ? theme.accentColor.opacity(theme.isDark ? 0.15 : 0.12)
+                    ? theme.selectedRowColor
                     : Color.clear,
                 in: RoundedRectangle(cornerRadius: scaled(8))
             )
@@ -302,14 +306,16 @@ private struct SidebarNodeRow: View {
 private struct SidebarSettingsButton: View {
     let theme: AppTheme
     let zoomScale: Double
+    let uiFontSize: Double
+    @Environment(\.openSettings) private var openSettings
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale, base * 0.75)
+        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
     }
 
     var body: some View {
         Button {
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            openSettings()
         } label: {
             HStack(spacing: scaled(8)) {
                 Image(systemName: "gearshape")
@@ -336,10 +342,11 @@ private struct SidebarSettingsButton: View {
 private struct EmptySidebarView: View {
     let theme: AppTheme
     let zoomScale: Double
+    let uiFontSize: Double
     let openFolder: () -> Void
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale, base * 0.75)
+        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
     }
 
     var body: some View {

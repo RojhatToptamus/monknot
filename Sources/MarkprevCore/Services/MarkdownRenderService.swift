@@ -20,10 +20,26 @@ public struct MarkdownRenderService: Sendable {
     }
 
     public func htmlDocument(markdown: String, appTheme: AppTheme, zoomScale: Double, baseURL: URL?) throws -> String {
+        try htmlDocument(
+            markdown: markdown,
+            appTheme: appTheme,
+            zoomScale: zoomScale,
+            baseFontSize: appTheme.codeFontSize,
+            baseURL: baseURL
+        )
+    }
+
+    public func htmlDocument(
+        markdown: String,
+        appTheme: AppTheme,
+        zoomScale: Double,
+        baseFontSize: Double,
+        baseURL: URL?
+    ) throws -> String {
         let markdownLiteral = try javaScriptLiteral(markdown)
         let themeLiteral = try javaScriptLiteral(appTheme.isDark ? "dark" : "light")
         let baseTag = baseURL.map { #"<base href="\#(htmlAttributeEscaped(directoryURLString(for: $0)))">"# } ?? ""
-        let cssVariables = themeVariables(for: appTheme, zoomScale: zoomScale)
+        let cssVariables = themeVariables(for: appTheme, zoomScale: zoomScale, baseFontSize: baseFontSize)
 
         return """
         <!doctype html>
@@ -54,13 +70,18 @@ public struct MarkdownRenderService: Sendable {
         """
     }
 
-    private func themeVariables(for theme: AppTheme, zoomScale: Double) -> String {
-        let baseFont = max(12, min(24, 15 * zoomScale))
+    private func themeVariables(for theme: AppTheme, zoomScale: Double, baseFontSize: Double) -> String {
+        let baseFont = max(11, min(32, baseFontSize * zoomScale))
         let baseFontSize = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), baseFont)
-        let border = "color-mix(in srgb, \(theme.foreground) 14%, transparent)"
-        let soft = "color-mix(in srgb, \(theme.foreground) 6%, transparent)"
-        let softStrong = "color-mix(in srgb, \(theme.foreground) 10%, transparent)"
-        let blockquoteBackground = "color-mix(in srgb, \(theme.accent) 12%, transparent)"
+        let contrast = max(0, min(100, theme.contrast))
+        let borderMix = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), 8 + contrast * 0.16)
+        let softMix = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), 3 + contrast * 0.06)
+        let softStrongMix = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), 6 + contrast * 0.10)
+        let quoteMix = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), 8 + contrast * 0.08)
+        let border = "color-mix(in srgb, \(theme.foreground) \(borderMix)%, transparent)"
+        let soft = "color-mix(in srgb, \(theme.foreground) \(softMix)%, transparent)"
+        let softStrong = "color-mix(in srgb, \(theme.foreground) \(softStrongMix)%, transparent)"
+        let blockquoteBackground = "color-mix(in srgb, \(theme.accent) \(quoteMix)%, transparent)"
 
         return """
         :root,

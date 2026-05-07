@@ -23,6 +23,10 @@ extension NSColor {
 }
 
 extension AppTheme {
+    private var normalizedContrast: Double {
+        min(100, max(0, contrast)) / 100
+    }
+
     var surfaceColor: Color {
         Color(hex: background)
     }
@@ -36,18 +40,18 @@ extension AppTheme {
     }
 
     var borderColor: Color {
-        foregroundColor.opacity(isDark ? 0.12 : 0.10)
+        foregroundColor.opacity((isDark ? 0.08 : 0.06) + normalizedContrast * 0.10)
     }
 
     var elevatedSurfaceColor: Color {
-        foregroundColor.opacity(isDark ? 0.055 : 0.045)
+        foregroundColor.opacity((isDark ? 0.035 : 0.025) + normalizedContrast * 0.055)
     }
 
     var mutedForegroundColor: Color {
-        foregroundColor.opacity(isDark ? 0.62 : 0.55)
+        foregroundColor.opacity((isDark ? 0.52 : 0.45) + normalizedContrast * 0.18)
     }
 
     var selectedRowColor: Color {
-        accentColor.opacity(0.12)
+        accentColor.opacity(0.08 + normalizedContrast * 0.10)
     }
 }

@@ -70,8 +70,18 @@ final class MarkdownRenderServiceTests: XCTestCase {
         XCTAssertTrue(html.contains("--fg: #FDFCFB;"))
         XCTAssertTrue(html.contains("--link: #445566;"))
         XCTAssertTrue(html.contains("--blockquote-border: #445566;"))
-        XCTAssertTrue(html.contains("--table-border: color-mix(in srgb, #FDFCFB 14%, transparent);"))
+        XCTAssertTrue(html.contains("--table-border: color-mix(in srgb, #FDFCFB 16.0%, transparent);"))
         XCTAssertTrue(html.contains("--selection-bg: #102030;"))
         XCTAssertTrue(html.contains("--base-font-size: 18.8px;"))
+    }
+
+    func testHTMLDocumentUsesThemeCodeFontSizeAndContrast() throws {
+        let service = MarkdownRenderService(stylesheet: "", rendererJavaScript: "")
+        let theme = AppTheme.codexDark.replacing(codeFontSize: 20, contrast: 75)
+
+        let html = try service.htmlDocument(markdown: "# Title", appTheme: theme, zoomScale: 1.2, baseURL: nil)
+
+        XCTAssertTrue(html.contains("--base-font-size: 24.0px;"))
+        XCTAssertTrue(html.contains("--table-border: color-mix(in srgb, #FFFFFF 20.0%, transparent);"))
     }
 }

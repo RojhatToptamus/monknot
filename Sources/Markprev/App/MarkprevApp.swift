@@ -6,10 +6,11 @@ import SwiftUI
 struct MarkprevApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var workspaceStore = WorkspaceStore()
+    @StateObject private var themeStore = ThemeSettingsStore()
 
     var body: some Scene {
         WindowGroup {
-            ContentView(store: workspaceStore)
+            ContentView(store: workspaceStore, themeStore: themeStore)
                 .frame(minWidth: 920, minHeight: 620)
         }
         .windowToolbarStyle(.unifiedCompact)
@@ -55,7 +56,7 @@ struct MarkprevApp: App {
         }
 
         Settings {
-            PreferencesView()
+            PreferencesView(themeStore: themeStore)
         }
     }
 }
