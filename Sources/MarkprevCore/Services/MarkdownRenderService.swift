@@ -25,6 +25,7 @@ public struct MarkdownRenderService: Sendable {
             appTheme: appTheme,
             zoomScale: zoomScale,
             baseFontSize: appTheme.codeFontSize,
+            previewWidthPercent: 88,
             baseURL: baseURL
         )
     }
@@ -34,12 +35,18 @@ public struct MarkdownRenderService: Sendable {
         appTheme: AppTheme,
         zoomScale: Double,
         baseFontSize: Double,
+        previewWidthPercent: Double = 88,
         baseURL: URL?
     ) throws -> String {
         let markdownLiteral = try javaScriptLiteral(markdown)
         let themeLiteral = try javaScriptLiteral(appTheme.isDark ? "dark" : "light")
         let baseTag = baseURL.map { #"<base href="\#(htmlAttributeEscaped(directoryURLString(for: $0)))">"# } ?? ""
-        let cssVariables = themeVariables(for: appTheme, zoomScale: zoomScale, baseFontSize: baseFontSize)
+        let cssVariables = themeVariables(
+            for: appTheme,
+            zoomScale: zoomScale,
+            baseFontSize: baseFontSize,
+            previewWidthPercent: previewWidthPercent
+        )
 
         return """
         <!doctype html>
@@ -70,9 +77,19 @@ public struct MarkdownRenderService: Sendable {
         """
     }
 
-    private func themeVariables(for theme: AppTheme, zoomScale: Double, baseFontSize: Double) -> String {
+    private func themeVariables(
+        for theme: AppTheme,
+        zoomScale: Double,
+        baseFontSize: Double,
+        previewWidthPercent: Double
+    ) -> String {
         let baseFont = max(11, min(32, baseFontSize * zoomScale))
         let baseFontSize = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), baseFont)
+        let previewWidth = String(
+            format: "%.0f",
+            locale: Locale(identifier: "en_US_POSIX"),
+            max(55, min(100, previewWidthPercent))
+        )
         let contrast = max(0, min(100, theme.contrast))
         let borderMix = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), 8 + contrast * 0.16)
         let softMix = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), 3 + contrast * 0.06)
@@ -122,6 +139,7 @@ public struct MarkdownRenderService: Sendable {
           --tok-comment: \(theme.codeComment);
           --tok-builtin: \(theme.codeBuiltin);
           --base-font-size: \(baseFontSize)px;
+          --preview-max-width: \(previewWidth)%;
           --ui-font: \(uiFontStack);
           --code-font: \(codeFontStack);
         }

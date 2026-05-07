@@ -100,6 +100,18 @@ private struct ThemeEditorSection: View {
             EditableThemeColorRow(label: "Background", hex: $draft.background)
             EditableThemeColorRow(label: "Foreground", hex: $draft.foreground)
 
+            SettingsToggleRow(
+                title: "Translucent sidebar",
+                detail: "Use the theme surface as a tinted macOS material sidebar",
+                isOn: $draft.translucentSidebar
+            )
+
+            SettingsToggleRow(
+                title: "Quiet sidebar",
+                detail: "Make sidebar text and icons 20% more subdued",
+                isOn: $draft.quietSidebar
+            )
+
             SettingsStepperRow(
                 title: "UI font size",
                 detail: "Base text size for Markprev controls using this theme",

@@ -13,7 +13,7 @@ struct MarkprevApp: App {
             ContentView(store: workspaceStore, themeStore: themeStore)
                 .frame(minWidth: 920, minHeight: 620)
         }
-        .windowToolbarStyle(.unifiedCompact)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             MarkprevCommandMenu()
         }

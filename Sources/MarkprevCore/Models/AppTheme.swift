@@ -26,6 +26,7 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
     public let uiFontName: String?
     public let codeFontName: String?
     public let opaqueWindows: Bool
+    public let quietSidebar: Bool
     public let uiFontSize: Double
     public let codeFontSize: Double
     public let contrast: Double
@@ -48,6 +49,7 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         uiFontName: String? = nil,
         codeFontName: String? = nil,
         opaqueWindows: Bool = false,
+        quietSidebar: Bool = false,
         uiFontSize: Double = 16,
         codeFontSize: Double = 15,
         contrast: Double = 50
@@ -65,6 +67,7 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         self.uiFontName = uiFontName
         self.codeFontName = codeFontName
         self.opaqueWindows = opaqueWindows
+        self.quietSidebar = quietSidebar
         self.uiFontSize = uiFontSize
         self.codeFontSize = codeFontSize
         self.contrast = contrast
@@ -110,6 +113,8 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         background: String? = nil,
         foreground: String? = nil,
         accent: String? = nil,
+        opaqueWindows: Bool? = nil,
+        quietSidebar: Bool? = nil,
         uiFontSize: Double? = nil,
         codeFontSize: Double? = nil,
         contrast: Double? = nil
@@ -145,7 +150,8 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
             semanticColors: semanticColors,
             uiFontName: uiFontName,
             codeFontName: codeFontName,
-            opaqueWindows: opaqueWindows,
+            opaqueWindows: opaqueWindows ?? self.opaqueWindows,
+            quietSidebar: quietSidebar ?? self.quietSidebar,
             uiFontSize: uiFontSize ?? self.uiFontSize,
             codeFontSize: codeFontSize ?? self.codeFontSize,
             contrast: contrast ?? self.contrast

@@ -8,6 +8,8 @@ struct ContentView: View {
     @AppStorage("Markprev.editorMode") private var editorModeRawValue = EditorMode.preview.rawValue
     @AppStorage("Markprev.themePreference") private var themePreferenceRawValue = ThemePreference.system.rawValue
     @AppStorage("Markprev.zoomScale") private var zoomScale = 1.0
+    @AppStorage("Markprev.previewWidthPercent") private var previewWidthPercent = 88.0
+    @SceneStorage("Markprev.isTerminalDrawerOpen") private var isTerminalDrawerOpen = false
     @State private var pendingSourceLocation: MarkdownSourceLocation?
     @Environment(\.colorScheme) private var systemColorScheme
 
@@ -41,74 +43,31 @@ struct ContentView: View {
         } detail: {
             EditorPaneView(
                 store: store,
-                editorMode: editorMode,
+                editorMode: Binding(
+                    get: { editorMode },
+                    set: { editorMode = $0 }
+                ),
                 theme: activeTheme,
                 zoomScale: zoomScale,
                 codeFontSize: CGFloat(activeTheme.codeFontSize),
+                previewWidthPercent: previewWidthPercent,
+                isTerminalPresented: $isTerminalDrawerOpen,
                 sourceLocation: $pendingSourceLocation,
+                newMarkdown: { store.createMarkdownFile() },
+                openFolder: openFolderPanel,
+                zoomOut: { adjustZoom(by: -0.1) },
+                resetZoom: { zoomScale = 1.0 },
+                zoomIn: { adjustZoom(by: 0.1) },
+                toggleTerminal: toggleTerminalDrawer,
                 onPreviewSourceJump: openSourceFromPreview(location:)
             )
         }
+        .ignoresSafeArea(.container, edges: .top)
         .background(activeTheme.surfaceColor)
+        .background(WindowBackgroundDragEnabler())
         .preferredColorScheme(themePreference.preferredColorScheme)
         .accentColor(activeTheme.accentColor)
         .navigationTitle(store.selectedFile?.displayName ?? "Markprev")
-        .toolbar {
-            ToolbarItemGroup(placement: .navigation) {
-                Button {
-                    openFolderPanel()
-                } label: {
-                    Label("Open Folder", systemImage: "folder")
-                }
-                .disabled(store.isBusy)
-                .help("Open Folder")
-            }
-
-            ToolbarItemGroup(placement: .primaryAction) {
-                if store.isBusy || store.isDocumentLoading || store.isSaving {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-
-                Picker("View Mode", selection: Binding(
-                    get: { editorMode },
-                    set: { editorMode = $0 }
-                )) {
-                    ForEach(EditorMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 148)
-                .disabled(store.selectedFile == nil || store.isDocumentLoading)
-
-                Divider()
-
-                Button {
-                    adjustZoom(by: -0.1)
-                } label: {
-                    Label("Zoom Out", systemImage: "minus.magnifyingglass")
-                }
-                .help("Zoom Out")
-
-                Button {
-                    zoomScale = 1.0
-                } label: {
-                    Text("\(Int((zoomScale * 100).rounded()))%")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .frame(width: 42)
-                }
-                .buttonStyle(.plain)
-                .help("Actual Size")
-
-                Button {
-                    adjustZoom(by: 0.1)
-                } label: {
-                    Label("Zoom In", systemImage: "plus.magnifyingglass")
-                }
-                .help("Zoom In")
-            }
-        }
         .task {
             store.restoreWorkspace()
         }
@@ -157,7 +116,14 @@ struct ContentView: View {
             refreshWorkspace: { store.refresh() },
             zoomIn: { adjustZoom(by: 0.1) },
             zoomOut: { adjustZoom(by: -0.1) },
-            resetZoom: { zoomScale = 1.0 }
+            resetZoom: { zoomScale = 1.0 },
+            toggleTerminal: { toggleTerminalDrawer() }
         )
+    }
+
+    private func toggleTerminalDrawer() {
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.88, blendDuration: 0.08)) {
+            isTerminalDrawerOpen.toggle()
+        }
     }
 }

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct GeneralSettingsView: View {
     @AppStorage("Markprev.zoomScale") private var zoomScale = 1.0
+    @AppStorage("Markprev.previewWidthPercent") private var previewWidthPercent = 88.0
     @AppStorage("Markprev.usePointerCursors") private var usePointerCursors = false
     @AppStorage("Markprev.fontSmoothing") private var fontSmoothing = true
 
@@ -27,6 +28,14 @@ struct GeneralSettingsView: View {
                     range: 0.7...1.8,
                     step: 0.1,
                     suffix: "x"
+                )
+
+                SettingsSliderRow(
+                    title: "Preview width",
+                    detail: "Set Markdown preview max width as a percentage of the editor pane",
+                    value: $previewWidthPercent,
+                    range: 55...100,
+                    suffix: "%"
                 )
             }
             .padding(.vertical, 8)

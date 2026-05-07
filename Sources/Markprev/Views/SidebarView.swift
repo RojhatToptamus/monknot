@@ -22,6 +22,8 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            SidebarWindowChrome(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize)
+
             SidebarHeader(store: store, theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize)
 
             Divider()
@@ -29,7 +31,7 @@ struct SidebarView: View {
 
             if !visibleNodes.isEmpty {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: scaled(2)) {
+                    LazyVStack(alignment: .leading, spacing: scaled(1)) {
                         ForEach(visibleNodes) { visibleNode in
                             SidebarNodeRow(
                                 visibleNode: visibleNode,
@@ -43,8 +45,8 @@ struct SidebarView: View {
                             )
                         }
                     }
-                    .padding(.horizontal, scaled(6))
-                    .padding(.vertical, scaled(8))
+                    .padding(.horizontal, scaled(5))
+                    .padding(.vertical, scaled(6))
                 }
                 .scrollContentBackground(.hidden)
             } else {
@@ -56,7 +58,9 @@ struct SidebarView: View {
 
             SidebarSettingsButton(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize)
         }
-        .background(theme.opaqueWindows ? theme.surfaceColor : theme.surfaceColor.opacity(0.96))
+        .background {
+            sidebarBackground
+        }
         .overlay {
             if isDropTargeted {
                 RoundedRectangle(cornerRadius: 12)
@@ -75,6 +79,20 @@ struct SidebarView: View {
         }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted) { providers in
             loadDroppedURLs(from: providers)
+        }
+    }
+
+    @ViewBuilder
+    private var sidebarBackground: some View {
+        if theme.opaqueWindows {
+            theme.surfaceColor
+        } else {
+            ZStack {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                theme.surfaceColor
+                    .opacity(theme.isDark ? 0.62 : 0.50)
+            }
         }
     }
 
@@ -181,18 +199,87 @@ private struct SidebarHeader: View {
         VStack(alignment: .leading, spacing: scaled(3)) {
             Text(store.workspaceURL?.lastPathComponent ?? "Markprev")
                 .font(.system(size: scaled(15), weight: .semibold))
-                .foregroundStyle(theme.foregroundColor)
+                .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
                 .lineLimit(1)
 
             Text(store.workspaceURL?.path ?? "No workspace open")
                 .font(.system(size: scaled(12)))
-                .foregroundStyle(theme.mutedForegroundColor)
+                .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, scaled(16))
-        .padding(.vertical, scaled(14))
+        .padding(.horizontal, scaled(12))
+        .padding(.vertical, scaled(10))
+    }
+}
+
+private struct SidebarWindowChrome: View {
+    let theme: AppTheme
+    let zoomScale: Double
+    let uiFontSize: Double
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+    }
+
+    var body: some View {
+        HStack(spacing: scaled(12)) {
+            Spacer()
+                .frame(width: scaled(86))
+
+            SidebarChromeIcon(systemImage: "sidebar.left", label: "Sidebar", theme: theme)
+            SidebarChromeIcon(systemImage: "chevron.left", label: "Back", theme: theme, isDisabled: true)
+            SidebarChromeIcon(systemImage: "chevron.right", label: "Forward", theme: theme, isDisabled: true)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.trailing, scaled(10))
+        .frame(height: scaled(44))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(theme.borderColor)
+                .frame(height: 1)
+        }
+    }
+}
+
+private struct SidebarChromeIcon: View {
+    let systemImage: String
+    let label: String
+    let theme: AppTheme
+    var isDisabled = false
+    @State private var isHovered = false
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        Button {} label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: isDisabled ? 0.45 : 0.9))
+                .frame(width: 30, height: 30)
+                .background(background, in: RoundedRectangle(cornerRadius: 8))
+                .overlay {
+                    if isFocused {
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(theme.accentColor.opacity(0.72), lineWidth: 1.4)
+                    }
+                }
+                .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .focusable(!isDisabled)
+        .focused($isFocused)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.14), value: isHovered)
+        .help(label)
+        .accessibilityLabel(label)
+    }
+
+    private var background: Color {
+        guard isHovered && !isDisabled else { return .clear }
+        return theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.06)
     }
 }
 
@@ -238,28 +325,28 @@ private struct SidebarNodeRow: View {
             HStack(spacing: scaled(8)) {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                     .font(.system(size: scaled(10), weight: .semibold))
-                    .foregroundStyle(theme.mutedForegroundColor)
+                    .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
                     .frame(width: scaled(12))
 
-                Image(systemName: "folder.fill")
-                    .font(.system(size: scaled(15)))
-                    .foregroundStyle(theme.accentColor.opacity(0.8))
+                Image(systemName: "folder")
+                    .font(.system(size: scaled(14)))
+                    .foregroundStyle(theme.sidebarColor(theme.accentColor, opacity: 0.8))
 
                 Text(node.name)
-                    .font(.system(size: scaled(14), weight: .semibold))
-                    .foregroundStyle(theme.foregroundColor.opacity(0.9))
+                    .font(.system(size: scaled(13), weight: .semibold))
+                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.9))
                     .lineLimit(1)
 
                 Spacer(minLength: 0)
             }
-            .padding(.leading, CGFloat(visibleNode.depth) * scaled(16))
-            .padding(.horizontal, scaled(6))
-            .padding(.vertical, scaled(7))
+            .padding(.leading, CGFloat(visibleNode.depth) * scaled(14))
+            .padding(.horizontal, scaled(5))
+            .padding(.vertical, scaled(5))
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .padding(.top, visibleNode.depth == 0 ? scaled(4) : 0)
+        .buttonStyle(SidebarHoverButtonStyle(theme: theme, isSelected: false, cornerRadius: scaled(7)))
+        .padding(.top, visibleNode.depth == 0 ? scaled(3) : 0)
         .help(node.relativePath.isEmpty ? node.name : node.relativePath)
     }
 
@@ -272,32 +359,65 @@ private struct SidebarNodeRow: View {
         } label: {
             HStack(spacing: scaled(10)) {
                 Image(systemName: "doc.text.fill")
-                    .font(.system(size: scaled(14)))
-                    .foregroundStyle(isSelected ? Color(hex: theme.selectionForeground) : theme.mutedForegroundColor.opacity(0.7))
-                    .frame(width: scaled(18))
+                    .font(.system(size: scaled(13)))
+                    .foregroundStyle(isSelected ? theme.sidebarColor(Color(hex: theme.selectionForeground)) : theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.7))
+                    .frame(width: scaled(16))
 
                 Text(node.name)
-                    .font(.system(size: scaled(15), weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? Color(hex: theme.selectionForeground) : theme.foregroundColor.opacity(0.88))
+                    .font(.system(size: scaled(14), weight: .regular))
+                    .foregroundStyle(isSelected ? theme.sidebarColor(Color(hex: theme.selectionForeground)) : theme.sidebarColor(theme.foregroundColor, opacity: 0.88))
                     .lineLimit(1)
                     .truncationMode(.middle)
 
                 Spacer(minLength: 0)
             }
-            .padding(.leading, CGFloat(visibleNode.depth) * scaled(16) + scaled(12))
-            .padding(.trailing, scaled(6))
-            .padding(.vertical, scaled(7))
+            .padding(.leading, CGFloat(visibleNode.depth) * scaled(14) + scaled(8))
+            .padding(.trailing, scaled(5))
+            .padding(.vertical, scaled(5))
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                isSelected
-                    ? Color(hex: theme.selectionBackground)
-                    : Color.clear,
-                in: RoundedRectangle(cornerRadius: scaled(8))
-            )
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SidebarHoverButtonStyle(theme: theme, isSelected: isSelected, cornerRadius: scaled(7)))
         .help(node.relativePath.isEmpty ? node.name : node.relativePath)
+    }
+}
+
+private struct SidebarHoverButtonStyle: ButtonStyle {
+    let theme: AppTheme
+    let isSelected: Bool
+    let cornerRadius: CGFloat
+
+    func makeBody(configuration: Configuration) -> Body {
+        Body(configuration: configuration, theme: theme, isSelected: isSelected, cornerRadius: cornerRadius)
+    }
+
+    fileprivate struct Body: View {
+        let configuration: Configuration
+        let theme: AppTheme
+        let isSelected: Bool
+        let cornerRadius: CGFloat
+        @State private var isHovered = false
+
+        var body: some View {
+            configuration.label
+                .background(background, in: RoundedRectangle(cornerRadius: cornerRadius))
+                .opacity(configuration.isPressed ? 0.82 : 1)
+                .animation(.easeOut(duration: 0.12), value: isHovered)
+                .animation(.easeOut(duration: 0.10), value: configuration.isPressed)
+                .onHover { isHovered = $0 }
+        }
+
+        private var background: Color {
+            if isSelected {
+                return Color(hex: theme.selectionBackground)
+            }
+
+            if isHovered {
+                return theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.06)
+            }
+
+            return .clear
+        }
     }
 }
 
@@ -320,19 +440,21 @@ private struct SidebarSettingsButton: View {
             HStack(spacing: scaled(8)) {
                 Image(systemName: "gearshape")
                     .font(.system(size: scaled(15)))
-                    .foregroundStyle(theme.mutedForegroundColor)
+                    .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
 
                 Text("Settings")
                     .font(.system(size: scaled(14), weight: .regular))
-                    .foregroundStyle(theme.foregroundColor.opacity(0.85))
+                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.85))
 
                 Spacer()
             }
-            .padding(.horizontal, scaled(12))
-            .padding(.vertical, scaled(10))
+            .padding(.horizontal, scaled(10))
+            .padding(.vertical, scaled(8))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SidebarHoverButtonStyle(theme: theme, isSelected: false, cornerRadius: scaled(8)))
+        .padding(.horizontal, scaled(5))
+        .padding(.vertical, scaled(4))
         .help("Open Settings (⌘,)")
     }
 }
@@ -355,15 +477,15 @@ private struct EmptySidebarView: View {
 
             Image(systemName: "folder.badge.plus")
                 .font(.system(size: scaled(36), weight: .medium))
-                .foregroundStyle(theme.mutedForegroundColor.opacity(0.5))
+                .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.5))
 
             VStack(spacing: scaled(6)) {
                 Text("No workspace")
                     .font(.system(size: scaled(16), weight: .semibold))
-                    .foregroundStyle(theme.foregroundColor)
+                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
                 Text("Drop a folder here or open one.")
                     .font(.system(size: scaled(14)))
-                    .foregroundStyle(theme.mutedForegroundColor)
+                    .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
                     .multilineTextAlignment(.center)
             }
 
@@ -378,7 +500,7 @@ private struct EmptySidebarView: View {
 
             Text("⇧⌘O")
                 .font(.system(size: scaled(12), weight: .medium, design: .rounded))
-                .foregroundStyle(theme.mutedForegroundColor.opacity(0.5))
+                .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.5))
 
             Spacer()
         }

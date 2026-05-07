@@ -8,6 +8,7 @@ struct MarkprevCommandActions {
     let zoomIn: () -> Void
     let zoomOut: () -> Void
     let resetZoom: () -> Void
+    let toggleTerminal: () -> Void
 }
 
 private struct MarkprevCommandActionsKey: FocusedValueKey {
@@ -48,6 +49,12 @@ struct MarkprevCommandMenu: Commands {
                 actions?.refreshWorkspace()
             }
             .keyboardShortcut("r", modifiers: [.command])
+            .disabled(actions == nil)
+
+            Button("Toggle Terminal") {
+                actions?.toggleTerminal()
+            }
+            .keyboardShortcut("t", modifiers: [.command, .option])
             .disabled(actions == nil)
         }
 

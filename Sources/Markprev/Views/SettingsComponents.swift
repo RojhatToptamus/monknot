@@ -83,18 +83,20 @@ struct SettingsStepperRow: View {
 /// Convenience: slider row.
 struct SettingsSliderRow: View {
     let title: String
+    var detail: String? = nil
     @Binding var value: Double
     let range: ClosedRange<Double>
+    var suffix = ""
 
     var body: some View {
-        SettingsRow(title: title) {
+        SettingsRow(title: title, detail: detail) {
             HStack(spacing: 10) {
                 Slider(value: $value, in: range)
                     .frame(width: 160)
-                Text("\(Int(value.rounded()))")
+                Text("\(Int(value.rounded()))\(suffix)")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
-                    .frame(width: 28, alignment: .trailing)
+                    .frame(width: suffix.isEmpty ? 28 : 44, alignment: .trailing)
             }
         }
     }

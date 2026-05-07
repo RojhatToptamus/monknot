@@ -8,6 +8,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
     let theme: AppTheme
     let zoomScale: Double
     let codeFontSize: Double
+    let previewWidthPercent: Double
     let onSourceJump: (MarkdownSourceLocation) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -38,7 +39,8 @@ struct MarkdownPreviewView: NSViewRepresentable {
             baseURL: baseURL,
             theme: theme,
             zoomScale: zoomScale,
-            codeFontSize: codeFontSize
+            codeFontSize: codeFontSize,
+            previewWidthPercent: previewWidthPercent
         )
         let contentRequest = PreviewContentRequest(
             markdown: markdown,
@@ -54,6 +56,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
                             appTheme: shellRequest.theme,
                             zoomScale: shellRequest.zoomScale,
                             baseFontSize: shellRequest.codeFontSize,
+                            previewWidthPercent: shellRequest.previewWidthPercent,
                             baseURL: shellRequest.baseURL
                         )
                     }.value
@@ -242,6 +245,7 @@ fileprivate struct PreviewShellRequest: Equatable {
     let theme: AppTheme
     let zoomScale: Double
     let codeFontSize: Double
+    let previewWidthPercent: Double
 }
 
 fileprivate struct PreviewContentRequest: Equatable {

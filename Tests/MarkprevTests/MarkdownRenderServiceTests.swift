@@ -91,15 +91,24 @@ final class MarkdownRenderServiceTests: XCTestCase {
         XCTAssertTrue(html.contains("--table-border: color-mix(in srgb, #FDFCFB 16.0%, transparent);"))
         XCTAssertTrue(html.contains("--selection-bg: #102030;"))
         XCTAssertTrue(html.contains("--base-font-size: 18.8px;"))
+        XCTAssertTrue(html.contains("--preview-max-width: 88%;"))
     }
 
     func testHTMLDocumentUsesThemeCodeFontSizeAndContrast() throws {
         let service = MarkdownRenderService(stylesheet: "", rendererJavaScript: "")
         let theme = AppTheme.codexDark.replacing(codeFontSize: 20, contrast: 75)
 
-        let html = try service.htmlDocument(markdown: "# Title", appTheme: theme, zoomScale: 1.2, baseURL: nil)
+        let html = try service.htmlDocument(
+            markdown: "# Title",
+            appTheme: theme,
+            zoomScale: 1.2,
+            baseFontSize: theme.codeFontSize,
+            previewWidthPercent: 96,
+            baseURL: nil
+        )
 
         XCTAssertTrue(html.contains("--base-font-size: 24.0px;"))
+        XCTAssertTrue(html.contains("--preview-max-width: 96%;"))
         XCTAssertTrue(html.contains("--table-border: color-mix(in srgb, #FFFFFF 20.0%, transparent);"))
     }
 }

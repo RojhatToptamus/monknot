@@ -71,9 +71,10 @@ body {
 
 .markdown-body {
   box-sizing: border-box;
-  max-width: 860px;
+  width: min(var(--preview-max-width, 88%), calc(100% - 28px));
+  max-width: none;
   margin: 0 auto;
-  padding: 40px 48px 64px;
+  padding: 34px clamp(18px, 2.2vw, 38px) 56px;
 }
 
 .markdown-body > :first-child {

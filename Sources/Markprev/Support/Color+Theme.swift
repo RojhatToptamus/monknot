@@ -54,4 +54,8 @@ extension AppTheme {
     var selectedRowColor: Color {
         accentColor.opacity(0.08 + normalizedContrast * 0.10)
     }
+
+    func sidebarColor(_ color: Color, opacity: Double = 1) -> Color {
+        color.opacity(opacity * (quietSidebar ? 0.8 : 1))
+    }
 }
