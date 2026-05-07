@@ -36,13 +36,13 @@ struct SidebarView: View {
                         ForEach(visibleNodes) { visibleNode in
                             SidebarNodeRow(
                                 visibleNode: visibleNode,
-                                selectedFileID: store.selectedFileID,
+                                selectedDocumentID: store.selectedDocumentID,
                                 isExpanded: expandedFolderIDs.contains(visibleNode.node.id),
                                 theme: theme,
                                 zoomScale: zoomScale,
                                 uiFontSize: uiFontSize,
                                 toggleFolder: toggleFolder(_:),
-                                selectFile: store.selectFile(id:)
+                                selectDocument: store.selectDocument(id:)
                             )
                         }
                     }
@@ -73,8 +73,8 @@ struct SidebarView: View {
         .onChange(of: store.rootNode?.id ?? "") {
             expandedFolderIDs = initialExpandedFolderIDs()
         }
-        .onChange(of: store.selectedFileID ?? "") {
-            expandedFolderIDs.formUnion(ancestorFolderIDs(for: store.selectedFileID))
+        .onChange(of: store.selectedDocumentID ?? "") {
+            expandedFolderIDs.formUnion(ancestorFolderIDs(for: store.selectedDocumentID))
         }
         .onAppear {
             expandedFolderIDs = initialExpandedFolderIDs()
@@ -107,7 +107,7 @@ struct SidebarView: View {
     }
 
     private func initialExpandedFolderIDs() -> Set<String> {
-        ancestorFolderIDs(for: store.selectedFileID ?? store.files.first?.id)
+        ancestorFolderIDs(for: store.selectedDocumentID ?? store.documents.first?.id)
     }
 
     private func ancestorFolderIDs(for fileID: String?) -> Set<String> {
@@ -116,7 +116,7 @@ struct SidebarView: View {
     }
 
     private func ancestorFolderIDs(for fileID: String, in node: SidebarNode) -> [String]? {
-        if node.file?.id == fileID {
+        if node.document?.id == fileID {
             return []
         }
 
@@ -295,20 +295,20 @@ struct ChromeBarButton: View {
 
 private struct SidebarNodeRow: View {
     let visibleNode: VisibleSidebarNode
-    let selectedFileID: String?
+    let selectedDocumentID: String?
     let isExpanded: Bool
     let theme: AppTheme
     let zoomScale: Double
     let uiFontSize: Double
     let toggleFolder: (String) -> Void
-    let selectFile: (String?) -> Void
+    let selectDocument: (String?) -> Void
 
     private var node: SidebarNode {
         visibleNode.node
     }
 
     private var isSelected: Bool {
-        node.file?.id == selectedFileID
+        node.document?.id == selectedDocumentID
     }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -361,12 +361,12 @@ private struct SidebarNodeRow: View {
     /// File row — larger text, generous padding, Codex-style selection highlight.
     private var fileRow: some View {
         Button {
-            if let file = node.file {
-                selectFile(file.id)
+            if let document = node.document {
+                selectDocument(document.id)
             }
         } label: {
             HStack(spacing: scaled(10)) {
-                Image(systemName: "doc.text.fill")
+                Image(systemName: documentIconName)
                     .font(.system(size: scaled(13)))
                     .foregroundStyle(
                         isSelected
@@ -391,6 +391,15 @@ private struct SidebarNodeRow: View {
         }
         .buttonStyle(SidebarHoverButtonStyle(theme: theme, isSelected: isSelected, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)))
         .help(node.relativePath.isEmpty ? node.name : node.relativePath)
+    }
+
+    private var documentIconName: String {
+        switch node.document?.kind {
+        case .pdf:
+            return "doc.richtext"
+        case .markdown, nil:
+            return "doc.text.fill"
+        }
     }
 }
 

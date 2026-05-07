@@ -19,6 +19,7 @@ let root = FileManager.default.temporaryDirectory
 defer { try? FileManager.default.removeItem(at: root) }
 
 try write("# Markprev", to: root.appendingPathComponent("README.md"))
+try write("%PDF-1.7", to: root.appendingPathComponent("Guide.pdf"))
 try write("- [ ] item", to: root.appendingPathComponent("Notes/Todo.markdown"))
 try write("ignored", to: root.appendingPathComponent("Notes/image.png"))
 try FileManager.default.createSymbolicLink(
@@ -26,11 +27,12 @@ try FileManager.default.createSymbolicLink(
     withDestinationURL: root
 )
 
-let scan = try MarkdownFileScanner().scan(rootURL: root)
-let paths = scan.files.map(\.relativePath).sorted()
-expect(paths == ["Notes/Todo.markdown", "README.md"], "scanner should include only supported Markdown files")
+let scan = try WorkspaceDocumentScanner().scan(rootURL: root)
+let paths = scan.documents.map(\.relativePath).sorted()
+expect(paths == ["Guide.pdf", "Notes/Todo.markdown", "README.md"], "scanner should include supported Markdown and PDF documents")
+expect(scan.documents.first(where: { $0.relativePath == "Guide.pdf" })?.kind == .pdf, "scanner should classify PDFs")
 expect(!scan.root.children!.contains(where: { $0.name == "Loop" }), "scanner should skip symbolic link directories")
-expect(scan.root.children?.first?.name == "Notes", "folders should sort before files")
+expect(scan.root.children?.first?.name == "Notes", "folders should sort before documents")
 
 let renderService = MarkdownRenderService(stylesheet: "body {}", rendererJavaScript: "window.ready = true;")
 let html = try renderService.htmlDocument(

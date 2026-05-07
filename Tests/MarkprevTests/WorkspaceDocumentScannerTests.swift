@@ -2,31 +2,37 @@ import Foundation
 @testable import MarkprevCore
 import XCTest
 
-final class MarkdownFileScannerTests: XCTestCase {
-    func testScannerBuildsMarkdownOnlyTree() throws {
+final class WorkspaceDocumentScannerTests: XCTestCase {
+    func testScannerBuildsSupportedDocumentTree() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
 
         try write("# Readme", to: root.appendingPathComponent("README.md"))
+        try write("%PDF-1.7", to: root.appendingPathComponent("Guide.pdf"))
         try FileManager.default.createDirectory(at: root.appendingPathComponent("Notes"), withIntermediateDirectories: true)
         try write("- [x] Done", to: root.appendingPathComponent("Notes/Todo.markdown"))
         try write("not markdown", to: root.appendingPathComponent("Notes/image.png"))
         try FileManager.default.createDirectory(at: root.appendingPathComponent("Empty"), withIntermediateDirectories: true)
 
-        let result = try MarkdownFileScanner().scan(rootURL: root)
-        let relativePaths = result.files.map(\.relativePath).sorted()
+        let result = try WorkspaceDocumentScanner().scan(rootURL: root)
+        let relativePaths = result.documents.map(\.relativePath).sorted()
 
-        XCTAssertEqual(relativePaths, ["Notes/Todo.markdown", "README.md"])
-        XCTAssertEqual(result.root.children?.map(\.name), ["Notes", "README.md"])
+        XCTAssertEqual(relativePaths, ["Guide.pdf", "Notes/Todo.markdown", "README.md"])
+        XCTAssertEqual(result.documents.first(where: { $0.displayName == "Guide.pdf" })?.kind, .pdf)
+        XCTAssertEqual(result.documents.first(where: { $0.displayName == "README.md" })?.kind, .markdown)
+        XCTAssertEqual(result.root.children?.map(\.name), ["Notes", "Guide.pdf", "README.md"])
         XCTAssertEqual(result.root.children?.first?.children?.map(\.name), ["Todo.markdown"])
     }
 
     func testSupportedExtensionsAreCaseInsensitive() {
-        XCTAssertTrue(MarkdownFileSupport.isMarkdownFile(URL(fileURLWithPath: "/tmp/README.MD")))
-        XCTAssertTrue(MarkdownFileSupport.isMarkdownFile(URL(fileURLWithPath: "/tmp/spec.markdown")))
-        XCTAssertTrue(MarkdownFileSupport.isMarkdownFile(URL(fileURLWithPath: "/tmp/note.mdown")))
-        XCTAssertTrue(MarkdownFileSupport.isMarkdownFile(URL(fileURLWithPath: "/tmp/doc.mkd")))
-        XCTAssertFalse(MarkdownFileSupport.isMarkdownFile(URL(fileURLWithPath: "/tmp/image.png")))
+        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/README.MD")))
+        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/spec.markdown")))
+        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/note.mdown")))
+        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/doc.mkd")))
+        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/guide.PDF")))
+        XCTAssertTrue(WorkspaceDocumentSupport.isPDFDocument(URL(fileURLWithPath: "/tmp/guide.pdf")))
+        XCTAssertTrue(WorkspaceDocumentSupport.isMarkdownDocument(URL(fileURLWithPath: "/tmp/doc.mkd")))
+        XCTAssertFalse(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/image.png")))
     }
 
     func testScannerSkipsSymbolicLinkDirectories() throws {
@@ -41,8 +47,8 @@ final class MarkdownFileScannerTests: XCTestCase {
             withDestinationURL: root
         )
 
-        let result = try MarkdownFileScanner().scan(rootURL: root)
-        XCTAssertEqual(result.files.map(\.relativePath), ["Real/Real.md"])
+        let result = try WorkspaceDocumentScanner().scan(rootURL: root)
+        XCTAssertEqual(result.documents.map(\.relativePath), ["Real/Real.md"])
         XCTAssertEqual(result.root.children?.map(\.name), ["Real"])
     }
 
@@ -50,7 +56,7 @@ final class MarkdownFileScannerTests: XCTestCase {
         let root = URL(fileURLWithPath: "/tmp/workspace", isDirectory: true)
         let outside = URL(fileURLWithPath: "/tmp/other/readme.md")
 
-        XCTAssertEqual(MarkdownFileSupport.relativePath(for: outside, in: root), "readme.md")
+        XCTAssertEqual(WorkspaceDocumentSupport.relativePath(for: outside, in: root), "readme.md")
     }
 
     private func makeTemporaryDirectory() throws -> URL {

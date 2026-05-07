@@ -84,7 +84,7 @@ struct ContentView: View {
         .task {
             store.restoreWorkspace()
         }
-        .onChange(of: store.selectedFile?.id) { _, _ in
+        .onChange(of: store.selectedDocument?.id) { _, _ in
             documentSearch.updateResult(.init())
         }
         .focusedSceneValue(\.markprevCommandActions, commandActions)
@@ -107,7 +107,7 @@ struct ContentView: View {
         panel.canChooseFiles = false
         panel.canCreateDirectories = false
         panel.prompt = "Open"
-        panel.message = "Choose a folder containing Markdown files."
+        panel.message = "Choose a folder containing Markdown or PDF documents."
 
         if panel.runModal() == .OK, let url = panel.url {
             store.openWorkspace(url)
@@ -150,7 +150,7 @@ struct ContentView: View {
         let commandFind = characters == "f" && flags.contains(.command)
         let controlFind = characters == "f" && flags.contains(.control)
         if commandFind || controlFind {
-            guard store.selectedFile != nil else { return false }
+            guard store.selectedDocument != nil else { return false }
             showDocumentSearch()
             return true
         }
@@ -173,7 +173,7 @@ struct ContentView: View {
     }
 
     private func showDocumentSearch() {
-        guard store.selectedFile != nil else { return }
+        guard store.selectedDocument != nil else { return }
         documentSearch.present()
     }
 

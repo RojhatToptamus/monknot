@@ -65,7 +65,7 @@ struct EditorPaneView: View {
         .onChange(of: store.workspaceURL) { _, _ in
             terminalSession.setDefaultDirectory(activeTerminalDirectory)
         }
-        .onChange(of: store.selectedFile?.id) { _, _ in
+        .onChange(of: store.selectedDocument?.id) { _, _ in
             terminalSession.setDefaultDirectory(activeTerminalDirectory)
         }
     }
@@ -146,8 +146,8 @@ struct EditorPaneView: View {
     }
 
     private var activeTerminalDirectory: URL? {
-        if let selectedFile = store.selectedFile {
-            return selectedFile.url.deletingLastPathComponent()
+        if let selectedDocument = store.selectedDocument {
+            return selectedDocument.url.deletingLastPathComponent()
         }
 
         return store.workspaceURL
@@ -155,8 +155,8 @@ struct EditorPaneView: View {
 
     @ViewBuilder
     private var editorContent: some View {
-        if let selectedFile = store.selectedFile {
-            editor(for: selectedFile)
+        if let selectedDocument = store.selectedDocument {
+            editor(for: selectedDocument)
                 .overlay {
                     if store.isDocumentLoading {
                         ProgressView()
@@ -178,7 +178,23 @@ struct EditorPaneView: View {
     }
 
     @ViewBuilder
-    private func editor(for selectedFile: MarkdownFile) -> some View {
+    private func editor(for selectedDocument: WorkspaceDocument) -> some View {
+        switch selectedDocument.kind {
+        case .markdown:
+            markdownEditor(for: selectedDocument)
+        case .pdf:
+            PDFPreviewView(
+                url: selectedDocument.url,
+                theme: theme,
+                zoomScale: zoomScale,
+                searchState: $documentSearch
+            )
+            .help(selectedDocument.relativePath)
+        }
+    }
+
+    @ViewBuilder
+    private func markdownEditor(for selectedDocument: WorkspaceDocument) -> some View {
         if editorMode == .source {
             MarkdownTextEditor(
                 text: Binding(
@@ -191,7 +207,7 @@ struct EditorPaneView: View {
                 sourceLocation: $sourceLocation,
                 searchState: $documentSearch
             )
-            .help(selectedFile.relativePath)
+            .help(selectedDocument.relativePath)
         } else {
             MarkdownPreviewView(
                 markdown: store.documentText,
@@ -205,7 +221,7 @@ struct EditorPaneView: View {
                 searchState: $documentSearch,
                 onSourceJump: onPreviewSourceJump
             )
-            .help(selectedFile.relativePath)
+            .help(selectedDocument.relativePath)
         }
     }
 
@@ -372,10 +388,10 @@ private struct EmptyDetailView: View {
                 .foregroundStyle(theme.mutedForegroundColor.opacity(0.6))
 
             VStack(spacing: 5) {
-                Text("Select a Markdown file")
+                Text("Select a document")
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(theme.foregroundColor)
-                Text("Open a folder or drop Markdown files into the sidebar.")
+                Text("Open a folder or drop Markdown or PDF documents into the sidebar.")
                     .foregroundStyle(theme.mutedForegroundColor)
             }
 

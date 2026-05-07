@@ -5,8 +5,8 @@ import MarkprevCore
 final class WorkspaceStore: ObservableObject {
     @Published private(set) var workspaceURL: URL?
     @Published private(set) var rootNode: SidebarNode?
-    @Published private(set) var files: [MarkdownFile] = []
-    @Published private(set) var selectedFileID: String?
+    @Published private(set) var documents: [WorkspaceDocument] = []
+    @Published private(set) var selectedDocumentID: String?
     @Published private(set) var documentText = ""
     @Published private(set) var hasUnsavedChanges = false
     @Published private(set) var isBusy = false
@@ -14,7 +14,7 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var isSaving = false
     @Published var errorMessage: String?
 
-    private let scanner: any MarkdownFileScanning
+    private let scanner: any WorkspaceDocumentScanning
     private let bookmarkKey = "Markprev.workspaceBookmark"
     private var lastSavedText = ""
     private var saveWorkItem: DispatchWorkItem?
@@ -26,12 +26,12 @@ final class WorkspaceStore: ObservableObject {
     private var documentGeneration = 0
     private var saveGeneration = 0
 
-    init(scanner: any MarkdownFileScanning = MarkdownFileScanner()) {
+    init(scanner: any WorkspaceDocumentScanning = WorkspaceDocumentScanner()) {
         self.scanner = scanner
     }
 
-    var selectedFile: MarkdownFile? {
-        files.first { $0.id == selectedFileID }
+    var selectedDocument: WorkspaceDocument? {
+        documents.first { $0.id == selectedDocumentID }
     }
 
     func restoreWorkspace() {
@@ -67,7 +67,7 @@ final class WorkspaceStore: ObservableObject {
                 switch target {
                 case .workspace(let workspaceURL):
                     self.startWorkspaceLoad(workspaceURL, selecting: nil, persistBookmark: true, preserveSelection: nil, reloadSelection: true)
-                case .markdownFile(let workspaceURL, let selectedURL):
+                case .document(let workspaceURL, let selectedURL):
                     self.startWorkspaceLoad(workspaceURL, selecting: selectedURL, persistBookmark: true, preserveSelection: nil, reloadSelection: true)
                 case .unsupported:
                     break
@@ -81,15 +81,15 @@ final class WorkspaceStore: ObservableObject {
     func refresh() {
         guard let workspaceURL else { return }
 
-        startWorkspaceLoad(workspaceURL, selecting: nil, persistBookmark: false, preserveSelection: selectedFileID, reloadSelection: false)
+        startWorkspaceLoad(workspaceURL, selecting: nil, persistBookmark: false, preserveSelection: selectedDocumentID, reloadSelection: false)
     }
 
-    func selectFile(id: String?) {
-        guard id != selectedFileID, !isBusy else { return }
+    func selectDocument(id: String?) {
+        guard id != selectedDocumentID, !isBusy else { return }
 
         saveIfNeeded()
-        selectedFileID = id
-        loadSelectedFile()
+        selectedDocumentID = id
+        loadSelectedDocument()
     }
 
     func createMarkdownFile() {
@@ -126,6 +126,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func setDocumentText(_ text: String) {
+        guard selectedDocument?.kind == .markdown else { return }
         guard text != documentText else { return }
 
         documentText = text
@@ -137,9 +138,9 @@ final class WorkspaceStore: ObservableObject {
         saveWorkItem?.cancel()
         saveWorkItem = nil
 
-        guard let selectedFile else { return }
+        guard let selectedDocument, selectedDocument.kind == .markdown else { return }
 
-        let file = selectedFile
+        let file = selectedDocument
         let text = documentText
         saveGeneration += 1
         let generation = saveGeneration
@@ -213,7 +214,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func finishWorkspaceLoad(
-        result: MarkdownFileScanResult,
+        result: WorkspaceDocumentScanResult,
         workspaceURL: URL,
         selectedURL: URL?,
         preserveSelection: String?,
@@ -223,25 +224,25 @@ final class WorkspaceStore: ObservableObject {
         guard generation == workspaceGeneration else { return }
 
         rootNode = result.root
-        files = result.files
+        documents = result.documents
 
         if let selectedURL {
-            selectedFileID = MarkdownFile(url: selectedURL, rootURL: workspaceURL).id
-        } else if let preserveSelection, files.contains(where: { $0.id == preserveSelection }) {
-            selectedFileID = preserveSelection
+            selectedDocumentID = WorkspaceDocument(url: selectedURL, rootURL: workspaceURL).id
+        } else if let preserveSelection, documents.contains(where: { $0.id == preserveSelection }) {
+            selectedDocumentID = preserveSelection
         } else {
-            selectedFileID = files.first?.id
+            selectedDocumentID = documents.first?.id
         }
 
         isBusy = false
 
-        if reloadSelection || documentText.isEmpty || selectedFileID != preserveSelection {
-            loadSelectedFile()
+        if reloadSelection || documentText.isEmpty || selectedDocumentID != preserveSelection {
+            loadSelectedDocument()
         }
     }
 
     private func finishCreatedFile(
-        result: MarkdownFileScanResult,
+        result: WorkspaceDocumentScanResult,
         fileURL: URL,
         workspaceURL: URL,
         initialText: String,
@@ -250,8 +251,8 @@ final class WorkspaceStore: ObservableObject {
         guard generation == workspaceGeneration else { return }
 
         rootNode = result.root
-        files = result.files
-        selectedFileID = MarkdownFile(url: fileURL, rootURL: workspaceURL).id
+        documents = result.documents
+        selectedDocumentID = WorkspaceDocument(url: fileURL, rootURL: workspaceURL).id
         documentText = initialText
         lastSavedText = initialText
         hasUnsavedChanges = false
@@ -278,14 +279,14 @@ final class WorkspaceStore: ObservableObject {
         securityScopedURL = url.startAccessingSecurityScopedResource() ? url : nil
     }
 
-    private func loadSelectedFile() {
+    private func loadSelectedDocument() {
         saveWorkItem?.cancel()
         saveWorkItem = nil
         documentTask?.cancel()
         documentGeneration += 1
         let generation = documentGeneration
 
-        guard let selectedFile else {
+        guard let selectedDocument else {
             documentText = ""
             lastSavedText = ""
             hasUnsavedChanges = false
@@ -293,7 +294,15 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        let file = selectedFile
+        guard selectedDocument.kind == .markdown else {
+            documentText = ""
+            lastSavedText = ""
+            hasUnsavedChanges = false
+            isDocumentLoading = false
+            return
+        }
+
+        let file = selectedDocument
         isDocumentLoading = true
 
         documentTask = Task.detached(priority: .userInitiated) { [weak self] in
@@ -307,8 +316,8 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func finishDocumentLoad(file: MarkdownFile, text: String, generation: Int) {
-        guard generation == documentGeneration, selectedFileID == file.id else { return }
+    private func finishDocumentLoad(file: WorkspaceDocument, text: String, generation: Int) {
+        guard generation == documentGeneration, selectedDocumentID == file.id else { return }
 
         documentText = text
         lastSavedText = text
@@ -316,8 +325,8 @@ final class WorkspaceStore: ObservableObject {
         isDocumentLoading = false
     }
 
-    private func finishDocumentLoadFailure(_ error: Error, file: MarkdownFile, generation: Int) {
-        guard generation == documentGeneration, selectedFileID == file.id else { return }
+    private func finishDocumentLoadFailure(_ error: Error, file: WorkspaceDocument, generation: Int) {
+        guard generation == documentGeneration, selectedDocumentID == file.id else { return }
 
         documentText = ""
         lastSavedText = ""
@@ -331,13 +340,13 @@ final class WorkspaceStore: ObservableObject {
 
         isSaving = false
 
-        guard selectedFileID == fileID else { return }
+        guard selectedDocumentID == fileID else { return }
 
         lastSavedText = text
         hasUnsavedChanges = documentText != lastSavedText
     }
 
-    private func finishSaveFailure(_ error: Error, file: MarkdownFile, generation: Int) {
+    private func finishSaveFailure(_ error: Error, file: WorkspaceDocument, generation: Int) {
         guard generation == saveGeneration else { return }
 
         isSaving = false
@@ -381,8 +390,8 @@ final class WorkspaceStore: ObservableObject {
 
     nonisolated private static func scanWorkspace(
         _ rootURL: URL,
-        scanner: any MarkdownFileScanning
-    ) async throws -> MarkdownFileScanResult {
+        scanner: any WorkspaceDocumentScanning
+    ) async throws -> WorkspaceDocumentScanResult {
         try await Task.detached(priority: .userInitiated) {
             try scanner.scan(rootURL: rootURL)
         }.value
@@ -408,8 +417,8 @@ final class WorkspaceStore: ObservableObject {
                 return .workspace(url)
             }
 
-            if resourceValues.isRegularFile == true, MarkdownFileSupport.isMarkdownFile(url) {
-                return .markdownFile(workspaceURL: url.deletingLastPathComponent(), selectedURL: url)
+            if resourceValues.isRegularFile == true, WorkspaceDocumentSupport.isWorkspaceDocument(url) {
+                return .document(workspaceURL: url.deletingLastPathComponent(), selectedURL: url)
             }
 
             return .unsupported
@@ -426,6 +435,6 @@ final class WorkspaceStore: ObservableObject {
 
 private enum DroppedTarget: Sendable {
     case workspace(URL)
-    case markdownFile(workspaceURL: URL, selectedURL: URL)
+    case document(workspaceURL: URL, selectedURL: URL)
     case unsupported
 }

@@ -11,7 +11,7 @@ public struct SidebarNode: Identifiable, Hashable, Codable, Sendable {
     public let name: String
     public let relativePath: String
     public let kind: Kind
-    public let file: MarkdownFile?
+    public let document: WorkspaceDocument?
     public let children: [SidebarNode]?
 
     public init(
@@ -20,7 +20,7 @@ public struct SidebarNode: Identifiable, Hashable, Codable, Sendable {
         name: String,
         relativePath: String,
         kind: Kind,
-        file: MarkdownFile? = nil,
+        document: WorkspaceDocument? = nil,
         children: [SidebarNode]? = nil
     ) {
         self.id = id
@@ -28,7 +28,7 @@ public struct SidebarNode: Identifiable, Hashable, Codable, Sendable {
         self.name = name
         self.relativePath = relativePath
         self.kind = kind
-        self.file = file
+        self.document = document
         self.children = children
     }
 

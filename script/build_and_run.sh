@@ -39,10 +39,10 @@ CORE_SOURCES=(
   "Sources/MarkprevCore/Models/ThemePreference.swift"
   "Sources/MarkprevCore/Models/AppTheme.swift"
   "Sources/MarkprevCore/Models/CodexThemeCatalog.swift"
-  "Sources/MarkprevCore/Models/MarkdownFile.swift"
+  "Sources/MarkprevCore/Models/WorkspaceDocument.swift"
   "Sources/MarkprevCore/Models/MarkdownSourceLocation.swift"
   "Sources/MarkprevCore/Models/SidebarNode.swift"
-  "Sources/MarkprevCore/Services/MarkdownFileScanner.swift"
+  "Sources/MarkprevCore/Services/WorkspaceDocumentScanner.swift"
   "Sources/MarkprevCore/Services/MarkdownRenderService.swift"
 )
 
@@ -68,6 +68,7 @@ APP_SOURCES=(
   "Sources/Markprev/Views/TerminalWebView.swift"
   "Sources/Markprev/Views/MarkdownTextEditor.swift"
   "Sources/Markprev/Views/MarkdownPreviewView.swift"
+  "Sources/Markprev/Views/PDFPreviewView.swift"
   "Sources/Markprev/Views/PreferencesView.swift"
   "Sources/Markprev/Views/GeneralSettingsView.swift"
   "Sources/Markprev/Views/AppearanceSettingsView.swift"

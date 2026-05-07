@@ -20,7 +20,11 @@ struct TopNavigationBar: View {
     @FocusState private var isSearchFocused: Bool
 
     private var title: String {
-        store.selectedFile?.displayName ?? store.workspaceURL?.lastPathComponent ?? "Markprev"
+        store.selectedDocument?.displayName ?? store.workspaceURL?.lastPathComponent ?? "Markprev"
+    }
+
+    private var isMarkdownSelected: Bool {
+        store.selectedDocument?.kind == .markdown
     }
 
     private var uiFontSize: Double { theme.uiFontSize }
@@ -109,8 +113,10 @@ struct TopNavigationBar: View {
 
     private var fullControlSet: some View {
         HStack(spacing: scaled(14)) {
-            sourcePreviewSwitch
-                .disabled(store.selectedFile == nil || store.isDocumentLoading)
+            if isMarkdownSelected {
+                sourcePreviewSwitch
+                    .disabled(store.isDocumentLoading)
+            }
 
             zoomCluster
 
@@ -120,8 +126,10 @@ struct TopNavigationBar: View {
 
     private var compactControlSet: some View {
         HStack(spacing: scaled(10)) {
-            sourcePreviewSwitch
-                .disabled(store.selectedFile == nil || store.isDocumentLoading)
+            if isMarkdownSelected {
+                sourcePreviewSwitch
+                    .disabled(store.isDocumentLoading)
+            }
 
             HStack(spacing: scaled(2)) {
                 iconButton(systemImage: "folder", label: "Open Folder", isDisabled: store.isBusy, action: openFolder)
@@ -132,8 +140,10 @@ struct TopNavigationBar: View {
 
     private var minimalControlSet: some View {
         HStack(spacing: scaled(6)) {
-            sourcePreviewSwitch
-                .disabled(store.selectedFile == nil || store.isDocumentLoading)
+            if isMarkdownSelected {
+                sourcePreviewSwitch
+                    .disabled(store.isDocumentLoading)
+            }
 
             terminalButton
         }

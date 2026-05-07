@@ -1,20 +1,20 @@
 import Foundation
 
-public struct MarkdownFileScanResult: Sendable {
+public struct WorkspaceDocumentScanResult: Sendable {
     public let root: SidebarNode
-    public let files: [MarkdownFile]
+    public let documents: [WorkspaceDocument]
 
-    public init(root: SidebarNode, files: [MarkdownFile]) {
+    public init(root: SidebarNode, documents: [WorkspaceDocument]) {
         self.root = root
-        self.files = files
+        self.documents = documents
     }
 }
 
-public protocol MarkdownFileScanning: Sendable {
-    func scan(rootURL: URL) throws -> MarkdownFileScanResult
+public protocol WorkspaceDocumentScanning: Sendable {
+    func scan(rootURL: URL) throws -> WorkspaceDocumentScanResult
 }
 
-public struct MarkdownFileScanner: MarkdownFileScanning {
+public struct WorkspaceDocumentScanner: WorkspaceDocumentScanning {
     private let ignoredDirectoryNames: Set<String>
 
     public init(
@@ -24,9 +24,9 @@ public struct MarkdownFileScanner: MarkdownFileScanning {
         self.ignoredDirectoryNames = ignoredDirectoryNames
     }
 
-    public func scan(rootURL: URL) throws -> MarkdownFileScanResult {
-        var files: [MarkdownFile] = []
-        let rootChildren = try scanDirectory(rootURL, rootURL: rootURL, files: &files)
+    public func scan(rootURL: URL) throws -> WorkspaceDocumentScanResult {
+        var documents: [WorkspaceDocument] = []
+        let rootChildren = try scanDirectory(rootURL, rootURL: rootURL, documents: &documents)
         let rootName = rootURL.lastPathComponent.isEmpty ? rootURL.path : rootURL.lastPathComponent
         let rootNode = SidebarNode(
             id: rootURL.standardizedFileURL.path,
@@ -37,10 +37,10 @@ public struct MarkdownFileScanner: MarkdownFileScanning {
             children: rootChildren
         )
 
-        return MarkdownFileScanResult(root: rootNode, files: files)
+        return WorkspaceDocumentScanResult(root: rootNode, documents: documents)
     }
 
-    private func scanDirectory(_ directoryURL: URL, rootURL: URL, files: inout [MarkdownFile]) throws -> [SidebarNode] {
+    private func scanDirectory(_ directoryURL: URL, rootURL: URL, documents: inout [WorkspaceDocument]) throws -> [SidebarNode] {
         let fileManager = FileManager.default
         let contents = try fileManager.contentsOfDirectory(
             at: directoryURL,
@@ -58,7 +58,7 @@ public struct MarkdownFileScanner: MarkdownFileScanning {
                     continue
                 }
 
-                let children = try scanDirectory(url, rootURL: rootURL, files: &files)
+                let children = try scanDirectory(url, rootURL: rootURL, documents: &documents)
                 guard !children.isEmpty else {
                     continue
                 }
@@ -67,20 +67,20 @@ public struct MarkdownFileScanner: MarkdownFileScanning {
                     id: url.standardizedFileURL.path,
                     url: url.standardizedFileURL,
                     name: url.lastPathComponent,
-                    relativePath: MarkdownFileSupport.relativePath(for: url, in: rootURL),
+                    relativePath: WorkspaceDocumentSupport.relativePath(for: url, in: rootURL),
                     kind: .folder,
                     children: children
                 ))
-            } else if resourceValues.isRegularFile == true, MarkdownFileSupport.isMarkdownFile(url) {
-                let file = MarkdownFile(url: url, rootURL: rootURL)
-                files.append(file)
+            } else if resourceValues.isRegularFile == true, WorkspaceDocumentSupport.isWorkspaceDocument(url) {
+                let document = WorkspaceDocument(url: url, rootURL: rootURL)
+                documents.append(document)
                 nodes.append(SidebarNode(
-                    id: file.id,
-                    url: file.url,
-                    name: file.displayName,
-                    relativePath: file.relativePath,
+                    id: document.id,
+                    url: document.url,
+                    name: document.displayName,
+                    relativePath: document.relativePath,
                     kind: .file,
-                    file: file
+                    document: document
                 ))
             }
         }
