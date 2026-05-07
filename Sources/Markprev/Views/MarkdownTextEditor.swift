@@ -32,7 +32,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
         textView.textContainerInset = NSSize(width: 24, height: 24)
-        textView.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        textView.font = font(for: theme, size: fontSize)
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
         textView.minSize = NSSize(width: 0, height: scrollView.contentSize.height)
@@ -54,7 +54,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             textView.selectedRanges = selectedRanges
         }
 
-        textView.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        textView.font = font(for: theme, size: fontSize)
         applyTheme(theme, to: textView, in: scrollView)
 
         if let sourceLocation {
@@ -71,6 +71,18 @@ struct MarkdownTextEditor: NSViewRepresentable {
         scrollView.backgroundColor = background
         textView.textColor = NSColor(hex: theme.foreground)
         textView.insertionPointColor = NSColor(hex: theme.cursor)
+        textView.selectedTextAttributes = [
+            .backgroundColor: NSColor(hex: theme.selectionBackground),
+            .foregroundColor: NSColor(hex: theme.selectionForeground)
+        ]
+    }
+
+    private func font(for theme: AppTheme, size: CGFloat) -> NSFont {
+        if let codeFontName = theme.codeFontName, let font = NSFont(name: codeFontName, size: size) {
+            return font
+        }
+
+        return .monospacedSystemFont(ofSize: size, weight: .regular)
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {

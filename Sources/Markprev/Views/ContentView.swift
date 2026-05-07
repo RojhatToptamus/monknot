@@ -22,7 +22,10 @@ struct ContentView: View {
     }
 
     private var activeTheme: AppTheme {
-        themeStore.activeTheme(themePreference: themePreference, systemColorScheme: systemColorScheme)
+        themeStore.activeTheme(
+            themePreference: themePreference,
+            systemAppearance: systemColorScheme == .dark ? .dark : .light
+        )
     }
 
     var body: some View {
@@ -109,27 +112,7 @@ struct ContentView: View {
         .task {
             store.restoreWorkspace()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .markprevOpenFolder)) { _ in
-            openFolderPanel()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .markprevNewMarkdown)) { _ in
-            store.createMarkdownFile()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .markprevSaveDocument)) { _ in
-            store.saveSelectedFile()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .markprevRefreshWorkspace)) { _ in
-            store.refresh()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .markprevZoomIn)) { _ in
-            adjustZoom(by: 0.1)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .markprevZoomOut)) { _ in
-            adjustZoom(by: -0.1)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .markprevResetZoom)) { _ in
-            zoomScale = 1.0
-        }
+        .focusedSceneValue(\.markprevCommandActions, commandActions)
         .alert("Markprev", isPresented: Binding(
             get: { store.errorMessage != nil },
             set: { if !$0 { store.errorMessage = nil } }
@@ -164,5 +147,17 @@ struct ContentView: View {
     private func openSourceFromPreview(location: MarkdownSourceLocation) {
         pendingSourceLocation = location
         editorMode = .source
+    }
+
+    private var commandActions: MarkprevCommandActions {
+        MarkprevCommandActions(
+            newMarkdown: { store.createMarkdownFile() },
+            openFolder: openFolderPanel,
+            saveDocument: { store.saveSelectedFile() },
+            refreshWorkspace: { store.refresh() },
+            zoomIn: { adjustZoom(by: 0.1) },
+            zoomOut: { adjustZoom(by: -0.1) },
+            resetZoom: { zoomScale = 1.0 }
+        )
     }
 }

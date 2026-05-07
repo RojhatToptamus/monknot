@@ -3,6 +3,24 @@ import Foundation
 import XCTest
 
 final class MarkdownRenderServiceTests: XCTestCase {
+    func testCodexThemeCatalogKeepsVersionedDefaultTokens() {
+        XCTAssertEqual(CodexThemeCatalog.sourceVersion, "codex-theme-v1")
+        XCTAssertEqual(AppTheme.codexLight.codeThemeID, "codex")
+        XCTAssertEqual(AppTheme.codexLight.accent, "#339cff")
+        XCTAssertEqual(AppTheme.codexLight.background, "#ffffff")
+        XCTAssertEqual(AppTheme.codexLight.foreground, "#1a1c1f")
+        XCTAssertEqual(AppTheme.codexLight.contrast, 45)
+
+        XCTAssertEqual(AppTheme.codexDark.codeThemeID, "codex")
+        XCTAssertEqual(AppTheme.codexDark.accent, "#0169cc")
+        XCTAssertEqual(AppTheme.codexDark.background, "#111111")
+        XCTAssertEqual(AppTheme.codexDark.foreground, "#fcfcfc")
+        XCTAssertEqual(AppTheme.codexDark.contrast, 60)
+
+        XCTAssertTrue(AppTheme.lightThemes.contains { $0.id == "rose-pine-light" })
+        XCTAssertTrue(AppTheme.darkThemes.contains { $0.id == "night-owl-dark" })
+    }
+
     func testHTMLDocumentEmbedsThemeBaseAndLocalAssets() throws {
         let service = MarkdownRenderService(
             stylesheet: "body { color: var(--fg); }",

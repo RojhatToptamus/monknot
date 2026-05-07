@@ -1,3 +1,4 @@
+/* Fallback tokens mirror MarkprevCore CodexThemeCatalog.sourceVersion = codex-theme-v1. */
 :root {
   color-scheme: light dark;
   --accent: #339cff;
@@ -18,31 +19,38 @@
   --table-header-bg: var(--soft-strong);
   --table-row-alt-bg: var(--soft);
   --shadow: rgba(0, 0, 0, 0.08);
-  --selection-bg: #d9ecff;
+  --selection-bg: #d6ebff;
   --selection-fg: #111315;
-  --tok-keyword: #bf7af0;
-  --tok-string: #71d36f;
-  --tok-number: #64d2ff;
-  --tok-comment: #8d939f;
-  --tok-builtin: #ff9f40;
+  --tok-keyword: #924ff7;
+  --tok-string: #00a240;
+  --tok-number: #339cff;
+  --tok-comment: #60646c;
+  --tok-builtin: #339cff;
   --ui-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
   --code-font: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 :root[data-theme="dark"] {
-  --bg: #181818;
-  --fg: #ffffff;
+  --accent: #0169cc;
+  --link: var(--accent);
+  --bg: #111111;
+  --fg: #fcfcfc;
   --muted: #aaaeb7;
   --border: rgba(255, 255, 255, 0.13);
   --soft: rgba(255, 255, 255, 0.055);
   --soft-strong: rgba(255, 255, 255, 0.09);
-  --code-bg: #111315;
-  --code-fg: #e7edf4;
-  --quote-bg: rgba(51, 156, 255, 0.13);
-  --quote-border: rgba(51, 156, 255, 0.82);
+  --code-bg: #2e2e2e;
+  --code-fg: #fcfcfc;
+  --quote-bg: rgba(1, 105, 204, 0.13);
+  --quote-border: rgba(1, 105, 204, 0.82);
   --shadow: rgba(0, 0, 0, 0.32);
-  --selection-bg: #233850;
-  --selection-fg: #ffffff;
+  --selection-bg: #0d2a45;
+  --selection-fg: #fcfcfc;
+  --tok-keyword: #b06dff;
+  --tok-string: #00a240;
+  --tok-number: #0169cc;
+  --tok-comment: #aaaeb7;
+  --tok-builtin: #0169cc;
 }
 
 html,

@@ -82,6 +82,14 @@ public struct MarkdownRenderService: Sendable {
         let soft = "color-mix(in srgb, \(theme.foreground) \(softMix)%, transparent)"
         let softStrong = "color-mix(in srgb, \(theme.foreground) \(softStrongMix)%, transparent)"
         let blockquoteBackground = "color-mix(in srgb, \(theme.accent) \(quoteMix)%, transparent)"
+        let uiFontStack = fontStack(
+            preferred: theme.uiFontName,
+            fallback: "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", sans-serif"
+        )
+        let codeFontStack = fontStack(
+            preferred: theme.codeFontName,
+            fallback: "ui-monospace, \"SF Mono\", SFMono-Regular, Menlo, Consolas, monospace"
+        )
 
         return """
         :root,
@@ -114,8 +122,18 @@ public struct MarkdownRenderService: Sendable {
           --tok-comment: \(theme.codeComment);
           --tok-builtin: \(theme.codeBuiltin);
           --base-font-size: \(baseFontSize)px;
+          --ui-font: \(uiFontStack);
+          --code-font: \(codeFontStack);
         }
         """
+    }
+
+    private func fontStack(preferred: String?, fallback: String) -> String {
+        guard let preferred, !preferred.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return fallback
+        }
+
+        return "\"\(preferred.replacingOccurrences(of: "\"", with: ""))\", \(fallback)"
     }
 
     private static func loadResource(_ name: String, extension resourceExtension: String, bundle: Bundle) throws -> String {

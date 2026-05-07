@@ -56,7 +56,7 @@ struct SidebarView: View {
 
             SidebarSettingsButton(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize)
         }
-        .background(.ultraThinMaterial)
+        .background(theme.opaqueWindows ? theme.surfaceColor : theme.surfaceColor.opacity(0.96))
         .overlay {
             if isDropTargeted {
                 RoundedRectangle(cornerRadius: 12)
@@ -273,12 +273,12 @@ private struct SidebarNodeRow: View {
             HStack(spacing: scaled(10)) {
                 Image(systemName: "doc.text.fill")
                     .font(.system(size: scaled(14)))
-                    .foregroundStyle(isSelected ? theme.accentColor : theme.mutedForegroundColor.opacity(0.7))
+                    .foregroundStyle(isSelected ? Color(hex: theme.selectionForeground) : theme.mutedForegroundColor.opacity(0.7))
                     .frame(width: scaled(18))
 
                 Text(node.name)
                     .font(.system(size: scaled(15), weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? theme.foregroundColor : theme.foregroundColor.opacity(0.88))
+                    .foregroundStyle(isSelected ? Color(hex: theme.selectionForeground) : theme.foregroundColor.opacity(0.88))
                     .lineLimit(1)
                     .truncationMode(.middle)
 
@@ -290,7 +290,7 @@ private struct SidebarNodeRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 isSelected
-                    ? theme.selectedRowColor
+                    ? Color(hex: theme.selectionBackground)
                     : Color.clear,
                 in: RoundedRectangle(cornerRadius: scaled(8))
             )

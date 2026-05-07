@@ -1,7 +1,11 @@
 import Combine
 import Foundation
 import MarkprevCore
-import SwiftUI
+
+enum SystemAppearance {
+    case light
+    case dark
+}
 
 enum ThemeSlot: String, CaseIterable, Identifiable {
     case light
@@ -171,7 +175,11 @@ final class ThemeSettingsStore: ObservableObject {
 
     func effectiveTheme(for slot: ThemeSlot) -> AppTheme {
         let preset = presetTheme(for: slot)
-        return configuration(for: slot).applied(to: preset)
+        guard let customization = customizations[preset.id] else {
+            return preset
+        }
+
+        return customization.applied(to: preset)
     }
 
     func configuration(for slot: ThemeSlot) -> ThemeConfiguration {
@@ -186,8 +194,9 @@ final class ThemeSettingsStore: ObservableObject {
     func save(_ configuration: ThemeConfiguration, for slot: ThemeSlot) {
         let preset = presetTheme(for: slot)
         let sanitized = configuration.sanitized(for: preset)
+        let presetConfiguration = ThemeConfiguration(theme: preset).sanitized(for: preset)
 
-        if sanitized == ThemeConfiguration(theme: preset) {
+        if sanitized == presetConfiguration {
             customizations.removeValue(forKey: preset.id)
         } else {
             customizations[preset.id] = sanitized
@@ -201,14 +210,14 @@ final class ThemeSettingsStore: ObservableObject {
         persistCustomizations()
     }
 
-    func activeTheme(themePreference: ThemePreference, systemColorScheme: ColorScheme) -> AppTheme {
-        effectiveTheme(for: activeSlot(themePreference: themePreference, systemColorScheme: systemColorScheme))
+    func activeTheme(themePreference: ThemePreference, systemAppearance: SystemAppearance) -> AppTheme {
+        effectiveTheme(for: activeSlot(themePreference: themePreference, systemAppearance: systemAppearance))
     }
 
-    func activeSlot(themePreference: ThemePreference, systemColorScheme: ColorScheme) -> ThemeSlot {
+    func activeSlot(themePreference: ThemePreference, systemAppearance: SystemAppearance) -> ThemeSlot {
         switch themePreference {
         case .system:
-            return systemColorScheme == .dark ? .dark : .light
+            return systemAppearance == .dark ? .dark : .light
         case .light:
             return .light
         case .dark:
