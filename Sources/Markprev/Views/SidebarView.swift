@@ -61,10 +61,11 @@ struct SidebarView: View {
         }
         .background {
             sidebarBackground
+                .ignoresSafeArea(.container, edges: .top)
         }
         .overlay {
             if isDropTargeted {
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
                     .stroke(theme.accentColor, style: StrokeStyle(lineWidth: 2, dash: [7, 5]))
                     .padding(8)
             }
@@ -209,6 +210,10 @@ private struct SidebarHeader: View {
 /// Reserves the same 44pt height the detail-pane top nav uses, so the
 /// traffic lights have somewhere to sit and the sidebar header aligns
 /// with the toolbar on the right.
+///
+/// This is only a spacer for the traffic-light area. The parent paints the
+/// sidebar surface through the title-bar region so the left column has one
+/// continuous background.
 private struct SidebarWindowChrome: View {
     let theme: AppTheme
     let zoomScale: Double
@@ -249,8 +254,8 @@ struct ChromeBarButton: View {
                 .font(.system(size: scaled(13), weight: .regular))
                 .foregroundStyle(iconColor)
                 .frame(width: scaled(28), height: scaled(26))
-                .background(background, in: RoundedRectangle(cornerRadius: scaled(6)))
-                .contentShape(RoundedRectangle(cornerRadius: scaled(6)))
+                .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale)))
+                .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale)))
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
@@ -262,14 +267,15 @@ struct ChromeBarButton: View {
         .animation(.easeOut(duration: 0.12), value: isActive)
         .help(label)
         .accessibilityLabel(label)
+        .markprevPointerCursor(enabled: !isDisabled)
     }
 
     private var background: Color {
         if isActive {
-            return theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.06)
+            return theme.controlTrackFillColor
         }
         if isHovered && !isDisabled {
-            return theme.foregroundColor.opacity(theme.isDark ? 0.06 : 0.04)
+            return theme.foregroundColor.opacity(theme.isDark ? 0.065 : 0.048)
         }
         return .clear
     }
@@ -347,7 +353,7 @@ private struct SidebarNodeRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .buttonStyle(SidebarHoverButtonStyle(theme: theme, isSelected: false, cornerRadius: scaled(7)))
+        .buttonStyle(SidebarHoverButtonStyle(theme: theme, isSelected: false, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)))
         .padding(.top, visibleNode.depth == 0 ? scaled(3) : 0)
         .help(node.relativePath.isEmpty ? node.name : node.relativePath)
     }
@@ -362,12 +368,16 @@ private struct SidebarNodeRow: View {
             HStack(spacing: scaled(10)) {
                 Image(systemName: "doc.text.fill")
                     .font(.system(size: scaled(13)))
-                    .foregroundStyle(isSelected ? theme.sidebarColor(Color(hex: theme.selectionForeground)) : theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.7))
+                    .foregroundStyle(
+                        isSelected
+                            ? theme.sidebarColor(theme.accentColor, opacity: 0.95)
+                            : theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.7)
+                    )
                     .frame(width: scaled(16))
 
                 Text(node.name)
-                    .font(.system(size: scaled(14), weight: .regular))
-                    .foregroundStyle(isSelected ? theme.sidebarColor(Color(hex: theme.selectionForeground)) : theme.sidebarColor(theme.foregroundColor, opacity: 0.88))
+                    .font(.system(size: scaled(14), weight: isSelected ? .medium : .regular))
+                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: isSelected ? 0.98 : 0.88))
                     .lineLimit(1)
                     .truncationMode(.middle)
 
@@ -379,7 +389,7 @@ private struct SidebarNodeRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .buttonStyle(SidebarHoverButtonStyle(theme: theme, isSelected: isSelected, cornerRadius: scaled(7)))
+        .buttonStyle(SidebarHoverButtonStyle(theme: theme, isSelected: isSelected, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)))
         .help(node.relativePath.isEmpty ? node.name : node.relativePath)
     }
 }
@@ -398,26 +408,44 @@ private struct SidebarHoverButtonStyle: ButtonStyle {
         let theme: AppTheme
         let isSelected: Bool
         let cornerRadius: CGFloat
+        @Environment(\.isEnabled) private var isEnabled
         @State private var isHovered = false
 
         var body: some View {
             configuration.label
-                .background(background, in: RoundedRectangle(cornerRadius: cornerRadius))
-                .opacity(configuration.isPressed ? 0.82 : 1)
+                .background(selectionBackground)
+                .overlay {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: cornerRadius)
+                            .strokeBorder(theme.borderColor, lineWidth: 1)
+                    }
+                }
+                .opacity(configuration.isPressed ? 0.88 : 1)
                 .animation(.easeOut(duration: 0.12), value: isHovered)
                 .animation(.easeOut(duration: 0.10), value: configuration.isPressed)
                 .onHover { isHovered = $0 }
+                .markprevPointerCursor(enabled: isEnabled)
         }
 
-        private var background: Color {
+        @ViewBuilder
+        private var selectionBackground: some View {
+            ZStack {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(underlayFill)
+                if isSelected {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(theme.selectedRowColor)
+                }
+            }
+        }
+
+        private var underlayFill: Color {
             if isSelected {
-                return Color(hex: theme.selectionBackground)
+                return theme.elevatedSurfaceColor
             }
-
             if isHovered {
-                return theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.06)
+                return theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.055)
             }
-
             return .clear
         }
     }
@@ -454,7 +482,7 @@ private struct SidebarSettingsButton: View {
             .padding(.vertical, scaled(8))
             .contentShape(Rectangle())
         }
-        .buttonStyle(SidebarHoverButtonStyle(theme: theme, isSelected: false, cornerRadius: scaled(8)))
+        .buttonStyle(SidebarHoverButtonStyle(theme: theme, isSelected: false, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)))
         .padding(.horizontal, scaled(5))
         .padding(.vertical, scaled(4))
         .help("Open Settings (⌘,)")
@@ -499,6 +527,7 @@ private struct EmptySidebarView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(theme.accentColor)
+            .markprevPointerCursor()
 
             Text("⇧⌘O")
                 .font(.system(size: scaled(12), weight: .medium, design: .rounded))

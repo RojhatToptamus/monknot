@@ -36,6 +36,8 @@ public struct MarkdownRenderService: Sendable {
         zoomScale: Double,
         baseFontSize: Double,
         previewWidthPercent: Double = 88,
+        usePointerCursors: Bool = false,
+        fontSmoothing: Bool = true,
         baseURL: URL?
     ) throws -> String {
         let markdownLiteral = try javaScriptLiteral(markdown)
@@ -45,7 +47,9 @@ public struct MarkdownRenderService: Sendable {
             for: appTheme,
             zoomScale: zoomScale,
             baseFontSize: baseFontSize,
-            previewWidthPercent: previewWidthPercent
+            previewWidthPercent: previewWidthPercent,
+            usePointerCursors: usePointerCursors,
+            fontSmoothing: fontSmoothing
         )
 
         return """
@@ -81,8 +85,41 @@ public struct MarkdownRenderService: Sendable {
         for theme: AppTheme,
         zoomScale: Double,
         baseFontSize: Double,
-        previewWidthPercent: Double
+        previewWidthPercent: Double,
+        usePointerCursors: Bool,
+        fontSmoothing: Bool
     ) -> String {
+        let declarations = themeVariableValues(
+            for: theme,
+            zoomScale: zoomScale,
+            baseFontSize: baseFontSize,
+            previewWidthPercent: previewWidthPercent,
+            usePointerCursors: usePointerCursors,
+            fontSmoothing: fontSmoothing
+        )
+
+        let variableCSS = declarations
+            .map { key, value in "  \(key): \(value);" }
+            .joined(separator: "\n")
+
+        return """
+        :root,
+        :root[data-theme="light"],
+        :root[data-theme="dark"] {
+          color-scheme: \(theme.isDark ? "dark" : "light");
+        \(variableCSS)
+        }
+        """
+    }
+
+    public func themeVariableValues(
+        for theme: AppTheme,
+        zoomScale: Double,
+        baseFontSize: Double,
+        previewWidthPercent: Double,
+        usePointerCursors: Bool = false,
+        fontSmoothing: Bool = true
+    ) -> [(String, String)] {
         let baseFont = max(11, min(32, baseFontSize * zoomScale))
         let baseFontSize = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), baseFont)
         let previewWidth = String(
@@ -108,42 +145,39 @@ public struct MarkdownRenderService: Sendable {
             fallback: "ui-monospace, \"SF Mono\", SFMono-Regular, Menlo, Consolas, monospace"
         )
 
-        return """
-        :root,
-        :root[data-theme="light"],
-        :root[data-theme="dark"] {
-          color-scheme: \(theme.isDark ? "dark" : "light");
-          --accent: \(theme.accent);
-          --link: \(theme.accent);
-          --bg: \(theme.background);
-          --fg: \(theme.foreground);
-          --muted: \(theme.palette[safe: 8] ?? theme.foreground);
-          --border: \(border);
-          --soft: \(soft);
-          --soft-strong: \(softStrong);
-          --code-bg: color-mix(in srgb, \(theme.background) 88%, \(theme.foreground) 12%);
-          --code-fg: \(theme.foreground);
-          --blockquote-bg: \(blockquoteBackground);
-          --blockquote-border: \(theme.accent);
-          --quote-bg: var(--blockquote-bg);
-          --quote-border: var(--blockquote-border);
-          --table-border: \(border);
-          --table-header-bg: \(softStrong);
-          --table-row-alt-bg: \(soft);
-          --shadow: rgba(0, 0, 0, \(theme.isDark ? "0.36" : "0.08"));
-          --selection-bg: \(theme.selectionBackground);
-          --selection-fg: \(theme.selectionForeground);
-          --tok-keyword: \(theme.codeKeyword);
-          --tok-string: \(theme.codeString);
-          --tok-number: \(theme.codeNumber);
-          --tok-comment: \(theme.codeComment);
-          --tok-builtin: \(theme.codeBuiltin);
-          --base-font-size: \(baseFontSize)px;
-          --preview-max-width: \(previewWidth)%;
-          --ui-font: \(uiFontStack);
-          --code-font: \(codeFontStack);
-        }
-        """
+        return [
+            ("--accent", theme.accent),
+            ("--link", theme.accent),
+            ("--bg", theme.background),
+            ("--fg", theme.foreground),
+            ("--muted", theme.palette[safe: 8] ?? theme.foreground),
+            ("--border", border),
+            ("--soft", soft),
+            ("--soft-strong", softStrong),
+            ("--code-bg", "color-mix(in srgb, \(theme.background) 88%, \(theme.foreground) 12%)"),
+            ("--code-fg", theme.foreground),
+            ("--blockquote-bg", blockquoteBackground),
+            ("--blockquote-border", theme.accent),
+            ("--quote-bg", "var(--blockquote-bg)"),
+            ("--quote-border", "var(--blockquote-border)"),
+            ("--table-border", border),
+            ("--table-header-bg", softStrong),
+            ("--table-row-alt-bg", soft),
+            ("--shadow", "rgba(0, 0, 0, \(theme.isDark ? "0.36" : "0.08"))"),
+            ("--selection-bg", theme.selectionBackground),
+            ("--selection-fg", theme.selectionForeground),
+            ("--tok-keyword", theme.codeKeyword),
+            ("--tok-string", theme.codeString),
+            ("--tok-number", theme.codeNumber),
+            ("--tok-comment", theme.codeComment),
+            ("--tok-builtin", theme.codeBuiltin),
+            ("--base-font-size", "\(baseFontSize)px"),
+            ("--preview-max-width", "\(previewWidth)%"),
+            ("--font-smoothing", fontSmoothing ? "antialiased" : "auto"),
+            ("--interactive-cursor", usePointerCursors ? "pointer" : "default"),
+            ("--ui-font", uiFontStack),
+            ("--code-font", codeFontStack)
+        ]
     }
 
     private func fontStack(preferred: String?, fallback: String) -> String {

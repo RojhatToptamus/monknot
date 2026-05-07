@@ -11,16 +11,19 @@ struct EditorPaneView: View {
     let zoomScale: Double
     let codeFontSize: CGFloat
     let previewWidthPercent: Double
+    let usePointerCursors: Bool
+    let fontSmoothing: Bool
     @Binding var isTerminalPresented: Bool
     @Binding var sourceLocation: MarkdownSourceLocation?
+    @Binding var documentSearch: DocumentSearchState
     let isSidebarVisible: Bool
-    let toggleSidebar: () -> Void
     let newMarkdown: () -> Void
     let openFolder: () -> Void
     let zoomOut: () -> Void
     let resetZoom: () -> Void
     let zoomIn: () -> Void
     let toggleTerminal: () -> Void
+    let toggleSidebar: () -> Void
     let onPreviewSourceJump: (MarkdownSourceLocation) -> Void
 
     var body: some View {
@@ -32,13 +35,14 @@ struct EditorPaneView: View {
                 zoomScale: zoomScale,
                 isTerminalPresented: isTerminalPresented,
                 isSidebarVisible: isSidebarVisible,
-                toggleSidebar: toggleSidebar,
                 newMarkdown: newMarkdown,
                 openFolder: openFolder,
                 zoomOut: zoomOut,
                 resetZoom: resetZoom,
                 zoomIn: zoomIn,
-                toggleTerminal: toggleTerminal
+                toggleTerminal: toggleTerminal,
+                toggleSidebar: toggleSidebar,
+                documentSearch: $documentSearch
             )
 
             GeometryReader { proxy in
@@ -48,14 +52,21 @@ struct EditorPaneView: View {
         .ignoresSafeArea(.container, edges: .top)
         .background(theme.surfaceColor)
         .onExitCommand {
+            if documentSearch.isPresented {
+                documentSearch.dismiss()
+                return
+            }
             guard isTerminalPresented else { return }
             setTerminalPresented(false)
         }
         .onAppear {
-            terminalSession.setDefaultDirectory(store.workspaceURL)
+            terminalSession.setDefaultDirectory(activeTerminalDirectory)
         }
-        .onChange(of: store.workspaceURL) { _, newURL in
-            terminalSession.setDefaultDirectory(newURL)
+        .onChange(of: store.workspaceURL) { _, _ in
+            terminalSession.setDefaultDirectory(activeTerminalDirectory)
+        }
+        .onChange(of: store.selectedFile?.id) { _, _ in
+            terminalSession.setDefaultDirectory(activeTerminalDirectory)
         }
     }
 
@@ -69,8 +80,7 @@ struct EditorPaneView: View {
                 editorContent
 
                 if isTerminalPresented {
-                    Color.black
-                        .opacity(theme.isDark ? 0.26 : 0.16)
+                    theme.scrimColor
                         .ignoresSafeArea()
                         .transition(.opacity)
                         .onTapGesture {
@@ -103,16 +113,44 @@ struct EditorPaneView: View {
     }
 
     private func resizableTerminalDrawer(width: CGFloat, maxWidth: CGFloat, close: @escaping () -> Void) -> some View {
-        TerminalDrawerView(session: terminalSession, theme: theme, zoomScale: zoomScale, close: close)
-            .frame(width: width)
-            .overlay(alignment: .leading) {
-                TerminalResizeHandle(
-                    theme: theme,
-                    width: $terminalDrawerWidth,
-                    minWidth: terminalDrawerMinWidth,
-                    maxWidth: maxWidth
-                )
-            }
+        HStack(spacing: 0) {
+            TerminalResizeHandle(
+                width: $terminalDrawerWidth,
+                minWidth: terminalDrawerMinWidth,
+                maxWidth: maxWidth
+            )
+            .frame(width: terminalResizeGutterWidth)
+
+            TerminalDrawerView(
+                session: terminalSession,
+                workingDirectory: activeTerminalDirectory,
+                theme: theme,
+                zoomScale: zoomScale,
+                usePointerCursors: usePointerCursors,
+                fontSmoothing: fontSmoothing,
+                close: close
+            )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(width: width)
+        .background(theme.surfaceColor)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(theme.borderColor)
+                .frame(width: 1)
+        }
+    }
+
+    private var terminalResizeGutterWidth: CGFloat {
+        12
+    }
+
+    private var activeTerminalDirectory: URL? {
+        if let selectedFile = store.selectedFile {
+            return selectedFile.url.deletingLastPathComponent()
+        }
+
+        return store.workspaceURL
     }
 
     @ViewBuilder
@@ -123,8 +161,15 @@ struct EditorPaneView: View {
                     if store.isDocumentLoading {
                         ProgressView()
                             .controlSize(.small)
-                            .padding(10)
-                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                            .padding(12)
+                            .background(
+                                theme.elevatedSurfaceColor,
+                                in: RoundedRectangle(cornerRadius: theme.chromeRadius(10, zoomScale: zoomScale))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: theme.chromeRadius(10, zoomScale: zoomScale))
+                                    .strokeBorder(theme.borderColor, lineWidth: 1)
+                            )
                     }
                 }
         } else {
@@ -142,7 +187,9 @@ struct EditorPaneView: View {
                 ),
                 theme: theme,
                 fontSize: codeFontSize * zoomScale,
-                sourceLocation: $sourceLocation
+                fontSmoothing: fontSmoothing,
+                sourceLocation: $sourceLocation,
+                searchState: $documentSearch
             )
             .help(selectedFile.relativePath)
         } else {
@@ -153,6 +200,9 @@ struct EditorPaneView: View {
                 zoomScale: zoomScale,
                 codeFontSize: Double(codeFontSize),
                 previewWidthPercent: previewWidthPercent,
+                usePointerCursors: usePointerCursors,
+                fontSmoothing: fontSmoothing,
+                searchState: $documentSearch,
                 onSourceJump: onPreviewSourceJump
             )
             .help(selectedFile.relativePath)
@@ -188,50 +238,127 @@ struct EditorPaneView: View {
     }
 }
 
-private struct TerminalResizeHandle: View {
-    let theme: AppTheme
+private struct TerminalResizeHandle: NSViewRepresentable {
     @Binding var width: Double
     let minWidth: CGFloat
     let maxWidth: CGFloat
-    @State private var dragStartWidth: Double?
-    @State private var isHovered = false
 
-    var body: some View {
-        Rectangle()
-            .fill(isHovered ? theme.accentColor.opacity(0.36) : Color.clear)
-            .frame(width: 7)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        let startWidth = dragStartWidth ?? width
-                        dragStartWidth = startWidth
-                        width = clamped(startWidth - Double(value.translation.width))
-                    }
-                    .onEnded { _ in
-                        width = clamped(width)
-                        dragStartWidth = nil
-                    }
-            )
-            .onHover { hovering in
-                isHovered = hovering
-                if hovering {
-                    NSCursor.resizeLeftRight.push()
-                } else {
-                    NSCursor.pop()
-                }
-            }
-            .onDisappear {
-                if isHovered {
-                    NSCursor.pop()
-                }
-            }
-            .accessibilityLabel("Resize terminal sidebar")
-            .accessibilityAddTraits(.allowsDirectInteraction)
+    func makeCoordinator() -> Coordinator {
+        Coordinator(width: $width, minWidth: minWidth, maxWidth: maxWidth)
     }
 
-    private func clamped(_ value: Double) -> Double {
-        min(Double(maxWidth), max(Double(minWidth), value))
+    func makeNSView(context: Context) -> ResizeHandleView {
+        let view = ResizeHandleView()
+        view.coordinator = context.coordinator
+        view.setAccessibilityElement(true)
+        view.setAccessibilityLabel("Resize terminal sidebar")
+        return view
+    }
+
+    func updateNSView(_ nsView: ResizeHandleView, context: Context) {
+        context.coordinator.width = $width
+        context.coordinator.minWidth = minWidth
+        context.coordinator.maxWidth = maxWidth
+        nsView.coordinator = context.coordinator
+    }
+
+    final class Coordinator {
+        var width: Binding<Double>
+        var minWidth: CGFloat
+        var maxWidth: CGFloat
+        var dragStartWidth: Double?
+        var dragStartX: CGFloat?
+
+        init(width: Binding<Double>, minWidth: CGFloat, maxWidth: CGFloat) {
+            self.width = width
+            self.minWidth = minWidth
+            self.maxWidth = maxWidth
+        }
+
+        func beginDrag(at screenX: CGFloat) {
+            dragStartWidth = width.wrappedValue
+            dragStartX = screenX
+        }
+
+        func drag(to screenX: CGFloat) {
+            guard let dragStartWidth, let dragStartX else { return }
+            width.wrappedValue = clamped(dragStartWidth - Double(screenX - dragStartX))
+        }
+
+        func endDrag() {
+            width.wrappedValue = clamped(width.wrappedValue)
+            dragStartWidth = nil
+            dragStartX = nil
+        }
+
+        private func clamped(_ value: Double) -> Double {
+            min(Double(maxWidth), max(Double(minWidth), value))
+        }
+    }
+
+    final class ResizeHandleView: NSView {
+        weak var coordinator: Coordinator?
+        private var isCursorPushed = false
+
+        override var mouseDownCanMoveWindow: Bool {
+            false
+        }
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .resizeLeftRight)
+        }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(
+                NSTrackingArea(
+                    rect: bounds,
+                    options: [.activeAlways, .mouseEnteredAndExited, .inVisibleRect],
+                    owner: self
+                )
+            )
+        }
+
+        override func mouseEntered(with event: NSEvent) {
+            pushResizeCursor()
+        }
+
+        override func mouseExited(with event: NSEvent) {
+            popResizeCursorIfNeeded()
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            pushResizeCursor()
+            coordinator?.beginDrag(at: event.locationInWindow.x)
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            coordinator?.drag(to: event.locationInWindow.x)
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            coordinator?.endDrag()
+        }
+
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            if newWindow == nil {
+                popResizeCursorIfNeeded()
+            }
+            super.viewWillMove(toWindow: newWindow)
+        }
+
+        private func pushResizeCursor() {
+            guard !isCursorPushed else { return }
+            NSCursor.resizeLeftRight.push()
+            isCursorPushed = true
+        }
+
+        private func popResizeCursorIfNeeded() {
+            guard isCursorPushed else { return }
+            NSCursor.pop()
+            isCursorPushed = false
+        }
     }
 }
 

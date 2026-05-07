@@ -42,4 +42,17 @@ expect(html.contains(#"data-theme="dark""#), "render shell should include the se
 expect(!html.contains("</script>alert"), "render shell should safely encode script-closing Markdown")
 expect(html.contains("window.ready = true"), "render shell should embed local renderer JavaScript")
 
+let preferenceHTML = try renderService.htmlDocument(
+    markdown: "# Preferences",
+    appTheme: AppTheme.codexDark,
+    zoomScale: 1,
+    baseFontSize: 16,
+    previewWidthPercent: 88,
+    usePointerCursors: true,
+    fontSmoothing: false,
+    baseURL: root
+)
+expect(preferenceHTML.contains("--interactive-cursor: pointer;"), "preview shell should reflect pointer cursor preference")
+expect(preferenceHTML.contains("--font-smoothing: auto;"), "preview shell should reflect font smoothing preference")
+
 print("Markprev smoke tests passed")

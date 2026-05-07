@@ -1,145 +1,141 @@
 import Combine
 import Foundation
 
-struct TerminalLine: Identifiable, Equatable {
-    enum Kind: Equatable {
-        case command
-        case output
-        case status
-        case error
-    }
-
-    let id = UUID()
-    let kind: Kind
-    let text: String
-}
-
 @MainActor
 final class TerminalSessionStore: ObservableObject {
-    @Published private(set) var lines: [TerminalLine] = []
+    @Published private(set) var transcript = ""
     @Published private(set) var isRunning = false
     @Published private(set) var workingDirectory: URL
-    @Published private(set) var completionCount = 0
+    @Published private(set) var outputRevision = 0
 
     private let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+    private var ptySession: TerminalPTYSession?
+    private var sessionGeneration = 0
 
     init(initialDirectory: URL? = nil) {
-        workingDirectory = initialDirectory ?? homeDirectory
-    }
-
-    var prompt: String {
-        let user = NSUserName().isEmpty ? "user" : NSUserName()
-        let host = Self.shortHostName()
-        return "\(user)@\(host) \(workingDirectory.lastPathComponent) %"
+        workingDirectory = Self.resolvedDirectory(initialDirectory, fallback: homeDirectory)
     }
 
     func setDefaultDirectory(_ url: URL?) {
-        guard lines.isEmpty, !isRunning else { return }
-        workingDirectory = url ?? homeDirectory
+        guard ptySession == nil else { return }
+        workingDirectory = Self.resolvedDirectory(url, fallback: homeDirectory)
     }
 
-    func submit(_ rawCommand: String) {
-        let command = rawCommand.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !command.isEmpty, !isRunning else { return }
+    func startIfNeeded() {
+        guard ptySession == nil else { return }
 
-        lines.append(TerminalLine(kind: .command, text: "\(prompt) \(command)"))
-
-        if handleBuiltIn(command) {
-            return
-        }
-
+        transcript = ""
         isRunning = true
-        let directory = workingDirectory
+        sessionGeneration += 1
+        let generation = sessionGeneration
 
-        Task {
-            let result = await TerminalCommandRunner.run(command: command, workingDirectory: directory)
-            append(result: result)
+        let session = TerminalPTYSession(
+            outputHandler: { [weak self] output in
+                Task { @MainActor in
+                    self?.append(output, generation: generation)
+                }
+            },
+            exitHandler: { [weak self] status in
+                Task { @MainActor in
+                    self?.handleExit(status, generation: generation)
+                }
+            }
+        )
+
+        do {
+            try session.start(workingDirectory: workingDirectory)
+            ptySession = session
+        } catch {
+            transcript = "markprev: \(error.localizedDescription)\n"
+            isRunning = false
+            outputRevision += 1
         }
     }
 
-    private func handleBuiltIn(_ command: String) -> Bool {
-        if command == "clear" {
-            lines.removeAll()
-            completionCount += 1
-            return true
-        }
+    func startOrRestartIfNeeded(in directory: URL?) {
+        let resolvedDirectory = Self.resolvedDirectory(directory, fallback: homeDirectory)
 
-        if command == "pwd" {
-            lines.append(TerminalLine(kind: .output, text: workingDirectory.path))
-            completionCount += 1
-            return true
-        }
-
-        if command == "cd" || command.hasPrefix("cd ") {
-            changeDirectory(command)
-            completionCount += 1
-            return true
-        }
-
-        return false
-    }
-
-    private func changeDirectory(_ command: String) {
-        let rawPath = command == "cd" ? "~" : String(command.dropFirst(3)).trimmingCharacters(in: .whitespacesAndNewlines)
-        let target = resolvedDirectory(for: rawPath)
-
-        guard FileManager.default.directoryExists(at: target) else {
-            lines.append(TerminalLine(kind: .error, text: "cd: no such directory: \(rawPath)"))
+        guard ptySession != nil else {
+            workingDirectory = resolvedDirectory
+            startIfNeeded()
             return
         }
 
-        workingDirectory = target.standardizedFileURL
+        guard workingDirectory.standardizedFileURL != resolvedDirectory.standardizedFileURL else {
+            return
+        }
+
+        restart(in: resolvedDirectory)
     }
 
-    private func resolvedDirectory(for rawPath: String) -> URL {
-        if rawPath == "~" || rawPath.isEmpty {
-            return homeDirectory
-        }
-
-        if rawPath.hasPrefix("~/") {
-            return homeDirectory.appendingPathComponent(String(rawPath.dropFirst(2)))
-        }
-
-        if rawPath.hasPrefix("/") {
-            return URL(fileURLWithPath: rawPath)
-        }
-
-        return workingDirectory.appendingPathComponent(rawPath)
+    func restart() {
+        restart(in: workingDirectory)
     }
 
-    private func append(result: TerminalCommandResult) {
-        let trimmedOutput = result.output.trimmingCharacters(in: .newlines)
-        if !trimmedOutput.isEmpty {
-            lines.append(TerminalLine(kind: result.exitCode == 0 ? .output : .error, text: trimmedOutput))
-        }
+    func restart(in directory: URL?) {
+        workingDirectory = Self.resolvedDirectory(directory, fallback: homeDirectory)
+        sessionGeneration += 1
+        ptySession?.stop()
+        ptySession = nil
+        transcript = ""
+        outputRevision += 1
+        startIfNeeded()
+    }
 
-        if result.exitCode != 0 {
-            lines.append(TerminalLine(kind: .status, text: "Process exited with status \(result.exitCode)"))
+    func send(_ text: String) {
+        startIfNeeded()
+        ptySession?.write(text)
+    }
+
+    func resize(columns: Int, rows: Int) {
+        ptySession?.resize(columns: columns, rows: rows)
+    }
+
+    func stop() {
+        sessionGeneration += 1
+        ptySession?.stop()
+        ptySession = nil
+        isRunning = false
+    }
+
+    private func append(_ rawOutput: String, generation: Int) {
+        guard generation == sessionGeneration else { return }
+
+        transcript += rawOutput
+        if transcript.count > 240_000 {
+            transcript = String(transcript.suffix(180_000))
         }
+        outputRevision += 1
+    }
+
+    private func handleExit(_ status: Int32?, generation: Int) {
+        guard generation == sessionGeneration else { return }
 
         isRunning = false
-        completionCount += 1
+        ptySession = nil
+
+        if let status {
+            transcript += "\n[Process exited with status \(status)]\n"
+        } else {
+            transcript += "\n[Process exited]\n"
+        }
+
+        outputRevision += 1
+    }
+    deinit {
+        ptySession?.stop()
     }
 
-    private static func shortHostName() -> String {
-        let rawHost = ProcessInfo.processInfo.hostName
-            .split(separator: ".")
-            .first
-            .map(String.init)
-            ?? Host.current().localizedName
-            ?? "mac"
+    private static func resolvedDirectory(_ url: URL?, fallback: URL) -> URL {
+        guard let url else { return fallback }
 
-        let compact = rawHost
-            .replacingOccurrences(of: " ", with: "-")
-            .replacingOccurrences(of: ".local", with: "")
+        let standardizedURL = url.standardizedFileURL
+        var isDirectory = ObjCBool(false)
 
-        return compact.isEmpty ? "mac" : compact
-    }
-}
+        if FileManager.default.fileExists(atPath: standardizedURL.path, isDirectory: &isDirectory) {
+            return isDirectory.boolValue ? standardizedURL : standardizedURL.deletingLastPathComponent()
+        }
 
-private extension FileManager {
-    func directoryExists(at url: URL) -> Bool {
-        var isDirectory: ObjCBool = false
-        return fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+        return fallback
     }
 }

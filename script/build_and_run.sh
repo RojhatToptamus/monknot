@@ -48,12 +48,15 @@ CORE_SOURCES=(
 
 APP_SOURCES=(
   "Sources/Markprev/App/MarkprevApp.swift"
+  "Sources/Markprev/Models/DocumentSearchState.swift"
   "Sources/Markprev/Support/Color+Theme.swift"
+  "Sources/Markprev/Support/CursorSupport.swift"
   "Sources/Markprev/Support/EditorMode+SwiftUI.swift"
+  "Sources/Markprev/Support/KeyboardShortcutMonitor.swift"
   "Sources/Markprev/Support/MarkprevCommandActions.swift"
   "Sources/Markprev/Support/ThemePreference+SwiftUI.swift"
   "Sources/Markprev/Support/WindowChromeSupport.swift"
-  "Sources/Markprev/Services/TerminalCommandRunner.swift"
+  "Sources/Markprev/Services/TerminalPTYSession.swift"
   "Sources/Markprev/Stores/WorkspaceStore.swift"
   "Sources/Markprev/Stores/ThemeSettingsStore.swift"
   "Sources/Markprev/Stores/TerminalSessionStore.swift"
@@ -62,6 +65,7 @@ APP_SOURCES=(
   "Sources/Markprev/Views/EditorPaneView.swift"
   "Sources/Markprev/Views/TopNavigationBar.swift"
   "Sources/Markprev/Views/TerminalDrawerView.swift"
+  "Sources/Markprev/Views/TerminalWebView.swift"
   "Sources/Markprev/Views/MarkdownTextEditor.swift"
   "Sources/Markprev/Views/MarkdownPreviewView.swift"
   "Sources/Markprev/Views/PreferencesView.swift"
@@ -99,6 +103,9 @@ cp "$BUILD_DIR/libMarkprevCore.dylib" "$APP_FRAMEWORKS/libMarkprevCore.dylib"
 chmod +x "$APP_BINARY"
 cp "$ROOT_DIR/Sources/MarkprevCore/Resources/preview.css" "$APP_RESOURCES/preview.css"
 cp "$ROOT_DIR/Sources/MarkprevCore/Resources/renderer.js" "$APP_RESOURCES/renderer.js"
+cp "$ROOT_DIR/Sources/Markprev/Resources/xterm.css" "$APP_RESOURCES/xterm.css"
+cp "$ROOT_DIR/Sources/Markprev/Resources/xterm.js" "$APP_RESOURCES/xterm.js"
+cp "$ROOT_DIR/Sources/Markprev/Resources/xterm-addon-fit.js" "$APP_RESOURCES/xterm-addon-fit.js"
 
 cat >"$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

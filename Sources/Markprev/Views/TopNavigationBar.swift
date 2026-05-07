@@ -8,14 +8,16 @@ struct TopNavigationBar: View {
     let zoomScale: Double
     let isTerminalPresented: Bool
     let isSidebarVisible: Bool
-    let toggleSidebar: () -> Void
     let newMarkdown: () -> Void
     let openFolder: () -> Void
     let zoomOut: () -> Void
     let resetZoom: () -> Void
     let zoomIn: () -> Void
     let toggleTerminal: () -> Void
+    let toggleSidebar: () -> Void
+    @Binding var documentSearch: DocumentSearchState
     @Environment(\.openSettings) private var openSettings
+    @FocusState private var isSearchFocused: Bool
 
     private var title: String {
         store.selectedFile?.displayName ?? store.workspaceURL?.lastPathComponent ?? "Markprev"
@@ -43,38 +45,53 @@ struct TopNavigationBar: View {
                     .accessibilityLabel("Working")
             }
 
-            ViewThatFits(in: .horizontal) {
-                fullControlSet
-                compactControlSet
-                minimalControlSet
+            if documentSearch.isPresented {
+                documentSearchBar
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .trailing)))
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    fullControlSet
+                    compactControlSet
+                    minimalControlSet
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .trailing)))
             }
         }
         .padding(.horizontal, scaled(14))
         .frame(height: scaled(44))
+        .animation(.easeOut(duration: 0.14), value: documentSearch.isPresented)
+        .onChange(of: documentSearch.focusSerial) { _, _ in
+            isSearchFocused = documentSearch.isPresented
+        }
+        .onChange(of: documentSearch.isPresented) { _, isPresented in
+            guard isPresented else { return }
+            isSearchFocused = true
+        }
     }
 
+    /// When the sidebar is collapsed, the detail column spans the full window width under the
+    /// traffic lights. Reserve leading space so the title row does not sit under the buttons.
     private var leadingNavigation: some View {
-        HStack(spacing: 4) {
+        Group {
             if !isSidebarVisible {
-                Spacer()
+                Color.clear
                     .frame(width: 76)
             }
+        }
+    }
 
+    private var titleCluster: some View {
+        HStack(spacing: scaled(8)) {
             ChromeBarButton(
                 systemImage: "sidebar.left",
                 label: isSidebarVisible ? "Hide Sidebar" : "Show Sidebar",
                 theme: theme,
                 zoomScale: zoomScale,
                 uiFontSize: uiFontSize,
-                isActive: isSidebarVisible,
                 action: toggleSidebar
             )
             .keyboardShortcut("s", modifiers: [.command, .control])
-        }
-    }
 
-    private var titleCluster: some View {
-        HStack(spacing: scaled(6)) {
             Text(title)
                 .font(.system(size: scaled(14), weight: .semibold))
                 .foregroundStyle(theme.foregroundColor)
@@ -146,8 +163,8 @@ struct TopNavigationBar: View {
         }
         .padding(scaled(2))
         .background(
-            RoundedRectangle(cornerRadius: scaled(7))
-                .fill(theme.foregroundColor.opacity(theme.isDark ? 0.035 : 0.028))
+            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+                .fill(theme.controlTrackFillColor)
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Editor mode")
@@ -162,11 +179,12 @@ struct TopNavigationBar: View {
                     .font(.system(size: scaled(11), weight: .medium, design: .rounded))
                     .foregroundStyle(theme.mutedForegroundColor)
                     .frame(width: scaled(40), height: scaled(26))
-                    .contentShape(RoundedRectangle(cornerRadius: scaled(6)))
+                    .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale)))
             }
-            .buttonStyle(TopBarTextButtonStyle(theme: theme, cornerRadius: scaled(6)))
+            .buttonStyle(TopBarTextButtonStyle(theme: theme, cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale)))
             .help("Actual Size")
             .accessibilityLabel("Actual Size")
+            .markprevPointerCursor()
 
             iconButton(systemImage: "plus.magnifyingglass", label: "Zoom In", action: zoomIn)
         }
@@ -187,6 +205,103 @@ struct TopNavigationBar: View {
 
             terminalButton
         }
+    }
+
+    private var documentSearchBar: some View {
+        HStack(spacing: scaled(8)) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: scaled(14), weight: .medium))
+                .foregroundStyle(theme.mutedForegroundColor)
+                .accessibilityHidden(true)
+
+            Rectangle()
+                .fill(theme.borderColor)
+                .frame(width: 1, height: scaled(20))
+
+            TextField(
+                "Search in doc...",
+                text: Binding(
+                    get: { documentSearch.query },
+                    set: { documentSearch.setQuery($0) }
+                )
+            )
+            .textFieldStyle(.plain)
+            .focused($isSearchFocused)
+            .font(.system(size: scaled(13), weight: .regular))
+            .foregroundStyle(theme.foregroundColor)
+            .frame(width: scaled(190))
+            .onSubmit {
+                documentSearch.findNext()
+            }
+            .accessibilityLabel("Search in document")
+
+            Text(documentSearch.countText)
+                .font(.system(size: scaled(11), weight: .medium, design: .rounded))
+                .foregroundStyle(theme.mutedForegroundColor)
+                .monospacedDigit()
+                .frame(minWidth: scaled(42), alignment: .trailing)
+                .accessibilityLabel("Search result \(documentSearch.countText)")
+
+            Rectangle()
+                .fill(theme.borderColor)
+                .frame(width: 1, height: scaled(20))
+
+            findBarButton(
+                systemImage: "chevron.up",
+                label: "Previous Match",
+                isDisabled: documentSearch.totalCount == 0
+            ) {
+                documentSearch.findPrevious()
+            }
+
+            findBarButton(
+                systemImage: "chevron.down",
+                label: "Next Match",
+                isDisabled: documentSearch.totalCount == 0
+            ) {
+                documentSearch.findNext()
+            }
+
+            findBarButton(systemImage: "xmark", label: "Close Search") {
+                documentSearch.dismiss()
+            }
+            .keyboardShortcut(.cancelAction)
+        }
+        .padding(.leading, scaled(12))
+        .padding(.trailing, scaled(8))
+        .frame(height: scaled(34))
+        .background(
+            RoundedRectangle(cornerRadius: theme.chromeRadius(17, zoomScale: zoomScale))
+                .fill(theme.surfaceColor)
+                .overlay {
+                    RoundedRectangle(cornerRadius: theme.chromeRadius(17, zoomScale: zoomScale))
+                        .strokeBorder(theme.borderColor, lineWidth: 1)
+                }
+        )
+        .shadow(color: theme.foregroundColor.opacity(theme.isDark ? 0.18 : 0.08), radius: 18, y: 8)
+        .onAppear {
+            isSearchFocused = true
+        }
+    }
+
+    private func findBarButton(
+        systemImage: String,
+        label: String,
+        isDisabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: scaled(12), weight: .semibold))
+                .foregroundStyle(isDisabled ? theme.mutedForegroundColor.opacity(0.42) : theme.mutedForegroundColor)
+                .frame(width: scaled(24), height: scaled(24))
+                .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale)))
+        }
+        .buttonStyle(FindBarIconButtonStyle(theme: theme, cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale)))
+        .disabled(isDisabled)
+        .help(label)
+        .accessibilityLabel(label)
+        .markprevPointerCursor(enabled: !isDisabled)
     }
 
     private var terminalButton: some View {
@@ -242,8 +357,8 @@ private struct TopBarSegment: View {
                 .foregroundStyle(foreground)
                 .padding(.horizontal, scaled(10))
                 .frame(height: scaled(22))
-                .background(background, in: RoundedRectangle(cornerRadius: scaled(5)))
-                .contentShape(RoundedRectangle(cornerRadius: scaled(5)))
+                .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale)))
+                .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale)))
         }
         .buttonStyle(.plain)
         .focusable(true)
@@ -253,6 +368,7 @@ private struct TopBarSegment: View {
         .animation(.easeOut(duration: 0.12), value: isSelected)
         .accessibilityLabel(title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .markprevPointerCursor()
     }
 
     private var foreground: Color {
@@ -264,7 +380,7 @@ private struct TopBarSegment: View {
 
     private var background: Color {
         if isSelected {
-            return theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.06)
+            return theme.controlTrackFillColor
         }
         return .clear
     }
@@ -276,10 +392,51 @@ private struct TopBarTextButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .background(
-                theme.foregroundColor.opacity(configuration.isPressed ? 0.08 : 0.0),
-                in: RoundedRectangle(cornerRadius: cornerRadius)
-            )
-            .opacity(configuration.isPressed ? 0.78 : 1)
+            .background {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(theme.controlTrackFillColor)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: cornerRadius)
+                            .fill(theme.foregroundColor.opacity(configuration.isPressed ? 0.055 : 0))
+                    }
+            }
+            .opacity(configuration.isPressed ? 0.94 : 1)
+    }
+}
+
+private struct FindBarIconButtonStyle: ButtonStyle {
+    let theme: AppTheme
+    let cornerRadius: CGFloat
+
+    func makeBody(configuration: Configuration) -> Body {
+        Body(configuration: configuration, theme: theme, cornerRadius: cornerRadius)
+    }
+
+    fileprivate struct Body: View {
+        let configuration: Configuration
+        let theme: AppTheme
+        let cornerRadius: CGFloat
+        @State private var isHovered = false
+
+        var body: some View {
+            configuration.label
+                .background {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(theme.foregroundColor.opacity(backgroundOpacity(isPressed: configuration.isPressed)))
+                }
+                .opacity(configuration.isPressed ? 0.9 : 1)
+                .animation(.easeOut(duration: 0.12), value: isHovered)
+                .onHover { isHovered = $0 }
+        }
+
+        private func backgroundOpacity(isPressed: Bool) -> Double {
+            if isPressed {
+                return theme.isDark ? 0.11 : 0.08
+            }
+            if isHovered {
+                return theme.isDark ? 0.075 : 0.055
+            }
+            return 0
+        }
     }
 }

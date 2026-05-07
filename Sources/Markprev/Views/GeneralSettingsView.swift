@@ -1,6 +1,8 @@
+import MarkprevCore
 import SwiftUI
 
 struct GeneralSettingsView: View {
+    let uiTheme: AppTheme
     @AppStorage("Markprev.zoomScale") private var zoomScale = 1.0
     @AppStorage("Markprev.previewWidthPercent") private var previewWidthPercent = 88.0
     @AppStorage("Markprev.usePointerCursors") private var usePointerCursors = false
@@ -8,37 +10,45 @@ struct GeneralSettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                SettingsToggleRow(
-                    title: "Use pointer cursors",
-                    detail: "Change the cursor to a pointer when hovering over interactive elements",
-                    isOn: $usePointerCursors
-                )
+            VStack(alignment: .leading, spacing: 16) {
+                SettingsGroupCard(theme: uiTheme) {
+                    SettingsToggleRow(
+                        theme: uiTheme,
+                        title: "Use pointer cursors",
+                        detail: "Change the cursor to a pointer when hovering over interactive elements",
+                        isOn: $usePointerCursors
+                    )
 
-                SettingsToggleRow(
-                    title: "Font Smoothing",
-                    detail: "Use native macOS font anti-aliasing",
-                    isOn: $fontSmoothing
-                )
+                    SettingsToggleRow(
+                        theme: uiTheme,
+                        title: "Font Smoothing",
+                        detail: "Use native macOS font anti-aliasing",
+                        isOn: $fontSmoothing
+                    )
 
-                SettingsStepperRow(
-                    title: "Window zoom",
-                    detail: "Adjust the application scale used by ⌘+ and ⌘−",
-                    value: $zoomScale,
-                    range: 0.7...1.8,
-                    step: 0.1,
-                    suffix: "x"
-                )
+                    SettingsStepperRow(
+                        theme: uiTheme,
+                        title: "Window zoom",
+                        detail: "Adjust the application scale used by ⌘+ and ⌘−",
+                        value: $zoomScale,
+                        range: 0.7...1.8,
+                        step: 0.1,
+                        suffix: "x"
+                    )
 
-                SettingsSliderRow(
-                    title: "Preview width",
-                    detail: "Set Markdown preview max width as a percentage of the editor pane",
-                    value: $previewWidthPercent,
-                    range: 55...100,
-                    suffix: "%"
-                )
+                    SettingsSliderRow(
+                        theme: uiTheme,
+                        title: "Preview width",
+                        detail: "Set Markdown preview max width as a percentage of the editor pane",
+                        showsDivider: false,
+                        value: $previewWidthPercent,
+                        range: 55...100,
+                        suffix: "%"
+                    )
+                }
             }
-            .padding(.vertical, 8)
+            .padding(20)
+            .padding(.bottom, 10)
         }
     }
 }

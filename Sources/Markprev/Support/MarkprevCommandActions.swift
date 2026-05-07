@@ -8,7 +8,11 @@ struct MarkprevCommandActions {
     let zoomIn: () -> Void
     let zoomOut: () -> Void
     let resetZoom: () -> Void
+    let showFind: () -> Void
+    let findNext: () -> Void
+    let findPrevious: () -> Void
     let toggleTerminal: () -> Void
+    let toggleSidebar: () -> Void
 }
 
 private struct MarkprevCommandActionsKey: FocusedValueKey {
@@ -56,9 +60,35 @@ struct MarkprevCommandMenu: Commands {
             }
             .keyboardShortcut("t", modifiers: [.command, .option])
             .disabled(actions == nil)
+
+            Button("Toggle Sidebar") {
+                actions?.toggleSidebar()
+            }
+            .keyboardShortcut("s", modifiers: [.command, .control])
+            .disabled(actions == nil)
         }
 
         CommandGroup(after: .toolbar) {
+            Button("Find in Document") {
+                actions?.showFind()
+            }
+            .keyboardShortcut("f", modifiers: [.command])
+            .disabled(actions == nil)
+
+            Button("Find Next") {
+                actions?.findNext()
+            }
+            .keyboardShortcut("g", modifiers: [.command])
+            .disabled(actions == nil)
+
+            Button("Find Previous") {
+                actions?.findPrevious()
+            }
+            .keyboardShortcut("g", modifiers: [.command, .shift])
+            .disabled(actions == nil)
+
+            Divider()
+
             Button("Zoom In") {
                 actions?.zoomIn()
             }

@@ -6,7 +6,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
     @Binding var text: String
     let theme: AppTheme
     let fontSize: CGFloat
+    let fontSmoothing: Bool
     @Binding var sourceLocation: MarkdownSourceLocation?
+    @Binding var searchState: DocumentSearchState
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -20,7 +22,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = true
 
-        let textView = NSTextView()
+        let textView = MarkdownNSTextView()
+        textView.fontSmoothingEnabled = fontSmoothing
         textView.delegate = context.coordinator
         textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
@@ -47,6 +50,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = context.coordinator.textView else { return }
+        let visibleOrigin = scrollView.contentView.bounds.origin
 
         if textView.string != text {
             let selectedRanges = textView.selectedRanges
@@ -55,12 +59,24 @@ struct MarkdownTextEditor: NSViewRepresentable {
         }
 
         textView.font = font(for: theme, size: fontSize)
+        if let textView = textView as? MarkdownNSTextView {
+            textView.fontSmoothingEnabled = fontSmoothing
+        }
         applyTheme(theme, to: textView, in: scrollView)
+        scrollView.contentView.scroll(to: visibleOrigin)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
 
         if let sourceLocation {
             context.coordinator.navigate(to: sourceLocation, in: textView)
             DispatchQueue.main.async {
                 self.sourceLocation = nil
+            }
+        }
+
+        let searchResult = context.coordinator.applySearch(searchState, theme: theme, in: textView)
+        if DocumentSearchResult(currentIndex: searchState.currentIndex, totalCount: searchState.totalCount) != searchResult {
+            DispatchQueue.main.async {
+                self.searchState.updateResult(searchResult)
             }
         }
     }
@@ -89,6 +105,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
         @Binding private var text: String
         weak var textView: NSTextView?
         private var lastNavigatedLocation: MarkdownSourceLocation?
+        private var highlightedRanges: [NSRange] = []
+        private var lastSearchQuery = ""
+        private var lastSearchedText = ""
+        private var lastNavigationSerial = 0
+        private var currentMatchIndex = 0
 
         init(text: Binding<String>) {
             self._text = text
@@ -134,5 +155,151 @@ struct MarkdownTextEditor: NSViewRepresentable {
             let lineEnd = min(NSMaxRange(lineRange), nsText.length)
             return min(lineStart + max(0, location.offset), lineEnd)
         }
+
+        func applySearch(
+            _ state: DocumentSearchState,
+            theme: AppTheme,
+            in textView: NSTextView
+        ) -> DocumentSearchResult {
+            let request = DocumentSearchRequest(state)
+            let query = request.query.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard state.isPresented, !query.isEmpty else {
+                clearSearchHighlights(in: textView)
+                lastSearchQuery = ""
+                lastSearchedText = textView.string
+                currentMatchIndex = 0
+                lastNavigationSerial = request.navigationSerial
+                return .init()
+            }
+
+            let text = textView.string
+            let matches = matchRanges(for: query, in: text)
+            guard !matches.isEmpty else {
+                clearSearchHighlights(in: textView)
+                lastSearchQuery = query
+                lastSearchedText = text
+                currentMatchIndex = 0
+                lastNavigationSerial = request.navigationSerial
+                return .init()
+            }
+
+            let queryChanged = query != lastSearchQuery
+            let textChanged = text != lastSearchedText
+            let navigationChanged = request.navigationSerial != lastNavigationSerial
+
+            if queryChanged {
+                currentMatchIndex = firstMatchIndex(atOrAfter: textView.selectedRange().location, in: matches)
+            } else if textChanged, currentMatchIndex >= matches.count {
+                currentMatchIndex = max(0, matches.count - 1)
+            } else if navigationChanged {
+                switch request.navigationDirection {
+                case .next:
+                    currentMatchIndex = (currentMatchIndex + 1) % matches.count
+                case .previous:
+                    currentMatchIndex = (currentMatchIndex - 1 + matches.count) % matches.count
+                }
+            } else if currentMatchIndex >= matches.count {
+                currentMatchIndex = 0
+            }
+
+            applySearchHighlights(matches: matches, currentIndex: currentMatchIndex, theme: theme, in: textView)
+
+            if queryChanged || navigationChanged {
+                let range = matches[currentMatchIndex]
+                textView.setSelectedRange(range)
+                textView.scrollRangeToVisible(range)
+            }
+
+            lastSearchQuery = query
+            lastSearchedText = text
+            lastNavigationSerial = request.navigationSerial
+
+            return DocumentSearchResult(currentIndex: currentMatchIndex + 1, totalCount: matches.count)
+        }
+
+        private func matchRanges(for query: String, in text: String) -> [NSRange] {
+            let nsText = text as NSString
+            var ranges: [NSRange] = []
+            var searchRange = NSRange(location: 0, length: nsText.length)
+
+            while searchRange.length > 0 {
+                let found = nsText.range(
+                    of: query,
+                    options: [.caseInsensitive, .diacriticInsensitive],
+                    range: searchRange
+                )
+                guard found.location != NSNotFound, found.length > 0 else { break }
+
+                ranges.append(found)
+                let nextLocation = found.location + found.length
+                guard nextLocation < nsText.length else { break }
+                searchRange = NSRange(location: nextLocation, length: nsText.length - nextLocation)
+            }
+
+            return ranges
+        }
+
+        private func firstMatchIndex(atOrAfter location: Int, in matches: [NSRange]) -> Int {
+            matches.firstIndex { $0.location >= location } ?? 0
+        }
+
+        private func applySearchHighlights(
+            matches: [NSRange],
+            currentIndex: Int,
+            theme: AppTheme,
+            in textView: NSTextView
+        ) {
+            clearSearchHighlights(in: textView)
+
+            guard let layoutManager = textView.layoutManager else { return }
+            let accent = NSColor(hex: theme.accent)
+            let matchColor = accent.withAlphaComponent(theme.isDark ? 0.24 : 0.18)
+            let currentColor = accent.withAlphaComponent(theme.isDark ? 0.44 : 0.30)
+
+            for (index, range) in matches.enumerated() {
+                layoutManager.addTemporaryAttribute(
+                    .backgroundColor,
+                    value: index == currentIndex ? currentColor : matchColor,
+                    forCharacterRange: range
+                )
+            }
+
+            highlightedRanges = matches
+        }
+
+        private func clearSearchHighlights(in textView: NSTextView) {
+            guard let layoutManager = textView.layoutManager else {
+                highlightedRanges = []
+                return
+            }
+
+            let length = (textView.string as NSString).length
+            for range in highlightedRanges {
+                guard range.location >= 0, NSMaxRange(range) <= length else { continue }
+                layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: range)
+            }
+            highlightedRanges = []
+        }
+    }
+}
+
+private final class MarkdownNSTextView: NSTextView {
+    var fontSmoothingEnabled = true {
+        didSet {
+            guard fontSmoothingEnabled != oldValue else { return }
+            needsDisplay = true
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let context = NSGraphicsContext.current else {
+            super.draw(dirtyRect)
+            return
+        }
+
+        let previousAntialiasing = context.shouldAntialias
+        context.shouldAntialias = fontSmoothingEnabled
+        super.draw(dirtyRect)
+        context.shouldAntialias = previousAntialiasing
     }
 }

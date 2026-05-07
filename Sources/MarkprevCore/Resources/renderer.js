@@ -2,11 +2,17 @@
   "use strict";
 
   let markdown = "";
+  let searchQuery = "";
+  let searchNavigationSerial = -1;
+  let searchMatches = [];
+  let searchCurrentIndex = 0;
 
   const target = document.getElementById("content");
   if (!target) return;
 
   window.markprevRender = render;
+  window.markprevApplyAppearance = applyAppearance;
+  window.markprevSearch = searchDocument;
   render(window.markprev || {});
   target.addEventListener("dblclick", handleSourceJump);
 
@@ -14,6 +20,193 @@
     markdown = typeof nextState.markdown === "string" ? nextState.markdown : "";
     document.documentElement.dataset.theme = nextState.theme === "dark" ? "dark" : "light";
     target.innerHTML = renderMarkdown(markdown);
+    if (searchQuery) {
+      searchDocument({
+        query: searchQuery,
+        navigationSerial: searchNavigationSerial,
+        direction: "current",
+        isPresented: true
+      });
+    }
+  }
+
+  function applyAppearance(nextState) {
+    const restoreScroll = captureScrollAnchor();
+    const theme = nextState.theme === "dark" ? "dark" : "light";
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+
+    if (nextState.variables && typeof nextState.variables === "object") {
+      Object.entries(nextState.variables).forEach(([key, value]) => {
+        if (typeof key === "string" && key.startsWith("--") && typeof value === "string") {
+          document.documentElement.style.setProperty(key, value);
+        }
+      });
+    }
+
+    restoreScroll();
+  }
+
+  function searchDocument(nextState = {}) {
+    const requestedQuery = nextState.isPresented === false
+      ? ""
+      : typeof nextState.query === "string"
+        ? nextState.query.trim()
+        : "";
+    const navigationSerial = Number.isFinite(Number(nextState.navigationSerial))
+      ? Number(nextState.navigationSerial)
+      : searchNavigationSerial;
+    const direction = nextState.direction === "previous" ? "previous" : nextState.direction === "next" ? "next" : "current";
+    const queryChanged = requestedQuery !== searchQuery;
+    const navigationChanged = navigationSerial !== searchNavigationSerial;
+
+    searchQuery = requestedQuery;
+    removeSearchHighlights();
+
+    if (!searchQuery) {
+      searchMatches = [];
+      searchCurrentIndex = 0;
+      searchNavigationSerial = navigationSerial;
+      return searchResult();
+    }
+
+    searchMatches = highlightSearchMatches(searchQuery);
+
+    if (searchMatches.length === 0) {
+      searchCurrentIndex = 0;
+      searchNavigationSerial = navigationSerial;
+      return searchResult();
+    }
+
+    if (queryChanged || searchCurrentIndex >= searchMatches.length) {
+      searchCurrentIndex = 0;
+    } else if (navigationChanged) {
+      searchCurrentIndex = direction === "previous"
+        ? (searchCurrentIndex - 1 + searchMatches.length) % searchMatches.length
+        : (searchCurrentIndex + 1) % searchMatches.length;
+    }
+
+    searchNavigationSerial = navigationSerial;
+    revealCurrentSearchMatch(queryChanged || navigationChanged);
+    return searchResult();
+  }
+
+  function searchResult() {
+    return {
+      currentIndex: searchMatches.length > 0 ? searchCurrentIndex + 1 : 0,
+      totalCount: searchMatches.length
+    };
+  }
+
+  function removeSearchHighlights() {
+    const parents = new Set();
+    target.querySelectorAll("mark.markprev-search-match").forEach((mark) => {
+      const parent = mark.parentNode;
+      if (!parent) return;
+      parents.add(parent);
+      mark.replaceWith(document.createTextNode(mark.textContent || ""));
+    });
+    parents.forEach((parent) => parent.normalize());
+  }
+
+  function highlightSearchMatches(query) {
+    const matches = [];
+    const queryLower = query.toLocaleLowerCase();
+    const nodes = textNodesForSearch();
+
+    for (const node of nodes) {
+      const value = node.nodeValue || "";
+      const valueLower = value.toLocaleLowerCase();
+      let cursor = 0;
+      let matchIndex = valueLower.indexOf(queryLower);
+      if (matchIndex < 0) continue;
+
+      const fragment = document.createDocumentFragment();
+      while (matchIndex >= 0) {
+        if (matchIndex > cursor) {
+          fragment.appendChild(document.createTextNode(value.slice(cursor, matchIndex)));
+        }
+
+        const mark = document.createElement("mark");
+        mark.className = "markprev-search-match";
+        mark.textContent = value.slice(matchIndex, matchIndex + query.length);
+        fragment.appendChild(mark);
+        matches.push(mark);
+
+        cursor = matchIndex + query.length;
+        matchIndex = valueLower.indexOf(queryLower, cursor);
+      }
+
+      if (cursor < value.length) {
+        fragment.appendChild(document.createTextNode(value.slice(cursor)));
+      }
+
+      node.parentNode?.replaceChild(fragment, node);
+    }
+
+    return matches;
+  }
+
+  function textNodesForSearch() {
+    const nodes = [];
+    const walker = document.createTreeWalker(
+      target,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode(node) {
+          const value = node.nodeValue || "";
+          if (!value.trim()) return NodeFilter.FILTER_REJECT;
+
+          const parent = node.parentElement;
+          if (!parent) return NodeFilter.FILTER_REJECT;
+          if (parent.closest("script, style, mark.markprev-search-match")) {
+            return NodeFilter.FILTER_REJECT;
+          }
+
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      }
+    );
+
+    while (walker.nextNode()) {
+      nodes.push(walker.currentNode);
+    }
+
+    return nodes;
+  }
+
+  function revealCurrentSearchMatch(shouldScroll) {
+    searchMatches.forEach((match, index) => {
+      match.classList.toggle("markprev-search-current", index === searchCurrentIndex);
+    });
+
+    const current = searchMatches[searchCurrentIndex];
+    if (shouldScroll && current) {
+      current.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+    }
+  }
+
+  function captureScrollAnchor() {
+    const scroller = document.scrollingElement || document.documentElement;
+    const maxBefore = Math.max(1, scroller.scrollHeight - window.innerHeight);
+    const ratio = scroller.scrollTop / maxBefore;
+    const pointX = Math.max(1, Math.floor(window.innerWidth / 2));
+    const pointY = Math.max(1, Math.min(window.innerHeight - 1, Math.floor(window.innerHeight / 2)));
+    const anchor = document.elementFromPoint(pointX, pointY);
+    const anchorTop = anchor?.getBoundingClientRect().top;
+
+    return () => {
+      requestAnimationFrame(() => {
+        if (anchor && anchor.isConnected && Number.isFinite(anchorTop)) {
+          const nextTop = anchor.getBoundingClientRect().top;
+          scroller.scrollTop += nextTop - anchorTop;
+          return;
+        }
+
+        const maxAfter = Math.max(0, scroller.scrollHeight - window.innerHeight);
+        scroller.scrollTop = ratio * maxAfter;
+      });
+    };
   }
 
   function renderMarkdown(source) {

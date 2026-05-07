@@ -47,6 +47,11 @@ extension AppTheme {
         foregroundColor.opacity((isDark ? 0.035 : 0.025) + normalizedContrast * 0.055)
     }
 
+    /// Slightly stronger than `elevatedSurfaceColor` for inset fields and wells.
+    var insetFillColor: Color {
+        foregroundColor.opacity((isDark ? 0.055 : 0.04) + normalizedContrast * 0.065)
+    }
+
     var mutedForegroundColor: Color {
         foregroundColor.opacity((isDark ? 0.52 : 0.45) + normalizedContrast * 0.18)
     }
@@ -55,7 +60,40 @@ extension AppTheme {
         accentColor.opacity(0.08 + normalizedContrast * 0.10)
     }
 
+    /// Background for compact controls (segmented tracks, terminal tab chips).
+    var controlTrackFillColor: Color {
+        foregroundColor.opacity((isDark ? 0.035 : 0.028) + normalizedContrast * 0.028)
+    }
+
+    /// Dimming layer over the editor when a drawer is presented (theme-aware, not pure black).
+    var scrimColor: Color {
+        foregroundColor.opacity(isDark ? 0.22 : 0.14)
+    }
+
     func sidebarColor(_ color: Color, opacity: Double = 1) -> Color {
         color.opacity(opacity * (quietSidebar ? 0.8 : 1))
+    }
+
+    // MARK: - Layout (scales with UI font size; no hard-coded theme colors)
+
+    private var layoutFontFactor: CGFloat {
+        CGFloat(min(28, max(12, uiFontSize)) / 16)
+    }
+
+    func layoutScale(zoomScale: Double) -> CGFloat {
+        max(CGFloat(zoomScale) * layoutFontFactor, 0.75)
+    }
+
+    func chromeRadius(_ basePoints: CGFloat, zoomScale: Double) -> CGFloat {
+        max(basePoints * layoutScale(zoomScale: zoomScale), basePoints * 0.8)
+    }
+
+    /// Settings / static panels (zoom = 1).
+    var settingsControlCornerRadius: CGFloat {
+        CGFloat(min(10, max(7, uiFontSize * 0.48)))
+    }
+
+    var settingsCardCornerRadius: CGFloat {
+        CGFloat(min(14, max(10, uiFontSize * 0.62)))
     }
 }

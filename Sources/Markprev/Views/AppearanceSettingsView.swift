@@ -3,6 +3,7 @@ import SwiftUI
 
 struct AppearanceSettingsView: View {
     @ObservedObject var themeStore: ThemeSettingsStore
+    let uiTheme: AppTheme
     @AppStorage("Markprev.themePreference") private var themePreferenceRawValue = ThemePreference.system.rawValue
     @State private var lightDraft = ThemeConfiguration(theme: AppTheme.codexLight)
     @State private var darkDraft = ThemeConfiguration(theme: AppTheme.codexDark)
@@ -22,29 +23,35 @@ struct AppearanceSettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                SettingsRow(title: "Theme", detail: "Use light, dark, or match your system") {
-                    Picker("Theme", selection: Binding(
-                        get: { themePreference },
-                        set: { themePreference = $0 }
-                    )) {
-                        ForEach(ThemePreference.allCases) { pref in
-                            Label(pref.title, systemImage: pref.systemImage)
-                                .tag(pref)
+            VStack(alignment: .leading, spacing: 16) {
+                SettingsGroupCard(theme: uiTheme) {
+                    SettingsRow(theme: uiTheme, title: "Theme", detail: "Use light, dark, or match your system", showsDivider: false) {
+                        Picker("Theme", selection: Binding(
+                            get: { themePreference },
+                            set: { themePreference = $0 }
+                        )) {
+                            ForEach(ThemePreference.allCases) { pref in
+                                Label(pref.title, systemImage: pref.systemImage)
+                                    .tag(pref)
+                            }
                         }
+                        .pickerStyle(.segmented)
+                        .controlSize(.regular)
+                        .frame(width: 268)
+                        .markprevPointerCursor()
                     }
-                    .pickerStyle(.segmented)
-                    .frame(width: 260)
                 }
 
-                CodePreviewCard(lightTheme: draftLightTheme, darkTheme: draftDarkTheme)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
+                SettingsGroupCard(theme: uiTheme) {
+                    CodePreviewCard(chromeTheme: uiTheme, lightTheme: draftLightTheme, darkTheme: draftDarkTheme)
+                        .padding(12)
+                }
 
-                ThemeEditorSection(slot: .light, themeStore: themeStore, draft: $lightDraft)
-                ThemeEditorSection(slot: .dark, themeStore: themeStore, draft: $darkDraft)
+                ThemeEditorSection(slot: .light, themeStore: themeStore, draft: $lightDraft, uiTheme: uiTheme)
+                ThemeEditorSection(slot: .dark, themeStore: themeStore, draft: $darkDraft, uiTheme: uiTheme)
             }
-            .padding(.vertical, 8)
+            .padding(20)
+            .padding(.bottom, 10)
         }
         .onAppear(perform: reloadDrafts)
     }
@@ -61,6 +68,7 @@ private struct ThemeEditorSection: View {
     let slot: ThemeSlot
     @ObservedObject var themeStore: ThemeSettingsStore
     @Binding var draft: ThemeConfiguration
+    let uiTheme: AppTheme
 
     private var preset: AppTheme {
         themeStore.presetTheme(for: slot)
@@ -93,70 +101,86 @@ private struct ThemeEditorSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
+        SettingsGroupCard(theme: uiTheme) {
+            VStack(alignment: .leading, spacing: 0) {
+                header
 
-            EditableThemeColorRow(label: "Accent", hex: $draft.accent)
-            EditableThemeColorRow(label: "Background", hex: $draft.background)
-            EditableThemeColorRow(label: "Foreground", hex: $draft.foreground)
+                EditableThemeColorRow(theme: uiTheme, label: "Accent", hex: $draft.accent)
+                EditableThemeColorRow(theme: uiTheme, label: "Background", hex: $draft.background)
+                EditableThemeColorRow(theme: uiTheme, label: "Foreground", hex: $draft.foreground)
 
-            SettingsToggleRow(
-                title: "Translucent sidebar",
-                detail: "Use the theme surface as a tinted macOS material sidebar",
-                isOn: $draft.translucentSidebar
-            )
+                SettingsToggleRow(
+                    theme: uiTheme,
+                    title: "Translucent sidebar",
+                    detail: "Use the theme surface as a tinted macOS material sidebar",
+                    isOn: $draft.translucentSidebar
+                )
 
-            SettingsToggleRow(
-                title: "Quiet sidebar",
-                detail: "Make sidebar text and icons 20% more subdued",
-                isOn: $draft.quietSidebar
-            )
+                SettingsToggleRow(
+                    theme: uiTheme,
+                    title: "Quiet sidebar",
+                    detail: "Make sidebar text and icons 20% more subdued",
+                    isOn: $draft.quietSidebar
+                )
 
-            SettingsStepperRow(
-                title: "UI font size",
-                detail: "Base text size for Markprev controls using this theme",
-                value: $draft.uiFontSize,
-                range: 12...24
-            )
+                SettingsStepperRow(
+                    theme: uiTheme,
+                    title: "UI font size",
+                    detail: "Base text size for Markprev controls using this theme",
+                    value: $draft.uiFontSize,
+                    range: 12...24
+                )
 
-            SettingsStepperRow(
-                title: "Code font size",
-                detail: "Base text size for source and Markdown preview code",
-                value: $draft.codeFontSize,
-                range: 11...28
-            )
+                SettingsStepperRow(
+                    theme: uiTheme,
+                    title: "Code font size",
+                    detail: "Base text size for source and Markdown preview code",
+                    value: $draft.codeFontSize,
+                    range: 11...28
+                )
 
-            SettingsSliderRow(title: "Contrast", value: $draft.contrast, range: 0...100)
+                SettingsSliderRow(
+                    theme: uiTheme,
+                    title: "Contrast",
+                    showsDivider: false,
+                    value: $draft.contrast,
+                    range: 0...100
+                )
+            }
         }
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(slot.title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(uiTheme.foregroundColor)
 
                 if hasUnsavedChanges {
                     Text("Unsaved changes")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(uiTheme.mutedForegroundColor)
                 }
             }
 
-            Spacer(minLength: 16)
+            Spacer(minLength: 12)
 
-            Button("Reset") {
+            SettingsOutlineButton(title: "Reset", theme: uiTheme, isDisabled: !canReset) {
                 themeStore.reset(slot)
                 draft = themeStore.configuration(for: slot)
             }
-            .disabled(!canReset)
+            .fixedSize()
 
             Button("Save") {
                 themeStore.save(draft, for: slot)
                 draft = themeStore.configuration(for: slot)
             }
             .buttonStyle(.borderedProminent)
+            .tint(uiTheme.accentColor)
+            .controlSize(.regular)
             .disabled(!hasUnsavedChanges)
+            .markprevPointerCursor(enabled: hasUnsavedChanges)
 
             Picker(slot.title, selection: selectedThemeID) {
                 ForEach(slot.themes) { theme in
@@ -164,13 +188,17 @@ private struct ThemeEditorSection: View {
                 }
             }
             .labelsHidden()
-            .pickerStyle(.menu)
-            .frame(width: 200)
+            .controlSize(.regular)
+            .frame(width: 196)
+            .markprevPointerCursor()
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 13)
         .overlay(alignment: .bottom) {
-            Divider().padding(.leading, 20)
+            Rectangle()
+                .fill(uiTheme.borderColor)
+                .frame(height: 1)
+                .padding(.leading, 18)
         }
     }
 }
@@ -178,16 +206,24 @@ private struct ThemeEditorSection: View {
 // MARK: - Code Preview
 
 private struct CodePreviewCard: View {
+    let chromeTheme: AppTheme
     let lightTheme: AppTheme
     let darkTheme: AppTheme
 
     var body: some View {
         HStack(spacing: 0) {
             codePane(theme: lightTheme, surface: "sidebar", contrast: lightTheme.contrast)
+            Rectangle()
+                .fill(chromeTheme.borderColor)
+                .frame(width: 1)
             codePane(theme: darkTheme, surface: "sidebar-editor", contrast: darkTheme.contrast)
         }
-        .frame(height: 170)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .frame(height: 176)
+        .clipShape(RoundedRectangle(cornerRadius: chromeTheme.settingsControlCornerRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: chromeTheme.settingsControlCornerRadius)
+                .strokeBorder(chromeTheme.borderColor.opacity(0.92), lineWidth: 1)
+        )
     }
 
     private func codePane(theme: AppTheme, surface: String, contrast: Double) -> some View {
@@ -205,7 +241,8 @@ private struct CodePreviewCard: View {
             codeLine(n: "5", text: "};", color: theme.mutedForegroundColor, theme: theme)
             Spacer()
         }
-        .font(.system(size: 14, weight: .regular, design: .monospaced))
+        .font(.system(size: 13, weight: .regular, design: .monospaced))
+        .lineSpacing(1)
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.surfaceColor)
@@ -213,14 +250,16 @@ private struct CodePreviewCard: View {
 
     private func highlightedLine<Content: View>(theme: AppTheme, @ViewBuilder content: () -> Content) -> some View {
         content()
-            .background(Color(hex: theme.selectionBackground).opacity(theme.isDark ? 0.42 : 0.32))
+            .padding(.vertical, 1)
+            .background(Color(hex: theme.selectionBackground).opacity(theme.isDark ? 0.38 : 0.28))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 
     private func codeLine(n: String, text: String, color: Color, theme: AppTheme) -> some View {
-        HStack(spacing: 10) {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(n)
                 .foregroundStyle(theme.mutedForegroundColor)
-                .frame(width: 20, alignment: .trailing)
+                .frame(width: 18, alignment: .trailing)
             Text(text)
                 .foregroundStyle(color)
                 .lineLimit(1)

@@ -9,8 +9,11 @@ struct ContentView: View {
     @AppStorage("Markprev.themePreference") private var themePreferenceRawValue = ThemePreference.system.rawValue
     @AppStorage("Markprev.zoomScale") private var zoomScale = 1.0
     @AppStorage("Markprev.previewWidthPercent") private var previewWidthPercent = 88.0
+    @AppStorage("Markprev.usePointerCursors") private var usePointerCursors = false
+    @AppStorage("Markprev.fontSmoothing") private var fontSmoothing = true
     @SceneStorage("Markprev.isTerminalDrawerOpen") private var isTerminalDrawerOpen = false
     @State private var pendingSourceLocation: MarkdownSourceLocation?
+    @State private var documentSearch = DocumentSearchState()
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
     @Environment(\.colorScheme) private var systemColorScheme
 
@@ -52,28 +55,37 @@ struct ContentView: View {
                 zoomScale: zoomScale,
                 codeFontSize: CGFloat(activeTheme.codeFontSize),
                 previewWidthPercent: previewWidthPercent,
+                usePointerCursors: usePointerCursors,
+                fontSmoothing: fontSmoothing,
                 isTerminalPresented: $isTerminalDrawerOpen,
                 sourceLocation: $pendingSourceLocation,
+                documentSearch: $documentSearch,
                 isSidebarVisible: sidebarVisibility != .detailOnly,
-                toggleSidebar: toggleSidebar,
                 newMarkdown: { store.createMarkdownFile() },
                 openFolder: openFolderPanel,
                 zoomOut: { adjustZoom(by: -0.1) },
                 resetZoom: { zoomScale = 1.0 },
                 zoomIn: { adjustZoom(by: 0.1) },
                 toggleTerminal: toggleTerminalDrawer,
+                toggleSidebar: toggleSidebar,
                 onPreviewSourceJump: openSourceFromPreview(location:)
             )
         }
         .ignoresSafeArea(.container, edges: .top)
-        .toolbar(removing: .sidebarToggle)
         .background(activeTheme.surfaceColor)
-        .background(WindowBackgroundDragEnabler())
+        .background(WindowBackgroundDragEnabler(
+            surfaceColor: activeTheme.surfaceColor,
+            layoutToken: nativeChromeLayoutToken,
+            toolbarButtonSize: nativeToolbarButtonSize
+        ))
+        .background(KeyboardShortcutMonitor(handler: handleKeyDown))
         .preferredColorScheme(themePreference.preferredColorScheme)
         .accentColor(activeTheme.accentColor)
-        .navigationTitle(store.selectedFile?.displayName ?? "Markprev")
         .task {
             store.restoreWorkspace()
+        }
+        .onChange(of: store.selectedFile?.id) { _, _ in
+            documentSearch.updateResult(.init())
         }
         .focusedSceneValue(\.markprevCommandActions, commandActions)
         .alert("Markprev", isPresented: Binding(
@@ -121,14 +133,63 @@ struct ContentView: View {
             zoomIn: { adjustZoom(by: 0.1) },
             zoomOut: { adjustZoom(by: -0.1) },
             resetZoom: { zoomScale = 1.0 },
-            toggleTerminal: { toggleTerminalDrawer() }
+            showFind: { showDocumentSearch() },
+            findNext: { documentSearch.findNext() },
+            findPrevious: { documentSearch.findPrevious() },
+            toggleTerminal: { toggleTerminalDrawer() },
+            toggleSidebar: { toggleSidebar() }
         )
+    }
+
+    private func handleKeyDown(_ event: NSEvent) -> Bool {
+        guard let characters = event.charactersIgnoringModifiers?.lowercased() else {
+            return false
+        }
+
+        let flags = event.modifierFlags.independentFlags
+        let commandFind = characters == "f" && flags.contains(.command)
+        let controlFind = characters == "f" && flags.contains(.control)
+        if commandFind || controlFind {
+            guard store.selectedFile != nil else { return false }
+            showDocumentSearch()
+            return true
+        }
+
+        if characters == "g", flags.contains(.command) {
+            if flags.contains(.shift) {
+                documentSearch.findPrevious()
+            } else {
+                documentSearch.findNext()
+            }
+            return true
+        }
+
+        if event.keyCode == 53, documentSearch.isPresented {
+            documentSearch.dismiss()
+            return true
+        }
+
+        return false
+    }
+
+    private func showDocumentSearch() {
+        guard store.selectedFile != nil else { return }
+        documentSearch.present()
     }
 
     private func toggleTerminalDrawer() {
         withAnimation(.spring(response: 0.32, dampingFraction: 0.88, blendDuration: 0.08)) {
             isTerminalDrawerOpen.toggle()
         }
+    }
+
+    private var nativeChromeLayoutToken: String {
+        "\(themePreference.rawValue)-\(systemColorScheme == .dark ? "dark" : "light")-\(sidebarVisibility == .detailOnly ? "detailOnly" : "all")"
+    }
+
+    private var nativeToolbarButtonSize: CGSize {
+        let scale = max(zoomScale * activeTheme.uiFontSize / 16, 0.75)
+        return CGSize(width: 28 * scale, height: 26 * scale)
     }
 
     private func toggleSidebar() {
