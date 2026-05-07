@@ -21,10 +21,15 @@ defer { try? FileManager.default.removeItem(at: root) }
 try write("# Markprev", to: root.appendingPathComponent("README.md"))
 try write("- [ ] item", to: root.appendingPathComponent("Notes/Todo.markdown"))
 try write("ignored", to: root.appendingPathComponent("Notes/image.png"))
+try FileManager.default.createSymbolicLink(
+    at: root.appendingPathComponent("Loop"),
+    withDestinationURL: root
+)
 
 let scan = try MarkdownFileScanner().scan(rootURL: root)
 let paths = scan.files.map(\.relativePath).sorted()
 expect(paths == ["Notes/Todo.markdown", "README.md"], "scanner should include only supported Markdown files")
+expect(!scan.root.children!.contains(where: { $0.name == "Loop" }), "scanner should skip symbolic link directories")
 expect(scan.root.children?.first?.name == "Notes", "folders should sort before files")
 
 let renderService = MarkdownRenderService(stylesheet: "body {}", rendererJavaScript: "window.ready = true;")

@@ -5,44 +5,56 @@ import UniformTypeIdentifiers
 struct SidebarView: View {
     @ObservedObject var store: WorkspaceStore
     let theme: AppTheme
+    let zoomScale: Double
     let openFolder: () -> Void
     @State private var isDropTargeted = false
     @State private var expandedFolderIDs: Set<String> = []
 
+    /// Scaled font size — all sidebar typography goes through this.
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        max(base * zoomScale, base * 0.75)
+    }
+
+    private var visibleNodes: [VisibleSidebarNode] {
+        flattenVisibleNodes(from: store.rootNode?.children ?? [])
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            SidebarHeader(store: store, theme: theme, openFolder: openFolder)
+            SidebarHeader(store: store, theme: theme, zoomScale: zoomScale)
 
             Divider()
                 .overlay(theme.borderColor)
 
-            if let rootNode = store.rootNode, let children = rootNode.children, !children.isEmpty {
+            if !visibleNodes.isEmpty {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(children) { node in
+                    LazyVStack(alignment: .leading, spacing: scaled(2)) {
+                        ForEach(visibleNodes) { visibleNode in
                             SidebarNodeRow(
-                                node: node,
-                                depth: 0,
+                                visibleNode: visibleNode,
                                 selectedFileID: store.selectedFileID,
-                                expandedFolderIDs: $expandedFolderIDs,
-                                theme: theme
-                            ) { id in
-                                store.selectFile(id: id)
-                            }
+                                isExpanded: expandedFolderIDs.contains(visibleNode.node.id),
+                                theme: theme,
+                                zoomScale: zoomScale,
+                                toggleFolder: toggleFolder(_:),
+                                selectFile: store.selectFile(id:)
+                            )
                         }
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 10)
+                    .padding(.horizontal, scaled(6))
+                    .padding(.vertical, scaled(8))
                 }
                 .scrollContentBackground(.hidden)
             } else {
-                EmptySidebarView(theme: theme, openFolder: openFolder)
+                EmptySidebarView(theme: theme, zoomScale: zoomScale, openFolder: openFolder)
             }
+
+            Divider()
+                .overlay(theme.borderColor)
+
+            SidebarSettingsButton(theme: theme, zoomScale: zoomScale)
         }
-        .background {
-            theme.surfaceColor
-                .overlay(theme.foregroundColor.opacity(theme.isDark ? 0.035 : 0.025))
-        }
+        .background(.ultraThinMaterial)
         .overlay {
             if isDropTargeted {
                 RoundedRectangle(cornerRadius: 12)
@@ -51,13 +63,68 @@ struct SidebarView: View {
             }
         }
         .onChange(of: store.rootNode?.id ?? "") {
-            expandedFolderIDs = collectFolderIDs(from: store.rootNode)
+            expandedFolderIDs = initialExpandedFolderIDs()
+        }
+        .onChange(of: store.selectedFileID ?? "") {
+            expandedFolderIDs.formUnion(ancestorFolderIDs(for: store.selectedFileID))
         }
         .onAppear {
-            expandedFolderIDs = collectFolderIDs(from: store.rootNode)
+            expandedFolderIDs = initialExpandedFolderIDs()
         }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted) { providers in
             loadDroppedURLs(from: providers)
+        }
+    }
+
+    private func flattenVisibleNodes(from nodes: [SidebarNode]) -> [VisibleSidebarNode] {
+        var visibleNodes: [VisibleSidebarNode] = []
+
+        func walk(_ currentNodes: [SidebarNode], depth: Int) {
+            for node in currentNodes {
+                visibleNodes.append(VisibleSidebarNode(node: node, depth: depth))
+
+                if node.kind == .folder, expandedFolderIDs.contains(node.id), let children = node.children {
+                    walk(children, depth: depth + 1)
+                }
+            }
+        }
+
+        walk(nodes, depth: 0)
+        return visibleNodes
+    }
+
+    private func initialExpandedFolderIDs() -> Set<String> {
+        ancestorFolderIDs(for: store.selectedFileID ?? store.files.first?.id)
+    }
+
+    private func ancestorFolderIDs(for fileID: String?) -> Set<String> {
+        guard let fileID, let rootNode = store.rootNode else { return [] }
+        return ancestorFolderIDs(for: fileID, in: rootNode).map(Set.init) ?? []
+    }
+
+    private func ancestorFolderIDs(for fileID: String, in node: SidebarNode) -> [String]? {
+        if node.file?.id == fileID {
+            return []
+        }
+
+        guard node.kind == .folder, let children = node.children else {
+            return nil
+        }
+
+        for child in children {
+            if let descendantIDs = ancestorFolderIDs(for: fileID, in: child) {
+                return node.relativePath.isEmpty ? descendantIDs : [node.id] + descendantIDs
+            }
+        }
+
+        return nil
+    }
+
+    private func toggleFolder(_ id: String) {
+        if expandedFolderIDs.contains(id) {
+            expandedFolderIDs.remove(id)
+        } else {
+            expandedFolderIDs.insert(id)
         }
     }
 
@@ -85,189 +152,229 @@ struct SidebarView: View {
 
         return didHandleProvider
     }
-
-    private func collectFolderIDs(from node: SidebarNode?) -> Set<String> {
-        guard let node else { return [] }
-
-        var ids = Set<String>()
-
-        func walk(_ current: SidebarNode) {
-            guard current.kind == .folder else { return }
-            ids.insert(current.id)
-            current.children?.forEach(walk)
-        }
-
-        walk(node)
-        return ids
-    }
 }
+
+// MARK: - Supporting Types
+
+private struct VisibleSidebarNode: Identifiable {
+    let node: SidebarNode
+    let depth: Int
+
+    var id: String { node.id }
+}
+
+// MARK: - Sidebar Header
 
 private struct SidebarHeader: View {
     @ObservedObject var store: WorkspaceStore
     let theme: AppTheme
-    let openFolder: () -> Void
+    let zoomScale: Double
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        max(base * zoomScale, base * 0.75)
+    }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "sidebar.left")
-                .font(.system(size: 13, weight: .semibold))
+        VStack(alignment: .leading, spacing: scaled(3)) {
+            Text(store.workspaceURL?.lastPathComponent ?? "Markprev")
+                .font(.system(size: scaled(15), weight: .semibold))
+                .foregroundStyle(theme.foregroundColor)
+                .lineLimit(1)
+
+            Text(store.workspaceURL?.path ?? "No workspace open")
+                .font(.system(size: scaled(12)))
                 .foregroundStyle(theme.mutedForegroundColor)
-                .frame(width: 22, height: 22)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(store.workspaceURL?.lastPathComponent ?? "Markprev")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(theme.foregroundColor)
-                    .lineLimit(1)
-
-                Text(store.workspaceURL?.path ?? "Drop a folder or Markdown file")
-                    .font(.system(size: 11))
-                    .foregroundStyle(theme.mutedForegroundColor)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 8)
-
-            Button {
-                store.createMarkdownFile()
-            } label: {
-                Image(systemName: "square.and.pencil")
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(theme.mutedForegroundColor)
-            .disabled(store.workspaceURL == nil)
-            .help("New Markdown")
-
-            Button(action: openFolder) {
-                Image(systemName: "folder")
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(theme.mutedForegroundColor)
-            .help("Open Folder")
+                .lineLimit(1)
+                .truncationMode(.middle)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, scaled(16))
+        .padding(.vertical, scaled(14))
     }
 }
 
-private struct SidebarNodeRow: View {
-    let node: SidebarNode
-    let depth: Int
-    let selectedFileID: String?
-    @Binding var expandedFolderIDs: Set<String>
-    let theme: AppTheme
-    let selectFile: (String) -> Void
+// MARK: - Sidebar Row
 
-    private var isExpanded: Bool {
-        expandedFolderIDs.contains(node.id)
+private struct SidebarNodeRow: View {
+    let visibleNode: VisibleSidebarNode
+    let selectedFileID: String?
+    let isExpanded: Bool
+    let theme: AppTheme
+    let zoomScale: Double
+    let toggleFolder: (String) -> Void
+    let selectFile: (String?) -> Void
+
+    private var node: SidebarNode {
+        visibleNode.node
     }
 
     private var isSelected: Bool {
         node.file?.id == selectedFileID
     }
 
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        max(base * zoomScale, base * 0.75)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Button {
-                if node.kind == .folder {
-                    toggleFolder()
-                } else if let file = node.file {
-                    selectFile(file.id)
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    if node.kind == .folder {
-                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(theme.mutedForegroundColor)
-                            .frame(width: 10)
-                    } else {
-                        Spacer()
-                            .frame(width: 10)
-                    }
-
-                    Image(systemName: node.kind == .folder ? "folder" : "doc.text")
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundStyle(node.kind == .folder ? theme.mutedForegroundColor : theme.mutedForegroundColor.opacity(0.88))
-                        .frame(width: 16)
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(node.name)
-                            .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
-                            .foregroundStyle(isSelected ? theme.foregroundColor : theme.foregroundColor.opacity(0.90))
-                            .lineLimit(1)
-
-                        if node.kind == .file {
-                            Text(node.relativePath)
-                                .font(.system(size: 11))
-                                .foregroundStyle(theme.mutedForegroundColor)
-                                .lineLimit(1)
-                        }
-                    }
-
-                    Spacer(minLength: 0)
-                }
-                .padding(.leading, CGFloat(depth) * 16)
-                .padding(.horizontal, 8)
-                .padding(.vertical, node.kind == .file ? 7 : 6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(isSelected ? theme.foregroundColor.opacity(theme.isDark ? 0.11 : 0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
-            }
-            .buttonStyle(.plain)
-            .help(node.relativePath.isEmpty ? node.name : node.relativePath)
-
-            if node.kind == .folder, isExpanded {
-                ForEach(node.children ?? []) { child in
-                    SidebarNodeRow(
-                        node: child,
-                        depth: depth + 1,
-                        selectedFileID: selectedFileID,
-                        expandedFolderIDs: $expandedFolderIDs,
-                        theme: theme,
-                        selectFile: selectFile
-                    )
-                }
-            }
+        if node.kind == .folder {
+            folderRow
+        } else {
+            fileRow
         }
     }
 
-    private func toggleFolder() {
-        if expandedFolderIDs.contains(node.id) {
-            expandedFolderIDs.remove(node.id)
-        } else {
-            expandedFolderIDs.insert(node.id)
+    /// Folder row — styled like a Codex section header with a disclosure chevron.
+    private var folderRow: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                toggleFolder(node.id)
+            }
+        } label: {
+            HStack(spacing: scaled(8)) {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: scaled(10), weight: .semibold))
+                    .foregroundStyle(theme.mutedForegroundColor)
+                    .frame(width: scaled(12))
+
+                Image(systemName: "folder.fill")
+                    .font(.system(size: scaled(15)))
+                    .foregroundStyle(theme.accentColor.opacity(0.8))
+
+                Text(node.name)
+                    .font(.system(size: scaled(14), weight: .semibold))
+                    .foregroundStyle(theme.foregroundColor.opacity(0.9))
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+            }
+            .padding(.leading, CGFloat(visibleNode.depth) * scaled(16))
+            .padding(.horizontal, scaled(6))
+            .padding(.vertical, scaled(7))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .padding(.top, visibleNode.depth == 0 ? scaled(4) : 0)
+        .help(node.relativePath.isEmpty ? node.name : node.relativePath)
+    }
+
+    /// File row — larger text, generous padding, Codex-style selection highlight.
+    private var fileRow: some View {
+        Button {
+            if let file = node.file {
+                selectFile(file.id)
+            }
+        } label: {
+            HStack(spacing: scaled(10)) {
+                Image(systemName: "doc.text.fill")
+                    .font(.system(size: scaled(14)))
+                    .foregroundStyle(isSelected ? theme.accentColor : theme.mutedForegroundColor.opacity(0.7))
+                    .frame(width: scaled(18))
+
+                Text(node.name)
+                    .font(.system(size: scaled(15), weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? theme.foregroundColor : theme.foregroundColor.opacity(0.88))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Spacer(minLength: 0)
+            }
+            .padding(.leading, CGFloat(visibleNode.depth) * scaled(16) + scaled(12))
+            .padding(.trailing, scaled(6))
+            .padding(.vertical, scaled(7))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isSelected
+                    ? theme.accentColor.opacity(theme.isDark ? 0.15 : 0.12)
+                    : Color.clear,
+                in: RoundedRectangle(cornerRadius: scaled(8))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(node.relativePath.isEmpty ? node.name : node.relativePath)
     }
 }
 
-private struct EmptySidebarView: View {
+// MARK: - Settings Button
+
+private struct SidebarSettingsButton: View {
     let theme: AppTheme
-    let openFolder: () -> Void
+    let zoomScale: Double
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        max(base * zoomScale, base * 0.75)
+    }
 
     var body: some View {
-        VStack(spacing: 16) {
+        Button {
+            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        } label: {
+            HStack(spacing: scaled(8)) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: scaled(15)))
+                    .foregroundStyle(theme.mutedForegroundColor)
+
+                Text("Settings")
+                    .font(.system(size: scaled(14), weight: .regular))
+                    .foregroundStyle(theme.foregroundColor.opacity(0.85))
+
+                Spacer()
+            }
+            .padding(.horizontal, scaled(12))
+            .padding(.vertical, scaled(10))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Open Settings (⌘,)")
+    }
+}
+
+// MARK: - Empty Sidebar
+
+private struct EmptySidebarView: View {
+    let theme: AppTheme
+    let zoomScale: Double
+    let openFolder: () -> Void
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        max(base * zoomScale, base * 0.75)
+    }
+
+    var body: some View {
+        VStack(spacing: scaled(16)) {
             Spacer()
 
-            Image(systemName: "doc.text.magnifyingglass")
-                .font(.system(size: 32, weight: .medium))
-                .foregroundStyle(theme.mutedForegroundColor)
+            Image(systemName: "folder.badge.plus")
+                .font(.system(size: scaled(36), weight: .medium))
+                .foregroundStyle(theme.mutedForegroundColor.opacity(0.5))
 
-            VStack(spacing: 6) {
+            VStack(spacing: scaled(6)) {
                 Text("No workspace")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: scaled(16), weight: .semibold))
                     .foregroundStyle(theme.foregroundColor)
-                Text("Drop a folder here or open one from disk.")
-                    .font(.system(size: 13))
+                Text("Drop a folder here or open one.")
+                    .font(.system(size: scaled(14)))
                     .foregroundStyle(theme.mutedForegroundColor)
                     .multilineTextAlignment(.center)
             }
 
             Button(action: openFolder) {
                 Label("Open Folder", systemImage: "folder")
+                    .font(.system(size: scaled(14), weight: .medium))
+                    .padding(.horizontal, scaled(16))
+                    .padding(.vertical, scaled(8))
             }
+            .buttonStyle(.borderedProminent)
+            .tint(theme.accentColor)
+
+            Text("⇧⌘O")
+                .font(.system(size: scaled(12), weight: .medium, design: .rounded))
+                .foregroundStyle(theme.mutedForegroundColor.opacity(0.5))
 
             Spacer()
         }
-        .padding(24)
+        .padding(scaled(24))
     }
 }

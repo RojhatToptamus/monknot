@@ -51,9 +51,10 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font: var(--base-font-size, 15px)/1.62 var(--ui-font);
+  font: var(--base-font-size, 15px)/1.68 var(--ui-font);
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  font-feature-settings: "ss01", "cv01";
 }
 
 body {
@@ -62,7 +63,7 @@ body {
 
 .markdown-body {
   box-sizing: border-box;
-  max-width: 920px;
+  max-width: 860px;
   margin: 0 auto;
   padding: 40px 48px 64px;
 }
@@ -83,7 +84,7 @@ h5,
 h6 {
   margin: 1.45em 0 0.62em;
   line-height: 1.18;
-  font-weight: 650;
+  font-weight: 620;
   letter-spacing: 0;
 }
 

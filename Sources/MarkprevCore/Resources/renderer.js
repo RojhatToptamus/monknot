@@ -1,16 +1,20 @@
 (() => {
   "use strict";
 
-  const state = window.markprev || {};
-  const markdown = typeof state.markdown === "string" ? state.markdown : "";
-  const theme = state.theme === "dark" ? "dark" : "light";
-  document.documentElement.dataset.theme = theme;
+  let markdown = "";
 
   const target = document.getElementById("content");
   if (!target) return;
 
-  target.innerHTML = renderMarkdown(markdown);
+  window.markprevRender = render;
+  render(window.markprev || {});
   target.addEventListener("dblclick", handleSourceJump);
+
+  function render(nextState) {
+    markdown = typeof nextState.markdown === "string" ? nextState.markdown : "";
+    document.documentElement.dataset.theme = nextState.theme === "dark" ? "dark" : "light";
+    target.innerHTML = renderMarkdown(markdown);
+  }
 
   function renderMarkdown(source) {
     const footnotes = new Map();

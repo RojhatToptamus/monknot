@@ -32,23 +32,19 @@ struct ContentView: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            NavigationSplitView {
-                SidebarView(store: store, theme: activeTheme, openFolder: openFolderPanel)
-                    .navigationSplitViewColumnWidth(min: 236, ideal: 296, max: 360)
-            } detail: {
-                EditorPaneView(
-                    store: store,
-                    editorMode: editorMode,
-                    theme: activeTheme,
-                    zoomScale: 1,
-                    codeFontSize: CGFloat(codeFontSize),
-                    sourceLocation: $pendingSourceLocation,
-                    onPreviewSourceJump: openSourceFromPreview(location:)
-                )
-            }
-            .frame(width: proxy.size.width / zoomScale, height: proxy.size.height / zoomScale, alignment: .topLeading)
-            .scaleEffect(zoomScale, anchor: .topLeading)
+        NavigationSplitView {
+            SidebarView(store: store, theme: activeTheme, zoomScale: zoomScale, openFolder: openFolderPanel)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 440)
+        } detail: {
+            EditorPaneView(
+                store: store,
+                editorMode: editorMode,
+                theme: activeTheme,
+                zoomScale: zoomScale,
+                codeFontSize: CGFloat(codeFontSize),
+                sourceLocation: $pendingSourceLocation,
+                onPreviewSourceJump: openSourceFromPreview(location:)
+            )
         }
         .background(activeTheme.surfaceColor)
         .preferredColorScheme(themePreference.preferredColorScheme)
@@ -61,33 +57,15 @@ struct ContentView: View {
                 } label: {
                     Label("Open Folder", systemImage: "folder")
                 }
+                .disabled(store.isBusy)
                 .help("Open Folder")
             }
 
             ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    store.createMarkdownFile()
-                } label: {
-                    Label("New Markdown", systemImage: "square.and.pencil")
+                if store.isBusy || store.isDocumentLoading || store.isSaving {
+                    ProgressView()
+                        .controlSize(.small)
                 }
-                .disabled(store.workspaceURL == nil)
-                .help("New Markdown")
-
-                Button {
-                    store.saveSelectedFile()
-                } label: {
-                    Label("Save", systemImage: store.hasUnsavedChanges ? "square.and.arrow.down.fill" : "square.and.arrow.down")
-                }
-                .disabled(store.selectedFile == nil || !store.hasUnsavedChanges)
-                .help("Save")
-
-                Button {
-                    store.refresh()
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .disabled(store.workspaceURL == nil)
-                .help("Refresh")
 
                 Picker("View Mode", selection: Binding(
                     get: { editorMode },
@@ -99,35 +77,7 @@ struct ContentView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 148)
-                .disabled(store.selectedFile == nil)
-
-                Menu {
-                    Picker("Base Theme", selection: Binding(
-                        get: { themePreference },
-                        set: { themePreference = $0 }
-                    )) {
-                        ForEach(ThemePreference.allCases) { preference in
-                            Label(preference.title, systemImage: preference.systemImage).tag(preference)
-                        }
-                    }
-
-                    Divider()
-
-                    Picker("Light Theme", selection: $lightThemeID) {
-                        ForEach(AppTheme.lightThemes) { theme in
-                            Text(theme.name).tag(theme.id)
-                        }
-                    }
-
-                    Picker("Dark Theme", selection: $darkThemeID) {
-                        ForEach(AppTheme.darkThemes) { theme in
-                            Text(theme.name).tag(theme.id)
-                        }
-                    }
-                } label: {
-                    Label("Appearance", systemImage: "paintpalette")
-                }
-                .help("Appearance")
+                .disabled(store.selectedFile == nil || store.isDocumentLoading)
 
                 Divider()
 

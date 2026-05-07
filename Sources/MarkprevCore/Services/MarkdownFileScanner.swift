@@ -10,19 +10,17 @@ public struct MarkdownFileScanResult: Sendable {
     }
 }
 
-public protocol MarkdownFileScanning {
+public protocol MarkdownFileScanning: Sendable {
     func scan(rootURL: URL) throws -> MarkdownFileScanResult
 }
 
 public struct MarkdownFileScanner: MarkdownFileScanning {
-    private let fileManager: FileManager
     private let ignoredDirectoryNames: Set<String>
 
     public init(
         fileManager: FileManager = .default,
         ignoredDirectoryNames: Set<String> = [".build", ".git", "DerivedData", "dist", "node_modules"]
     ) {
-        self.fileManager = fileManager
         self.ignoredDirectoryNames = ignoredDirectoryNames
     }
 
@@ -43,18 +41,19 @@ public struct MarkdownFileScanner: MarkdownFileScanning {
     }
 
     private func scanDirectory(_ directoryURL: URL, rootURL: URL, files: inout [MarkdownFile]) throws -> [SidebarNode] {
+        let fileManager = FileManager.default
         let contents = try fileManager.contentsOfDirectory(
             at: directoryURL,
-            includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isPackageKey],
+            includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isPackageKey, .isSymbolicLinkKey],
             options: [.skipsHiddenFiles]
         )
 
         var nodes: [SidebarNode] = []
 
         for url in contents {
-            let resourceValues = try url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isPackageKey])
+            let resourceValues = try url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isPackageKey, .isSymbolicLinkKey])
 
-            if resourceValues.isDirectory == true, resourceValues.isPackage != true {
+            if resourceValues.isDirectory == true, resourceValues.isPackage != true, resourceValues.isSymbolicLink != true {
                 guard !ignoredDirectoryNames.contains(url.lastPathComponent) else {
                     continue
                 }

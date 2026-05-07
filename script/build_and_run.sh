@@ -55,7 +55,10 @@ APP_SOURCES=(
   "Sources/Markprev/Views/EditorPaneView.swift"
   "Sources/Markprev/Views/MarkdownTextEditor.swift"
   "Sources/Markprev/Views/MarkdownPreviewView.swift"
-  "Sources/Markprev/Views/ThemeSettingsView.swift"
+  "Sources/Markprev/Views/PreferencesView.swift"
+  "Sources/Markprev/Views/GeneralSettingsView.swift"
+  "Sources/Markprev/Views/AppearanceSettingsView.swift"
+  "Sources/Markprev/Views/SettingsComponents.swift"
 )
 
 "$SWIFTC_BIN" \

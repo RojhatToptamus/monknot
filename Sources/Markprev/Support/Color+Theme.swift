@@ -44,6 +44,10 @@ extension AppTheme {
     }
 
     var mutedForegroundColor: Color {
-        foregroundColor.opacity(isDark ? 0.68 : 0.62)
+        foregroundColor.opacity(isDark ? 0.62 : 0.55)
+    }
+
+    var selectedRowColor: Color {
+        accentColor.opacity(0.12)
     }
 }

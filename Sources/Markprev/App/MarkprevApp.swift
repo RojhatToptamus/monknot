@@ -55,7 +55,7 @@ struct MarkprevApp: App {
         }
 
         Settings {
-            ThemeSettingsView()
+            PreferencesView()
         }
     }
 }
