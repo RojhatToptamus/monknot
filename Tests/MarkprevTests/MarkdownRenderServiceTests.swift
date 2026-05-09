@@ -111,4 +111,23 @@ final class MarkdownRenderServiceTests: XCTestCase {
         XCTAssertTrue(html.contains("--preview-max-width: 96%;"))
         XCTAssertTrue(html.contains("--table-border: color-mix(in srgb, #FFFFFF 20.0%, transparent);"))
     }
+
+    func testBundledStylesheetPreservesThemeColorsForPDFExport() throws {
+        let html = try MarkdownRenderService().htmlDocument(
+            markdown: "# Export",
+            appTheme: AppTheme.codexDark,
+            zoomScale: 1,
+            baseFontSize: AppTheme.codexDark.codeFontSize,
+            previewWidthPercent: 82,
+            usePointerCursors: false,
+            fontSmoothing: true,
+            baseURL: nil
+        )
+
+        XCTAssertTrue(html.contains("-webkit-print-color-adjust: exact;"))
+        XCTAssertTrue(html.contains("print-color-adjust: exact;"))
+        XCTAssertTrue(html.contains("--bg: #111111;"))
+        XCTAssertTrue(html.contains("--fg: #fcfcfc;"))
+        XCTAssertTrue(html.contains("--preview-max-width: 82%;"))
+    }
 }

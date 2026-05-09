@@ -59,9 +59,6 @@ public struct WorkspaceDocumentScanner: WorkspaceDocumentScanning {
                 }
 
                 let children = try scanDirectory(url, rootURL: rootURL, documents: &documents)
-                guard !children.isEmpty else {
-                    continue
-                }
 
                 nodes.append(SidebarNode(
                     id: url.standardizedFileURL.path,
@@ -71,7 +68,7 @@ public struct WorkspaceDocumentScanner: WorkspaceDocumentScanning {
                     kind: .folder,
                     children: children
                 ))
-            } else if resourceValues.isRegularFile == true, WorkspaceDocumentSupport.isWorkspaceDocument(url) {
+            } else if resourceValues.isRegularFile == true {
                 let document = WorkspaceDocument(url: url, rootURL: rootURL)
                 documents.append(document)
                 nodes.append(SidebarNode(

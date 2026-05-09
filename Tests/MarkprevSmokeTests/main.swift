@@ -29,8 +29,9 @@ try FileManager.default.createSymbolicLink(
 
 let scan = try WorkspaceDocumentScanner().scan(rootURL: root)
 let paths = scan.documents.map(\.relativePath).sorted()
-expect(paths == ["Guide.pdf", "Notes/Todo.markdown", "README.md"], "scanner should include supported Markdown and PDF documents")
+expect(paths == ["Guide.pdf", "Notes/Todo.markdown", "Notes/image.png", "README.md"], "scanner should include regular workspace files")
 expect(scan.documents.first(where: { $0.relativePath == "Guide.pdf" })?.kind == .pdf, "scanner should classify PDFs")
+expect(scan.documents.first(where: { $0.relativePath == "Notes/image.png" })?.kind == .unsupported, "scanner should classify unsupported files without opening them")
 expect(!scan.root.children!.contains(where: { $0.name == "Loop" }), "scanner should skip symbolic link directories")
 expect(scan.root.children?.first?.name == "Notes", "folders should sort before documents")
 

@@ -56,6 +56,7 @@ APP_SOURCES=(
   "Sources/Markprev/Support/MarkprevCommandActions.swift"
   "Sources/Markprev/Support/ThemePreference+SwiftUI.swift"
   "Sources/Markprev/Support/WindowChromeSupport.swift"
+  "Sources/Markprev/Services/MarkdownPDFExportService.swift"
   "Sources/Markprev/Services/TerminalPTYSession.swift"
   "Sources/Markprev/Stores/WorkspaceStore.swift"
   "Sources/Markprev/Stores/ThemeSettingsStore.swift"

@@ -3,6 +3,7 @@ import Foundation
 public enum WorkspaceDocumentKind: String, Codable, Sendable {
     case markdown
     case pdf
+    case unsupported
 }
 
 public struct WorkspaceDocument: Identifiable, Hashable, Codable, Sendable {
@@ -19,7 +20,7 @@ public struct WorkspaceDocument: Identifiable, Hashable, Codable, Sendable {
         self.id = standardizedURL.path
         self.displayName = standardizedURL.lastPathComponent
         self.relativePath = WorkspaceDocumentSupport.relativePath(for: standardizedURL, in: rootURL)
-        self.kind = WorkspaceDocumentSupport.kind(for: standardizedURL) ?? .markdown
+        self.kind = WorkspaceDocumentSupport.kind(for: standardizedURL) ?? .unsupported
         self.depth = max(0, relativePath.split(separator: "/").count - 1)
     }
 }

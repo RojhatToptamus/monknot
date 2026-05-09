@@ -64,6 +64,8 @@ body {
   font: var(--base-font-size, 15px)/1.68 var(--ui-font);
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: var(--font-smoothing);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
   font-feature-settings: "ss01", "cv01";
 }
 
@@ -311,5 +313,18 @@ img {
 @media (max-width: 720px) {
   .markdown-body {
     padding: 24px 22px 48px;
+  }
+}
+
+@media print {
+  html,
+  body {
+    background: var(--bg) !important;
+    color: var(--fg) !important;
+  }
+
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 }

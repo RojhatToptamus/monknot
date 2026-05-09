@@ -1,6 +1,7 @@
 import AppKit
 import MarkprevCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @ObservedObject var store: WorkspaceStore
@@ -15,6 +16,7 @@ struct ContentView: View {
     @State private var pendingSourceLocation: MarkdownSourceLocation?
     @State private var documentSearch = DocumentSearchState()
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
+    @State private var exportNotice: String?
     @Environment(\.colorScheme) private var systemColorScheme
 
     private var editorMode: EditorMode {
@@ -41,7 +43,8 @@ struct ContentView: View {
                 theme: activeTheme,
                 zoomScale: zoomScale,
                 uiFontSize: activeTheme.uiFontSize,
-                openFolder: openFolderPanel
+                openFolder: openFolderPanel,
+                exportPDF: exportMarkdownPDF(_:)
             )
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 440)
         } detail: {
@@ -98,6 +101,16 @@ struct ContentView: View {
         } message: {
             Text(store.errorMessage ?? "")
         }
+        .alert("Export Complete", isPresented: Binding(
+            get: { exportNotice != nil },
+            set: { if !$0 { exportNotice = nil } }
+        )) {
+            Button("OK", role: .cancel) {
+                exportNotice = nil
+            }
+        } message: {
+            Text(exportNotice ?? "")
+        }
     }
 
     private func openFolderPanel() {
@@ -112,6 +125,58 @@ struct ContentView: View {
         if panel.runModal() == .OK, let url = panel.url {
             store.openWorkspace(url)
         }
+    }
+
+    private func exportMarkdownPDF(_ document: WorkspaceDocument) {
+        Task { @MainActor in
+            guard let destinationURL = pdfExportDestination(for: document) else {
+                return
+            }
+
+            do {
+                let markdown = try await store.markdownTextForExport(document)
+                let exporter = try MarkdownPDFExportService.makeDefault()
+                try await exporter.exportPDF(for: MarkdownPDFExportRequest(
+                    markdown: markdown,
+                    baseURL: store.workspaceURL,
+                    theme: activeTheme,
+                    zoomScale: zoomScale,
+                    codeFontSize: activeTheme.codeFontSize,
+                    previewWidthPercent: previewWidthPercent,
+                    usePointerCursors: usePointerCursors,
+                    fontSmoothing: fontSmoothing
+                ), to: destinationURL)
+
+                if isInsideWorkspace(destinationURL) {
+                    store.refresh()
+                }
+
+                exportNotice = "Saved \(destinationURL.lastPathComponent)."
+            } catch {
+                store.errorMessage = "Could not export \(document.displayName) as PDF: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func pdfExportDestination(for document: WorkspaceDocument) -> URL? {
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.directoryURL = document.url.deletingLastPathComponent()
+        panel.nameFieldStringValue = document.url.deletingPathExtension().lastPathComponent + ".pdf"
+        panel.allowedContentTypes = [.pdf]
+        panel.prompt = "Export"
+        panel.message = "Export the rendered Markdown document as a PDF."
+
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    private func isInsideWorkspace(_ url: URL) -> Bool {
+        guard let workspaceURL = store.workspaceURL?.standardizedFileURL else {
+            return false
+        }
+
+        let workspacePath = workspaceURL.path.hasSuffix("/") ? workspaceURL.path : workspaceURL.path + "/"
+        return url.standardizedFileURL.path.hasPrefix(workspacePath)
     }
 
     private func adjustZoom(by delta: Double) {

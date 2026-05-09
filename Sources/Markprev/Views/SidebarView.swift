@@ -9,8 +9,10 @@ struct SidebarView: View {
     let zoomScale: Double
     let uiFontSize: Double
     let openFolder: () -> Void
+    let exportPDF: (WorkspaceDocument) -> Void
     @State private var isDropTargeted = false
     @State private var expandedFolderIDs: Set<String> = []
+    @State private var sidebarPrompt: SidebarNamePrompt?
 
     /// Scaled font size — all sidebar typography goes through this.
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -42,7 +44,18 @@ struct SidebarView: View {
                                 zoomScale: zoomScale,
                                 uiFontSize: uiFontSize,
                                 toggleFolder: toggleFolder(_:),
-                                selectDocument: store.selectDocument(id:)
+                                selectDocument: store.selectDocument(id:),
+                                createFileInFolder: beginCreateFile(in:),
+                                createFolderInFolder: beginCreateFolder(in:),
+                                copyFolderPath: copyPath(_:),
+                                revealFolderInFinder: revealInFinder(_:),
+                                renameDocument: beginRename(_:),
+                                copyPath: copyPath(_:),
+                                revealInFinder: revealInFinder(_:),
+                                exportPDF: exportPDF,
+                                copyDocument: copyDocument(_:),
+                                cutDocument: cutDocument(_:),
+                                deleteDocument: store.deleteDocument(_:)
                             )
                         }
                     }
@@ -50,8 +63,14 @@ struct SidebarView: View {
                     .padding(.vertical, scaled(6))
                 }
                 .scrollContentBackground(.hidden)
+                .contextMenu {
+                    sidebarContextMenu
+                }
             } else {
                 EmptySidebarView(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize, openFolder: openFolder)
+                    .contextMenu {
+                        sidebarContextMenu
+                    }
             }
 
             Divider()
@@ -81,6 +100,25 @@ struct SidebarView: View {
         }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted) { providers in
             loadDroppedURLs(from: providers)
+        }
+        .sheet(item: $sidebarPrompt) { prompt in
+            SidebarNameInputSheet(
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize,
+                title: prompt.title,
+                message: prompt.message,
+                placeholder: prompt.placeholder,
+                confirmTitle: prompt.confirmTitle,
+                initialName: prompt.name,
+                cancel: {
+                    sidebarPrompt = nil
+                },
+                submit: { newName in
+                    submitPrompt(prompt, name: newName)
+                    sidebarPrompt = nil
+                }
+            )
         }
     }
 
@@ -165,9 +203,148 @@ struct SidebarView: View {
 
         return didHandleProvider
     }
+
+    @ViewBuilder
+    private var sidebarContextMenu: some View {
+        Button {
+            beginCreateFile(in: nil)
+        } label: {
+            Label("New File", systemImage: "doc.badge.plus")
+        }
+        .disabled(store.workspaceURL == nil || store.isBusy)
+
+        Button {
+            beginCreateFolder(in: nil)
+        } label: {
+            Label("New Folder", systemImage: "folder.badge.plus")
+        }
+        .disabled(store.workspaceURL == nil || store.isBusy)
+
+        if store.canPasteDocumentTransfer {
+            Divider()
+
+            Button {
+                store.pasteDocumentTransfer()
+            } label: {
+                Label("Paste", systemImage: "doc.on.clipboard")
+            }
+        }
+
+        if let workspaceURL = store.workspaceURL {
+            Divider()
+
+            Button {
+                copyPath(workspaceURL)
+            } label: {
+                Label("Copy Path", systemImage: "link")
+            }
+
+            Button {
+                revealInFinder(workspaceURL)
+            } label: {
+                Label("Reveal in Finder", systemImage: "magnifyingglass")
+            }
+        }
+    }
+
+    private func beginRename(_ document: WorkspaceDocument) {
+        sidebarPrompt = SidebarNamePrompt(
+            operation: .renameDocument(document.id),
+            title: "Rename",
+            message: "Enter a new file name.",
+            placeholder: "File name",
+            confirmTitle: "Rename",
+            name: document.displayName
+        )
+    }
+
+    private func beginCreateFile(in directoryURL: URL?) {
+        let directoryName = directoryURL?.lastPathComponent ?? "workspace root"
+        sidebarPrompt = SidebarNamePrompt(
+            operation: .createFile(directoryURL),
+            title: "New File",
+            message: "Create a file in \(directoryName).",
+            placeholder: "example.txt",
+            confirmTitle: "Create",
+            name: store.suggestedNewFileName(in: directoryURL)
+        )
+    }
+
+    private func beginCreateFolder(in directoryURL: URL?) {
+        let directoryName = directoryURL?.lastPathComponent ?? "workspace root"
+        sidebarPrompt = SidebarNamePrompt(
+            operation: .createFolder(directoryURL),
+            title: "New Folder",
+            message: "Create a folder in \(directoryName).",
+            placeholder: "Folder name",
+            confirmTitle: "Create",
+            name: store.suggestedNewFolderName(in: directoryURL)
+        )
+    }
+
+    private func copyPath(_ document: WorkspaceDocument) {
+        copyPath(document.url)
+    }
+
+    private func copyPath(_ url: URL) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(url.path, forType: .string)
+    }
+
+    private func revealInFinder(_ document: WorkspaceDocument) {
+        revealInFinder(document.url)
+    }
+
+    private func revealInFinder(_ url: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    private func copyDocument(_ document: WorkspaceDocument) {
+        writeFileURLToPasteboard(document.url)
+        store.copyDocument(document)
+    }
+
+    private func cutDocument(_ document: WorkspaceDocument) {
+        writeFileURLToPasteboard(document.url)
+        store.cutDocument(document)
+    }
+
+    private func writeFileURLToPasteboard(_ url: URL) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([url as NSURL])
+    }
+
+    private func submitPrompt(_ prompt: SidebarNamePrompt, name: String) {
+        switch prompt.operation {
+        case .renameDocument(let documentID):
+            store.renameDocument(id: documentID, to: name)
+        case .createFile(let directoryURL):
+            store.createFile(named: name, in: directoryURL)
+        case .createFolder(let directoryURL):
+            store.createFolder(named: name, in: directoryURL)
+        }
+    }
 }
 
 // MARK: - Supporting Types
+
+private struct SidebarNamePrompt: Identifiable {
+    enum Operation {
+        case renameDocument(String)
+        case createFile(URL?)
+        case createFolder(URL?)
+    }
+
+    let id = UUID()
+    let operation: Operation
+    let title: String
+    let message: String
+    let placeholder: String
+    let confirmTitle: String
+    var name: String
+}
 
 private struct VisibleSidebarNode: Identifiable {
     let node: SidebarNode
@@ -302,6 +479,17 @@ private struct SidebarNodeRow: View {
     let uiFontSize: Double
     let toggleFolder: (String) -> Void
     let selectDocument: (String?) -> Void
+    let createFileInFolder: (URL) -> Void
+    let createFolderInFolder: (URL) -> Void
+    let copyFolderPath: (URL) -> Void
+    let revealFolderInFinder: (URL) -> Void
+    let renameDocument: (WorkspaceDocument) -> Void
+    let copyPath: (WorkspaceDocument) -> Void
+    let revealInFinder: (WorkspaceDocument) -> Void
+    let exportPDF: (WorkspaceDocument) -> Void
+    let copyDocument: (WorkspaceDocument) -> Void
+    let cutDocument: (WorkspaceDocument) -> Void
+    let deleteDocument: (WorkspaceDocument) -> Void
 
     private var node: SidebarNode {
         visibleNode.node
@@ -356,6 +544,9 @@ private struct SidebarNodeRow: View {
         .buttonStyle(SidebarHoverButtonStyle(theme: theme, isSelected: false, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)))
         .padding(.top, visibleNode.depth == 0 ? scaled(3) : 0)
         .help(node.relativePath.isEmpty ? node.name : node.relativePath)
+        .contextMenu {
+            folderContextMenu()
+        }
     }
 
     /// File row — larger text, generous padding, Codex-style selection highlight.
@@ -391,14 +582,101 @@ private struct SidebarNodeRow: View {
         }
         .buttonStyle(SidebarHoverButtonStyle(theme: theme, isSelected: isSelected, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)))
         .help(node.relativePath.isEmpty ? node.name : node.relativePath)
+        .contextMenu {
+            if let document = node.document {
+                documentContextMenu(for: document)
+            }
+        }
     }
 
     private var documentIconName: String {
         switch node.document?.kind {
         case .pdf:
             return "doc.richtext"
-        case .markdown, nil:
+        case .markdown:
             return "doc.text.fill"
+        case .unsupported, nil:
+            return "doc"
+        }
+    }
+
+    @ViewBuilder
+    private func folderContextMenu() -> some View {
+        Button {
+            createFileInFolder(node.url)
+        } label: {
+            Label("New File", systemImage: "doc.badge.plus")
+        }
+
+        Button {
+            createFolderInFolder(node.url)
+        } label: {
+            Label("New Folder", systemImage: "folder.badge.plus")
+        }
+
+        Divider()
+
+        Button {
+            copyFolderPath(node.url)
+        } label: {
+            Label("Copy Path", systemImage: "link")
+        }
+
+        Button {
+            revealFolderInFinder(node.url)
+        } label: {
+            Label("Reveal in Finder", systemImage: "magnifyingglass")
+        }
+    }
+
+    @ViewBuilder
+    private func documentContextMenu(for document: WorkspaceDocument) -> some View {
+        Button {
+            renameDocument(document)
+        } label: {
+            Label("Rename", systemImage: "pencil")
+        }
+
+        Button {
+            copyPath(document)
+        } label: {
+            Label("Copy Path", systemImage: "link")
+        }
+
+        Button {
+            revealInFinder(document)
+        } label: {
+            Label("Reveal in Finder", systemImage: "magnifyingglass")
+        }
+
+        if document.kind == .markdown {
+            Button {
+                exportPDF(document)
+            } label: {
+                Label("Export PDF...", systemImage: "doc.richtext")
+            }
+        }
+
+        Divider()
+
+        Button {
+            copyDocument(document)
+        } label: {
+            Label("Copy", systemImage: "doc.on.doc")
+        }
+
+        Button {
+            cutDocument(document)
+        } label: {
+            Label("Cut", systemImage: "scissors")
+        }
+
+        Divider()
+
+        Button(role: .destructive) {
+            deleteDocument(document)
+        } label: {
+            Label("Delete", systemImage: "trash")
         }
     }
 }
@@ -545,5 +823,99 @@ private struct EmptySidebarView: View {
             Spacer()
         }
         .padding(scaled(24))
+    }
+}
+
+private struct SidebarNameInputSheet: View {
+    let theme: AppTheme
+    let zoomScale: Double
+    let uiFontSize: Double
+    let title: String
+    let message: String
+    let placeholder: String
+    let confirmTitle: String
+    let cancel: () -> Void
+    let submitName: (String) -> Void
+    @State private var name: String
+    @FocusState private var isNameFocused: Bool
+
+    init(
+        theme: AppTheme,
+        zoomScale: Double,
+        uiFontSize: Double,
+        title: String,
+        message: String,
+        placeholder: String,
+        confirmTitle: String,
+        initialName: String,
+        cancel: @escaping () -> Void,
+        submit: @escaping (String) -> Void
+    ) {
+        self.theme = theme
+        self.zoomScale = zoomScale
+        self.uiFontSize = uiFontSize
+        self.title = title
+        self.message = message
+        self.placeholder = placeholder
+        self.confirmTitle = confirmTitle
+        self.cancel = cancel
+        self.submitName = submit
+        _name = State(initialValue: initialName)
+    }
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: scaled(16)) {
+            VStack(alignment: .leading, spacing: scaled(5)) {
+                Text(title)
+                    .font(.system(size: scaled(16), weight: .semibold))
+                    .foregroundStyle(theme.foregroundColor)
+
+                Text(message)
+                    .font(.system(size: scaled(13)))
+                    .foregroundStyle(theme.mutedForegroundColor)
+            }
+
+            TextField(placeholder, text: $name)
+                .textFieldStyle(.plain)
+                .font(.system(size: scaled(14)))
+                .foregroundStyle(theme.foregroundColor)
+                .focused($isNameFocused)
+                .onSubmit(submit)
+                .padding(.horizontal, scaled(10))
+                .frame(height: scaled(34))
+                .background(
+                    RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+                        .fill(theme.insetFillColor)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+                        .strokeBorder(theme.borderColor, lineWidth: 1)
+                }
+
+            HStack(spacing: scaled(8)) {
+                Spacer()
+
+                Button("Cancel", action: cancel)
+                    .keyboardShortcut(.cancelAction)
+
+                Button(confirmTitle, action: submit)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(scaled(18))
+        .frame(width: scaled(360))
+        .background(theme.surfaceColor)
+        .onAppear {
+            isNameFocused = true
+        }
+    }
+
+    private func submit() {
+        submitName(name)
     }
 }

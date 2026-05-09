@@ -3,7 +3,7 @@ import Foundation
 import XCTest
 
 final class WorkspaceDocumentScannerTests: XCTestCase {
-    func testScannerBuildsSupportedDocumentTree() throws {
+    func testScannerBuildsWorkspaceFileTree() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -17,11 +17,12 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
         let result = try WorkspaceDocumentScanner().scan(rootURL: root)
         let relativePaths = result.documents.map(\.relativePath).sorted()
 
-        XCTAssertEqual(relativePaths, ["Guide.pdf", "Notes/Todo.markdown", "README.md"])
+        XCTAssertEqual(relativePaths, ["Guide.pdf", "Notes/Todo.markdown", "Notes/image.png", "README.md"])
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "Guide.pdf" })?.kind, .pdf)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "README.md" })?.kind, .markdown)
-        XCTAssertEqual(result.root.children?.map(\.name), ["Notes", "Guide.pdf", "README.md"])
-        XCTAssertEqual(result.root.children?.first?.children?.map(\.name), ["Todo.markdown"])
+        XCTAssertEqual(result.documents.first(where: { $0.displayName == "image.png" })?.kind, .unsupported)
+        XCTAssertEqual(result.root.children?.map(\.name), ["Empty", "Notes", "Guide.pdf", "README.md"])
+        XCTAssertEqual(result.root.children?.first(where: { $0.name == "Notes" })?.children?.map(\.name), ["image.png", "Todo.markdown"])
     }
 
     func testSupportedExtensionsAreCaseInsensitive() {
@@ -33,6 +34,7 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
         XCTAssertTrue(WorkspaceDocumentSupport.isPDFDocument(URL(fileURLWithPath: "/tmp/guide.pdf")))
         XCTAssertTrue(WorkspaceDocumentSupport.isMarkdownDocument(URL(fileURLWithPath: "/tmp/doc.mkd")))
         XCTAssertFalse(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/image.png")))
+        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/image.png"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .unsupported)
     }
 
     func testScannerSkipsSymbolicLinkDirectories() throws {

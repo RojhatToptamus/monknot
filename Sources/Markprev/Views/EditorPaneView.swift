@@ -190,6 +190,13 @@ struct EditorPaneView: View {
                 searchState: $documentSearch
             )
             .help(selectedDocument.relativePath)
+        case .unsupported:
+            UnsupportedDocumentView(
+                document: selectedDocument,
+                theme: theme,
+                zoomScale: zoomScale
+            )
+            .help(selectedDocument.relativePath)
         }
     }
 
@@ -251,6 +258,38 @@ struct EditorPaneView: View {
         withAnimation(drawerAnimation) {
             isTerminalPresented = value
         }
+    }
+}
+
+private struct UnsupportedDocumentView: View {
+    let document: WorkspaceDocument
+    let theme: AppTheme
+    let zoomScale: Double
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        max(base * zoomScale * CGFloat(theme.uiFontSize / 16), base * 0.75)
+    }
+
+    var body: some View {
+        VStack(spacing: scaled(12)) {
+            Image(systemName: "doc")
+                .font(.system(size: scaled(34), weight: .regular))
+                .foregroundStyle(theme.mutedForegroundColor.opacity(0.7))
+
+            VStack(spacing: scaled(5)) {
+                Text(document.displayName)
+                    .font(.system(size: scaled(17), weight: .semibold))
+                    .foregroundStyle(theme.foregroundColor)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Text("Preview is not available for this file type.")
+                    .font(.system(size: scaled(13)))
+                    .foregroundStyle(theme.mutedForegroundColor)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.surfaceColor)
     }
 }
 
