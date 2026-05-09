@@ -11,6 +11,7 @@ struct SidebarView: View {
     let uiFontSize: Double
     let openFolder: () -> Void
     let exportPDF: (WorkspaceDocument) -> Void
+    let openDocument: (String) -> Void
     let openWorkspaceSearchResult: (WorkspaceSearchResult) -> Void
     @State private var isDropTargeted = false
     @State private var expandedFolderIDs: Set<String> = []
@@ -126,7 +127,7 @@ struct SidebarView: View {
                             zoomScale: zoomScale,
                             uiFontSize: uiFontSize,
                             toggleFolder: toggleFolder(_:),
-                            selectDocument: store.selectDocument(id:),
+                            selectDocument: openDocument,
                             createFileInFolder: beginCreateFile(in:),
                             createFolderInFolder: beginCreateFolder(in:),
                             copyFolderPath: copyPath(_:),
@@ -523,7 +524,7 @@ private struct SidebarNodeRow: View {
     let zoomScale: Double
     let uiFontSize: Double
     let toggleFolder: (String) -> Void
-    let selectDocument: (String?) -> Void
+    let selectDocument: (String) -> Void
     let createFileInFolder: (URL) -> Void
     let createFolderInFolder: (URL) -> Void
     let copyFolderPath: (URL) -> Void
@@ -612,7 +613,7 @@ private struct SidebarNodeRow: View {
                     .frame(width: scaled(16))
 
                 Text(node.name)
-                    .font(.system(size: scaled(14), weight: isSelected ? .medium : .regular))
+                    .font(.system(size: scaled(14), weight: .regular))
                     .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: isSelected ? 0.98 : 0.88))
                     .lineLimit(1)
                     .truncationMode(.middle)

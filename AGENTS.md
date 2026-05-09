@@ -4,7 +4,7 @@ This file orients AI agents and contributors working in this repository. Keep it
 
 ## Project Overview
 
-Markprev is a SwiftPM macOS app for browsing a workspace, editing Markdown and text-like files, previewing Markdown, viewing PDFs, previewing system-supported files with Quick Look, searching text/PDF documents, exporting Markdown to PDF, and running an embedded terminal.
+Markprev is a SwiftPM macOS app for browsing a workspace, opening multiple files in lightweight tabs, editing Markdown and text-like files, previewing Markdown, viewing PDFs, previewing system-supported files with Quick Look, searching text/PDF documents, exporting Markdown to PDF, and running an embedded terminal.
 
 The app is split into two main targets:
 
@@ -37,9 +37,10 @@ There are also smoke-test source files under `Tests/MarkprevSmokeTests` and `Tes
 ## Main Runtime Flow
 
 1. `MarkprevApp` creates shared `WorkspaceStore` and `ThemeSettingsStore`, then renders `ContentView`.
-2. `ContentView` owns UI preferences via `@AppStorage`, restores the previous workspace, coordinates sidebar/detail layout, document search, workspace search, Markdown outline parsing, source jumps, terminal visibility, and Markdown PDF export.
-3. `SidebarView` displays the workspace tree from `WorkspaceStore.rootNode`, opens folders, handles drops, manages file/folder context menu actions, and presents `WorkspaceSearchView`.
+2. `ContentView` owns UI preferences via `@AppStorage`, restores the previous workspace, coordinates lightweight document tabs, sidebar/detail layout, document search, workspace search, Markdown outline parsing, source jumps, terminal visibility, and Markdown PDF export.
+3. `SidebarView` displays the workspace tree from `WorkspaceStore.rootNode`, opens folders, handles drops, manages file/folder context menu actions, routes file opens through `ContentView` tab actions, and presents `WorkspaceSearchView`.
 4. `EditorPaneView` switches on `WorkspaceDocument.kind`:
+   - The `DocumentTabBar` above the editor renders open tab metadata only; inactive tabs do not instantiate hidden editors/previews.
    - Markdown source: `MarkdownTextEditor`.
    - Markdown preview: `MarkdownPreviewView`.
    - Text/source/data text files: `MarkdownTextEditor` as a generic plain text editor.
@@ -56,6 +57,7 @@ Prefer putting logic in `MarkprevCore` when it can be tested without SwiftUI/App
 - Workspace model:
   - `WorkspaceDocument`: document identity, path, relative path, kind, content type metadata, capabilities, and depth.
   - `WorkspaceDocumentCapabilities`: explicit preview/edit/search/export/outline capability flags.
+  - `WorkspaceTabState`: lightweight tab order, active document ID, pinned state, document snapshots, close behavior, and rename/move ID remapping.
   - `WorkspaceDocumentSupport`: UTType-backed classification, conservative extension fallback groups, capability mapping, and relative path helpers.
   - `SidebarNode`: folder/file tree model for the sidebar.
 - Markdown rendering:
@@ -75,6 +77,9 @@ App-layer code should stay in `Sources/Markprev` when it uses SwiftUI state, App
 ## Important App-Layer Owners
 
 - `WorkspaceStore`: central workspace state machine. It uses generation counters and cancellable tasks to prevent stale async results from overwriting newer state. Preserve this pattern when adding async workspace, document, save, or refresh behavior.
+- Tab state is owned by `ContentView`, but `WorkspaceStore` remains the source of truth for the active document text, dirty buffers, save state, external refresh, and file operations. Do not create per-tab editor state or per-tab preview instances.
+- `WorkspaceStore` publishes document-ID remap events for rename/cut-paste operations so inactive tabs can survive path changes.
+- `WorkspaceStore` tracks open document IDs so dirty open documents removed externally are not silently pruned before the UI can surface the conflict.
 - `WorkspaceFileWatcher`: wraps macOS FSEvents and reports changed paths/full-rescan requirements back to `WorkspaceStore`.
 - `ThemeSettingsStore`: persists selected light/dark theme IDs and sanitized per-theme customizations in `UserDefaults`.
 - `MarkdownOutlineStore`: debounces outline parsing off the main actor.
@@ -117,6 +122,7 @@ Before adding custom parsing, indexing, PDF handling, file watching, or renderin
 - Main layout is `NavigationSplitView` in `ContentView`.
 - Sidebar-specific state and tree presentation live in `SidebarView`.
 - Detail/editor state lives in `EditorPaneView`.
+- File tabs are rendered by `DocumentTabBar` under `TopNavigationBar`. Keep tabs lightweight: labels, pinned state, close/pin actions, and save indicators only.
 - App menu commands flow through `MarkprevCommandActions` and `FocusedValues`.
 - Markdown preview behavior belongs in `MarkdownPreviewView` and `renderer.js`, not scattered across unrelated views.
 - PDF viewing behavior belongs in `PDFPreviewView`.
@@ -159,6 +165,7 @@ Current XCTest coverage focuses on `MarkprevCore`:
 - `MarkdownOutlineParserTests`: Markdown heading extraction behavior.
 - `MarkdownPDFExportOptionsTests`: export option defaults, clamping, persistence behavior.
 - `BuildScriptSyncTests`: manual build script source/resource sync.
+- Manual smoke coverage includes `WorkspaceTabState` open/dedupe/pin/close/prune/remap behavior and `WorkspaceStore` remap/delete guard behavior.
 
 Manual smoke verification used in this repo when SwiftPM is blocked:
 
@@ -219,6 +226,7 @@ script/build_and_run.sh --debug
 ## Guidance For Future Agents
 
 - Read `WorkspaceStore` before changing workspace, document, save, dirty-state, bookmark, or external-refresh behavior.
+- Read `WorkspaceTabState`, `DocumentTabBar`, `ContentView`, and `WorkspaceStore` before changing tab behavior. Tabs are metadata around the active `WorkspaceStore` document, not independent document runtimes.
 - Read `MarkdownRenderService`, `MarkdownPreviewView`, `renderer.js`, and `preview.css` together before changing Markdown preview or export behavior.
 - Read `PDFPreviewView`, `WorkspaceSearchService`, and `MarkdownPDFExportService` before changing PDF behavior.
 - Read `QuickLookPreviewView` and `WorkspaceDocumentSupport` before changing generic preview or file-format support.

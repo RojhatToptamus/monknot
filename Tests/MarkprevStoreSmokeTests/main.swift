@@ -129,6 +129,22 @@ struct MarkprevStoreSmokeTests {
         let savedText = try String(contentsOf: text.url, encoding: .utf8)
         expect(savedText == "plain text\nchanged\n", "text document save should write disk")
 
+        let renamedSecondURL = root.appendingPathComponent("Renamed.md").standardizedFileURL
+        store.setOpenDocumentIDs([second.id])
+        store.renameDocument(id: second.id, to: "Renamed.md")
+        let didRenameInactiveTabDocument = await waitUntil {
+            !store.isBusy &&
+                store.documentIDRemapEvent?.sourceID == second.id &&
+                store.documentIDRemapEvent?.destinationID == renamedSecondURL.path &&
+                store.documents.contains { $0.id == renamedSecondURL.path }
+        }
+        expect(didRenameInactiveTabDocument, "renaming an inactive open document should publish a tab remap event")
+
+        store.setOpenDocumentIDs([first.id])
+        store.deleteDocument(first)
+        expect(store.errorMessage?.contains("Save or close") == true, "deleting a dirty open document should be blocked")
+        expect(FileManager.default.fileExists(atPath: first.url.path), "blocked dirty open delete should leave the file on disk")
+
         print("Markprev store smoke tests passed")
     }
 }

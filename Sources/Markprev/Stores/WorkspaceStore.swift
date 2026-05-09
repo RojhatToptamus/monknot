@@ -14,6 +14,8 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var isSaving = false
     @Published private(set) var documentSaveStates: [String: DocumentSaveState] = [:]
     @Published private(set) var selectedDocumentExternalChange = false
+    @Published private(set) var removedDirtyOpenDocumentIDs: Set<String> = []
+    @Published private(set) var documentIDRemapEvent: WorkspaceDocumentIDRemapEvent?
     @Published var errorMessage: String?
 
     private let scanner: any WorkspaceDocumentScanning
@@ -22,6 +24,8 @@ final class WorkspaceStore: ObservableObject {
     private var lastSavedText = ""
     private var dirtyDocumentTexts: [String: String] = [:]
     private var dirtyDocumentBaselines: [String: String] = [:]
+    private var removedDirtyDocuments: [String: WorkspaceDocument] = [:]
+    private var openDocumentIDs: Set<String> = []
     private var selectedDocumentSignature: FileSignature?
     private var externalRefreshWorkItem: DispatchWorkItem?
     private var externalRefreshTask: Task<Void, Never>?
@@ -41,7 +45,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var selectedDocument: WorkspaceDocument? {
-        documents.first { $0.id == selectedDocumentID }
+        guard let selectedDocumentID else { return nil }
+        return document(id: selectedDocumentID)
     }
 
     var canPasteDocumentTransfer: Bool {
@@ -102,11 +107,23 @@ final class WorkspaceStore: ObservableObject {
         runExternalWorkspaceRefresh()
     }
 
-    func selectDocument(id: String?) {
-        guard id != selectedDocumentID, !isBusy else { return }
+    func document(id: String) -> WorkspaceDocument? {
+        documents.first { $0.id == id } ?? removedDirtyDocuments[id]
+    }
+
+    func setOpenDocumentIDs(_ documentIDs: Set<String>) {
+        openDocumentIDs = documentIDs
+        pruneRemovedDirtyDocuments()
+    }
+
+    @discardableResult
+    func selectDocument(id: String?) -> Bool {
+        guard !isBusy else { return false }
+        guard id != selectedDocumentID else { return true }
 
         selectedDocumentID = id
         loadSelectedDocument()
+        return true
     }
 
     func createMarkdownFile(in directoryURL: URL? = nil) {
@@ -337,6 +354,11 @@ final class WorkspaceStore: ObservableObject {
     func deleteDocument(_ document: WorkspaceDocument) {
         guard let workspaceURL, documents.contains(where: { $0.id == document.id }) else { return }
 
+        if openDocumentIDs.contains(document.id), saveState(for: document.id).isClean == false {
+            errorMessage = "Save or close \(document.displayName) before deleting it."
+            return
+        }
+
         let preserveSelection = selectedDocumentID
         let didDeleteSelectedDocument = selectedDocumentID == document.id
         noteInternalFileMutation()
@@ -436,6 +458,9 @@ final class WorkspaceStore: ObservableObject {
             pendingDocumentTransfer = nil
             dirtyDocumentTexts = [:]
             dirtyDocumentBaselines = [:]
+            removedDirtyDocuments = [:]
+            removedDirtyOpenDocumentIDs = []
+            openDocumentIDs = []
             documentSaveStates = [:]
         }
 
@@ -487,9 +512,10 @@ final class WorkspaceStore: ObservableObject {
     ) {
         guard generation == workspaceGeneration else { return }
 
+        let previousDocuments = documents
         rootNode = result.root
         documents = result.documents
-        pruneSaveStates()
+        pruneSaveStates(previousDocuments: previousDocuments)
         ensureFileWatcher(for: workspaceURL)
 
         if let selectedURL {
@@ -516,9 +542,10 @@ final class WorkspaceStore: ObservableObject {
     ) {
         guard generation == workspaceGeneration else { return }
 
+        let previousDocuments = documents
         rootNode = result.root
         documents = result.documents
-        pruneSaveStates()
+        pruneSaveStates(previousDocuments: previousDocuments)
         ensureFileWatcher(for: workspaceURL)
         selectedDocumentID = WorkspaceDocument(url: fileURL, rootURL: workspaceURL).id
         documentText = initialText
@@ -551,6 +578,7 @@ final class WorkspaceStore: ObservableObject {
 
         if operation == .cut {
             moveDirtyState(from: sourceID, to: destinationID)
+            publishDocumentIDRemap(sourceID: sourceID, destinationID: destinationID)
         }
         pendingDocumentTransfer = nil
         finishWorkspaceLoad(
@@ -576,6 +604,7 @@ final class WorkspaceStore: ObservableObject {
         guard generation == workspaceGeneration else { return }
 
         moveDirtyState(from: sourceID, to: destinationID)
+        publishDocumentIDRemap(sourceID: sourceID, destinationID: destinationID)
         finishWorkspaceLoad(
             result: result,
             workspaceURL: workspaceURL,
@@ -634,7 +663,7 @@ final class WorkspaceStore: ObservableObject {
             lastSavedText = dirtyDocumentBaselines[file.id] ?? dirtyText
             hasUnsavedChanges = dirtyText != lastSavedText
             selectedDocumentSignature = Self.fileSignature(for: file.url)
-            selectedDocumentExternalChange = false
+            selectedDocumentExternalChange = removedDirtyDocuments[file.id] != nil
             isDocumentLoading = false
             setSaveState(hasUnsavedChanges ? .edited : .clean, for: file.id)
             return
@@ -683,6 +712,9 @@ final class WorkspaceStore: ObservableObject {
             isSaving = false
         }
 
+        let wasRemovedDirtyDocument = removedDirtyDocuments.removeValue(forKey: fileID) != nil
+        pruneRemovedDirtyDocuments()
+
         guard selectedDocumentID == fileID else {
             if dirtyDocumentTexts[fileID] == nil || dirtyDocumentTexts[fileID] == text {
                 dirtyDocumentTexts.removeValue(forKey: fileID)
@@ -691,6 +723,9 @@ final class WorkspaceStore: ObservableObject {
             } else {
                 dirtyDocumentBaselines[fileID] = text
                 setSaveState(.edited, for: fileID)
+            }
+            if wasRemovedDirtyDocument {
+                refresh()
             }
             return
         }
@@ -707,6 +742,9 @@ final class WorkspaceStore: ObservableObject {
         }
         selectedDocumentSignature = selectedDocument.map { Self.fileSignature(for: $0.url) } ?? selectedDocumentSignature
         setSaveState(hasUnsavedChanges ? .edited : .clean, for: fileID)
+        if wasRemovedDirtyDocument {
+            refresh()
+        }
     }
 
     private func finishSaveFailure(_ error: Error, file: WorkspaceDocument, generation: Int) {
@@ -740,14 +778,39 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func pruneSaveStates() {
+    private func pruneSaveStates(previousDocuments: [WorkspaceDocument]) {
         let documentIDs = Set(documents.map(\.id))
-        documentSaveStates = documentSaveStates.filter { documentIDs.contains($0.key) }
-        dirtyDocumentTexts = dirtyDocumentTexts.filter { documentIDs.contains($0.key) }
-        dirtyDocumentBaselines = dirtyDocumentBaselines.filter { documentIDs.contains($0.key) }
+        let previousDocumentsByID = Dictionary(uniqueKeysWithValues: previousDocuments.map { ($0.id, $0) })
+        let removedDirtyIDs = Set(dirtyDocumentTexts.keys)
+            .intersection(openDocumentIDs)
+            .subtracting(documentIDs)
+
+        for documentID in removedDirtyIDs {
+            if removedDirtyDocuments[documentID] == nil, let document = previousDocumentsByID[documentID] {
+                removedDirtyDocuments[documentID] = document
+            }
+        }
+
+        pruneRemovedDirtyDocuments(availableDocumentIDs: documentIDs)
+        let preservedDocumentIDs = documentIDs.union(removedDirtyOpenDocumentIDs)
+
+        documentSaveStates = documentSaveStates.filter { preservedDocumentIDs.contains($0.key) }
+        dirtyDocumentTexts = dirtyDocumentTexts.filter { preservedDocumentIDs.contains($0.key) }
+        dirtyDocumentBaselines = dirtyDocumentBaselines.filter { preservedDocumentIDs.contains($0.key) }
         if let selectedDocumentID {
             hasUnsavedChanges = dirtyDocumentTexts[selectedDocumentID] != nil
         }
+    }
+
+    private func pruneRemovedDirtyDocuments(availableDocumentIDs: Set<String>? = nil) {
+        let availableDocumentIDs = availableDocumentIDs ?? Set(documents.map(\.id))
+        removedDirtyDocuments = removedDirtyDocuments.filter { entry in
+            let documentID = entry.key
+            return openDocumentIDs.contains(documentID) &&
+                dirtyDocumentTexts[documentID] != nil &&
+                !availableDocumentIDs.contains(documentID)
+        }
+        removedDirtyOpenDocumentIDs = Set(removedDirtyDocuments.keys)
     }
 
     private func moveDirtyState(from sourceID: String, to destinationID: String) {
@@ -768,6 +831,16 @@ final class WorkspaceStore: ObservableObject {
         if selectedDocumentID == sourceID {
             selectedDocumentID = destinationID
         }
+    }
+
+    private func publishDocumentIDRemap(sourceID: String, destinationID: String) {
+        guard sourceID != destinationID else { return }
+        let serial = (documentIDRemapEvent?.serial ?? 0) + 1
+        documentIDRemapEvent = WorkspaceDocumentIDRemapEvent(
+            serial: serial,
+            sourceID: sourceID,
+            destinationID: destinationID
+        )
     }
 
     private func noteInternalFileMutation() {
@@ -848,12 +921,16 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
+        let previousDocuments = documents
         rootNode = result.root
         documents = result.documents
-        pruneSaveStates()
+        pruneSaveStates(previousDocuments: previousDocuments)
 
         if selectionStillExists {
             selectedDocumentID = previousSelection
+        } else if previousSelection == nil {
+            selectedDocumentID = nil
+            selectedDocumentSignature = nil
         } else {
             selectedDocumentID = documents.first?.id
             selectedDocumentSignature = nil
@@ -1068,6 +1145,12 @@ final class WorkspaceStore: ObservableObject {
 private struct FileSignature: Equatable, Sendable {
     let modificationDate: Date?
     let fileSize: Int64?
+}
+
+struct WorkspaceDocumentIDRemapEvent: Equatable, Sendable {
+    let serial: Int
+    let sourceID: String
+    let destinationID: String
 }
 
 private enum DroppedTarget: Sendable {

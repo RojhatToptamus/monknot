@@ -19,6 +19,7 @@ struct ContentView: View {
     @State private var pendingPreviewLocation: MarkdownSourceLocation?
     @State private var pendingPDFSearchTarget: WorkspaceSearchPDFTarget?
     @State private var deferredWorkspaceSourceJump: DeferredWorkspaceSourceJump?
+    @State private var tabState = WorkspaceTabState()
     @State private var documentSearch = DocumentSearchState()
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
     @State private var exportNotice: String?
@@ -45,111 +46,162 @@ struct ContentView: View {
     }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $sidebarVisibility) {
-            SidebarView(
-                store: store,
-                workspaceSearch: workspaceSearch,
-                theme: activeTheme,
-                zoomScale: zoomScale,
-                uiFontSize: activeTheme.uiFontSize,
-                openFolder: openFolderPanel,
-                exportPDF: exportMarkdownPDF(_:),
-                openWorkspaceSearchResult: openWorkspaceSearchResult(_:)
-            )
-                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 440)
-        } detail: {
-            EditorPaneView(
-                store: store,
-                editorMode: Binding(
-                    get: { editorMode },
-                    set: { editorMode = $0 }
-                ),
-                theme: activeTheme,
-                zoomScale: zoomScale,
-                codeFontSize: CGFloat(activeTheme.codeFontSize),
-                previewWidthPercent: previewWidthPercent,
-                usePointerCursors: usePointerCursors,
-                fontSmoothing: fontSmoothing,
-                isTerminalPresented: $isTerminalDrawerOpen,
-                sourceLocation: $pendingSourceLocation,
-                previewLocation: $pendingPreviewLocation,
-                pdfSearchTarget: $pendingPDFSearchTarget,
-                documentSearch: $documentSearch,
-                isSidebarVisible: sidebarVisibility != .detailOnly,
-                newMarkdown: { store.createMarkdownFile() },
-                openFolder: openFolderPanel,
-                toggleTerminal: toggleTerminalDrawer,
-                toggleSidebar: toggleSidebar,
-                outlineItems: outlineStore.items,
-                selectOutlineItem: openOutlineItem(_:),
-                onPreviewSourceJump: openSourceFromPreview(location:)
-            )
-        }
-        .ignoresSafeArea(.container, edges: .top)
-        .background(activeTheme.surfaceColor)
-        .background(WindowBackgroundDragEnabler(
-            surfaceColor: activeTheme.surfaceColor,
-            layoutToken: nativeChromeLayoutToken,
-            toolbarButtonSize: nativeToolbarButtonSize
-        ))
-        .background(KeyboardShortcutMonitor(handler: handleKeyDown))
-        .preferredColorScheme(themePreference.preferredColorScheme)
-        .accentColor(activeTheme.accentColor)
-        .task {
-            store.restoreWorkspace()
-        }
-        .onChange(of: store.selectedDocument?.id) { _, _ in
-            documentSearch.updateResult(.init())
-            workspaceSearch.refresh(documents: store.documents)
-            updateOutline()
-            fulfillDeferredWorkspaceSourceJump()
-        }
-        .onChange(of: store.documentText) { _, _ in
-            updateOutline()
-            fulfillDeferredWorkspaceSourceJump()
-        }
-        .onChange(of: store.isDocumentLoading) { _, _ in
-            fulfillDeferredWorkspaceSourceJump()
-        }
-        .onChange(of: store.documents) { _, documents in
-            workspaceSearch.refresh(documents: documents)
-        }
-        .focusedSceneValue(\.markprevCommandActions, commandActions)
-        .alert("Markprev", isPresented: Binding(
-            get: { store.errorMessage != nil },
-            set: { if !$0 { store.errorMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) {
-                store.errorMessage = nil
+        configuredContent
+    }
+
+    private var configuredContent: AnyView {
+        AnyView(alertContent)
+    }
+
+    private var chromeContent: AnyView {
+        AnyView(rootContent
+            .ignoresSafeArea(.container, edges: .top)
+            .background(activeTheme.surfaceColor)
+            .background(WindowBackgroundDragEnabler(
+                surfaceColor: activeTheme.surfaceColor,
+                layoutToken: nativeChromeLayoutToken,
+                toolbarButtonSize: nativeToolbarButtonSize
+            ))
+            .background(KeyboardShortcutMonitor(handler: handleKeyDown))
+            .preferredColorScheme(themePreference.preferredColorScheme)
+            .accentColor(activeTheme.accentColor)
+        )
+    }
+
+    private var lifecycleContent: AnyView {
+        AnyView(chromeContent
+            .task {
+                store.restoreWorkspace()
             }
-        } message: {
-            Text(store.errorMessage ?? "")
-        }
-        .alert("Export Complete", isPresented: Binding(
-            get: { exportNotice != nil },
-            set: { if !$0 { exportNotice = nil } }
-        )) {
-            Button("OK", role: .cancel) {
-                exportNotice = nil
+            .onChange(of: store.selectedDocument?.id) { _, _ in
+                reconcileTabsWithStore()
+                documentSearch.updateResult(.init())
+                workspaceSearch.refresh(documents: store.documents)
+                updateOutline()
+                fulfillDeferredWorkspaceSourceJump()
             }
-        } message: {
-            Text(exportNotice ?? "")
-        }
-        .sheet(item: $pendingPDFExportDocument) { document in
-            MarkdownPDFExportOptionsSheet(
-                document: document,
-                theme: activeTheme,
-                options: $pdfExportOptions,
-                isExporting: isExportingPDF,
-                cancel: {
-                    guard !isExportingPDF else { return }
-                    pendingPDFExportDocument = nil
-                },
-                export: {
-                    performMarkdownPDFExport(document, options: pdfExportOptions)
+            .onChange(of: store.documentText) { _, _ in
+                updateOutline()
+                fulfillDeferredWorkspaceSourceJump()
+            }
+            .onChange(of: store.isDocumentLoading) { _, _ in
+                fulfillDeferredWorkspaceSourceJump()
+            }
+            .onChange(of: store.documents) { _, documents in
+                workspaceSearch.refresh(documents: documents)
+                reconcileTabsWithStore()
+            }
+            .onChange(of: store.workspaceURL?.standardizedFileURL.path ?? "") { _, _ in
+                tabState.reset()
+                publishOpenTabIDs()
+            }
+            .onChange(of: store.removedDirtyOpenDocumentIDs) { _, _ in
+                reconcileTabsWithStore()
+            }
+            .onChange(of: store.documentIDRemapEvent?.serial ?? 0) { _, _ in
+                applyDocumentIDRemapEvent()
+            }
+            .focusedSceneValue(\.markprevCommandActions, commandActions)
+        )
+    }
+
+    private var alertContent: AnyView {
+        AnyView(lifecycleContent
+            .alert("Markprev", isPresented: Binding(
+                get: { store.errorMessage != nil },
+                set: { if !$0 { store.errorMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) {
+                    store.errorMessage = nil
                 }
-            )
+            } message: {
+                Text(store.errorMessage ?? "")
+            }
+            .alert("Export Complete", isPresented: Binding(
+                get: { exportNotice != nil },
+                set: { if !$0 { exportNotice = nil } }
+            )) {
+                Button("OK", role: .cancel) {
+                    exportNotice = nil
+                }
+            } message: {
+                Text(exportNotice ?? "")
+            }
+            .sheet(item: $pendingPDFExportDocument) { document in
+                MarkdownPDFExportOptionsSheet(
+                    document: document,
+                    theme: activeTheme,
+                    options: $pdfExportOptions,
+                    isExporting: isExportingPDF,
+                    cancel: {
+                        guard !isExportingPDF else { return }
+                        pendingPDFExportDocument = nil
+                    },
+                    export: {
+                        performMarkdownPDFExport(document, options: pdfExportOptions)
+                    }
+                )
+            }
+        )
+    }
+
+    private var rootContent: some View {
+        NavigationSplitView(columnVisibility: $sidebarVisibility) {
+            sidebarContent
+        } detail: {
+            detailContent
         }
+    }
+
+    private var sidebarContent: some View {
+        SidebarView(
+            store: store,
+            workspaceSearch: workspaceSearch,
+            theme: activeTheme,
+            zoomScale: zoomScale,
+            uiFontSize: activeTheme.uiFontSize,
+            openFolder: openFolderPanel,
+            exportPDF: exportMarkdownPDF(_:),
+            openDocument: openDocumentTab(id:),
+            openWorkspaceSearchResult: openWorkspaceSearchResult(_:)
+        )
+        .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 440)
+    }
+
+    private var detailContent: some View {
+        EditorPaneView(
+            store: store,
+            editorMode: Binding(
+                get: { editorMode },
+                set: { editorMode = $0 }
+            ),
+            theme: activeTheme,
+            zoomScale: zoomScale,
+            codeFontSize: CGFloat(activeTheme.codeFontSize),
+            previewWidthPercent: previewWidthPercent,
+            usePointerCursors: usePointerCursors,
+            fontSmoothing: fontSmoothing,
+            tabs: tabState.tabs,
+            activeTabID: tabState.selectedDocumentID,
+            missingTabIDs: store.removedDirtyOpenDocumentIDs,
+            selectTab: activateTab(id:),
+            closeTab: closeTab(id:),
+            togglePinTab: togglePinTab(id:),
+            reorderTab: reorderTab(draggedID:targetID:),
+            isTerminalPresented: $isTerminalDrawerOpen,
+            sourceLocation: $pendingSourceLocation,
+            previewLocation: $pendingPreviewLocation,
+            pdfSearchTarget: $pendingPDFSearchTarget,
+            documentSearch: $documentSearch,
+            isSidebarVisible: sidebarVisibility != .detailOnly,
+            newMarkdown: { store.createMarkdownFile() },
+            openFolder: openFolderPanel,
+            toggleTerminal: toggleTerminalDrawer,
+            toggleSidebar: toggleSidebar,
+            outlineItems: outlineStore.items,
+            selectOutlineItem: openOutlineItem(_:),
+            onPreviewSourceJump: openSourceFromPreview(location:)
+        )
     }
 
     private func openFolderPanel() {
@@ -257,6 +309,97 @@ struct ContentView: View {
         zoomScale = min(1.8, max(0.7, stepped))
     }
 
+    private func openDocumentTab(id documentID: String) {
+        guard !store.isBusy, let document = store.document(id: documentID) else { return }
+        guard store.selectDocument(id: documentID) else { return }
+        tabState.open(document)
+        publishOpenTabIDs()
+    }
+
+    private func activateTab(id documentID: String) {
+        guard !store.isBusy else { return }
+        guard tabState.contains(documentID: documentID) else { return }
+        guard store.selectDocument(id: documentID) else { return }
+
+        if let document = store.document(id: documentID) {
+            tabState.open(document)
+        } else {
+            tabState.activate(documentID: documentID)
+        }
+        publishOpenTabIDs()
+    }
+
+    private func closeTab(id documentID: String) {
+        guard !store.isBusy else { return }
+        let wasActive = tabState.selectedDocumentID == documentID
+        let nextDocumentID = tabState.close(documentID: documentID)
+        publishOpenTabIDs()
+
+        if wasActive || store.selectedDocumentID == documentID {
+            _ = store.selectDocument(id: nextDocumentID)
+        }
+    }
+
+    private func closeActiveTab() {
+        guard let selectedDocumentID = tabState.selectedDocumentID else { return }
+        closeTab(id: selectedDocumentID)
+    }
+
+    private func togglePinTab(id documentID: String) {
+        tabState.togglePin(documentID: documentID)
+    }
+
+    private func toggleActiveTabPin() {
+        guard let selectedDocumentID = tabState.selectedDocumentID else { return }
+        togglePinTab(id: selectedDocumentID)
+    }
+
+    private func reorderTab(draggedID: String, targetID: String?) {
+        guard !store.isBusy else { return }
+        tabState.moveTab(documentID: draggedID, before: targetID)
+    }
+
+    private func reconcileTabsWithStore() {
+        guard !store.isBusy else { return }
+
+        let availableDocumentIDs = Set(store.documents.map(\.id))
+        tabState.updateSnapshots(from: store.documents)
+        tabState.pruneUnavailableDocuments(
+            availableDocumentIDs: availableDocumentIDs,
+            preserving: store.removedDirtyOpenDocumentIDs
+        )
+
+        if let selectedDocument = store.selectedDocument {
+            if tabState.contains(documentID: selectedDocument.id) {
+                tabState.open(selectedDocument)
+            } else if !tabState.isEmptyByUserChoice {
+                tabState.open(selectedDocument)
+            }
+        } else if store.selectedDocumentID == nil, tabState.tabs.isEmpty {
+            tabState.activate(documentID: nil)
+        }
+
+        publishOpenTabIDs()
+
+        if tabState.selectedDocumentID != store.selectedDocumentID {
+            _ = store.selectDocument(id: tabState.selectedDocumentID)
+        }
+    }
+
+    private func applyDocumentIDRemapEvent() {
+        guard let event = store.documentIDRemapEvent else { return }
+        tabState.remapDocumentID(
+            sourceID: event.sourceID,
+            destinationID: event.destinationID,
+            document: store.document(id: event.destinationID)
+        )
+        publishOpenTabIDs()
+    }
+
+    private func publishOpenTabIDs() {
+        store.setOpenDocumentIDs(tabState.openDocumentIDs)
+    }
+
     private func openSourceFromPreview(location: MarkdownSourceLocation) {
         pendingSourceLocation = location
         editorMode = .source
@@ -270,6 +413,10 @@ struct ContentView: View {
             canExportPDF: store.selectedDocument?.kind == .markdown,
             saveDocument: { store.saveSelectedFile() },
             refreshWorkspace: { store.refresh() },
+            closeTab: { closeActiveTab() },
+            canCloseTab: tabState.selectedDocumentID != nil && !store.isBusy,
+            togglePinTab: { toggleActiveTabPin() },
+            canTogglePinTab: tabState.selectedDocumentID != nil && !store.isBusy,
             zoomIn: { adjustZoom(by: 0.1) },
             zoomOut: { adjustZoom(by: -0.1) },
             resetZoom: { zoomScale = 1.0 },
@@ -288,6 +435,16 @@ struct ContentView: View {
         }
 
         let flags = event.modifierFlags.independentFlags
+        let isCommandOnly = flags.contains(.command) &&
+            !flags.contains(.shift) &&
+            !flags.contains(.option) &&
+            !flags.contains(.control)
+
+        if characters == "w", isCommandOnly, tabState.selectedDocumentID != nil {
+            closeActiveTab()
+            return true
+        }
+
         if characters == "f", flags.contains(.command), flags.contains(.shift) {
             showWorkspaceSearch()
             return true
@@ -341,7 +498,7 @@ struct ContentView: View {
             editorMode = .source
         }
 
-        store.selectDocument(id: result.documentID)
+        openDocumentTab(id: result.documentID)
         if result.kind == .text {
             deferredWorkspaceSourceJump = DeferredWorkspaceSourceJump(
                 documentID: result.documentID,

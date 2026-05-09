@@ -7,6 +7,10 @@ struct MarkprevCommandActions {
     let canExportPDF: Bool
     let saveDocument: () -> Void
     let refreshWorkspace: () -> Void
+    let closeTab: () -> Void
+    let canCloseTab: Bool
+    let togglePinTab: () -> Void
+    let canTogglePinTab: Bool
     let zoomIn: () -> Void
     let zoomOut: () -> Void
     let resetZoom: () -> Void
@@ -57,6 +61,22 @@ struct MarkprevCommandMenu: Commands {
             }
             .keyboardShortcut("r", modifiers: [.command])
             .disabled(actions == nil)
+
+            Divider()
+
+            Button("Close Tab") {
+                actions?.closeTab()
+            }
+            .keyboardShortcut("w", modifiers: [.command])
+            .disabled(actions?.canCloseTab != true)
+
+            Button("Pin or Unpin Tab") {
+                actions?.togglePinTab()
+            }
+            .keyboardShortcut("p", modifiers: [.command, .shift])
+            .disabled(actions?.canTogglePinTab != true)
+
+            Divider()
 
             Button("Toggle Terminal") {
                 actions?.toggleTerminal()

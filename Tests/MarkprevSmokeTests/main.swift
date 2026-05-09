@@ -65,6 +65,52 @@ expect(scan.documents.first(where: { $0.relativePath == "Notes/image.png" })?.ki
 expect(!scan.root.children!.contains(where: { $0.name == "Loop" }), "scanner should skip symbolic link directories")
 expect(scan.root.children?.first?.name == "Notes", "folders should sort before documents")
 
+guard let readmeDocument = scan.documents.first(where: { $0.relativePath == "README.md" }),
+      let guideDocument = scan.documents.first(where: { $0.relativePath == "Guide.pdf" }),
+      let todoDocument = scan.documents.first(where: { $0.relativePath == "Notes/Todo.markdown" })
+else {
+    fputs("FAIL: expected tab smoke documents\n", stderr)
+    exit(1)
+}
+
+var tabs = WorkspaceTabState()
+tabs.open(readmeDocument)
+expect(tabs.tabs.map(\.documentID) == [readmeDocument.id], "opening first document should create one tab")
+expect(tabs.selectedDocumentID == readmeDocument.id, "opening first document should select its tab")
+tabs.open(guideDocument)
+expect(tabs.tabs.map(\.documentID) == [readmeDocument.id, guideDocument.id], "opening second document should append a tab")
+expect(tabs.selectedDocumentID == guideDocument.id, "opening second document should select it")
+tabs.open(readmeDocument)
+expect(tabs.tabs.count == 2, "opening an already-open document should not duplicate tabs")
+expect(tabs.selectedDocumentID == readmeDocument.id, "opening an existing tab should activate it")
+tabs.moveTab(documentID: guideDocument.id, before: readmeDocument.id)
+expect(tabs.tabs.map(\.documentID) == [guideDocument.id, readmeDocument.id], "drag reordering should move a tab before the target tab")
+tabs.moveTab(documentID: readmeDocument.id, before: guideDocument.id)
+expect(tabs.tabs.map(\.documentID) == [readmeDocument.id, guideDocument.id], "drag reordering should support moving a tab back")
+tabs.moveTab(documentID: readmeDocument.id, before: nil)
+expect(tabs.tabs.map(\.documentID) == [guideDocument.id, readmeDocument.id], "drag reordering should support moving a tab to the end")
+tabs.moveTab(documentID: readmeDocument.id, before: guideDocument.id)
+expect(tabs.tabs.map(\.documentID) == [readmeDocument.id, guideDocument.id], "drag reordering should preserve order after moving from the end")
+tabs.togglePin(documentID: guideDocument.id)
+expect(tabs.tabs.first?.documentID == guideDocument.id, "pinning should move a tab before unpinned tabs")
+let nextAfterClose = tabs.close(documentID: readmeDocument.id)
+expect(nextAfterClose == guideDocument.id, "closing the active tab should choose a neighboring tab")
+expect(tabs.selectedDocumentID == guideDocument.id, "closing the active tab should update selection")
+tabs.close(documentID: guideDocument.id)
+expect(tabs.tabs.isEmpty, "closing the final tab should empty the tab list")
+expect(tabs.selectedDocumentID == nil, "closing the final tab should clear selection")
+expect(tabs.isEmptyByUserChoice, "closing the final tab should record user-empty state")
+tabs.open(readmeDocument)
+tabs.open(todoDocument)
+let renamedTodoID = root.appendingPathComponent("Notes/Renamed.markdown").standardizedFileURL.path
+tabs.remapDocumentID(sourceID: todoDocument.id, destinationID: renamedTodoID)
+expect(tabs.contains(documentID: renamedTodoID), "tab state should remap renamed document IDs")
+expect(!tabs.contains(documentID: todoDocument.id), "tab state should remove old renamed document IDs")
+tabs.pruneUnavailableDocuments(availableDocumentIDs: [readmeDocument.id], preserving: [renamedTodoID])
+expect(tabs.contains(documentID: renamedTodoID), "tab pruning should preserve known dirty removed tab IDs")
+tabs.pruneUnavailableDocuments(availableDocumentIDs: [readmeDocument.id])
+expect(!tabs.contains(documentID: renamedTodoID), "tab pruning should remove unavailable unpreserved tab IDs")
+
 let outline = MarkdownOutlineParser().parse("""
 # Title
 

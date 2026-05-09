@@ -68,3 +68,30 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
         button.frame = frame.integral
     }
 }
+
+struct WindowDoubleClickZoomArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        DoubleClickZoomView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    final class DoubleClickZoomView: NSView {
+        override var mouseDownCanMoveWindow: Bool {
+            true
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            guard event.buttonNumber == 0 else {
+                super.mouseDown(with: event)
+                return
+            }
+
+            if event.clickCount == 2 {
+                window?.performZoom(nil)
+            } else {
+                window?.performDrag(with: event)
+            }
+        }
+    }
+}

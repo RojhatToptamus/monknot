@@ -39,7 +39,9 @@ struct TopNavigationBar: View {
 
             titleCluster
 
-            Spacer(minLength: scaled(16))
+            WindowDoubleClickZoomArea()
+                .frame(minWidth: scaled(16), maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityHidden(true)
 
             if store.isBusy || store.isDocumentLoading || store.isSaving {
                 ProgressView()
@@ -352,9 +354,6 @@ struct TopNavigationBar: View {
     }
 
     private var titleAccessibilityLabel: String {
-        if store.selectedDocumentExternalChange {
-            return "\(title), file changed on disk"
-        }
         guard !selectedSaveState.isClean else { return title }
         return "\(title), \(selectedSaveState.accessibilityDescription)"
     }
@@ -424,7 +423,7 @@ private struct TopBarSegment: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: scaled(12), weight: isSelected ? .medium : .regular))
+                .font(.system(size: scaled(12), weight: .regular))
                 .foregroundStyle(foreground)
                 .padding(.horizontal, scaled(10))
                 .frame(height: scaled(22))

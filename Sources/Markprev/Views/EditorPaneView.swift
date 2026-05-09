@@ -13,6 +13,13 @@ struct EditorPaneView: View {
     let previewWidthPercent: Double
     let usePointerCursors: Bool
     let fontSmoothing: Bool
+    let tabs: [WorkspaceTabItem]
+    let activeTabID: String?
+    let missingTabIDs: Set<String>
+    let selectTab: (String) -> Void
+    let closeTab: (String) -> Void
+    let togglePinTab: (String) -> Void
+    let reorderTab: (String, String?) -> Void
     @Binding var isTerminalPresented: Bool
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var previewLocation: MarkdownSourceLocation?
@@ -43,6 +50,21 @@ struct EditorPaneView: View {
                 outlineItems: outlineItems,
                 selectOutlineItem: selectOutlineItem,
                 documentSearch: $documentSearch
+            )
+
+            DocumentTabBar(
+                tabs: tabs,
+                selectedDocumentID: activeTabID,
+                missingDocumentIDs: missingTabIDs,
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: theme.uiFontSize,
+                isDisabled: store.isBusy,
+                saveState: { store.saveState(for: $0) },
+                selectTab: selectTab,
+                closeTab: closeTab,
+                togglePin: togglePinTab,
+                reorderTab: reorderTab
             )
 
             GeometryReader { proxy in
@@ -153,10 +175,6 @@ struct EditorPaneView: View {
         return store.workspaceURL
     }
 
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(theme.uiFontSize / 16), base * 0.75)
-    }
-
     @ViewBuilder
     private var editorContent: some View {
         if let selectedDocument = store.selectedDocument {
@@ -174,13 +192,6 @@ struct EditorPaneView: View {
                                 RoundedRectangle(cornerRadius: theme.chromeRadius(10, zoomScale: zoomScale))
                                     .strokeBorder(theme.borderColor, lineWidth: 1)
                             )
-                    }
-                }
-                .overlay(alignment: .top) {
-                    if store.selectedDocumentExternalChange {
-                        ExternalDocumentChangeBanner(theme: theme, zoomScale: zoomScale)
-                            .padding(.top, scaled(10))
-                            .padding(.horizontal, scaled(12))
                     }
                 }
         } else {
@@ -291,42 +302,6 @@ struct EditorPaneView: View {
         withAnimation(drawerAnimation) {
             isTerminalPresented = value
         }
-    }
-}
-
-private struct ExternalDocumentChangeBanner: View {
-    let theme: AppTheme
-    let zoomScale: Double
-
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(theme.uiFontSize / 16), base * 0.75)
-    }
-
-    var body: some View {
-        HStack(spacing: scaled(8)) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: scaled(12), weight: .semibold))
-                .foregroundStyle(Color(hex: theme.semanticColors.diffRemoved))
-                .accessibilityHidden(true)
-
-            Text("File changed on disk. Saving will overwrite the external version.")
-                .font(.system(size: scaled(12), weight: .medium))
-                .foregroundStyle(theme.foregroundColor)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, scaled(12))
-        .padding(.vertical, scaled(8))
-        .background(
-            theme.elevatedSurfaceColor,
-            in: RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                .strokeBorder(theme.borderColor, lineWidth: 1)
-        }
-        .shadow(color: theme.foregroundColor.opacity(theme.isDark ? 0.20 : 0.08), radius: scaled(14), y: scaled(6))
-        .accessibilityLabel("File changed on disk. Saving will overwrite the external version.")
     }
 }
 

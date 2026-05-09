@@ -24,17 +24,13 @@ struct WorkspaceSearchView: View {
             Divider()
                 .overlay(theme.borderColor)
 
-            if state.results.isEmpty {
-                emptyState
-            } else {
-                resultList
-            }
+            searchBody
         }
         .onAppear {
-            isSearchFocused = true
+            focusSearchField()
         }
         .onChange(of: state.focusSerial) { _, _ in
-            isSearchFocused = true
+            focusSearchField()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
@@ -94,48 +90,56 @@ struct WorkspaceSearchView: View {
         .padding(.vertical, scaled(10))
     }
 
-    private var resultList: some View {
+    private var searchBody: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: scaled(2)) {
-                ForEach(state.results) { result in
-                    Button {
-                        openResult(result)
-                    } label: {
-                        VStack(alignment: .leading, spacing: scaled(2)) {
-                            HStack(spacing: scaled(6)) {
-                                Image(systemName: result.kind == .pdf ? "doc.richtext" : "doc.text")
-                                    .font(.system(size: scaled(12)))
-                                    .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.72))
-
-                                Text(result.displayName)
-                                    .font(.system(size: scaled(12), weight: .medium))
-                                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.92))
-                                    .lineLimit(1)
-
-                                Spacer(minLength: 0)
-
-                                Text(result.locationLabel)
-                                    .font(.system(size: scaled(10), weight: .medium, design: .monospaced))
-                                    .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
-                            }
-
-                            Text(highlightedPreview(for: result))
-                                .font(.system(size: scaled(11)))
-                                .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
-                                .lineLimit(2)
-                        }
-                        .padding(.horizontal, scaled(9))
-                        .padding(.vertical, scaled(7))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(SidebarSearchResultButtonStyle(theme: theme, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)))
-                }
+            if state.results.isEmpty {
+                emptyState
+            } else {
+                resultList
             }
-            .padding(.horizontal, scaled(6))
-            .padding(.vertical, scaled(6))
         }
         .scrollContentBackground(.hidden)
+    }
+
+    private var resultList: some View {
+        LazyVStack(alignment: .leading, spacing: scaled(2)) {
+            ForEach(state.results) { result in
+                Button {
+                    openResult(result)
+                } label: {
+                    VStack(alignment: .leading, spacing: scaled(2)) {
+                        HStack(spacing: scaled(6)) {
+                            Image(systemName: result.kind == .pdf ? "doc.richtext" : "doc.text")
+                                .font(.system(size: scaled(12)))
+                                .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.72))
+
+                            Text(result.displayName)
+                                .font(.system(size: scaled(12), weight: .medium))
+                                .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.92))
+                                .lineLimit(1)
+
+                            Spacer(minLength: 0)
+
+                            Text(result.locationLabel)
+                                .font(.system(size: scaled(10), weight: .medium, design: .monospaced))
+                                .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
+                        }
+
+                        Text(highlightedPreview(for: result))
+                            .font(.system(size: scaled(11)))
+                            .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
+                            .lineLimit(2)
+                    }
+                    .padding(.horizontal, scaled(9))
+                    .padding(.vertical, scaled(7))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(SidebarSearchResultButtonStyle(theme: theme, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)))
+            }
+        }
+        .padding(.horizontal, scaled(6))
+        .padding(.vertical, scaled(6))
     }
 
     private func highlightedPreview(for result: WorkspaceSearchResult) -> AttributedString {
@@ -184,8 +188,14 @@ struct WorkspaceSearchView: View {
                 .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .padding(scaled(16))
+    }
+
+    private func focusSearchField() {
+        DispatchQueue.main.async {
+            isSearchFocused = true
+        }
     }
 }
 
