@@ -29,9 +29,10 @@ final class TerminalPTYSession {
     private let exitHandler: @Sendable (Int32?) -> Void
     private var masterFD: Int32 = -1
     private var childPID: pid_t = -1
+    private var processGroupID: pid_t = -1
     private var readSource: DispatchSourceRead?
-    private let ioQueue = DispatchQueue(label: "com.local.Markprev.terminal-pty")
-    private let stateLock = NSLock()
+    private let ioQueue = DispatchQueue(label: "com.local.Markprev.terminal-pty.\(UUID().uuidString)")
+    private let queueKey = DispatchSpecificKey<Void>()
     private var didFinish = false
 
     init(
@@ -40,6 +41,7 @@ final class TerminalPTYSession {
     ) {
         self.outputHandler = outputHandler
         self.exitHandler = exitHandler
+        ioQueue.setSpecific(key: queueKey, value: ())
     }
 
     func start(workingDirectory: URL) throws {
@@ -82,55 +84,56 @@ final class TerminalPTYSession {
 
         masterFD = master
         childPID = pid
-        didFinish = false
-        startReading(masterFD: master)
+        processGroupID = {
+            let groupID = Darwin.getpgid(pid)
+            return groupID > 0 ? groupID : pid
+        }()
+        performOnIOQueueSync {
+            didFinish = false
+            startReadingOnQueue(masterFD: master)
+        }
         waitForChild(pid)
     }
 
     func write(_ string: String) {
         guard masterFD >= 0, let data = string.data(using: .utf8) else { return }
-        data.withUnsafeBytes { buffer in
-            guard let baseAddress = buffer.baseAddress else { return }
-            _ = Darwin.write(masterFD, baseAddress, buffer.count)
+        ioQueue.async { [weak self] in
+            self?.writeOnQueue(data)
         }
     }
 
     func resize(columns: Int, rows: Int) {
-        guard masterFD >= 0 else { return }
-        var windowSize = winsize(
-            ws_row: UInt16(max(1, rows)),
-            ws_col: UInt16(max(1, columns)),
-            ws_xpixel: 0,
-            ws_ypixel: 0
-        )
-        _ = ioctl(masterFD, TIOCSWINSZ, &windowSize)
+        ioQueue.async { [weak self] in
+            guard let self, self.masterFD >= 0 else { return }
+            var windowSize = winsize(
+                ws_row: UInt16(max(1, rows)),
+                ws_col: UInt16(max(1, columns)),
+                ws_xpixel: 0,
+                ws_ypixel: 0
+            )
+            _ = ioctl(self.masterFD, TIOCSWINSZ, &windowSize)
+        }
     }
 
     func stop() {
-        stopReadSource()
-
-        if childPID > 0 {
-            kill(childPID, SIGTERM)
-            childPID = -1
-        }
-
-        if masterFD >= 0 {
-            close(masterFD)
-            masterFD = -1
+        performOnIOQueueSync {
+            stopOnQueue()
         }
     }
 
-    private func startReading(masterFD: Int32) {
+    private func startReadingOnQueue(masterFD: Int32) {
         let source = DispatchSource.makeReadSource(fileDescriptor: masterFD, queue: ioQueue)
         source.setEventHandler { [weak self] in
-            self?.readAvailableOutput()
+            self?.readAvailableOutputOnQueue()
         }
-        source.setCancelHandler { }
+        source.setCancelHandler {
+            Darwin.close(masterFD)
+        }
         readSource = source
-        source.resume()
+        source.activate()
     }
 
-    private func readAvailableOutput() {
+    private func readAvailableOutputOnQueue() {
         guard masterFD >= 0 else { return }
 
         var buffer = [UInt8](repeating: 0, count: 4096)
@@ -139,40 +142,112 @@ final class TerminalPTYSession {
         if count > 0 {
             outputHandler(String(decoding: buffer.prefix(count), as: UTF8.self))
         } else {
-            finish(status: nil)
+            cancelReadSourceOnQueue()
         }
     }
 
-    private func stopReadSource() {
-        readSource?.cancel()
-        readSource = nil
+    private func writeOnQueue(_ data: Data) {
+        guard masterFD >= 0 else { return }
+
+        data.withUnsafeBytes { rawBuffer in
+            guard var pointer = rawBuffer.bindMemory(to: UInt8.self).baseAddress else {
+                return
+            }
+
+            var remaining = data.count
+            while remaining > 0 {
+                let written = Darwin.write(masterFD, pointer, remaining)
+                if written > 0 {
+                    pointer = pointer.advanced(by: written)
+                    remaining -= written
+                } else if errno == EINTR {
+                    continue
+                } else {
+                    break
+                }
+            }
+        }
     }
 
     private func waitForChild(_ pid: pid_t) {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             var status: Int32 = 0
-            waitpid(pid, &status, 0)
-            let exitCode = (status >> 8) & 0xFF
-            self?.finish(status: Int32(exitCode))
+            var result: pid_t
+            repeat {
+                result = waitpid(pid, &status, 0)
+            } while result == -1 && errno == EINTR
+
+            let exitCode = result == pid ? Self.exitCode(from: status) : nil
+            self?.ioQueue.async { [weak self] in
+                self?.finishOnQueue(status: exitCode)
+            }
         }
     }
 
-    private func finish(status: Int32?) {
-        stateLock.lock()
-        if didFinish {
-            stateLock.unlock()
-            return
-        }
+    private func stopOnQueue() {
+        guard !didFinish else { return }
         didFinish = true
-        stateLock.unlock()
 
-        stopReadSource()
-        if masterFD >= 0 {
-            close(masterFD)
+        let pid = childPID
+        let groupID = processGroupID
+        childPID = -1
+        processGroupID = -1
+
+        if pid > 0 {
+            terminateProcess(pid: pid, processGroupID: groupID)
+        }
+
+        cancelReadSourceOnQueue()
+    }
+
+    private func finishOnQueue(status: Int32?) {
+        guard !didFinish else { return }
+        didFinish = true
+        childPID = -1
+        processGroupID = -1
+        cancelReadSourceOnQueue()
+        exitHandler(status)
+    }
+
+    private func cancelReadSourceOnQueue() {
+        if let readSource {
+            self.readSource = nil
+            masterFD = -1
+            readSource.cancel()
+        } else if masterFD >= 0 {
+            Darwin.close(masterFD)
             masterFD = -1
         }
-        childPID = -1
-        exitHandler(status)
+    }
+
+    private func terminateProcess(pid: pid_t, processGroupID: pid_t) {
+        let currentProcessGroupID = Darwin.getpgrp()
+        if processGroupID > 0, processGroupID != currentProcessGroupID {
+            if Darwin.kill(-processGroupID, SIGTERM) == 0 {
+                return
+            }
+        }
+
+        Darwin.kill(pid, SIGTERM)
+    }
+
+    private func performOnIOQueueSync(_ work: () -> Void) {
+        if DispatchQueue.getSpecific(key: queueKey) != nil {
+            work()
+        } else {
+            ioQueue.sync(execute: work)
+        }
+    }
+
+    private static func exitCode(from waitStatus: Int32) -> Int32? {
+        let signal = waitStatus & 0x7F
+        if signal == 0 {
+            return (waitStatus >> 8) & 0xFF
+        }
+        if signal != 0x7F {
+            return 128 + signal
+        }
+        return nil
     }
 
     deinit {

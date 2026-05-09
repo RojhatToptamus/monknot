@@ -84,7 +84,8 @@ App-layer code should stay in `Sources/Markprev` when it uses SwiftUI state, App
 - `ThemeSettingsStore`: persists selected light/dark theme IDs and sanitized per-theme customizations in `UserDefaults`.
 - `MarkdownOutlineStore`: debounces outline parsing off the main actor.
 - `WorkspaceSearchState`: debounces workspace search and runs search work off the main actor.
-- `TerminalSessionStore`: owns terminal transcript, working directory, lifecycle, resize, and PTY interaction.
+- `TerminalSessionCollectionStore`: owns the terminal tab collection, active terminal selection, and per-terminal create/switch/kill/restart actions.
+- `TerminalSessionStore`: owns one terminal's transcript, working directory, lifecycle, resize, and PTY interaction.
 - `TerminalPTYSession`: low-level `/bin/zsh` PTY process management using `forkpty`, dispatch read sources, and wait handling.
 - `MarkdownPDFExportService`: uses an offscreen `WKWebView`, `WKPDFConfiguration`, and `PDFKit.PDFDocument` to export paginated PDFs.
 
@@ -103,6 +104,14 @@ Use Apple-native APIs where they fit the feature:
 - Folder access persistence: security-scoped bookmarks in `WorkspaceStore`.
 - File/folder open panels, reveal in Finder, and pasteboard interactions: AppKit in the app layer.
 - Terminal: Darwin PTY APIs in `TerminalPTYSession`.
+
+Terminal lifecycle notes:
+
+- Multi-terminal UI is explicit: `TerminalSessionCollectionStore` owns tab metadata and one `TerminalSessionStore` per terminal. `TerminalWebView` renders only the active terminal, so inactive terminals do not keep hidden WebKit/xterm views mounted.
+- Hiding the terminal drawer does not kill sessions. Terminal tabs use a single VS Code-style destructive action: killing a terminal stops its PTY if needed and removes that one session/tab.
+- New terminals start in the active document directory when possible, then the workspace directory, then the user's home directory. Existing running terminals keep their original working directory.
+- `TerminalPTYSession` follows Apple's Dispatch source guidance: a read source owns its file descriptor while active, and the cancellation handler closes it after the source releases the descriptor. Relevant docs: https://developer.apple.com/documentation/dispatch/dispatch_source_cancel and https://developer.apple.com/documentation/dispatch/dispatchsource/makereadsource%28filedescriptor%3Aqueue%3A%29.
+- `TerminalWebView` removes WebKit script message handlers during dismantle. Relevant docs: https://developer.apple.com/documentation/webkit/wkscriptmessagehandler.
 
 Before adding custom parsing, indexing, PDF handling, file watching, or rendering code, check whether Foundation, AppKit, PDFKit, WebKit, CoreServices, or UniformTypeIdentifiers already provides the behavior.
 
@@ -232,7 +241,7 @@ script/build_and_run.sh --debug
 - Read `PDFPreviewView`, `WorkspaceSearchService`, and `MarkdownPDFExportService` before changing PDF behavior.
 - Read `QuickLookPreviewView` and `WorkspaceDocumentSupport` before changing generic preview or file-format support.
 - Read `ThemeSettingsStore`, `AppTheme`, and `Color+Theme.swift` before changing theming.
-- Read `TerminalSessionStore`, `TerminalPTYSession`, `TerminalDrawerView`, and `TerminalWebView` before changing terminal behavior.
+- Read `TerminalSessionCollectionStore`, `TerminalSessionStore`, `TerminalPTYSession`, `TerminalDrawerView`, and `TerminalWebView` before changing terminal behavior.
 - Keep `MarkprevCore` independent from SwiftUI/AppKit view types unless there is a deliberate architectural change.
 - Prefer narrowly scoped changes and focused tests over broad refactors.
 - Avoid adding duplicate state to views when the state already belongs to a store.

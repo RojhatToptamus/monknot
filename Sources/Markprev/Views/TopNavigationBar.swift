@@ -312,7 +312,7 @@ struct TopNavigationBar: View {
     private var terminalButton: some View {
         ChromeBarButton(
             systemImage: "terminal",
-            label: isTerminalPresented ? "Close Terminal" : "Open Terminal",
+            label: isTerminalPresented ? "Hide Terminal Panel" : "Open Terminal",
             theme: theme,
             zoomScale: zoomScale,
             uiFontSize: uiFontSize,

@@ -37,7 +37,9 @@ struct TerminalWebView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        context.coordinator.session = session
+        if context.coordinator.session !== session {
+            context.coordinator.switchSession(to: session)
+        }
         context.coordinator.updateTheme(
             theme,
             fontSize: fontSize,
@@ -269,6 +271,15 @@ struct TerminalWebView: NSViewRepresentable {
 
         init(session: TerminalSessionStore) {
             self.session = session
+        }
+
+        func switchSession(to session: TerminalSessionStore) {
+            self.session = session
+            renderedTranscript = ""
+            guard isLoaded, let webView else { return }
+            evaluate("window.markprevReset && window.markprevReset();", in: webView)
+            render(transcript: session.transcript)
+            focus()
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

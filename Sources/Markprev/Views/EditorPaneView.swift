@@ -6,7 +6,7 @@ struct EditorPaneView: View {
     @ObservedObject var store: WorkspaceStore
     @Binding var editorMode: EditorMode
     @AppStorage("Markprev.terminalDrawerWidth") private var terminalDrawerWidth = 420.0
-    @StateObject private var terminalSession = TerminalSessionStore()
+    @StateObject private var terminalSessions = TerminalSessionCollectionStore()
     let theme: AppTheme
     let zoomScale: Double
     let codeFontSize: CGFloat
@@ -82,13 +82,13 @@ struct EditorPaneView: View {
             setTerminalPresented(false)
         }
         .onAppear {
-            terminalSession.setDefaultDirectory(activeTerminalDirectory)
+            terminalSessions.setDefaultDirectory(activeTerminalDirectory)
         }
         .onChange(of: store.workspaceURL) { _, _ in
-            terminalSession.setDefaultDirectory(activeTerminalDirectory)
+            terminalSessions.setDefaultDirectory(activeTerminalDirectory)
         }
         .onChange(of: store.selectedDocument?.id) { _, _ in
-            terminalSession.setDefaultDirectory(activeTerminalDirectory)
+            terminalSessions.setDefaultDirectory(activeTerminalDirectory)
         }
     }
 
@@ -144,7 +144,7 @@ struct EditorPaneView: View {
             .frame(width: terminalResizeGutterWidth)
 
             TerminalDrawerView(
-                session: terminalSession,
+                sessions: terminalSessions,
                 workingDirectory: activeTerminalDirectory,
                 theme: theme,
                 zoomScale: zoomScale,

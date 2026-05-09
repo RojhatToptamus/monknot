@@ -1,12 +1,20 @@
 import Combine
 import Foundation
 
+enum TerminalSessionStatus: Equatable {
+    case idle
+    case running
+    case exited(Int32?)
+    case failed(String)
+}
+
 @MainActor
 final class TerminalSessionStore: ObservableObject {
     @Published private(set) var transcript = ""
     @Published private(set) var isRunning = false
     @Published private(set) var workingDirectory: URL
     @Published private(set) var outputRevision = 0
+    @Published private(set) var status: TerminalSessionStatus = .idle
 
     private let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
     private let maxTranscriptLength = 240_000
@@ -23,18 +31,25 @@ final class TerminalSessionStore: ObservableObject {
     }
 
     func setDefaultDirectory(_ url: URL?) {
-        guard ptySession == nil else { return }
+        guard ptySession == nil, status == .idle else { return }
         workingDirectory = Self.resolvedDirectory(url, fallback: homeDirectory)
     }
 
     func startIfNeeded() {
-        guard ptySession == nil else { return }
+        startIfNeeded(in: nil)
+    }
 
+    func startIfNeeded(in directory: URL?) {
+        guard ptySession == nil else { return }
+        guard status == .idle else { return }
+
+        workingDirectory = Self.resolvedDirectory(directory ?? workingDirectory, fallback: homeDirectory)
         transcript = ""
         pendingOutput = ""
         outputFlushTask?.cancel()
         outputFlushTask = nil
         isRunning = true
+        status = .running
         sessionGeneration += 1
         let generation = sessionGeneration
 
@@ -57,24 +72,9 @@ final class TerminalSessionStore: ObservableObject {
         } catch {
             transcript = "markprev: \(error.localizedDescription)\n"
             isRunning = false
+            status = .failed(error.localizedDescription)
             outputRevision += 1
         }
-    }
-
-    func startOrRestartIfNeeded(in directory: URL?) {
-        let resolvedDirectory = Self.resolvedDirectory(directory, fallback: homeDirectory)
-
-        guard ptySession != nil else {
-            workingDirectory = resolvedDirectory
-            startIfNeeded()
-            return
-        }
-
-        guard workingDirectory.standardizedFileURL != resolvedDirectory.standardizedFileURL else {
-            return
-        }
-
-        restart(in: resolvedDirectory)
     }
 
     func restart() {
@@ -90,12 +90,15 @@ final class TerminalSessionStore: ObservableObject {
         pendingOutput = ""
         outputFlushTask?.cancel()
         outputFlushTask = nil
+        isRunning = false
+        status = .idle
         outputRevision += 1
         startIfNeeded()
     }
 
     func send(_ text: String) {
         startIfNeeded()
+        guard isRunning else { return }
         ptySession?.write(text)
     }
 
@@ -112,6 +115,7 @@ final class TerminalSessionStore: ObservableObject {
         outputFlushTask?.cancel()
         outputFlushTask = nil
         isRunning = false
+        status = .idle
     }
 
     private func enqueueOutput(_ rawOutput: String, generation: Int) {
@@ -159,6 +163,7 @@ final class TerminalSessionStore: ObservableObject {
 
         flushPendingOutput(generation: generation)
         isRunning = false
+        self.status = .exited(status)
         ptySession = nil
 
         if let status {
@@ -174,7 +179,7 @@ final class TerminalSessionStore: ObservableObject {
         ptySession?.stop()
     }
 
-    private static func resolvedDirectory(_ url: URL?, fallback: URL) -> URL {
+    static func resolvedDirectory(_ url: URL?, fallback: URL) -> URL {
         guard let url else { return fallback }
 
         let standardizedURL = url.standardizedFileURL
