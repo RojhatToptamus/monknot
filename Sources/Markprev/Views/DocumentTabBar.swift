@@ -328,6 +328,8 @@ private struct DocumentTabItemView: View {
             return "doc.richtext"
         case .text:
             return "doc.plaintext"
+        case .media:
+            return "play.rectangle"
         case .nativePreview:
             return "doc.viewfinder"
         case .unsupported:

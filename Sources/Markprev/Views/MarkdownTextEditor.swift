@@ -105,11 +105,13 @@ struct MarkdownTextEditor: NSViewRepresentable {
         @Binding private var text: String
         weak var textView: NSTextView?
         private var lastNavigatedLocation: MarkdownSourceLocation?
+        private var searchMatches: [NSRange] = []
         private var highlightedRanges: [NSRange] = []
         private var lastSearchQuery = ""
         private var lastSearchedText = ""
         private var lastNavigationSerial = 0
         private var currentMatchIndex = 0
+        private var lastHighlightTheme: SearchHighlightTheme?
 
         init(text: Binding<String>) {
             self._text = text
@@ -173,7 +175,16 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
 
             let text = textView.string
-            let matches = matchRanges(for: query, in: text)
+            let queryChanged = query != lastSearchQuery
+            let textChanged = text != lastSearchedText
+            let navigationChanged = request.navigationSerial != lastNavigationSerial
+            let highlightTheme = SearchHighlightTheme(theme: theme)
+
+            if queryChanged || textChanged {
+                searchMatches = matchRanges(for: query, in: text)
+            }
+
+            let matches = searchMatches
             guard !matches.isEmpty else {
                 clearSearchHighlights(in: textView)
                 lastSearchQuery = query
@@ -183,9 +194,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 return .init()
             }
 
-            let queryChanged = query != lastSearchQuery
-            let textChanged = text != lastSearchedText
-            let navigationChanged = request.navigationSerial != lastNavigationSerial
+            let previousMatchIndex = currentMatchIndex
 
             if queryChanged {
                 currentMatchIndex = firstMatchIndex(atOrAfter: textView.selectedRange().location, in: matches)
@@ -202,7 +211,17 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 currentMatchIndex = 0
             }
 
-            applySearchHighlights(matches: matches, currentIndex: currentMatchIndex, theme: theme, in: textView)
+            if queryChanged || textChanged || !rangesEqual(highlightedRanges, matches) || lastHighlightTheme != highlightTheme {
+                applySearchHighlights(matches: matches, currentIndex: currentMatchIndex, theme: theme, in: textView)
+            } else if navigationChanged || previousMatchIndex != currentMatchIndex {
+                updateCurrentSearchHighlight(
+                    previousIndex: previousMatchIndex,
+                    currentIndex: currentMatchIndex,
+                    matches: matches,
+                    theme: theme,
+                    in: textView
+                )
+            }
 
             if queryChanged || navigationChanged {
                 let range = matches[currentMatchIndex]
@@ -249,7 +268,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             theme: AppTheme,
             in textView: NSTextView
         ) {
-            clearSearchHighlights(in: textView)
+            clearSearchHighlights(in: textView, resetMatches: false)
 
             guard let layoutManager = textView.layoutManager else { return }
             let accent = NSColor(hex: theme.accent)
@@ -265,11 +284,43 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
 
             highlightedRanges = matches
+            lastHighlightTheme = SearchHighlightTheme(theme: theme)
         }
 
-        private func clearSearchHighlights(in textView: NSTextView) {
+        private func updateCurrentSearchHighlight(
+            previousIndex: Int,
+            currentIndex: Int,
+            matches: [NSRange],
+            theme: AppTheme,
+            in textView: NSTextView
+        ) {
+            guard let layoutManager = textView.layoutManager else { return }
+            guard previousIndex >= 0, previousIndex < matches.count else { return }
+            guard currentIndex >= 0, currentIndex < matches.count else { return }
+
+            let accent = NSColor(hex: theme.accent)
+            let matchColor = accent.withAlphaComponent(theme.isDark ? 0.24 : 0.18)
+            let currentColor = accent.withAlphaComponent(theme.isDark ? 0.44 : 0.30)
+
+            layoutManager.addTemporaryAttribute(
+                .backgroundColor,
+                value: matchColor,
+                forCharacterRange: matches[previousIndex]
+            )
+            layoutManager.addTemporaryAttribute(
+                .backgroundColor,
+                value: currentColor,
+                forCharacterRange: matches[currentIndex]
+            )
+            lastHighlightTheme = SearchHighlightTheme(theme: theme)
+        }
+
+        private func clearSearchHighlights(in textView: NSTextView, resetMatches: Bool = true) {
             guard let layoutManager = textView.layoutManager else {
                 highlightedRanges = []
+                if resetMatches {
+                    searchMatches = []
+                }
                 return
             }
 
@@ -279,6 +330,27 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: range)
             }
             highlightedRanges = []
+            if resetMatches {
+                searchMatches = []
+            }
+            lastHighlightTheme = nil
+        }
+
+        private func rangesEqual(_ lhs: [NSRange], _ rhs: [NSRange]) -> Bool {
+            guard lhs.count == rhs.count else { return false }
+            return zip(lhs, rhs).allSatisfy { left, right in
+                left.location == right.location && left.length == right.length
+            }
+        }
+
+        private struct SearchHighlightTheme: Equatable {
+            let accent: String
+            let isDark: Bool
+
+            init(theme: AppTheme) {
+                self.accent = theme.accent
+                self.isDark = theme.isDark
+            }
         }
     }
 }

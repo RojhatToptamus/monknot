@@ -294,6 +294,68 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    func renameFolder(id: String, to proposedName: String) {
+        guard let workspaceURL, !isBusy else { return }
+
+        let sourceURL = URL(fileURLWithPath: id, isDirectory: true).standardizedFileURL
+        guard sourceURL != workspaceURL.standardizedFileURL else {
+            errorMessage = "Rename the workspace folder in Finder."
+            return
+        }
+
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: sourceURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            return
+        }
+
+        let targetURL: URL
+        do {
+            targetURL = try Self.renamedURL(for: sourceURL, proposedName: proposedName, preservingExtension: false)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+
+        guard targetURL.standardizedFileURL != sourceURL else {
+            return
+        }
+
+        moveItemOnDisk(
+            sourceURL: sourceURL,
+            destinationURL: targetURL,
+            workspaceURL: workspaceURL,
+            failureName: sourceURL.lastPathComponent
+        )
+    }
+
+    func moveItem(id: String, toDirectory directoryURL: URL?) {
+        guard let workspaceURL, !isBusy else { return }
+
+        let sourceURL = URL(fileURLWithPath: id).standardizedFileURL
+        let targetDirectory = (directoryURL ?? workspaceURL).standardizedFileURL
+
+        do {
+            let destinationURL = try Self.moveDestinationURL(
+                for: sourceURL,
+                toDirectory: targetDirectory,
+                workspaceURL: workspaceURL
+            )
+
+            guard destinationURL.standardizedFileURL != sourceURL else {
+                return
+            }
+
+            moveItemOnDisk(
+                sourceURL: sourceURL,
+                destinationURL: destinationURL,
+                workspaceURL: workspaceURL,
+                failureName: sourceURL.lastPathComponent
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func copyDocument(_ document: WorkspaceDocument) {
         guard documents.contains(where: { $0.id == document.id }) else { return }
         pendingDocumentTransfer = WorkspaceDocumentTransfer(document: document, operation: .copy)
@@ -380,6 +442,40 @@ final class WorkspaceStore: ObservableObject {
                 )
             } catch {
                 await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not delete \(document.displayName)")
+            }
+        }
+    }
+
+    private func moveItemOnDisk(
+        sourceURL: URL,
+        destinationURL: URL,
+        workspaceURL: URL,
+        failureName: String
+    ) {
+        let mappings = Self.documentIDMappings(forMoving: sourceURL, to: destinationURL, documents: documents)
+        let preserveSelection = selectedDocumentID
+        let selectedURL = mappings.first(where: { $0.sourceID == selectedDocumentID })?.destinationURL
+        let shouldReloadSelection = selectedURL != nil
+
+        noteInternalFileMutation()
+        let generation = beginDocumentFileOperation()
+
+        workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
+            do {
+                try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
+                let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
+                guard !Task.isCancelled else { return }
+                await self?.finishMovedItem(
+                    result: result,
+                    workspaceURL: workspaceURL,
+                    mappings: mappings,
+                    selectedURL: selectedURL,
+                    preserveSelection: preserveSelection,
+                    reloadSelection: shouldReloadSelection,
+                    generation: generation
+                )
+            } catch {
+                await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not move \(failureName)")
             }
         }
     }
@@ -615,6 +711,31 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
+    private func finishMovedItem(
+        result: WorkspaceDocumentScanResult,
+        workspaceURL: URL,
+        mappings: [WorkspaceDocumentIDMapping],
+        selectedURL: URL?,
+        preserveSelection: String?,
+        reloadSelection: Bool,
+        generation: Int
+    ) {
+        guard generation == workspaceGeneration else { return }
+
+        for mapping in mappings {
+            moveDirtyState(from: mapping.sourceID, to: mapping.destinationID)
+        }
+        publishDocumentIDRemaps(mappings)
+        finishWorkspaceLoad(
+            result: result,
+            workspaceURL: workspaceURL,
+            selectedURL: selectedURL,
+            preserveSelection: preserveSelection,
+            reloadSelection: reloadSelection,
+            generation: generation
+        )
+    }
+
     private func updateSecurityScope(for url: URL) {
         if securityScopedURL == url {
             return
@@ -835,11 +956,16 @@ final class WorkspaceStore: ObservableObject {
 
     private func publishDocumentIDRemap(sourceID: String, destinationID: String) {
         guard sourceID != destinationID else { return }
+        publishDocumentIDRemaps([WorkspaceDocumentIDMapping(sourceID: sourceID, destinationID: destinationID)])
+    }
+
+    private func publishDocumentIDRemaps(_ mappings: [WorkspaceDocumentIDMapping]) {
+        let mappings = mappings.filter { $0.sourceID != $0.destinationID }
+        guard !mappings.isEmpty else { return }
         let serial = (documentIDRemapEvent?.serial ?? 0) + 1
         documentIDRemapEvent = WorkspaceDocumentIDRemapEvent(
             serial: serial,
-            sourceID: sourceID,
-            destinationID: destinationID
+            mappings: mappings
         )
     }
 
@@ -1066,7 +1192,11 @@ final class WorkspaceStore: ObservableObject {
         return "\(baseName).\(pathExtension)"
     }
 
-    nonisolated private static func renamedURL(for sourceURL: URL, proposedName: String) throws -> URL {
+    nonisolated private static func renamedURL(
+        for sourceURL: URL,
+        proposedName: String,
+        preservingExtension: Bool = true
+    ) throws -> URL {
         var fileName = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !fileName.isEmpty else {
             throw WorkspaceDocumentOperationError.emptyName
@@ -1076,7 +1206,7 @@ final class WorkspaceStore: ObservableObject {
             throw WorkspaceDocumentOperationError.nestedName
         }
 
-        if URL(fileURLWithPath: fileName).pathExtension.isEmpty, !sourceURL.pathExtension.isEmpty {
+        if preservingExtension, URL(fileURLWithPath: fileName).pathExtension.isEmpty, !sourceURL.pathExtension.isEmpty {
             fileName += ".\(sourceURL.pathExtension)"
         }
 
@@ -1090,6 +1220,86 @@ final class WorkspaceStore: ObservableObject {
         }
 
         return destinationURL
+    }
+
+    nonisolated private static func moveDestinationURL(
+        for sourceURL: URL,
+        toDirectory targetDirectory: URL,
+        workspaceURL: URL
+    ) throws -> URL {
+        let sourceURL = sourceURL.standardizedFileURL
+        let targetDirectory = targetDirectory.standardizedFileURL
+        let workspaceURL = workspaceURL.standardizedFileURL
+
+        guard isURL(sourceURL, containedIn: workspaceURL) else {
+            throw WorkspaceDocumentOperationError.invalidMove("Move items from inside the current workspace.")
+        }
+
+        var targetIsDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: targetDirectory.path, isDirectory: &targetIsDirectory),
+              targetIsDirectory.boolValue else {
+            throw WorkspaceDocumentOperationError.notDirectory(targetDirectory.lastPathComponent)
+        }
+
+        guard isURL(targetDirectory, containedIn: workspaceURL) else {
+            throw WorkspaceDocumentOperationError.invalidMove("Move items into the current workspace.")
+        }
+
+        var sourceIsDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: sourceURL.path, isDirectory: &sourceIsDirectory) else {
+            throw WorkspaceDocumentOperationError.invalidMove("The item no longer exists.")
+        }
+
+        if sourceIsDirectory.boolValue, isURL(targetDirectory, containedIn: sourceURL) {
+            throw WorkspaceDocumentOperationError.invalidMove("A folder cannot be moved into itself.")
+        }
+
+        if sourceURL.deletingLastPathComponent().standardizedFileURL == targetDirectory {
+            return sourceURL
+        }
+
+        let destinationURL = targetDirectory.appendingPathComponent(sourceURL.lastPathComponent).standardizedFileURL
+        guard !FileManager.default.fileExists(atPath: destinationURL.path) else {
+            throw WorkspaceDocumentOperationError.destinationExists(sourceURL.lastPathComponent)
+        }
+
+        return destinationURL
+    }
+
+    nonisolated private static func documentIDMappings(
+        forMoving sourceURL: URL,
+        to destinationURL: URL,
+        documents: [WorkspaceDocument]
+    ) -> [WorkspaceDocumentIDMapping] {
+        let sourcePath = sourceURL.standardizedFileURL.path
+        let destinationPath = destinationURL.standardizedFileURL.path
+        let sourcePrefix = sourcePath.hasSuffix("/") ? sourcePath : sourcePath + "/"
+
+        return documents.compactMap { document in
+            let documentPath = document.url.standardizedFileURL.path
+            let remappedPath: String?
+
+            if documentPath == sourcePath {
+                remappedPath = destinationPath
+            } else if documentPath.hasPrefix(sourcePrefix) {
+                remappedPath = destinationPath + "/" + documentPath.dropFirst(sourcePrefix.count)
+            } else {
+                remappedPath = nil
+            }
+
+            guard let remappedPath, remappedPath != documentPath else {
+                return nil
+            }
+
+            return WorkspaceDocumentIDMapping(sourceID: documentPath, destinationID: remappedPath)
+        }
+    }
+
+    nonisolated private static func isURL(_ candidate: URL, containedIn directory: URL) -> Bool {
+        let candidatePath = candidate.standardizedFileURL.path
+        let directoryPath = directory.standardizedFileURL.path
+        let prefix = directoryPath.hasSuffix("/") ? directoryPath : directoryPath + "/"
+        return candidatePath == directoryPath || candidatePath.hasPrefix(prefix)
     }
 
     nonisolated private static func uniqueDocumentURL(for sourceURL: URL, in directoryURL: URL) -> URL {
@@ -1149,8 +1359,24 @@ private struct FileSignature: Equatable, Sendable {
 
 struct WorkspaceDocumentIDRemapEvent: Equatable, Sendable {
     let serial: Int
+    let mappings: [WorkspaceDocumentIDMapping]
+
+    var sourceID: String {
+        mappings.first?.sourceID ?? ""
+    }
+
+    var destinationID: String {
+        mappings.first?.destinationID ?? ""
+    }
+}
+
+struct WorkspaceDocumentIDMapping: Equatable, Sendable {
     let sourceID: String
     let destinationID: String
+
+    var destinationURL: URL {
+        URL(fileURLWithPath: destinationID)
+    }
 }
 
 private enum DroppedTarget: Sendable {
@@ -1176,6 +1402,8 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
     case couldNotCreateFile(String)
     case unsupportedPDFExport(String)
     case destinationExists(String)
+    case invalidMove(String)
+    case notDirectory(String)
 
     var errorDescription: String? {
         switch self {
@@ -1190,7 +1418,11 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
         case .unsupportedPDFExport(let name):
             return "\(name) is not a Markdown file."
         case .destinationExists(let name):
-            return "A document named \(name) already exists."
+            return "An item named \(name) already exists."
+        case .invalidMove(let message):
+            return message
+        case .notDirectory(let name):
+            return "\(name) is not a folder."
         }
     }
 }

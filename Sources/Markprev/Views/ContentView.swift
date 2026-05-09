@@ -388,11 +388,13 @@ struct ContentView: View {
 
     private func applyDocumentIDRemapEvent() {
         guard let event = store.documentIDRemapEvent else { return }
-        tabState.remapDocumentID(
-            sourceID: event.sourceID,
-            destinationID: event.destinationID,
-            document: store.document(id: event.destinationID)
-        )
+        for mapping in event.mappings {
+            tabState.remapDocumentID(
+                sourceID: mapping.sourceID,
+                destinationID: mapping.destinationID,
+                document: store.document(id: mapping.destinationID)
+            )
+        }
         publishOpenTabIDs()
     }
 

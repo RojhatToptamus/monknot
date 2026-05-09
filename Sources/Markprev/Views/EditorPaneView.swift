@@ -215,6 +215,9 @@ struct EditorPaneView: View {
                 searchTarget: $pdfSearchTarget
             )
             .help(selectedDocument.relativePath)
+        case .media:
+            MediaPreviewView(url: selectedDocument.url, theme: theme)
+                .help(selectedDocument.relativePath)
         case .nativePreview:
             QuickLookPreviewView(url: selectedDocument.url, theme: theme)
                 .help(selectedDocument.relativePath)

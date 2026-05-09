@@ -140,6 +140,51 @@ struct MarkprevStoreSmokeTests {
         }
         expect(didRenameInactiveTabDocument, "renaming an inactive open document should publish a tab remap event")
 
+        let sourceFolder = root.appendingPathComponent("MoveSource", isDirectory: true)
+        let targetFolder = root.appendingPathComponent("MoveTarget", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceFolder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: targetFolder, withIntermediateDirectories: true)
+        let draggedFileURL = sourceFolder.appendingPathComponent("Dragged.md")
+        try write("# Dragged\n", to: draggedFileURL)
+        store.refresh()
+        let didRefreshMoveFixture = await waitUntil {
+            !store.isBusy &&
+                store.documents.contains { $0.url == draggedFileURL.standardizedFileURL }
+        }
+        expect(didRefreshMoveFixture, "refresh should discover drag-move fixture document")
+
+        store.renameFolder(id: sourceFolder.standardizedFileURL.path, to: "RenamedSource")
+        let renamedFolder = root.appendingPathComponent("RenamedSource", isDirectory: true).standardizedFileURL
+        let renamedDraggedFileURL = renamedFolder.appendingPathComponent("Dragged.md").standardizedFileURL
+        let didRenameFolder = await waitUntil {
+            !store.isBusy &&
+                FileManager.default.fileExists(atPath: renamedFolder.path) &&
+                store.documents.contains { $0.url == renamedDraggedFileURL }
+        }
+        expect(didRenameFolder, "renaming a folder should move nested workspace documents")
+
+        store.moveItem(id: renamedFolder.path, toDirectory: targetFolder)
+        let movedFolder = targetFolder.appendingPathComponent("RenamedSource", isDirectory: true).standardizedFileURL
+        let nestedDraggedFileURL = movedFolder.appendingPathComponent("Dragged.md").standardizedFileURL
+        let didMoveFolderIntoFolder = await waitUntil {
+            !store.isBusy &&
+                FileManager.default.fileExists(atPath: movedFolder.path) &&
+                store.documents.contains { $0.url == nestedDraggedFileURL }
+        }
+        expect(didMoveFolderIntoFolder, "drag-moving a folder into another folder should preserve nested documents")
+
+        store.moveItem(id: nestedDraggedFileURL.path, toDirectory: root)
+        let draggedFileAtRoot = root.appendingPathComponent("Dragged.md").standardizedFileURL
+        let didMoveFileOut = await waitUntil {
+            !store.isBusy &&
+                FileManager.default.fileExists(atPath: draggedFileAtRoot.path) &&
+                store.documents.contains { $0.url == draggedFileAtRoot }
+        }
+        expect(didMoveFileOut, "drag-moving a file to the workspace root should move it out of nested folders")
+
+        store.moveItem(id: movedFolder.path, toDirectory: movedFolder)
+        expect(store.errorMessage?.contains("cannot be moved into itself") == true, "drag-moving a folder into itself should be blocked")
+
         store.setOpenDocumentIDs([first.id])
         store.deleteDocument(first)
         expect(store.errorMessage?.contains("Save or close") == true, "deleting a dirty open document should be blocked")

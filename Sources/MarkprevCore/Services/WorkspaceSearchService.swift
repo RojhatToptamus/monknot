@@ -35,7 +35,7 @@ public struct WorkspaceSearchService: Sendable {
                     document: document,
                     limit: maxMatchesPerFile
                 )
-            case .nativePreview, .unsupported:
+            case .media, .nativePreview, .unsupported:
                 continue
             }
 

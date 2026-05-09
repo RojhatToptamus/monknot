@@ -9,8 +9,14 @@ final class TerminalSessionStore: ObservableObject {
     @Published private(set) var outputRevision = 0
 
     private let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+    private let maxTranscriptLength = 240_000
+    private let trimmedTranscriptLength = 180_000
+    private let maxPendingOutputBeforeFlush = 32_000
+    private let outputFlushIntervalNanoseconds: UInt64 = 16_000_000
     private var ptySession: TerminalPTYSession?
     private var sessionGeneration = 0
+    private var pendingOutput = ""
+    private var outputFlushTask: Task<Void, Never>?
 
     init(initialDirectory: URL? = nil) {
         workingDirectory = Self.resolvedDirectory(initialDirectory, fallback: homeDirectory)
@@ -25,6 +31,9 @@ final class TerminalSessionStore: ObservableObject {
         guard ptySession == nil else { return }
 
         transcript = ""
+        pendingOutput = ""
+        outputFlushTask?.cancel()
+        outputFlushTask = nil
         isRunning = true
         sessionGeneration += 1
         let generation = sessionGeneration
@@ -32,7 +41,7 @@ final class TerminalSessionStore: ObservableObject {
         let session = TerminalPTYSession(
             outputHandler: { [weak self] output in
                 Task { @MainActor in
-                    self?.append(output, generation: generation)
+                    self?.enqueueOutput(output, generation: generation)
                 }
             },
             exitHandler: { [weak self] status in
@@ -78,6 +87,9 @@ final class TerminalSessionStore: ObservableObject {
         ptySession?.stop()
         ptySession = nil
         transcript = ""
+        pendingOutput = ""
+        outputFlushTask?.cancel()
+        outputFlushTask = nil
         outputRevision += 1
         startIfNeeded()
     }
@@ -92,18 +104,52 @@ final class TerminalSessionStore: ObservableObject {
     }
 
     func stop() {
+        flushPendingOutput(generation: sessionGeneration)
         sessionGeneration += 1
         ptySession?.stop()
         ptySession = nil
+        pendingOutput = ""
+        outputFlushTask?.cancel()
+        outputFlushTask = nil
         isRunning = false
     }
 
-    private func append(_ rawOutput: String, generation: Int) {
+    private func enqueueOutput(_ rawOutput: String, generation: Int) {
         guard generation == sessionGeneration else { return }
 
-        transcript += rawOutput
-        if transcript.count > 240_000 {
-            transcript = String(transcript.suffix(180_000))
+        pendingOutput += rawOutput
+
+        if pendingOutput.count >= maxPendingOutputBeforeFlush {
+            outputFlushTask?.cancel()
+            flushPendingOutput(generation: generation)
+            return
+        }
+
+        guard outputFlushTask == nil else { return }
+        let flushInterval = outputFlushIntervalNanoseconds
+        outputFlushTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: flushInterval)
+            } catch {
+                return
+            }
+
+            self?.flushPendingOutput(generation: generation)
+        }
+    }
+
+    private func flushPendingOutput(generation: Int) {
+        outputFlushTask = nil
+        guard generation == sessionGeneration else {
+            pendingOutput = ""
+            return
+        }
+        guard !pendingOutput.isEmpty else { return }
+
+        transcript += pendingOutput
+        pendingOutput = ""
+        if transcript.count > maxTranscriptLength {
+            transcript = String(transcript.suffix(trimmedTranscriptLength))
         }
         outputRevision += 1
     }
@@ -111,6 +157,7 @@ final class TerminalSessionStore: ObservableObject {
     private func handleExit(_ status: Int32?, generation: Int) {
         guard generation == sessionGeneration else { return }
 
+        flushPendingOutput(generation: generation)
         isRunning = false
         ptySession = nil
 
@@ -123,6 +170,7 @@ final class TerminalSessionStore: ObservableObject {
         outputRevision += 1
     }
     deinit {
+        outputFlushTask?.cancel()
         ptySession?.stop()
     }
 

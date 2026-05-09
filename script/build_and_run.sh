@@ -84,6 +84,7 @@ APP_SOURCES=(
   "Sources/Markprev/Views/MarkdownTextEditor.swift"
   "Sources/Markprev/Views/MarkdownPreviewView.swift"
   "Sources/Markprev/Views/PDFPreviewView.swift"
+  "Sources/Markprev/Views/MediaPreviewView.swift"
   "Sources/Markprev/Views/QuickLookPreviewView.swift"
   "Sources/Markprev/Views/PreferencesView.swift"
   "Sources/Markprev/Views/GeneralSettingsView.swift"

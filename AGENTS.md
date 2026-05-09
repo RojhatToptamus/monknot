@@ -106,6 +106,7 @@ Use Apple-native APIs where they fit the feature:
 
 Before adding custom parsing, indexing, PDF handling, file watching, or rendering code, check whether Foundation, AppKit, PDFKit, WebKit, CoreServices, or UniformTypeIdentifiers already provides the behavior.
 
+
 ## State And Concurrency Conventions
 
 - Keep UI state owners on `@MainActor`.
@@ -237,3 +238,4 @@ script/build_and_run.sh --debug
 - Avoid adding duplicate state to views when the state already belongs to a store.
 - Avoid adding new global singletons; inject services where the current design already supports it.
 - If a feature needs platform integration, put the platform wrapper in `Sources/Markprev/Services` and keep reusable policy/model code in `MarkprevCore`.
+- When implementing a feature, first consult the official Apple Developer Documentation and related Apple guides/articles first. Prefer Apple-recommended APIs and lifecycle patterns over ad hoc implementations, and record the relevant docs links in research notes or implementation docs when the decision affects architecture.

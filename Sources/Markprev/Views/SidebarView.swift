@@ -16,6 +16,11 @@ struct SidebarView: View {
     @State private var isDropTargeted = false
     @State private var expandedFolderIDs: Set<String> = []
     @State private var sidebarPrompt: SidebarNamePrompt?
+    @State private var sidebarTreeFrame: CGRect = .zero
+    @State private var sidebarNodeFrames: [String: CGRect] = [:]
+    @State private var draggedSidebarNodeID: String?
+    @State private var moveDropTargetFolderID: String?
+    @State private var isMoveDropTargetingRoot = false
 
     /// Scaled font size — all sidebar typography goes through this.
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -58,7 +63,11 @@ struct SidebarView: View {
                 .ignoresSafeArea(.container, edges: .top)
         }
         .overlay {
-            if isDropTargeted {
+            if isMoveDropTargetingRoot {
+                RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
+                    .stroke(theme.accentColor.opacity(0.85), lineWidth: 2)
+                    .padding(8)
+            } else if isDropTargeted {
                 RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
                     .stroke(theme.accentColor, style: StrokeStyle(lineWidth: 2, dash: [7, 5]))
                     .padding(8)
@@ -115,7 +124,7 @@ struct SidebarView: View {
                 openResult: openWorkspaceSearchResult
             )
         } else if !visibleNodes.isEmpty {
-            ScrollView {
+            SidebarScrollContainer {
                 LazyVStack(alignment: .leading, spacing: scaled(1)) {
                     ForEach(visibleNodes) { visibleNode in
                         SidebarNodeRow(
@@ -132,6 +141,11 @@ struct SidebarView: View {
                             createFolderInFolder: beginCreateFolder(in:),
                             copyFolderPath: copyPath(_:),
                             revealFolderInFinder: revealInFinder(_:),
+                            renameFolder: beginRenameFolder(_:),
+                            isMoveSource: draggedSidebarNodeID == visibleNode.id,
+                            isMoveTarget: moveDropTargetFolderID == visibleNode.id,
+                            dragChanged: handleSidebarNodeDragChanged(id:location:),
+                            dragEnded: handleSidebarNodeDragEnded(id:location:),
                             renameDocument: beginRename(_:),
                             copyPath: copyPath(_:),
                             revealInFinder: revealInFinder(_:),
@@ -144,8 +158,15 @@ struct SidebarView: View {
                 }
                 .padding(.horizontal, scaled(5))
                 .padding(.vertical, scaled(6))
+                .coordinateSpace(name: SidebarMoveCoordinateSpace.name)
+                .background(SidebarTreeFrameReader())
+                .onPreferenceChange(SidebarTreeFramePreferenceKey.self) { frame in
+                    sidebarTreeFrame = frame
+                }
+                .onPreferenceChange(SidebarNodeFramePreferenceKey.self) { frames in
+                    sidebarNodeFrames = frames
+                }
             }
-            .scrollContentBackground(.hidden)
             .contextMenu {
                 sidebarContextMenu
             }
@@ -288,6 +309,77 @@ struct SidebarView: View {
         )
     }
 
+    private func beginRenameFolder(_ node: SidebarNode) {
+        sidebarPrompt = SidebarNamePrompt(
+            operation: .renameFolder(node.id),
+            title: "Rename Folder",
+            message: "Enter a new folder name.",
+            placeholder: "Folder name",
+            confirmTitle: "Rename",
+            name: node.name
+        )
+    }
+
+    private func handleSidebarNodeDragChanged(id: String, location: CGPoint) {
+        guard store.workspaceURL != nil, !store.isBusy, sidebarNodeFrames[id] != nil else { return }
+        draggedSidebarNodeID = id
+        updateMoveDropTarget(at: location, excluding: id)
+    }
+
+    private func handleSidebarNodeDragEnded(id: String, location: CGPoint) {
+        defer {
+            draggedSidebarNodeID = nil
+            moveDropTargetFolderID = nil
+            isMoveDropTargetingRoot = false
+        }
+
+        guard store.workspaceURL != nil, !store.isBusy, sidebarNodeFrames[id] != nil else { return }
+
+        if let folderID = folderID(at: location, excluding: id),
+           let folderURL = visibleNodes.first(where: { $0.id == folderID })?.node.url {
+            store.moveItem(id: id, toDirectory: folderURL)
+            return
+        }
+
+        guard isRootMoveTarget(at: location) else {
+            return
+        }
+
+        store.moveItem(id: id, toDirectory: nil)
+    }
+
+    private func updateMoveDropTarget(at location: CGPoint, excluding draggedID: String) {
+        let folderID = folderID(at: location, excluding: draggedID)
+        moveDropTargetFolderID = folderID
+        isMoveDropTargetingRoot = folderID == nil && isRootMoveTarget(at: location)
+    }
+
+    private func isRootMoveTarget(at location: CGPoint) -> Bool {
+        let horizontalTarget: CGRect
+        if sidebarTreeFrame.width > 0 {
+            horizontalTarget = sidebarTreeFrame.insetBy(dx: -8, dy: 0)
+        } else {
+            guard let minX = sidebarNodeFrames.values.map(\.minX).min(),
+                  let maxX = sidebarNodeFrames.values.map(\.maxX).max() else {
+                return false
+            }
+            horizontalTarget = CGRect(x: minX - 8, y: 0, width: maxX - minX + 16, height: 1)
+        }
+
+        return location.x >= horizontalTarget.minX && location.x <= horizontalTarget.maxX
+    }
+
+    private func folderID(at location: CGPoint, excluding draggedID: String) -> String? {
+        visibleNodes
+            .filter { visibleNode in
+                visibleNode.id != draggedID &&
+                    visibleNode.node.kind == .folder &&
+                    sidebarNodeFrames[visibleNode.id]?.contains(location) == true
+            }
+            .max { lhs, rhs in lhs.depth < rhs.depth }?
+            .id
+    }
+
     private func beginCreateFile(in directoryURL: URL?) {
         let directoryName = directoryURL?.lastPathComponent ?? "workspace root"
         sidebarPrompt = SidebarNamePrompt(
@@ -350,6 +442,8 @@ struct SidebarView: View {
         switch prompt.operation {
         case .renameDocument(let documentID):
             store.renameDocument(id: documentID, to: name)
+        case .renameFolder(let folderID):
+            store.renameFolder(id: folderID, to: name)
         case .createFile(let directoryURL):
             store.createFile(named: name, in: directoryURL)
         case .createFolder(let directoryURL):
@@ -363,6 +457,7 @@ struct SidebarView: View {
 private struct SidebarNamePrompt: Identifiable {
     enum Operation {
         case renameDocument(String)
+        case renameFolder(String)
         case createFile(URL?)
         case createFolder(URL?)
     }
@@ -381,6 +476,49 @@ private struct VisibleSidebarNode: Identifiable {
     let depth: Int
 
     var id: String { node.id }
+}
+
+private enum SidebarMoveCoordinateSpace {
+    static let name = "Markprev.SidebarMoveCoordinateSpace"
+}
+
+private struct SidebarTreeFramePreferenceKey: PreferenceKey {
+    static let defaultValue: CGRect = .zero
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
+}
+
+private struct SidebarTreeFrameReader: View {
+    var body: some View {
+        GeometryReader { proxy in
+            Color.clear.preference(
+                key: SidebarTreeFramePreferenceKey.self,
+                value: proxy.frame(in: .named(SidebarMoveCoordinateSpace.name))
+            )
+        }
+    }
+}
+
+private struct SidebarNodeFramePreferenceKey: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, newValue in newValue })
+    }
+}
+
+private struct SidebarNodeFrameReader: View {
+    let id: String
+
+    var body: some View {
+        GeometryReader { proxy in
+            Color.clear.preference(key: SidebarNodeFramePreferenceKey.self, value: [
+                id: proxy.frame(in: .named(SidebarMoveCoordinateSpace.name))
+            ])
+        }
+    }
 }
 
 // MARK: - Sidebar Header
@@ -529,6 +667,11 @@ private struct SidebarNodeRow: View {
     let createFolderInFolder: (URL) -> Void
     let copyFolderPath: (URL) -> Void
     let revealFolderInFinder: (URL) -> Void
+    let renameFolder: (SidebarNode) -> Void
+    let isMoveSource: Bool
+    let isMoveTarget: Bool
+    let dragChanged: (String, CGPoint) -> Void
+    let dragEnded: (String, CGPoint) -> Void
     let renameDocument: (WorkspaceDocument) -> Void
     let copyPath: (WorkspaceDocument) -> Void
     let revealInFinder: (WorkspaceDocument) -> Void
@@ -536,7 +679,6 @@ private struct SidebarNodeRow: View {
     let copyDocument: (WorkspaceDocument) -> Void
     let cutDocument: (WorkspaceDocument) -> Void
     let deleteDocument: (WorkspaceDocument) -> Void
-
     private var node: SidebarNode {
         visibleNode.node
     }
@@ -559,37 +701,46 @@ private struct SidebarNodeRow: View {
 
     /// Folder row — styled like a Codex section header with a disclosure chevron.
     private var folderRow: some View {
-        Button {
+        HStack(spacing: scaled(8)) {
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                .font(.system(size: scaled(10), weight: .semibold))
+                .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
+                .frame(width: scaled(12))
+
+            Image(systemName: "folder")
+                .font(.system(size: scaled(14)))
+                .foregroundStyle(theme.sidebarColor(theme.accentColor, opacity: 0.8))
+
+            Text(node.name)
+                .font(.system(size: scaled(13), weight: .semibold))
+                .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.9))
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, CGFloat(visibleNode.depth) * scaled(14))
+        .padding(.horizontal, scaled(5))
+        .padding(.vertical, scaled(5))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .sidebarHoverRow(theme: theme, isSelected: false, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+        .background(SidebarNodeFrameReader(id: node.id))
+        .onTapGesture {
             withAnimation(.easeInOut(duration: 0.18)) {
                 toggleFolder(node.id)
             }
-        } label: {
-            HStack(spacing: scaled(8)) {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: scaled(10), weight: .semibold))
-                    .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
-                    .frame(width: scaled(12))
-
-                Image(systemName: "folder")
-                    .font(.system(size: scaled(14)))
-                    .foregroundStyle(theme.sidebarColor(theme.accentColor, opacity: 0.8))
-
-                Text(node.name)
-                    .font(.system(size: scaled(13), weight: .semibold))
-                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.9))
-                    .lineLimit(1)
-
-                Spacer(minLength: 0)
-            }
-            .padding(.leading, CGFloat(visibleNode.depth) * scaled(14))
-            .padding(.horizontal, scaled(5))
-            .padding(.vertical, scaled(5))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(SidebarHoverButtonStyle(theme: theme, isSelected: false, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)))
+        .overlay {
+            if isMoveTarget {
+                RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+                    .stroke(theme.accentColor.opacity(0.85), lineWidth: 1)
+            }
+        }
+        .opacity(isMoveSource ? 0.45 : 1)
+        .highPriorityGesture(sidebarMoveGesture)
         .padding(.top, visibleNode.depth == 0 ? scaled(3) : 0)
         .help(node.relativePath.isEmpty ? node.name : node.relativePath)
+        .accessibilityAddTraits(.isButton)
         .contextMenu {
             folderContextMenu()
         }
@@ -597,44 +748,48 @@ private struct SidebarNodeRow: View {
 
     /// File row — larger text, generous padding, Codex-style selection highlight.
     private var fileRow: some View {
-        Button {
+        HStack(spacing: scaled(10)) {
+            Image(systemName: documentIconName)
+                .font(.system(size: scaled(13)))
+                .foregroundStyle(
+                    isSelected
+                        ? theme.sidebarColor(theme.accentColor, opacity: 0.95)
+                        : theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.7)
+                )
+                .frame(width: scaled(16))
+
+            Text(node.name)
+                .font(.system(size: scaled(14), weight: .regular))
+                .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: isSelected ? 0.98 : 0.88))
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            Spacer(minLength: 0)
+
+            SaveStateIndicator(
+                state: saveState,
+                theme: theme,
+                zoomScale: zoomScale,
+                size: scaled(12)
+            )
+        }
+        .padding(.leading, CGFloat(visibleNode.depth) * scaled(14) + scaled(8))
+        .padding(.trailing, scaled(5))
+        .padding(.vertical, scaled(5))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .sidebarHoverRow(theme: theme, isSelected: isSelected, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+        .background(SidebarNodeFrameReader(id: node.id))
+        .onTapGesture {
             if let document = node.document {
                 selectDocument(document.id)
             }
-        } label: {
-            HStack(spacing: scaled(10)) {
-                Image(systemName: documentIconName)
-                    .font(.system(size: scaled(13)))
-                    .foregroundStyle(
-                        isSelected
-                            ? theme.sidebarColor(theme.accentColor, opacity: 0.95)
-                            : theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.7)
-                    )
-                    .frame(width: scaled(16))
-
-                Text(node.name)
-                    .font(.system(size: scaled(14), weight: .regular))
-                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: isSelected ? 0.98 : 0.88))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
-                Spacer(minLength: 0)
-
-                SaveStateIndicator(
-                    state: saveState,
-                    theme: theme,
-                    zoomScale: zoomScale,
-                    size: scaled(12)
-                )
-            }
-            .padding(.leading, CGFloat(visibleNode.depth) * scaled(14) + scaled(8))
-            .padding(.trailing, scaled(5))
-            .padding(.vertical, scaled(5))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(SidebarHoverButtonStyle(theme: theme, isSelected: isSelected, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)))
+        .opacity(isMoveSource ? 0.45 : 1)
+        .highPriorityGesture(sidebarMoveGesture)
         .help(node.relativePath.isEmpty ? node.name : node.relativePath)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .contextMenu {
             if let document = node.document {
                 documentContextMenu(for: document)
@@ -650,6 +805,8 @@ private struct SidebarNodeRow: View {
             return "doc.text.fill"
         case .text:
             return "doc.plaintext"
+        case .media:
+            return "play.rectangle"
         case .nativePreview:
             return "doc.viewfinder"
         case .unsupported, nil:
@@ -672,6 +829,12 @@ private struct SidebarNodeRow: View {
         }
 
         Divider()
+
+        Button {
+            renameFolder(node)
+        } label: {
+            Label("Rename", systemImage: "pencil")
+        }
 
         Button {
             copyFolderPath(node.url)
@@ -735,6 +898,153 @@ private struct SidebarNodeRow: View {
         } label: {
             Label("Delete", systemImage: "trash")
         }
+    }
+
+    private var sidebarMoveGesture: some Gesture {
+        DragGesture(minimumDistance: scaled(4), coordinateSpace: .named(SidebarMoveCoordinateSpace.name))
+            .onChanged { value in
+                dragChanged(node.id, value.location)
+            }
+            .onEnded { value in
+                dragEnded(node.id, value.location)
+            }
+    }
+}
+
+private struct SidebarScrollContainer<Content: View>: NSViewRepresentable {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> SidebarNativeScrollView<Content> {
+        let scrollView = SidebarNativeScrollView<Content>()
+        let hostingView = SidebarHostingView(rootView: content)
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        hostingView.setContentHuggingPriority(.required, for: .vertical)
+        hostingView.setContentCompressionResistancePriority(.required, for: .vertical)
+
+        scrollView.documentView = hostingView
+        let minimumHeight = hostingView.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.heightAnchor)
+        minimumHeight.priority = .defaultLow
+        NSLayoutConstraint.activate([
+            hostingView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            hostingView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            hostingView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            hostingView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            minimumHeight
+        ])
+
+        context.coordinator.hostingView = hostingView
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: SidebarNativeScrollView<Content>, context: Context) {
+        context.coordinator.hostingView?.rootView = content
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+    }
+
+    final class Coordinator {
+        var hostingView: SidebarHostingView<Content>?
+    }
+}
+
+private final class SidebarHostingView<Content: View>: NSHostingView<Content> {
+    override var mouseDownCanMoveWindow: Bool {
+        false
+    }
+}
+
+private final class SidebarClipView: NSClipView {
+    override var mouseDownCanMoveWindow: Bool {
+        false
+    }
+}
+
+private final class SidebarNativeScrollView<Content: View>: NSScrollView {
+    override var mouseDownCanMoveWindow: Bool {
+        false
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configure()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configure()
+    }
+
+    private func configure() {
+        let clipView = SidebarClipView(frame: bounds)
+        clipView.drawsBackground = false
+        contentView = clipView
+
+        drawsBackground = false
+        borderType = .noBorder
+        hasVerticalScroller = true
+        hasHorizontalScroller = false
+        autohidesScrollers = true
+        scrollerStyle = .overlay
+        horizontalScrollElasticity = .none
+        verticalScrollElasticity = .allowed
+    }
+}
+
+private extension View {
+    func sidebarHoverRow(theme: AppTheme, isSelected: Bool, cornerRadius: CGFloat) -> some View {
+        modifier(SidebarHoverRowModifier(theme: theme, isSelected: isSelected, cornerRadius: cornerRadius))
+    }
+}
+
+private struct SidebarHoverRowModifier: ViewModifier {
+    let theme: AppTheme
+    let isSelected: Bool
+    let cornerRadius: CGFloat
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(selectionBackground)
+            .overlay {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .strokeBorder(theme.borderColor, lineWidth: 1)
+                }
+            }
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+            .onHover { isHovered = $0 }
+            .markprevPointerCursor(enabled: isEnabled)
+    }
+
+    @ViewBuilder
+    private var selectionBackground: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .fill(underlayFill)
+            if isSelected {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(theme.selectedRowColor)
+            }
+        }
+    }
+
+    private var underlayFill: Color {
+        if isSelected {
+            return theme.elevatedSurfaceColor
+        }
+        if isHovered {
+            return theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.055)
+        }
+        return .clear
     }
 }
 

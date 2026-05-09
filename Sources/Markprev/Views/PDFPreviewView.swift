@@ -56,6 +56,7 @@ struct PDFPreviewView: NSViewRepresentable {
         private var lastAppliedTheme: AppTheme?
         private var lastZoomScale: Double?
         private var lastSearchRequest: DocumentSearchRequest?
+        private var lastSearchHighlightTheme: SearchHighlightTheme?
         private var matches: [PDFSelection] = []
         private var currentMatchIndex = 0
         private var pendingSearchTarget: WorkspaceSearchPDFTarget?
@@ -69,6 +70,7 @@ struct PDFPreviewView: NSViewRepresentable {
             matches = []
             currentMatchIndex = 0
             lastSearchRequest = nil
+            lastSearchHighlightTheme = nil
             pdfView.document = PDFDocument(url: standardizedURL)
             pdfView.autoScales = true
             onSearchResult(.init())
@@ -119,10 +121,12 @@ struct PDFPreviewView: NSViewRepresentable {
             }
 
             let queryDidChange = request.query != lastSearchRequest?.query
+            let navigationDidChange = request.navigationSerial != lastSearchRequest?.navigationSerial
             if queryDidChange {
                 matches = document.findString(request.query, withOptions: [.caseInsensitive, .diacriticInsensitive])
                 currentMatchIndex = matches.isEmpty ? 0 : 0
-            } else if request.navigationSerial != lastSearchRequest?.navigationSerial, !matches.isEmpty {
+                lastSearchHighlightTheme = nil
+            } else if navigationDidChange, !matches.isEmpty {
                 switch request.navigationDirection {
                 case .next:
                     currentMatchIndex = (currentMatchIndex + 1) % matches.count
@@ -131,25 +135,33 @@ struct PDFPreviewView: NSViewRepresentable {
                 }
             }
 
+            var shouldRevealSelection = queryDidChange || navigationDidChange
             if let targetIndex = pendingTargetIndex(in: pdfView), !matches.isEmpty {
                 currentMatchIndex = targetIndex
                 pendingSearchTarget = nil
+                shouldRevealSelection = true
                 onSearchTargetConsumed()
             }
 
-            let highlightColor = NSColor(hex: theme.accent).withAlphaComponent(theme.isDark ? 0.38 : 0.28)
-            matches.forEach { selection in
-                selection.color = highlightColor
+            let highlightTheme = SearchHighlightTheme(theme: theme)
+            if lastSearchHighlightTheme != highlightTheme {
+                let highlightColor = NSColor(hex: theme.accent).withAlphaComponent(theme.isDark ? 0.38 : 0.28)
+                matches.forEach { selection in
+                    selection.color = highlightColor
+                }
+                pdfView.highlightedSelections = matches
+                lastSearchHighlightTheme = highlightTheme
             }
-            pdfView.highlightedSelections = matches
 
             if matches.isEmpty {
                 pdfView.clearSelection()
                 onSearchResult(.init())
             } else {
                 let selection = matches[currentMatchIndex]
-                pdfView.setCurrentSelection(selection, animate: true)
-                pdfView.go(to: selection)
+                if shouldRevealSelection {
+                    pdfView.setCurrentSelection(selection, animate: true)
+                    pdfView.go(to: selection)
+                }
                 onSearchResult(DocumentSearchResult(currentIndex: currentMatchIndex + 1, totalCount: matches.count))
             }
 
@@ -163,6 +175,7 @@ struct PDFPreviewView: NSViewRepresentable {
                 pendingSearchTarget = nil
                 onSearchTargetConsumed()
             }
+            lastSearchHighlightTheme = nil
             pdfView.highlightedSelections = nil
             pdfView.clearSelection()
             onSearchResult(.init())
@@ -186,6 +199,16 @@ struct PDFPreviewView: NSViewRepresentable {
             guard pageNumber > 0, let document = pdfView.document else { return false }
             return selection.pages.contains { page in
                 document.index(for: page) + 1 == pageNumber
+            }
+        }
+
+        private struct SearchHighlightTheme: Equatable {
+            let accent: String
+            let isDark: Bool
+
+            init(theme: AppTheme) {
+                self.accent = theme.accent
+                self.isDark = theme.isDark
             }
         }
     }

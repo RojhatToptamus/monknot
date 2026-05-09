@@ -52,6 +52,7 @@ try write("# Markprev", to: root.appendingPathComponent("README.md"))
 try writeSearchablePDF("Guide pdf-only-token", to: root.appendingPathComponent("Guide.pdf"))
 try write("- [ ] item", to: root.appendingPathComponent("Notes/Todo.markdown"))
 try write("ignored", to: root.appendingPathComponent("Notes/image.png"))
+try write("media", to: root.appendingPathComponent("Notes/movie.mp4"))
 try FileManager.default.createSymbolicLink(
     at: root.appendingPathComponent("Loop"),
     withDestinationURL: root
@@ -59,9 +60,10 @@ try FileManager.default.createSymbolicLink(
 
 let scan = try WorkspaceDocumentScanner().scan(rootURL: root)
 let paths = scan.documents.map(\.relativePath).sorted()
-expect(paths == ["Guide.pdf", "Notes/Todo.markdown", "Notes/image.png", "README.md"], "scanner should include regular workspace files")
+expect(paths == ["Guide.pdf", "Notes/Todo.markdown", "Notes/image.png", "Notes/movie.mp4", "README.md"], "scanner should include regular workspace files")
 expect(scan.documents.first(where: { $0.relativePath == "Guide.pdf" })?.kind == .pdf, "scanner should classify PDFs")
 expect(scan.documents.first(where: { $0.relativePath == "Notes/image.png" })?.kind == .nativePreview, "scanner should classify image files as native-preview documents")
+expect(scan.documents.first(where: { $0.relativePath == "Notes/movie.mp4" })?.kind == .media, "scanner should classify video files as media documents")
 expect(!scan.root.children!.contains(where: { $0.name == "Loop" }), "scanner should skip symbolic link directories")
 expect(scan.root.children?.first?.name == "Notes", "folders should sort before documents")
 

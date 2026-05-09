@@ -5,6 +5,7 @@ public enum WorkspaceDocumentKind: String, Codable, Sendable {
     case markdown
     case pdf
     case text
+    case media
     case nativePreview
     case unsupported
 }
@@ -93,9 +94,14 @@ public enum WorkspaceDocumentSupport {
         "doc", "docx", "xls", "xlsx", "ppt", "pptx", "pages", "numbers", "key",
         "epub"
     ]
+    public static let mediaExtensions: Set<String> = [
+        "mov", "mp4", "m4v", "avi", "mpg", "mpeg",
+        "mp3", "m4a", "aac", "wav", "aif", "aiff", "caf", "flac"
+    ]
     public static let supportedExtensions = markdownExtensions
         .union(pdfExtensions)
         .union(textExtensions)
+        .union(mediaExtensions)
         .union(nativePreviewExtensions)
 
     public static func kind(for url: URL) -> WorkspaceDocumentKind? {
@@ -134,6 +140,18 @@ public enum WorkspaceDocumentSupport {
                 contentTypeIdentifier: contentTypeIdentifier,
                 localizedTypeDescription: localizedTypeDescription,
                 capabilities: capabilities(for: .text)
+            )
+        }
+
+        if mediaExtensions.contains(fileExtension) ||
+            type?.conforms(to: .audio) == true ||
+            type?.conforms(to: .movie) == true ||
+            type?.conforms(to: .video) == true {
+            return Classification(
+                kind: .media,
+                contentTypeIdentifier: contentTypeIdentifier,
+                localizedTypeDescription: localizedTypeDescription,
+                capabilities: capabilities(for: .media)
             )
         }
 
@@ -183,6 +201,16 @@ public enum WorkspaceDocumentSupport {
                 canPreview: true,
                 canEditText: true,
                 canSearchText: true,
+                canSearchPDF: false,
+                canExportPDF: false,
+                canShowOutline: false,
+                usesQuickLookPreview: false
+            )
+        case .media:
+            return WorkspaceDocumentCapabilities(
+                canPreview: true,
+                canEditText: false,
+                canSearchText: false,
                 canSearchPDF: false,
                 canExportPDF: false,
                 canShowOutline: false,

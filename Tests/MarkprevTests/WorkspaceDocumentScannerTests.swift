@@ -9,6 +9,7 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
 
         try write("# Readme", to: root.appendingPathComponent("README.md"))
         try write("%PDF-1.7", to: root.appendingPathComponent("Guide.pdf"))
+        try write("media", to: root.appendingPathComponent("Clip.mp4"))
         try write("plain text", to: root.appendingPathComponent("Notes.txt"))
         try FileManager.default.createDirectory(at: root.appendingPathComponent("Notes"), withIntermediateDirectories: true)
         try write("- [x] Done", to: root.appendingPathComponent("Notes/Todo.markdown"))
@@ -19,13 +20,14 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
         let result = try WorkspaceDocumentScanner().scan(rootURL: root)
         let relativePaths = result.documents.map(\.relativePath).sorted()
 
-        XCTAssertEqual(relativePaths, ["Guide.pdf", "Notes.txt", "Notes/Todo.markdown", "Notes/archive.zip", "Notes/image.png", "README.md"])
+        XCTAssertEqual(relativePaths, ["Clip.mp4", "Guide.pdf", "Notes.txt", "Notes/Todo.markdown", "Notes/archive.zip", "Notes/image.png", "README.md"])
+        XCTAssertEqual(result.documents.first(where: { $0.displayName == "Clip.mp4" })?.kind, .media)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "Guide.pdf" })?.kind, .pdf)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "README.md" })?.kind, .markdown)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "Notes.txt" })?.kind, .text)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "image.png" })?.kind, .nativePreview)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "archive.zip" })?.kind, .unsupported)
-        XCTAssertEqual(result.root.children?.map(\.name), ["Empty", "Notes", "Guide.pdf", "Notes.txt", "README.md"])
+        XCTAssertEqual(result.root.children?.map(\.name), ["Empty", "Notes", "Clip.mp4", "Guide.pdf", "Notes.txt", "README.md"])
         XCTAssertEqual(result.root.children?.first(where: { $0.name == "Notes" })?.children?.map(\.name), ["archive.zip", "image.png", "Todo.markdown"])
     }
 
@@ -37,10 +39,13 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
         XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/guide.PDF")))
         XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/notes.TXT")))
         XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/image.PNG")))
+        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/movie.MP4")))
+        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/sound.M4A")))
         XCTAssertTrue(WorkspaceDocumentSupport.isPDFDocument(URL(fileURLWithPath: "/tmp/guide.pdf")))
         XCTAssertTrue(WorkspaceDocumentSupport.isMarkdownDocument(URL(fileURLWithPath: "/tmp/doc.mkd")))
         XCTAssertFalse(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/archive.zip")))
         XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/image.png"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .nativePreview)
+        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/movie.mp4"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .media)
         XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/archive.zip"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .unsupported)
     }
 
@@ -50,6 +55,7 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
         let pdf = WorkspaceDocument(url: root.appendingPathComponent("Guide.pdf"), rootURL: root)
         let text = WorkspaceDocument(url: root.appendingPathComponent("notes.txt"), rootURL: root)
         let image = WorkspaceDocument(url: root.appendingPathComponent("image.png"), rootURL: root)
+        let media = WorkspaceDocument(url: root.appendingPathComponent("movie.mp4"), rootURL: root)
         let archive = WorkspaceDocument(url: root.appendingPathComponent("archive.zip"), rootURL: root)
 
         XCTAssertTrue(markdown.capabilities.canEditText)
@@ -60,6 +66,10 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
         XCTAssertTrue(text.capabilities.canEditText)
         XCTAssertTrue(text.capabilities.canSearchText)
         XCTAssertTrue(image.capabilities.usesQuickLookPreview)
+        XCTAssertTrue(media.capabilities.canPreview)
+        XCTAssertFalse(media.capabilities.canEditText)
+        XCTAssertFalse(media.capabilities.canSearchText)
+        XCTAssertFalse(media.capabilities.usesQuickLookPreview)
         XCTAssertFalse(archive.capabilities.canPreview)
     }
 
