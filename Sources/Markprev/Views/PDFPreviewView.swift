@@ -7,6 +7,7 @@ struct PDFPreviewView: NSViewRepresentable {
     let theme: AppTheme
     let zoomScale: Double
     @Binding var searchState: DocumentSearchState
+    @Binding var searchTarget: WorkspaceSearchPDFTarget?
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -37,6 +38,12 @@ struct PDFPreviewView: NSViewRepresentable {
                 }
             }
         }
+        context.coordinator.onSearchTargetConsumed = {
+            DispatchQueue.main.async {
+                self.searchTarget = nil
+            }
+        }
+        context.coordinator.setPendingSearchTarget(searchTarget)
 
         context.coordinator.loadDocumentIfNeeded(url, in: pdfView)
         context.coordinator.applyAppearance(theme: theme, zoomScale: zoomScale, in: pdfView)
@@ -51,6 +58,8 @@ struct PDFPreviewView: NSViewRepresentable {
         private var lastSearchRequest: DocumentSearchRequest?
         private var matches: [PDFSelection] = []
         private var currentMatchIndex = 0
+        private var pendingSearchTarget: WorkspaceSearchPDFTarget?
+        var onSearchTargetConsumed: () -> Void = {}
 
         func loadDocumentIfNeeded(_ url: URL, in pdfView: PDFView) {
             let standardizedURL = url.standardizedFileURL
@@ -63,6 +72,11 @@ struct PDFPreviewView: NSViewRepresentable {
             pdfView.document = PDFDocument(url: standardizedURL)
             pdfView.autoScales = true
             onSearchResult(.init())
+        }
+
+        func setPendingSearchTarget(_ target: WorkspaceSearchPDFTarget?) {
+            guard let target else { return }
+            pendingSearchTarget = target
         }
 
         func applyAppearance(theme: AppTheme, zoomScale: Double, in pdfView: PDFView) {
@@ -117,6 +131,12 @@ struct PDFPreviewView: NSViewRepresentable {
                 }
             }
 
+            if let targetIndex = pendingTargetIndex(in: pdfView), !matches.isEmpty {
+                currentMatchIndex = targetIndex
+                pendingSearchTarget = nil
+                onSearchTargetConsumed()
+            }
+
             let highlightColor = NSColor(hex: theme.accent).withAlphaComponent(theme.isDark ? 0.38 : 0.28)
             matches.forEach { selection in
                 selection.color = highlightColor
@@ -139,9 +159,34 @@ struct PDFPreviewView: NSViewRepresentable {
         private func clearSearch(in pdfView: PDFView) {
             matches = []
             currentMatchIndex = 0
+            if pendingSearchTarget != nil {
+                pendingSearchTarget = nil
+                onSearchTargetConsumed()
+            }
             pdfView.highlightedSelections = nil
             pdfView.clearSelection()
             onSearchResult(.init())
+        }
+
+        private func pendingTargetIndex(in pdfView: PDFView) -> Int? {
+            guard let target = pendingSearchTarget, !matches.isEmpty else { return nil }
+
+            if target.matchIndex >= 0,
+               target.matchIndex < matches.count,
+               isSelection(matches[target.matchIndex], onPage: target.page, in: pdfView) {
+                return target.matchIndex
+            }
+
+            return matches.firstIndex { selection in
+                isSelection(selection, onPage: target.page, in: pdfView)
+            }
+        }
+
+        private func isSelection(_ selection: PDFSelection, onPage pageNumber: Int, in pdfView: PDFView) -> Bool {
+            guard pageNumber > 0, let document = pdfView.document else { return false }
+            return selection.pages.contains { page in
+                document.index(for: page) + 1 == pageNumber
+            }
         }
     }
 }

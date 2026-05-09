@@ -13,6 +13,7 @@ struct MarkdownPDFExportRequest {
     let previewWidthPercent: Double
     let usePointerCursors: Bool
     let fontSmoothing: Bool
+    let options: MarkdownPDFExportOptions
 }
 
 @MainActor
@@ -33,6 +34,11 @@ final class MarkdownPDFExportService: NSObject, WKNavigationDelegate {
     }
 
     func exportPDF(for request: MarkdownPDFExportRequest, to destinationURL: URL) async throws {
+        let pageSize = request.options.pageSize.resolved()
+        let pageMargin = request.options.marginPreset.points
+        let contentWidth = max(320, pageSize.width - (pageMargin * 2))
+        let contentHeight = max(420, pageSize.height - (pageMargin * 2))
+
         let html = try renderService.htmlDocument(
             markdown: request.markdown,
             appTheme: request.theme,
@@ -44,24 +50,27 @@ final class MarkdownPDFExportService: NSObject, WKNavigationDelegate {
             baseURL: request.baseURL
         )
 
-        let webView = makeWebView()
+        let webView = makeWebView(viewportSize: CGSize(width: contentWidth, height: pageSize.height))
         defer {
             cleanup()
         }
 
         try await load(html: html, baseURL: request.baseURL, in: webView)
-        let contentSize = try await measuredContentSize(in: webView)
+        let contentSize = try await measuredContentSize(in: webView, minimumWidth: contentWidth, minimumHeight: contentHeight)
         webView.setFrameSize(contentSize)
         renderWindow?.setContentSize(contentSize)
 
-        let document = try await paginatedPDFDocument(from: webView, contentSize: contentSize)
+        let document = try await paginatedPDFDocument(
+            from: webView,
+            contentSize: contentSize,
+            pageContentHeight: contentHeight
+        )
         guard document.write(to: destinationURL) else {
             throw MarkdownPDFExportError.missingOutput
         }
     }
 
-    private func makeWebView() -> WKWebView {
-        let viewportSize = CGSize(width: 900, height: 1200)
+    private func makeWebView(viewportSize: CGSize) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
 
@@ -99,9 +108,13 @@ final class MarkdownPDFExportService: NSObject, WKNavigationDelegate {
         if let navigationError {
             throw navigationError
         }
+
+        guard navigationDidFinish else {
+            throw MarkdownPDFExportError.timedOut
+        }
     }
 
-    private func measuredContentSize(in webView: WKWebView) async throws -> CGSize {
+    private func measuredContentSize(in webView: WKWebView, minimumWidth: CGFloat, minimumHeight: CGFloat) async throws -> CGSize {
         try await Task.sleep(nanoseconds: 200_000_000)
 
         let script = """
@@ -109,8 +122,8 @@ final class MarkdownPDFExportService: NSObject, WKNavigationDelegate {
           const root = document.documentElement;
           const body = document.body;
           return {
-            width: Math.ceil(Math.max(root.scrollWidth, body ? body.scrollWidth : 0, 900)),
-            height: Math.ceil(Math.max(root.scrollHeight, body ? body.scrollHeight : 0, 1200))
+            width: Math.ceil(Math.max(root.scrollWidth, body ? body.scrollWidth : 0, \(Int(minimumWidth.rounded())))),
+            height: Math.ceil(Math.max(root.scrollHeight, body ? body.scrollHeight : 0, \(Int(minimumHeight.rounded()))))
           };
         })();
         """
@@ -120,17 +133,17 @@ final class MarkdownPDFExportService: NSObject, WKNavigationDelegate {
             throw MarkdownPDFExportError.invalidContentMetrics
         }
 
-        let width = numericValue(payload["width"]) ?? 900
-        let height = numericValue(payload["height"]) ?? 1200
+        let width = numericValue(payload["width"]) ?? Double(minimumWidth)
+        let height = numericValue(payload["height"]) ?? Double(minimumHeight)
 
         return CGSize(
-            width: max(CGFloat(width), 900),
-            height: max(CGFloat(height), 1200)
+            width: max(CGFloat(width), minimumWidth),
+            height: max(CGFloat(height), minimumHeight)
         )
     }
 
-    private func paginatedPDFDocument(from webView: WKWebView, contentSize: CGSize) async throws -> PDFDocument {
-        let pageHeight = min(max(contentSize.width * 1.4142, 900), 1400)
+    private func paginatedPDFDocument(from webView: WKWebView, contentSize: CGSize, pageContentHeight: CGFloat) async throws -> PDFDocument {
+        let pageHeight = pageContentHeight
         let pageCount = max(1, Int(ceil(contentSize.height / pageHeight)))
         let output = PDFDocument()
 

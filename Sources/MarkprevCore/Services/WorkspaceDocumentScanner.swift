@@ -18,13 +18,13 @@ public struct WorkspaceDocumentScanner: WorkspaceDocumentScanning {
     private let ignoredDirectoryNames: Set<String>
 
     public init(
-        fileManager: FileManager = .default,
         ignoredDirectoryNames: Set<String> = [".build", ".git", "DerivedData", "dist", "node_modules"]
     ) {
         self.ignoredDirectoryNames = ignoredDirectoryNames
     }
 
     public func scan(rootURL: URL) throws -> WorkspaceDocumentScanResult {
+        try Task.checkCancellation()
         var documents: [WorkspaceDocument] = []
         let rootChildren = try scanDirectory(rootURL, rootURL: rootURL, documents: &documents)
         let rootName = rootURL.lastPathComponent.isEmpty ? rootURL.path : rootURL.lastPathComponent
@@ -41,6 +41,7 @@ public struct WorkspaceDocumentScanner: WorkspaceDocumentScanning {
     }
 
     private func scanDirectory(_ directoryURL: URL, rootURL: URL, documents: inout [WorkspaceDocument]) throws -> [SidebarNode] {
+        try Task.checkCancellation()
         let fileManager = FileManager.default
         let contents = try fileManager.contentsOfDirectory(
             at: directoryURL,
@@ -51,6 +52,7 @@ public struct WorkspaceDocumentScanner: WorkspaceDocumentScanning {
         var nodes: [SidebarNode] = []
 
         for url in contents {
+            try Task.checkCancellation()
             let resourceValues = try url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isPackageKey, .isSymbolicLinkKey])
 
             if resourceValues.isDirectory == true, resourceValues.isPackage != true, resourceValues.isSymbolicLink != true {

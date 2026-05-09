@@ -10,14 +10,14 @@ struct TopNavigationBar: View {
     let isSidebarVisible: Bool
     let newMarkdown: () -> Void
     let openFolder: () -> Void
-    let zoomOut: () -> Void
-    let resetZoom: () -> Void
-    let zoomIn: () -> Void
     let toggleTerminal: () -> Void
     let toggleSidebar: () -> Void
+    let outlineItems: [MarkdownOutlineItem]
+    let selectOutlineItem: (MarkdownOutlineItem) -> Void
     @Binding var documentSearch: DocumentSearchState
     @Environment(\.openSettings) private var openSettings
     @FocusState private var isSearchFocused: Bool
+    @State private var isOutlinePresented = false
 
     private var title: String {
         store.selectedDocument?.displayName ?? store.workspaceURL?.lastPathComponent ?? "Markprev"
@@ -102,6 +102,14 @@ struct TopNavigationBar: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .accessibilityAddTraits(.isHeader)
+                .accessibilityLabel(titleAccessibilityLabel)
+
+            TopBarSaveStateIndicator(
+                state: selectedSaveState,
+                theme: theme,
+                zoomScale: zoomScale,
+                size: scaled(12)
+            )
 
             Image(systemName: "ellipsis")
                 .font(.system(size: scaled(11), weight: .semibold))
@@ -118,8 +126,6 @@ struct TopNavigationBar: View {
                     .disabled(store.isDocumentLoading)
             }
 
-            zoomCluster
-
             utilityButtons
         }
     }
@@ -132,6 +138,9 @@ struct TopNavigationBar: View {
             }
 
             HStack(spacing: scaled(2)) {
+                if isMarkdownSelected {
+                    outlineButton
+                }
                 iconButton(systemImage: "folder", label: "Open Folder", isDisabled: store.isBusy, action: openFolder)
                 terminalButton
             }
@@ -180,28 +189,12 @@ struct TopNavigationBar: View {
         .accessibilityLabel("Editor mode")
     }
 
-    private var zoomCluster: some View {
-        HStack(spacing: 0) {
-            iconButton(systemImage: "minus.magnifyingglass", label: "Zoom Out", action: zoomOut)
-
-            Button(action: resetZoom) {
-                Text("\(Int((zoomScale * 100).rounded()))%")
-                    .font(.system(size: scaled(11), weight: .medium, design: .rounded))
-                    .foregroundStyle(theme.mutedForegroundColor)
-                    .frame(width: scaled(40), height: scaled(26))
-                    .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale)))
-            }
-            .buttonStyle(TopBarTextButtonStyle(theme: theme, cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale)))
-            .help("Actual Size")
-            .accessibilityLabel("Actual Size")
-            .markprevPointerCursor()
-
-            iconButton(systemImage: "plus.magnifyingglass", label: "Zoom In", action: zoomIn)
-        }
-    }
-
     private var utilityButtons: some View {
         HStack(spacing: scaled(2)) {
+            if isMarkdownSelected {
+                outlineButton
+            }
+
             iconButton(systemImage: "gearshape", label: "Open Settings", action: openSettings.callAsFunction)
 
             iconButton(
@@ -328,6 +321,44 @@ struct TopNavigationBar: View {
         .accessibilityValue(isTerminalPresented ? "Open" : "Closed")
     }
 
+    private var outlineButton: some View {
+        ChromeBarButton(
+            systemImage: "list.bullet.indent",
+            label: isOutlinePresented ? "Close Outline" : "Open Outline",
+            theme: theme,
+            zoomScale: zoomScale,
+            uiFontSize: uiFontSize,
+            isActive: isOutlinePresented,
+            isDisabled: store.isDocumentLoading,
+            action: { isOutlinePresented.toggle() }
+        )
+        .popover(isPresented: $isOutlinePresented, arrowEdge: .bottom) {
+            MarkdownOutlinePanel(
+                items: outlineItems,
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize,
+                select: { item in
+                    isOutlinePresented = false
+                    selectOutlineItem(item)
+                }
+            )
+        }
+    }
+
+    private var selectedSaveState: DocumentSaveState {
+        guard let id = store.selectedDocumentID else { return .clean }
+        return store.saveState(for: id)
+    }
+
+    private var titleAccessibilityLabel: String {
+        if store.selectedDocumentExternalChange {
+            return "\(title), file changed on disk"
+        }
+        guard !selectedSaveState.isClean else { return title }
+        return "\(title), \(selectedSaveState.accessibilityDescription)"
+    }
+
     private func iconButton(
         systemImage: String,
         label: String,
@@ -343,6 +374,36 @@ struct TopNavigationBar: View {
             isDisabled: isDisabled,
             action: action
         )
+    }
+}
+
+private struct TopBarSaveStateIndicator: View {
+    let state: DocumentSaveState
+    let theme: AppTheme
+    let zoomScale: Double
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            switch state {
+            case .clean:
+                Color.clear
+            case .edited:
+                Circle()
+                    .fill(theme.accentColor)
+                    .frame(width: max(5, size * 0.48), height: max(5, size * 0.48))
+            case .saving:
+                ProgressView()
+                    .controlSize(.mini)
+                    .scaleEffect(max(0.65, zoomScale * 0.78))
+            case .failed:
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: max(9, size * 0.82), weight: .semibold))
+                    .foregroundStyle(Color(hex: theme.semanticColors.diffRemoved))
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityLabel(state.accessibilityDescription)
     }
 }
 
@@ -393,24 +454,6 @@ private struct TopBarSegment: View {
             return theme.controlTrackFillColor
         }
         return .clear
-    }
-}
-
-private struct TopBarTextButtonStyle: ButtonStyle {
-    let theme: AppTheme
-    let cornerRadius: CGFloat
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(theme.controlTrackFillColor)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: cornerRadius)
-                            .fill(theme.foregroundColor.opacity(configuration.isPressed ? 0.055 : 0))
-                    }
-            }
-            .opacity(configuration.isPressed ? 0.94 : 1)
     }
 }
 

@@ -9,20 +9,24 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
 
         try write("# Readme", to: root.appendingPathComponent("README.md"))
         try write("%PDF-1.7", to: root.appendingPathComponent("Guide.pdf"))
+        try write("plain text", to: root.appendingPathComponent("Notes.txt"))
         try FileManager.default.createDirectory(at: root.appendingPathComponent("Notes"), withIntermediateDirectories: true)
         try write("- [x] Done", to: root.appendingPathComponent("Notes/Todo.markdown"))
         try write("not markdown", to: root.appendingPathComponent("Notes/image.png"))
+        try write("binary", to: root.appendingPathComponent("Notes/archive.zip"))
         try FileManager.default.createDirectory(at: root.appendingPathComponent("Empty"), withIntermediateDirectories: true)
 
         let result = try WorkspaceDocumentScanner().scan(rootURL: root)
         let relativePaths = result.documents.map(\.relativePath).sorted()
 
-        XCTAssertEqual(relativePaths, ["Guide.pdf", "Notes/Todo.markdown", "Notes/image.png", "README.md"])
+        XCTAssertEqual(relativePaths, ["Guide.pdf", "Notes.txt", "Notes/Todo.markdown", "Notes/archive.zip", "Notes/image.png", "README.md"])
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "Guide.pdf" })?.kind, .pdf)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "README.md" })?.kind, .markdown)
-        XCTAssertEqual(result.documents.first(where: { $0.displayName == "image.png" })?.kind, .unsupported)
-        XCTAssertEqual(result.root.children?.map(\.name), ["Empty", "Notes", "Guide.pdf", "README.md"])
-        XCTAssertEqual(result.root.children?.first(where: { $0.name == "Notes" })?.children?.map(\.name), ["image.png", "Todo.markdown"])
+        XCTAssertEqual(result.documents.first(where: { $0.displayName == "Notes.txt" })?.kind, .text)
+        XCTAssertEqual(result.documents.first(where: { $0.displayName == "image.png" })?.kind, .nativePreview)
+        XCTAssertEqual(result.documents.first(where: { $0.displayName == "archive.zip" })?.kind, .unsupported)
+        XCTAssertEqual(result.root.children?.map(\.name), ["Empty", "Notes", "Guide.pdf", "Notes.txt", "README.md"])
+        XCTAssertEqual(result.root.children?.first(where: { $0.name == "Notes" })?.children?.map(\.name), ["archive.zip", "image.png", "Todo.markdown"])
     }
 
     func testSupportedExtensionsAreCaseInsensitive() {
@@ -31,10 +35,32 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
         XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/note.mdown")))
         XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/doc.mkd")))
         XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/guide.PDF")))
+        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/notes.TXT")))
+        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/image.PNG")))
         XCTAssertTrue(WorkspaceDocumentSupport.isPDFDocument(URL(fileURLWithPath: "/tmp/guide.pdf")))
         XCTAssertTrue(WorkspaceDocumentSupport.isMarkdownDocument(URL(fileURLWithPath: "/tmp/doc.mkd")))
-        XCTAssertFalse(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/image.png")))
-        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/image.png"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .unsupported)
+        XCTAssertFalse(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/archive.zip")))
+        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/image.png"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .nativePreview)
+        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/archive.zip"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .unsupported)
+    }
+
+    func testDocumentCapabilitiesAreClassifiedByFormatGroup() {
+        let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        let markdown = WorkspaceDocument(url: root.appendingPathComponent("README.md"), rootURL: root)
+        let pdf = WorkspaceDocument(url: root.appendingPathComponent("Guide.pdf"), rootURL: root)
+        let text = WorkspaceDocument(url: root.appendingPathComponent("notes.txt"), rootURL: root)
+        let image = WorkspaceDocument(url: root.appendingPathComponent("image.png"), rootURL: root)
+        let archive = WorkspaceDocument(url: root.appendingPathComponent("archive.zip"), rootURL: root)
+
+        XCTAssertTrue(markdown.capabilities.canEditText)
+        XCTAssertTrue(markdown.capabilities.canExportPDF)
+        XCTAssertTrue(markdown.capabilities.canShowOutline)
+        XCTAssertTrue(pdf.capabilities.canSearchPDF)
+        XCTAssertFalse(pdf.capabilities.canEditText)
+        XCTAssertTrue(text.capabilities.canEditText)
+        XCTAssertTrue(text.capabilities.canSearchText)
+        XCTAssertTrue(image.capabilities.usesQuickLookPreview)
+        XCTAssertFalse(archive.capabilities.canPreview)
     }
 
     func testScannerSkipsSymbolicLinkDirectories() throws {

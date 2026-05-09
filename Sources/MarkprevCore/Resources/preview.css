@@ -264,6 +264,18 @@ mark.markprev-search-current {
   outline-offset: 1px;
 }
 
+[data-source-line] {
+  scroll-margin-top: 24px;
+}
+
+.markprev-source-reveal {
+  border-radius: 8px;
+  outline: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 6px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  transition: background 180ms ease, outline-color 180ms ease;
+}
+
 table {
   display: block;
   width: 100%;

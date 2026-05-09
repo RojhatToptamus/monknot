@@ -13,10 +13,18 @@ struct ContentView: View {
     @AppStorage("Markprev.usePointerCursors") private var usePointerCursors = false
     @AppStorage("Markprev.fontSmoothing") private var fontSmoothing = true
     @SceneStorage("Markprev.isTerminalDrawerOpen") private var isTerminalDrawerOpen = false
+    @StateObject private var workspaceSearch = WorkspaceSearchState()
+    @StateObject private var outlineStore = MarkdownOutlineStore()
     @State private var pendingSourceLocation: MarkdownSourceLocation?
+    @State private var pendingPreviewLocation: MarkdownSourceLocation?
+    @State private var pendingPDFSearchTarget: WorkspaceSearchPDFTarget?
+    @State private var deferredWorkspaceSourceJump: DeferredWorkspaceSourceJump?
     @State private var documentSearch = DocumentSearchState()
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
     @State private var exportNotice: String?
+    @State private var pendingPDFExportDocument: WorkspaceDocument?
+    @State private var pdfExportOptions = MarkdownPDFExportOptions.loadLastUsed()
+    @State private var isExportingPDF = false
     @Environment(\.colorScheme) private var systemColorScheme
 
     private var editorMode: EditorMode {
@@ -40,11 +48,13 @@ struct ContentView: View {
         NavigationSplitView(columnVisibility: $sidebarVisibility) {
             SidebarView(
                 store: store,
+                workspaceSearch: workspaceSearch,
                 theme: activeTheme,
                 zoomScale: zoomScale,
                 uiFontSize: activeTheme.uiFontSize,
                 openFolder: openFolderPanel,
-                exportPDF: exportMarkdownPDF(_:)
+                exportPDF: exportMarkdownPDF(_:),
+                openWorkspaceSearchResult: openWorkspaceSearchResult(_:)
             )
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 440)
         } detail: {
@@ -62,15 +72,16 @@ struct ContentView: View {
                 fontSmoothing: fontSmoothing,
                 isTerminalPresented: $isTerminalDrawerOpen,
                 sourceLocation: $pendingSourceLocation,
+                previewLocation: $pendingPreviewLocation,
+                pdfSearchTarget: $pendingPDFSearchTarget,
                 documentSearch: $documentSearch,
                 isSidebarVisible: sidebarVisibility != .detailOnly,
                 newMarkdown: { store.createMarkdownFile() },
                 openFolder: openFolderPanel,
-                zoomOut: { adjustZoom(by: -0.1) },
-                resetZoom: { zoomScale = 1.0 },
-                zoomIn: { adjustZoom(by: 0.1) },
                 toggleTerminal: toggleTerminalDrawer,
                 toggleSidebar: toggleSidebar,
+                outlineItems: outlineStore.items,
+                selectOutlineItem: openOutlineItem(_:),
                 onPreviewSourceJump: openSourceFromPreview(location:)
             )
         }
@@ -89,6 +100,19 @@ struct ContentView: View {
         }
         .onChange(of: store.selectedDocument?.id) { _, _ in
             documentSearch.updateResult(.init())
+            workspaceSearch.refresh(documents: store.documents)
+            updateOutline()
+            fulfillDeferredWorkspaceSourceJump()
+        }
+        .onChange(of: store.documentText) { _, _ in
+            updateOutline()
+            fulfillDeferredWorkspaceSourceJump()
+        }
+        .onChange(of: store.isDocumentLoading) { _, _ in
+            fulfillDeferredWorkspaceSourceJump()
+        }
+        .onChange(of: store.documents) { _, documents in
+            workspaceSearch.refresh(documents: documents)
         }
         .focusedSceneValue(\.markprevCommandActions, commandActions)
         .alert("Markprev", isPresented: Binding(
@@ -111,6 +135,21 @@ struct ContentView: View {
         } message: {
             Text(exportNotice ?? "")
         }
+        .sheet(item: $pendingPDFExportDocument) { document in
+            MarkdownPDFExportOptionsSheet(
+                document: document,
+                theme: activeTheme,
+                options: $pdfExportOptions,
+                isExporting: isExportingPDF,
+                cancel: {
+                    guard !isExportingPDF else { return }
+                    pendingPDFExportDocument = nil
+                },
+                export: {
+                    performMarkdownPDFExport(document, options: pdfExportOptions)
+                }
+            )
+        }
     }
 
     private func openFolderPanel() {
@@ -128,23 +167,45 @@ struct ContentView: View {
     }
 
     private func exportMarkdownPDF(_ document: WorkspaceDocument) {
+        pendingPDFExportDocument = document
+    }
+
+    private func exportSelectedMarkdownPDF() {
+        guard let document = store.selectedDocument, document.kind == .markdown else {
+            return
+        }
+
+        exportMarkdownPDF(document)
+    }
+
+    private func performMarkdownPDFExport(_ document: WorkspaceDocument, options: MarkdownPDFExportOptions) {
         Task { @MainActor in
+            isExportingPDF = true
+            defer {
+                isExportingPDF = false
+            }
+
             guard let destinationURL = pdfExportDestination(for: document) else {
+                pendingPDFExportDocument = nil
                 return
             }
 
             do {
+                pdfExportOptions = options
+                options.saveLastUsed()
+                let exportTheme = pdfExportTheme(for: options)
                 let markdown = try await store.markdownTextForExport(document)
                 let exporter = try MarkdownPDFExportService.makeDefault()
                 try await exporter.exportPDF(for: MarkdownPDFExportRequest(
                     markdown: markdown,
                     baseURL: store.workspaceURL,
-                    theme: activeTheme,
-                    zoomScale: zoomScale,
-                    codeFontSize: activeTheme.codeFontSize,
+                    theme: exportTheme,
+                    zoomScale: options.resolvedScale,
+                    codeFontSize: exportTheme.codeFontSize,
                     previewWidthPercent: previewWidthPercent,
                     usePointerCursors: usePointerCursors,
-                    fontSmoothing: fontSmoothing
+                    fontSmoothing: fontSmoothing,
+                    options: options
                 ), to: destinationURL)
 
                 if isInsideWorkspace(destinationURL) {
@@ -152,9 +213,21 @@ struct ContentView: View {
                 }
 
                 exportNotice = "Saved \(destinationURL.lastPathComponent)."
+                pendingPDFExportDocument = nil
             } catch {
                 store.errorMessage = "Could not export \(document.displayName) as PDF: \(error.localizedDescription)"
             }
+        }
+    }
+
+    private func pdfExportTheme(for options: MarkdownPDFExportOptions) -> AppTheme {
+        switch options.themeMode {
+        case .current:
+            return activeTheme
+        case .light:
+            return themeStore.effectiveTheme(for: .light)
+        case .dark:
+            return themeStore.effectiveTheme(for: .dark)
         }
     }
 
@@ -193,12 +266,15 @@ struct ContentView: View {
         MarkprevCommandActions(
             newMarkdown: { store.createMarkdownFile() },
             openFolder: openFolderPanel,
+            exportPDF: { exportSelectedMarkdownPDF() },
+            canExportPDF: store.selectedDocument?.kind == .markdown,
             saveDocument: { store.saveSelectedFile() },
             refreshWorkspace: { store.refresh() },
             zoomIn: { adjustZoom(by: 0.1) },
             zoomOut: { adjustZoom(by: -0.1) },
             resetZoom: { zoomScale = 1.0 },
             showFind: { showDocumentSearch() },
+            showWorkspaceSearch: { showWorkspaceSearch() },
             findNext: { documentSearch.findNext() },
             findPrevious: { documentSearch.findPrevious() },
             toggleTerminal: { toggleTerminalDrawer() },
@@ -212,6 +288,11 @@ struct ContentView: View {
         }
 
         let flags = event.modifierFlags.independentFlags
+        if characters == "f", flags.contains(.command), flags.contains(.shift) {
+            showWorkspaceSearch()
+            return true
+        }
+
         let commandFind = characters == "f" && flags.contains(.command)
         let controlFind = characters == "f" && flags.contains(.control)
         if commandFind || controlFind {
@@ -242,6 +323,61 @@ struct ContentView: View {
         documentSearch.present()
     }
 
+    private func showWorkspaceSearch() {
+        guard store.workspaceURL != nil else { return }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            sidebarVisibility = .all
+        }
+        workspaceSearch.present(documents: store.documents)
+    }
+
+    private func openWorkspaceSearchResult(_ result: WorkspaceSearchResult) {
+        let query = workspaceSearch.query
+        workspaceSearch.dismiss()
+        documentSearch.present()
+        documentSearch.setQuery(query)
+
+        if result.kind == .text {
+            editorMode = .source
+        }
+
+        store.selectDocument(id: result.documentID)
+        if result.kind == .text {
+            deferredWorkspaceSourceJump = DeferredWorkspaceSourceJump(
+                documentID: result.documentID,
+                location: MarkdownSourceLocation(line: result.line, offset: result.column)
+            )
+            fulfillDeferredWorkspaceSourceJump()
+        } else if result.kind == .pdf {
+            pendingPDFSearchTarget = result.pdfTarget
+        }
+    }
+
+    private func fulfillDeferredWorkspaceSourceJump() {
+        guard let deferredWorkspaceSourceJump else { return }
+        guard store.selectedDocumentID == deferredWorkspaceSourceJump.documentID else { return }
+        guard !store.isDocumentLoading else { return }
+
+        pendingSourceLocation = deferredWorkspaceSourceJump.location
+        self.deferredWorkspaceSourceJump = nil
+    }
+
+    private func openOutlineItem(_ item: MarkdownOutlineItem) {
+        if editorMode == .preview {
+            pendingPreviewLocation = item.location
+        } else {
+            editorMode = .source
+            pendingSourceLocation = item.location
+        }
+    }
+
+    private func updateOutline() {
+        outlineStore.update(
+            markdown: store.documentText,
+            isMarkdown: store.selectedDocument?.kind == .markdown
+        )
+    }
+
     private func toggleTerminalDrawer() {
         withAnimation(.spring(response: 0.32, dampingFraction: 0.88, blendDuration: 0.08)) {
             isTerminalDrawerOpen.toggle()
@@ -262,4 +398,9 @@ struct ContentView: View {
             sidebarVisibility = sidebarVisibility == .detailOnly ? .all : .detailOnly
         }
     }
+}
+
+private struct DeferredWorkspaceSourceJump: Equatable {
+    let documentID: String
+    let location: MarkdownSourceLocation
 }

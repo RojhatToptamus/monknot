@@ -12,12 +12,21 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var isBusy = false
     @Published private(set) var isDocumentLoading = false
     @Published private(set) var isSaving = false
+    @Published private(set) var documentSaveStates: [String: DocumentSaveState] = [:]
+    @Published private(set) var selectedDocumentExternalChange = false
     @Published var errorMessage: String?
 
     private let scanner: any WorkspaceDocumentScanning
+    private let fileWatcher = WorkspaceFileWatcher()
     private let bookmarkKey = "Markprev.workspaceBookmark"
     private var lastSavedText = ""
-    private var saveWorkItem: DispatchWorkItem?
+    private var dirtyDocumentTexts: [String: String] = [:]
+    private var dirtyDocumentBaselines: [String: String] = [:]
+    private var selectedDocumentSignature: FileSignature?
+    private var externalRefreshWorkItem: DispatchWorkItem?
+    private var externalRefreshTask: Task<Void, Never>?
+    private var externalRefreshGeneration = 0
+    private var suppressWatcherUntil = Date.distantPast
     private var securityScopedURL: URL?
     private var workspaceTask: Task<Void, Never>?
     private var documentTask: Task<Void, Never>?
@@ -37,6 +46,10 @@ final class WorkspaceStore: ObservableObject {
 
     var canPasteDocumentTransfer: Bool {
         pendingDocumentTransfer != nil && workspaceURL != nil
+    }
+
+    func saveState(for documentID: String) -> DocumentSaveState {
+        documentSaveStates[documentID] ?? .clean
     }
 
     func restoreWorkspace() {
@@ -84,15 +97,14 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func refresh() {
-        guard let workspaceURL else { return }
+        guard workspaceURL != nil else { return }
 
-        startWorkspaceLoad(workspaceURL, selecting: nil, persistBookmark: false, preserveSelection: selectedDocumentID, reloadSelection: false)
+        runExternalWorkspaceRefresh()
     }
 
     func selectDocument(id: String?) {
         guard id != selectedDocumentID, !isBusy else { return }
 
-        saveIfNeeded()
         selectedDocumentID = id
         loadSelectedDocument()
     }
@@ -105,7 +117,7 @@ final class WorkspaceStore: ObservableObject {
 
         guard !isBusy else { return }
 
-        saveIfNeeded()
+        noteInternalFileMutation()
 
         let targetDirectory = directoryURL ?? workspaceURL
         let fileURL = nextAvailableMarkdownURL(in: targetDirectory)
@@ -158,7 +170,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        saveIfNeeded()
+        noteInternalFileMutation()
         let generation = beginWorkspaceOperation()
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
@@ -199,7 +211,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        saveIfNeeded()
+        noteInternalFileMutation()
         let preserveSelection = selectedDocumentID
         let generation = beginWorkspaceOperation()
 
@@ -237,23 +249,23 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        let pendingText = pendingTextForFileOperation(documentID: document.id)
         let preserveSelection = selectedDocumentID
         let selectedURL = preserveSelection == document.id ? targetURL : nil
         let shouldReloadSelection = preserveSelection == document.id
+        let sourceID = document.id
+        noteInternalFileMutation()
         let generation = beginDocumentFileOperation()
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
             do {
-                if let pendingText {
-                    try await Self.writeText(pendingText, to: document.url)
-                }
                 try FileManager.default.moveItem(at: document.url, to: targetURL)
                 let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
                 guard !Task.isCancelled else { return }
-                await self?.finishWorkspaceLoad(
+                await self?.finishRenamedDocument(
                     result: result,
                     workspaceURL: workspaceURL,
+                    sourceID: sourceID,
+                    destinationID: targetURL.standardizedFileURL.path,
                     selectedURL: selectedURL,
                     preserveSelection: preserveSelection,
                     reloadSelection: shouldReloadSelection,
@@ -280,7 +292,8 @@ final class WorkspaceStore: ObservableObject {
 
         let targetDirectory = directoryURL ?? workspaceURL
         let sourceURL = transfer.document.url
-        let pendingText = pendingTextForFileOperation(documentID: transfer.document.id)
+        let sourceID = transfer.document.id
+        let dirtyCopyText = transfer.operation == .copy ? dirtyDocumentTexts[sourceID] : nil
 
         if transfer.operation == .cut,
            sourceURL.deletingLastPathComponent().standardizedFileURL == targetDirectory.standardizedFileURL {
@@ -288,18 +301,18 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
+        noteInternalFileMutation()
         let generation = beginDocumentFileOperation()
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
             do {
-                if let pendingText {
-                    try await Self.writeText(pendingText, to: sourceURL)
-                }
-
                 let destinationURL = Self.uniqueDocumentURL(for: sourceURL, in: targetDirectory)
                 switch transfer.operation {
                 case .copy:
                     try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+                    if let dirtyCopyText {
+                        try await Self.writeText(dirtyCopyText, to: destinationURL)
+                    }
                 case .cut:
                     try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
                 }
@@ -310,6 +323,9 @@ final class WorkspaceStore: ObservableObject {
                     result: result,
                     workspaceURL: workspaceURL,
                     selectedURL: destinationURL,
+                    sourceID: sourceID,
+                    destinationID: destinationURL.standardizedFileURL.path,
+                    operation: transfer.operation,
                     generation: generation
                 )
             } catch {
@@ -323,6 +339,7 @@ final class WorkspaceStore: ObservableObject {
 
         let preserveSelection = selectedDocumentID
         let didDeleteSelectedDocument = selectedDocumentID == document.id
+        noteInternalFileMutation()
         let generation = beginDocumentFileOperation()
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
@@ -346,25 +363,24 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func setDocumentText(_ text: String) {
-        guard selectedDocument?.kind == .markdown else { return }
+        guard selectedDocument?.capabilities.canEditText == true else { return }
         guard text != documentText else { return }
 
         documentText = text
         hasUnsavedChanges = text != lastSavedText
-        scheduleAutoSave()
+        updateSaveStateForSelectedDocument()
     }
 
     func saveSelectedFile() {
-        saveWorkItem?.cancel()
-        saveWorkItem = nil
-
-        guard let selectedDocument, selectedDocument.kind == .markdown else { return }
+        guard let selectedDocument, selectedDocument.capabilities.canEditText else { return }
 
         let file = selectedDocument
         let text = documentText
         saveGeneration += 1
         let generation = saveGeneration
+        setSaveState(.saving, for: file.id)
         isSaving = true
+        noteInternalFileMutation()
 
         saveTask = Task.detached(priority: .utility) { [weak self] in
             do {
@@ -386,6 +402,10 @@ final class WorkspaceStore: ObservableObject {
             return documentText
         }
 
+        if let dirtyText = dirtyDocumentTexts[document.id] {
+            return dirtyText
+        }
+
         return try await Self.readText(from: document.url)
     }
 
@@ -396,8 +416,6 @@ final class WorkspaceStore: ObservableObject {
         preserveSelection: String?,
         reloadSelection: Bool
     ) {
-        saveIfNeeded()
-
         let standardizedURL = url.standardizedFileURL
         updateSecurityScope(for: standardizedURL)
 
@@ -416,6 +434,9 @@ final class WorkspaceStore: ObservableObject {
 
         if workspaceURL?.standardizedFileURL != standardizedURL {
             pendingDocumentTransfer = nil
+            dirtyDocumentTexts = [:]
+            dirtyDocumentBaselines = [:]
+            documentSaveStates = [:]
         }
 
         workspaceURL = standardizedURL
@@ -450,8 +471,6 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func beginDocumentFileOperation() -> Int {
-        saveWorkItem?.cancel()
-        saveWorkItem = nil
         saveTask?.cancel()
         saveGeneration += 1
         isSaving = false
@@ -470,6 +489,8 @@ final class WorkspaceStore: ObservableObject {
 
         rootNode = result.root
         documents = result.documents
+        pruneSaveStates()
+        ensureFileWatcher(for: workspaceURL)
 
         if let selectedURL {
             selectedDocumentID = WorkspaceDocument(url: selectedURL, rootURL: workspaceURL).id
@@ -497,10 +518,15 @@ final class WorkspaceStore: ObservableObject {
 
         rootNode = result.root
         documents = result.documents
+        pruneSaveStates()
+        ensureFileWatcher(for: workspaceURL)
         selectedDocumentID = WorkspaceDocument(url: fileURL, rootURL: workspaceURL).id
         documentText = initialText
         lastSavedText = initialText
         hasUnsavedChanges = false
+        selectedDocumentExternalChange = false
+        selectedDocumentSignature = Self.fileSignature(for: fileURL)
+        setSaveState(.clean, for: selectedDocumentID)
         isBusy = false
     }
 
@@ -516,10 +542,16 @@ final class WorkspaceStore: ObservableObject {
         result: WorkspaceDocumentScanResult,
         workspaceURL: URL,
         selectedURL: URL,
+        sourceID: String,
+        destinationID: String,
+        operation: WorkspaceDocumentTransferOperation,
         generation: Int
     ) {
         guard generation == workspaceGeneration else { return }
 
+        if operation == .cut {
+            moveDirtyState(from: sourceID, to: destinationID)
+        }
         pendingDocumentTransfer = nil
         finishWorkspaceLoad(
             result: result,
@@ -531,10 +563,37 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
+    private func finishRenamedDocument(
+        result: WorkspaceDocumentScanResult,
+        workspaceURL: URL,
+        sourceID: String,
+        destinationID: String,
+        selectedURL: URL?,
+        preserveSelection: String?,
+        reloadSelection: Bool,
+        generation: Int
+    ) {
+        guard generation == workspaceGeneration else { return }
+
+        moveDirtyState(from: sourceID, to: destinationID)
+        finishWorkspaceLoad(
+            result: result,
+            workspaceURL: workspaceURL,
+            selectedURL: selectedURL,
+            preserveSelection: preserveSelection,
+            reloadSelection: reloadSelection,
+            generation: generation
+        )
+    }
+
     private func updateSecurityScope(for url: URL) {
         if securityScopedURL == url {
             return
         }
+
+        fileWatcher.stop()
+        externalRefreshWorkItem?.cancel()
+        externalRefreshTask?.cancel()
 
         if let securityScopedURL {
             securityScopedURL.stopAccessingSecurityScopedResource()
@@ -544,8 +603,6 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func loadSelectedDocument() {
-        saveWorkItem?.cancel()
-        saveWorkItem = nil
         documentTask?.cancel()
         documentGeneration += 1
         let generation = documentGeneration
@@ -554,19 +611,35 @@ final class WorkspaceStore: ObservableObject {
             documentText = ""
             lastSavedText = ""
             hasUnsavedChanges = false
+            selectedDocumentSignature = nil
+            selectedDocumentExternalChange = false
             isDocumentLoading = false
             return
         }
 
-        guard selectedDocument.kind == .markdown else {
+        guard selectedDocument.capabilities.canEditText else {
             documentText = ""
             lastSavedText = ""
             hasUnsavedChanges = false
+            selectedDocumentSignature = nil
+            selectedDocumentExternalChange = false
             isDocumentLoading = false
             return
         }
 
         let file = selectedDocument
+
+        if let dirtyText = dirtyDocumentTexts[file.id] {
+            documentText = dirtyText
+            lastSavedText = dirtyDocumentBaselines[file.id] ?? dirtyText
+            hasUnsavedChanges = dirtyText != lastSavedText
+            selectedDocumentSignature = Self.fileSignature(for: file.url)
+            selectedDocumentExternalChange = false
+            isDocumentLoading = false
+            setSaveState(hasUnsavedChanges ? .edited : .clean, for: file.id)
+            return
+        }
+
         isDocumentLoading = true
 
         documentTask = Task.detached(priority: .userInitiated) { [weak self] in
@@ -586,6 +659,11 @@ final class WorkspaceStore: ObservableObject {
         documentText = text
         lastSavedText = text
         hasUnsavedChanges = false
+        dirtyDocumentTexts.removeValue(forKey: file.id)
+        dirtyDocumentBaselines.removeValue(forKey: file.id)
+        selectedDocumentSignature = Self.fileSignature(for: file.url)
+        selectedDocumentExternalChange = false
+        setSaveState(.clean, for: file.id)
         isDocumentLoading = false
     }
 
@@ -595,42 +673,214 @@ final class WorkspaceStore: ObservableObject {
         documentText = ""
         lastSavedText = ""
         hasUnsavedChanges = false
+        selectedDocumentSignature = nil
         isDocumentLoading = false
         errorMessage = "Could not read \(file.displayName): \(error.localizedDescription)"
     }
 
     private func finishSave(fileID: String, text: String, generation: Int) {
-        guard generation == saveGeneration else { return }
+        if generation == saveGeneration {
+            isSaving = false
+        }
 
-        isSaving = false
-
-        guard selectedDocumentID == fileID else { return }
+        guard selectedDocumentID == fileID else {
+            if dirtyDocumentTexts[fileID] == nil || dirtyDocumentTexts[fileID] == text {
+                dirtyDocumentTexts.removeValue(forKey: fileID)
+                dirtyDocumentBaselines.removeValue(forKey: fileID)
+                setSaveState(.clean, for: fileID)
+            } else {
+                dirtyDocumentBaselines[fileID] = text
+                setSaveState(.edited, for: fileID)
+            }
+            return
+        }
 
         lastSavedText = text
         hasUnsavedChanges = documentText != lastSavedText
+        selectedDocumentExternalChange = false
+        if hasUnsavedChanges {
+            dirtyDocumentTexts[fileID] = documentText
+            dirtyDocumentBaselines[fileID] = lastSavedText
+        } else {
+            dirtyDocumentTexts.removeValue(forKey: fileID)
+            dirtyDocumentBaselines.removeValue(forKey: fileID)
+        }
+        selectedDocumentSignature = selectedDocument.map { Self.fileSignature(for: $0.url) } ?? selectedDocumentSignature
+        setSaveState(hasUnsavedChanges ? .edited : .clean, for: fileID)
     }
 
     private func finishSaveFailure(_ error: Error, file: WorkspaceDocument, generation: Int) {
-        guard generation == saveGeneration else { return }
-
-        isSaving = false
+        if generation == saveGeneration {
+            isSaving = false
+        }
+        setSaveState(.failed(error.localizedDescription), for: file.id)
         errorMessage = "Could not save \(file.displayName): \(error.localizedDescription)"
     }
 
-    private func saveIfNeeded() {
-        guard hasUnsavedChanges else { return }
-        saveSelectedFile()
+    private func updateSaveStateForSelectedDocument() {
+        guard let selectedDocumentID else { return }
+        if hasUnsavedChanges {
+            if dirtyDocumentBaselines[selectedDocumentID] == nil {
+                dirtyDocumentBaselines[selectedDocumentID] = lastSavedText
+            }
+            dirtyDocumentTexts[selectedDocumentID] = documentText
+        } else {
+            dirtyDocumentTexts.removeValue(forKey: selectedDocumentID)
+            dirtyDocumentBaselines.removeValue(forKey: selectedDocumentID)
+        }
+        setSaveState(hasUnsavedChanges ? .edited : .clean, for: selectedDocumentID)
     }
 
-    private func pendingTextForFileOperation(documentID: String) -> String? {
-        guard selectedDocumentID == documentID,
-              selectedDocument?.kind == .markdown,
-              hasUnsavedChanges
-        else {
-            return nil
+    private func setSaveState(_ state: DocumentSaveState, for documentID: String?) {
+        guard let documentID else { return }
+        if state.isClean {
+            documentSaveStates.removeValue(forKey: documentID)
+        } else {
+            documentSaveStates[documentID] = state
+        }
+    }
+
+    private func pruneSaveStates() {
+        let documentIDs = Set(documents.map(\.id))
+        documentSaveStates = documentSaveStates.filter { documentIDs.contains($0.key) }
+        dirtyDocumentTexts = dirtyDocumentTexts.filter { documentIDs.contains($0.key) }
+        dirtyDocumentBaselines = dirtyDocumentBaselines.filter { documentIDs.contains($0.key) }
+        if let selectedDocumentID {
+            hasUnsavedChanges = dirtyDocumentTexts[selectedDocumentID] != nil
+        }
+    }
+
+    private func moveDirtyState(from sourceID: String, to destinationID: String) {
+        guard sourceID != destinationID else { return }
+
+        if let text = dirtyDocumentTexts.removeValue(forKey: sourceID) {
+            dirtyDocumentTexts[destinationID] = text
         }
 
-        return documentText
+        if let baseline = dirtyDocumentBaselines.removeValue(forKey: sourceID) {
+            dirtyDocumentBaselines[destinationID] = baseline
+        }
+
+        if let state = documentSaveStates.removeValue(forKey: sourceID) {
+            documentSaveStates[destinationID] = state
+        }
+
+        if selectedDocumentID == sourceID {
+            selectedDocumentID = destinationID
+        }
+    }
+
+    private func noteInternalFileMutation() {
+        suppressWatcherUntil = Date().addingTimeInterval(1.2)
+    }
+
+    private func ensureFileWatcher(for workspaceURL: URL) {
+        fileWatcher.start(rootURL: workspaceURL) { [weak self] event in
+            Task { @MainActor [weak self] in
+                self?.scheduleExternalWorkspaceRefresh(event)
+            }
+        }
+    }
+
+    private func scheduleExternalWorkspaceRefresh(_ event: WorkspaceFileWatcher.Event) {
+        guard workspaceURL != nil else { return }
+        guard Date() >= suppressWatcherUntil else { return }
+        guard event.requiresFullRescan || event.changedPaths.contains(where: { Self.isRelevantExternalChange(path: $0) }) else {
+            return
+        }
+
+        externalRefreshWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                self?.runExternalWorkspaceRefresh()
+            }
+        }
+        externalRefreshWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
+    }
+
+    private func runExternalWorkspaceRefresh() {
+        guard let workspaceURL else { return }
+        guard !isBusy else {
+            scheduleExternalWorkspaceRefresh(.init(changedPaths: [workspaceURL.path], requiresFullRescan: true))
+            return
+        }
+
+        externalRefreshGeneration += 1
+        let generation = externalRefreshGeneration
+        let workspaceOperationGeneration = workspaceGeneration
+        let selectedSignature = selectedDocumentSignature
+
+        externalRefreshTask?.cancel()
+        externalRefreshTask = Task.detached(priority: .utility) { [weak self, scanner] in
+            do {
+                let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
+                guard !Task.isCancelled else { return }
+                await self?.finishExternalWorkspaceRefresh(
+                    result: result,
+                    workspaceURL: workspaceURL,
+                    selectedSignature: selectedSignature,
+                    workspaceOperationGeneration: workspaceOperationGeneration,
+                    generation: generation
+                )
+            } catch {
+                await self?.finishExternalWorkspaceFailure(error, generation: generation)
+            }
+        }
+    }
+
+    private func finishExternalWorkspaceRefresh(
+        result: WorkspaceDocumentScanResult,
+        workspaceURL: URL,
+        selectedSignature: FileSignature?,
+        workspaceOperationGeneration: Int,
+        generation: Int
+    ) {
+        guard generation == externalRefreshGeneration else { return }
+        guard workspaceURL.standardizedFileURL == self.workspaceURL?.standardizedFileURL else { return }
+        guard workspaceOperationGeneration == workspaceGeneration else { return }
+
+        let previousSelection = selectedDocumentID
+        let selectionStillExists = previousSelection.map { id in result.documents.contains { $0.id == id } } ?? false
+
+        if previousSelection != nil, !selectionStillExists, hasUnsavedChanges {
+            selectedDocumentExternalChange = true
+            return
+        }
+
+        rootNode = result.root
+        documents = result.documents
+        pruneSaveStates()
+
+        if selectionStillExists {
+            selectedDocumentID = previousSelection
+        } else {
+            selectedDocumentID = documents.first?.id
+            selectedDocumentSignature = nil
+        }
+
+        guard let selectedDocument, selectedDocument.capabilities.canEditText else { return }
+        let nextSignature = Self.fileSignature(for: selectedDocument.url)
+        if hasUnsavedChanges, selectedSignature != nil, nextSignature != selectedSignature {
+            selectedDocumentExternalChange = true
+        } else if !hasUnsavedChanges, !isSaving, selectedSignature != nil, nextSignature != selectedSignature {
+            loadSelectedDocument()
+        } else if selectedDocumentSignature == nil {
+            selectedDocumentSignature = nextSignature
+        }
+    }
+
+    private func finishExternalWorkspaceFailure(_ error: Error, generation: Int) {
+        guard generation == externalRefreshGeneration else { return }
+        errorMessage = "Could not refresh workspace changes: \(error.localizedDescription)"
+    }
+
+    private static func isRelevantExternalChange(path: String) -> Bool {
+        let ignored = Set([".git", ".build", "DerivedData", "dist", "node_modules"])
+        let components = URL(fileURLWithPath: path).pathComponents
+        return !components.contains { component in
+            ignored.contains(component) || (component.hasPrefix(".") && component != "." && component != "..")
+        }
     }
 
     private func nextAvailableMarkdownURL(in rootURL: URL) -> URL {
@@ -651,25 +901,12 @@ final class WorkspaceStore: ObservableObject {
         return candidate
     }
 
-    private func scheduleAutoSave() {
-        saveWorkItem?.cancel()
-
-        let item = DispatchWorkItem { [weak self] in
-            Task { @MainActor in
-                self?.saveSelectedFile()
-            }
-        }
-        saveWorkItem = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: item)
-    }
-
     nonisolated private static func scanWorkspace(
         _ rootURL: URL,
         scanner: any WorkspaceDocumentScanning
     ) async throws -> WorkspaceDocumentScanResult {
-        try await Task.detached(priority: .userInitiated) {
-            try scanner.scan(rootURL: rootURL)
-        }.value
+        try Task.checkCancellation()
+        return try scanner.scan(rootURL: rootURL)
     }
 
     nonisolated private static func readText(from url: URL) async throws -> String {
@@ -682,6 +919,17 @@ final class WorkspaceStore: ObservableObject {
         try await Task.detached(priority: .utility) {
             try text.write(to: url, atomically: true, encoding: .utf8)
         }.value
+    }
+
+    nonisolated private static func fileSignature(for url: URL) -> FileSignature? {
+        guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]) else {
+            return nil
+        }
+
+        return FileSignature(
+            modificationDate: values.contentModificationDate,
+            fileSize: values.fileSize.map(Int64.init)
+        )
     }
 
     private static func suggestedChildName(in directoryURL: URL?, baseName: String, pathExtension: String?) -> String {
@@ -807,11 +1055,19 @@ final class WorkspaceStore: ObservableObject {
     }
 
     deinit {
+        fileWatcher.stop()
+        externalRefreshWorkItem?.cancel()
+        externalRefreshTask?.cancel()
         workspaceTask?.cancel()
         documentTask?.cancel()
         saveTask?.cancel()
         securityScopedURL?.stopAccessingSecurityScopedResource()
     }
+}
+
+private struct FileSignature: Equatable, Sendable {
+    let modificationDate: Date?
+    let fileSize: Int64?
 }
 
 private enum DroppedTarget: Sendable {

@@ -13,6 +13,7 @@
   window.markprevRender = render;
   window.markprevApplyAppearance = applyAppearance;
   window.markprevSearch = searchDocument;
+  window.markprevRevealSourceLine = revealSourceLine;
   render(window.markprev || {});
   target.addEventListener("dblclick", handleSourceJump);
 
@@ -184,6 +185,47 @@
     if (shouldScroll && current) {
       current.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
     }
+  }
+
+  function revealSourceLine(nextState = {}) {
+    const line = Number(nextState.line || 0);
+    if (!Number.isFinite(line) || line < 1) return false;
+
+    const sourceElements = Array.from(target.querySelectorAll("[data-source-line]"));
+    if (sourceElements.length === 0) return false;
+
+    let bestElement = null;
+    let bestLine = 0;
+    let nextElement = null;
+    let nextLine = Number.MAX_SAFE_INTEGER;
+
+    for (const element of sourceElements) {
+      const sourceLine = Number(element.dataset.sourceLine || "0");
+      if (!Number.isFinite(sourceLine) || sourceLine < 1) continue;
+
+      if (sourceLine <= line && sourceLine >= bestLine) {
+        bestElement = element;
+        bestLine = sourceLine;
+      } else if (sourceLine > line && sourceLine < nextLine) {
+        nextElement = element;
+        nextLine = sourceLine;
+      }
+    }
+
+    const targetElement = bestElement || nextElement;
+    if (!targetElement) return false;
+
+    target.querySelectorAll(".markprev-source-reveal").forEach((element) => {
+      element.classList.remove("markprev-source-reveal");
+    });
+    targetElement.classList.add("markprev-source-reveal");
+    targetElement.scrollIntoView({ block: "start", inline: "nearest", behavior: "smooth" });
+
+    window.setTimeout(() => {
+      targetElement.classList.remove("markprev-source-reveal");
+    }, 1400);
+
+    return true;
   }
 
   function captureScrollAnchor() {

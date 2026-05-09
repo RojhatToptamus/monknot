@@ -11,6 +11,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
     let previewWidthPercent: Double
     let usePointerCursors: Bool
     let fontSmoothing: Bool
+    @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var searchState: DocumentSearchState
     let onSourceJump: (MarkdownSourceLocation) -> Void
 
@@ -43,6 +44,12 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 }
             }
         }
+        context.coordinator.onSourceRevealConsumed = {
+            DispatchQueue.main.async {
+                self.sourceLocation = nil
+            }
+        }
+        context.coordinator.setPendingSourceReveal(sourceLocation)
 
         guard let service = context.coordinator.service else {
             webView.loadHTMLString(Self.errorHTML("Preview resources could not be loaded."), baseURL: nil)
@@ -68,7 +75,8 @@ struct MarkdownPreviewView: NSViewRepresentable {
             shellRequest,
             pendingAppearance: appearanceRequest,
             pendingContent: contentRequest,
-            pendingSearch: searchState
+            pendingSearch: searchState,
+            pendingSourceReveal: sourceLocation
         ) {
             let renderTask = Task { [weak webView, service] in
                 do {
@@ -105,12 +113,14 @@ struct MarkdownPreviewView: NSViewRepresentable {
 
         guard context.coordinator.shouldRenderContent(contentRequest) else {
             applySearch(searchState, in: webView, coordinator: context.coordinator)
+            applySourceReveal(in: webView, coordinator: context.coordinator)
             return
         }
         renderContent(
             contentRequest,
             themeName: appearanceRequest.themeName,
             searchState: searchState,
+            sourceLocation: sourceLocation,
             in: webView,
             coordinator: context.coordinator
         )
@@ -127,6 +137,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         _ request: PreviewContentRequest,
         themeName: String,
         searchState: DocumentSearchState,
+        sourceLocation: MarkdownSourceLocation?,
         in webView: WKWebView,
         coordinator: Coordinator
     ) {
@@ -142,6 +153,10 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 } else {
                     coordinator.markRenderedContent(request)
                     coordinator.applySearch(searchState, in: webView)
+                    coordinator.setPendingSourceReveal(sourceLocation)
+                    coordinator.applyPendingSourceReveal(in: webView) {
+                        self.sourceLocation = nil
+                    }
                 }
             }
         } catch {
@@ -152,6 +167,13 @@ struct MarkdownPreviewView: NSViewRepresentable {
     private func applySearch(_ state: DocumentSearchState, in webView: WKWebView, coordinator: Coordinator) {
         guard coordinator.isShellLoaded else { return }
         coordinator.applySearch(state, in: webView)
+    }
+
+    private func applySourceReveal(in webView: WKWebView, coordinator: Coordinator) {
+        guard coordinator.isShellLoaded else { return }
+        coordinator.applyPendingSourceReveal(in: webView) {
+            self.sourceLocation = nil
+        }
     }
 
     private static func javaScriptPayload(markdown: String, themeName: String) throws -> String {
@@ -193,6 +215,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         let service = try? MarkdownRenderService()
         var onSourceJump: (MarkdownSourceLocation) -> Void
         var onSearchResult: (DocumentSearchResult) -> Void = { _ in }
+        var onSourceRevealConsumed: () -> Void = {}
         private var shellTask: Task<Void, Never>?
         private var lastShellRequest: PreviewShellRequest?
         private var lastAppliedAppearance: PreviewAppearanceRequest?
@@ -202,6 +225,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         private var pendingAppearance: PreviewAppearanceRequest?
         private var pendingContent: PreviewContentRequest?
         private var pendingSearch: DocumentSearchState?
+        private var pendingSourceReveal: MarkdownSourceLocation?
         private(set) var isShellLoaded = false
 
         init(onSourceJump: @escaping (MarkdownSourceLocation) -> Void) {
@@ -212,11 +236,13 @@ struct MarkdownPreviewView: NSViewRepresentable {
             _ request: PreviewShellRequest,
             pendingAppearance: PreviewAppearanceRequest,
             pendingContent: PreviewContentRequest,
-            pendingSearch: DocumentSearchState
+            pendingSearch: DocumentSearchState,
+            pendingSourceReveal: MarkdownSourceLocation?
         ) -> Bool {
             self.pendingAppearance = pendingAppearance
             self.pendingContent = pendingContent
             self.pendingSearch = pendingSearch
+            self.pendingSourceReveal = pendingSourceReveal ?? self.pendingSourceReveal
             if request == lastShellRequest {
                 if isShellLoaded || shellTask != nil {
                     return false
@@ -248,6 +274,11 @@ struct MarkdownPreviewView: NSViewRepresentable {
 
         fileprivate func setPendingContent(_ request: PreviewContentRequest) {
             pendingContent = request
+        }
+
+        fileprivate func setPendingSourceReveal(_ location: MarkdownSourceLocation?) {
+            guard let location else { return }
+            pendingSourceReveal = location
         }
 
         func setShellTask(_ task: Task<Void, Never>) {
@@ -324,6 +355,29 @@ struct MarkdownPreviewView: NSViewRepresentable {
             }
         }
 
+        fileprivate func applyPendingSourceReveal(in webView: WKWebView, onConsumed: @escaping () -> Void) {
+            guard let location = pendingSourceReveal, lastRenderedContent != nil else { return }
+
+            let payload: [String: Any] = [
+                "line": location.line,
+                "offset": location.offset
+            ]
+
+            do {
+                let json = try MarkdownPreviewView.javaScriptPayload(payload)
+                webView.evaluateJavaScript("window.markprevRevealSourceLine && window.markprevRevealSourceLine(\(json));") { [weak self] value, _ in
+                    let didReveal = (value as? NSNumber)?.boolValue ?? value as? Bool ?? false
+                    guard didReveal else { return }
+                    self?.pendingSourceReveal = nil
+                    DispatchQueue.main.async {
+                        onConsumed()
+                    }
+                }
+            } catch {
+                onConsumed()
+            }
+        }
+
         private static func parseSearchResult(_ value: Any?) -> DocumentSearchResult {
             guard let payload = value as? [String: Any] else {
                 return .init()
@@ -362,6 +416,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
                     if let pendingSearch = self.pendingSearch {
                         self.applySearch(pendingSearch, in: webView)
                     }
+                    self.applyPendingSourceReveal(in: webView, onConsumed: self.onSourceRevealConsumed)
                 }
             } catch {
                 webView.loadHTMLString(MarkdownPreviewView.errorHTML(error.localizedDescription), baseURL: nil)

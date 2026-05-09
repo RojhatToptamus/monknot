@@ -5,11 +5,13 @@ import UniformTypeIdentifiers
 
 struct SidebarView: View {
     @ObservedObject var store: WorkspaceStore
+    @ObservedObject var workspaceSearch: WorkspaceSearchState
     let theme: AppTheme
     let zoomScale: Double
     let uiFontSize: Double
     let openFolder: () -> Void
     let exportPDF: (WorkspaceDocument) -> Void
+    let openWorkspaceSearchResult: (WorkspaceSearchResult) -> Void
     @State private var isDropTargeted = false
     @State private var expandedFolderIDs: Set<String> = []
     @State private var sidebarPrompt: SidebarNamePrompt?
@@ -27,56 +29,28 @@ struct SidebarView: View {
         VStack(spacing: 0) {
             SidebarWindowChrome(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize)
 
-            SidebarHeader(store: store, theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize)
+            SidebarHeader(
+                store: store,
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize,
+                showWorkspaceSearch: {
+                    workspaceSearch.present(documents: store.documents)
+                }
+            )
 
             Divider()
                 .overlay(theme.borderColor)
 
-            if !visibleNodes.isEmpty {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: scaled(1)) {
-                        ForEach(visibleNodes) { visibleNode in
-                            SidebarNodeRow(
-                                visibleNode: visibleNode,
-                                selectedDocumentID: store.selectedDocumentID,
-                                isExpanded: expandedFolderIDs.contains(visibleNode.node.id),
-                                theme: theme,
-                                zoomScale: zoomScale,
-                                uiFontSize: uiFontSize,
-                                toggleFolder: toggleFolder(_:),
-                                selectDocument: store.selectDocument(id:),
-                                createFileInFolder: beginCreateFile(in:),
-                                createFolderInFolder: beginCreateFolder(in:),
-                                copyFolderPath: copyPath(_:),
-                                revealFolderInFinder: revealInFinder(_:),
-                                renameDocument: beginRename(_:),
-                                copyPath: copyPath(_:),
-                                revealInFinder: revealInFinder(_:),
-                                exportPDF: exportPDF,
-                                copyDocument: copyDocument(_:),
-                                cutDocument: cutDocument(_:),
-                                deleteDocument: store.deleteDocument(_:)
-                            )
-                        }
-                    }
-                    .padding(.horizontal, scaled(5))
-                    .padding(.vertical, scaled(6))
-                }
-                .scrollContentBackground(.hidden)
-                .contextMenu {
-                    sidebarContextMenu
-                }
-            } else {
-                EmptySidebarView(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize, openFolder: openFolder)
-                    .contextMenu {
-                        sidebarContextMenu
-                    }
-            }
+            sidebarMainContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .layoutPriority(1)
 
             Divider()
                 .overlay(theme.borderColor)
 
             SidebarSettingsButton(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize)
+                .layoutPriority(2)
         }
         .background {
             sidebarBackground
@@ -125,6 +99,61 @@ struct SidebarView: View {
     @ViewBuilder
     private var sidebarBackground: some View {
         theme.surfaceColor
+    }
+
+    @ViewBuilder
+    private var sidebarMainContent: some View {
+        if workspaceSearch.isPresented {
+            WorkspaceSearchView(
+                state: workspaceSearch,
+                documents: store.documents,
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize,
+                close: { workspaceSearch.dismiss() },
+                openResult: openWorkspaceSearchResult
+            )
+        } else if !visibleNodes.isEmpty {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: scaled(1)) {
+                    ForEach(visibleNodes) { visibleNode in
+                        SidebarNodeRow(
+                            visibleNode: visibleNode,
+                            selectedDocumentID: store.selectedDocumentID,
+                            saveState: visibleNode.node.document.map { store.saveState(for: $0.id) } ?? .clean,
+                            isExpanded: expandedFolderIDs.contains(visibleNode.node.id),
+                            theme: theme,
+                            zoomScale: zoomScale,
+                            uiFontSize: uiFontSize,
+                            toggleFolder: toggleFolder(_:),
+                            selectDocument: store.selectDocument(id:),
+                            createFileInFolder: beginCreateFile(in:),
+                            createFolderInFolder: beginCreateFolder(in:),
+                            copyFolderPath: copyPath(_:),
+                            revealFolderInFinder: revealInFinder(_:),
+                            renameDocument: beginRename(_:),
+                            copyPath: copyPath(_:),
+                            revealInFinder: revealInFinder(_:),
+                            exportPDF: exportPDF,
+                            copyDocument: copyDocument(_:),
+                            cutDocument: cutDocument(_:),
+                            deleteDocument: store.deleteDocument(_:)
+                        )
+                    }
+                }
+                .padding(.horizontal, scaled(5))
+                .padding(.vertical, scaled(6))
+            }
+            .scrollContentBackground(.hidden)
+            .contextMenu {
+                sidebarContextMenu
+            }
+        } else {
+            EmptySidebarView(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize, openFolder: openFolder)
+                .contextMenu {
+                    sidebarContextMenu
+                }
+        }
     }
 
     private func flattenVisibleNodes(from nodes: [SidebarNode]) -> [VisibleSidebarNode] {
@@ -360,23 +389,38 @@ private struct SidebarHeader: View {
     let theme: AppTheme
     let zoomScale: Double
     let uiFontSize: Double
+    let showWorkspaceSearch: () -> Void
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: scaled(3)) {
-            Text(store.workspaceURL?.lastPathComponent ?? "Markprev")
-                .font(.system(size: scaled(15), weight: .semibold))
-                .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
-                .lineLimit(1)
+        HStack(spacing: scaled(8)) {
+            VStack(alignment: .leading, spacing: scaled(3)) {
+                Text(store.workspaceURL?.lastPathComponent ?? "Markprev")
+                    .font(.system(size: scaled(15), weight: .semibold))
+                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
+                    .lineLimit(1)
 
-            Text(store.workspaceURL?.path ?? "No workspace open")
-                .font(.system(size: scaled(12)))
-                .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
-                .lineLimit(1)
-                .truncationMode(.middle)
+                Text(store.workspaceURL?.path ?? "No workspace open")
+                    .font(.system(size: scaled(12)))
+                    .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer(minLength: 0)
+
+            ChromeBarButton(
+                systemImage: "magnifyingglass",
+                label: "Search Workspace",
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize,
+                isDisabled: store.workspaceURL == nil,
+                action: showWorkspaceSearch
+            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, scaled(12))
@@ -473,6 +517,7 @@ struct ChromeBarButton: View {
 private struct SidebarNodeRow: View {
     let visibleNode: VisibleSidebarNode
     let selectedDocumentID: String?
+    let saveState: DocumentSaveState
     let isExpanded: Bool
     let theme: AppTheme
     let zoomScale: Double
@@ -573,6 +618,13 @@ private struct SidebarNodeRow: View {
                     .truncationMode(.middle)
 
                 Spacer(minLength: 0)
+
+                SaveStateIndicator(
+                    state: saveState,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    size: scaled(12)
+                )
             }
             .padding(.leading, CGFloat(visibleNode.depth) * scaled(14) + scaled(8))
             .padding(.trailing, scaled(5))
@@ -595,6 +647,10 @@ private struct SidebarNodeRow: View {
             return "doc.richtext"
         case .markdown:
             return "doc.text.fill"
+        case .text:
+            return "doc.plaintext"
+        case .nativePreview:
+            return "doc.viewfinder"
         case .unsupported, nil:
             return "doc"
         }
@@ -735,6 +791,36 @@ private struct SidebarHoverButtonStyle: ButtonStyle {
             }
             return .clear
         }
+    }
+}
+
+private struct SaveStateIndicator: View {
+    let state: DocumentSaveState
+    let theme: AppTheme
+    let zoomScale: Double
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            switch state {
+            case .clean:
+                Color.clear
+            case .edited:
+                Circle()
+                    .fill(theme.accentColor)
+                    .frame(width: max(5, size * 0.48), height: max(5, size * 0.48))
+            case .saving:
+                ProgressView()
+                    .controlSize(.mini)
+                    .scaleEffect(max(0.65, zoomScale * 0.78))
+            case .failed:
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: max(9, size * 0.82), weight: .semibold))
+                    .foregroundStyle(Color(hex: theme.semanticColors.diffRemoved))
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityLabel(state.accessibilityDescription)
     }
 }
 

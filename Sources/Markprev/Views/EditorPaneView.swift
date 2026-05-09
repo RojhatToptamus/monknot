@@ -15,15 +15,16 @@ struct EditorPaneView: View {
     let fontSmoothing: Bool
     @Binding var isTerminalPresented: Bool
     @Binding var sourceLocation: MarkdownSourceLocation?
+    @Binding var previewLocation: MarkdownSourceLocation?
+    @Binding var pdfSearchTarget: WorkspaceSearchPDFTarget?
     @Binding var documentSearch: DocumentSearchState
     let isSidebarVisible: Bool
     let newMarkdown: () -> Void
     let openFolder: () -> Void
-    let zoomOut: () -> Void
-    let resetZoom: () -> Void
-    let zoomIn: () -> Void
     let toggleTerminal: () -> Void
     let toggleSidebar: () -> Void
+    let outlineItems: [MarkdownOutlineItem]
+    let selectOutlineItem: (MarkdownOutlineItem) -> Void
     let onPreviewSourceJump: (MarkdownSourceLocation) -> Void
 
     var body: some View {
@@ -37,11 +38,10 @@ struct EditorPaneView: View {
                 isSidebarVisible: isSidebarVisible,
                 newMarkdown: newMarkdown,
                 openFolder: openFolder,
-                zoomOut: zoomOut,
-                resetZoom: resetZoom,
-                zoomIn: zoomIn,
                 toggleTerminal: toggleTerminal,
                 toggleSidebar: toggleSidebar,
+                outlineItems: outlineItems,
+                selectOutlineItem: selectOutlineItem,
                 documentSearch: $documentSearch
             )
 
@@ -153,6 +153,10 @@ struct EditorPaneView: View {
         return store.workspaceURL
     }
 
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        max(base * zoomScale * CGFloat(theme.uiFontSize / 16), base * 0.75)
+    }
+
     @ViewBuilder
     private var editorContent: some View {
         if let selectedDocument = store.selectedDocument {
@@ -172,6 +176,13 @@ struct EditorPaneView: View {
                             )
                     }
                 }
+                .overlay(alignment: .top) {
+                    if store.selectedDocumentExternalChange {
+                        ExternalDocumentChangeBanner(theme: theme, zoomScale: zoomScale)
+                            .padding(.top, scaled(10))
+                            .padding(.horizontal, scaled(12))
+                    }
+                }
         } else {
             EmptyDetailView(theme: theme)
         }
@@ -182,14 +193,20 @@ struct EditorPaneView: View {
         switch selectedDocument.kind {
         case .markdown:
             markdownEditor(for: selectedDocument)
+        case .text:
+            textEditor(for: selectedDocument)
         case .pdf:
             PDFPreviewView(
                 url: selectedDocument.url,
                 theme: theme,
                 zoomScale: zoomScale,
-                searchState: $documentSearch
+                searchState: $documentSearch,
+                searchTarget: $pdfSearchTarget
             )
             .help(selectedDocument.relativePath)
+        case .nativePreview:
+            QuickLookPreviewView(url: selectedDocument.url, theme: theme)
+                .help(selectedDocument.relativePath)
         case .unsupported:
             UnsupportedDocumentView(
                 document: selectedDocument,
@@ -198,6 +215,21 @@ struct EditorPaneView: View {
             )
             .help(selectedDocument.relativePath)
         }
+    }
+
+    private func textEditor(for selectedDocument: WorkspaceDocument) -> some View {
+        MarkdownTextEditor(
+            text: Binding(
+                get: { store.documentText },
+                set: { store.setDocumentText($0) }
+            ),
+            theme: theme,
+            fontSize: codeFontSize * zoomScale,
+            fontSmoothing: fontSmoothing,
+            sourceLocation: $sourceLocation,
+            searchState: $documentSearch
+        )
+        .help(selectedDocument.relativePath)
     }
 
     @ViewBuilder
@@ -225,6 +257,7 @@ struct EditorPaneView: View {
                 previewWidthPercent: previewWidthPercent,
                 usePointerCursors: usePointerCursors,
                 fontSmoothing: fontSmoothing,
+                sourceLocation: $previewLocation,
                 searchState: $documentSearch,
                 onSourceJump: onPreviewSourceJump
             )
@@ -258,6 +291,42 @@ struct EditorPaneView: View {
         withAnimation(drawerAnimation) {
             isTerminalPresented = value
         }
+    }
+}
+
+private struct ExternalDocumentChangeBanner: View {
+    let theme: AppTheme
+    let zoomScale: Double
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        max(base * zoomScale * CGFloat(theme.uiFontSize / 16), base * 0.75)
+    }
+
+    var body: some View {
+        HStack(spacing: scaled(8)) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: scaled(12), weight: .semibold))
+                .foregroundStyle(Color(hex: theme.semanticColors.diffRemoved))
+                .accessibilityHidden(true)
+
+            Text("File changed on disk. Saving will overwrite the external version.")
+                .font(.system(size: scaled(12), weight: .medium))
+                .foregroundStyle(theme.foregroundColor)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, scaled(12))
+        .padding(.vertical, scaled(8))
+        .background(
+            theme.elevatedSurfaceColor,
+            in: RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+                .strokeBorder(theme.borderColor, lineWidth: 1)
+        }
+        .shadow(color: theme.foregroundColor.opacity(theme.isDark ? 0.20 : 0.08), radius: scaled(14), y: scaled(6))
+        .accessibilityLabel("File changed on disk. Saving will overwrite the external version.")
     }
 }
 
