@@ -13,6 +13,11 @@ func write(_ text: String, to url: URL) throws {
     try text.write(to: url, atomically: true, encoding: .utf8)
 }
 
+func write(_ data: Data, to url: URL) throws {
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try data.write(to: url, options: .atomic)
+}
+
 @MainActor
 func waitUntil(_ timeout: TimeInterval = 3, _ condition: @escaping @MainActor () -> Bool) async -> Bool {
     let deadline = Date().addingTimeInterval(timeout)
@@ -37,9 +42,14 @@ struct MarkprevStoreSmokeTests {
         let firstURL = root.appendingPathComponent("A.md")
         let secondURL = root.appendingPathComponent("B.md")
         let textURL = root.appendingPathComponent("Plain.txt")
+        let pdfURL = root.appendingPathComponent("Paper.pdf")
+        let pdfBaseline = Data("%PDF-1.4 baseline\n".utf8)
+        let pdfFirstEdit = Data("%PDF-1.4 edit one\n".utf8)
+        let pdfSecondEdit = Data("%PDF-1.4 edit two\n".utf8)
         try write("# A\n", to: firstURL)
         try write("# B\n", to: secondURL)
         try write("plain text\n", to: textURL)
+        try write(pdfBaseline, to: pdfURL)
 
         let store = WorkspaceStore()
         store.openWorkspace(root)
@@ -48,7 +58,8 @@ struct MarkprevStoreSmokeTests {
 
         guard let first = store.documents.first(where: { $0.url == firstURL.standardizedFileURL }),
               let second = store.documents.first(where: { $0.url == secondURL.standardizedFileURL }),
-              let text = store.documents.first(where: { $0.url == textURL.standardizedFileURL })
+              let text = store.documents.first(where: { $0.url == textURL.standardizedFileURL }),
+              let pdf = store.documents.first(where: { $0.url == pdfURL.standardizedFileURL })
         else {
             fputs("FAIL: expected smoke documents\n", stderr)
             exit(1)
@@ -128,6 +139,34 @@ struct MarkprevStoreSmokeTests {
         expect(didSaveText, "text document save should complete")
         let savedText = try String(contentsOf: text.url, encoding: .utf8)
         expect(savedText == "plain text\nchanged\n", "text document save should write disk")
+
+        store.selectDocument(id: pdf.id)
+        let didLoadPDF = await waitUntil { !store.isDocumentLoading && store.selectedDocumentID == pdf.id }
+        expect(didLoadPDF, "PDF document should load")
+
+        store.markPDFDocumentEdited(id: pdf.id, previousData: pdfBaseline, data: pdfFirstEdit)
+        expect(store.dirtyPDFData(for: pdf.id) == pdfFirstEdit, "PDF edits should be retained in memory")
+        expect(store.saveState(for: pdf.id) == .edited, "edited PDF should show edited state")
+        let diskPDFBeforeSave = try Data(contentsOf: pdf.url)
+        expect(diskPDFBeforeSave == pdfBaseline, "PDF editing should not autosave to disk")
+
+        store.markPDFDocumentEdited(id: pdf.id, previousData: pdfFirstEdit, data: pdfSecondEdit)
+        expect(store.dirtyPDFData(for: pdf.id) == pdfSecondEdit, "second PDF edit should replace dirty snapshot")
+
+        store.markPDFDocumentEdited(id: pdf.id, previousData: pdfSecondEdit, data: pdfBaseline)
+        expect(store.dirtyPDFData(for: pdf.id) == nil, "returning to the PDF baseline should clear dirty data")
+        expect(store.saveState(for: pdf.id) == .clean, "returning to the PDF baseline should clear edited state")
+
+        store.markPDFDocumentEdited(id: pdf.id, previousData: pdfBaseline, data: pdfSecondEdit)
+        expect(store.dirtyPDFData(for: pdf.id) == pdfSecondEdit, "PDF edit after baseline restore should become dirty again")
+
+        store.saveSelectedFile()
+        let didSavePDF = await waitUntil { !store.isSaving }
+        expect(didSavePDF, "PDF save should complete")
+        let savedPDFData = try Data(contentsOf: pdf.url)
+        expect(savedPDFData == pdfSecondEdit, "PDF save should write the dirty snapshot to disk")
+        expect(store.dirtyPDFData(for: pdf.id) == nil, "PDF save should clear dirty snapshot")
+        expect(store.saveState(for: pdf.id) == .clean, "PDF save should clear edited state")
 
         let renamedSecondURL = root.appendingPathComponent("Renamed.md").standardizedFileURL
         store.setOpenDocumentIDs([second.id])

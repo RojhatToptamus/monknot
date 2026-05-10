@@ -52,23 +52,8 @@ struct EditorPaneView: View {
                 documentSearch: $documentSearch
             )
 
-            DocumentTabBar(
-                tabs: tabs,
-                selectedDocumentID: activeTabID,
-                missingDocumentIDs: missingTabIDs,
-                theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: theme.uiFontSize,
-                isDisabled: store.isBusy,
-                saveState: { store.saveState(for: $0) },
-                selectTab: selectTab,
-                closeTab: closeTab,
-                togglePin: togglePinTab,
-                reorderTab: reorderTab
-            )
-
             GeometryReader { proxy in
-                editorWithTerminalDrawer(in: proxy.size)
+                lowerChromeWithTerminalDrawer(in: proxy.size)
             }
         }
         .ignoresSafeArea(.container, edges: .top)
@@ -93,13 +78,13 @@ struct EditorPaneView: View {
     }
 
     @ViewBuilder
-    private func editorWithTerminalDrawer(in size: CGSize) -> some View {
+    private func lowerChromeWithTerminalDrawer(in size: CGSize) -> some View {
         let isCompact = size.width < 760
         let drawerWidth = terminalDrawerWidth(for: size.width)
 
         if isCompact {
             ZStack(alignment: .trailing) {
-                editorContent
+                editorColumn
 
                 if isTerminalPresented {
                     theme.scrimColor
@@ -120,7 +105,7 @@ struct EditorPaneView: View {
             .animation(drawerAnimation, value: isTerminalPresented)
         } else {
             HStack(spacing: 0) {
-                editorContent
+                editorColumn
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 if isTerminalPresented {
@@ -132,6 +117,32 @@ struct EditorPaneView: View {
             }
             .animation(drawerAnimation, value: isTerminalPresented)
         }
+    }
+
+    private var editorColumn: some View {
+        VStack(spacing: 0) {
+            documentTabBar
+
+            editorContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var documentTabBar: some View {
+        DocumentTabBar(
+            tabs: tabs,
+            selectedDocumentID: activeTabID,
+            missingDocumentIDs: missingTabIDs,
+            theme: theme,
+            zoomScale: zoomScale,
+            uiFontSize: theme.uiFontSize,
+            isDisabled: store.isBusy,
+            saveState: { store.saveState(for: $0) },
+            selectTab: selectTab,
+            closeTab: closeTab,
+            togglePin: togglePinTab,
+            reorderTab: reorderTab
+        )
     }
 
     private func resizableTerminalDrawer(width: CGFloat, maxWidth: CGFloat, close: @escaping () -> Void) -> some View {
@@ -208,11 +219,22 @@ struct EditorPaneView: View {
             textEditor(for: selectedDocument)
         case .pdf:
             PDFPreviewView(
-                url: selectedDocument.url,
+                document: selectedDocument,
                 theme: theme,
                 zoomScale: zoomScale,
+                saveState: store.saveState(for: selectedDocument.id),
+                dirtyData: store.dirtyPDFData(for: selectedDocument.id),
                 searchState: $documentSearch,
-                searchTarget: $pdfSearchTarget
+                searchTarget: $pdfSearchTarget,
+                markEdited: { previousData, data in
+                    store.markPDFDocumentEdited(id: selectedDocument.id, previousData: previousData, data: data)
+                },
+                reportError: { message in
+                    store.reportPDFAnnotationError(message)
+                },
+                saveDocument: {
+                    store.saveSelectedFile()
+                }
             )
             .help(selectedDocument.relativePath)
         case .media:

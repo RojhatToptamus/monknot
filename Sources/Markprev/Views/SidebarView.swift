@@ -62,6 +62,7 @@ struct SidebarView: View {
             sidebarBackground
                 .ignoresSafeArea(.container, edges: .top)
         }
+        .ignoresSafeArea(.container, edges: .top)
         .overlay {
             if isMoveDropTargetingRoot {
                 RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
@@ -534,6 +535,10 @@ private struct SidebarHeader: View {
         max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
     }
 
+    private var chromeRowHeight: CGFloat {
+        scaled(44)
+    }
+
     var body: some View {
         HStack(spacing: scaled(8)) {
             VStack(alignment: .leading, spacing: scaled(3)) {
@@ -563,17 +568,17 @@ private struct SidebarHeader: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, scaled(12))
-        .padding(.vertical, scaled(10))
+        .frame(height: chromeRowHeight)
     }
 }
 
-/// Reserves the same 44pt height the detail-pane top nav uses, so the
-/// traffic lights have somewhere to sit and the sidebar header aligns
-/// with the toolbar on the right.
+/// Reserves the same 44pt height the detail-pane top nav uses. The sidebar
+/// stack ignores the top safe area, so this spacer occupies the title-bar
+/// region and leaves room for the traffic lights.
 ///
-/// This is only a spacer for the traffic-light area. The parent paints the
-/// sidebar surface through the title-bar region so the left column has one
-/// continuous background.
+/// This is only a spacer for the traffic-light area. The parent paints and
+/// lays out the sidebar surface through the title-bar region so the left
+/// column has one continuous background.
 private struct SidebarWindowChrome: View {
     let theme: AppTheme
     let zoomScale: Double

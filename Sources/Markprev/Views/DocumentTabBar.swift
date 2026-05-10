@@ -22,6 +22,10 @@ struct DocumentTabBar: View {
         max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
     }
 
+    private var chromeRowHeight: CGFloat {
+        scaled(44)
+    }
+
     var body: some View {
         if !tabs.isEmpty {
             GeometryReader { proxy in
@@ -48,7 +52,7 @@ struct DocumentTabBar: View {
                     }
                 }
             }
-            .frame(height: scaled(36))
+            .frame(height: chromeRowHeight)
             .background(theme.surfaceColor)
             .overlay(alignment: .bottom) {
                 Rectangle()
@@ -104,6 +108,10 @@ private struct DocumentTabStripContent: View {
         max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
     }
 
+    private var chromeRowHeight: CGFloat {
+        scaled(44)
+    }
+
     var body: some View {
         HStack(spacing: scaled(4)) {
             ForEach(tabs) { tab in
@@ -126,7 +134,7 @@ private struct DocumentTabStripContent: View {
             }
         }
         .padding(.horizontal, scaled(10))
-        .padding(.vertical, scaled(4))
+        .frame(height: chromeRowHeight, alignment: .center)
         .fixedSize(horizontal: true, vertical: false)
         .coordinateSpace(name: Self.coordinateSpaceName)
         .onPreferenceChange(TabFramePreferenceKey.self) { frames in

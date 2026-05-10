@@ -24,6 +24,9 @@ final class WorkspaceStore: ObservableObject {
     private var lastSavedText = ""
     private var dirtyDocumentTexts: [String: String] = [:]
     private var dirtyDocumentBaselines: [String: String] = [:]
+    private var pdfDocumentBaselines: [String: Data] = [:]
+    private var dirtyPDFDocumentData: [String: Data] = [:]
+    private var dirtyPDFDocumentVersions: [String: Int] = [:]
     private var removedDirtyDocuments: [String: WorkspaceDocument] = [:]
     private var openDocumentIDs: Set<String> = []
     private var selectedDocumentSignature: FileSignature?
@@ -489,8 +492,38 @@ final class WorkspaceStore: ObservableObject {
         updateSaveStateForSelectedDocument()
     }
 
+    func dirtyPDFData(for documentID: String) -> Data? {
+        dirtyPDFDocumentData[documentID]
+    }
+
+    func markPDFDocumentEdited(id documentID: String, previousData: Data?, data: Data?) {
+        guard let file = document(id: documentID), file.kind == .pdf else { return }
+        guard let data else {
+            errorMessage = "Could not prepare PDF annotation data."
+            return
+        }
+
+        let undoSnapshot = previousData ?? currentPDFData(for: file)
+        if pdfDocumentBaselines[documentID] == nil, let undoSnapshot {
+            pdfDocumentBaselines[documentID] = undoSnapshot
+        }
+
+        applyPDFData(data, to: file)
+    }
+
+    func reportPDFAnnotationError(_ message: String) {
+        errorMessage = message
+    }
+
     func saveSelectedFile() {
-        guard let selectedDocument, selectedDocument.capabilities.canEditText else { return }
+        guard let selectedDocument else { return }
+
+        if selectedDocument.kind == .pdf {
+            saveSelectedPDF(selectedDocument)
+            return
+        }
+
+        guard selectedDocument.capabilities.canEditText else { return }
 
         let file = selectedDocument
         let text = documentText
@@ -509,6 +542,64 @@ final class WorkspaceStore: ObservableObject {
                 await self?.finishSaveFailure(error, file: file, generation: generation)
             }
         }
+    }
+
+    private func saveSelectedPDF(_ file: WorkspaceDocument) {
+        guard let dirtyVersion = dirtyPDFDocumentVersions[file.id],
+              let pdfData = dirtyPDFDocumentData[file.id] else {
+            return
+        }
+
+        saveGeneration += 1
+        let generation = saveGeneration
+        setSaveState(.saving, for: file.id)
+        isSaving = true
+        noteInternalFileMutation()
+
+        saveTask = Task.detached(priority: .utility) { [weak self] in
+            do {
+                try pdfData.write(to: file.url, options: .atomic)
+                guard !Task.isCancelled else { return }
+                await self?.finishPDFSave(
+                    fileID: file.id,
+                    url: file.url,
+                    dirtyVersion: dirtyVersion,
+                    generation: generation
+                )
+            } catch {
+                await self?.finishPDFSaveFailure(error, file: file, generation: generation)
+            }
+        }
+    }
+
+    private func currentPDFData(for file: WorkspaceDocument) -> Data? {
+        if let dirtyData = dirtyPDFDocumentData[file.id] {
+            return dirtyData
+        }
+        return try? Data(contentsOf: file.url)
+    }
+
+    private func applyPDFData(_ data: Data, to file: WorkspaceDocument) {
+        if let baseline = pdfDocumentBaselines[file.id], data == baseline {
+            dirtyPDFDocumentData.removeValue(forKey: file.id)
+            dirtyPDFDocumentVersions.removeValue(forKey: file.id)
+            setSaveState(.clean, for: file.id)
+            if selectedDocumentID == file.id {
+                hasUnsavedChanges = false
+                selectedDocumentExternalChange = false
+                selectedDocumentSignature = Self.fileSignature(for: file.url)
+            }
+            return
+        }
+
+        dirtyPDFDocumentData[file.id] = data
+        dirtyPDFDocumentVersions[file.id, default: 0] += 1
+        if selectedDocumentID == file.id {
+            hasUnsavedChanges = true
+            selectedDocumentExternalChange = false
+            selectedDocumentSignature = Self.fileSignature(for: file.url)
+        }
+        setSaveState(.edited, for: file.id)
     }
 
     func markdownTextForExport(_ document: WorkspaceDocument) async throws -> String {
@@ -554,6 +645,9 @@ final class WorkspaceStore: ObservableObject {
             pendingDocumentTransfer = nil
             dirtyDocumentTexts = [:]
             dirtyDocumentBaselines = [:]
+            pdfDocumentBaselines = [:]
+            dirtyPDFDocumentData = [:]
+            dirtyPDFDocumentVersions = [:]
             removedDirtyDocuments = [:]
             removedDirtyOpenDocumentIDs = []
             openDocumentIDs = []
@@ -770,10 +864,13 @@ final class WorkspaceStore: ObservableObject {
         guard selectedDocument.capabilities.canEditText else {
             documentText = ""
             lastSavedText = ""
-            hasUnsavedChanges = false
-            selectedDocumentSignature = nil
-            selectedDocumentExternalChange = false
+            hasUnsavedChanges = dirtyPDFDocumentVersions[selectedDocument.id] != nil
+            selectedDocumentSignature = selectedDocument.kind == .pdf ? Self.fileSignature(for: selectedDocument.url) : nil
+            selectedDocumentExternalChange = removedDirtyDocuments[selectedDocument.id] != nil
             isDocumentLoading = false
+            if selectedDocument.kind == .pdf, hasUnsavedChanges, saveState(for: selectedDocument.id).isClean {
+                setSaveState(.edited, for: selectedDocument.id)
+            }
             return
         }
 
@@ -868,6 +965,46 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    private func finishPDFSave(fileID: String, url: URL, dirtyVersion: Int, generation: Int) {
+        if generation == saveGeneration {
+            isSaving = false
+        }
+
+        let wasRemovedDirtyDocument = removedDirtyDocuments.removeValue(forKey: fileID) != nil
+        pruneRemovedDirtyDocuments()
+
+        let currentDirtyVersion = dirtyPDFDocumentVersions[fileID]
+        if currentDirtyVersion == nil || currentDirtyVersion == dirtyVersion {
+            pdfDocumentBaselines.removeValue(forKey: fileID)
+            dirtyPDFDocumentData.removeValue(forKey: fileID)
+            dirtyPDFDocumentVersions.removeValue(forKey: fileID)
+            setSaveState(.clean, for: fileID)
+            if selectedDocumentID == fileID {
+                hasUnsavedChanges = false
+                selectedDocumentExternalChange = false
+                selectedDocumentSignature = Self.fileSignature(for: url)
+            }
+        } else {
+            setSaveState(.edited, for: fileID)
+            if selectedDocumentID == fileID {
+                hasUnsavedChanges = true
+                selectedDocumentSignature = Self.fileSignature(for: url)
+            }
+        }
+
+        if wasRemovedDirtyDocument {
+            refresh()
+        }
+    }
+
+    private func finishPDFSaveFailure(_ error: Error, file: WorkspaceDocument, generation: Int) {
+        if generation == saveGeneration {
+            isSaving = false
+        }
+        setSaveState(.failed(error.localizedDescription), for: file.id)
+        errorMessage = "Could not save \(file.displayName): \(error.localizedDescription)"
+    }
+
     private func finishSaveFailure(_ error: Error, file: WorkspaceDocument, generation: Int) {
         if generation == saveGeneration {
             isSaving = false
@@ -902,7 +1039,8 @@ final class WorkspaceStore: ObservableObject {
     private func pruneSaveStates(previousDocuments: [WorkspaceDocument]) {
         let documentIDs = Set(documents.map(\.id))
         let previousDocumentsByID = Dictionary(uniqueKeysWithValues: previousDocuments.map { ($0.id, $0) })
-        let removedDirtyIDs = Set(dirtyDocumentTexts.keys)
+        let dirtyDocumentIDs = Set(dirtyDocumentTexts.keys).union(dirtyPDFDocumentVersions.keys)
+        let removedDirtyIDs = dirtyDocumentIDs
             .intersection(openDocumentIDs)
             .subtracting(documentIDs)
 
@@ -918,8 +1056,11 @@ final class WorkspaceStore: ObservableObject {
         documentSaveStates = documentSaveStates.filter { preservedDocumentIDs.contains($0.key) }
         dirtyDocumentTexts = dirtyDocumentTexts.filter { preservedDocumentIDs.contains($0.key) }
         dirtyDocumentBaselines = dirtyDocumentBaselines.filter { preservedDocumentIDs.contains($0.key) }
+        pdfDocumentBaselines = pdfDocumentBaselines.filter { preservedDocumentIDs.contains($0.key) }
+        dirtyPDFDocumentData = dirtyPDFDocumentData.filter { preservedDocumentIDs.contains($0.key) }
+        dirtyPDFDocumentVersions = dirtyPDFDocumentVersions.filter { preservedDocumentIDs.contains($0.key) }
         if let selectedDocumentID {
-            hasUnsavedChanges = dirtyDocumentTexts[selectedDocumentID] != nil
+            hasUnsavedChanges = dirtyDocumentTexts[selectedDocumentID] != nil || dirtyPDFDocumentVersions[selectedDocumentID] != nil
         }
     }
 
@@ -928,7 +1069,7 @@ final class WorkspaceStore: ObservableObject {
         removedDirtyDocuments = removedDirtyDocuments.filter { entry in
             let documentID = entry.key
             return openDocumentIDs.contains(documentID) &&
-                dirtyDocumentTexts[documentID] != nil &&
+                (dirtyDocumentTexts[documentID] != nil || dirtyPDFDocumentVersions[documentID] != nil) &&
                 !availableDocumentIDs.contains(documentID)
         }
         removedDirtyOpenDocumentIDs = Set(removedDirtyDocuments.keys)
@@ -943,6 +1084,18 @@ final class WorkspaceStore: ObservableObject {
 
         if let baseline = dirtyDocumentBaselines.removeValue(forKey: sourceID) {
             dirtyDocumentBaselines[destinationID] = baseline
+        }
+
+        if let dirtyPDFVersion = dirtyPDFDocumentVersions.removeValue(forKey: sourceID) {
+            dirtyPDFDocumentVersions[destinationID] = dirtyPDFVersion
+        }
+
+        if let pdfBaseline = pdfDocumentBaselines.removeValue(forKey: sourceID) {
+            pdfDocumentBaselines[destinationID] = pdfBaseline
+        }
+
+        if let dirtyPDFData = dirtyPDFDocumentData.removeValue(forKey: sourceID) {
+            dirtyPDFDocumentData[destinationID] = dirtyPDFData
         }
 
         if let state = documentSaveStates.removeValue(forKey: sourceID) {

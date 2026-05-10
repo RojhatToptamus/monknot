@@ -1,20 +1,404 @@
+import AppKit
 import MarkprevCore
 import PDFKit
 import SwiftUI
 
-struct PDFPreviewView: NSViewRepresentable {
-    let url: URL
+struct PDFPreviewView: View {
+    let document: WorkspaceDocument
     let theme: AppTheme
     let zoomScale: Double
+    let saveState: DocumentSaveState
+    let dirtyData: Data?
     @Binding var searchState: DocumentSearchState
     @Binding var searchTarget: WorkspaceSearchPDFTarget?
+    let markEdited: (Data?, Data) -> Void
+    let reportError: (String) -> Void
+    let saveDocument: () -> Void
+
+    @State private var interactionMode: PDFAnnotationInteractionMode = .select
+    @State private var selectedColor: PDFAnnotationPaletteColor = .yellow
+    @State private var strokeWidth = 3.0
+    @State private var markupCommand: PDFTextMarkupCommand?
+    @State private var markupCommandSerial = 0
+    @State private var undoCommandSerial = 0
+    @State private var redoCommandSerial = 0
+    @State private var canUndo = false
+    @State private var canRedo = false
+
+    private var uiFontSize: Double { theme.uiFontSize }
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            PDFAnnotationToolbar(
+                interactionMode: $interactionMode,
+                selectedColor: $selectedColor,
+                strokeWidth: $strokeWidth,
+                saveState: saveState,
+                canUndo: canUndo,
+                canRedo: canRedo,
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize,
+                runMarkup: runMarkup(_:),
+                undo: runUndo,
+                redo: runRedo,
+                saveDocument: saveDocument
+            )
+
+            Divider()
+                .overlay(theme.borderColor)
+
+            PDFKitPreviewRepresentable(
+                url: document.url,
+                dirtyData: dirtyData,
+                theme: theme,
+                zoomScale: zoomScale,
+                annotationMode: interactionMode,
+                annotationColor: selectedColor,
+                strokeWidth: CGFloat(strokeWidth),
+                markupCommand: markupCommand,
+                undoCommandSerial: undoCommandSerial,
+                redoCommandSerial: redoCommandSerial,
+                searchState: $searchState,
+                searchTarget: $searchTarget,
+                markEdited: markEdited,
+                updateUndoState: updateUndoState(canUndo:canRedo:),
+                reportError: reportError
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(theme.surfaceColor)
+    }
+
+    private func runMarkup(_ kind: PDFTextMarkupKind) {
+        markupCommandSerial += 1
+        markupCommand = PDFTextMarkupCommand(
+            serial: markupCommandSerial,
+            kind: kind,
+            color: selectedColor
+        )
+    }
+
+    private func runUndo() {
+        undoCommandSerial += 1
+    }
+
+    private func runRedo() {
+        redoCommandSerial += 1
+    }
+
+    private func updateUndoState(canUndo: Bool, canRedo: Bool) {
+        if self.canUndo != canUndo {
+            self.canUndo = canUndo
+        }
+        if self.canRedo != canRedo {
+            self.canRedo = canRedo
+        }
+    }
+}
+
+private struct PDFAnnotationToolbar: View {
+    @Binding var interactionMode: PDFAnnotationInteractionMode
+    @Binding var selectedColor: PDFAnnotationPaletteColor
+    @Binding var strokeWidth: Double
+    let saveState: DocumentSaveState
+    let canUndo: Bool
+    let canRedo: Bool
+    let theme: AppTheme
+    let zoomScale: Double
+    let uiFontSize: Double
+    let runMarkup: (PDFTextMarkupKind) -> Void
+    let undo: () -> Void
+    let redo: () -> Void
+    let saveDocument: () -> Void
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+    }
+
+    var body: some View {
+        HStack(spacing: scaled(7)) {
+            PDFToolbarIconButton(
+                systemImage: "arrow.uturn.backward",
+                label: "Undo",
+                isDisabled: !canUndo,
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize
+            ) {
+                undo()
+            }
+
+            PDFToolbarIconButton(
+                systemImage: "arrow.uturn.forward",
+                label: "Redo",
+                isDisabled: !canRedo,
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize
+            ) {
+                redo()
+            }
+
+            toolbarDivider
+
+            PDFToolbarIconButton(
+                systemImage: "cursorarrow",
+                label: "Select",
+                isActive: interactionMode == .select,
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize
+            ) {
+                interactionMode = .select
+            }
+
+            toolbarDivider
+
+            PDFToolbarIconButton(
+                systemImage: "highlighter",
+                label: "Highlight Selection",
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize
+            ) {
+                runMarkup(.highlight)
+            }
+
+            PDFToolbarIconButton(
+                systemImage: "underline",
+                label: "Underline Selection",
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize
+            ) {
+                runMarkup(.underline)
+            }
+
+            PDFToolbarIconButton(
+                systemImage: "strikethrough",
+                label: "Strike Through Selection",
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize
+            ) {
+                runMarkup(.strikeOut)
+            }
+
+            toolbarDivider
+
+            PDFToolbarIconButton(
+                systemImage: "pencil.tip",
+                label: "Draw",
+                isActive: interactionMode == .pen,
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize
+            ) {
+                interactionMode = interactionMode == .pen ? .select : .pen
+            }
+
+            PDFToolbarIconButton(
+                systemImage: "eraser",
+                label: "Erase Annotation",
+                isActive: interactionMode == .eraser,
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize
+            ) {
+                interactionMode = interactionMode == .eraser ? .select : .eraser
+            }
+
+            if interactionMode == .pen {
+                Slider(value: $strokeWidth, in: 1...10, step: 1)
+                    .frame(width: scaled(92))
+                    .tint(selectedColor.color)
+                    .help("Stroke Width")
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .leading)))
+            }
+
+            toolbarDivider
+
+            HStack(spacing: scaled(5)) {
+                ForEach(PDFAnnotationPaletteColor.all) { color in
+                    PDFColorSwatchButton(
+                        color: color,
+                        isSelected: color == selectedColor,
+                        theme: theme,
+                        zoomScale: zoomScale,
+                        uiFontSize: uiFontSize
+                    ) {
+                        selectedColor = color
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            PDFToolbarIconButton(
+                systemImage: "externaldrive.badge.checkmark",
+                label: "Save PDF",
+                isActive: !saveState.isClean,
+                isDisabled: saveState.isClean || saveState == .saving,
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize
+            ) {
+                saveDocument()
+            }
+        }
+        .padding(.horizontal, scaled(12))
+        .frame(height: scaled(42))
+        .animation(.easeOut(duration: 0.14), value: interactionMode)
+    }
+
+    private var toolbarDivider: some View {
+        Rectangle()
+            .fill(theme.borderColor)
+            .frame(width: 1, height: scaled(20))
+            .accessibilityHidden(true)
+    }
+}
+
+private struct PDFToolbarIconButton: View {
+    let systemImage: String
+    let label: String
+    var isActive = false
+    var isDisabled = false
+    let theme: AppTheme
+    let zoomScale: Double
+    let uiFontSize: Double
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: scaled(13), weight: .regular))
+                .foregroundStyle(iconColor)
+                .frame(width: scaled(30), height: scaled(28))
+                .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale)))
+                .overlay {
+                    RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale))
+                        .strokeBorder(borderColor, lineWidth: 1)
+                }
+                .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale)))
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.46 : 1)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.easeOut(duration: 0.12), value: isActive)
+        .help(label)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(isActive ? .isSelected : [])
+        .markprevPointerCursor(enabled: !isDisabled)
+    }
+
+    private var iconColor: Color {
+        if isActive {
+            return theme.foregroundColor
+        }
+        if isHovered && !isDisabled {
+            return theme.foregroundColor.opacity(0.92)
+        }
+        return theme.mutedForegroundColor
+    }
+
+    private var background: Color {
+        if isActive {
+            return theme.controlTrackFillColor
+        }
+        if isHovered && !isDisabled {
+            return theme.foregroundColor.opacity(theme.isDark ? 0.065 : 0.048)
+        }
+        return .clear
+    }
+
+    private var borderColor: Color {
+        isActive ? theme.borderColor : Color.clear
+    }
+}
+
+private struct PDFColorSwatchButton: View {
+    let color: PDFAnnotationPaletteColor
+    let isSelected: Bool
+    let theme: AppTheme
+    let zoomScale: Double
+    let uiFontSize: Double
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Circle()
+                .fill(color.color)
+                .frame(width: scaled(16), height: scaled(16))
+                .overlay {
+                    Circle()
+                        .strokeBorder(theme.surfaceColor.opacity(0.85), lineWidth: scaled(1))
+                }
+                .padding(scaled(4))
+                .background(
+                    Circle()
+                        .fill(isSelected ? theme.controlTrackFillColor : Color.clear)
+                )
+                .overlay {
+                    Circle()
+                        .strokeBorder(isSelected ? theme.borderColor : Color.clear, lineWidth: 1)
+                }
+                .scaleEffect(isHovered ? 1.06 : 1)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.easeOut(duration: 0.12), value: isSelected)
+        .help(color.name)
+        .accessibilityLabel(color.name)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .markprevPointerCursor()
+    }
+}
+
+private struct PDFKitPreviewRepresentable: NSViewRepresentable {
+    let url: URL
+    let dirtyData: Data?
+    let theme: AppTheme
+    let zoomScale: Double
+    let annotationMode: PDFAnnotationInteractionMode
+    let annotationColor: PDFAnnotationPaletteColor
+    let strokeWidth: CGFloat
+    let markupCommand: PDFTextMarkupCommand?
+    let undoCommandSerial: Int
+    let redoCommandSerial: Int
+    @Binding var searchState: DocumentSearchState
+    @Binding var searchTarget: WorkspaceSearchPDFTarget?
+    let markEdited: (Data?, Data) -> Void
+    let updateUndoState: (Bool, Bool) -> Void
+    let reportError: (String) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
     }
 
-    func makeNSView(context: Context) -> PDFView {
-        let view = PDFView()
+    func makeNSView(context: Context) -> AnnotatingPDFView {
+        let view = AnnotatingPDFView()
         view.displayMode = .singlePageContinuous
         view.displayDirection = .vertical
         view.displaysPageBreaks = true
@@ -26,7 +410,14 @@ struct PDFPreviewView: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ pdfView: PDFView, context: Context) {
+    func updateNSView(_ pdfView: AnnotatingPDFView, context: Context) {
+        pdfView.annotationMode = annotationMode
+        pdfView.annotationColor = annotationColor.nsColor
+        pdfView.annotationLineWidth = strokeWidth
+        pdfView.onEdited = markEdited
+        pdfView.onError = reportError
+        pdfView.onUndoStateChanged = updateUndoState
+
         context.coordinator.onSearchResult = { result in
             DispatchQueue.main.async {
                 let current = DocumentSearchResult(
@@ -45,13 +436,16 @@ struct PDFPreviewView: NSViewRepresentable {
         }
         context.coordinator.setPendingSearchTarget(searchTarget)
 
-        context.coordinator.loadDocumentIfNeeded(url, in: pdfView)
+        context.coordinator.loadDocumentIfNeeded(url, dirtyData: dirtyData, in: pdfView)
         context.coordinator.applyAppearance(theme: theme, zoomScale: zoomScale, in: pdfView)
         context.coordinator.applySearch(searchState, theme: theme, in: pdfView)
+        context.coordinator.applyMarkupCommand(markupCommand, in: pdfView)
+        context.coordinator.applyUndoRedoCommands(undoSerial: undoCommandSerial, redoSerial: redoCommandSerial, in: pdfView)
     }
 
     final class Coordinator {
         var onSearchResult: (DocumentSearchResult) -> Void = { _ in }
+        var onSearchTargetConsumed: () -> Void = {}
         private var documentURL: URL?
         private var lastAppliedTheme: AppTheme?
         private var lastZoomScale: Double?
@@ -60,9 +454,11 @@ struct PDFPreviewView: NSViewRepresentable {
         private var matches: [PDFSelection] = []
         private var currentMatchIndex = 0
         private var pendingSearchTarget: WorkspaceSearchPDFTarget?
-        var onSearchTargetConsumed: () -> Void = {}
+        private var lastMarkupCommandSerial = 0
+        private var lastUndoCommandSerial = 0
+        private var lastRedoCommandSerial = 0
 
-        func loadDocumentIfNeeded(_ url: URL, in pdfView: PDFView) {
+        func loadDocumentIfNeeded(_ url: URL, dirtyData: Data?, in pdfView: AnnotatingPDFView) {
             let standardizedURL = url.standardizedFileURL
             guard documentURL != standardizedURL else { return }
 
@@ -71,8 +467,13 @@ struct PDFPreviewView: NSViewRepresentable {
             currentMatchIndex = 0
             lastSearchRequest = nil
             lastSearchHighlightTheme = nil
-            pdfView.document = PDFDocument(url: standardizedURL)
+            if let dirtyData, let dirtyDocument = PDFDocument(data: dirtyData) {
+                pdfView.document = dirtyDocument
+            } else {
+                pdfView.document = PDFDocument(url: standardizedURL)
+            }
             pdfView.autoScales = true
+            pdfView.clearAnnotationUndoHistory()
             onSearchResult(.init())
         }
 
@@ -81,7 +482,7 @@ struct PDFPreviewView: NSViewRepresentable {
             pendingSearchTarget = target
         }
 
-        func applyAppearance(theme: AppTheme, zoomScale: Double, in pdfView: PDFView) {
+        func applyAppearance(theme: AppTheme, zoomScale: Double, in pdfView: AnnotatingPDFView) {
             pdfView.backgroundColor = NSColor(hex: theme.background)
 
             guard lastAppliedTheme != theme || lastZoomScale != zoomScale else {
@@ -112,7 +513,7 @@ struct PDFPreviewView: NSViewRepresentable {
             }
         }
 
-        func applySearch(_ state: DocumentSearchState, theme: AppTheme, in pdfView: PDFView) {
+        func applySearch(_ state: DocumentSearchState, theme: AppTheme, in pdfView: AnnotatingPDFView) {
             let request = DocumentSearchRequest(state)
             guard request.isPresented, !request.query.isEmpty, let document = pdfView.document else {
                 clearSearch(in: pdfView)
@@ -168,7 +569,25 @@ struct PDFPreviewView: NSViewRepresentable {
             lastSearchRequest = request
         }
 
-        private func clearSearch(in pdfView: PDFView) {
+        func applyMarkupCommand(_ command: PDFTextMarkupCommand?, in pdfView: AnnotatingPDFView) {
+            guard let command, command.serial != lastMarkupCommandSerial else { return }
+            lastMarkupCommandSerial = command.serial
+            pdfView.addTextMarkup(kind: command.kind, color: command.color.nsColor)
+        }
+
+        func applyUndoRedoCommands(undoSerial: Int, redoSerial: Int, in pdfView: AnnotatingPDFView) {
+            if undoSerial != lastUndoCommandSerial {
+                lastUndoCommandSerial = undoSerial
+                pdfView.undoAnnotationEdit()
+            }
+
+            if redoSerial != lastRedoCommandSerial {
+                lastRedoCommandSerial = redoSerial
+                pdfView.redoAnnotationEdit()
+            }
+        }
+
+        private func clearSearch(in pdfView: AnnotatingPDFView) {
             matches = []
             currentMatchIndex = 0
             if pendingSearchTarget != nil {
@@ -181,7 +600,7 @@ struct PDFPreviewView: NSViewRepresentable {
             onSearchResult(.init())
         }
 
-        private func pendingTargetIndex(in pdfView: PDFView) -> Int? {
+        private func pendingTargetIndex(in pdfView: AnnotatingPDFView) -> Int? {
             guard let target = pendingSearchTarget, !matches.isEmpty else { return nil }
 
             if target.matchIndex >= 0,
@@ -195,7 +614,7 @@ struct PDFPreviewView: NSViewRepresentable {
             }
         }
 
-        private func isSelection(_ selection: PDFSelection, onPage pageNumber: Int, in pdfView: PDFView) -> Bool {
+        private func isSelection(_ selection: PDFSelection, onPage pageNumber: Int, in pdfView: AnnotatingPDFView) -> Bool {
             guard pageNumber > 0, let document = pdfView.document else { return false }
             return selection.pages.contains { page in
                 document.index(for: page) + 1 == pageNumber
@@ -210,6 +629,598 @@ struct PDFPreviewView: NSViewRepresentable {
                 self.accent = theme.accent
                 self.isDark = theme.isDark
             }
+        }
+    }
+}
+
+private final class AnnotatingPDFView: PDFView {
+    var annotationMode: PDFAnnotationInteractionMode = .select {
+        didSet {
+            if oldValue != annotationMode {
+                discardActiveInkAnnotation()
+                window?.invalidateCursorRects(for: self)
+                setToolCursorIfPointerIsInside()
+            }
+        }
+    }
+    var annotationColor: NSColor = PDFAnnotationPaletteColor.yellow.nsColor
+    var annotationLineWidth: CGFloat = 3
+    var onEdited: (Data?, Data) -> Void = { _, _ in }
+    var onUndoStateChanged: (Bool, Bool) -> Void = { _, _ in }
+    var onError: (String) -> Void = { _ in }
+
+    private weak var activeInkPage: PDFPage?
+    private var activeInkPoints: [CGPoint] = []
+    private var activeInkAnnotation: PDFAnnotation?
+    private var activeInkBaselineData: Data?
+    private var toolTrackingArea: NSTrackingArea?
+    private var undoStack: [PDFAnnotationEditOperation] = []
+    private var redoStack: [PDFAnnotationEditOperation] = []
+    private var toolCursor: NSCursor {
+        PDFAnnotationToolCursor.cursor(for: annotationMode)
+    }
+
+    override var acceptsFirstResponder: Bool {
+        true
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard let characters = event.charactersIgnoringModifiers?.lowercased() else {
+            super.keyDown(with: event)
+            return
+        }
+
+        let flags = event.modifierFlags.independentFlags
+        if characters == "z",
+           flags.contains(.command),
+           !flags.contains(.option),
+           !flags.contains(.control) {
+            if flags.contains(.shift) {
+                redoAnnotationEdit()
+            } else {
+                undoAnnotationEdit()
+            }
+            return
+        }
+
+        super.keyDown(with: event)
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        if annotationMode != .select {
+            addCursorRect(bounds, cursor: toolCursor)
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let toolTrackingArea {
+            removeTrackingArea(toolTrackingArea)
+        }
+
+        let nextTrackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .cursorUpdate, .mouseMoved, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(nextTrackingArea)
+        toolTrackingArea = nextTrackingArea
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        guard annotationMode != .select else {
+            super.cursorUpdate(with: event)
+            return
+        }
+        toolCursor.set()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        if annotationMode != .select {
+            toolCursor.set()
+        }
+    }
+
+    private func setToolCursorIfPointerIsInside() {
+        guard annotationMode != .select, let window else { return }
+        let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        if bounds.contains(point) {
+            toolCursor.set()
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+
+        switch annotationMode {
+        case .select:
+            super.mouseDown(with: event)
+        case .pen:
+            guard canAnnotate() else { return }
+            guard let target = pagePoint(for: event) else { return }
+            activeInkPage = target.page
+            activeInkPoints = [target.point]
+            activeInkAnnotation = nil
+            activeInkBaselineData = document?.dataRepresentation()
+        case .eraser:
+            eraseAnnotation(at: event)
+        }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        switch annotationMode {
+        case .select:
+            super.mouseDragged(with: event)
+        case .pen:
+            guard let activeInkPage,
+                  let target = pagePoint(for: event),
+                  target.page === activeInkPage else {
+                return
+            }
+
+            if let last = activeInkPoints.last, squaredDistance(from: last, to: target.point) < 1.8 {
+                return
+            }
+
+            activeInkPoints.append(target.point)
+            renderActiveInkAnnotation(finalizing: false)
+        case .eraser:
+            eraseAnnotation(at: event)
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        switch annotationMode {
+        case .select:
+            super.mouseUp(with: event)
+        case .pen:
+            if activeInkPoints.count > 1 {
+                let inkPage = activeInkPage
+                if let annotation = renderActiveInkAnnotation(finalizing: true),
+                   let inkPage,
+                   let document {
+                    registerAnnotationEdit(
+                        PDFAnnotationEditOperation(
+                            added: [.init(pageIndex: document.index(for: inkPage), annotation: annotation)],
+                            removed: []
+                        )
+                    )
+                }
+                publishEditedDocument(previousData: activeInkBaselineData)
+            } else {
+                discardActiveInkAnnotation()
+            }
+            activeInkBaselineData = nil
+        case .eraser:
+            break
+        }
+    }
+
+    func addTextMarkup(kind: PDFTextMarkupKind, color: NSColor) {
+        guard canAnnotate() else { return }
+        guard let selection = currentSelection,
+              !selection.pages.isEmpty,
+              selection.string?.isEmpty == false else {
+            onError(PDFAnnotationOperationError.noSelection.localizedDescription)
+            return
+        }
+
+        guard let document else { return }
+        let previousData = document.dataRepresentation()
+
+        let lineSelections = selection.selectionsByLine()
+        var addedAnnotations: [PDFAnnotationEditOperation.Item] = []
+
+        for lineSelection in lineSelections {
+            for page in lineSelection.pages {
+                let bounds = lineSelection.bounds(for: page).insetBy(dx: -1, dy: -1)
+                guard bounds.width > 0, bounds.height > 0 else { continue }
+
+                let annotation = PDFAnnotation(bounds: bounds, forType: kind.annotationSubtype, withProperties: nil)
+                annotation.color = kind == .highlight ? color.withAlphaComponent(0.46) : color
+                annotation.contents = selection.string
+                annotation.userName = NSFullUserName()
+                annotation.modificationDate = Date()
+                annotation.shouldDisplay = true
+                annotation.shouldPrint = true
+                annotation.setValue(quadPoints(for: bounds), forAnnotationKey: .quadPoints)
+                page.addAnnotation(annotation)
+                addedAnnotations.append(.init(pageIndex: document.index(for: page), annotation: annotation))
+            }
+        }
+
+        guard !addedAnnotations.isEmpty else {
+            onError(PDFAnnotationOperationError.noSelection.localizedDescription)
+            return
+        }
+
+        registerAnnotationEdit(PDFAnnotationEditOperation(added: addedAnnotations, removed: []))
+        refreshAnnotationDisplay()
+        clearSelection()
+        publishEditedDocument(previousData: previousData)
+    }
+
+    @discardableResult
+    private func renderActiveInkAnnotation(finalizing: Bool) -> PDFAnnotation? {
+        guard let activeInkPage else { return nil }
+
+        if let activeInkAnnotation {
+            activeInkPage.removeAnnotation(activeInkAnnotation)
+            self.activeInkAnnotation = nil
+        }
+
+        guard let annotation = inkAnnotation(points: activeInkPoints) else { return nil }
+        activeInkPage.addAnnotation(annotation)
+
+        if finalizing {
+            self.activeInkPage = nil
+            activeInkPoints = []
+        } else {
+            activeInkAnnotation = annotation
+        }
+
+        refreshAnnotationDisplay(on: activeInkPage)
+        return annotation
+    }
+
+    private func discardActiveInkAnnotation() {
+        if let activeInkPage, let activeInkAnnotation {
+            activeInkPage.removeAnnotation(activeInkAnnotation)
+        }
+        activeInkPoints = []
+        activeInkPage = nil
+        activeInkAnnotation = nil
+        activeInkBaselineData = nil
+    }
+
+    private func inkAnnotation(points: [CGPoint]) -> PDFAnnotation? {
+        guard points.count > 1 else { return nil }
+
+        let padding = max(annotationLineWidth * 2, 3)
+        let minX = points.map(\.x).min() ?? 0
+        let maxX = points.map(\.x).max() ?? 0
+        let minY = points.map(\.y).min() ?? 0
+        let maxY = points.map(\.y).max() ?? 0
+        let bounds = CGRect(
+            x: minX - padding,
+            y: minY - padding,
+            width: max(maxX - minX + padding * 2, annotationLineWidth * 2),
+            height: max(maxY - minY + padding * 2, annotationLineWidth * 2)
+        )
+
+        let path = NSBezierPath()
+        path.lineCapStyle = .round
+        path.lineJoinStyle = .round
+        path.lineWidth = annotationLineWidth
+
+        if let first = points.first {
+            path.move(to: CGPoint(x: first.x - bounds.minX, y: first.y - bounds.minY))
+        }
+        for point in points.dropFirst() {
+            path.line(to: CGPoint(x: point.x - bounds.minX, y: point.y - bounds.minY))
+        }
+
+        let annotation = PDFAnnotation(bounds: bounds, forType: .ink, withProperties: nil)
+        let border = PDFBorder()
+        border.style = .solid
+        border.lineWidth = annotationLineWidth
+        annotation.border = border
+        annotation.color = annotationColor
+        annotation.userName = NSFullUserName()
+        annotation.modificationDate = Date()
+        annotation.shouldDisplay = true
+        annotation.shouldPrint = true
+        annotation.add(path)
+        return annotation
+    }
+
+    private func eraseAnnotation(at event: NSEvent) {
+        guard canAnnotate() else { return }
+        guard let target = pagePoint(for: event),
+              let annotation = annotationForErasing(on: target.page, at: target.point),
+              let document else {
+            return
+        }
+
+        let previousData = document.dataRepresentation()
+        let removedItem = PDFAnnotationEditOperation.Item(pageIndex: document.index(for: target.page), annotation: annotation)
+        target.page.removeAnnotation(annotation)
+        registerAnnotationEdit(PDFAnnotationEditOperation(added: [], removed: [removedItem]))
+        refreshAnnotationDisplay(on: target.page)
+        publishEditedDocument(previousData: previousData)
+    }
+
+    func undoAnnotationEdit() {
+        guard let operation = undoStack.popLast() else { return }
+        applyInverse(operation)
+        redoStack.append(operation)
+        publishUndoState()
+        publishEditedDocument(previousData: nil)
+    }
+
+    func redoAnnotationEdit() {
+        guard let operation = redoStack.popLast() else { return }
+        apply(operation)
+        undoStack.append(operation)
+        publishUndoState()
+        publishEditedDocument(previousData: nil)
+    }
+
+    func clearAnnotationUndoHistory() {
+        undoStack = []
+        redoStack = []
+        publishUndoState()
+    }
+
+    private func registerAnnotationEdit(_ operation: PDFAnnotationEditOperation) {
+        guard !operation.added.isEmpty || !operation.removed.isEmpty else { return }
+        undoStack.append(operation)
+        redoStack = []
+        publishUndoState()
+    }
+
+    private func apply(_ operation: PDFAnnotationEditOperation) {
+        for item in operation.removed {
+            page(at: item.pageIndex)?.removeAnnotation(item.annotation)
+        }
+
+        for item in operation.added {
+            page(at: item.pageIndex)?.addAnnotation(item.annotation)
+        }
+
+        refreshAnnotationDisplay()
+    }
+
+    private func applyInverse(_ operation: PDFAnnotationEditOperation) {
+        for item in operation.added {
+            page(at: item.pageIndex)?.removeAnnotation(item.annotation)
+        }
+
+        for item in operation.removed {
+            page(at: item.pageIndex)?.addAnnotation(item.annotation)
+        }
+
+        refreshAnnotationDisplay()
+    }
+
+    private func page(at pageIndex: Int) -> PDFPage? {
+        guard pageIndex >= 0 else { return nil }
+        return document?.page(at: pageIndex)
+    }
+
+    private func publishUndoState() {
+        onUndoStateChanged(!undoStack.isEmpty, !redoStack.isEmpty)
+    }
+
+    private func refreshAnnotationDisplay(on page: PDFPage? = nil) {
+        if let page {
+            let pageBounds = page.bounds(for: displayBox)
+            setNeedsDisplay(convert(pageBounds, from: page))
+        } else {
+            needsDisplay = true
+            documentView?.needsDisplay = true
+        }
+    }
+
+    private func publishEditedDocument(previousData: Data?) {
+        guard let data = document?.dataRepresentation() else {
+            onError(PDFAnnotationOperationError.dataRepresentationFailed.localizedDescription)
+            return
+        }
+        onEdited(previousData, data)
+    }
+
+    private func canAnnotate() -> Bool {
+        guard let document else {
+            onError(PDFAnnotationOperationError.noDocument.localizedDescription)
+            return false
+        }
+
+        if document.isLocked {
+            onError(PDFAnnotationOperationError.locked.localizedDescription)
+            return false
+        }
+
+        if !document.allowsCommenting {
+            onError(PDFAnnotationOperationError.commentingNotAllowed.localizedDescription)
+            return false
+        }
+
+        return true
+    }
+
+    private func pagePoint(for event: NSEvent) -> (page: PDFPage, point: CGPoint)? {
+        let viewPoint = convert(event.locationInWindow, from: nil)
+        guard let page = page(for: viewPoint, nearest: false) else {
+            return nil
+        }
+        return (page, convert(viewPoint, to: page))
+    }
+
+    private func annotationForErasing(on page: PDFPage, at point: CGPoint) -> PDFAnnotation? {
+        let tolerance = max(annotationLineWidth * 2.2, 8)
+        return page.annotations.reversed().first { annotation in
+            guard isErasable(annotation) else { return false }
+            return annotation.bounds.insetBy(dx: -tolerance, dy: -tolerance).contains(point)
+        }
+    }
+
+    private func isErasable(_ annotation: PDFAnnotation) -> Bool {
+        guard let type = annotation.type else { return false }
+        let subtype = PDFAnnotationSubtype(rawValue: type)
+        if [
+            PDFAnnotationSubtype.highlight,
+            PDFAnnotationSubtype.underline,
+            PDFAnnotationSubtype.strikeOut,
+            PDFAnnotationSubtype.ink,
+            PDFAnnotationSubtype.freeText,
+            PDFAnnotationSubtype.text,
+            PDFAnnotationSubtype.square,
+            PDFAnnotationSubtype.circle,
+            PDFAnnotationSubtype.line,
+            PDFAnnotationSubtype.stamp,
+            PDFAnnotationSubtype.popup
+        ].contains(subtype) {
+            return true
+        }
+
+        let normalizedType = type
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            .replacingOccurrences(of: "-", with: "")
+            .lowercased()
+        return [
+            "highlight",
+            "underline",
+            "strikeout",
+            "ink",
+            "freetext",
+            "text",
+            "square",
+            "circle",
+            "line",
+            "stamp",
+            "popup"
+        ].contains(normalizedType)
+    }
+
+    private func quadPoints(for bounds: CGRect) -> [NSNumber] {
+        [
+            NSNumber(value: Double(bounds.minX)),
+            NSNumber(value: Double(bounds.maxY)),
+            NSNumber(value: Double(bounds.maxX)),
+            NSNumber(value: Double(bounds.maxY)),
+            NSNumber(value: Double(bounds.minX)),
+            NSNumber(value: Double(bounds.minY)),
+            NSNumber(value: Double(bounds.maxX)),
+            NSNumber(value: Double(bounds.minY))
+        ]
+    }
+
+    private func squaredDistance(from lhs: CGPoint, to rhs: CGPoint) -> CGFloat {
+        let dx = lhs.x - rhs.x
+        let dy = lhs.y - rhs.y
+        return dx * dx + dy * dy
+    }
+}
+
+private enum PDFAnnotationInteractionMode: Equatable {
+    case select
+    case pen
+    case eraser
+}
+
+private struct PDFAnnotationEditOperation {
+    struct Item {
+        let pageIndex: Int
+        let annotation: PDFAnnotation
+    }
+
+    let added: [Item]
+    let removed: [Item]
+}
+
+private enum PDFAnnotationToolCursor {
+    static func cursor(for mode: PDFAnnotationInteractionMode) -> NSCursor {
+        switch mode {
+        case .select:
+            return .arrow
+        case .pen:
+            return pen
+        case .eraser:
+            return eraser
+        }
+    }
+
+    private static let pen = symbolCursor(systemName: "pencil.tip", fallback: .crosshair, hotSpot: CGPoint(x: 3, y: 21))
+    private static let eraser = symbolCursor(systemName: "eraser", fallback: .pointingHand, hotSpot: CGPoint(x: 5, y: 18))
+
+    private static func symbolCursor(systemName: String, fallback: NSCursor, hotSpot: CGPoint) -> NSCursor {
+        guard let symbol = NSImage(systemSymbolName: systemName, accessibilityDescription: nil) else {
+            return fallback
+        }
+
+        let image = NSImage(size: NSSize(width: 24, height: 24))
+        image.lockFocus()
+        NSColor.labelColor.set()
+        symbol.draw(
+            in: NSRect(x: 2, y: 2, width: 20, height: 20),
+            from: .zero,
+            operation: .sourceOver,
+            fraction: 1
+        )
+        image.unlockFocus()
+        return NSCursor(image: image, hotSpot: hotSpot)
+    }
+}
+
+private enum PDFTextMarkupKind: Equatable {
+    case highlight
+    case underline
+    case strikeOut
+
+    var annotationSubtype: PDFAnnotationSubtype {
+        switch self {
+        case .highlight:
+            return .highlight
+        case .underline:
+            return .underline
+        case .strikeOut:
+            return .strikeOut
+        }
+    }
+}
+
+private struct PDFTextMarkupCommand: Equatable {
+    let serial: Int
+    let kind: PDFTextMarkupKind
+    let color: PDFAnnotationPaletteColor
+}
+
+private struct PDFAnnotationPaletteColor: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let hex: String
+
+    var color: Color {
+        Color(hex: hex)
+    }
+
+    var nsColor: NSColor {
+        NSColor(hex: hex)
+    }
+
+    static let yellow = PDFAnnotationPaletteColor(id: "yellow", name: "Yellow", hex: "#ffd84d")
+    static let green = PDFAnnotationPaletteColor(id: "green", name: "Green", hex: "#76d672")
+    static let blue = PDFAnnotationPaletteColor(id: "blue", name: "Blue", hex: "#66b8ff")
+    static let pink = PDFAnnotationPaletteColor(id: "pink", name: "Pink", hex: "#ff6fae")
+    static let red = PDFAnnotationPaletteColor(id: "red", name: "Red", hex: "#ef5350")
+    static let graphite = PDFAnnotationPaletteColor(id: "graphite", name: "Graphite", hex: "#d8dee9")
+
+    static let all: [PDFAnnotationPaletteColor] = [.yellow, .green, .blue, .pink, .red, .graphite]
+}
+
+private enum PDFAnnotationOperationError: LocalizedError {
+    case noDocument
+    case locked
+    case commentingNotAllowed
+    case noSelection
+    case dataRepresentationFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .noDocument:
+            return "No PDF document is loaded."
+        case .locked:
+            return "This PDF is locked."
+        case .commentingNotAllowed:
+            return "This PDF does not allow annotations."
+        case .noSelection:
+            return "Select PDF text before applying markup."
+        case .dataRepresentationFailed:
+            return "PDFKit could not prepare the annotated document."
         }
     }
 }
