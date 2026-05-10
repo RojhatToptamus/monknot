@@ -2,8 +2,8 @@
 set -euo pipefail
 
 MODE="${1:-run}"
-APP_NAME="Markprev"
-BUNDLE_ID="com.local.Markprev"
+APP_NAME="monknot"
+BUNDLE_ID="com.local.monknot"
 MIN_SYSTEM_VERSION="14.0"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,6 +18,13 @@ INFO_PLIST="$APP_CONTENTS/Info.plist"
 BUILD_DIR="$ROOT_DIR/.build/manual"
 OVERLAY_FILE="$BUILD_DIR/swift-vfs-overlay.yaml"
 EMPTY_MODULEMAP="$BUILD_DIR/empty.modulemap"
+APP_ICON_NAME="AppIcon"
+APP_ICON_SOURCE="$ROOT_DIR/Sources/Monknot/Resources/AppIcon.svg"
+APP_ICONSET_SOURCE="$ROOT_DIR/Sources/Monknot/Resources/AppIcon.iconset"
+APP_ICON_FLATTENED_SVG="$BUILD_DIR/$APP_ICON_NAME-full-background.svg"
+APP_ICON_BASE_PNG="$BUILD_DIR/$APP_ICON_NAME-base.png"
+APP_ICONSET_BUILD="$BUILD_DIR/$APP_ICON_NAME.iconset"
+APP_ICON_ICNS="$BUILD_DIR/$APP_ICON_NAME.icns"
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 
@@ -34,107 +41,152 @@ cat >"$OVERLAY_FILE" <<OVERLAY
 { "version": 0, "case-sensitive": "false", "roots": [ { "name": "$SWIFT_MODULEMAP", "type": "file", "external-contents": "$EMPTY_MODULEMAP" } ] }
 OVERLAY
 
+build_app_icon() {
+  if [[ -d "$APP_ICONSET_SOURCE" ]]; then
+    iconutil -c icns "$APP_ICONSET_SOURCE" -o "$APP_ICON_ICNS"
+    return
+  fi
+
+  if [[ ! -f "$APP_ICON_SOURCE" ]]; then
+    echo "missing app icon source: $APP_ICON_SOURCE" >&2
+    exit 1
+  fi
+
+  rm -rf "$APP_ICONSET_BUILD"
+  mkdir -p "$APP_ICONSET_BUILD"
+
+  if command -v rsvg-convert >/dev/null 2>&1; then
+    awk '
+      index($0, "<g clip-path=") && !inserted {
+        print "  <rect width=\"1024\" height=\"1024\" fill=\"url(#bg)\"/>"
+        inserted = 1
+      }
+      { print }
+    ' "$APP_ICON_SOURCE" >"$APP_ICON_FLATTENED_SVG"
+    rsvg-convert -w 1024 -h 1024 "$APP_ICON_FLATTENED_SVG" -o "$APP_ICON_BASE_PNG"
+  else
+    echo "rsvg-convert is required to preserve the SVG app icon background." >&2
+    exit 1
+  fi
+
+  sips -z 16 16 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_16x16.png" >/dev/null
+  sips -z 32 32 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_16x16@2x.png" >/dev/null
+  sips -z 32 32 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_32x32.png" >/dev/null
+  sips -z 64 64 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_32x32@2x.png" >/dev/null
+  sips -z 128 128 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_128x128.png" >/dev/null
+  sips -z 256 256 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_128x128@2x.png" >/dev/null
+  sips -z 256 256 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_256x256.png" >/dev/null
+  sips -z 512 512 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_256x256@2x.png" >/dev/null
+  sips -z 512 512 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_512x512.png" >/dev/null
+  sips -z 1024 1024 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_512x512@2x.png" >/dev/null
+
+  iconutil -c icns "$APP_ICONSET_BUILD" -o "$APP_ICON_ICNS"
+}
+
 CORE_SOURCES=(
-  "Sources/MarkprevCore/Models/EditorMode.swift"
-  "Sources/MarkprevCore/Models/ThemePreference.swift"
-  "Sources/MarkprevCore/Models/AppTheme.swift"
-  "Sources/MarkprevCore/Models/CodexThemeCatalog.swift"
-  "Sources/MarkprevCore/Models/WorkspaceDocument.swift"
-  "Sources/MarkprevCore/Models/MarkdownSourceLocation.swift"
-  "Sources/MarkprevCore/Models/MarkdownOutlineItem.swift"
-  "Sources/MarkprevCore/Models/MarkdownPDFExportOptions.swift"
-  "Sources/MarkprevCore/Models/WorkspaceSearchResult.swift"
-  "Sources/MarkprevCore/Models/WorkspaceTabState.swift"
-  "Sources/MarkprevCore/Models/MarkprevKeyboardShortcut.swift"
-  "Sources/MarkprevCore/Models/TerminalTabState.swift"
-  "Sources/MarkprevCore/Models/SidebarNode.swift"
-  "Sources/MarkprevCore/Services/WorkspaceDocumentScanner.swift"
-  "Sources/MarkprevCore/Services/WorkspaceTabStatePersistence.swift"
-  "Sources/MarkprevCore/Services/RecentWorkspaceStore.swift"
-  "Sources/MarkprevCore/Services/MarkdownOutlineParser.swift"
-  "Sources/MarkprevCore/Services/WorkspaceSearchService.swift"
-  "Sources/MarkprevCore/Services/MarkdownRenderService.swift"
+  "Sources/MonknotCore/Models/EditorMode.swift"
+  "Sources/MonknotCore/Models/ThemePreference.swift"
+  "Sources/MonknotCore/Models/AppTheme.swift"
+  "Sources/MonknotCore/Models/CodexThemeCatalog.swift"
+  "Sources/MonknotCore/Models/WorkspaceDocument.swift"
+  "Sources/MonknotCore/Models/MarkdownSourceLocation.swift"
+  "Sources/MonknotCore/Models/MarkdownOutlineItem.swift"
+  "Sources/MonknotCore/Models/MarkdownPDFExportOptions.swift"
+  "Sources/MonknotCore/Models/WorkspaceSearchResult.swift"
+  "Sources/MonknotCore/Models/WorkspaceTabState.swift"
+  "Sources/MonknotCore/Models/MonknotKeyboardShortcut.swift"
+  "Sources/MonknotCore/Models/TerminalTabState.swift"
+  "Sources/MonknotCore/Models/SidebarNode.swift"
+  "Sources/MonknotCore/Services/WorkspaceDocumentScanner.swift"
+  "Sources/MonknotCore/Services/WorkspaceTabStatePersistence.swift"
+  "Sources/MonknotCore/Services/RecentWorkspaceStore.swift"
+  "Sources/MonknotCore/Services/MarkdownOutlineParser.swift"
+  "Sources/MonknotCore/Services/WorkspaceSearchService.swift"
+  "Sources/MonknotCore/Services/MarkdownRenderService.swift"
 )
 
 APP_SOURCES=(
-  "Sources/Markprev/App/MarkprevApp.swift"
-  "Sources/Markprev/Models/DocumentSaveState.swift"
-  "Sources/Markprev/Models/DocumentSearchState.swift"
-  "Sources/Markprev/Models/DocumentViewportState.swift"
-  "Sources/Markprev/Models/TerminalWorkingDirectoryPolicy.swift"
-  "Sources/Markprev/Models/WorkspaceSearchState.swift"
-  "Sources/Markprev/Support/Color+Theme.swift"
-  "Sources/Markprev/Support/CursorSupport.swift"
-  "Sources/Markprev/Support/EditorMode+SwiftUI.swift"
-  "Sources/Markprev/Support/InitialWorkspaceRestorationCoordinator.swift"
-  "Sources/Markprev/Support/KeyboardShortcutMonitor.swift"
-  "Sources/Markprev/Support/MarkprevCommandActions.swift"
-  "Sources/Markprev/Support/PDFAnnotationHitTesting.swift"
-  "Sources/Markprev/Support/ThemePreference+SwiftUI.swift"
-  "Sources/Markprev/Support/WindowChromeSupport.swift"
-  "Sources/Markprev/Support/WorkspaceWindowRequestCenter.swift"
-  "Sources/Markprev/Services/MarkdownPDFExportService.swift"
-  "Sources/Markprev/Services/WorkspacePasteboardImportService.swift"
-  "Sources/Markprev/Services/WorkspaceFileWatcher.swift"
-  "Sources/Markprev/Services/TerminalPTYSession.swift"
-  "Sources/Markprev/Stores/MarkdownOutlineStore.swift"
-  "Sources/Markprev/Stores/WorkspaceStore.swift"
-  "Sources/Markprev/Stores/ThemeSettingsStore.swift"
-  "Sources/Markprev/Stores/TerminalSessionStore.swift"
-  "Sources/Markprev/Stores/TerminalSessionCollectionStore.swift"
-  "Sources/Markprev/Views/ContentView.swift"
-  "Sources/Markprev/Views/SidebarView.swift"
-  "Sources/Markprev/Views/EditorPaneView.swift"
-  "Sources/Markprev/Views/DocumentTabBar.swift"
-  "Sources/Markprev/Views/TopNavigationBar.swift"
-  "Sources/Markprev/Views/TerminalDrawerView.swift"
-  "Sources/Markprev/Views/TerminalWebView.swift"
-  "Sources/Markprev/Views/WorkspaceSearchView.swift"
-  "Sources/Markprev/Views/MarkdownOutlinePanel.swift"
-  "Sources/Markprev/Views/MarkdownPDFExportOptionsSheet.swift"
-  "Sources/Markprev/Views/MarkdownTextEditor.swift"
-  "Sources/Markprev/Views/MarkdownPreviewView.swift"
-  "Sources/Markprev/Views/PDFPreviewView.swift"
-  "Sources/Markprev/Views/MediaPreviewView.swift"
-  "Sources/Markprev/Views/QuickLookPreviewView.swift"
-  "Sources/Markprev/Views/PreferencesView.swift"
-  "Sources/Markprev/Views/GeneralSettingsView.swift"
-  "Sources/Markprev/Views/AppearanceSettingsView.swift"
-  "Sources/Markprev/Views/SettingsComponents.swift"
+  "Sources/Monknot/App/MonknotApp.swift"
+  "Sources/Monknot/Models/DocumentSaveState.swift"
+  "Sources/Monknot/Models/DocumentSearchState.swift"
+  "Sources/Monknot/Models/DocumentViewportState.swift"
+  "Sources/Monknot/Models/TerminalWorkingDirectoryPolicy.swift"
+  "Sources/Monknot/Models/WorkspaceSearchState.swift"
+  "Sources/Monknot/Support/Color+Theme.swift"
+  "Sources/Monknot/Support/CursorSupport.swift"
+  "Sources/Monknot/Support/EditorMode+SwiftUI.swift"
+  "Sources/Monknot/Support/InitialWorkspaceRestorationCoordinator.swift"
+  "Sources/Monknot/Support/KeyboardShortcutMonitor.swift"
+  "Sources/Monknot/Support/MonknotCommandActions.swift"
+  "Sources/Monknot/Support/PDFAnnotationHitTesting.swift"
+  "Sources/Monknot/Support/ThemePreference+SwiftUI.swift"
+  "Sources/Monknot/Support/WindowChromeSupport.swift"
+  "Sources/Monknot/Support/WorkspaceWindowRequestCenter.swift"
+  "Sources/Monknot/Services/MarkdownPDFExportService.swift"
+  "Sources/Monknot/Services/WorkspacePasteboardImportService.swift"
+  "Sources/Monknot/Services/WorkspaceFileWatcher.swift"
+  "Sources/Monknot/Services/TerminalPTYSession.swift"
+  "Sources/Monknot/Stores/MarkdownOutlineStore.swift"
+  "Sources/Monknot/Stores/WorkspaceStore.swift"
+  "Sources/Monknot/Stores/ThemeSettingsStore.swift"
+  "Sources/Monknot/Stores/TerminalSessionStore.swift"
+  "Sources/Monknot/Stores/TerminalSessionCollectionStore.swift"
+  "Sources/Monknot/Views/ContentView.swift"
+  "Sources/Monknot/Views/SidebarView.swift"
+  "Sources/Monknot/Views/EditorPaneView.swift"
+  "Sources/Monknot/Views/DocumentTabBar.swift"
+  "Sources/Monknot/Views/TopNavigationBar.swift"
+  "Sources/Monknot/Views/TerminalDrawerView.swift"
+  "Sources/Monknot/Views/TerminalWebView.swift"
+  "Sources/Monknot/Views/WorkspaceSearchView.swift"
+  "Sources/Monknot/Views/MarkdownOutlinePanel.swift"
+  "Sources/Monknot/Views/MarkdownPDFExportOptionsSheet.swift"
+  "Sources/Monknot/Views/MarkdownTextEditor.swift"
+  "Sources/Monknot/Views/MarkdownPreviewView.swift"
+  "Sources/Monknot/Views/PDFPreviewView.swift"
+  "Sources/Monknot/Views/MediaPreviewView.swift"
+  "Sources/Monknot/Views/QuickLookPreviewView.swift"
+  "Sources/Monknot/Views/PreferencesView.swift"
+  "Sources/Monknot/Views/GeneralSettingsView.swift"
+  "Sources/Monknot/Views/AppearanceSettingsView.swift"
+  "Sources/Monknot/Views/SettingsComponents.swift"
 )
 
 "$SWIFTC_BIN" \
   -vfsoverlay "$OVERLAY_FILE" \
   -parse-as-library \
-  -module-name MarkprevCore \
+  -module-name MonknotCore \
   -emit-library \
   -emit-module \
-  -emit-module-path "$BUILD_DIR/MarkprevCore.swiftmodule" \
+  -emit-module-path "$BUILD_DIR/MonknotCore.swiftmodule" \
   -Xlinker -install_name \
-  -Xlinker @rpath/libMarkprevCore.dylib \
+  -Xlinker @rpath/libMonknotCore.dylib \
   "${CORE_SOURCES[@]}" \
-  -o "$BUILD_DIR/libMarkprevCore.dylib"
+  -o "$BUILD_DIR/libMonknotCore.dylib"
 
 "$SWIFTC_BIN" \
   -vfsoverlay "$OVERLAY_FILE" \
   -I "$BUILD_DIR" \
   -L "$BUILD_DIR" \
-  -lMarkprevCore \
+  -lMonknotCore \
   -Xlinker -rpath \
   -Xlinker @executable_path/../Frameworks \
   "${APP_SOURCES[@]}" \
   -o "$BUILD_DIR/$APP_NAME"
 
+build_app_icon
+
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS" "$APP_RESOURCES" "$APP_FRAMEWORKS"
 cp "$BUILD_DIR/$APP_NAME" "$APP_BINARY"
-cp "$BUILD_DIR/libMarkprevCore.dylib" "$APP_FRAMEWORKS/libMarkprevCore.dylib"
+cp "$BUILD_DIR/libMonknotCore.dylib" "$APP_FRAMEWORKS/libMonknotCore.dylib"
 chmod +x "$APP_BINARY"
-cp "$ROOT_DIR/Sources/MarkprevCore/Resources/preview.css" "$APP_RESOURCES/preview.css"
-cp "$ROOT_DIR/Sources/MarkprevCore/Resources/renderer.js" "$APP_RESOURCES/renderer.js"
-cp "$ROOT_DIR/Sources/Markprev/Resources/xterm.css" "$APP_RESOURCES/xterm.css"
-cp "$ROOT_DIR/Sources/Markprev/Resources/xterm.js" "$APP_RESOURCES/xterm.js"
-cp "$ROOT_DIR/Sources/Markprev/Resources/xterm-addon-fit.js" "$APP_RESOURCES/xterm-addon-fit.js"
+cp "$APP_ICON_ICNS" "$APP_RESOURCES/$APP_ICON_NAME.icns"
+cp "$ROOT_DIR/Sources/MonknotCore/Resources/preview.css" "$APP_RESOURCES/preview.css"
+cp "$ROOT_DIR/Sources/MonknotCore/Resources/renderer.js" "$APP_RESOURCES/renderer.js"
+cp "$ROOT_DIR/Sources/Monknot/Resources/xterm.css" "$APP_RESOURCES/xterm.css"
+cp "$ROOT_DIR/Sources/Monknot/Resources/xterm.js" "$APP_RESOURCES/xterm.js"
+cp "$ROOT_DIR/Sources/Monknot/Resources/xterm-addon-fit.js" "$APP_RESOURCES/xterm-addon-fit.js"
 
 cat >"$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -145,7 +197,11 @@ cat >"$INFO_PLIST" <<PLIST
   <string>$APP_NAME</string>
   <key>CFBundleIdentifier</key>
   <string>$BUNDLE_ID</string>
+  <key>CFBundleIconFile</key>
+  <string>$APP_ICON_NAME.icns</string>
   <key>CFBundleName</key>
+  <string>$APP_NAME</string>
+  <key>CFBundleDisplayName</key>
   <string>$APP_NAME</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>

@@ -1,24 +1,28 @@
-// swift-tools-version:5.0
+// swift-tools-version:5.3
 
 import PackageDescription
 
 let package = Package(
-    name: "Markprev",
+    name: "monknot",
     platforms: [
         .macOS("14.0")
     ],
     products: [
-        .executable(name: "Markprev", targets: ["Markprev"])
+        .executable(name: "monknot", targets: ["Monknot"])
     ],
     targets: [
-        .target(name: "MarkprevCore"),
         .target(
-            name: "Markprev",
-            dependencies: ["MarkprevCore"]
+            name: "MonknotCore",
+            resources: [.process("Resources")]
+        ),
+        .target(
+            name: "Monknot",
+            dependencies: ["MonknotCore"],
+            resources: [.process("Resources")]
         ),
         .testTarget(
-            name: "MarkprevTests",
-            dependencies: ["MarkprevCore"]
+            name: "MonknotTests",
+            dependencies: ["MonknotCore"]
         )
     ]
 )

@@ -1,42 +1,42 @@
-# Markprev Agent Guide
+# Monknot Agent Guide
 
 This file orients AI agents and contributors working in this repository. Keep it current when major files, targets, or workflows move.
 
 ## Project Overview
 
-Markprev is a SwiftPM macOS app for browsing a workspace, opening multiple files in lightweight tabs, editing Markdown and text-like files, previewing Markdown, viewing PDFs, previewing system-supported files with Quick Look, searching text/PDF documents, exporting Markdown to PDF, and running an embedded terminal.
+Monknot is a SwiftPM macOS app for browsing a workspace, opening multiple files in lightweight tabs, editing Markdown and text-like files, previewing Markdown, viewing PDFs, previewing system-supported files with Quick Look, searching text/PDF documents, exporting Markdown to PDF, and running an embedded terminal.
 
 The app is split into two main targets:
 
-- `MarkprevCore`: reusable model and service logic with minimal UI coupling.
-- `Markprev`: the macOS application layer built with SwiftUI, AppKit bridges, WebKit, PDFKit, FSEvents, and PTY support.
+- `MonknotCore`: reusable model and service logic with minimal UI coupling.
+- `Monknot`: the macOS application layer built with SwiftUI, AppKit bridges, WebKit, PDFKit, FSEvents, and PTY support.
 
 The package currently declares one test target:
 
-- `MarkprevTests`: XCTest coverage for `MarkprevCore`.
+- `MonknotTests`: XCTest coverage for `MonknotCore`.
 
-There are also smoke-test source files under `Tests/MarkprevSmokeTests` and `Tests/MarkprevStoreSmokeTests`; these are not declared in `Package.swift` unless the package is updated.
+There are also smoke-test source files under `Tests/MonknotSmokeTests` and `Tests/MonknotStoreSmokeTests`; these are not declared in `Package.swift` unless the package is updated.
 
 ## Repository Map
 
 - `Package.swift`: SwiftPM manifest. Add new compile targets or resources here if they should be part of SwiftPM builds/tests.
-- `Sources/MarkprevCore/Models`: value types and enums shared by the app and tests.
-- `Sources/MarkprevCore/Services`: core services for scanning workspaces, rendering Markdown HTML, parsing outlines, and searching workspaces.
-- `Sources/MarkprevCore/Resources`: Markdown preview CSS and JavaScript renderer used by WebKit preview and PDF export.
-- `Sources/Markprev/App`: app entry point and application delegate.
-- `Sources/Markprev/Stores`: `@MainActor` observable state containers for workspace, themes, terminal state, and Markdown outline state.
-- `Sources/Markprev/Models`: app-layer UI state models such as save state and document search state.
-- `Sources/Markprev/Views`: SwiftUI views and AppKit/WebKit/PDFKit representables.
-- `Sources/Markprev/Services`: app-layer services that need platform APIs, including PDF export, FSEvents, and PTY management.
-- `Sources/Markprev/Support`: SwiftUI support types, command wiring, keyboard monitoring, color/theme bridging, and window chrome helpers.
-- `Sources/Markprev/Resources`: bundled terminal web assets.
-- `Tests/MarkprevTests`: XCTest unit tests for core services and models.
-- `script/build_and_run.sh`: manual app bundle builder/runner. It compiles explicit source-file lists and copies runtime resources into `dist/Markprev.app`.
+- `Sources/MonknotCore/Models`: value types and enums shared by the app and tests.
+- `Sources/MonknotCore/Services`: core services for scanning workspaces, rendering Markdown HTML, parsing outlines, and searching workspaces.
+- `Sources/MonknotCore/Resources`: Markdown preview CSS and JavaScript renderer used by WebKit preview and PDF export.
+- `Sources/Monknot/App`: app entry point and application delegate.
+- `Sources/Monknot/Stores`: `@MainActor` observable state containers for workspace, themes, terminal state, and Markdown outline state.
+- `Sources/Monknot/Models`: app-layer UI state models such as save state and document search state.
+- `Sources/Monknot/Views`: SwiftUI views and AppKit/WebKit/PDFKit representables.
+- `Sources/Monknot/Services`: app-layer services that need platform APIs, including PDF export, FSEvents, and PTY management.
+- `Sources/Monknot/Support`: SwiftUI support types, command wiring, keyboard monitoring, color/theme bridging, and window chrome helpers.
+- `Sources/Monknot/Resources`: bundled terminal web assets.
+- `Tests/MonknotTests`: XCTest unit tests for core services and models.
+- `script/build_and_run.sh`: manual app bundle builder/runner. It compiles explicit source-file lists and copies runtime resources into `dist/monknot.app`.
 - `dist`: local build output. Treat as generated.
 
 ## Main Runtime Flow
 
-1. `MarkprevApp` creates shared `WorkspaceStore` and `ThemeSettingsStore`, then renders `ContentView`.
+1. `MonknotApp` creates shared `WorkspaceStore` and `ThemeSettingsStore`, then renders `ContentView`.
 2. `ContentView` owns UI preferences via `@AppStorage`, restores the previous workspace, coordinates lightweight document tabs, sidebar/detail layout, document search, workspace search, Markdown outline parsing, source jumps, terminal visibility, and Markdown PDF export.
 3. `SidebarView` displays the workspace tree from `WorkspaceStore.rootNode`, opens folders, handles drops, manages file/folder context menu actions, routes file opens through `ContentView` tab actions, and presents `WorkspaceSearchView`.
 4. `EditorPaneView` switches on `WorkspaceDocument.kind`:
@@ -52,7 +52,7 @@ There are also smoke-test source files under `Tests/MarkprevSmokeTests` and `Tes
 
 ## Core Domain And Service Boundaries
 
-Prefer putting logic in `MarkprevCore` when it can be tested without SwiftUI/AppKit view state.
+Prefer putting logic in `MonknotCore` when it can be tested without SwiftUI/AppKit view state.
 
 - Workspace model:
   - `WorkspaceDocument`: document identity, path, relative path, kind, content type metadata, capabilities, and depth.
@@ -62,8 +62,8 @@ Prefer putting logic in `MarkprevCore` when it can be tested without SwiftUI/App
   - `SidebarNode`: folder/file tree model for the sidebar.
 - Markdown rendering:
   - `MarkdownRenderService`: builds the HTML shell with theme variables, CSP, base URL, CSS, and renderer JavaScript.
-  - `Sources/MarkprevCore/Resources/renderer.js`: custom Markdown renderer, document search highlighting, source-jump events, and dynamic appearance updates.
-  - `Sources/MarkprevCore/Resources/preview.css`: preview styling and print/export styling.
+  - `Sources/MonknotCore/Resources/renderer.js`: custom Markdown renderer, document search highlighting, source-jump events, and dynamic appearance updates.
+  - `Sources/MonknotCore/Resources/preview.css`: preview styling and print/export styling.
 - Search and outline:
   - `WorkspaceSearchService`: searches editable text documents and searchable PDFs using `PDFKit.PDFDocument`.
   - `WorkspaceSearchResult`: normalized result model for text and PDF matches.
@@ -72,7 +72,7 @@ Prefer putting logic in `MarkprevCore` when it can be tested without SwiftUI/App
 - PDF export options:
   - `MarkdownPDFExportOptions`: page size, margins, theme mode, scale, clamping, and last-used persistence.
 
-App-layer code should stay in `Sources/Markprev` when it uses SwiftUI state, AppKit, WebKit, PDFKit UI classes, FSEvents, PTYs, window behavior, menus, or user defaults tied directly to UI.
+App-layer code should stay in `Sources/Monknot` when it uses SwiftUI state, AppKit, WebKit, PDFKit UI classes, FSEvents, PTYs, window behavior, menus, or user defaults tied directly to UI.
 
 ## Important App-Layer Owners
 
@@ -142,13 +142,13 @@ Before adding custom parsing, indexing, PDF handling, file watching, or renderin
 - Sidebar-specific state and tree presentation live in `SidebarView`.
 - Detail/editor state lives in `EditorPaneView`.
 - File tabs are rendered by `DocumentTabBar` under `TopNavigationBar`. Keep tabs lightweight: labels, pinned state, close/pin actions, and save indicators only.
-- App menu commands flow through `MarkprevCommandActions` and `FocusedValues`.
+- App menu commands flow through `MonknotCommandActions` and `FocusedValues`.
 - Markdown preview behavior belongs in `MarkdownPreviewView` and `renderer.js`, not scattered across unrelated views.
 - PDF viewing behavior belongs in `PDFPreviewView`.
 - Native preview-only behavior belongs in `QuickLookPreviewView`.
 - Route behavior by `WorkspaceDocument.capabilities` when possible. Keep `WorkspaceDocumentKind` coarse; do not add one enum case per file extension.
 - Theme colors should flow through `AppTheme` and `Color+Theme.swift`.
-- User-facing persisted UI preferences generally use `@AppStorage` keys prefixed with `Markprev.`.
+- User-facing persisted UI preferences generally use `@AppStorage` keys prefixed with `Monknot.`.
 
 ## Manual Build Script Warning
 
@@ -158,11 +158,11 @@ When adding, moving, or deleting Swift files that must be included in the manual
 
 The script also manually copies these runtime resources into the app bundle:
 
-- `Sources/MarkprevCore/Resources/preview.css`
-- `Sources/MarkprevCore/Resources/renderer.js`
-- `Sources/Markprev/Resources/xterm.css`
-- `Sources/Markprev/Resources/xterm.js`
-- `Sources/Markprev/Resources/xterm-addon-fit.js`
+- `Sources/MonknotCore/Resources/preview.css`
+- `Sources/MonknotCore/Resources/renderer.js`
+- `Sources/Monknot/Resources/xterm.css`
+- `Sources/Monknot/Resources/xterm.js`
+- `Sources/Monknot/Resources/xterm-addon-fit.js`
 
 When adding a Swift source file to the app or core target, update `script/build_and_run.sh`. The declared XCTest suite includes a build-script sync check, but the local SwiftPM command may be blocked until the current CommandLineTools issue is fixed.
 
@@ -176,7 +176,7 @@ swift test
 
 Current local caveat: on this machine, `swift test` has been observed to fail before test compilation with a CommandLineTools module-map issue (`SwiftBridging` redefinition and Foundation/CoreServices module build failures). If that happens, record the exact output and use the manual build/smoke verification paths below until the toolchain is repaired.
 
-Current XCTest coverage focuses on `MarkprevCore`:
+Current XCTest coverage focuses on `MonknotCore`:
 
 - `WorkspaceDocumentScannerTests`: tree scanning, file classification, sorting, symlink skipping, relative paths.
 - `MarkdownRenderServiceTests`: HTML shell generation, theme variables, escaping, export styling.
@@ -190,10 +190,10 @@ Manual smoke verification used in this repo when SwiftPM is blocked:
 
 ```sh
 script/build_and_run.sh --verify
-swiftc -vfsoverlay .build/manual/swift-vfs-overlay.yaml -I .build/manual -L .build/manual -lMarkprevCore -Xlinker -rpath -Xlinker .build/manual Tests/MarkprevSmokeTests/main.swift -o .build/manual/MarkprevSmokeTests
-.build/manual/MarkprevSmokeTests
-swiftc -parse-as-library -vfsoverlay .build/manual/swift-vfs-overlay.yaml -I .build/manual -L .build/manual -lMarkprevCore -Xlinker -rpath -Xlinker .build/manual Sources/Markprev/Models/DocumentSaveState.swift Sources/Markprev/Services/WorkspaceFileWatcher.swift Sources/Markprev/Stores/WorkspaceStore.swift Tests/MarkprevStoreSmokeTests/main.swift -o .build/manual/MarkprevStoreSmokeTests
-.build/manual/MarkprevStoreSmokeTests
+swiftc -vfsoverlay .build/manual/swift-vfs-overlay.yaml -I .build/manual -L .build/manual -lMonknotCore -Xlinker -rpath -Xlinker .build/manual Tests/MonknotSmokeTests/main.swift -o .build/manual/MonknotSmokeTests
+.build/manual/MonknotSmokeTests
+swiftc -parse-as-library -vfsoverlay .build/manual/swift-vfs-overlay.yaml -I .build/manual -L .build/manual -lMonknotCore -Xlinker -rpath -Xlinker .build/manual Sources/Monknot/Models/DocumentSaveState.swift Sources/Monknot/Services/WorkspaceFileWatcher.swift Sources/Monknot/Services/WorkspacePasteboardImportService.swift Sources/Monknot/Stores/WorkspaceStore.swift Tests/MonknotStoreSmokeTests/main.swift -o .build/manual/MonknotStoreSmokeTests
+.build/manual/MonknotStoreSmokeTests
 ```
 
 When adding logic:
@@ -201,7 +201,7 @@ When adding logic:
 - Write tests to discover real issues in the app, not tests shaped only to pass the current implementation.
 - Cover realistic workflows, edge cases, failure paths, regressions, and cross-component behavior when the feature touches app-level state.
 - A passing test suite is not enough if the tests do not exercise the risky behavior introduced or changed by the feature.
-- Put pure logic in `MarkprevCore` and add XCTest coverage in `Tests/MarkprevTests`.
+- Put pure logic in `MonknotCore` and add XCTest coverage in `Tests/MonknotTests`.
 - Add tests for cancellation-safe service behavior when feasible.
 - Add regression tests for path handling, file type classification, Markdown parsing, search matching, theme persistence, and PDF export option logic.
 - Add regression tests for capability classification, editable text support, Quick Look routing, and PDF workspace-result targets.
@@ -254,9 +254,9 @@ script/build_and_run.sh --debug
 - Read `QuickLookPreviewView` and `WorkspaceDocumentSupport` before changing generic preview or file-format support.
 - Read `ThemeSettingsStore`, `AppTheme`, and `Color+Theme.swift` before changing theming.
 - Read `TerminalSessionCollectionStore`, `TerminalSessionStore`, `TerminalPTYSession`, `TerminalDrawerView`, and `TerminalWebView` before changing terminal behavior.
-- Keep `MarkprevCore` independent from SwiftUI/AppKit view types unless there is a deliberate architectural change.
+- Keep `MonknotCore` independent from SwiftUI/AppKit view types unless there is a deliberate architectural change.
 - Prefer narrowly scoped changes and focused tests over broad refactors.
 - Avoid adding duplicate state to views when the state already belongs to a store.
 - Avoid adding new global singletons; inject services where the current design already supports it.
-- If a feature needs platform integration, put the platform wrapper in `Sources/Markprev/Services` and keep reusable policy/model code in `MarkprevCore`.
+- If a feature needs platform integration, put the platform wrapper in `Sources/Monknot/Services` and keep reusable policy/model code in `MonknotCore`.
 - When implementing a feature, first consult the official Apple Developer Documentation and related Apple guides/articles first. Prefer Apple-recommended APIs and lifecycle patterns over ad hoc implementations, and record the relevant docs links in research notes or implementation docs when the decision affects architecture.
