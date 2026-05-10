@@ -38,6 +38,10 @@ struct MarkprevStoreSmokeTests {
             .appendingPathComponent("markprev-store-smoke")
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        let externalRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("markprev-store-smoke-external")
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: externalRoot) }
 
         let firstURL = root.appendingPathComponent("A.md")
         let secondURL = root.appendingPathComponent("B.md")
@@ -118,6 +122,33 @@ struct MarkprevStoreSmokeTests {
         let sourceDiskAfterCopy = try String(contentsOf: first.url, encoding: .utf8)
         expect(sourceDiskAfterCopy == "# A\nsave while switching\n", "copying dirty text should not save the original document")
         expect(store.saveState(for: first.id) == .edited, "original dirty document should remain edited after copying")
+
+        let externalMarkdownURL = externalRoot.appendingPathComponent("Finder.md")
+        try write("# Finder\n", to: externalMarkdownURL)
+        store.importPasteboardItems([.fileURL(externalMarkdownURL)])
+        let didImportExternalFile = await waitUntil {
+            !store.isBusy &&
+                store.documents.contains { $0.relativePath == "Finder.md" }
+        }
+        expect(didImportExternalFile, "pasteboard file import should copy an external file into the workspace")
+        let importedExternalText = try String(contentsOf: root.appendingPathComponent("Finder.md"), encoding: .utf8)
+        expect(importedExternalText == "# Finder\n", "pasteboard file import should preserve external file contents")
+
+        store.importPasteboardItems([.fileURL(externalMarkdownURL)])
+        let didImportUniqueExternalFile = await waitUntil {
+            !store.isBusy &&
+                store.documents.contains { $0.relativePath == "Finder copy.md" }
+        }
+        expect(didImportUniqueExternalFile, "pasteboard file import should use a unique destination name")
+
+        store.importPasteboardItems([.pngImageData(Data("png image bytes\n".utf8))])
+        let didImportClipboardImage = await waitUntil {
+            !store.isBusy &&
+                store.documents.contains { $0.relativePath == "Pasted Image.png" }
+        }
+        expect(didImportClipboardImage, "pasteboard image import should write a PNG file into the workspace")
+        let importedImageData = try Data(contentsOf: root.appendingPathComponent("Pasted Image.png"))
+        expect(importedImageData == Data("png image bytes\n".utf8), "pasteboard image import should write the provided PNG data")
 
         store.selectDocument(id: first.id)
         let didRestoreDirtySource = await waitUntil { !store.isDocumentLoading && store.selectedDocumentID == first.id }

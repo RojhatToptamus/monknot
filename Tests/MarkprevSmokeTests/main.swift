@@ -87,6 +87,9 @@ expect(tabs.tabs.count == 2, "opening an already-open document should not duplic
 expect(tabs.selectedDocumentID == readmeDocument.id, "opening an existing tab should activate it")
 tabs.moveTab(documentID: guideDocument.id, before: readmeDocument.id)
 expect(tabs.tabs.map(\.documentID) == [guideDocument.id, readmeDocument.id], "drag reordering should move a tab before the target tab")
+let orderAfterReorder = tabs.tabs.map(\.documentID)
+tabs.open(readmeDocument)
+expect(tabs.tabs.map(\.documentID) == orderAfterReorder, "opening an existing reordered tab should preserve its tab-strip position")
 tabs.moveTab(documentID: readmeDocument.id, before: guideDocument.id)
 expect(tabs.tabs.map(\.documentID) == [readmeDocument.id, guideDocument.id], "drag reordering should support moving a tab back")
 tabs.moveTab(documentID: readmeDocument.id, before: nil)
@@ -112,6 +115,29 @@ tabs.pruneUnavailableDocuments(availableDocumentIDs: [readmeDocument.id], preser
 expect(tabs.contains(documentID: renamedTodoID), "tab pruning should preserve known dirty removed tab IDs")
 tabs.pruneUnavailableDocuments(availableDocumentIDs: [readmeDocument.id])
 expect(!tabs.contains(documentID: renamedTodoID), "tab pruning should remove unavailable unpreserved tab IDs")
+
+let tabDefaultsSuiteName = "MarkprevSmokeTests.WorkspaceTabStatePersistence.\(UUID().uuidString)"
+guard let tabDefaults = UserDefaults(suiteName: tabDefaultsSuiteName) else {
+    fputs("FAIL: expected test defaults suite\n", stderr)
+    exit(1)
+}
+defer {
+    tabDefaults.removePersistentDomain(forName: tabDefaultsSuiteName)
+}
+let tabPersistence = WorkspaceTabStatePersistence(defaults: tabDefaults)
+var persistedTabs = WorkspaceTabState()
+persistedTabs.open(readmeDocument)
+persistedTabs.open(guideDocument)
+persistedTabs.togglePin(documentID: guideDocument.id)
+tabPersistence.save(persistedTabs, for: root)
+let restoredTabs = tabPersistence.load(for: root)
+expect(restoredTabs?.tabs.map(\.documentID) == [guideDocument.id, readmeDocument.id], "tab persistence should restore open tab order")
+expect(restoredTabs?.tabs.first?.isPinned == true, "tab persistence should restore pinned tab state")
+expect(restoredTabs?.selectedDocumentID == guideDocument.id, "tab persistence should restore the active tab")
+expect(
+    tabPersistence.load(for: root.appendingPathComponent("Other", isDirectory: true)) == nil,
+    "tab persistence should keep workspace tab states isolated by workspace path"
+)
 
 let outline = MarkdownOutlineParser().parse("""
 # Title

@@ -3,12 +3,15 @@ import MarkprevCore
 import SwiftUI
 
 struct MarkdownTextEditor: NSViewRepresentable {
+    let documentID: String
     @Binding var text: String
     let theme: AppTheme
     let fontSize: CGFloat
     let fontSmoothing: Bool
+    let scrollPosition: DocumentScrollPosition?
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var searchState: DocumentSearchState
+    let onScrollPositionChange: (DocumentScrollPosition) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -43,6 +46,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         scrollView.documentView = textView
         context.coordinator.textView = textView
+        context.coordinator.documentID = documentID
+        context.coordinator.onScrollPositionChange = onScrollPositionChange
+        context.coordinator.attach(to: scrollView)
         applyTheme(theme, to: textView, in: scrollView)
 
         return scrollView
@@ -50,12 +56,18 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = context.coordinator.textView else { return }
+        let didChangeDocument = context.coordinator.prepareForDocument(documentID, in: scrollView)
+        context.coordinator.onScrollPositionChange = onScrollPositionChange
         let visibleOrigin = scrollView.contentView.bounds.origin
 
         if textView.string != text {
-            let selectedRanges = textView.selectedRanges
+            let selectedRanges = didChangeDocument ? [] : textView.selectedRanges
             textView.string = text
-            textView.selectedRanges = selectedRanges
+            if selectedRanges.isEmpty {
+                textView.setSelectedRange(NSRange(location: 0, length: 0))
+            } else {
+                textView.selectedRanges = selectedRanges
+            }
         }
 
         textView.font = font(for: theme, size: fontSize)
@@ -63,8 +75,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
             textView.fontSmoothingEnabled = fontSmoothing
         }
         applyTheme(theme, to: textView, in: scrollView)
-        scrollView.contentView.scroll(to: visibleOrigin)
-        scrollView.reflectScrolledClipView(scrollView.contentView)
+        if didChangeDocument {
+            context.coordinator.restoreScrollPosition(scrollPosition?.point ?? .zero, in: scrollView)
+        } else {
+            context.coordinator.restoreScrollPosition(visibleOrigin, in: scrollView, shouldPublish: false)
+        }
 
         if let sourceLocation {
             context.coordinator.navigate(to: sourceLocation, in: textView)
@@ -79,6 +94,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 self.searchState.updateResult(searchResult)
             }
         }
+    }
+
+    static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
+        coordinator.publishCurrentScrollPosition()
+        coordinator.detach()
     }
 
     private func applyTheme(_ theme: AppTheme, to textView: NSTextView, in scrollView: NSScrollView) {
@@ -104,6 +124,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         @Binding private var text: String
         weak var textView: NSTextView?
+        var documentID: String?
+        var onScrollPositionChange: (DocumentScrollPosition) -> Void = { _ in }
         private var lastNavigatedLocation: MarkdownSourceLocation?
         private var searchMatches: [NSRange] = []
         private var highlightedRanges: [NSRange] = []
@@ -112,9 +134,70 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private var lastNavigationSerial = 0
         private var currentMatchIndex = 0
         private var lastHighlightTheme: SearchHighlightTheme?
+        private weak var scrollView: NSScrollView?
+        private var lastPublishedScrollPosition: DocumentScrollPosition?
+        private var isRestoringScrollPosition = false
 
         init(text: Binding<String>) {
             self._text = text
+        }
+
+        func attach(to scrollView: NSScrollView) {
+            self.scrollView = scrollView
+            scrollView.contentView.postsBoundsChangedNotifications = true
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(scrollViewBoundsDidChange(_:)),
+                name: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView
+            )
+        }
+
+        func detach() {
+            NotificationCenter.default.removeObserver(self)
+            scrollView = nil
+        }
+
+        func prepareForDocument(_ nextDocumentID: String, in scrollView: NSScrollView) -> Bool {
+            self.scrollView = scrollView
+            guard documentID != nextDocumentID else { return false }
+
+            publishCurrentScrollPosition()
+            documentID = nextDocumentID
+            lastPublishedScrollPosition = nil
+            return true
+        }
+
+        func restoreScrollPosition(_ point: CGPoint, in scrollView: NSScrollView, shouldPublish: Bool = true) {
+            isRestoringScrollPosition = true
+            scrollView.contentView.scroll(to: point)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            isRestoringScrollPosition = false
+
+            if shouldPublish {
+                publish(DocumentScrollPosition(point))
+            }
+        }
+
+        func publishCurrentScrollPosition() {
+            guard let scrollView else { return }
+            publish(DocumentScrollPosition(scrollView.contentView.bounds.origin))
+        }
+
+        @objc private func scrollViewBoundsDidChange(_ notification: Notification) {
+            guard !isRestoringScrollPosition else { return }
+            publishCurrentScrollPosition()
+        }
+
+        private func publish(_ position: DocumentScrollPosition) {
+            guard documentID != nil,
+                  position.isMeaningfullyDifferent(from: lastPublishedScrollPosition)
+            else {
+                return
+            }
+
+            lastPublishedScrollPosition = position
+            onScrollPositionChange(position)
         }
 
         func textDidChange(_ notification: Notification) {

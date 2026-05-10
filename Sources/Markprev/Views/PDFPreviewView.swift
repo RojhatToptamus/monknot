@@ -9,11 +9,16 @@ struct PDFPreviewView: View {
     let zoomScale: Double
     let saveState: DocumentSaveState
     let dirtyData: Data?
+    let viewportPosition: PDFDocumentViewportPosition?
+    let externalUndoCommandSerial: Int
+    let externalRedoCommandSerial: Int
     @Binding var searchState: DocumentSearchState
     @Binding var searchTarget: WorkspaceSearchPDFTarget?
     let markEdited: (Data?, Data) -> Void
     let reportError: (String) -> Void
     let saveDocument: () -> Void
+    let onViewportPositionChange: (PDFDocumentViewportPosition) -> Void
+    let updateAnnotationUndoState: (Bool, Bool) -> Void
 
     @State private var interactionMode: PDFAnnotationInteractionMode = .select
     @State private var selectedColor: PDFAnnotationPaletteColor = .yellow
@@ -26,10 +31,6 @@ struct PDFPreviewView: View {
     @State private var canRedo = false
 
     private var uiFontSize: Double { theme.uiFontSize }
-
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,19 +54,22 @@ struct PDFPreviewView: View {
                 .overlay(theme.borderColor)
 
             PDFKitPreviewRepresentable(
+                documentID: document.id,
                 url: document.url,
                 dirtyData: dirtyData,
                 theme: theme,
                 zoomScale: zoomScale,
+                viewportPosition: viewportPosition,
                 annotationMode: interactionMode,
                 annotationColor: selectedColor,
                 strokeWidth: CGFloat(strokeWidth),
                 markupCommand: markupCommand,
-                undoCommandSerial: undoCommandSerial,
-                redoCommandSerial: redoCommandSerial,
+                undoCommandSerial: externalUndoCommandSerial + undoCommandSerial,
+                redoCommandSerial: externalRedoCommandSerial + redoCommandSerial,
                 searchState: $searchState,
                 searchTarget: $searchTarget,
                 markEdited: markEdited,
+                onViewportPositionChange: onViewportPositionChange,
                 updateUndoState: updateUndoState(canUndo:canRedo:),
                 reportError: reportError
             )
@@ -98,6 +102,7 @@ struct PDFPreviewView: View {
         if self.canRedo != canRedo {
             self.canRedo = canRedo
         }
+        updateAnnotationUndoState(canUndo, canRedo)
     }
 }
 
@@ -121,6 +126,21 @@ private struct PDFAnnotationToolbar: View {
     }
 
     var body: some View {
+        HStack(spacing: scaled(7)) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                toolbarContent
+                    .padding(.vertical, scaled(7))
+            }
+            .frame(minWidth: 0, maxWidth: .infinity)
+
+            saveButton
+        }
+        .padding(.horizontal, scaled(12))
+        .frame(height: scaled(42))
+        .animation(.easeOut(duration: 0.14), value: interactionMode)
+    }
+
+    private var toolbarContent: some View {
         HStack(spacing: scaled(7)) {
             PDFToolbarIconButton(
                 systemImage: "arrow.uturn.backward",
@@ -236,24 +256,22 @@ private struct PDFAnnotationToolbar: View {
                     }
                 }
             }
-
-            Spacer(minLength: 0)
-
-            PDFToolbarIconButton(
-                systemImage: "externaldrive.badge.checkmark",
-                label: "Save PDF",
-                isActive: !saveState.isClean,
-                isDisabled: saveState.isClean || saveState == .saving,
-                theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: uiFontSize
-            ) {
-                saveDocument()
-            }
         }
-        .padding(.horizontal, scaled(12))
-        .frame(height: scaled(42))
-        .animation(.easeOut(duration: 0.14), value: interactionMode)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var saveButton: some View {
+        PDFToolbarIconButton(
+            systemImage: "externaldrive.badge.checkmark",
+            label: "Save PDF",
+            isActive: !saveState.isClean,
+            isDisabled: saveState.isClean || saveState == .saving,
+            theme: theme,
+            zoomScale: zoomScale,
+            uiFontSize: uiFontSize
+        ) {
+            saveDocument()
+        }
     }
 
     private var toolbarDivider: some View {
@@ -377,10 +395,12 @@ private struct PDFColorSwatchButton: View {
 }
 
 private struct PDFKitPreviewRepresentable: NSViewRepresentable {
+    let documentID: String
     let url: URL
     let dirtyData: Data?
     let theme: AppTheme
     let zoomScale: Double
+    let viewportPosition: PDFDocumentViewportPosition?
     let annotationMode: PDFAnnotationInteractionMode
     let annotationColor: PDFAnnotationPaletteColor
     let strokeWidth: CGFloat
@@ -390,6 +410,7 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
     @Binding var searchState: DocumentSearchState
     @Binding var searchTarget: WorkspaceSearchPDFTarget?
     let markEdited: (Data?, Data) -> Void
+    let onViewportPositionChange: (PDFDocumentViewportPosition) -> Void
     let updateUndoState: (Bool, Bool) -> Void
     let reportError: (String) -> Void
 
@@ -407,16 +428,34 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
         view.minScaleFactor = 0.35
         view.maxScaleFactor = 4
         view.backgroundColor = NSColor(hex: theme.background)
+        context.coordinator.documentID = documentID
+        context.coordinator.onViewportPositionChange = onViewportPositionChange
+        context.coordinator.acceptCurrentUndoRedoSerials(
+            undoSerial: undoCommandSerial,
+            redoSerial: redoCommandSerial
+        )
+        context.coordinator.attach(to: view)
         return view
     }
 
     func updateNSView(_ pdfView: AnnotatingPDFView, context: Context) {
+        let didChangeDocument = context.coordinator.prepareForDocument(
+            documentID,
+            undoSerial: undoCommandSerial,
+            redoSerial: redoCommandSerial,
+            in: pdfView
+        )
+        context.coordinator.onViewportPositionChange = onViewportPositionChange
         pdfView.annotationMode = annotationMode
         pdfView.annotationColor = annotationColor.nsColor
         pdfView.annotationLineWidth = strokeWidth
         pdfView.onEdited = markEdited
         pdfView.onError = reportError
-        pdfView.onUndoStateChanged = updateUndoState
+        pdfView.onUndoStateChanged = { canUndo, canRedo in
+            DispatchQueue.main.async {
+                self.updateUndoState(canUndo, canRedo)
+            }
+        }
 
         context.coordinator.onSearchResult = { result in
             DispatchQueue.main.async {
@@ -436,16 +475,29 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
         }
         context.coordinator.setPendingSearchTarget(searchTarget)
 
-        context.coordinator.loadDocumentIfNeeded(url, dirtyData: dirtyData, in: pdfView)
-        context.coordinator.applyAppearance(theme: theme, zoomScale: zoomScale, in: pdfView)
+        let didLoadDocument = context.coordinator.loadDocumentIfNeeded(url, dirtyData: dirtyData, in: pdfView)
+        context.coordinator.applyAppearance(theme: theme, zoomScale: zoomScale, force: didLoadDocument, in: pdfView)
+        context.coordinator.restoreViewportPositionIfNeeded(
+            viewportPosition,
+            force: didChangeDocument || didLoadDocument,
+            skip: searchTarget != nil,
+            in: pdfView
+        )
         context.coordinator.applySearch(searchState, theme: theme, in: pdfView)
         context.coordinator.applyMarkupCommand(markupCommand, in: pdfView)
         context.coordinator.applyUndoRedoCommands(undoSerial: undoCommandSerial, redoSerial: redoCommandSerial, in: pdfView)
     }
 
+    static func dismantleNSView(_ pdfView: AnnotatingPDFView, coordinator: Coordinator) {
+        coordinator.publishViewportPosition(from: pdfView)
+        coordinator.detach()
+    }
+
     final class Coordinator {
+        var documentID: String?
         var onSearchResult: (DocumentSearchResult) -> Void = { _ in }
         var onSearchTargetConsumed: () -> Void = {}
+        var onViewportPositionChange: (PDFDocumentViewportPosition) -> Void = { _ in }
         private var documentURL: URL?
         private var lastAppliedTheme: AppTheme?
         private var lastZoomScale: Double?
@@ -457,24 +509,79 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
         private var lastMarkupCommandSerial = 0
         private var lastUndoCommandSerial = 0
         private var lastRedoCommandSerial = 0
+        private var shouldRestoreViewportPosition = false
+        private var lastPublishedViewportPosition: PDFDocumentViewportPosition?
+        private var isRestoringViewportPosition = false
 
-        func loadDocumentIfNeeded(_ url: URL, dirtyData: Data?, in pdfView: AnnotatingPDFView) {
+        func attach(to pdfView: AnnotatingPDFView) {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(pdfViewViewportDidChange(_:)),
+                name: .PDFViewPageChanged,
+                object: pdfView
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(pdfViewViewportDidChange(_:)),
+                name: .PDFViewVisiblePagesChanged,
+                object: pdfView
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(pdfViewViewportDidChange(_:)),
+                name: .PDFViewScaleChanged,
+                object: pdfView
+            )
+        }
+
+        func detach() {
+            NotificationCenter.default.removeObserver(self)
+        }
+
+        func acceptCurrentUndoRedoSerials(undoSerial: Int, redoSerial: Int) {
+            lastUndoCommandSerial = undoSerial
+            lastRedoCommandSerial = redoSerial
+        }
+
+        func prepareForDocument(
+            _ nextDocumentID: String,
+            undoSerial: Int,
+            redoSerial: Int,
+            in pdfView: AnnotatingPDFView
+        ) -> Bool {
+            guard documentID != nextDocumentID else { return false }
+
+            publishViewportPosition(from: pdfView)
+            documentID = nextDocumentID
+            acceptCurrentUndoRedoSerials(undoSerial: undoSerial, redoSerial: redoSerial)
+            lastPublishedViewportPosition = nil
+            shouldRestoreViewportPosition = true
+            return true
+        }
+
+        @discardableResult
+        func loadDocumentIfNeeded(_ url: URL, dirtyData: Data?, in pdfView: AnnotatingPDFView) -> Bool {
             let standardizedURL = url.standardizedFileURL
-            guard documentURL != standardizedURL else { return }
+            guard documentURL != standardizedURL else { return false }
 
             documentURL = standardizedURL
             matches = []
             currentMatchIndex = 0
             lastSearchRequest = nil
             lastSearchHighlightTheme = nil
-            if let dirtyData, let dirtyDocument = PDFDocument(data: dirtyData) {
-                pdfView.document = dirtyDocument
-            } else {
-                pdfView.document = PDFDocument(url: standardizedURL)
+            performWithoutPublishingViewportChanges {
+                if let dirtyData, let dirtyDocument = PDFDocument(data: dirtyData) {
+                    pdfView.document = dirtyDocument
+                } else {
+                    pdfView.document = PDFDocument(url: standardizedURL)
+                }
+                pdfView.autoScales = true
+                pdfView.layoutDocumentView()
             }
-            pdfView.autoScales = true
             pdfView.clearAnnotationUndoHistory()
+            shouldRestoreViewportPosition = true
             onSearchResult(.init())
+            return true
         }
 
         func setPendingSearchTarget(_ target: WorkspaceSearchPDFTarget?) {
@@ -482,10 +589,10 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
             pendingSearchTarget = target
         }
 
-        func applyAppearance(theme: AppTheme, zoomScale: Double, in pdfView: AnnotatingPDFView) {
+        func applyAppearance(theme: AppTheme, zoomScale: Double, force: Bool, in pdfView: AnnotatingPDFView) {
             pdfView.backgroundColor = NSColor(hex: theme.background)
 
-            guard lastAppliedTheme != theme || lastZoomScale != zoomScale else {
+            guard force || lastAppliedTheme != theme || lastZoomScale != zoomScale else {
                 return
             }
 
@@ -494,29 +601,34 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
 
             let destination = pdfView.currentDestination
 
-            if abs(zoomScale - 1) < 0.001 {
-                pdfView.autoScales = true
-            } else {
-                let sizeToFitScale = pdfView.scaleFactorForSizeToFit
-                guard sizeToFitScale.isFinite, sizeToFitScale > 0 else {
+            performWithoutPublishingViewportChanges {
+                if abs(zoomScale - 1) < 0.001 {
                     pdfView.autoScales = true
-                    return
+                } else {
+                    let sizeToFitScale = pdfView.scaleFactorForSizeToFit
+                    if sizeToFitScale.isFinite, sizeToFitScale > 0 {
+                        let nextScale = max(pdfView.minScaleFactor, min(pdfView.maxScaleFactor, sizeToFitScale * CGFloat(zoomScale)))
+                        pdfView.autoScales = false
+                        pdfView.scaleFactor = nextScale
+                    } else {
+                        pdfView.autoScales = true
+                    }
                 }
 
-                let nextScale = max(pdfView.minScaleFactor, min(pdfView.maxScaleFactor, sizeToFitScale * CGFloat(zoomScale)))
-                pdfView.autoScales = false
-                pdfView.scaleFactor = nextScale
-            }
+                pdfView.layoutDocumentView()
 
-            if let destination {
-                pdfView.go(to: destination)
+                if let destination {
+                    pdfView.go(to: destination)
+                }
             }
         }
 
         func applySearch(_ state: DocumentSearchState, theme: AppTheme, in pdfView: AnnotatingPDFView) {
             let request = DocumentSearchRequest(state)
             guard request.isPresented, !request.query.isEmpty, let document = pdfView.document else {
-                clearSearch(in: pdfView)
+                if shouldClearSearch(for: request) {
+                    clearSearch(in: pdfView)
+                }
                 lastSearchRequest = request
                 return
             }
@@ -562,6 +674,7 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
                 if shouldRevealSelection {
                     pdfView.setCurrentSelection(selection, animate: true)
                     pdfView.go(to: selection)
+                    publishViewportPosition(from: pdfView)
                 }
                 onSearchResult(DocumentSearchResult(currentIndex: currentMatchIndex + 1, totalCount: matches.count))
             }
@@ -587,6 +700,61 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
             }
         }
 
+        func restoreViewportPositionIfNeeded(
+            _ position: PDFDocumentViewportPosition?,
+            force: Bool,
+            skip: Bool,
+            in pdfView: AnnotatingPDFView
+        ) {
+            if force {
+                shouldRestoreViewportPosition = true
+            }
+
+            guard shouldRestoreViewportPosition else { return }
+            guard !skip else {
+                shouldRestoreViewportPosition = false
+                return
+            }
+
+            shouldRestoreViewportPosition = false
+            guard let position,
+                  let document = pdfView.document,
+                  let destination = position.destination(in: document)
+            else {
+                return
+            }
+
+            performWithoutPublishingViewportChanges {
+                pdfView.layoutDocumentView()
+                pdfView.go(to: destination)
+            }
+            lastPublishedViewportPosition = position
+            onViewportPositionChange(position)
+        }
+
+        func publishViewportPosition(from pdfView: PDFView) {
+            guard !isRestoringViewportPosition,
+                  let position = PDFDocumentViewportPosition(pdfView: pdfView),
+                  position != lastPublishedViewportPosition
+            else {
+                return
+            }
+
+            lastPublishedViewportPosition = position
+            onViewportPositionChange(position)
+        }
+
+        @objc private func pdfViewViewportDidChange(_ notification: Notification) {
+            guard let pdfView = notification.object as? PDFView else { return }
+            publishViewportPosition(from: pdfView)
+        }
+
+        private func performWithoutPublishingViewportChanges(_ body: () -> Void) {
+            isRestoringViewportPosition = true
+            defer { isRestoringViewportPosition = false }
+            body()
+        }
+
         private func clearSearch(in pdfView: AnnotatingPDFView) {
             matches = []
             currentMatchIndex = 0
@@ -598,6 +766,13 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
             pdfView.highlightedSelections = nil
             pdfView.clearSelection()
             onSearchResult(.init())
+        }
+
+        private func shouldClearSearch(for request: DocumentSearchRequest) -> Bool {
+            return !matches.isEmpty
+                || lastSearchHighlightTheme != nil
+                || pendingSearchTarget != nil
+                || (lastSearchRequest?.isPresented == true && !request.isPresented)
         }
 
         private func pendingTargetIndex(in pdfView: AnnotatingPDFView) -> Int? {
@@ -633,11 +808,39 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
     }
 }
 
+private extension PDFDocumentViewportPosition {
+    init?(pdfView: PDFView) {
+        guard let document = pdfView.document,
+              let destination = pdfView.currentDestination,
+              let page = destination.page
+        else {
+            return nil
+        }
+
+        let pageIndex = document.index(for: page)
+        guard pageIndex >= 0 else { return nil }
+
+        self.init(
+            pageIndex: pageIndex,
+            point: DocumentScrollPosition(destination.point)
+        )
+    }
+
+    func destination(in document: PDFDocument) -> PDFDestination? {
+        guard pageIndex >= 0, let page = document.page(at: pageIndex) else {
+            return nil
+        }
+
+        return PDFDestination(page: page, at: point.point)
+    }
+}
+
 private final class AnnotatingPDFView: PDFView {
     var annotationMode: PDFAnnotationInteractionMode = .select {
         didSet {
             if oldValue != annotationMode {
                 discardActiveInkAnnotation()
+                syncToolTrackingArea()
                 window?.invalidateCursorRects(for: self)
                 setToolCursorIfPointerIsInside()
             }
@@ -687,26 +890,17 @@ private final class AnnotatingPDFView: PDFView {
     }
 
     override func resetCursorRects() {
-        super.resetCursorRects()
-        if annotationMode != .select {
+        if annotationMode == .select {
+            super.resetCursorRects()
+        } else {
+            // In annotation modes Markprev owns the cursor; PDFView cursor rects otherwise compete with it.
             addCursorRect(bounds, cursor: toolCursor)
         }
     }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let toolTrackingArea {
-            removeTrackingArea(toolTrackingArea)
-        }
-
-        let nextTrackingArea = NSTrackingArea(
-            rect: bounds,
-            options: [.activeInKeyWindow, .cursorUpdate, .mouseMoved, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(nextTrackingArea)
-        toolTrackingArea = nextTrackingArea
+        syncToolTrackingArea()
     }
 
     override func cursorUpdate(with event: NSEvent) {
@@ -718,10 +912,31 @@ private final class AnnotatingPDFView: PDFView {
     }
 
     override func mouseMoved(with event: NSEvent) {
-        super.mouseMoved(with: event)
-        if annotationMode != .select {
+        if annotationMode == .select {
+            super.mouseMoved(with: event)
+        } else {
             toolCursor.set()
         }
+    }
+
+    private func syncToolTrackingArea() {
+        if let toolTrackingArea {
+            if trackingAreas.contains(where: { $0 === toolTrackingArea }) {
+                removeTrackingArea(toolTrackingArea)
+            }
+            self.toolTrackingArea = nil
+        }
+
+        guard annotationMode != .select else { return }
+
+        let nextTrackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .cursorUpdate, .mouseMoved, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(nextTrackingArea)
+        toolTrackingArea = nextTrackingArea
     }
 
     private func setToolCursorIfPointerIsInside() {
@@ -1042,48 +1257,7 @@ private final class AnnotatingPDFView: PDFView {
 
     private func annotationForErasing(on page: PDFPage, at point: CGPoint) -> PDFAnnotation? {
         let tolerance = max(annotationLineWidth * 2.2, 8)
-        return page.annotations.reversed().first { annotation in
-            guard isErasable(annotation) else { return false }
-            return annotation.bounds.insetBy(dx: -tolerance, dy: -tolerance).contains(point)
-        }
-    }
-
-    private func isErasable(_ annotation: PDFAnnotation) -> Bool {
-        guard let type = annotation.type else { return false }
-        let subtype = PDFAnnotationSubtype(rawValue: type)
-        if [
-            PDFAnnotationSubtype.highlight,
-            PDFAnnotationSubtype.underline,
-            PDFAnnotationSubtype.strikeOut,
-            PDFAnnotationSubtype.ink,
-            PDFAnnotationSubtype.freeText,
-            PDFAnnotationSubtype.text,
-            PDFAnnotationSubtype.square,
-            PDFAnnotationSubtype.circle,
-            PDFAnnotationSubtype.line,
-            PDFAnnotationSubtype.stamp,
-            PDFAnnotationSubtype.popup
-        ].contains(subtype) {
-            return true
-        }
-
-        let normalizedType = type
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            .replacingOccurrences(of: "-", with: "")
-            .lowercased()
-        return [
-            "highlight",
-            "underline",
-            "strikeout",
-            "ink",
-            "freetext",
-            "text",
-            "square",
-            "circle",
-            "line",
-            "stamp",
-            "popup"
-        ].contains(normalizedType)
+        return PDFAnnotationHitTesting.annotationForErasing(on: page, at: point, tolerance: tolerance)
     }
 
     private func quadPoints(for bounds: CGRect) -> [NSNumber] {

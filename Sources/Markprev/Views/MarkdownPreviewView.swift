@@ -3,6 +3,7 @@ import SwiftUI
 import WebKit
 
 struct MarkdownPreviewView: NSViewRepresentable {
+    let documentID: String
     let markdown: String
     let baseURL: URL?
     let theme: AppTheme
@@ -11,9 +12,11 @@ struct MarkdownPreviewView: NSViewRepresentable {
     let previewWidthPercent: Double
     let usePointerCursors: Bool
     let fontSmoothing: Bool
+    let scrollPosition: DocumentScrollPosition?
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var searchState: DocumentSearchState
     let onSourceJump: (MarkdownSourceLocation) -> Void
+    let onScrollPositionChange: (DocumentScrollPosition) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onSourceJump: onSourceJump)
@@ -23,6 +26,8 @@ struct MarkdownPreviewView: NSViewRepresentable {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.userContentController.add(context.coordinator, name: Coordinator.sourceJumpHandlerName)
+        configuration.userContentController.add(context.coordinator, name: Coordinator.scrollPositionHandlerName)
+        configuration.userContentController.addUserScript(Coordinator.scrollTrackingScript)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -32,7 +37,9 @@ struct MarkdownPreviewView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
+        let didChangeDocument = context.coordinator.prepareForDocument(documentID, in: webView)
         context.coordinator.onSourceJump = onSourceJump
+        context.coordinator.onScrollPositionChange = onScrollPositionChange
         context.coordinator.onSearchResult = { result in
             DispatchQueue.main.async {
                 let current = DocumentSearchResult(
@@ -50,6 +57,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
             }
         }
         context.coordinator.setPendingSourceReveal(sourceLocation)
+        context.coordinator.setPendingScrollPosition(scrollPosition, force: didChangeDocument)
 
         guard let service = context.coordinator.service else {
             webView.loadHTMLString(Self.errorHTML("Preview resources could not be loaded."), baseURL: nil)
@@ -68,6 +76,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
             fontSmoothing: fontSmoothing
         )
         let contentRequest = PreviewContentRequest(
+            documentID: documentID,
             markdown: markdown
         )
 
@@ -114,6 +123,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         guard context.coordinator.shouldRenderContent(contentRequest) else {
             applySearch(searchState, in: webView, coordinator: context.coordinator)
             applySourceReveal(in: webView, coordinator: context.coordinator)
+            applyScrollPositionIfNeeded(in: webView, coordinator: context.coordinator)
             return
         }
         renderContent(
@@ -142,6 +152,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         coordinator: Coordinator
     ) {
         coordinator.setPendingContent(request)
+        coordinator.setPendingScrollPosition(scrollPosition)
 
         guard coordinator.isShellLoaded else { return }
 
@@ -154,8 +165,12 @@ struct MarkdownPreviewView: NSViewRepresentable {
                     coordinator.markRenderedContent(request)
                     coordinator.applySearch(searchState, in: webView)
                     coordinator.setPendingSourceReveal(sourceLocation)
+                    let isRevealingSource = sourceLocation != nil
                     coordinator.applyPendingSourceReveal(in: webView) {
                         self.sourceLocation = nil
+                    }
+                    if !isRevealingSource {
+                        coordinator.applyPendingScrollPositionIfNeeded(in: webView)
                     }
                 }
             }
@@ -174,6 +189,11 @@ struct MarkdownPreviewView: NSViewRepresentable {
         coordinator.applyPendingSourceReveal(in: webView) {
             self.sourceLocation = nil
         }
+    }
+
+    private func applyScrollPositionIfNeeded(in webView: WKWebView, coordinator: Coordinator) {
+        guard coordinator.isShellLoaded, sourceLocation == nil else { return }
+        coordinator.applyPendingScrollPositionIfNeeded(in: webView)
     }
 
     private static func javaScriptPayload(markdown: String, themeName: String) throws -> String {
@@ -195,6 +215,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         coordinator.cancelShellLoad()
         webView.navigationDelegate = nil
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.sourceJumpHandlerName)
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.scrollPositionHandlerName)
     }
 
     private static func errorHTML(_ message: String) -> String {
@@ -211,12 +232,36 @@ struct MarkdownPreviewView: NSViewRepresentable {
 
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         static let sourceJumpHandlerName = "markprevSourceJump"
+        static let scrollPositionHandlerName = "markprevScrollPosition"
+        static let scrollTrackingScript = WKUserScript(
+            source: """
+            (() => {
+              let pending = false;
+              const publish = () => {
+                pending = false;
+                window.webkit.messageHandlers.markprevScrollPosition.postMessage({
+                  x: window.scrollX || 0,
+                  y: window.scrollY || 0
+                });
+              };
+              window.addEventListener('scroll', () => {
+                if (pending) return;
+                pending = true;
+                window.requestAnimationFrame(publish);
+              }, { passive: true });
+            })();
+            """,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        )
 
         let service = try? MarkdownRenderService()
         var onSourceJump: (MarkdownSourceLocation) -> Void
+        var onScrollPositionChange: (DocumentScrollPosition) -> Void = { _ in }
         var onSearchResult: (DocumentSearchResult) -> Void = { _ in }
         var onSourceRevealConsumed: () -> Void = {}
         private var shellTask: Task<Void, Never>?
+        private var documentID: String?
         private var lastShellRequest: PreviewShellRequest?
         private var lastAppliedAppearance: PreviewAppearanceRequest?
         private var lastRenderedContent: PreviewContentRequest?
@@ -226,10 +271,26 @@ struct MarkdownPreviewView: NSViewRepresentable {
         private var pendingContent: PreviewContentRequest?
         private var pendingSearch: DocumentSearchState?
         private var pendingSourceReveal: MarkdownSourceLocation?
+        private var pendingScrollPosition: DocumentScrollPosition?
+        private var shouldRestorePendingScrollPosition = false
+        private var lastPublishedScrollPosition: DocumentScrollPosition?
         private(set) var isShellLoaded = false
 
         init(onSourceJump: @escaping (MarkdownSourceLocation) -> Void) {
             self.onSourceJump = onSourceJump
+        }
+
+        fileprivate func prepareForDocument(_ nextDocumentID: String, in webView: WKWebView) -> Bool {
+            guard documentID != nextDocumentID else { return false }
+            let publishPreviousScrollPosition = onScrollPositionChange
+            webView.evaluateJavaScript("({ x: window.scrollX || 0, y: window.scrollY || 0 })") { value, error in
+                guard error == nil else { return }
+                publishPreviousScrollPosition(Self.scrollPosition(from: value))
+            }
+            documentID = nextDocumentID
+            lastPublishedScrollPosition = nil
+            shouldRestorePendingScrollPosition = true
+            return true
         }
 
         fileprivate func shouldLoadShell(
@@ -279,6 +340,13 @@ struct MarkdownPreviewView: NSViewRepresentable {
         fileprivate func setPendingSourceReveal(_ location: MarkdownSourceLocation?) {
             guard let location else { return }
             pendingSourceReveal = location
+        }
+
+        fileprivate func setPendingScrollPosition(_ position: DocumentScrollPosition?, force: Bool = false) {
+            pendingScrollPosition = position
+            if force {
+                shouldRestorePendingScrollPosition = true
+            }
         }
 
         func setShellTask(_ task: Task<Void, Never>) {
@@ -378,6 +446,19 @@ struct MarkdownPreviewView: NSViewRepresentable {
             }
         }
 
+        fileprivate func applyPendingScrollPositionIfNeeded(in webView: WKWebView) {
+            guard shouldRestorePendingScrollPosition else { return }
+            shouldRestorePendingScrollPosition = false
+
+            let position = pendingScrollPosition ?? DocumentScrollPosition(x: 0, y: 0)
+            guard position.x.isFinite, position.y.isFinite else {
+                webView.evaluateJavaScript("window.scrollTo(0, 0);")
+                return
+            }
+
+            webView.evaluateJavaScript("window.scrollTo(\(position.x), \(position.y));")
+        }
+
         private static func parseSearchResult(_ value: Any?) -> DocumentSearchResult {
             guard let payload = value as? [String: Any] else {
                 return .init()
@@ -416,7 +497,11 @@ struct MarkdownPreviewView: NSViewRepresentable {
                     if let pendingSearch = self.pendingSearch {
                         self.applySearch(pendingSearch, in: webView)
                     }
+                    let isRevealingSource = self.pendingSourceReveal != nil
                     self.applyPendingSourceReveal(in: webView, onConsumed: self.onSourceRevealConsumed)
+                    if !isRevealingSource {
+                        self.applyPendingScrollPositionIfNeeded(in: webView)
+                    }
                 }
             } catch {
                 webView.loadHTMLString(MarkdownPreviewView.errorHTML(error.localizedDescription), baseURL: nil)
@@ -434,6 +519,11 @@ struct MarkdownPreviewView: NSViewRepresentable {
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            if message.name == Self.scrollPositionHandlerName {
+                publishScrollPosition(from: message.body)
+                return
+            }
+
             guard message.name == Self.sourceJumpHandlerName else { return }
 
             let line: Int?
@@ -456,6 +546,23 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 onSourceJump(location)
             }
         }
+
+        private func publishScrollPosition(from body: Any) {
+            let position = Self.scrollPosition(from: body)
+            guard position.isMeaningfullyDifferent(from: lastPublishedScrollPosition) else { return }
+            lastPublishedScrollPosition = position
+            onScrollPositionChange(position)
+        }
+
+        private static func scrollPosition(from body: Any?) -> DocumentScrollPosition {
+            guard let body = body as? [String: Any] else {
+                return DocumentScrollPosition(x: 0, y: 0)
+            }
+
+            let x = (body["x"] as? NSNumber)?.doubleValue ?? body["x"] as? Double ?? 0
+            let y = (body["y"] as? NSNumber)?.doubleValue ?? body["y"] as? Double ?? 0
+            return DocumentScrollPosition(x: x, y: y)
+        }
     }
 }
 
@@ -477,6 +584,7 @@ fileprivate struct PreviewAppearanceRequest: Equatable {
 }
 
 fileprivate struct PreviewContentRequest: Equatable {
+    let documentID: String
     let markdown: String
 }
 

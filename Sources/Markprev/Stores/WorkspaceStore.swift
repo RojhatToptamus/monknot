@@ -416,6 +416,43 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    func importPasteboardItems(_ items: [WorkspacePasteboardImportItem], into directoryURL: URL? = nil) {
+        guard let workspaceURL else {
+            errorMessage = "Open a workspace before pasting clipboard contents."
+            return
+        }
+
+        guard !isBusy, !items.isEmpty else { return }
+
+        let targetDirectory = directoryURL ?? workspaceURL
+        guard Self.isURL(targetDirectory, containedIn: workspaceURL) else {
+            errorMessage = "Paste clipboard contents into the current workspace."
+            return
+        }
+
+        noteInternalFileMutation()
+        let preserveSelection = selectedDocumentID
+        let generation = beginDocumentFileOperation()
+
+        workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
+            do {
+                _ = try WorkspacePasteboardImportService.importItems(items, into: targetDirectory)
+                let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
+                guard !Task.isCancelled else { return }
+                await self?.finishWorkspaceLoad(
+                    result: result,
+                    workspaceURL: workspaceURL,
+                    selectedURL: nil,
+                    preserveSelection: preserveSelection,
+                    reloadSelection: false,
+                    generation: generation
+                )
+            } catch {
+                await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not paste clipboard contents")
+            }
+        }
+    }
+
     func deleteDocument(_ document: WorkspaceDocument) {
         guard let workspaceURL, documents.contains(where: { $0.id == document.id }) else { return }
 
@@ -623,7 +660,8 @@ final class WorkspaceStore: ObservableObject {
         selecting selectedURL: URL?,
         persistBookmark: Bool,
         preserveSelection: String?,
-        reloadSelection: Bool
+        reloadSelection: Bool,
+        recordRecentWorkspace: Bool = true
     ) {
         let standardizedURL = url.standardizedFileURL
         updateSecurityScope(for: standardizedURL)
@@ -667,6 +705,7 @@ final class WorkspaceStore: ObservableObject {
                     selectedURL: selectedURL,
                     preserveSelection: preserveSelection,
                     reloadSelection: reloadSelection,
+                    recordRecentWorkspace: recordRecentWorkspace,
                     generation: generation
                 )
             } catch {
@@ -698,6 +737,7 @@ final class WorkspaceStore: ObservableObject {
         selectedURL: URL?,
         preserveSelection: String?,
         reloadSelection: Bool,
+        recordRecentWorkspace: Bool = false,
         generation: Int
     ) {
         guard generation == workspaceGeneration else { return }
@@ -707,6 +747,9 @@ final class WorkspaceStore: ObservableObject {
         documents = result.documents
         pruneSaveStates(previousDocuments: previousDocuments)
         ensureFileWatcher(for: workspaceURL)
+        if recordRecentWorkspace {
+            RecentWorkspaceStore().record(workspaceURL)
+        }
 
         if let selectedURL {
             selectedDocumentID = WorkspaceDocument(url: selectedURL, rootURL: workspaceURL).id

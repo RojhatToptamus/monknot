@@ -127,6 +127,15 @@ Before adding custom parsing, indexing, PDF handling, file watching, or renderin
 - Preserve security-scoped access behavior when changing workspace open/restore logic.
 - Use `WorkspaceDocument.id` as the canonical document identifier; it is the standardized file path.
 
+## Implementation Quality And Performance
+
+- Consider performance, memory, CPU usage, and lifecycle cleanup as part of every feature implementation, not as a separate cleanup pass.
+- Avoid designs that introduce retain cycles, orphaned processes, leaked file descriptors, unbounded buffers, unnecessary background work, repeated expensive recomputation, or main-thread blocking.
+- Bound memory growth for transcripts, search results, cached previews, and other accumulative state.
+- Prefer simple, platform-aligned implementations over custom machinery when native APIs already handle the behavior.
+- If a feature creates long-lived tasks, watchers, WebViews, PDF views, PTYs, timers, dispatch sources, or observers, define and verify its teardown path.
+- Do not accept an implementation as complete if it works functionally but introduces high CPU usage, memory leaks, poor async patterns, or brittle architecture.
+
 ## UI Conventions
 
 - Main layout is `NavigationSplitView` in `ContentView`.
@@ -189,6 +198,9 @@ swiftc -parse-as-library -vfsoverlay .build/manual/swift-vfs-overlay.yaml -I .bu
 
 When adding logic:
 
+- Write tests to discover real issues in the app, not tests shaped only to pass the current implementation.
+- Cover realistic workflows, edge cases, failure paths, regressions, and cross-component behavior when the feature touches app-level state.
+- A passing test suite is not enough if the tests do not exercise the risky behavior introduced or changed by the feature.
 - Put pure logic in `MarkprevCore` and add XCTest coverage in `Tests/MarkprevTests`.
 - Add tests for cancellation-safe service behavior when feasible.
 - Add regression tests for path handling, file type classification, Markdown parsing, search matching, theme persistence, and PDF export option logic.

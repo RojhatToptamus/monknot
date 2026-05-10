@@ -15,11 +15,16 @@ struct EditorPaneView: View {
     let fontSmoothing: Bool
     let tabs: [WorkspaceTabItem]
     let activeTabID: String?
+    let activeViewportState: DocumentViewportState?
     let missingTabIDs: Set<String>
     let selectTab: (String) -> Void
     let closeTab: (String) -> Void
     let togglePinTab: (String) -> Void
     let reorderTab: (String, String?) -> Void
+    let updateViewportState: (String, DocumentViewportStateChange) -> Void
+    let pdfUndoCommandSerial: Int
+    let pdfRedoCommandSerial: Int
+    let updatePDFAnnotationUndoState: (Bool, Bool) -> Void
     @Binding var isTerminalPresented: Bool
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var previewLocation: MarkdownSourceLocation?
@@ -179,11 +184,10 @@ struct EditorPaneView: View {
     }
 
     private var activeTerminalDirectory: URL? {
-        if let selectedDocument = store.selectedDocument {
-            return selectedDocument.url.deletingLastPathComponent()
-        }
-
-        return store.workspaceURL
+        TerminalWorkingDirectoryPolicy.directory(
+            workspaceURL: store.workspaceURL,
+            selectedDocumentURL: store.selectedDocument?.url
+        )
     }
 
     @ViewBuilder
@@ -224,6 +228,9 @@ struct EditorPaneView: View {
                 zoomScale: zoomScale,
                 saveState: store.saveState(for: selectedDocument.id),
                 dirtyData: store.dirtyPDFData(for: selectedDocument.id),
+                viewportPosition: activeViewportState?.pdfPosition,
+                externalUndoCommandSerial: pdfUndoCommandSerial,
+                externalRedoCommandSerial: pdfRedoCommandSerial,
                 searchState: $documentSearch,
                 searchTarget: $pdfSearchTarget,
                 markEdited: { previousData, data in
@@ -234,7 +241,11 @@ struct EditorPaneView: View {
                 },
                 saveDocument: {
                     store.saveSelectedFile()
-                }
+                },
+                onViewportPositionChange: { position in
+                    updateViewportState(selectedDocument.id, .pdfPosition(position))
+                },
+                updateAnnotationUndoState: updatePDFAnnotationUndoState
             )
             .help(selectedDocument.relativePath)
         case .media:
@@ -255,6 +266,7 @@ struct EditorPaneView: View {
 
     private func textEditor(for selectedDocument: WorkspaceDocument) -> some View {
         MarkdownTextEditor(
+            documentID: selectedDocument.id,
             text: Binding(
                 get: { store.documentText },
                 set: { store.setDocumentText($0) }
@@ -262,8 +274,12 @@ struct EditorPaneView: View {
             theme: theme,
             fontSize: codeFontSize * zoomScale,
             fontSmoothing: fontSmoothing,
+            scrollPosition: activeViewportState?.textScrollPosition,
             sourceLocation: $sourceLocation,
-            searchState: $documentSearch
+            searchState: $documentSearch,
+            onScrollPositionChange: { position in
+                updateViewportState(selectedDocument.id, .textScrollPosition(position))
+            }
         )
         .help(selectedDocument.relativePath)
     }
@@ -272,6 +288,7 @@ struct EditorPaneView: View {
     private func markdownEditor(for selectedDocument: WorkspaceDocument) -> some View {
         if editorMode == .source {
             MarkdownTextEditor(
+                documentID: selectedDocument.id,
                 text: Binding(
                     get: { store.documentText },
                     set: { store.setDocumentText($0) }
@@ -279,12 +296,17 @@ struct EditorPaneView: View {
                 theme: theme,
                 fontSize: codeFontSize * zoomScale,
                 fontSmoothing: fontSmoothing,
+                scrollPosition: activeViewportState?.textScrollPosition,
                 sourceLocation: $sourceLocation,
-                searchState: $documentSearch
+                searchState: $documentSearch,
+                onScrollPositionChange: { position in
+                    updateViewportState(selectedDocument.id, .textScrollPosition(position))
+                }
             )
             .help(selectedDocument.relativePath)
         } else {
             MarkdownPreviewView(
+                documentID: selectedDocument.id,
                 markdown: store.documentText,
                 baseURL: store.workspaceURL,
                 theme: theme,
@@ -293,9 +315,13 @@ struct EditorPaneView: View {
                 previewWidthPercent: previewWidthPercent,
                 usePointerCursors: usePointerCursors,
                 fontSmoothing: fontSmoothing,
+                scrollPosition: activeViewportState?.markdownPreviewScrollPosition,
                 sourceLocation: $previewLocation,
                 searchState: $documentSearch,
-                onSourceJump: onPreviewSourceJump
+                onSourceJump: onPreviewSourceJump,
+                onScrollPositionChange: { position in
+                    updateViewportState(selectedDocument.id, .markdownPreviewScrollPosition(position))
+                }
             )
             .help(selectedDocument.relativePath)
         }

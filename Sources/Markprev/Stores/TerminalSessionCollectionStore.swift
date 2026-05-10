@@ -6,7 +6,6 @@ final class TerminalSessionCollectionStore: ObservableObject {
     @Published private var tabState = TerminalTabState()
     @Published private var sessionsByID: [String: TerminalSessionStore] = [:]
 
-    private let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
     private var defaultDirectory: URL?
 
     var tabs: [TerminalTabItem] {
@@ -23,7 +22,7 @@ final class TerminalSessionCollectionStore: ObservableObject {
     }
 
     init(initialDirectory: URL? = nil) {
-        defaultDirectory = resolvedDirectory(initialDirectory)
+        defaultDirectory = TerminalSessionStore.resolvedDirectory(initialDirectory)
     }
 
     func session(for terminalID: String) -> TerminalSessionStore? {
@@ -31,12 +30,12 @@ final class TerminalSessionCollectionStore: ObservableObject {
     }
 
     func setDefaultDirectory(_ url: URL?) {
-        defaultDirectory = resolvedDirectory(url)
+        defaultDirectory = TerminalSessionStore.resolvedDirectory(url)
         activeSession?.setDefaultDirectory(defaultDirectory)
     }
 
     func ensureActiveTerminal(in directory: URL?) {
-        let resolvedDirectory = resolvedDirectory(directory)
+        guard let resolvedDirectory = resolvedDirectory(directory) else { return }
 
         guard !tabState.isEmpty else {
             createTerminal(in: resolvedDirectory)
@@ -48,8 +47,8 @@ final class TerminalSessionCollectionStore: ObservableObject {
     }
 
     @discardableResult
-    func createTerminal(in directory: URL?) -> TerminalSessionStore {
-        let resolvedDirectory = resolvedDirectory(directory)
+    func createTerminal(in directory: URL?) -> TerminalSessionStore? {
+        guard let resolvedDirectory = resolvedDirectory(directory) else { return nil }
         let tab = tabState.create(workingDirectoryPath: resolvedDirectory.path)
         let session = TerminalSessionStore(initialDirectory: resolvedDirectory)
         sessionsByID[tab.id] = session
@@ -93,7 +92,7 @@ final class TerminalSessionCollectionStore: ObservableObject {
         }
     }
 
-    private func resolvedDirectory(_ url: URL?) -> URL {
-        TerminalSessionStore.resolvedDirectory(url ?? defaultDirectory, fallback: homeDirectory)
+    private func resolvedDirectory(_ url: URL?) -> URL? {
+        TerminalSessionStore.resolvedDirectory(url ?? defaultDirectory)
     }
 }

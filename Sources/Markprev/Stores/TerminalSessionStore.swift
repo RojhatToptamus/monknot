@@ -16,7 +16,7 @@ final class TerminalSessionStore: ObservableObject {
     @Published private(set) var outputRevision = 0
     @Published private(set) var status: TerminalSessionStatus = .idle
 
-    private let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+    static let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
     private let maxTranscriptLength = 240_000
     private let trimmedTranscriptLength = 180_000
     private let maxPendingOutputBeforeFlush = 32_000
@@ -27,12 +27,13 @@ final class TerminalSessionStore: ObservableObject {
     private var outputFlushTask: Task<Void, Never>?
 
     init(initialDirectory: URL? = nil) {
-        workingDirectory = Self.resolvedDirectory(initialDirectory, fallback: homeDirectory)
+        workingDirectory = Self.resolvedDirectory(initialDirectory) ?? Self.homeDirectory
     }
 
     func setDefaultDirectory(_ url: URL?) {
         guard ptySession == nil, status == .idle else { return }
-        workingDirectory = Self.resolvedDirectory(url, fallback: homeDirectory)
+        guard let directory = Self.resolvedDirectory(url) else { return }
+        workingDirectory = directory
     }
 
     func startIfNeeded() {
@@ -43,7 +44,7 @@ final class TerminalSessionStore: ObservableObject {
         guard ptySession == nil else { return }
         guard status == .idle else { return }
 
-        workingDirectory = Self.resolvedDirectory(directory ?? workingDirectory, fallback: homeDirectory)
+        workingDirectory = Self.resolvedDirectory(directory ?? workingDirectory) ?? workingDirectory
         transcript = ""
         pendingOutput = ""
         outputFlushTask?.cancel()
@@ -82,7 +83,7 @@ final class TerminalSessionStore: ObservableObject {
     }
 
     func restart(in directory: URL?) {
-        workingDirectory = Self.resolvedDirectory(directory, fallback: homeDirectory)
+        workingDirectory = Self.resolvedDirectory(directory) ?? workingDirectory
         sessionGeneration += 1
         ptySession?.stop()
         ptySession = nil
@@ -179,8 +180,8 @@ final class TerminalSessionStore: ObservableObject {
         ptySession?.stop()
     }
 
-    static func resolvedDirectory(_ url: URL?, fallback: URL) -> URL {
-        guard let url else { return fallback }
+    static func resolvedDirectory(_ url: URL?) -> URL? {
+        guard let url else { return nil }
 
         let standardizedURL = url.standardizedFileURL
         var isDirectory = ObjCBool(false)
@@ -189,6 +190,13 @@ final class TerminalSessionStore: ObservableObject {
             return isDirectory.boolValue ? standardizedURL : standardizedURL.deletingLastPathComponent()
         }
 
-        return fallback
+        let parentURL = standardizedURL.deletingLastPathComponent()
+        var parentIsDirectory = ObjCBool(false)
+        if FileManager.default.fileExists(atPath: parentURL.path, isDirectory: &parentIsDirectory),
+           parentIsDirectory.boolValue {
+            return parentURL
+        }
+
+        return nil
     }
 }

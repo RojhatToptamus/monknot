@@ -20,6 +20,12 @@ struct ContentView: View {
     @State private var pendingPDFSearchTarget: WorkspaceSearchPDFTarget?
     @State private var deferredWorkspaceSourceJump: DeferredWorkspaceSourceJump?
     @State private var tabState = WorkspaceTabState()
+    @State private var restoredTabStateWorkspacePath: String?
+    @State private var documentViewportStates: [String: DocumentViewportState] = [:]
+    @State private var pdfUndoCommandSerial = 0
+    @State private var pdfRedoCommandSerial = 0
+    @State private var canUndoPDFAnnotation = false
+    @State private var canRedoPDFAnnotation = false
     @State private var documentSearch = DocumentSearchState()
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
     @State private var exportNotice: String?
@@ -27,6 +33,7 @@ struct ContentView: View {
     @State private var pdfExportOptions = MarkdownPDFExportOptions.loadLastUsed()
     @State private var isExportingPDF = false
     @Environment(\.colorScheme) private var systemColorScheme
+    private let tabStatePersistence = WorkspaceTabStatePersistence()
 
     private var editorMode: EditorMode {
         get { EditorMode(rawValue: editorModeRawValue) ?? .preview }
@@ -70,10 +77,8 @@ struct ContentView: View {
 
     private var lifecycleContent: AnyView {
         AnyView(chromeContent
-            .task {
-                store.restoreWorkspace()
-            }
             .onChange(of: store.selectedDocument?.id) { _, _ in
+                resetPDFAnnotationShortcutState()
                 reconcileTabsWithStore()
                 documentSearch.updateResult(.init())
                 workspaceSearch.refresh(documents: store.documents)
@@ -93,7 +98,9 @@ struct ContentView: View {
             }
             .onChange(of: store.workspaceURL?.standardizedFileURL.path ?? "") { _, _ in
                 tabState.reset()
-                publishOpenTabIDs()
+                restoredTabStateWorkspacePath = nil
+                documentViewportStates.removeAll()
+                publishOpenTabIDs(persistTabs: false)
             }
             .onChange(of: store.removedDirtyOpenDocumentIDs) { _, _ in
                 reconcileTabsWithStore()
@@ -183,11 +190,16 @@ struct ContentView: View {
             fontSmoothing: fontSmoothing,
             tabs: tabState.tabs,
             activeTabID: tabState.selectedDocumentID,
+            activeViewportState: activeDocumentViewportState,
             missingTabIDs: store.removedDirtyOpenDocumentIDs,
             selectTab: activateTab(id:),
             closeTab: closeTab(id:),
             togglePinTab: togglePinTab(id:),
             reorderTab: reorderTab(draggedID:targetID:),
+            updateViewportState: updateDocumentViewportState(documentID:change:),
+            pdfUndoCommandSerial: pdfUndoCommandSerial,
+            pdfRedoCommandSerial: pdfRedoCommandSerial,
+            updatePDFAnnotationUndoState: updatePDFAnnotationShortcutState(canUndo:canRedo:),
             isTerminalPresented: $isTerminalDrawerOpen,
             sourceLocation: $pendingSourceLocation,
             previewLocation: $pendingPreviewLocation,
@@ -333,6 +345,7 @@ struct ContentView: View {
         guard !store.isBusy else { return }
         let wasActive = tabState.selectedDocumentID == documentID
         let nextDocumentID = tabState.close(documentID: documentID)
+        documentViewportStates.removeValue(forKey: documentID)
         publishOpenTabIDs()
 
         if wasActive || store.selectedDocumentID == documentID {
@@ -347,6 +360,7 @@ struct ContentView: View {
 
     private func togglePinTab(id documentID: String) {
         tabState.togglePin(documentID: documentID)
+        persistTabState()
     }
 
     private func toggleActiveTabPin() {
@@ -357,10 +371,14 @@ struct ContentView: View {
     private func reorderTab(draggedID: String, targetID: String?) {
         guard !store.isBusy else { return }
         tabState.moveTab(documentID: draggedID, before: targetID)
+        persistTabState()
     }
 
     private func reconcileTabsWithStore() {
         guard !store.isBusy else { return }
+        if restorePersistedTabsIfNeeded() {
+            return
+        }
 
         let availableDocumentIDs = Set(store.documents.map(\.id))
         tabState.updateSnapshots(from: store.documents)
@@ -368,6 +386,7 @@ struct ContentView: View {
             availableDocumentIDs: availableDocumentIDs,
             preserving: store.removedDirtyOpenDocumentIDs
         )
+        pruneDocumentViewportStates()
 
         if let selectedDocument = store.selectedDocument {
             if tabState.contains(documentID: selectedDocument.id) {
@@ -394,12 +413,85 @@ struct ContentView: View {
                 destinationID: mapping.destinationID,
                 document: store.document(id: mapping.destinationID)
             )
+            if let viewportState = documentViewportStates.removeValue(forKey: mapping.sourceID) {
+                documentViewportStates[mapping.destinationID] = viewportState
+            }
         }
         publishOpenTabIDs()
     }
 
-    private func publishOpenTabIDs() {
+    @discardableResult
+    private func restorePersistedTabsIfNeeded() -> Bool {
+        guard let workspaceURL = store.workspaceURL?.standardizedFileURL else { return false }
+        let workspacePath = workspaceURL.path
+        guard restoredTabStateWorkspacePath != workspacePath else { return false }
+        restoredTabStateWorkspacePath = workspacePath
+
+        guard var restoredState = tabStatePersistence.load(for: workspaceURL) else {
+            return false
+        }
+
+        restoredState.updateSnapshots(from: store.documents)
+        restoredState.pruneUnavailableDocuments(
+            availableDocumentIDs: Set(store.documents.map(\.id)),
+            preserving: store.removedDirtyOpenDocumentIDs
+        )
+
+        guard !restoredState.tabs.isEmpty || restoredState.isEmptyByUserChoice else {
+            return false
+        }
+
+        tabState = restoredState
+        pruneDocumentViewportStates()
+        publishOpenTabIDs()
+
+        if tabState.selectedDocumentID != store.selectedDocumentID {
+            _ = store.selectDocument(id: tabState.selectedDocumentID)
+        }
+
+        return true
+    }
+
+    private func publishOpenTabIDs(persistTabs: Bool = true) {
         store.setOpenDocumentIDs(tabState.openDocumentIDs)
+        if persistTabs {
+            persistTabState()
+        }
+    }
+
+    private func persistTabState() {
+        guard let workspaceURL = store.workspaceURL?.standardizedFileURL else { return }
+        tabStatePersistence.save(tabState, for: workspaceURL)
+    }
+
+    private var activeDocumentViewportState: DocumentViewportState? {
+        guard let selectedDocumentID = tabState.selectedDocumentID else { return nil }
+        return documentViewportStates[selectedDocumentID]
+    }
+
+    private func updateDocumentViewportState(documentID: String, change: DocumentViewportStateChange) {
+        var state = documentViewportStates[documentID] ?? DocumentViewportState()
+
+        switch change {
+        case .textScrollPosition(let position):
+            guard position.isMeaningfullyDifferent(from: state.textScrollPosition) else { return }
+            state.textScrollPosition = position
+        case .markdownPreviewScrollPosition(let position):
+            guard position.isMeaningfullyDifferent(from: state.markdownPreviewScrollPosition) else { return }
+            state.markdownPreviewScrollPosition = position
+        case .pdfPosition(let position):
+            guard position != state.pdfPosition else { return }
+            state.pdfPosition = position
+        }
+
+        documentViewportStates[documentID] = state
+    }
+
+    private func pruneDocumentViewportStates() {
+        let retainedDocumentIDs = tabState.openDocumentIDs
+            .union(store.removedDirtyOpenDocumentIDs)
+            .union(store.selectedDocumentID.map { [$0] } ?? [])
+        documentViewportStates = documentViewportStates.filter { retainedDocumentIDs.contains($0.key) }
     }
 
     private func openSourceFromPreview(location: MarkdownSourceLocation) {
@@ -432,49 +524,109 @@ struct ContentView: View {
     }
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
-        guard let characters = event.charactersIgnoringModifiers?.lowercased() else {
+        guard let shortcutEvent = event.markprevKeyboardShortcutEvent,
+              let action = MarkprevKeyboardShortcutRouter.action(
+                for: shortcutEvent,
+                context: keyboardShortcutContext
+              )
+        else {
             return false
         }
 
-        let flags = event.modifierFlags.independentFlags
-        let isCommandOnly = flags.contains(.command) &&
-            !flags.contains(.shift) &&
-            !flags.contains(.option) &&
-            !flags.contains(.control)
+        if action == .importPasteboard {
+            guard !event.markprevShouldDeferToNativePasteTarget else { return false }
+            return importPasteboardFromCommand()
+        }
 
-        if characters == "w", isCommandOnly, tabState.selectedDocumentID != nil {
+        performKeyboardShortcutAction(action)
+        return true
+    }
+
+    private func importPasteboardFromCommand() -> Bool {
+        do {
+            let items = try WorkspacePasteboardImportService.importItems(from: .general)
+            guard !items.isEmpty else { return false }
+            store.importPasteboardItems(items)
+            return true
+        } catch {
+            store.errorMessage = "Could not read clipboard contents: \(error.localizedDescription)"
+            return true
+        }
+    }
+
+    private var keyboardShortcutContext: MarkprevKeyboardShortcutContext {
+        let selectedDocument = store.selectedDocument
+        return MarkprevKeyboardShortcutContext(
+            hasWorkspace: store.workspaceURL != nil,
+            hasSelectedDocument: selectedDocument != nil,
+            selectedDocumentKind: selectedDocument?.kind,
+            canCloseTab: tabState.selectedDocumentID != nil && !store.isBusy,
+            canTogglePinTab: tabState.selectedDocumentID != nil && !store.isBusy,
+            canExportPDF: selectedDocument?.kind == .markdown,
+            canUndoPDFAnnotation: selectedDocument?.kind == .pdf && canUndoPDFAnnotation,
+            canRedoPDFAnnotation: selectedDocument?.kind == .pdf && canRedoPDFAnnotation,
+            isDocumentSearchPresented: documentSearch.isPresented,
+            isBusy: store.isBusy
+        )
+    }
+
+    private func performKeyboardShortcutAction(_ action: MarkprevKeyboardShortcutAction) {
+        switch action {
+        case .newMarkdown:
+            store.createMarkdownFile()
+        case .openFolder:
+            openFolderPanel()
+        case .saveDocument:
+            store.saveSelectedFile()
+        case .refreshWorkspace:
+            store.refresh()
+        case .closeTab:
             closeActiveTab()
-            return true
-        }
-
-        if characters == "f", flags.contains(.command), flags.contains(.shift) {
-            showWorkspaceSearch()
-            return true
-        }
-
-        let commandFind = characters == "f" && flags.contains(.command)
-        let controlFind = characters == "f" && flags.contains(.control)
-        if commandFind || controlFind {
-            guard store.selectedDocument != nil else { return false }
+        case .togglePinTab:
+            toggleActiveTabPin()
+        case .exportPDF:
+            exportSelectedMarkdownPDF()
+        case .showDocumentSearch:
             showDocumentSearch()
-            return true
-        }
-
-        if characters == "g", flags.contains(.command) {
-            if flags.contains(.shift) {
-                documentSearch.findPrevious()
-            } else {
-                documentSearch.findNext()
-            }
-            return true
-        }
-
-        if event.keyCode == 53, documentSearch.isPresented {
+        case .showWorkspaceSearch:
+            showWorkspaceSearch()
+        case .findNext:
+            documentSearch.findNext()
+        case .findPrevious:
+            documentSearch.findPrevious()
+        case .zoomIn:
+            adjustZoom(by: 0.1)
+        case .zoomOut:
+            adjustZoom(by: -0.1)
+        case .resetZoom:
+            zoomScale = 1.0
+        case .importPasteboard:
+            _ = importPasteboardFromCommand()
+        case .toggleTerminal:
+            toggleTerminalDrawer()
+        case .toggleSidebar:
+            toggleSidebar()
+        case .undoPDFAnnotation:
+            pdfUndoCommandSerial += 1
+        case .redoPDFAnnotation:
+            pdfRedoCommandSerial += 1
+        case .dismissDocumentSearch:
             documentSearch.dismiss()
-            return true
         }
+    }
 
-        return false
+    private func resetPDFAnnotationShortcutState() {
+        canUndoPDFAnnotation = false
+        canRedoPDFAnnotation = false
+    }
+
+    private func updatePDFAnnotationShortcutState(canUndo: Bool, canRedo: Bool) {
+        if canUndoPDFAnnotation != canUndo {
+            canUndoPDFAnnotation = canUndo
+        }
+        if canRedoPDFAnnotation != canRedo {
+            canRedoPDFAnnotation = canRedo
+        }
     }
 
     private func showDocumentSearch() {
