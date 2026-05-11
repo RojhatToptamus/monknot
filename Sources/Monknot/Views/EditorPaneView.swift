@@ -40,26 +40,8 @@ struct EditorPaneView: View {
     let onPreviewSourceJump: (MarkdownSourceLocation) -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            TopNavigationBar(
-                store: store,
-                editorMode: $editorMode,
-                theme: theme,
-                zoomScale: zoomScale,
-                isTerminalPresented: isTerminalPresented,
-                isSidebarVisible: isSidebarVisible,
-                newMarkdown: newMarkdown,
-                openFolder: openFolder,
-                toggleTerminal: toggleTerminal,
-                toggleSidebar: toggleSidebar,
-                outlineItems: outlineItems,
-                selectOutlineItem: selectOutlineItem,
-                documentSearch: $documentSearch
-            )
-
-            GeometryReader { proxy in
-                lowerChromeWithTerminalDrawer(in: proxy.size)
-            }
+        GeometryReader { proxy in
+            editorAndDrawer(in: proxy.size)
         }
         .ignoresSafeArea(.container, edges: .top)
         .background(theme.surfaceColor)
@@ -83,7 +65,7 @@ struct EditorPaneView: View {
     }
 
     @ViewBuilder
-    private func lowerChromeWithTerminalDrawer(in size: CGSize) -> some View {
+    private func editorAndDrawer(in size: CGSize) -> some View {
         let isCompact = size.width < 760
         let drawerWidth = terminalDrawerWidth(for: size.width)
 
@@ -126,28 +108,32 @@ struct EditorPaneView: View {
 
     private var editorColumn: some View {
         VStack(spacing: 0) {
-            documentTabBar
+            TopNavigationBar(
+                store: store,
+                editorMode: $editorMode,
+                theme: theme,
+                zoomScale: zoomScale,
+                isTerminalPresented: isTerminalPresented,
+                isSidebarVisible: isSidebarVisible,
+                newMarkdown: newMarkdown,
+                openFolder: openFolder,
+                toggleTerminal: toggleTerminal,
+                toggleSidebar: toggleSidebar,
+                outlineItems: outlineItems,
+                selectOutlineItem: selectOutlineItem,
+                documentSearch: $documentSearch,
+                tabs: tabs,
+                activeTabID: activeTabID,
+                missingTabIDs: missingTabIDs,
+                selectTab: selectTab,
+                closeTab: closeTab,
+                togglePinTab: togglePinTab,
+                reorderTab: reorderTab
+            )
 
             editorContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-    }
-
-    private var documentTabBar: some View {
-        DocumentTabBar(
-            tabs: tabs,
-            selectedDocumentID: activeTabID,
-            missingDocumentIDs: missingTabIDs,
-            theme: theme,
-            zoomScale: zoomScale,
-            uiFontSize: theme.uiFontSize,
-            isDisabled: store.isBusy,
-            saveState: { store.saveState(for: $0) },
-            selectTab: selectTab,
-            closeTab: closeTab,
-            togglePin: togglePinTab,
-            reorderTab: reorderTab
-        )
     }
 
     private func resizableTerminalDrawer(width: CGFloat, maxWidth: CGFloat, close: @escaping () -> Void) -> some View {

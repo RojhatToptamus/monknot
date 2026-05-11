@@ -16,8 +16,6 @@ struct DocumentTabBar: View {
     let togglePin: (String) -> Void
     let reorderTab: (String, String?) -> Void
 
-    @State private var contentWidth: CGFloat = 0
-
     private func scaled(_ base: CGFloat) -> CGFloat {
         max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
     }
@@ -28,60 +26,24 @@ struct DocumentTabBar: View {
 
     var body: some View {
         if !tabs.isEmpty {
-            GeometryReader { proxy in
-                ZStack(alignment: .trailing) {
-                    HiddenHorizontalTabScrollView(contentWidth: $contentWidth) {
-                        DocumentTabStripContent(
-                            tabs: tabs,
-                            selectedDocumentID: selectedDocumentID,
-                            missingDocumentIDs: missingDocumentIDs,
-                            theme: theme,
-                            zoomScale: zoomScale,
-                            uiFontSize: uiFontSize,
-                            isDisabled: isDisabled,
-                            saveState: saveState,
-                            selectTab: selectTab,
-                            closeTab: closeTab,
-                            togglePin: togglePin,
-                            reorderTab: reorderTab
-                        )
-                    }
-
-                    if contentWidth > proxy.size.width + scaled(2) {
-                        overflowCue
-                    }
-                }
+            ScrollView(.horizontal, showsIndicators: false) {
+                DocumentTabStripContent(
+                    tabs: tabs,
+                    selectedDocumentID: selectedDocumentID,
+                    missingDocumentIDs: missingDocumentIDs,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    uiFontSize: uiFontSize,
+                    isDisabled: isDisabled,
+                    saveState: saveState,
+                    selectTab: selectTab,
+                    closeTab: closeTab,
+                    togglePin: togglePin,
+                    reorderTab: reorderTab
+                )
             }
-            .frame(height: chromeRowHeight)
-            .background(theme.surfaceColor)
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(theme.borderColor)
-                    .frame(height: 1)
-            }
+            .frame(maxHeight: chromeRowHeight)
         }
-    }
-
-    private var overflowCue: some View {
-        HStack(spacing: 0) {
-            LinearGradient(
-                colors: [
-                    theme.surfaceColor.opacity(0),
-                    theme.surfaceColor.opacity(0.92)
-                ],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-            .frame(width: scaled(36))
-
-            Image(systemName: "chevron.right")
-                .font(.system(size: scaled(9), weight: .semibold))
-                .foregroundStyle(theme.mutedForegroundColor.opacity(0.78))
-                .frame(width: scaled(14), height: scaled(30))
-                .padding(.trailing, scaled(5))
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
     }
 }
 
@@ -113,7 +75,7 @@ private struct DocumentTabStripContent: View {
     }
 
     var body: some View {
-        HStack(spacing: scaled(4)) {
+        HStack(spacing: scaled(2)) {
             ForEach(tabs) { tab in
                 DocumentTabItemView(
                     tab: tab,
@@ -133,7 +95,7 @@ private struct DocumentTabStripContent: View {
                 .highPriorityGesture(tabDragGesture(for: tab))
             }
         }
-        .padding(.horizontal, scaled(10))
+        .padding(.horizontal, scaled(2))
         .frame(height: chromeRowHeight, alignment: .center)
         .fixedSize(horizontal: true, vertical: false)
         .coordinateSpace(name: Self.coordinateSpaceName)
@@ -214,8 +176,8 @@ private struct DocumentTabItemView: View {
                     }
 
                     Text(tab.displayName)
-                        .font(.system(size: scaled(12), weight: .regular))
-                        .foregroundStyle(isSelected ? theme.foregroundColor : theme.mutedForegroundColor)
+                        .font(.system(size: scaled(12), weight: isSelected ? .medium : .regular))
+                        .foregroundStyle(textColor)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .frame(maxWidth: scaled(tab.isPinned ? 130 : 180), alignment: .leading)
@@ -234,9 +196,9 @@ private struct DocumentTabItemView: View {
                         size: scaled(10)
                     )
                 }
-                .padding(.leading, scaled(9))
-                .padding(.trailing, scaled(tab.isPinned ? 8 : 4))
-                .frame(height: scaled(26))
+                .padding(.leading, scaled(10))
+                .padding(.trailing, scaled(tab.isPinned ? 10 : 4))
+                .frame(height: scaled(28))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -255,15 +217,11 @@ private struct DocumentTabItemView: View {
                 .help("Close Tab")
                 .accessibilityLabel("Close \(tab.displayName)")
                 .monknotPointerCursor(enabled: !isDisabled)
-                .padding(.trailing, scaled(3))
+                .padding(.trailing, scaled(4))
             }
         }
-        .frame(minWidth: scaled(tab.isPinned ? 118 : 150), maxWidth: scaled(tab.isPinned ? 178 : 232), alignment: .leading)
-        .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale)))
-        .overlay {
-            RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale))
-                .strokeBorder(borderColor, lineWidth: 1)
-        }
+        .frame(minWidth: scaled(tab.isPinned ? 110 : 140), maxWidth: scaled(tab.isPinned ? 178 : 232), alignment: .leading)
+        .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale)))
         .opacity(opacity)
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovered)
@@ -292,9 +250,9 @@ private struct DocumentTabItemView: View {
             return theme.elevatedSurfaceColor
         }
         if isHovered && !isDisabled {
-            return theme.foregroundColor.opacity(theme.isDark ? 0.055 : 0.04)
+            return theme.foregroundColor.opacity(theme.isDark ? 0.05 : 0.035)
         }
-        return theme.controlTrackFillColor.opacity(0.65)
+        return .clear
     }
 
     private var opacity: Double {
@@ -304,11 +262,14 @@ private struct DocumentTabItemView: View {
         return isDisabled ? 0.55 : 1
     }
 
-    private var borderColor: Color {
+    private var textColor: Color {
         if isSelected {
-            return theme.borderColor
+            return theme.foregroundColor
         }
-        return theme.borderColor.opacity(isHovered ? 1 : 0.65)
+        if isHovered && !isDisabled {
+            return theme.foregroundColor.opacity(0.78)
+        }
+        return theme.mutedForegroundColor.opacity(0.78)
     }
 
     private var iconColor: Color {
@@ -318,14 +279,14 @@ private struct DocumentTabItemView: View {
         if isSelected {
             return theme.accentColor
         }
-        return theme.mutedForegroundColor
+        return theme.mutedForegroundColor.opacity(0.7)
     }
 
     private var closeIconColor: Color {
         if isHovered {
-            return theme.foregroundColor.opacity(0.9)
+            return theme.foregroundColor.opacity(0.85)
         }
-        return theme.mutedForegroundColor.opacity(0.75)
+        return theme.mutedForegroundColor.opacity(isSelected ? 0.6 : 0)
     }
 
     private var documentIconName: String {
@@ -384,139 +345,6 @@ private struct TabFrameReader: View {
                 documentID: proxy.frame(in: .named(DocumentTabStripContent.coordinateSpaceName))
             ])
         }
-    }
-}
-
-private struct HiddenHorizontalTabScrollView<Content: View>: NSViewRepresentable {
-    @Binding var contentWidth: CGFloat
-    let content: Content
-
-    init(contentWidth: Binding<CGFloat>, @ViewBuilder content: () -> Content) {
-        self._contentWidth = contentWidth
-        self.content = content()
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(contentWidth: $contentWidth)
-    }
-
-    func makeNSView(context: Context) -> TabStripScrollView {
-        let scrollView = TabStripScrollView()
-        let hostingView = TabStripHostingView(rootView: content)
-        hostingView.translatesAutoresizingMaskIntoConstraints = false
-        hostingView.setContentHuggingPriority(.required, for: .horizontal)
-        hostingView.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        scrollView.documentView = hostingView
-        NSLayoutConstraint.activate([
-            hostingView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
-            hostingView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
-            hostingView.bottomAnchor.constraint(equalTo: scrollView.contentView.bottomAnchor),
-            hostingView.heightAnchor.constraint(equalTo: scrollView.contentView.heightAnchor),
-            hostingView.widthAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.widthAnchor)
-        ])
-
-        context.coordinator.hostingView = hostingView
-        context.coordinator.updateContentWidth()
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: TabStripScrollView, context: Context) {
-        context.coordinator.contentWidth = $contentWidth
-        context.coordinator.hostingView?.rootView = content
-        context.coordinator.hostingView?.invalidateIntrinsicContentSize()
-        scrollView.hasHorizontalScroller = false
-        scrollView.hasVerticalScroller = false
-        context.coordinator.updateContentWidth()
-    }
-
-    final class Coordinator {
-        var contentWidth: Binding<CGFloat>
-        var hostingView: NSHostingView<Content>?
-
-        init(contentWidth: Binding<CGFloat>) {
-            self.contentWidth = contentWidth
-        }
-
-        func updateContentWidth() {
-            guard let hostingView else { return }
-            let width = max(0, hostingView.fittingSize.width)
-            let contentWidth = contentWidth
-            DispatchQueue.main.async {
-                if abs(contentWidth.wrappedValue - width) > 0.5 {
-                    contentWidth.wrappedValue = width
-                }
-            }
-        }
-    }
-}
-
-private final class TabStripHostingView<Content: View>: NSHostingView<Content> {
-    override var mouseDownCanMoveWindow: Bool {
-        false
-    }
-}
-
-private final class TabStripClipView: NSClipView {
-    override var mouseDownCanMoveWindow: Bool {
-        false
-    }
-}
-
-private final class TabStripScrollView: NSScrollView {
-    override var mouseDownCanMoveWindow: Bool {
-        false
-    }
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        configure()
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        configure()
-    }
-
-    override func scrollWheel(with event: NSEvent) {
-        if abs(event.scrollingDeltaX) > 0.1 {
-            super.scrollWheel(with: event)
-            return
-        }
-
-        let verticalDelta = event.scrollingDeltaY
-        guard abs(verticalDelta) > 0.1 else {
-            super.scrollWheel(with: event)
-            return
-        }
-
-        scrollHorizontally(by: verticalDelta)
-    }
-
-    private func configure() {
-        let clipView = TabStripClipView(frame: bounds)
-        clipView.drawsBackground = false
-        contentView = clipView
-
-        drawsBackground = false
-        borderType = .noBorder
-        hasHorizontalScroller = false
-        hasVerticalScroller = false
-        autohidesScrollers = true
-        scrollerStyle = .overlay
-        horizontalScrollElasticity = .allowed
-        verticalScrollElasticity = .none
-    }
-
-    private func scrollHorizontally(by delta: CGFloat) {
-        guard let documentView else { return }
-        let maxX = max(0, documentView.bounds.width - contentView.bounds.width)
-        guard maxX > 0 else { return }
-
-        var origin = contentView.bounds.origin
-        origin.x = min(max(origin.x + delta, 0), maxX)
-        contentView.scroll(to: origin)
-        reflectScrolledClipView(contentView)
     }
 }
 

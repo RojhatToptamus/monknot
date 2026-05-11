@@ -67,9 +67,20 @@ struct ContentView: View {
             .background(WindowBackgroundDragEnabler(
                 surfaceColor: activeTheme.surfaceColor,
                 layoutToken: nativeChromeLayoutToken,
-                toolbarButtonSize: nativeToolbarButtonSize
+                chromeHeight: nativeChromeHeight
             ))
             .background(KeyboardShortcutMonitor(handler: handleKeyDown))
+            .toolbar {
+                // SwiftUI's principal toolbar item grows the unified title-
+                // bar zone to `nativeChromeHeight`. AppKit doesn't auto-
+                // center the traffic lights inside that zone, so
+                // WindowBackgroundDragEnabler manually re-centers them.
+                ToolbarItem(placement: .principal) {
+                    Color.clear
+                        .frame(width: 1, height: nativeChromeHeight)
+                        .accessibilityHidden(true)
+                }
+            }
             .preferredColorScheme(themePreference.preferredColorScheme)
             .accentColor(activeTheme.accentColor)
         )
@@ -168,6 +179,7 @@ struct ContentView: View {
             zoomScale: zoomScale,
             uiFontSize: activeTheme.uiFontSize,
             openFolder: openFolderPanel,
+            newMarkdown: { store.createMarkdownFile() },
             exportPDF: exportMarkdownPDF(_:),
             openDocument: openDocumentTab(id:),
             openWorkspaceSearchResult: openWorkspaceSearchResult(_:)
@@ -699,9 +711,13 @@ struct ContentView: View {
         "\(themePreference.rawValue)-\(systemColorScheme == .dark ? "dark" : "light")-\(sidebarVisibility == .detailOnly ? "detailOnly" : "all")"
     }
 
-    private var nativeToolbarButtonSize: CGSize {
+    /// Single source of truth for the chrome row height (in points). The
+    /// same formula is mirrored by SwiftUI chrome views (`scaled(44)`),
+    /// so the AppKit unified toolbar and the SwiftUI chrome stay in
+    /// lockstep when the user changes zoom or font size.
+    private var nativeChromeHeight: CGFloat {
         let scale = max(zoomScale * activeTheme.uiFontSize / 16, 0.75)
-        return CGSize(width: 28 * scale, height: 26 * scale)
+        return 44 * scale
     }
 
     private func toggleSidebar() {

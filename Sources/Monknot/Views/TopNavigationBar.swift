@@ -15,12 +15,19 @@ struct TopNavigationBar: View {
     let outlineItems: [MarkdownOutlineItem]
     let selectOutlineItem: (MarkdownOutlineItem) -> Void
     @Binding var documentSearch: DocumentSearchState
+    let tabs: [WorkspaceTabItem]
+    let activeTabID: String?
+    let missingTabIDs: Set<String>
+    let selectTab: (String) -> Void
+    let closeTab: (String) -> Void
+    let togglePinTab: (String) -> Void
+    let reorderTab: (String, String?) -> Void
     @Environment(\.openSettings) private var openSettings
     @FocusState private var isSearchFocused: Bool
     @State private var isOutlinePresented = false
 
-    private var title: String {
-        store.selectedDocument?.displayName ?? store.workspaceURL?.lastPathComponent ?? "monknot"
+    private var emptyStateTitle: String {
+        store.workspaceURL?.lastPathComponent ?? "monknot"
     }
 
     private var isMarkdownSelected: Bool {
@@ -34,20 +41,19 @@ struct TopNavigationBar: View {
     }
 
     var body: some View {
-        HStack(spacing: scaled(10)) {
+        HStack(spacing: scaled(6)) {
             leadingNavigation
 
-            titleCluster
+            sidebarToggleButton
 
-            WindowDoubleClickZoomArea()
-                .frame(minWidth: scaled(16), maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityHidden(true)
+            tabsOrEmptyTitle
 
             if store.isBusy || store.isDocumentLoading || store.isSaving {
                 ProgressView()
                     .controlSize(.small)
                     .scaleEffect(zoomScale * (uiFontSize / 16))
                     .frame(width: scaled(18), height: scaled(18))
+                    .padding(.horizontal, scaled(2))
                     .accessibilityLabel("Working")
             }
 
@@ -55,16 +61,20 @@ struct TopNavigationBar: View {
                 documentSearchBar
                     .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .trailing)))
             } else {
-                ViewThatFits(in: .horizontal) {
-                    fullControlSet
-                    compactControlSet
-                    minimalControlSet
-                }
-                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .trailing)))
+                trailingActions
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .trailing)))
+
+                drawerToggleButton
             }
         }
-        .padding(.horizontal, scaled(14))
+        .padding(.horizontal, scaled(10))
         .frame(height: scaled(44))
+        .background(theme.surfaceColor)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(theme.borderColor)
+                .frame(height: 1)
+        }
         .animation(.easeOut(duration: 0.14), value: documentSearch.isPresented)
         .onChange(of: documentSearch.focusSerial) { _, _ in
             isSearchFocused = documentSearch.isPresented
@@ -75,95 +85,101 @@ struct TopNavigationBar: View {
         }
     }
 
-    /// When the sidebar is collapsed, the detail column spans the full window width under the
-    /// traffic lights. Reserve leading space so the title row does not sit under the buttons.
+    private var drawerToggleButton: some View {
+        ChromeBarButton(
+            systemImage: "sidebar.right",
+            label: isTerminalPresented ? "Hide Right Drawer" : "Show Right Drawer",
+            theme: theme,
+            zoomScale: zoomScale,
+            uiFontSize: uiFontSize,
+            isActive: isTerminalPresented,
+            action: toggleTerminal
+        )
+        .keyboardShortcut("t", modifiers: [.command, .option])
+        .accessibilityValue(isTerminalPresented ? "Open" : "Closed")
+    }
+
+    /// When the sidebar is hidden, the editor pane spans the full window
+    /// width and the chrome row sits behind the macOS traffic lights.
+    /// Reserve the leading space so chrome content is not under them.
     private var leadingNavigation: some View {
         Group {
             if !isSidebarVisible {
                 Color.clear
-                    .frame(width: 76)
+                    .frame(width: 72)
             }
         }
     }
 
-    private var titleCluster: some View {
-        HStack(spacing: scaled(8)) {
-            ChromeBarButton(
-                systemImage: "sidebar.left",
-                label: isSidebarVisible ? "Hide Sidebar" : "Show Sidebar",
+    private var sidebarToggleButton: some View {
+        ChromeBarButton(
+            systemImage: "sidebar.left",
+            label: isSidebarVisible ? "Hide Sidebar" : "Show Sidebar",
+            theme: theme,
+            zoomScale: zoomScale,
+            uiFontSize: uiFontSize,
+            action: toggleSidebar
+        )
+        .keyboardShortcut("s", modifiers: [.command, .control])
+    }
+
+    @ViewBuilder
+    private var tabsOrEmptyTitle: some View {
+        if tabs.isEmpty {
+            HStack(spacing: scaled(8)) {
+                Text(emptyStateTitle)
+                    .font(.system(size: scaled(13), weight: .medium))
+                    .foregroundStyle(theme.mutedForegroundColor.opacity(0.85))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .accessibilityAddTraits(.isHeader)
+
+                WindowDoubleClickZoomArea()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityHidden(true)
+            }
+            .padding(.leading, scaled(6))
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            DocumentTabBar(
+                tabs: tabs,
+                selectedDocumentID: activeTabID,
+                missingDocumentIDs: missingTabIDs,
                 theme: theme,
                 zoomScale: zoomScale,
                 uiFontSize: uiFontSize,
-                action: toggleSidebar
+                isDisabled: store.isBusy,
+                saveState: { store.saveState(for: $0) },
+                selectTab: selectTab,
+                closeTab: closeTab,
+                togglePin: togglePinTab,
+                reorderTab: reorderTab
             )
-            .keyboardShortcut("s", modifiers: [.command, .control])
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(title)
-                .font(.system(size: scaled(14), weight: .semibold))
-                .foregroundStyle(theme.foregroundColor)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityLabel(titleAccessibilityLabel)
-
-            TopBarSaveStateIndicator(
-                state: selectedSaveState,
-                theme: theme,
-                zoomScale: zoomScale,
-                size: scaled(12)
-            )
-
-            Image(systemName: "ellipsis")
-                .font(.system(size: scaled(11), weight: .semibold))
-                .foregroundStyle(theme.mutedForegroundColor.opacity(0.7))
+            WindowDoubleClickZoomArea()
+                .frame(width: scaled(20))
+                .frame(maxHeight: .infinity)
                 .accessibilityHidden(true)
         }
-        .frame(minWidth: scaled(120), maxWidth: scaled(420), alignment: .leading)
     }
 
-    private var fullControlSet: some View {
-        HStack(spacing: scaled(14)) {
+    @ViewBuilder
+    private var trailingActions: some View {
+        HStack(spacing: scaled(4)) {
             if isMarkdownSelected {
+                outlineButton
                 sourcePreviewSwitch
                     .disabled(store.isDocumentLoading)
             }
-
-            utilityButtons
-        }
-    }
-
-    private var compactControlSet: some View {
-        HStack(spacing: scaled(10)) {
-            if isMarkdownSelected {
-                sourcePreviewSwitch
-                    .disabled(store.isDocumentLoading)
-            }
-
-            HStack(spacing: scaled(2)) {
-                if isMarkdownSelected {
-                    outlineButton
-                }
-                iconButton(systemImage: "folder", label: "Open Folder", isDisabled: store.isBusy, action: openFolder)
-                terminalButton
-            }
-        }
-    }
-
-    private var minimalControlSet: some View {
-        HStack(spacing: scaled(6)) {
-            if isMarkdownSelected {
-                sourcePreviewSwitch
-                    .disabled(store.isDocumentLoading)
-            }
-
-            terminalButton
         }
     }
 
     private var sourcePreviewSwitch: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: scaled(2)) {
             TopBarSegment(
-                title: EditorMode.source.title,
+                systemImage: "chevron.left.forwardslash.chevron.right",
+                accessibilityLabel: EditorMode.source.title,
                 isSelected: editorMode == .source,
                 theme: theme,
                 zoomScale: zoomScale,
@@ -173,7 +189,8 @@ struct TopNavigationBar: View {
             }
 
             TopBarSegment(
-                title: EditorMode.preview.title,
+                systemImage: "eye",
+                accessibilityLabel: EditorMode.preview.title,
                 isSelected: editorMode == .preview,
                 theme: theme,
                 zoomScale: zoomScale,
@@ -189,27 +206,6 @@ struct TopNavigationBar: View {
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Editor mode")
-    }
-
-    private var utilityButtons: some View {
-        HStack(spacing: scaled(2)) {
-            if isMarkdownSelected {
-                outlineButton
-            }
-
-            iconButton(systemImage: "gearshape", label: "Open Settings", action: openSettings.callAsFunction)
-
-            iconButton(
-                systemImage: "square.and.pencil",
-                label: "New Markdown",
-                isDisabled: store.workspaceURL == nil || store.isBusy,
-                action: newMarkdown
-            )
-
-            iconButton(systemImage: "folder", label: "Open Folder", isDisabled: store.isBusy, action: openFolder)
-
-            terminalButton
-        }
     }
 
     private var documentSearchBar: some View {
@@ -309,20 +305,6 @@ struct TopNavigationBar: View {
         .monknotPointerCursor(enabled: !isDisabled)
     }
 
-    private var terminalButton: some View {
-        ChromeBarButton(
-            systemImage: "terminal",
-            label: isTerminalPresented ? "Hide Terminal Panel" : "Open Terminal",
-            theme: theme,
-            zoomScale: zoomScale,
-            uiFontSize: uiFontSize,
-            isActive: isTerminalPresented,
-            action: toggleTerminal
-        )
-        .keyboardShortcut("t", modifiers: [.command, .option])
-        .accessibilityValue(isTerminalPresented ? "Open" : "Closed")
-    }
-
     private var outlineButton: some View {
         ChromeBarButton(
             systemImage: "list.bullet.indent",
@@ -348,66 +330,11 @@ struct TopNavigationBar: View {
         }
     }
 
-    private var selectedSaveState: DocumentSaveState {
-        guard let id = store.selectedDocumentID else { return .clean }
-        return store.saveState(for: id)
-    }
-
-    private var titleAccessibilityLabel: String {
-        guard !selectedSaveState.isClean else { return title }
-        return "\(title), \(selectedSaveState.accessibilityDescription)"
-    }
-
-    private func iconButton(
-        systemImage: String,
-        label: String,
-        isDisabled: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        ChromeBarButton(
-            systemImage: systemImage,
-            label: label,
-            theme: theme,
-            zoomScale: zoomScale,
-            uiFontSize: uiFontSize,
-            isDisabled: isDisabled,
-            action: action
-        )
-    }
-}
-
-private struct TopBarSaveStateIndicator: View {
-    let state: DocumentSaveState
-    let theme: AppTheme
-    let zoomScale: Double
-    let size: CGFloat
-
-    var body: some View {
-        Group {
-            switch state {
-            case .clean:
-                Color.clear
-            case .edited:
-                Circle()
-                    .fill(theme.accentColor)
-                    .frame(width: max(5, size * 0.48), height: max(5, size * 0.48))
-            case .saving:
-                ProgressView()
-                    .controlSize(.mini)
-                    .scaleEffect(max(0.65, zoomScale * 0.78))
-            case .failed:
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: max(9, size * 0.82), weight: .semibold))
-                    .foregroundStyle(Color(hex: theme.semanticColors.diffRemoved))
-            }
-        }
-        .frame(width: size, height: size)
-        .accessibilityLabel(state.accessibilityDescription)
-    }
 }
 
 private struct TopBarSegment: View {
-    let title: String
+    let systemImage: String
+    let accessibilityLabel: String
     let isSelected: Bool
     let theme: AppTheme
     let zoomScale: Double
@@ -422,11 +349,10 @@ private struct TopBarSegment: View {
 
     var body: some View {
         Button(action: action) {
-            Text(title)
-                .font(.system(size: scaled(12), weight: .regular))
+            Image(systemName: systemImage)
+                .font(.system(size: scaled(12), weight: .medium))
                 .foregroundStyle(foreground)
-                .padding(.horizontal, scaled(10))
-                .frame(height: scaled(22))
+                .frame(width: scaled(32), height: scaled(24))
                 .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale)))
                 .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale)))
         }
@@ -436,7 +362,8 @@ private struct TopBarSegment: View {
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovered)
         .animation(.easeOut(duration: 0.12), value: isSelected)
-        .accessibilityLabel(title)
+        .help(accessibilityLabel)
+        .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .monknotPointerCursor()
     }

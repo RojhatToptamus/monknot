@@ -10,6 +10,7 @@ struct SidebarView: View {
     let zoomScale: Double
     let uiFontSize: Double
     let openFolder: () -> Void
+    let newMarkdown: () -> Void
     let exportPDF: (WorkspaceDocument) -> Void
     let openDocument: (String) -> Void
     let openWorkspaceSearchResult: (WorkspaceSearchResult) -> Void
@@ -33,24 +34,39 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SidebarWindowChrome(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize)
-
-            SidebarHeader(
-                store: store,
-                theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: uiFontSize,
+            // Sidebar chrome row: leading reservation for the macOS traffic
+            // lights, then the workspace-level action icons (New Markdown,
+            // Open Folder) that previously lived in the drawer. Same 52pt
+            // height as the editor's top nav so the divider below lines up.
+            SidebarChromeRow(
+                openFolder: openFolder,
+                createMarkdown: newMarkdown,
                 showWorkspaceSearch: {
                     workspaceSearch.present(documents: store.documents)
-                }
+                },
+                canCreateMarkdown: store.workspaceURL != nil,
+                canSearch: store.workspaceURL != nil,
+                isBusy: store.isBusy,
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize
             )
 
             Divider()
                 .overlay(theme.borderColor)
 
-            sidebarMainContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .layoutPriority(1)
+            VStack(spacing: 0) {
+                SidebarProjectHeader(
+                    store: store,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    uiFontSize: uiFontSize
+                )
+
+                sidebarMainContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            }
+            .layoutPriority(1)
 
             Divider()
                 .overlay(theme.borderColor)
@@ -524,37 +540,50 @@ private struct SidebarNodeFrameReader: View {
 
 // MARK: - Sidebar Header
 
-private struct SidebarHeader: View {
-    @ObservedObject var store: WorkspaceStore
+/// Sidebar chrome row that lines up with the editor's top nav. Reserves
+/// the leading width for the macOS traffic lights and exposes the
+/// workspace-level action icons on the trailing side: New Markdown, Open
+/// Folder, and Search Workspace.
+private struct SidebarChromeRow: View {
+    let openFolder: () -> Void
+    let createMarkdown: () -> Void
+    let showWorkspaceSearch: () -> Void
+    let canCreateMarkdown: Bool
+    let canSearch: Bool
+    let isBusy: Bool
     let theme: AppTheme
     let zoomScale: Double
     let uiFontSize: Double
-    let showWorkspaceSearch: () -> Void
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
     }
 
-    private var chromeRowHeight: CGFloat {
-        scaled(44)
-    }
-
     var body: some View {
-        HStack(spacing: scaled(8)) {
-            VStack(alignment: .leading, spacing: scaled(3)) {
-                Text(store.workspaceURL?.lastPathComponent ?? "monknot")
-                    .font(.system(size: scaled(15), weight: .semibold))
-                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
-                    .lineLimit(1)
+        HStack(spacing: scaled(2)) {
+            Color.clear
+                .frame(width: 78)
+                .accessibilityHidden(true)
 
-                Text(store.workspaceURL?.path ?? "No workspace open")
-                    .font(.system(size: scaled(12)))
-                    .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
+            ChromeBarButton(
+                systemImage: "square.and.pencil",
+                label: "New Markdown",
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize,
+                isDisabled: !canCreateMarkdown || isBusy,
+                action: createMarkdown
+            )
 
-            Spacer(minLength: 0)
+            ChromeBarButton(
+                systemImage: "folder",
+                label: "Open Folder",
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize,
+                isDisabled: isBusy,
+                action: openFolder
+            )
 
             ChromeBarButton(
                 systemImage: "magnifyingglass",
@@ -562,24 +591,22 @@ private struct SidebarHeader: View {
                 theme: theme,
                 zoomScale: zoomScale,
                 uiFontSize: uiFontSize,
-                isDisabled: store.workspaceURL == nil,
+                isDisabled: !canSearch,
                 action: showWorkspaceSearch
             )
+
+            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, scaled(12))
-        .frame(height: chromeRowHeight)
+        .padding(.trailing, scaled(8))
+        .frame(height: scaled(44))
     }
 }
 
-/// Reserves the same 44pt height the detail-pane top nav uses. The sidebar
-/// stack ignores the top safe area, so this spacer occupies the title-bar
-/// region and leaves room for the traffic lights.
-///
-/// This is only a spacer for the traffic-light area. The parent paints and
-/// lays out the sidebar surface through the title-bar region so the left
-/// column has one continuous background.
-private struct SidebarWindowChrome: View {
+/// Workspace identity row. Rendered inside the sidebar's content area
+/// (below the chrome row), now showing only the project name (search lives
+/// in the chrome row alongside New Markdown / Open Folder).
+private struct SidebarProjectHeader: View {
+    @ObservedObject var store: WorkspaceStore
     let theme: AppTheme
     let zoomScale: Double
     let uiFontSize: Double
@@ -589,8 +616,19 @@ private struct SidebarWindowChrome: View {
     }
 
     var body: some View {
-        Color.clear
-            .frame(height: scaled(44))
+        HStack(spacing: scaled(8)) {
+            Text(store.workspaceURL?.lastPathComponent ?? "monknot")
+                .font(.system(size: scaled(13), weight: .semibold))
+                .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.92))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(store.workspaceURL?.path ?? "No workspace open")
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, scaled(12))
+        .padding(.top, scaled(8))
+        .padding(.bottom, scaled(4))
     }
 }
 
@@ -618,7 +656,7 @@ struct ChromeBarButton: View {
             Image(systemName: systemImage)
                 .font(.system(size: scaled(13), weight: .regular))
                 .foregroundStyle(iconColor)
-                .frame(width: scaled(28), height: scaled(26))
+                .frame(width: scaled(28), height: scaled(28))
                 .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale)))
                 .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale)))
         }

@@ -71,11 +71,12 @@ struct TerminalDrawerView: View {
     private var terminalTabs: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: scaled(4)) {
-                ForEach(sessions.tabs) { tab in
+                ForEach(Array(sessions.tabs.enumerated()), id: \.element.id) { offset, tab in
                     if let session = sessions.session(for: tab.id) {
                         TerminalTabChip(
                             tab: tab,
                             session: session,
+                            index: offset + 1,
                             isSelected: tab.id == sessions.activeTerminalID,
                             theme: theme,
                             zoomScale: zoomScale,
@@ -95,7 +96,7 @@ struct TerminalDrawerView: View {
             }
             .padding(.vertical, scaled(4))
         }
-        .frame(minWidth: scaled(96), maxWidth: scaled(360), maxHeight: scaled(34))
+        .frame(minWidth: scaled(60), maxWidth: scaled(220), maxHeight: scaled(34))
     }
 
     @ViewBuilder
@@ -118,6 +119,7 @@ struct TerminalDrawerView: View {
 private struct TerminalTabChip: View {
     let tab: TerminalTabItem
     @ObservedObject var session: TerminalSessionStore
+    let index: Int
     let isSelected: Bool
     let theme: AppTheme
     let zoomScale: Double
@@ -135,26 +137,23 @@ private struct TerminalTabChip: View {
     var body: some View {
         HStack(spacing: 0) {
             Button(action: select) {
-                HStack(spacing: scaled(6)) {
+                HStack(spacing: scaled(5)) {
                     Image(systemName: "terminal")
-                        .font(.system(size: scaled(12), weight: .regular))
+                        .font(.system(size: scaled(11), weight: .regular))
                         .foregroundStyle(iconColor)
-                        .frame(width: scaled(15))
                         .accessibilityHidden(true)
 
                     Circle()
                         .fill(statusColor)
-                        .frame(width: scaled(6), height: scaled(6))
+                        .frame(width: scaled(5), height: scaled(5))
                         .accessibilityHidden(true)
 
-                    Text(tab.title)
-                        .font(.system(size: scaled(12), weight: .medium))
+                    Text("\(index)")
+                        .font(.system(size: scaled(11), weight: .medium, design: .rounded))
                         .foregroundStyle(isSelected ? theme.foregroundColor : theme.mutedForegroundColor)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: scaled(96), alignment: .leading)
+                        .monospacedDigit()
                 }
-                .padding(.leading, scaled(9))
+                .padding(.leading, scaled(8))
                 .padding(.trailing, scaled(4))
                 .frame(height: scaled(26))
                 .contentShape(Rectangle())
@@ -164,24 +163,25 @@ private struct TerminalTabChip: View {
             if isSelected || isHovered {
                 Button(action: kill) {
                     Image(systemName: "xmark")
-                        .font(.system(size: scaled(9), weight: .bold))
+                        .font(.system(size: scaled(8), weight: .bold))
                         .foregroundStyle(theme.mutedForegroundColor.opacity(isHovered ? 0.92 : 0.72))
-                        .frame(width: scaled(20), height: scaled(22))
-                        .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(5, zoomScale: zoomScale)))
+                        .frame(width: scaled(16), height: scaled(20))
+                        .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(4, zoomScale: zoomScale)))
                 }
                 .buttonStyle(.plain)
                 .help("Kill Terminal")
-                .accessibilityLabel("Kill \(tab.title)")
+                .accessibilityLabel("Kill terminal \(index)")
                 .monknotPointerCursor()
                 .padding(.trailing, scaled(3))
             }
         }
-        .frame(minWidth: scaled(118), maxWidth: scaled(168), alignment: .leading)
-        .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale)))
+        .frame(minWidth: scaled(54), maxWidth: scaled(82), alignment: .leading)
+        .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale)))
         .overlay {
-            RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale))
+            RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale))
                 .strokeBorder(borderColor, lineWidth: 1)
         }
+        .help(tab.title)
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovered)
         .animation(.easeOut(duration: 0.12), value: isSelected)

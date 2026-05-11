@@ -1,28 +1,42 @@
 import AppKit
 import SwiftUI
 
-/// Aligns NSWindow backing with the app theme so transparent title-bar regions
-/// do not reveal a different system gray than SwiftUI’s `surfaceColor`.
+/// Aligns the NSWindow's appearance with our SwiftUI surface (transparent
+/// title bar painting through to `surfaceColor`), suppresses the AppKit-
+/// injected `.toolbarButton` (duplicate of our own SwiftUI sidebar toggle),
+/// and manually centers the close/min/zoom traffic lights vertically inside
+/// the unified title-bar zone.
+///
+/// Why manual centering: SwiftUI's `.toolbar { ToolbarItem(placement:
+/// .principal) ... }` (used in `ContentView`) successfully grows the
+/// title-bar zone to `chromeHeight`, but AppKit does NOT re-center the
+/// standard window buttons inside the grown zone — they stay at the OS
+/// default y ≈ 14pt. We move them to chromeHeight/2 from the top so they
+/// line up with our SwiftUI chrome icons.
 struct WindowBackgroundDragEnabler: NSViewRepresentable {
     var surfaceColor: Color
     var layoutToken: String
-    var toolbarButtonSize: CGSize
+    var chromeHeight: CGFloat
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(chromeHeight: chromeHeight)
+    }
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
-        updateWindow(from: view)
+        updateWindow(from: view, coordinator: context.coordinator)
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        updateWindow(from: nsView)
+        context.coordinator.chromeHeight = chromeHeight
+        updateWindow(from: nsView, coordinator: context.coordinator)
     }
 
-    private func updateWindow(from view: NSView) {
+    private func updateWindow(from view: NSView, coordinator: Coordinator) {
         DispatchQueue.main.async {
             guard let window = view.window else { return }
             window.isMovableByWindowBackground = true
-            window.toolbar = nil
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden
             window.styleMask.insert(.fullSizeContentView)
@@ -30,42 +44,87 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             window.isOpaque = true
             if #available(macOS 11.0, *) {
                 window.titlebarSeparatorStyle = .none
+                window.toolbarStyle = .unified
             }
 
-            alignNativeTitlebarSidebarToggle(in: window)
-            DispatchQueue.main.async {
-                alignNativeTitlebarSidebarToggle(in: window)
-            }
+            coordinator.observeWindow(window)
+            Self.suppressSystemToolbarButton(in: window)
+            Self.centerStandardButtons(in: window, chromeHeight: coordinator.chromeHeight)
         }
     }
 
-    private func alignNativeTitlebarSidebarToggle(in window: NSWindow) {
-        guard let contentView = window.contentView,
-              let button = window.standardWindowButton(.toolbarButton)
-        else {
-            return
-        }
-
-        button.isHidden = false
-        button.isEnabled = true
-        button.controlSize = .small
-        button.imageScaling = .scaleProportionallyDown
-        align(button, withTopOf: contentView)
+    /// AppKit reinstalls `.toolbarButton` whenever the window changes state.
+    /// Hide + remove it on every relevant notification so our own SwiftUI
+    /// sidebar toggle is the only one visible.
+    fileprivate static func suppressSystemToolbarButton(in window: NSWindow) {
+        guard let button = window.standardWindowButton(.toolbarButton) else { return }
+        button.isHidden = true
+        button.removeFromSuperview()
     }
 
-    private func align(_ button: NSButton, withTopOf contentView: NSView) {
-        guard let targetSuperview = button.superview else { return }
+    /// Center the close / minimize / zoom buttons vertically inside the
+    /// title-bar superview, with their center at `chromeHeight/2` from the
+    /// top of that superview. SwiftUI's `.toolbar` principal item makes the
+    /// superview tall enough that the resulting frame fits without clipping.
+    fileprivate static func centerStandardButtons(in window: NSWindow, chromeHeight: CGFloat) {
+        let buttonTypes: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+        for type in buttonTypes {
+            guard let button = window.standardWindowButton(type),
+                  let superview = button.superview else { continue }
 
-        let topInButtonSuperview = contentView.convert(
-            NSPoint(x: contentView.bounds.minX, y: contentView.bounds.maxY),
-            to: targetSuperview
-        ).y
-        let toolbarCenterY = topInButtonSuperview - 22
+            // Cocoa coords: y=0 is the bottom of `superview`. We want the
+            // button center at `chromeHeight/2` pt from the TOP, which is
+            // `superview.bounds.height - chromeHeight/2` from the bottom.
+            let centerYInSuperview = superview.bounds.height - (chromeHeight / 2)
+            var frame = button.frame
+            frame.origin.y = centerYInSuperview - (frame.height / 2)
+            button.frame = frame.integral
+        }
+    }
 
-        var frame = button.frame
-        frame.size = NSSize(width: toolbarButtonSize.width, height: toolbarButtonSize.height)
-        frame.origin.y = toolbarCenterY - frame.height / 2
-        button.frame = frame.integral
+    final class Coordinator {
+        var chromeHeight: CGFloat
+        private weak var observedWindow: NSWindow?
+        private var observers: [NSObjectProtocol] = []
+
+        init(chromeHeight: CGFloat) {
+            self.chromeHeight = chromeHeight
+        }
+
+        deinit {
+            removeObservers()
+        }
+
+        func observeWindow(_ window: NSWindow) {
+            guard observedWindow !== window else { return }
+            removeObservers()
+            observedWindow = window
+
+            let center = NotificationCenter.default
+            let names: [NSNotification.Name] = [
+                NSWindow.didResizeNotification,
+                NSWindow.didBecomeKeyNotification,
+                NSWindow.didResignKeyNotification,
+                NSWindow.didEnterFullScreenNotification,
+                NSWindow.didExitFullScreenNotification,
+                NSWindow.didChangeOcclusionStateNotification,
+                NSWindow.didUpdateNotification
+            ]
+            for name in names {
+                let token = center.addObserver(forName: name, object: window, queue: .main) { [weak self, weak window] _ in
+                    guard let window, let self else { return }
+                    WindowBackgroundDragEnabler.suppressSystemToolbarButton(in: window)
+                    WindowBackgroundDragEnabler.centerStandardButtons(in: window, chromeHeight: self.chromeHeight)
+                }
+                observers.append(token)
+            }
+        }
+
+        private func removeObservers() {
+            let center = NotificationCenter.default
+            observers.forEach(center.removeObserver(_:))
+            observers.removeAll()
+        }
     }
 }
 
