@@ -17,6 +17,10 @@ struct TerminalDrawerView: View {
         max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
     }
 
+    private var terminalTabsWidth: CGFloat {
+        min(scaled(220), max(scaled(60), CGFloat(sessions.tabs.count) * scaled(68)))
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             terminalTopBar
@@ -97,6 +101,7 @@ struct TerminalDrawerView: View {
             .padding(.vertical, scaled(4))
         }
         .frame(minWidth: scaled(60), maxWidth: scaled(220), maxHeight: scaled(34))
+        .frame(width: terminalTabsWidth, alignment: .leading)
     }
 
     @ViewBuilder

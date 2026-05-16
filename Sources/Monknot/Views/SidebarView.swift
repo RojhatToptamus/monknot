@@ -35,9 +35,8 @@ struct SidebarView: View {
     var body: some View {
         VStack(spacing: 0) {
             // Sidebar chrome row: leading reservation for the macOS traffic
-            // lights, then the workspace-level action icons (New Markdown,
-            // Open Folder) that previously lived in the drawer. Same 52pt
-            // height as the editor's top nav so the divider below lines up.
+            // lights, with workspace-level action icons aligned to the
+            // split-view separator.
             SidebarChromeRow(
                 openFolder: openFolder,
                 createMarkdown: newMarkdown,
@@ -565,6 +564,8 @@ private struct SidebarChromeRow: View {
                 .frame(width: 78)
                 .accessibilityHidden(true)
 
+            Spacer(minLength: 0)
+
             ChromeBarButton(
                 systemImage: "square.and.pencil",
                 label: "New Markdown",
@@ -594,8 +595,6 @@ private struct SidebarChromeRow: View {
                 isDisabled: !canSearch,
                 action: showWorkspaceSearch
             )
-
-            Spacer(minLength: 0)
         }
         .padding(.trailing, scaled(8))
         .frame(height: scaled(44))

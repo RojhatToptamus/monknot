@@ -81,11 +81,16 @@ public enum WorkspaceDocumentSupport {
     public static let pdfExtensions: Set<String> = ["pdf"]
     public static let textExtensions: Set<String> = [
         "txt", "text", "log",
+        "mmd", "mermaid", "mdx",
         "swift", "js", "jsx", "ts", "tsx", "py", "rb", "go", "rs", "java", "kt",
         "c", "h", "cpp", "cxx", "cc", "hpp", "m", "mm", "php",
         "sh", "bash", "zsh", "fish",
+        "sql", "graphql", "gql", "proto", "dockerfile",
         "css", "scss", "sass", "less",
-        "json", "yaml", "yml", "xml", "csv", "tsv", "toml", "ini", "env"
+        "json", "jsonc", "yaml", "yml", "xml", "csv", "tsv", "toml", "ini", "env"
+    ]
+    public static let textFilenames: Set<String> = [
+        "dockerfile", "makefile", "procfile", "gemfile", "rakefile", "justfile"
     ]
     public static let nativePreviewExtensions: Set<String> = [
         "png", "jpg", "jpeg", "gif", "heic", "tif", "tiff", "webp", "bmp", "ico",
@@ -111,6 +116,7 @@ public enum WorkspaceDocumentSupport {
 
     public static func classification(for url: URL) -> Classification {
         let fileExtension = url.pathExtension.lowercased()
+        let filename = url.lastPathComponent.lowercased()
         let resourceValues = try? url.resourceValues(forKeys: [.contentTypeKey, .localizedTypeDescriptionKey])
         let type = resourceValues?.contentType ?? UTType(filenameExtension: fileExtension)
         let contentTypeIdentifier = type?.identifier
@@ -134,7 +140,7 @@ public enum WorkspaceDocumentSupport {
             )
         }
 
-        if textExtensions.contains(fileExtension) {
+        if textExtensions.contains(fileExtension) || textFilenames.contains(filename) {
             return Classification(
                 kind: .text,
                 contentTypeIdentifier: contentTypeIdentifier,
@@ -163,6 +169,17 @@ public enum WorkspaceDocumentSupport {
                 contentTypeIdentifier: contentTypeIdentifier,
                 localizedTypeDescription: localizedTypeDescription,
                 capabilities: capabilities(for: .nativePreview)
+            )
+        }
+
+        if type?.conforms(to: .text) == true ||
+            type?.conforms(to: .plainText) == true ||
+            type?.conforms(to: .sourceCode) == true {
+            return Classification(
+                kind: .text,
+                contentTypeIdentifier: contentTypeIdentifier,
+                localizedTypeDescription: localizedTypeDescription,
+                capabilities: capabilities(for: .text)
             )
         }
 

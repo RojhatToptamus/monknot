@@ -180,7 +180,7 @@ private struct DocumentTabItemView: View {
                         .foregroundStyle(textColor)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                        .frame(maxWidth: scaled(tab.isPinned ? 130 : 180), alignment: .leading)
+                        .layoutPriority(1)
 
                     if isMissing {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -189,15 +189,17 @@ private struct DocumentTabItemView: View {
                             .accessibilityHidden(true)
                     }
 
-                    TabSaveStateIndicator(
-                        state: saveState,
-                        theme: theme,
-                        zoomScale: zoomScale,
-                        size: scaled(10)
-                    )
+                    if !saveState.isClean {
+                        TabSaveStateIndicator(
+                            state: saveState,
+                            theme: theme,
+                            zoomScale: zoomScale,
+                            size: scaled(10)
+                        )
+                    }
                 }
                 .padding(.leading, scaled(10))
-                .padding(.trailing, scaled(tab.isPinned ? 10 : 4))
+                .padding(.trailing, scaled(tab.isPinned ? 10 : 2))
                 .frame(height: scaled(28))
                 .contentShape(Rectangle())
             }
@@ -209,7 +211,7 @@ private struct DocumentTabItemView: View {
                     Image(systemName: "xmark")
                         .font(.system(size: scaled(9), weight: .bold))
                         .foregroundStyle(closeIconColor)
-                        .frame(width: scaled(20), height: scaled(22))
+                        .frame(width: scaled(18), height: scaled(22))
                         .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(5, zoomScale: zoomScale)))
                 }
                 .buttonStyle(.plain)
@@ -217,7 +219,7 @@ private struct DocumentTabItemView: View {
                 .help("Close Tab")
                 .accessibilityLabel("Close \(tab.displayName)")
                 .monknotPointerCursor(enabled: !isDisabled)
-                .padding(.trailing, scaled(4))
+                .padding(.trailing, scaled(2))
             }
         }
         .frame(minWidth: scaled(tab.isPinned ? 110 : 140), maxWidth: scaled(tab.isPinned ? 178 : 232), alignment: .leading)

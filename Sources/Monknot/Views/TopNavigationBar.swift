@@ -118,6 +118,7 @@ struct TopNavigationBar: View {
             theme: theme,
             zoomScale: zoomScale,
             uiFontSize: uiFontSize,
+            isActive: isSidebarVisible,
             action: toggleSidebar
         )
         .keyboardShortcut("s", modifiers: [.command, .control])

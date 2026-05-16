@@ -66,15 +66,12 @@ struct ContentView: View {
             .background(activeTheme.surfaceColor)
             .background(WindowBackgroundDragEnabler(
                 surfaceColor: activeTheme.surfaceColor,
-                layoutToken: nativeChromeLayoutToken,
-                chromeHeight: nativeChromeHeight
+                layoutToken: nativeChromeLayoutToken
             ))
             .background(KeyboardShortcutMonitor(handler: handleKeyDown))
             .toolbar {
-                // SwiftUI's principal toolbar item grows the unified title-
-                // bar zone to `nativeChromeHeight`. AppKit doesn't auto-
-                // center the traffic lights inside that zone, so
-                // WindowBackgroundDragEnabler manually re-centers them.
+                // Keep the unified title-bar zone in step with our SwiftUI
+                // chrome height without manually moving the traffic lights.
                 ToolbarItem(placement: .principal) {
                     Color.clear
                         .frame(width: 1, height: nativeChromeHeight)
@@ -184,6 +181,7 @@ struct ContentView: View {
             openDocument: openDocumentTab(id:),
             openWorkspaceSearchResult: openWorkspaceSearchResult(_:)
         )
+        .toolbar(removing: .sidebarToggle)
         .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 440)
     }
 
@@ -648,9 +646,7 @@ struct ContentView: View {
 
     private func showWorkspaceSearch() {
         guard store.workspaceURL != nil else { return }
-        withAnimation(.easeInOut(duration: 0.18)) {
-            sidebarVisibility = .all
-        }
+        setSidebarVisibility(.all)
         workspaceSearch.present(documents: store.documents)
     }
 
@@ -708,7 +704,7 @@ struct ContentView: View {
     }
 
     private var nativeChromeLayoutToken: String {
-        "\(themePreference.rawValue)-\(systemColorScheme == .dark ? "dark" : "light")-\(sidebarVisibility == .detailOnly ? "detailOnly" : "all")"
+        "\(themePreference.rawValue)-\(systemColorScheme == .dark ? "dark" : "light")-\(zoomScale)-\(activeTheme.uiFontSize)"
     }
 
     /// Single source of truth for the chrome row height (in points). The
@@ -721,8 +717,14 @@ struct ContentView: View {
     }
 
     private func toggleSidebar() {
-        withAnimation(.easeInOut(duration: 0.22)) {
-            sidebarVisibility = sidebarVisibility == .detailOnly ? .all : .detailOnly
+        setSidebarVisibility(sidebarVisibility == .detailOnly ? .all : .detailOnly)
+    }
+
+    private func setSidebarVisibility(_ visibility: NavigationSplitViewVisibility) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            sidebarVisibility = visibility
         }
     }
 }
