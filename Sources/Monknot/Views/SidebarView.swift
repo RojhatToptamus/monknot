@@ -22,6 +22,7 @@ struct SidebarView: View {
     @State private var draggedSidebarNodeID: String?
     @State private var moveDropTargetFolderID: String?
     @State private var isMoveDropTargetingRoot = false
+    private let nativeSidebarTopInsetCompensation: CGFloat = 8
 
     /// Scaled font size — all sidebar typography goes through this.
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -51,10 +52,6 @@ struct SidebarView: View {
                 uiFontSize: uiFontSize
             )
 
-            Rectangle()
-                .fill(theme.borderColor)
-                .frame(height: 1)
-
             VStack(spacing: 0) {
                 SidebarProjectHeader(
                     store: store,
@@ -75,6 +72,7 @@ struct SidebarView: View {
             SidebarSettingsButton(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize)
                 .layoutPriority(2)
         }
+        .padding(.top, -nativeSidebarTopInsetCompensation)
         .background {
             sidebarBackground
                 .ignoresSafeArea(.container, edges: .top)
@@ -564,9 +562,12 @@ private struct SidebarChromeRow: View {
         HStack(spacing: scaled(2)) {
             Color.clear
                 .frame(width: 78)
+                .allowsHitTesting(false)
                 .accessibilityHidden(true)
 
-            Spacer(minLength: 0)
+            WindowDoubleClickZoomArea()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityHidden(true)
 
             ChromeBarButton(
                 systemImage: "square.and.pencil",
@@ -600,6 +601,11 @@ private struct SidebarChromeRow: View {
         }
         .padding(.horizontal, scaled(10))
         .frame(height: scaled(44))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(theme.borderColor)
+                .frame(height: 1)
+        }
     }
 }
 
@@ -845,7 +851,7 @@ private struct SidebarNodeRow: View {
         case .pdf:
             return "doc.richtext"
         case .markdown:
-            return "doc.text.fill"
+            return "chevron.left.forwardslash.chevron.right"
         case .text:
             return "doc.plaintext"
         case .media:

@@ -581,6 +581,59 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    @discardableResult
+    func saveDocument(id documentID: String) async -> Bool {
+        guard let file = document(id: documentID) else { return false }
+        guard !saveState(for: documentID).isClean else { return true }
+
+        if file.kind == .pdf {
+            return await savePDFDocument(file)
+        }
+
+        guard file.capabilities.canEditText else { return true }
+
+        let text = selectedDocumentID == file.id ? documentText : dirtyDocumentTexts[file.id]
+        guard let text else { return true }
+
+        saveGeneration += 1
+        let generation = saveGeneration
+        setSaveState(.saving, for: file.id)
+        isSaving = true
+        noteInternalFileMutation()
+
+        do {
+            try await Task.detached(priority: .utility) {
+                try await Self.writeText(text, to: file.url)
+            }.value
+            finishSave(fileID: file.id, text: text, generation: generation)
+            return saveState(for: file.id).isClean
+        } catch {
+            finishSaveFailure(error, file: file, generation: generation)
+            return false
+        }
+    }
+
+    func discardUnsavedChanges(for documentID: String) {
+        dirtyDocumentTexts.removeValue(forKey: documentID)
+        dirtyDocumentBaselines.removeValue(forKey: documentID)
+        pdfDocumentBaselines.removeValue(forKey: documentID)
+        dirtyPDFDocumentData.removeValue(forKey: documentID)
+        dirtyPDFDocumentVersions.removeValue(forKey: documentID)
+        removedDirtyDocuments.removeValue(forKey: documentID)
+        setSaveState(.clean, for: documentID)
+        pruneRemovedDirtyDocuments()
+
+        guard selectedDocumentID == documentID else { return }
+        hasUnsavedChanges = false
+        selectedDocumentExternalChange = false
+
+        if selectedDocument?.capabilities.canEditText == true {
+            loadSelectedDocument()
+        } else {
+            selectedDocumentSignature = selectedDocument.flatMap { Self.fileSignature(for: $0.url) }
+        }
+    }
+
     private func saveSelectedPDF(_ file: WorkspaceDocument) {
         guard let dirtyVersion = dirtyPDFDocumentVersions[file.id],
               let pdfData = dirtyPDFDocumentData[file.id] else {
@@ -606,6 +659,35 @@ final class WorkspaceStore: ObservableObject {
             } catch {
                 await self?.finishPDFSaveFailure(error, file: file, generation: generation)
             }
+        }
+    }
+
+    private func savePDFDocument(_ file: WorkspaceDocument) async -> Bool {
+        guard let dirtyVersion = dirtyPDFDocumentVersions[file.id],
+              let pdfData = dirtyPDFDocumentData[file.id] else {
+            return true
+        }
+
+        saveGeneration += 1
+        let generation = saveGeneration
+        setSaveState(.saving, for: file.id)
+        isSaving = true
+        noteInternalFileMutation()
+
+        do {
+            try await Task.detached(priority: .utility) {
+                try pdfData.write(to: file.url, options: .atomic)
+            }.value
+            finishPDFSave(
+                fileID: file.id,
+                url: file.url,
+                dirtyVersion: dirtyVersion,
+                generation: generation
+            )
+            return saveState(for: file.id).isClean
+        } catch {
+            finishPDFSaveFailure(error, file: file, generation: generation)
+            return false
         }
     }
 

@@ -161,11 +161,11 @@ private struct DocumentTabItemView: View {
     var body: some View {
         HStack(spacing: 0) {
             Button(action: select) {
-                HStack(spacing: scaled(6)) {
+                HStack(spacing: scaled(5)) {
                     Image(systemName: documentIconName)
-                        .font(.system(size: scaled(12), weight: .regular))
+                        .font(.system(size: scaled(11.5), weight: .regular))
                         .foregroundStyle(iconColor)
-                        .frame(width: scaled(15))
+                        .frame(width: scaled(13))
                         .accessibilityHidden(true)
 
                     if tab.isPinned {
@@ -175,7 +175,7 @@ private struct DocumentTabItemView: View {
                             .accessibilityHidden(true)
                     }
 
-                    Text(tab.displayName)
+                    Text(compactDisplayName)
                         .font(.system(size: scaled(12), weight: isSelected ? .medium : .regular))
                         .foregroundStyle(textColor)
                         .lineLimit(1)
@@ -198,7 +198,7 @@ private struct DocumentTabItemView: View {
                         )
                     }
                 }
-                .padding(.leading, scaled(10))
+                .padding(.leading, scaled(8))
                 .padding(.trailing, scaled(tab.isPinned ? 10 : 2))
                 .frame(height: scaled(28))
                 .contentShape(Rectangle())
@@ -211,7 +211,7 @@ private struct DocumentTabItemView: View {
                     Image(systemName: "xmark")
                         .font(.system(size: scaled(9), weight: .bold))
                         .foregroundStyle(closeIconColor)
-                        .frame(width: scaled(18), height: scaled(22))
+                        .frame(width: scaled(16), height: scaled(22))
                         .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(5, zoomScale: zoomScale)))
                 }
                 .buttonStyle(.plain)
@@ -222,7 +222,7 @@ private struct DocumentTabItemView: View {
                 .padding(.trailing, scaled(2))
             }
         }
-        .frame(minWidth: scaled(tab.isPinned ? 110 : 140), maxWidth: scaled(tab.isPinned ? 178 : 232), alignment: .leading)
+        .frame(minWidth: scaled(tab.isPinned ? 82 : 108), maxWidth: scaled(tab.isPinned ? 124 : 168), alignment: .leading)
         .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale)))
         .opacity(opacity)
         .onHover { isHovered = $0 }
@@ -291,10 +291,23 @@ private struct DocumentTabItemView: View {
         return theme.mutedForegroundColor.opacity(isSelected ? 0.6 : 0)
     }
 
+    private var compactDisplayName: String {
+        let limit = tab.isPinned ? 12 : 18
+        guard tab.displayName.count > limit else {
+            return tab.displayName
+        }
+
+        let marker = "..."
+        let availableCharacters = max(1, limit - marker.count)
+        let suffixCount = min(max(5, availableCharacters / 3), availableCharacters - 1)
+        let prefixCount = max(1, availableCharacters - suffixCount)
+        return "\(tab.displayName.prefix(prefixCount))\(marker)\(tab.displayName.suffix(suffixCount))"
+    }
+
     private var documentIconName: String {
         switch tab.kind {
         case .markdown:
-            return "doc.text.fill"
+            return "chevron.left.forwardslash.chevron.right"
         case .pdf:
             return "doc.richtext"
         case .text:

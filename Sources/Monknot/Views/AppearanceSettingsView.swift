@@ -5,8 +5,10 @@ struct AppearanceSettingsView: View {
     @ObservedObject var themeStore: ThemeSettingsStore
     let uiTheme: AppTheme
     @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.system.rawValue
+    @Environment(\.colorScheme) private var colorScheme
     @State private var lightDraft = ThemeConfiguration(theme: AppTheme.codexLight)
     @State private var darkDraft = ThemeConfiguration(theme: AppTheme.codexDark)
+    @State private var editingSlot: ThemeSlot = .dark
 
     private var themePreference: ThemePreference {
         get { ThemePreference(rawValue: themePreferenceRawValue) ?? .system }
@@ -21,44 +23,93 @@ struct AppearanceSettingsView: View {
         darkDraft.applied(to: themeStore.presetTheme(for: .dark))
     }
 
+    private var activeSlot: ThemeSlot {
+        themeStore.activeSlot(
+            themePreference: themePreference,
+            systemAppearance: colorScheme == .dark ? .dark : .light
+        )
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                SettingsGroupCard(theme: uiTheme) {
-                    SettingsRow(theme: uiTheme, title: "Theme", detail: "Use light, dark, or match your system", showsDivider: false) {
-                        Picker("Theme", selection: Binding(
-                            get: { themePreference },
-                            set: { themePreference = $0 }
-                        )) {
-                            ForEach(ThemePreference.allCases) { pref in
-                                Label(pref.title, systemImage: pref.systemImage)
-                                    .tag(pref)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .controlSize(.regular)
-                        .frame(width: 268)
-                        .monknotPointerCursor()
-                    }
-                }
+                appearanceModeCard
 
                 SettingsGroupCard(theme: uiTheme) {
                     CodePreviewCard(chromeTheme: uiTheme, lightTheme: draftLightTheme, darkTheme: draftDarkTheme)
                         .padding(12)
                 }
 
-                ThemeEditorSection(slot: .light, themeStore: themeStore, draft: $lightDraft, uiTheme: uiTheme)
-                ThemeEditorSection(slot: .dark, themeStore: themeStore, draft: $darkDraft, uiTheme: uiTheme)
+                editorSlotCard
+
+                selectedThemeEditor
             }
             .padding(20)
             .padding(.bottom, 10)
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
         }
-        .onAppear(perform: reloadDrafts)
+        .scrollContentBackground(.hidden)
+        .onAppear {
+            reloadDrafts()
+            editingSlot = activeSlot
+        }
+        .onChange(of: themePreferenceRawValue) { _, _ in
+            editingSlot = activeSlot
+        }
     }
 
     private func reloadDrafts() {
         lightDraft = themeStore.configuration(for: .light)
         darkDraft = themeStore.configuration(for: .dark)
+    }
+
+    private var appearanceModeCard: some View {
+        SettingsGroupCard(theme: uiTheme) {
+            SettingsRow(theme: uiTheme, title: "Theme", detail: "Use light, dark, or match your system", showsDivider: false) {
+                Picker("Theme", selection: Binding(
+                    get: { themePreference },
+                    set: { themePreference = $0 }
+                )) {
+                    ForEach(ThemePreference.allCases) { pref in
+                        Label(pref.title, systemImage: pref.systemImage)
+                            .tag(pref)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.regular)
+                .frame(width: 268)
+                .monknotPointerCursor()
+            }
+        }
+    }
+
+    private var editorSlotCard: some View {
+        SettingsGroupCard(theme: uiTheme) {
+            SettingsRow(theme: uiTheme, title: "Customize", detail: "Choose the light or dark theme slot to edit", showsDivider: false) {
+                Picker("Theme Slot", selection: $editingSlot) {
+                    ForEach(ThemeSlot.allCases) { slot in
+                        Text(slot.title.replacingOccurrences(of: " theme", with: ""))
+                            .tag(slot)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .controlSize(.regular)
+                .frame(width: 180)
+                .monknotPointerCursor()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var selectedThemeEditor: some View {
+        switch editingSlot {
+        case .light:
+            ThemeEditorSection(slot: .light, themeStore: themeStore, draft: $lightDraft, uiTheme: uiTheme)
+        case .dark:
+            ThemeEditorSection(slot: .dark, themeStore: themeStore, draft: $darkDraft, uiTheme: uiTheme)
+        }
     }
 }
 

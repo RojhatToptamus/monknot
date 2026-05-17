@@ -31,7 +31,7 @@ struct GeneralSettingsView: View {
                         title: "Window zoom",
                         detail: "Adjust the application scale used by ⌘+ and ⌘−",
                         value: $zoomScale,
-                        range: 0.7...1.8,
+                        range: 0.7...3.0,
                         step: 0.1,
                         suffix: "x"
                     )
@@ -49,6 +49,9 @@ struct GeneralSettingsView: View {
             }
             .padding(20)
             .padding(.bottom, 10)
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
         }
+        .scrollContentBackground(.hidden)
     }
 }

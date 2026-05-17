@@ -122,3 +122,71 @@ struct WindowDoubleClickZoomArea: NSViewRepresentable {
         }
     }
 }
+
+struct WindowCloseGuard: NSViewRepresentable {
+    var shouldClose: () async -> Bool
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(shouldClose: shouldClose)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        context.coordinator.installIfPossible(from: view)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.shouldClose = shouldClose
+        context.coordinator.installIfPossible(from: nsView)
+    }
+
+    final class Coordinator: NSObject, NSWindowDelegate {
+        var shouldClose: () async -> Bool
+        private weak var window: NSWindow?
+        private weak var previousDelegate: NSWindowDelegate?
+        private var isConfirmedClose = false
+
+        init(shouldClose: @escaping () async -> Bool) {
+            self.shouldClose = shouldClose
+        }
+
+        deinit {
+            if window?.delegate === self {
+                window?.delegate = previousDelegate
+            }
+        }
+
+        func installIfPossible(from view: NSView) {
+            DispatchQueue.main.async { [weak self, weak view] in
+                guard let self, let window = view?.window else { return }
+                guard self.window !== window else { return }
+
+                if self.window?.delegate === self {
+                    self.window?.delegate = self.previousDelegate
+                }
+
+                self.window = window
+                self.previousDelegate = window.delegate
+                window.delegate = self
+            }
+        }
+
+        func windowShouldClose(_ sender: NSWindow) -> Bool {
+            if isConfirmedClose {
+                return previousDelegate?.windowShouldClose?(sender) ?? true
+            }
+
+            Task { @MainActor [weak self, weak sender] in
+                guard let self, let sender else { return }
+                guard await self.shouldClose() else { return }
+
+                self.isConfirmedClose = true
+                sender.performClose(nil)
+                self.isConfirmedClose = false
+            }
+
+            return false
+        }
+    }
+}

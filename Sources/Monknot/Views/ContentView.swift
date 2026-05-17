@@ -32,6 +32,7 @@ struct ContentView: View {
     @State private var pendingPDFExportDocument: WorkspaceDocument?
     @State private var pdfExportOptions = MarkdownPDFExportOptions.loadLastUsed()
     @State private var isExportingPDF = false
+    @State private var isResolvingUnsavedChanges = false
     @Environment(\.colorScheme) private var systemColorScheme
     private let tabStatePersistence = WorkspaceTabStatePersistence()
 
@@ -68,13 +69,16 @@ struct ContentView: View {
                 surfaceColor: activeTheme.surfaceColor,
                 layoutToken: nativeChromeLayoutToken
             ))
+            .background(WindowCloseGuard(
+                shouldClose: { await resolveAllOpenUnsavedChanges() }
+            ))
             .background(KeyboardShortcutMonitor(handler: handleKeyDown))
             .toolbar {
                 // Keep the unified title-bar zone in step with our SwiftUI
                 // chrome height without manually moving the traffic lights.
                 ToolbarItem(placement: .principal) {
                     Color.clear
-                        .frame(width: 1, height: nativeChromeHeight)
+                        .frame(width: 0, height: nativeChromeHeight)
                         .accessibilityHidden(true)
                 }
             }
@@ -236,8 +240,65 @@ struct ContentView: View {
         panel.message = "Choose a folder containing Markdown or PDF documents."
 
         if panel.runModal() == .OK, let url = panel.url {
-            store.openWorkspace(url)
+            Task { @MainActor in
+                guard await resolveAllOpenUnsavedChanges() else { return }
+                store.openWorkspace(url)
+            }
         }
+    }
+
+    private enum UnsavedChangesResolution {
+        case save
+        case discard
+        case cancel
+    }
+
+    private func presentUnsavedChangesAlert(for document: WorkspaceDocument) -> UnsavedChangesResolution {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Do you want to save the changes you made to \(document.displayName)?"
+        alert.informativeText = "Your changes will be lost if you don't save them."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Don't Save")
+        alert.addButton(withTitle: "Cancel")
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return .save
+        case .alertSecondButtonReturn:
+            return .discard
+        default:
+            return .cancel
+        }
+    }
+
+    private func resolveUnsavedChangesIfNeeded(for documentID: String) async -> Bool {
+        guard !store.saveState(for: documentID).isClean else { return true }
+        guard let document = store.document(id: documentID) else { return true }
+
+        switch presentUnsavedChangesAlert(for: document) {
+        case .save:
+            return await store.saveDocument(id: documentID)
+        case .discard:
+            store.discardUnsavedChanges(for: documentID)
+            return true
+        case .cancel:
+            return false
+        }
+    }
+
+    private func resolveAllOpenUnsavedChanges() async -> Bool {
+        guard !isResolvingUnsavedChanges else { return false }
+        isResolvingUnsavedChanges = true
+        defer { isResolvingUnsavedChanges = false }
+
+        for documentID in tabState.tabs.map(\.documentID) where !store.saveState(for: documentID).isClean {
+            guard await resolveUnsavedChangesIfNeeded(for: documentID) else {
+                return false
+            }
+        }
+
+        return true
     }
 
     private func exportMarkdownPDF(_ document: WorkspaceDocument) {
@@ -328,7 +389,7 @@ struct ContentView: View {
 
     private func adjustZoom(by delta: Double) {
         let stepped = ((zoomScale + delta) * 10).rounded() / 10
-        zoomScale = min(1.8, max(0.7, stepped))
+        zoomScale = min(3.0, max(0.7, stepped))
     }
 
     private func openDocumentTab(id documentID: String) {
@@ -352,7 +413,18 @@ struct ContentView: View {
     }
 
     private func closeTab(id documentID: String) {
-        guard !store.isBusy else { return }
+        guard !store.isBusy, !isResolvingUnsavedChanges else { return }
+
+        Task { @MainActor in
+            isResolvingUnsavedChanges = true
+            defer { isResolvingUnsavedChanges = false }
+
+            guard await resolveUnsavedChangesIfNeeded(for: documentID) else { return }
+            closeResolvedTab(id: documentID)
+        }
+    }
+
+    private func closeResolvedTab(id documentID: String) {
         let wasActive = tabState.selectedDocumentID == documentID
         let nextDocumentID = tabState.close(documentID: documentID)
         documentViewportStates.removeValue(forKey: documentID)
