@@ -156,26 +156,14 @@ struct MarkdownPreviewView: NSViewRepresentable {
 
         guard coordinator.isShellLoaded else { return }
 
-        do {
-            let payload = try Self.javaScriptPayload(markdown: request.markdown, themeName: themeName)
-            webView.evaluateJavaScript("window.monknotRender && window.monknotRender(\(payload));") { _, error in
-                if error != nil {
-                    coordinator.markShellNeedsReload()
-                } else {
-                    coordinator.markRenderedContent(request)
-                    coordinator.applySearch(searchState, in: webView)
-                    coordinator.setPendingSourceReveal(sourceLocation)
-                    let isRevealingSource = sourceLocation != nil
-                    coordinator.applyPendingSourceReveal(in: webView) {
-                        self.sourceLocation = nil
-                    }
-                    if !isRevealingSource {
-                        coordinator.applyPendingScrollPositionIfNeeded(in: webView)
-                    }
-                }
-            }
-        } catch {
-            webView.loadHTMLString(Self.errorHTML(error.localizedDescription), baseURL: nil)
+        coordinator.scheduleContentRender(
+            request,
+            themeName: themeName,
+            searchState: searchState,
+            sourceLocation: sourceLocation,
+            in: webView
+        ) {
+            self.sourceLocation = nil
         }
     }
 
@@ -261,10 +249,13 @@ struct MarkdownPreviewView: NSViewRepresentable {
         var onSearchResult: (DocumentSearchResult) -> Void = { _ in }
         var onSourceRevealConsumed: () -> Void = {}
         private var shellTask: Task<Void, Never>?
+        private var renderTask: Task<Void, Never>?
+        private var renderSerial = 0
         private var documentID: String?
         private var lastShellRequest: PreviewShellRequest?
         private var lastAppliedAppearance: PreviewAppearanceRequest?
         private var lastRenderedContent: PreviewContentRequest?
+        private var scheduledRenderContent: PreviewContentRequest?
         private var lastSearchRequest: DocumentSearchRequest?
         private var loadingAppearance: PreviewAppearanceRequest?
         private var pendingAppearance: PreviewAppearanceRequest?
@@ -313,10 +304,13 @@ struct MarkdownPreviewView: NSViewRepresentable {
             lastShellRequest = request
             isShellLoaded = false
             lastRenderedContent = nil
+            scheduledRenderContent = nil
             lastAppliedAppearance = nil
             lastSearchRequest = nil
             loadingAppearance = pendingAppearance
             shellTask?.cancel()
+            renderTask?.cancel()
+            renderSerial += 1
             return true
         }
 
@@ -326,6 +320,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
 
         fileprivate func shouldRenderContent(_ request: PreviewContentRequest) -> Bool {
             guard request != lastRenderedContent else { return false }
+            guard request != scheduledRenderContent else { return false }
             return true
         }
 
@@ -356,16 +351,25 @@ struct MarkdownPreviewView: NSViewRepresentable {
         func cancelShellLoad() {
             shellTask?.cancel()
             shellTask = nil
+            renderTask?.cancel()
+            renderTask = nil
+            scheduledRenderContent = nil
+            renderSerial += 1
         }
 
         func markShellNeedsReload() {
             isShellLoaded = false
             lastShellRequest = nil
             shellTask = nil
+            renderTask?.cancel()
+            renderTask = nil
+            scheduledRenderContent = nil
+            renderSerial += 1
         }
 
         fileprivate func markRenderedContent(_ request: PreviewContentRequest) {
             lastRenderedContent = request
+            scheduledRenderContent = nil
             lastSearchRequest = nil
         }
 
@@ -401,6 +405,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         }
 
         fileprivate func applySearch(_ state: DocumentSearchState, in webView: WKWebView) {
+            pendingSearch = state
             let request = DocumentSearchRequest(state)
             guard request != lastSearchRequest else { return }
             lastSearchRequest = request
@@ -421,6 +426,84 @@ struct MarkdownPreviewView: NSViewRepresentable {
             } catch {
                 onSearchResult(.init())
             }
+        }
+
+        fileprivate func scheduleContentRender(
+            _ request: PreviewContentRequest,
+            themeName: String,
+            searchState: DocumentSearchState,
+            sourceLocation: MarkdownSourceLocation?,
+            in webView: WKWebView,
+            onSourceRevealConsumed: @escaping () -> Void
+        ) {
+            guard isShellLoaded else { return }
+
+            renderSerial += 1
+            let serial = renderSerial
+            scheduledRenderContent = request
+            pendingSearch = searchState
+            setPendingSourceReveal(sourceLocation)
+            renderTask?.cancel()
+
+            let delayNanoseconds = Self.renderDebounceNanoseconds(for: request)
+            renderTask = Task { [weak self, weak webView] in
+                if delayNanoseconds > 0 {
+                    try? await Task.sleep(nanoseconds: delayNanoseconds)
+                }
+
+                guard !Task.isCancelled else { return }
+
+                let latestThemeName = await MainActor.run {
+                    self?.pendingAppearance?.themeName ?? themeName
+                }
+
+                let payload: String
+                do {
+                    payload = try MarkdownPreviewView.javaScriptPayload(
+                        markdown: request.markdown,
+                        themeName: latestThemeName
+                    )
+                } catch {
+                    await MainActor.run {
+                        _ = webView?.loadHTMLString(MarkdownPreviewView.errorHTML(error.localizedDescription), baseURL: nil)
+                    }
+                    return
+                }
+
+                guard !Task.isCancelled else { return }
+
+                await MainActor.run {
+                    guard let self, self.renderSerial == serial, let webView else { return }
+                    webView.evaluateJavaScript("window.monknotRender && window.monknotRender(\(payload));") { [weak self, weak webView] _, error in
+                        guard let self, self.renderSerial == serial, let webView else { return }
+                        self.renderTask = nil
+                        if error != nil {
+                            self.markShellNeedsReload()
+                            return
+                        }
+
+                        self.markRenderedContent(request)
+                        self.applySearch(self.pendingSearch ?? searchState, in: webView)
+                        self.setPendingSourceReveal(sourceLocation)
+                        let isRevealingSource = sourceLocation != nil
+                        self.applyPendingSourceReveal(in: webView, onConsumed: onSourceRevealConsumed)
+                        if !isRevealingSource {
+                            self.applyPendingScrollPositionIfNeeded(in: webView)
+                        }
+                    }
+                }
+            }
+        }
+
+        private static func renderDebounceNanoseconds(for request: PreviewContentRequest) -> UInt64 {
+            let byteCount = request.markdown.utf8.count
+            if byteCount >= 500_000 {
+                return 450_000_000
+            }
+            if byteCount >= 100_000 {
+                return 180_000_000
+            }
+            return 0
         }
 
         fileprivate func applyPendingSourceReveal(in webView: WKWebView, onConsumed: @escaping () -> Void) {
@@ -484,28 +567,14 @@ struct MarkdownPreviewView: NSViewRepresentable {
             loadingAppearance = nil
 
             guard let pendingContent else { return }
-
-            do {
-                let payload = try MarkdownPreviewView.javaScriptPayload(
-                    markdown: pendingContent.markdown,
-                    themeName: pendingAppearance?.themeName ?? "light"
-                )
-                webView.evaluateJavaScript("window.monknotRender && window.monknotRender(\(payload));") { [weak self] _, _ in
-                    guard let self else { return }
-                    self.lastRenderedContent = pendingContent
-                    self.lastSearchRequest = nil
-                    if let pendingSearch = self.pendingSearch {
-                        self.applySearch(pendingSearch, in: webView)
-                    }
-                    let isRevealingSource = self.pendingSourceReveal != nil
-                    self.applyPendingSourceReveal(in: webView, onConsumed: self.onSourceRevealConsumed)
-                    if !isRevealingSource {
-                        self.applyPendingScrollPositionIfNeeded(in: webView)
-                    }
-                }
-            } catch {
-                webView.loadHTMLString(MarkdownPreviewView.errorHTML(error.localizedDescription), baseURL: nil)
-            }
+            scheduleContentRender(
+                pendingContent,
+                themeName: pendingAppearance?.themeName ?? "light",
+                searchState: pendingSearch ?? DocumentSearchState(),
+                sourceLocation: pendingSourceReveal,
+                in: webView,
+                onSourceRevealConsumed: onSourceRevealConsumed
+            )
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

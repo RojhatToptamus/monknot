@@ -179,7 +179,7 @@ struct TopNavigationBar: View {
     private var sourcePreviewSwitch: some View {
         HStack(spacing: scaled(2)) {
             TopBarSegment(
-                systemImage: "chevron.left.forwardslash.chevron.right",
+                systemImage: "square.and.pencil",
                 accessibilityLabel: EditorMode.source.title,
                 isSelected: editorMode == .source,
                 theme: theme,

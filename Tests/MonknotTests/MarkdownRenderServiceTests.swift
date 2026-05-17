@@ -36,9 +36,11 @@ final class MarkdownRenderServiceTests: XCTestCase {
 
         XCTAssertTrue(html.contains(#"data-theme="dark""#))
         XCTAssertTrue(html.contains(#"<base href="file:///tmp/Monknot%20Workspace/">"#))
+        XCTAssertTrue(html.contains("img-src 'self' file: data: blob:;"))
+        XCTAssertFalse(html.contains("img-src 'self' file: data: blob: https: http:;"))
         XCTAssertTrue(html.contains("body { color: var(--fg); }"))
         XCTAssertTrue(html.contains("document.body.dataset.ready"))
-        XCTAssertTrue(html.contains(#"<\/script>alert"#))
+        XCTAssertTrue(html.contains(#"<script>alert('x')<\/script>"#))
     }
 
     func testHTMLDocumentEscapesMarkdownForJavaScriptString() throws {
@@ -109,7 +111,7 @@ final class MarkdownRenderServiceTests: XCTestCase {
 
         XCTAssertTrue(html.contains("--base-font-size: 24.0px;"))
         XCTAssertTrue(html.contains("--preview-max-width: 96%;"))
-        XCTAssertTrue(html.contains("--table-border: color-mix(in srgb, #FFFFFF 20.0%, transparent);"))
+        XCTAssertTrue(html.contains("--table-border: color-mix(in srgb, #fcfcfc 20.0%, transparent);"))
     }
 
     func testBundledStylesheetPreservesThemeColorsForPDFExport() throws {

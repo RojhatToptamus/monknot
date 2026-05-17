@@ -51,8 +51,9 @@ struct SidebarView: View {
                 uiFontSize: uiFontSize
             )
 
-            Divider()
-                .overlay(theme.borderColor)
+            Rectangle()
+                .fill(theme.borderColor)
+                .frame(height: 1)
 
             VStack(spacing: 0) {
                 SidebarProjectHeader(
@@ -67,8 +68,9 @@ struct SidebarView: View {
             }
             .layoutPriority(1)
 
-            Divider()
-                .overlay(theme.borderColor)
+            Rectangle()
+                .fill(theme.borderColor)
+                .frame(height: 1)
 
             SidebarSettingsButton(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize)
                 .layoutPriority(2)
@@ -596,7 +598,7 @@ private struct SidebarChromeRow: View {
                 action: showWorkspaceSearch
             )
         }
-        .padding(.trailing, scaled(8))
+        .padding(.horizontal, scaled(10))
         .frame(height: scaled(44))
     }
 }
@@ -779,8 +781,7 @@ private struct SidebarNodeRow: View {
             }
         }
         .opacity(isMoveSource ? 0.45 : 1)
-        .highPriorityGesture(sidebarMoveGesture)
-        .padding(.top, visibleNode.depth == 0 ? scaled(3) : 0)
+        .simultaneousGesture(sidebarMoveGesture)
         .help(node.relativePath.isEmpty ? node.name : node.relativePath)
         .accessibilityAddTraits(.isButton)
         .contextMenu {
@@ -828,7 +829,7 @@ private struct SidebarNodeRow: View {
             }
         }
         .opacity(isMoveSource ? 0.45 : 1)
-        .highPriorityGesture(sidebarMoveGesture)
+        .simultaneousGesture(sidebarMoveGesture)
         .help(node.relativePath.isEmpty ? node.name : node.relativePath)
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])

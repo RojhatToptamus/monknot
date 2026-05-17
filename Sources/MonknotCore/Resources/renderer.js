@@ -6,6 +6,7 @@
   let searchNavigationSerial = -1;
   let searchMatches = [];
   let searchCurrentIndex = 0;
+  let hasRendered = false;
 
   const target = document.getElementById("content");
   if (!target) return;
@@ -18,9 +19,16 @@
   target.addEventListener("dblclick", handleSourceJump);
 
   function render(nextState) {
-    markdown = typeof nextState.markdown === "string" ? nextState.markdown : "";
-    document.documentElement.dataset.theme = nextState.theme === "dark" ? "dark" : "light";
+    const nextMarkdown = typeof nextState.markdown === "string" ? nextState.markdown : "";
+    const nextTheme = nextState.theme === "dark" ? "dark" : "light";
+    if (hasRendered && nextMarkdown === markdown && document.documentElement.dataset.theme === nextTheme) {
+      return;
+    }
+
+    markdown = nextMarkdown;
+    document.documentElement.dataset.theme = nextTheme;
     target.innerHTML = renderMarkdown(markdown);
+    hasRendered = true;
     if (searchQuery) {
       searchDocument({
         query: searchQuery,
@@ -362,7 +370,7 @@
         paragraph.push(lines[index]);
         index += 1;
       }
-      blocks.push(markSource(`<p>${inline(paragraph.join(" "), footnotes, footnoteOrder, refNumbers)}</p>`, startLine));
+      blocks.push(markSource(`<p>${inline(paragraphText(paragraph), footnotes, footnoteOrder, refNumbers)}</p>`, startLine));
     }
 
     return blocks.join("\n");
@@ -446,7 +454,7 @@
     const thead = `<thead><tr>${headers.map((cell, idx) => `<th${alignAttr(idx)}>${inline(cell.trim(), footnotes, footnoteOrder, refNumbers)}</th>`).join("")}</tr></thead>`;
     const tbody = `<tbody>${rows.map((row) => `<tr>${headers.map((_, idx) => `<td${alignAttr(idx)}>${inline((row[idx] || "").trim(), footnotes, footnoteOrder, refNumbers)}</td>`).join("")}</tr>`).join("")}</tbody>`;
 
-    return { html: `<table>${thead}${tbody}</table>`, nextIndex: index };
+    return { html: `<div class="table-wrapper"><table>${thead}${tbody}</table></div>`, nextIndex: index };
   }
 
   function isTableStart(lines, index) {
@@ -462,15 +470,27 @@
     return row.split(/(?<!\\)\|/).map((cell) => cell.replace(/\\\|/g, "|"));
   }
 
+  function paragraphText(lines) {
+    if (lines.length === 0) return "";
+
+    let text = lines[0];
+    for (let index = 1; index < lines.length; index += 1) {
+      const separator = /(?: {2,}|\\)$/.test(text) ? "\n" : " ";
+      text += separator + lines[index];
+    }
+    return text;
+  }
+
   function inline(text, footnotes, footnoteOrder, refNumbers) {
     const codeTokens = [];
-    let value = text.replace(/`([^`]+)`/g, (_, code) => {
+    let value = text.replace(/`([\s\S]+?)`/g, (_, code) => {
       const token = `\u0000CODE${codeTokens.length}\u0000`;
       codeTokens.push(`<code>${escapeHTML(code)}</code>`);
       return token;
     });
 
     value = escapeHTML(value);
+    value = value.replace(/(?: {2,}|\\)\n/g, "<br>");
 
     value = value.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]+)")?\)/g, (_, alt, url, title) => {
       const safe = sanitizeURL(url, true);
@@ -497,8 +517,8 @@
       return `<sup class="footnote-ref" id="fnref-${escapeAttr(slug(normalized))}"><a href="#fn-${escapeAttr(slug(normalized))}">${number}</a></sup>`;
     });
 
-    value = value.replace(/(\*\*|__)(.+?)\1/g, "<strong>$2</strong>");
-    value = value.replace(/~~(.+?)~~/g, "<del>$1</del>");
+    value = value.replace(/(\*\*|__)([\s\S]+?)\1/g, "<strong>$2</strong>");
+    value = value.replace(/~~([\s\S]+?)~~/g, "<del>$1</del>");
     value = value.replace(/(^|[^*])\*([^*\s][^*]*?)\*/g, "$1<em>$2</em>");
     value = value.replace(/(^|[^_])_([^_\s][^_]*?)_/g, "$1<em>$2</em>");
 

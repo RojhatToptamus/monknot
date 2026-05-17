@@ -2,6 +2,26 @@ import AppKit
 import MonknotCore
 import SwiftUI
 
+struct MarkdownTextEditorCommandRequest: Equatable {
+    let serial: Int
+    let command: MarkdownTextEditorCommand
+}
+
+enum MarkdownTextEditorCommand: Equatable {
+    case paragraph
+    case heading(level: Int)
+    case bold
+    case italic
+    case quote
+    case code
+    case link
+    case bulletList
+    case numberedList
+    case taskList
+    case image
+    case horizontalRule
+}
+
 struct MarkdownTextEditor: NSViewRepresentable {
     let documentID: String
     @Binding var text: String
@@ -12,6 +32,34 @@ struct MarkdownTextEditor: NSViewRepresentable {
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var searchState: DocumentSearchState
     let onScrollPositionChange: (DocumentScrollPosition) -> Void
+    let commandRequest: MarkdownTextEditorCommandRequest?
+    let markdownShortcutsEnabled: Bool
+
+    init(
+        documentID: String,
+        text: Binding<String>,
+        theme: AppTheme,
+        fontSize: CGFloat,
+        fontSmoothing: Bool,
+        scrollPosition: DocumentScrollPosition?,
+        sourceLocation: Binding<MarkdownSourceLocation?>,
+        searchState: Binding<DocumentSearchState>,
+        onScrollPositionChange: @escaping (DocumentScrollPosition) -> Void,
+        commandRequest: MarkdownTextEditorCommandRequest? = nil,
+        markdownShortcutsEnabled: Bool = false
+    ) {
+        self.documentID = documentID
+        self._text = text
+        self.theme = theme
+        self.fontSize = fontSize
+        self.fontSmoothing = fontSmoothing
+        self.scrollPosition = scrollPosition
+        self._sourceLocation = sourceLocation
+        self._searchState = searchState
+        self.onScrollPositionChange = onScrollPositionChange
+        self.commandRequest = commandRequest
+        self.markdownShortcutsEnabled = markdownShortcutsEnabled
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -28,6 +76,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
         let textView = MarkdownNSTextView()
         textView.fontSmoothingEnabled = fontSmoothing
         textView.delegate = context.coordinator
+        textView.markdownShortcutsEnabled = markdownShortcutsEnabled
+        textView.commandHandler = { [weak coordinator = context.coordinator] command in
+            coordinator?.apply(command) ?? false
+        }
         textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
@@ -73,8 +125,14 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.font = font(for: theme, size: fontSize)
         if let textView = textView as? MarkdownNSTextView {
             textView.fontSmoothingEnabled = fontSmoothing
+            textView.markdownShortcutsEnabled = markdownShortcutsEnabled
         }
         applyTheme(theme, to: textView, in: scrollView)
+
+        if let commandRequest {
+            context.coordinator.apply(commandRequest)
+        }
+
         if didChangeDocument {
             context.coordinator.restoreScrollPosition(scrollPosition?.point ?? .zero, in: scrollView)
         } else {
@@ -137,6 +195,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private weak var scrollView: NSScrollView?
         private var lastPublishedScrollPosition: DocumentScrollPosition?
         private var isRestoringScrollPosition = false
+        private var lastCommandSerial = 0
 
         init(text: Binding<String>) {
             self._text = text
@@ -203,6 +262,38 @@ struct MarkdownTextEditor: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             text = textView.string
+        }
+
+        func apply(_ request: MarkdownTextEditorCommandRequest) {
+            guard request.serial != lastCommandSerial else { return }
+            lastCommandSerial = request.serial
+            _ = apply(request.command)
+        }
+
+        func apply(_ command: MarkdownTextEditorCommand) -> Bool {
+            guard let textView, let textStorage = textView.textStorage else { return false }
+            let selectedRange = textView.selectedRange()
+            let result = MarkdownTextCommandApplier.apply(
+                command,
+                to: textView.string,
+                selectedRange: selectedRange
+            )
+            let currentReplacementText = (textView.string as NSString).substring(with: result.replacementRange)
+            guard result.replacementText != currentReplacementText || result.selectedRange != selectedRange else {
+                return false
+            }
+
+            guard textView.shouldChangeText(in: result.replacementRange, replacementString: result.replacementText) else {
+                return false
+            }
+
+            textStorage.replaceCharacters(in: result.replacementRange, with: result.replacementText)
+            textView.didChangeText()
+            textView.setSelectedRange(result.selectedRange)
+            textView.scrollRangeToVisible(result.selectedRange)
+            textView.window?.makeFirstResponder(textView)
+            text = textView.string
+            return true
         }
 
         func navigate(to location: MarkdownSourceLocation, in textView: NSTextView) {
@@ -438,11 +529,242 @@ struct MarkdownTextEditor: NSViewRepresentable {
     }
 }
 
+private struct MarkdownTextCommandResult {
+    let replacementRange: NSRange
+    let replacementText: String
+    let selectedRange: NSRange
+}
+
+private enum MarkdownTextCommandApplier {
+    static func apply(
+        _ command: MarkdownTextEditorCommand,
+        to text: String,
+        selectedRange: NSRange
+    ) -> MarkdownTextCommandResult {
+        let range = boundedRange(selectedRange, in: text)
+
+        switch command {
+        case .paragraph:
+            return replaceSelectedLines(in: text, selectedRange: range) { lines in
+                lines.map(removeBlockPrefix(_:))
+            }
+        case .heading(let level):
+            return replaceSelectedLines(in: text, selectedRange: range) { lines in
+                let prefix = String(repeating: "#", count: max(1, min(level, 6))) + " "
+                return lines.map { prefix + removeBlockPrefix($0) }
+            }
+        case .bold:
+            return wrapSelection(in: text, range: range, prefix: "**", suffix: "**", placeholder: "bold")
+        case .italic:
+            return wrapSelection(in: text, range: range, prefix: "*", suffix: "*", placeholder: "italic")
+        case .quote:
+            return replaceSelectedLines(in: text, selectedRange: range) { lines in
+                lines.map {
+                    let line = removeBlockPrefix($0)
+                    return line.isEmpty ? "> " : "> \(line)"
+                }
+            }
+        case .code:
+            return range.length == 0 || !selectedText(in: text, range: range).containsNewline
+                ? wrapSelection(in: text, range: range, prefix: "`", suffix: "`", placeholder: "code")
+                : insertBlock("```\n\(selectedText(in: text, range: range))\n```", in: text, range: range)
+        case .link:
+            let label = range.length > 0 ? selectedText(in: text, range: range) : "link text"
+            let replacement = "[\(label)](https://)"
+            let urlLocation = range.location + label.utf16.count + 3
+            return MarkdownTextCommandResult(
+                replacementRange: range,
+                replacementText: replacement,
+                selectedRange: NSRange(location: urlLocation, length: "https://".utf16.count)
+            )
+        case .bulletList:
+            return replaceSelectedLines(in: text, selectedRange: range) { lines in
+                lines.map {
+                    let line = removeBlockPrefix($0)
+                    return line.isEmpty ? "- " : "- \(line)"
+                }
+            }
+        case .numberedList:
+            return replaceSelectedLines(in: text, selectedRange: range) { lines in
+                lines.enumerated().map { index, line in
+                    let line = removeBlockPrefix(line)
+                    return line.isEmpty ? "\(index + 1). " : "\(index + 1). \(line)"
+                }
+            }
+        case .taskList:
+            return replaceSelectedLines(in: text, selectedRange: range) { lines in
+                lines.map {
+                    let line = removeBlockPrefix($0)
+                    return line.isEmpty ? "- [ ] " : "- [ ] \(line)"
+                }
+            }
+        case .image:
+            let replacement = "![alt text](url)"
+            return MarkdownTextCommandResult(
+                replacementRange: range,
+                replacementText: replacement,
+                selectedRange: NSRange(location: range.location + 2, length: "alt text".utf16.count)
+            )
+        case .horizontalRule:
+            return insertBlock("---", in: text, range: range)
+        }
+    }
+
+    private static func wrapSelection(
+        in text: String,
+        range: NSRange,
+        prefix: String,
+        suffix: String,
+        placeholder: String
+    ) -> MarkdownTextCommandResult {
+        if range.length > 0,
+           let result = unwrapSelectionIfNeeded(in: text, range: range, prefix: prefix, suffix: suffix) {
+            return result
+        }
+
+        let body = range.length > 0 ? selectedText(in: text, range: range) : placeholder
+        let replacement = prefix + body + suffix
+        return MarkdownTextCommandResult(
+            replacementRange: range,
+            replacementText: replacement,
+            selectedRange: NSRange(location: range.location + prefix.utf16.count, length: body.utf16.count)
+        )
+    }
+
+    private static func unwrapSelectionIfNeeded(
+        in text: String,
+        range: NSRange,
+        prefix: String,
+        suffix: String
+    ) -> MarkdownTextCommandResult? {
+        let nsText = text as NSString
+        let prefixLength = (prefix as NSString).length
+        let suffixLength = (suffix as NSString).length
+        let selected = nsText.substring(with: range)
+
+        if selected.hasPrefix(prefix),
+           selected.hasSuffix(suffix),
+           (selected as NSString).length >= prefixLength + suffixLength {
+            let bodyRange = NSRange(
+                location: prefixLength,
+                length: (selected as NSString).length - prefixLength - suffixLength
+            )
+            let body = (selected as NSString).substring(with: bodyRange)
+            return MarkdownTextCommandResult(
+                replacementRange: range,
+                replacementText: body,
+                selectedRange: NSRange(location: range.location, length: (body as NSString).length)
+            )
+        }
+
+        let prefixRange = NSRange(location: range.location - prefixLength, length: prefixLength)
+        let suffixRange = NSRange(location: NSMaxRange(range), length: suffixLength)
+        guard range.location >= prefixLength,
+              NSMaxRange(suffixRange) <= nsText.length,
+              nsText.substring(with: prefixRange) == prefix,
+              nsText.substring(with: suffixRange) == suffix else {
+            return nil
+        }
+
+        return MarkdownTextCommandResult(
+            replacementRange: NSRange(location: prefixRange.location, length: prefixLength + range.length + suffixLength),
+            replacementText: selected,
+            selectedRange: NSRange(location: prefixRange.location, length: range.length)
+        )
+    }
+
+    private static func insertBlock(_ block: String, in text: String, range: NSRange) -> MarkdownTextCommandResult {
+        let nsText = text as NSString
+        let leading = range.location > 0 && !nsText.substring(to: range.location).hasSuffix("\n\n")
+            ? (nsText.substring(to: range.location).hasSuffix("\n") ? "\n" : "\n\n")
+            : ""
+        let trailingLocation = min(nsText.length, NSMaxRange(range))
+        let trailing = trailingLocation < nsText.length && !nsText.substring(from: trailingLocation).hasPrefix("\n\n")
+            ? (nsText.substring(from: trailingLocation).hasPrefix("\n") ? "\n" : "\n\n")
+            : ""
+        let replacement = leading + block + trailing
+        let selectionLocation = range.location + leading.utf16.count + block.utf16.count
+        return MarkdownTextCommandResult(
+            replacementRange: range,
+            replacementText: replacement,
+            selectedRange: NSRange(location: selectionLocation, length: 0)
+        )
+    }
+
+    private static func replaceSelectedLines(
+        in text: String,
+        selectedRange: NSRange,
+        transform: ([String]) -> [String]
+    ) -> MarkdownTextCommandResult {
+        let nsText = text as NSString
+        let sourceRange = lineRange(for: selectedRange, in: nsText)
+        let source = nsText.substring(with: sourceRange)
+        let hasTrailingNewline = source.hasSuffix("\n")
+        var lines = source.components(separatedBy: "\n")
+        if hasTrailingNewline {
+            lines.removeLast()
+        }
+
+        let replacement = transform(lines).joined(separator: "\n") + (hasTrailingNewline ? "\n" : "")
+        return MarkdownTextCommandResult(
+            replacementRange: sourceRange,
+            replacementText: replacement,
+            selectedRange: NSRange(location: sourceRange.location, length: replacement.utf16.count)
+        )
+    }
+
+    private static func removeBlockPrefix(_ line: String) -> String {
+        let pattern = #"^\s{0,3}(#{1,6}[ \t]+|>[ \t]?|[-*+][ \t]+\[[ xX]\][ \t]+|[-*+][ \t]+|\d+[.)][ \t]+)"#
+        guard let expression = try? NSRegularExpression(pattern: pattern) else {
+            return line
+        }
+
+        let range = NSRange(location: 0, length: (line as NSString).length)
+        return expression.stringByReplacingMatches(in: line, range: range, withTemplate: "")
+    }
+
+    private static func lineRange(for range: NSRange, in text: NSString) -> NSRange {
+        guard text.length > 0 else { return NSRange(location: 0, length: 0) }
+        let location = max(0, min(range.location, text.length))
+        let length = max(0, min(range.length, text.length - location))
+        return text.lineRange(for: NSRange(location: location, length: length))
+    }
+
+    private static func selectedText(in text: String, range: NSRange) -> String {
+        (text as NSString).substring(with: boundedRange(range, in: text))
+    }
+
+    private static func boundedRange(_ range: NSRange, in text: String) -> NSRange {
+        let length = (text as NSString).length
+        let location = max(0, min(range.location, length))
+        let upperBound = max(location, min(range.location + range.length, length))
+        return NSRange(location: location, length: upperBound - location)
+    }
+}
+
+private extension String {
+    var containsNewline: Bool {
+        contains("\n") || contains("\r")
+    }
+}
+
 private final class MarkdownNSTextView: NSTextView {
+    var markdownShortcutsEnabled = false
+    var commandHandler: ((MarkdownTextEditorCommand) -> Bool)?
     var fontSmoothingEnabled = true {
         didSet {
             guard fontSmoothingEnabled != oldValue else { return }
             needsDisplay = true
+        }
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard markdownShortcutsEnabled,
+              let command = markdownCommand(for: event),
+              commandHandler?(command) == true
+        else {
+            super.keyDown(with: event)
+            return
         }
     }
 
@@ -456,5 +778,34 @@ private final class MarkdownNSTextView: NSTextView {
         context.shouldAntialias = fontSmoothingEnabled
         super.draw(dirtyRect)
         context.shouldAntialias = previousAntialiasing
+    }
+
+    private func markdownCommand(for event: NSEvent) -> MarkdownTextEditorCommand? {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock])
+        let isCommandOnly = modifiers.isSubset(of: [.command]) && modifiers.contains(.command)
+        let isCommandShift = modifiers.isSubset(of: [.command, .shift])
+            && modifiers.contains(.command)
+            && modifiers.contains(.shift)
+        guard let key = event.charactersIgnoringModifiers?.lowercased() else { return nil }
+
+        if isCommandOnly {
+            switch key {
+            case "b": return .bold
+            case "i": return .italic
+            case "e": return .code
+            case "k": return .link
+            default: return nil
+            }
+        }
+
+        if isCommandShift, key == "7" {
+            return .numberedList
+        }
+
+        if isCommandShift, key == "8" {
+            return .bulletList
+        }
+
+        return nil
     }
 }

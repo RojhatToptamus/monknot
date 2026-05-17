@@ -1,5 +1,8 @@
 .DS_Store
 .build/
 dist/
+.swiftpm/
+.playwright-mcp/
+chrome-debug-handoff.json
 
 docs/

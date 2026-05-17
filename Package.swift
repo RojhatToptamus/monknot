@@ -1,4 +1,4 @@
-// swift-tools-version:5.3
+// swift-tools-version:5.4
 
 import PackageDescription
 
@@ -15,7 +15,7 @@ let package = Package(
             name: "MonknotCore",
             resources: [.process("Resources")]
         ),
-        .target(
+        .executableTarget(
             name: "Monknot",
             dependencies: ["MonknotCore"],
             resources: [.process("Resources")]

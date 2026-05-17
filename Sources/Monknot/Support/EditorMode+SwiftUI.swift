@@ -4,7 +4,7 @@ extension EditorMode {
     var title: String {
         switch self {
         case .source:
-            return "Source"
+            return "Write"
         case .preview:
             return "Preview"
         }

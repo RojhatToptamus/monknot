@@ -4,12 +4,12 @@ import MonknotCore
 final class MonknotKeyboardShortcutRouterTests: XCTestCase {
     func testSaveShortcutRequiresASelectedDocument() {
         XCTAssertEqual(
-            action(for: "s", modifiers: [.command], context: context(selectedDocumentKind: .markdown)),
+            action(for: "s", modifiers: [.command], context: shortcutContext(selectedDocumentKind: .markdown)),
             .saveDocument
         )
 
         XCTAssertNil(
-            action(for: "s", modifiers: [.command], context: context(selectedDocumentKind: nil))
+            action(for: "s", modifiers: [.command], context: shortcutContext(selectedDocumentKind: nil))
         )
     }
 
@@ -18,7 +18,7 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
             action(
                 for: "z",
                 modifiers: [.command],
-                context: context(selectedDocumentKind: .pdf, canUndoPDFAnnotation: true)
+                context: shortcutContext(selectedDocumentKind: .pdf, canUndoPDFAnnotation: true)
             ),
             .undoPDFAnnotation
         )
@@ -26,7 +26,7 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
             action(
                 for: "z",
                 modifiers: [.command, .shift],
-                context: context(selectedDocumentKind: .pdf, canRedoPDFAnnotation: true)
+                context: shortcutContext(selectedDocumentKind: .pdf, canRedoPDFAnnotation: true)
             ),
             .redoPDFAnnotation
         )
@@ -35,96 +35,96 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
             action(
                 for: "z",
                 modifiers: [.command],
-                context: context(selectedDocumentKind: .markdown, canUndoPDFAnnotation: true)
+                context: shortcutContext(selectedDocumentKind: .markdown, canUndoPDFAnnotation: true)
             )
         )
         XCTAssertNil(
             action(
                 for: "z",
                 modifiers: [.command, .shift],
-                context: context(selectedDocumentKind: .text, canRedoPDFAnnotation: true)
+                context: shortcutContext(selectedDocumentKind: .text, canRedoPDFAnnotation: true)
             )
         )
     }
 
     func testPDFUndoRedoShortcutsRespectUndoAvailability() {
         XCTAssertNil(
-            action(for: "z", modifiers: [.command], context: context(selectedDocumentKind: .pdf))
+            action(for: "z", modifiers: [.command], context: shortcutContext(selectedDocumentKind: .pdf))
         )
         XCTAssertNil(
-            action(for: "z", modifiers: [.command, .shift], context: context(selectedDocumentKind: .pdf))
+            action(for: "z", modifiers: [.command, .shift], context: shortcutContext(selectedDocumentKind: .pdf))
         )
     }
 
     func testWorkspaceAndTabShortcutsRespectContext() {
         XCTAssertEqual(
-            action(for: "n", modifiers: [.command], context: context(hasWorkspace: true)),
+            action(for: "n", modifiers: [.command], context: shortcutContext(hasWorkspace: true)),
             .newMarkdown
         )
         XCTAssertNil(
-            action(for: "n", modifiers: [.command], context: context(hasWorkspace: true, isBusy: true))
+            action(for: "n", modifiers: [.command], context: shortcutContext(hasWorkspace: true, isBusy: true))
         )
         XCTAssertNil(
-            action(for: "n", modifiers: [.command], context: context(hasWorkspace: false))
+            action(for: "n", modifiers: [.command], context: shortcutContext(hasWorkspace: false))
         )
 
         XCTAssertEqual(
-            action(for: "w", modifiers: [.command], context: context(canCloseTab: true)),
+            action(for: "w", modifiers: [.command], context: shortcutContext(canCloseTab: true)),
             .closeTab
         )
         XCTAssertNil(
-            action(for: "w", modifiers: [.command], context: context(canCloseTab: false))
+            action(for: "w", modifiers: [.command], context: shortcutContext(canCloseTab: false))
         )
 
         XCTAssertEqual(
-            action(for: "p", modifiers: [.command, .shift], context: context(canTogglePinTab: true)),
+            action(for: "p", modifiers: [.command, .shift], context: shortcutContext(canTogglePinTab: true)),
             .togglePinTab
         )
         XCTAssertNil(
-            action(for: "p", modifiers: [.command, .shift], context: context(canTogglePinTab: false))
+            action(for: "p", modifiers: [.command, .shift], context: shortcutContext(canTogglePinTab: false))
         )
     }
 
     func testPasteShortcutRequiresWorkspaceAndIdleState() {
         XCTAssertEqual(
-            action(for: "v", modifiers: [.command], context: context(hasWorkspace: true)),
+            action(for: "v", modifiers: [.command], context: shortcutContext(hasWorkspace: true)),
             .importPasteboard
         )
         XCTAssertNil(
-            action(for: "v", modifiers: [.command], context: context(hasWorkspace: false))
+            action(for: "v", modifiers: [.command], context: shortcutContext(hasWorkspace: false))
         )
         XCTAssertNil(
-            action(for: "v", modifiers: [.command], context: context(hasWorkspace: true, isBusy: true))
+            action(for: "v", modifiers: [.command], context: shortcutContext(hasWorkspace: true, isBusy: true))
         )
     }
 
     func testFindSearchAndEscapeShortcutsRespectContext() {
         XCTAssertEqual(
-            action(for: "f", modifiers: [.command], context: context(selectedDocumentKind: .markdown)),
+            action(for: "f", modifiers: [.command], context: shortcutContext(selectedDocumentKind: .markdown)),
             .showDocumentSearch
         )
         XCTAssertEqual(
-            action(for: "f", modifiers: [.control], context: context(selectedDocumentKind: .markdown)),
+            action(for: "f", modifiers: [.control], context: shortcutContext(selectedDocumentKind: .markdown)),
             .showDocumentSearch
         )
         XCTAssertNil(
-            action(for: "f", modifiers: [.command], context: context(selectedDocumentKind: nil))
+            action(for: "f", modifiers: [.command], context: shortcutContext(selectedDocumentKind: nil))
         )
 
         XCTAssertEqual(
-            action(for: "f", modifiers: [.command, .shift], context: context(hasWorkspace: true)),
+            action(for: "f", modifiers: [.command, .shift], context: shortcutContext(hasWorkspace: true)),
             .showWorkspaceSearch
         )
         XCTAssertNil(
-            action(for: "f", modifiers: [.command, .shift], context: context(hasWorkspace: false))
+            action(for: "f", modifiers: [.command, .shift], context: shortcutContext(hasWorkspace: false))
         )
 
         XCTAssertEqual(
-            action(for: "g", modifiers: [.command], context: context(selectedDocumentKind: .markdown)),
+            action(for: "g", modifiers: [.command], context: shortcutContext(selectedDocumentKind: .markdown)),
             .findNext
         )
         XCTAssertEqual(
-            action(for: "g", modifiers: [.command, .shift], context: context(selectedDocumentKind: .markdown)),
+            action(for: "g", modifiers: [.command, .shift], context: shortcutContext(selectedDocumentKind: .markdown)),
             .findPrevious
         )
         XCTAssertEqual(
@@ -132,7 +132,7 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
                 for: "",
                 modifiers: [],
                 keyCode: MonknotKeyboardShortcutRouter.escapeKeyCode,
-                context: context(isDocumentSearchPresented: true)
+                context: shortcutContext(isDocumentSearchPresented: true)
             ),
             .dismissDocumentSearch
         )
@@ -141,7 +141,7 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
                 for: "",
                 modifiers: [],
                 keyCode: MonknotKeyboardShortcutRouter.escapeKeyCode,
-                context: context(isDocumentSearchPresented: false)
+                context: shortcutContext(isDocumentSearchPresented: false)
             )
         )
     }
@@ -156,11 +156,11 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         XCTAssertEqual(action(for: "o", modifiers: [.command, .shift]), .openFolder)
 
         XCTAssertEqual(
-            action(for: "p", modifiers: [.command], context: context(canExportPDF: true)),
+            action(for: "p", modifiers: [.command], context: shortcutContext(canExportPDF: true)),
             .exportPDF
         )
         XCTAssertNil(
-            action(for: "p", modifiers: [.command], context: context(canExportPDF: false))
+            action(for: "p", modifiers: [.command], context: shortcutContext(canExportPDF: false))
         )
     }
 
@@ -172,11 +172,11 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
     ) -> MonknotKeyboardShortcutAction? {
         MonknotKeyboardShortcutRouter.action(
             for: MonknotKeyboardShortcutEvent(key: key, modifiers: modifiers, keyCode: keyCode),
-            context: context ?? Self.context()
+            context: context ?? shortcutContext()
         )
     }
 
-    private static func context(
+    private func shortcutContext(
         hasWorkspace: Bool = true,
         selectedDocumentKind: WorkspaceDocumentKind? = nil,
         canCloseTab: Bool = false,

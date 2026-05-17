@@ -128,9 +128,9 @@ ul,
 ol,
 blockquote,
 pre,
-table,
 details,
-figure {
+figure,
+.table-wrapper {
   margin: 0 0 1.08rem;
 }
 
@@ -276,10 +276,16 @@ mark.monknot-search-current {
   transition: background 180ms ease, outline-color 180ms ease;
 }
 
-table {
-  display: block;
+.table-wrapper {
   width: 100%;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+table {
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
   border-spacing: 0;
   border-collapse: collapse;
 }
@@ -288,11 +294,15 @@ th,
 td {
   padding: 0.58rem 0.72rem;
   border: 1px solid var(--table-border);
+  vertical-align: top;
+  word-break: normal;
+  overflow-wrap: normal;
 }
 
 th {
   background: var(--table-header-bg);
   font-weight: 650;
+  text-align: left;
 }
 
 tr:nth-child(even) td {

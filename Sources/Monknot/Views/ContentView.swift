@@ -272,7 +272,7 @@ struct ContentView: View {
                 let exporter = try MarkdownPDFExportService.makeDefault()
                 try await exporter.exportPDF(for: MarkdownPDFExportRequest(
                     markdown: markdown,
-                    baseURL: store.workspaceURL,
+                    baseURL: document.url.deletingLastPathComponent(),
                     theme: exportTheme,
                     zoomScale: options.resolvedScale,
                     codeFontSize: exportTheme.codeFontSize,

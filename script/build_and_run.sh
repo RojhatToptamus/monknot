@@ -142,6 +142,7 @@ APP_SOURCES=(
   "Sources/Monknot/Views/MarkdownOutlinePanel.swift"
   "Sources/Monknot/Views/MarkdownPDFExportOptionsSheet.swift"
   "Sources/Monknot/Views/MarkdownTextEditor.swift"
+  "Sources/Monknot/Views/NativeMarkdownEditorView.swift"
   "Sources/Monknot/Views/MarkdownPreviewView.swift"
   "Sources/Monknot/Views/PDFPreviewView.swift"
   "Sources/Monknot/Views/MediaPreviewView.swift"

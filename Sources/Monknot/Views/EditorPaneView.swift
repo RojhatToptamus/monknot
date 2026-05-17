@@ -272,8 +272,9 @@ struct EditorPaneView: View {
 
     @ViewBuilder
     private func markdownEditor(for selectedDocument: WorkspaceDocument) -> some View {
-        if editorMode == .source {
-            MarkdownTextEditor(
+        switch editorMode {
+        case .source:
+            NativeMarkdownEditorView(
                 documentID: selectedDocument.id,
                 text: Binding(
                     get: { store.documentText },
@@ -281,6 +282,7 @@ struct EditorPaneView: View {
                 ),
                 theme: theme,
                 fontSize: codeFontSize * zoomScale,
+                zoomScale: zoomScale,
                 fontSmoothing: fontSmoothing,
                 scrollPosition: activeViewportState?.textScrollPosition,
                 sourceLocation: $sourceLocation,
@@ -290,11 +292,12 @@ struct EditorPaneView: View {
                 }
             )
             .help(selectedDocument.relativePath)
-        } else {
+
+        case .preview:
             MarkdownPreviewView(
                 documentID: selectedDocument.id,
                 markdown: store.documentText,
-                baseURL: store.workspaceURL,
+                baseURL: URL(fileURLWithPath: selectedDocument.id).deletingLastPathComponent(),
                 theme: theme,
                 zoomScale: zoomScale,
                 codeFontSize: Double(codeFontSize),

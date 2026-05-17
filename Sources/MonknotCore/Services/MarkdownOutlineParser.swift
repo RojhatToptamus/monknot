@@ -32,9 +32,10 @@ public struct MarkdownOutlineParser: Sendable {
                 return
             }
 
+            let displayTitle = Self.displayTitle(from: heading.title)
             items.append(MarkdownOutlineItem(
-                id: "\(lineNumber)-\(heading.level)-\(heading.title)",
-                title: heading.title.isEmpty ? "Untitled heading" : heading.title,
+                id: "\(lineNumber)-\(heading.level)-\(displayTitle)",
+                title: displayTitle.isEmpty ? "Untitled heading" : displayTitle,
                 level: heading.level,
                 location: MarkdownSourceLocation(line: lineNumber, offset: 0)
             ))
@@ -78,6 +79,26 @@ public struct MarkdownOutlineParser: Sendable {
         }
 
         return title[..<closingStart].trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func displayTitle(from title: String) -> String {
+        var value = title
+        value = replaceMatches(#"!\[([^\]]*)\]\([^)]+\)"#, in: value, withTemplate: "$1")
+        value = replaceMatches(#"\[([^\]]+)\]\([^)]+\)"#, in: value, withTemplate: "$1")
+        value = replaceMatches(#"`([^`]*)`"#, in: value, withTemplate: "$1")
+        value = replaceMatches(#"(\*\*|__)(.*?)\1"#, in: value, withTemplate: "$2")
+        value = replaceMatches(#"(\*|_)(.*?)\1"#, in: value, withTemplate: "$2")
+        value = replaceMatches(#"~~(.*?)~~"#, in: value, withTemplate: "$1")
+        value = value.replacingOccurrences(of: #"\\([\\`*_{}\[\]()#+\-.!|>~])"#, with: "$1", options: .regularExpression)
+        return value
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func replaceMatches(_ pattern: String, in value: String, withTemplate template: String) -> String {
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return value }
+        let range = NSRange(value.startIndex..<value.endIndex, in: value)
+        return expression.stringByReplacingMatches(in: value, range: range, withTemplate: template)
     }
 
     private static func fence(in line: String) -> Fence? {
