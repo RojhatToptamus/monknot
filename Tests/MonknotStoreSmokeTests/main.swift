@@ -133,6 +133,8 @@ struct MonknotStoreSmokeTests {
         expect(didImportExternalFile, "pasteboard file import should copy an external file into the workspace")
         let importedExternalText = try String(contentsOf: root.appendingPathComponent("Finder.md"), encoding: .utf8)
         expect(importedExternalText == "# Finder\n", "pasteboard file import should preserve external file contents")
+        expect(FileManager.default.fileExists(atPath: externalMarkdownURL.path), "pasteboard file import should leave the Finder source file in place")
+        expect(store.workspaceURL?.standardizedFileURL == root.standardizedFileURL, "pasteboard file import should keep the current workspace root")
 
         store.importPasteboardItems([.fileURL(externalMarkdownURL)])
         let didImportUniqueExternalFile = await waitUntil {
@@ -140,6 +142,8 @@ struct MonknotStoreSmokeTests {
                 store.documents.contains { $0.relativePath == "Finder copy.md" }
         }
         expect(didImportUniqueExternalFile, "pasteboard file import should use a unique destination name")
+        expect(FileManager.default.fileExists(atPath: externalMarkdownURL.path), "repeated pasteboard file import should still leave the Finder source file in place")
+        expect(store.workspaceURL?.standardizedFileURL == root.standardizedFileURL, "repeated pasteboard file import should keep the current workspace root")
 
         store.importPasteboardItems([.pngImageData(Data("png image bytes\n".utf8))])
         let didImportClipboardImage = await waitUntil {

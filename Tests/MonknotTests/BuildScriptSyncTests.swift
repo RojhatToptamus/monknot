@@ -49,6 +49,16 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(script.contains("Sources/Monknot/Resources/AppIcon.iconset"))
     }
 
+    func testManualBundleDeclaresOpenableFilesAndFolders() throws {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let script = try String(contentsOf: root.appendingPathComponent("script/build_and_run.sh"), encoding: .utf8)
+
+        XCTAssertTrue(script.contains("<key>CFBundleDocumentTypes</key>"))
+        XCTAssertTrue(script.contains("<string>public.folder</string>"))
+        XCTAssertTrue(script.contains("<string>public.data</string>"))
+        XCTAssertTrue(script.contains("<key>LSSupportsOpeningDocumentsInPlace</key>"))
+    }
+
     private func sourceEntries(named arrayName: String, in script: String) throws -> Set<String> {
         guard let startRange = script.range(of: "\(arrayName)=(") else {
             throw NSError(domain: "BuildScriptSyncTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing \(arrayName) array"])

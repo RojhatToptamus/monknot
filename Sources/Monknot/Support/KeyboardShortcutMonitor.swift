@@ -88,22 +88,59 @@ extension NSEvent {
         )
     }
 
-    var monknotShouldDeferToNativePasteTarget: Bool {
-        guard let event = monknotKeyboardShortcutEvent,
-              event.modifiers == [.command],
-              event.key.lowercased() == "v"
+}
+
+enum MonknotNativePasteboardCommand {
+    static func performCopyIfAvailable() -> Bool {
+        perform(#selector(NSText.copy(_:)), ifTargetMatches: monknotCanNativeCopyTargetHandleCopy(_:))
+    }
+
+    static func performPasteIfAvailable() -> Bool {
+        perform(#selector(NSText.paste(_:)), ifTargetMatches: monknotIsNativeTextTarget(_:))
+    }
+
+    static func performCutIfAvailable() -> Bool {
+        perform(#selector(NSText.cut(_:)), ifTargetMatches: monknotCanNativeCutTargetHandleCut(_:))
+    }
+
+    private static func perform(
+        _ action: Selector,
+        ifTargetMatches predicate: (Any) -> Bool
+    ) -> Bool {
+        guard let target = NSApp.target(forAction: action, to: nil, from: nil),
+              predicate(target)
         else {
             return false
         }
 
-        guard let target = NSApp.target(forAction: #selector(NSText.paste(_:)), to: nil, from: nil) else {
-            return false
-        }
-
-        return Self.monknotIsNativePasteTarget(target)
+        return NSApp.sendAction(action, to: nil, from: nil)
     }
 
-    private static func monknotIsNativePasteTarget(_ target: Any) -> Bool {
+    private static func monknotCanNativeCopyTargetHandleCopy(_ target: Any) -> Bool {
+        if let textView = target as? NSTextView {
+            if textView.isFieldEditor {
+                return true
+            }
+
+            return textView.selectedRanges.contains { $0.rangeValue.length > 0 }
+        }
+
+        return monknotIsNativeTextTarget(target)
+    }
+
+    private static func monknotCanNativeCutTargetHandleCut(_ target: Any) -> Bool {
+        if let textView = target as? NSTextView {
+            if textView.isFieldEditor {
+                return true
+            }
+
+            return textView.isEditable && textView.selectedRanges.contains { $0.rangeValue.length > 0 }
+        }
+
+        return monknotIsNativeTextTarget(target)
+    }
+
+    private static func monknotIsNativeTextTarget(_ target: Any) -> Bool {
         if target is NSTextView || target is NSTextField {
             return true
         }

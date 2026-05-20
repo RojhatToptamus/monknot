@@ -70,6 +70,7 @@ public enum MonknotKeyboardShortcutAction: Equatable, Sendable {
     case newMarkdown
     case openFolder
     case saveDocument
+    case copyDocument
     case refreshWorkspace
     case closeTab
     case togglePinTab
@@ -109,6 +110,8 @@ public enum MonknotKeyboardShortcutRouter {
                 return context.hasWorkspace && !context.isBusy ? .newMarkdown : nil
             case "s":
                 return context.hasSelectedDocument ? .saveDocument : nil
+            case "c":
+                return context.hasSelectedDocument && !context.isBusy ? .copyDocument : nil
             case "r":
                 return context.hasWorkspace ? .refreshWorkspace : nil
             case "w":

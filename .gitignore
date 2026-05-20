@@ -6,3 +6,6 @@ dist/
 chrome-debug-handoff.json
 
 docs/
+
+./codex
+./claude

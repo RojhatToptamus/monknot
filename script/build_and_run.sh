@@ -115,6 +115,7 @@ APP_SOURCES=(
   "Sources/Monknot/Support/Color+Theme.swift"
   "Sources/Monknot/Support/CursorSupport.swift"
   "Sources/Monknot/Support/EditorMode+SwiftUI.swift"
+  "Sources/Monknot/Support/FileURLDropTarget.swift"
   "Sources/Monknot/Support/InitialWorkspaceRestorationCoordinator.swift"
   "Sources/Monknot/Support/KeyboardShortcutMonitor.swift"
   "Sources/Monknot/Support/MonknotCommandActions.swift"
@@ -124,6 +125,7 @@ APP_SOURCES=(
   "Sources/Monknot/Support/WorkspaceWindowRequestCenter.swift"
   "Sources/Monknot/Services/MarkdownPDFExportService.swift"
   "Sources/Monknot/Services/WorkspacePasteboardImportService.swift"
+  "Sources/Monknot/Services/WorkspacePasteboardExportService.swift"
   "Sources/Monknot/Services/WorkspaceFileWatcher.swift"
   "Sources/Monknot/Services/TerminalPTYSession.swift"
   "Sources/Monknot/Stores/MarkdownOutlineStore.swift"
@@ -204,8 +206,37 @@ cat >"$INFO_PLIST" <<PLIST
   <string>$APP_NAME</string>
   <key>CFBundleDisplayName</key>
   <string>$APP_NAME</string>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Folders</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.folder</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Files</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.data</string>
+      </array>
+    </dict>
+  </array>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
+  <key>LSSupportsOpeningDocumentsInPlace</key>
+  <true/>
   <key>LSMinimumSystemVersion</key>
   <string>$MIN_SYSTEM_VERSION</string>
   <key>NSHighResolutionCapable</key>

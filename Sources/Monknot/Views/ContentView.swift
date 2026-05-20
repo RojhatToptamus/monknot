@@ -588,6 +588,9 @@ struct ContentView: View {
             exportPDF: { exportSelectedMarkdownPDF() },
             canExportPDF: store.selectedDocument?.kind == .markdown,
             saveDocument: { store.saveSelectedFile() },
+            cut: { _ = cutFromCommand() },
+            copy: { _ = copyFromCommand() },
+            paste: { _ = pasteFromCommand() },
             refreshWorkspace: { store.refresh() },
             closeTab: { closeActiveTab() },
             canCloseTab: tabState.selectedDocumentID != nil && !store.isBusy,
@@ -616,11 +619,50 @@ struct ContentView: View {
         }
 
         if action == .importPasteboard {
-            guard !event.monknotShouldDeferToNativePasteTarget else { return false }
-            return importPasteboardFromCommand()
+            return pasteFromCommand()
+        }
+
+        if action == .copyDocument {
+            return copyFromCommand()
         }
 
         performKeyboardShortcutAction(action)
+        return true
+    }
+
+    private func cutFromCommand() -> Bool {
+        MonknotNativePasteboardCommand.performCutIfAvailable()
+    }
+
+    private func copyFromCommand() -> Bool {
+        if MonknotNativePasteboardCommand.performCopyIfAvailable() {
+            return true
+        }
+
+        return copySelectedDocumentFromCommand()
+    }
+
+    private func pasteFromCommand() -> Bool {
+        if MonknotNativePasteboardCommand.performPasteIfAvailable() {
+            return true
+        }
+
+        if WorkspacePasteboardExportService.ownsPasteboard(), store.canPasteDocumentTransfer {
+            store.pasteDocumentTransfer()
+            return true
+        }
+
+        return importPasteboardFromCommand()
+    }
+
+    private func copySelectedDocumentFromCommand() -> Bool {
+        guard let document = store.selectedDocument, !store.isBusy else { return false }
+        do {
+            try WorkspacePasteboardExportService.copyFile(at: document.url)
+            store.copyDocument(document)
+        } catch {
+            store.errorMessage = "Could not copy \(document.displayName): \(error.localizedDescription)"
+        }
         return true
     }
 
@@ -660,6 +702,8 @@ struct ContentView: View {
             openFolderPanel()
         case .saveDocument:
             store.saveSelectedFile()
+        case .copyDocument:
+            _ = copyFromCommand()
         case .refreshWorkspace:
             store.refresh()
         case .closeTab:
@@ -683,7 +727,7 @@ struct ContentView: View {
         case .resetZoom:
             zoomScale = 1.0
         case .importPasteboard:
-            _ = importPasteboardFromCommand()
+            _ = pasteFromCommand()
         case .toggleTerminal:
             toggleTerminalDrawer()
         case .toggleSidebar:

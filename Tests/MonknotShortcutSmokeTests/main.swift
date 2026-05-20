@@ -54,6 +54,18 @@ expect(
     "Command-S should not be consumed without an active document"
 )
 expect(
+    action("c", [.command], context: context(selectedDocumentKind: .markdown)) == .copyDocument,
+    "Command-C should copy the selected workspace file when an active document is selected"
+)
+expect(
+    action("c", [.command], context: context(selectedDocumentKind: nil)) == nil,
+    "Command-C should not be consumed without an active document"
+)
+expect(
+    action("c", [.command], context: context(selectedDocumentKind: .markdown, isBusy: true)) == nil,
+    "Command-C should not start a file copy during busy workspace operations"
+)
+expect(
     action("z", [.command], context: context(selectedDocumentKind: .pdf, canUndoPDFAnnotation: true)) == .undoPDFAnnotation,
     "Command-Z should undo PDF annotations when a PDF has undo history"
 )

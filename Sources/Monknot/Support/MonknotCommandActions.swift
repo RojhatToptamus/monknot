@@ -6,6 +6,9 @@ struct MonknotCommandActions {
     let exportPDF: () -> Void
     let canExportPDF: Bool
     let saveDocument: () -> Void
+    let cut: () -> Void
+    let copy: () -> Void
+    let paste: () -> Void
     let refreshWorkspace: () -> Void
     let closeTab: () -> Void
     let canCloseTab: Bool
@@ -50,12 +53,6 @@ struct MonknotCommandMenu: Commands {
             .keyboardShortcut("o", modifiers: [.command, .shift])
             .disabled(actions == nil)
 
-            Button("Save") {
-                actions?.saveDocument()
-            }
-            .keyboardShortcut("s", modifiers: [.command])
-            .disabled(actions == nil)
-
             Button("Refresh") {
                 actions?.refreshWorkspace()
             }
@@ -63,12 +60,6 @@ struct MonknotCommandMenu: Commands {
             .disabled(actions == nil)
 
             Divider()
-
-            Button("Close Tab") {
-                actions?.closeTab()
-            }
-            .keyboardShortcut("w", modifiers: [.command])
-            .disabled(actions?.canCloseTab != true)
 
             Button("Pin or Unpin Tab") {
                 actions?.togglePinTab()
@@ -88,6 +79,40 @@ struct MonknotCommandMenu: Commands {
                 actions?.toggleSidebar()
             }
             .keyboardShortcut("s", modifiers: [.command, .control])
+            .disabled(actions == nil)
+        }
+
+        CommandGroup(replacing: .saveItem) {
+            Button("Close Tab") {
+                actions?.closeTab()
+            }
+            .keyboardShortcut("w", modifiers: [.command])
+            .disabled(actions?.canCloseTab != true)
+
+            Button("Save") {
+                actions?.saveDocument()
+            }
+            .keyboardShortcut("s", modifiers: [.command])
+            .disabled(actions == nil)
+        }
+
+        CommandGroup(replacing: .pasteboard) {
+            Button("Cut") {
+                actions?.cut()
+            }
+            .keyboardShortcut("x", modifiers: [.command])
+            .disabled(actions == nil)
+
+            Button("Copy") {
+                actions?.copy()
+            }
+            .keyboardShortcut("c", modifiers: [.command])
+            .disabled(actions == nil)
+
+            Button("Paste") {
+                actions?.paste()
+            }
+            .keyboardShortcut("v", modifiers: [.command])
             .disabled(actions == nil)
         }
 

@@ -81,7 +81,11 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func openWorkspace(_ url: URL) {
-        startWorkspaceLoad(url, selecting: nil, persistBookmark: true, preserveSelection: nil, reloadSelection: true)
+        openWorkspace(url, selecting: nil)
+    }
+
+    func openWorkspace(_ url: URL, selecting selectedURL: URL?) {
+        startWorkspaceLoad(url, selecting: selectedURL, persistBookmark: true, preserveSelection: nil, reloadSelection: true)
     }
 
     func handleDroppedURL(_ url: URL) {

@@ -1,7 +1,6 @@
 import AppKit
 import MonknotCore
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct SidebarView: View {
     @ObservedObject var store: WorkspaceStore
@@ -98,8 +97,10 @@ struct SidebarView: View {
         .onAppear {
             expandedFolderIDs = initialExpandedFolderIDs()
         }
-        .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted) { providers in
-            loadDroppedURLs(from: providers)
+        .background {
+            FileURLDropTarget(isTargeted: $isDropTargeted) { urls in
+                handleDroppedURLs(urls)
+            }
         }
         .sheet(item: $sidebarPrompt) { prompt in
             SidebarNameInputSheet(
@@ -246,29 +247,16 @@ struct SidebarView: View {
         }
     }
 
-    private func loadDroppedURLs(from providers: [NSItemProvider]) -> Bool {
-        var didHandleProvider = false
+    private func handleDroppedURLs(_ urls: [URL]) {
+        let fileURLs = urls.filter(\.isFileURL)
+        guard !fileURLs.isEmpty else { return }
 
-        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-            didHandleProvider = true
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                let url: URL?
-
-                if let data = item as? Data {
-                    url = URL(dataRepresentation: data, relativeTo: nil)
-                } else {
-                    url = item as? URL
-                }
-
-                guard let url else { return }
-
-                Task { @MainActor in
-                    store.handleDroppedURL(url)
-                }
-            }
+        guard store.workspaceURL != nil else {
+            fileURLs.forEach { store.handleDroppedURL($0) }
+            return
         }
 
-        return didHandleProvider
+        store.importPasteboardItems(fileURLs.map(WorkspacePasteboardImportItem.fileURL))
     }
 
     @ViewBuilder
@@ -439,19 +427,17 @@ struct SidebarView: View {
     }
 
     private func copyDocument(_ document: WorkspaceDocument) {
-        writeFileURLToPasteboard(document.url)
-        store.copyDocument(document)
+        do {
+            try WorkspacePasteboardExportService.copyFile(at: document.url)
+            store.copyDocument(document)
+        } catch {
+            store.errorMessage = "Could not copy \(document.displayName): \(error.localizedDescription)"
+        }
     }
 
     private func cutDocument(_ document: WorkspaceDocument) {
-        writeFileURLToPasteboard(document.url)
+        WorkspacePasteboardExportService.clearFileTransferPasteboard()
         store.cutDocument(document)
-    }
-
-    private func writeFileURLToPasteboard(_ url: URL) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.writeObjects([url as NSURL])
     }
 
     private func submitPrompt(_ prompt: SidebarNamePrompt, name: String) {

@@ -13,6 +13,20 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         )
     }
 
+    func testCopyShortcutRequiresSelectedDocumentAndIdleState() {
+        XCTAssertEqual(
+            action(for: "c", modifiers: [.command], context: shortcutContext(selectedDocumentKind: .markdown)),
+            .copyDocument
+        )
+
+        XCTAssertNil(
+            action(for: "c", modifiers: [.command], context: shortcutContext(selectedDocumentKind: nil))
+        )
+        XCTAssertNil(
+            action(for: "c", modifiers: [.command], context: shortcutContext(selectedDocumentKind: .markdown, isBusy: true))
+        )
+    }
+
     func testPDFUndoRedoShortcutsDoNotStealTextUndo() {
         XCTAssertEqual(
             action(

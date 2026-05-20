@@ -18,7 +18,8 @@ struct MonknotApp: App {
             MonknotWindowRootView(
                 request: request.wrappedValue,
                 themeStore: themeStore,
-                workspaceRestoration: workspaceRestoration
+                workspaceRestoration: workspaceRestoration,
+                workspaceWindowRequests: workspaceWindowRequests
             )
                 .background(WorkspaceWindowRequestInstaller(requestCenter: workspaceWindowRequests))
                 .frame(minWidth: 920, minHeight: 620)
@@ -41,19 +42,42 @@ private struct MonknotWindowRootView: View {
     let request: MonknotWorkspaceWindowRequest
     @ObservedObject var themeStore: ThemeSettingsStore
     @ObservedObject var workspaceRestoration: InitialWorkspaceRestorationCoordinator
+    let workspaceWindowRequests: WorkspaceWindowRequestCenter
     @State private var didHandleInitialRequest = false
+    @State private var reusableWindowHandlerID = UUID()
 
     var body: some View {
         ContentView(store: workspaceStore, themeStore: themeStore)
+            .onAppear {
+                workspaceWindowRequests.installReusableWindowHandler(id: reusableWindowHandlerID) { request in
+                    guard workspaceStore.workspaceURL == nil,
+                          !workspaceStore.isBusy,
+                          let workspaceURL = request.workspaceURL
+                    else {
+                        return false
+                    }
+
+                    workspaceStore.openWorkspace(workspaceURL, selecting: request.selectedDocumentURL)
+                    return true
+                }
+            }
+            .onDisappear {
+                workspaceWindowRequests.removeReusableWindowHandler(id: reusableWindowHandlerID)
+            }
             .task {
                 guard !didHandleInitialRequest else { return }
                 didHandleInitialRequest = true
 
                 if let workspaceURL = request.workspaceURL {
-                    workspaceStore.openWorkspace(workspaceURL)
+                    workspaceStore.openWorkspace(workspaceURL, selecting: request.selectedDocumentURL)
+                } else if let pendingRequest = workspaceWindowRequests.consumePendingInitialWorkspaceRequest(),
+                          let workspaceURL = pendingRequest.workspaceURL {
+                    workspaceStore.openWorkspace(workspaceURL, selecting: pendingRequest.selectedDocumentURL)
                 } else if workspaceRestoration.claimInitialRestore() {
                     workspaceStore.restoreWorkspace()
                 }
+
+                workspaceWindowRequests.finishInitialWorkspaceRequestHandling()
             }
     }
 }
@@ -85,6 +109,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    func application(_ application: NSApplication, open urls: [URL]) {
+        openWorkspaceItems(at: urls)
+    }
+
+    func application(_ sender: NSApplication, openFile filename: String) -> Bool {
+        openWorkspaceItems(at: [URL(fileURLWithPath: filename)])
+        return true
+    }
+
+    func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        openWorkspaceItems(at: filenames.map { URL(fileURLWithPath: $0) })
+        sender.reply(toOpenOrPrint: .success)
+    }
+
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let recentWorkspaces = existingRecentWorkspaces()
         guard !recentWorkspaces.isEmpty else { return nil }
@@ -113,6 +151,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         WorkspaceWindowRequestCenter.shared.openWorkspaceWindow(
             at: URL(fileURLWithPath: path, isDirectory: true)
         )
+    }
+
+    private func openWorkspaceItems(at urls: [URL]) {
+        let requests = urls.compactMap(Self.workspaceRequest(for:))
+        guard !requests.isEmpty else { return }
+
+        NSApp.activate(ignoringOtherApps: true)
+        for request in requests {
+            guard let workspaceURL = request.workspaceURL else { continue }
+            WorkspaceWindowRequestCenter.shared.openWorkspaceWindow(
+                at: workspaceURL,
+                selecting: request.selectedDocumentURL
+            )
+        }
+    }
+
+    private static func workspaceRequest(for url: URL) -> MonknotWorkspaceWindowRequest? {
+        guard url.isFileURL else { return nil }
+
+        let standardizedURL = url.standardizedFileURL
+        guard let resourceValues = try? standardizedURL.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey]) else {
+            return nil
+        }
+
+        if resourceValues.isDirectory == true {
+            return MonknotWorkspaceWindowRequest(workspaceURL: standardizedURL)
+        }
+
+        if resourceValues.isRegularFile == true {
+            return MonknotWorkspaceWindowRequest(
+                workspaceURL: standardizedURL.deletingLastPathComponent(),
+                selectedDocumentURL: standardizedURL
+            )
+        }
+
+        return nil
     }
 
     private func existingRecentWorkspaces() -> [RecentWorkspaceEntry] {
