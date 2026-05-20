@@ -264,6 +264,29 @@ mark.monknot-search-current {
   outline-offset: 1px;
 }
 
+:root.monknot-pdf-export h1,
+:root.monknot-pdf-export h2,
+:root.monknot-pdf-export h3,
+:root.monknot-pdf-export h4,
+:root.monknot-pdf-export h5,
+:root.monknot-pdf-export h6 {
+  break-after: avoid;
+  page-break-after: avoid;
+}
+
+:root.monknot-pdf-export blockquote,
+:root.monknot-pdf-export pre,
+:root.monknot-pdf-export table,
+:root.monknot-pdf-export figure,
+:root.monknot-pdf-export img {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+:root.monknot-pdf-export pre {
+  box-shadow: none;
+}
+
 [data-source-line] {
   scroll-margin-top: 24px;
 }
@@ -348,5 +371,28 @@ img {
   * {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  blockquote,
+  pre,
+  table,
+  figure,
+  img {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  pre {
+    box-shadow: none;
   }
 }
