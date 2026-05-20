@@ -9,27 +9,34 @@ struct TerminalDrawerView: View {
     let zoomScale: Double
     let usePointerCursors: Bool
     let fontSmoothing: Bool
+    var includesChrome: Bool = true
     let close: () -> Void
 
     private var uiFontSize: Double { theme.uiFontSize }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
-    }
-
-    private var terminalTabsWidth: CGFloat {
-        min(scaled(220), max(scaled(60), CGFloat(sessions.tabs.count) * scaled(68)))
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            terminalTopBar
-
-            Divider()
-                .overlay(theme.borderColor)
+            if includesChrome {
+                MonknotChromePanel(theme: theme) {
+                    TerminalDrawerChromeRow(
+                        sessions: sessions,
+                        workingDirectory: workingDirectory,
+                        theme: theme,
+                        zoomScale: zoomScale,
+                        uiFontSize: uiFontSize,
+                        close: close
+                    )
+                }
+            }
 
             terminalSurface
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.surfaceColor)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Terminal panel")
@@ -41,7 +48,40 @@ struct TerminalDrawerView: View {
         }
     }
 
-    private var terminalTopBar: some View {
+    @ViewBuilder
+    private var terminalSurface: some View {
+        if let session = sessions.activeSession {
+            TerminalWebView(
+                session: session,
+                theme: theme,
+                fontSize: scaled(13.5),
+                usePointerCursors: usePointerCursors,
+                fontSmoothing: fontSmoothing
+            )
+            .id(sessions.activeTerminalID)
+        } else {
+            TerminalEmptySurface(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize)
+        }
+    }
+}
+
+struct TerminalDrawerChromeRow: View {
+    @ObservedObject var sessions: TerminalSessionCollectionStore
+    let workingDirectory: URL?
+    let theme: AppTheme
+    let zoomScale: Double
+    let uiFontSize: Double
+    let close: () -> Void
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    private var terminalTabsWidth: CGFloat {
+        min(scaled(220), max(scaled(60), CGFloat(sessions.tabs.count) * scaled(68)))
+    }
+
+    var body: some View {
         HStack(spacing: scaled(4)) {
             terminalTabs
 
@@ -68,8 +108,7 @@ struct TerminalDrawerView: View {
             )
             .keyboardShortcut(.cancelAction)
         }
-        .padding(.horizontal, scaled(10))
-        .frame(height: scaled(44))
+        .monknotChromeRowLayout(theme: theme, zoomScale: zoomScale)
     }
 
     private var terminalTabs: some View {
@@ -98,26 +137,9 @@ struct TerminalDrawerView: View {
                     }
                 }
             }
-            .padding(.vertical, scaled(4))
         }
-        .frame(minWidth: scaled(60), maxWidth: scaled(220), maxHeight: scaled(34))
+        .frame(minWidth: scaled(60), maxWidth: scaled(220))
         .frame(width: terminalTabsWidth, alignment: .leading)
-    }
-
-    @ViewBuilder
-    private var terminalSurface: some View {
-        if let session = sessions.activeSession {
-            TerminalWebView(
-                session: session,
-                theme: theme,
-                fontSize: scaled(13.5),
-                usePointerCursors: usePointerCursors,
-                fontSmoothing: fontSmoothing
-            )
-            .id(sessions.activeTerminalID)
-        } else {
-            TerminalEmptySurface(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize)
-        }
     }
 }
 
@@ -136,7 +158,7 @@ private struct TerminalTabChip: View {
     @State private var isHovered = false
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -274,7 +296,7 @@ private struct TerminalEmptySurface: View {
     let uiFontSize: Double
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {

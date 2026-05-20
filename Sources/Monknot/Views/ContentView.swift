@@ -62,12 +62,15 @@ struct ContentView: View {
     }
 
     private var chromeContent: AnyView {
-        AnyView(rootContent
+        AnyView(MonknotChromeSurfaceReader {
+            rootContent
+        }
             .ignoresSafeArea(.container, edges: .top)
             .background(activeTheme.surfaceColor)
             .background(WindowBackgroundDragEnabler(
                 surfaceColor: activeTheme.surfaceColor,
-                layoutToken: nativeChromeLayoutToken
+                layoutToken: nativeChromeLayoutToken,
+                usesDarkAppearance: activeTheme.isDark
             ))
             .background(WindowCloseGuard(
                 shouldClose: { await resolveAllOpenUnsavedChanges() }
@@ -828,8 +831,7 @@ struct ContentView: View {
     /// so the AppKit unified toolbar and the SwiftUI chrome stay in
     /// lockstep when the user changes zoom or font size.
     private var nativeChromeHeight: CGFloat {
-        let scale = max(zoomScale * activeTheme.uiFontSize / 16, 0.75)
-        return 44 * scale
+        MonknotMetrics.chromeHeight(theme: activeTheme, zoomScale: zoomScale)
     }
 
     private func toggleSidebar() {

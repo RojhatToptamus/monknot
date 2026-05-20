@@ -88,7 +88,7 @@ public enum CodexThemeCatalog {
                 semanticColors: AppThemeSemanticColors(diffAdded: diffAdded, diffRemoved: diffRemoved, skill: skill),
                 uiFontName: uiFontName,
                 codeFontName: codeFontName,
-                opaqueWindows: opaqueWindows,
+                chromeSurfaceStyle: opaqueWindows ? .solid : .translucent,
                 contrast: contrast
             )
         )

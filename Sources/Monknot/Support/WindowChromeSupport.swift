@@ -9,9 +9,11 @@ import SwiftUI
 struct WindowBackgroundDragEnabler: NSViewRepresentable {
     var surfaceColor: Color
     var layoutToken: String
+    var suppressToolbarButton: Bool = true
+    var usesDarkAppearance: Bool?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(suppressToolbarButton: suppressToolbarButton)
     }
 
     func makeNSView(context: Context) -> NSView {
@@ -37,10 +39,60 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
                 window.titlebarSeparatorStyle = .none
                 window.toolbarStyle = .unified
             }
+            if let usesDarkAppearance {
+                window.appearance = NSAppearance(named: usesDarkAppearance ? .darkAqua : .aqua)
+            }
 
             coordinator.observeWindow(window)
-            coordinator.suppressDuplicateToolbarButton(in: window)
+            if coordinator.suppressToolbarButton {
+                coordinator.suppressDuplicateToolbarButton(in: window)
+            }
+            coordinator.configureSplitViewDividers(in: window)
         }
+    }
+
+    /// Hides only AppKit NSSplitView divider subviews (not column content).
+    /// Must not run on key-window changes — inactive windows recreate dividers and
+    /// broad name matching previously hid non-divider views.
+    fileprivate static func hideSplitViewDividers(in window: NSWindow) {
+        guard let contentView = window.contentView else { return }
+        for splitView in splitViews(in: contentView) {
+            for subview in splitView.subviews where isNSSplitViewDividerSubview(subview, in: splitView) {
+                subview.isHidden = true
+            }
+        }
+    }
+
+    private static let splitDividerTypeMarkers = [
+        "NSSplitViewDivider",
+        "_NSSplitViewDivider",
+        "SplitDivider",
+        "NSSplitViewSplitter"
+    ]
+
+    private static func isNSSplitViewDividerSubview(_ view: NSView, in splitView: NSSplitView) -> Bool {
+        let typeName = String(describing: type(of: view))
+        if splitDividerTypeMarkers.contains(where: { typeName.contains($0) }) {
+            return true
+        }
+
+        guard splitView.subviews.count > 2 else { return false }
+        let thickness = max(splitView.dividerThickness, 1)
+        if splitView.isVertical {
+            return view.frame.width <= thickness + 0.5
+        }
+        return view.frame.height <= thickness + 0.5
+    }
+
+    private static func splitViews(in view: NSView) -> [NSSplitView] {
+        var results: [NSSplitView] = []
+        if let splitView = view as? NSSplitView {
+            results.append(splitView)
+        }
+        for subview in view.subviews {
+            results.append(contentsOf: splitViews(in: subview))
+        }
+        return results
     }
 
     /// AppKit reinstalls `.toolbarButton` whenever the window changes state.
@@ -53,8 +105,13 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
     }
 
     final class Coordinator {
+        let suppressToolbarButton: Bool
         private weak var observedWindow: NSWindow?
         private var observers: [NSObjectProtocol] = []
+
+        init(suppressToolbarButton: Bool) {
+            self.suppressToolbarButton = suppressToolbarButton
+        }
 
         deinit {
             removeObservers()
@@ -66,7 +123,7 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             observedWindow = window
 
             let center = NotificationCenter.default
-            let names: [NSNotification.Name] = [
+            let toolbarNames: [NSNotification.Name] = [
                 NSWindow.didResizeNotification,
                 NSWindow.didBecomeKeyNotification,
                 NSWindow.didResignKeyNotification,
@@ -75,13 +132,31 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
                 NSWindow.didChangeOcclusionStateNotification,
                 NSWindow.didUpdateNotification
             ]
-            for name in names {
+            for name in toolbarNames {
                 let token = center.addObserver(forName: name, object: window, queue: .main) { [weak self, weak window] _ in
-                    guard let window, let self else { return }
+                    guard let window, let self, self.suppressToolbarButton else { return }
                     self.suppressDuplicateToolbarButton(in: window)
                 }
                 observers.append(token)
             }
+
+            let layoutNames: [NSNotification.Name] = [
+                NSWindow.didResizeNotification,
+                NSWindow.didEnterFullScreenNotification,
+                NSWindow.didExitFullScreenNotification,
+                NSWindow.didUpdateNotification
+            ]
+            for name in layoutNames {
+                let token = center.addObserver(forName: name, object: window, queue: .main) { [weak window] _ in
+                    guard let window else { return }
+                    WindowBackgroundDragEnabler.hideSplitViewDividers(in: window)
+                }
+                observers.append(token)
+            }
+        }
+
+        func configureSplitViewDividers(in window: NSWindow) {
+            WindowBackgroundDragEnabler.hideSplitViewDividers(in: window)
         }
 
         func suppressDuplicateToolbarButton(in window: NSWindow) {

@@ -23,9 +23,8 @@ struct SidebarView: View {
     @State private var isMoveDropTargetingRoot = false
     private let nativeSidebarTopInsetCompensation: CGFloat = 8
 
-    /// Scaled font size — all sidebar typography goes through this.
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     private var visibleNodes: [VisibleSidebarNode] {
@@ -34,22 +33,21 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Sidebar chrome row: leading reservation for the macOS traffic
-            // lights, with workspace-level action icons aligned to the
-            // split-view separator.
-            SidebarChromeRow(
-                openFolder: openFolder,
-                createMarkdown: newMarkdown,
-                showWorkspaceSearch: {
-                    workspaceSearch.present(documents: store.documents)
-                },
-                canCreateMarkdown: store.workspaceURL != nil,
-                canSearch: store.workspaceURL != nil,
-                isBusy: store.isBusy,
-                theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: uiFontSize
-            )
+            MonknotChromePanel(theme: theme) {
+                SidebarChromeRow(
+                    openFolder: openFolder,
+                    createMarkdown: newMarkdown,
+                    showWorkspaceSearch: {
+                        workspaceSearch.present(documents: store.documents)
+                    },
+                    canCreateMarkdown: store.workspaceURL != nil,
+                    canSearch: store.workspaceURL != nil,
+                    isBusy: store.isBusy,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    uiFontSize: uiFontSize
+                )
+            }
 
             VStack(spacing: 0) {
                 SidebarProjectHeader(
@@ -65,7 +63,7 @@ struct SidebarView: View {
             .layoutPriority(1)
 
             Rectangle()
-                .fill(theme.borderColor)
+                .fill(theme.separatorColor)
                 .frame(height: 1)
 
             SidebarSettingsButton(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize)
@@ -73,8 +71,12 @@ struct SidebarView: View {
         }
         .padding(.top, -nativeSidebarTopInsetCompensation)
         .background {
-            sidebarBackground
-                .ignoresSafeArea(.container, edges: .top)
+            MonknotChromeSurfaceBackground(theme: theme)
+        }
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(theme.separatorColor)
+                .frame(width: 1)
         }
         .ignoresSafeArea(.container, edges: .top)
         .overlay {
@@ -121,11 +123,6 @@ struct SidebarView: View {
                 }
             )
         }
-    }
-
-    @ViewBuilder
-    private var sidebarBackground: some View {
-        theme.surfaceColor
     }
 
     @ViewBuilder
@@ -264,14 +261,14 @@ struct SidebarView: View {
         Button {
             beginCreateFile(in: nil)
         } label: {
-            Label("New File", systemImage: "doc.badge.plus")
+            Label("New File", systemImage: MonknotWorkspaceIcons.newFile)
         }
         .disabled(store.workspaceURL == nil || store.isBusy)
 
         Button {
             beginCreateFolder(in: nil)
         } label: {
-            Label("New Folder", systemImage: "folder.badge.plus")
+            Label("New Folder", systemImage: MonknotWorkspaceIcons.newFolder)
         }
         .disabled(store.workspaceURL == nil || store.isBusy)
 
@@ -291,13 +288,13 @@ struct SidebarView: View {
             Button {
                 copyPath(workspaceURL)
             } label: {
-                Label("Copy Path", systemImage: "link")
+                Label("Copy Path", systemImage: MonknotWorkspaceIcons.copyPath)
             }
 
             Button {
                 revealInFinder(workspaceURL)
             } label: {
-                Label("Reveal in Finder", systemImage: "magnifyingglass")
+                Label("Reveal in Finder", systemImage: MonknotWorkspaceIcons.revealInFinder)
             }
         }
     }
@@ -541,13 +538,13 @@ private struct SidebarChromeRow: View {
     let uiFontSize: Double
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
         HStack(spacing: scaled(2)) {
             Color.clear
-                .frame(width: 78)
+                .frame(width: MonknotMetrics.scale(MonknotMetrics.trafficLightReserveBase + 6, theme: theme, zoomScale: zoomScale))
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
 
@@ -556,7 +553,7 @@ private struct SidebarChromeRow: View {
                 .accessibilityHidden(true)
 
             ChromeBarButton(
-                systemImage: "square.and.pencil",
+                systemImage: MonknotWorkspaceIcons.newMarkdown,
                 label: "New Markdown",
                 theme: theme,
                 zoomScale: zoomScale,
@@ -566,7 +563,7 @@ private struct SidebarChromeRow: View {
             )
 
             ChromeBarButton(
-                systemImage: "folder",
+                systemImage: MonknotWorkspaceIcons.openFolder,
                 label: "Open Folder",
                 theme: theme,
                 zoomScale: zoomScale,
@@ -576,7 +573,7 @@ private struct SidebarChromeRow: View {
             )
 
             ChromeBarButton(
-                systemImage: "magnifyingglass",
+                systemImage: MonknotWorkspaceIcons.searchWorkspace,
                 label: "Search Workspace",
                 theme: theme,
                 zoomScale: zoomScale,
@@ -585,13 +582,7 @@ private struct SidebarChromeRow: View {
                 action: showWorkspaceSearch
             )
         }
-        .padding(.horizontal, scaled(10))
-        .frame(height: scaled(44))
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(theme.borderColor)
-                .frame(height: 1)
-        }
+        .monknotChromeRowLayout(theme: theme, zoomScale: zoomScale)
     }
 }
 
@@ -605,7 +596,7 @@ private struct SidebarProjectHeader: View {
     let uiFontSize: Double
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -622,68 +613,6 @@ private struct SidebarProjectHeader: View {
         .padding(.horizontal, scaled(12))
         .padding(.top, scaled(8))
         .padding(.bottom, scaled(4))
-    }
-}
-
-/// Shared chrome/toolbar button — used in both the sidebar window chrome
-/// and the right-pane top navigation bar so sizing/styling is identical.
-struct ChromeBarButton: View {
-    let systemImage: String
-    let label: String
-    let theme: AppTheme
-    let zoomScale: Double
-    let uiFontSize: Double
-    var isActive: Bool = false
-    var isDisabled: Bool = false
-    let action: () -> Void
-
-    @State private var isHovered = false
-    @FocusState private var isFocused: Bool
-
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
-    }
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: scaled(13), weight: .regular))
-                .foregroundStyle(iconColor)
-                .frame(width: scaled(28), height: scaled(28))
-                .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale)))
-                .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale)))
-        }
-        .buttonStyle(.plain)
-        .disabled(isDisabled)
-        .focusable(!isDisabled)
-        .focused($isFocused)
-        .opacity(isDisabled ? 0.4 : 1)
-        .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.12), value: isHovered)
-        .animation(.easeOut(duration: 0.12), value: isActive)
-        .help(label)
-        .accessibilityLabel(label)
-        .monknotPointerCursor(enabled: !isDisabled)
-    }
-
-    private var background: Color {
-        if isActive {
-            return theme.controlTrackFillColor
-        }
-        if isHovered && !isDisabled {
-            return theme.foregroundColor.opacity(theme.isDark ? 0.065 : 0.048)
-        }
-        return .clear
-    }
-
-    private var iconColor: Color {
-        if isActive {
-            return theme.foregroundColor
-        }
-        if isHovered && !isDisabled {
-            return theme.foregroundColor.opacity(0.92)
-        }
-        return theme.mutedForegroundColor
     }
 }
 
@@ -724,7 +653,7 @@ private struct SidebarNodeRow: View {
     }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -775,10 +704,16 @@ private struct SidebarNodeRow: View {
         .opacity(isMoveSource ? 0.45 : 1)
         .simultaneousGesture(sidebarMoveGesture)
         .help(node.relativePath.isEmpty ? node.name : node.relativePath)
+        .accessibilityLabel(folderAccessibilityLabel)
         .accessibilityAddTraits(.isButton)
         .contextMenu {
             folderContextMenu()
         }
+    }
+
+    private var folderAccessibilityLabel: String {
+        let state = isExpanded ? "expanded" : "collapsed"
+        return "\(node.name), folder, \(state)"
     }
 
     /// File row — larger text, generous padding, Codex-style selection highlight.
@@ -823,6 +758,7 @@ private struct SidebarNodeRow: View {
         .opacity(isMoveSource ? 0.45 : 1)
         .simultaneousGesture(sidebarMoveGesture)
         .help(node.relativePath.isEmpty ? node.name : node.relativePath)
+        .accessibilityLabel(fileAccessibilityLabel)
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .contextMenu {
@@ -832,21 +768,19 @@ private struct SidebarNodeRow: View {
         }
     }
 
-    private var documentIconName: String {
-        switch node.document?.kind {
-        case .pdf:
-            return "doc.richtext"
-        case .markdown:
-            return "chevron.left.forwardslash.chevron.right"
-        case .text:
-            return "doc.plaintext"
-        case .media:
-            return "play.rectangle"
-        case .nativePreview:
-            return "doc.viewfinder"
-        case .unsupported, nil:
-            return "doc"
+    private var fileAccessibilityLabel: String {
+        var parts = [node.name, "file"]
+        if isSelected {
+            parts.append("selected")
         }
+        if !saveState.isClean {
+            parts.append(saveState.accessibilityDescription)
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    private var documentIconName: String {
+        node.document?.kind.resolvedSystemImage ?? WorkspaceDocumentKind.unsupported.resolvedSystemImage
     }
 
     @ViewBuilder
@@ -854,13 +788,13 @@ private struct SidebarNodeRow: View {
         Button {
             createFileInFolder(node.url)
         } label: {
-            Label("New File", systemImage: "doc.badge.plus")
+            Label("New File", systemImage: MonknotWorkspaceIcons.newFile)
         }
 
         Button {
             createFolderInFolder(node.url)
         } label: {
-            Label("New Folder", systemImage: "folder.badge.plus")
+            Label("New Folder", systemImage: MonknotWorkspaceIcons.newFolder)
         }
 
         Divider()
@@ -880,7 +814,7 @@ private struct SidebarNodeRow: View {
         Button {
             revealFolderInFinder(node.url)
         } label: {
-            Label("Reveal in Finder", systemImage: "magnifyingglass")
+            Label("Reveal in Finder", systemImage: MonknotWorkspaceIcons.revealInFinder)
         }
     }
 
@@ -901,14 +835,14 @@ private struct SidebarNodeRow: View {
         Button {
             revealInFinder(document)
         } label: {
-            Label("Reveal in Finder", systemImage: "magnifyingglass")
+            Label("Reveal in Finder", systemImage: MonknotWorkspaceIcons.revealInFinder)
         }
 
         if document.kind == .markdown {
             Button {
                 exportPDF(document)
             } label: {
-                Label("Export PDF...", systemImage: "doc.richtext")
+                Label("Export PDF...", systemImage: MonknotWorkspaceIcons.exportPDF)
             }
         }
 
@@ -1179,7 +1113,7 @@ private struct SidebarSettingsButton: View {
     @Environment(\.openSettings) private var openSettings
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -1187,7 +1121,7 @@ private struct SidebarSettingsButton: View {
             openSettings()
         } label: {
             HStack(spacing: scaled(8)) {
-                Image(systemName: "gearshape")
+                Image(systemName: MonknotWorkspaceIcons.settings)
                     .font(.system(size: scaled(15)))
                     .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
 
@@ -1217,7 +1151,7 @@ private struct EmptySidebarView: View {
     let openFolder: () -> Void
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -1239,7 +1173,7 @@ private struct EmptySidebarView: View {
             }
 
             Button(action: openFolder) {
-                Label("Open Folder", systemImage: "folder")
+                Label("Open Folder", systemImage: MonknotWorkspaceIcons.openFolder)
                     .font(.system(size: scaled(14), weight: .medium))
                     .padding(.horizontal, scaled(16))
                     .padding(.vertical, scaled(8))
@@ -1296,7 +1230,7 @@ private struct SidebarNameInputSheet: View {
     }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {

@@ -24,25 +24,39 @@ struct MarkdownPDFExportOptionsSheet: View {
 
             SettingsGroupCard(theme: theme) {
                 SettingsRow(theme: theme, title: "Page size", detail: "Choose the export page format.") {
-                    Picker("", selection: $options.pageSize) {
-                        ForEach(MarkdownPDFPageSize.allCases) { size in
-                            Text(size.title).tag(size)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .frame(width: 230)
+                    MonknotSettingsSegmentedControl(
+                        options: MarkdownPDFPageSize.allCases.map {
+                            MonknotSettingsSegment(id: $0.rawValue, title: $0.title)
+                        },
+                        selection: Binding(
+                            get: { options.pageSize.rawValue },
+                            set: { raw in
+                                if let value = MarkdownPDFPageSize(rawValue: raw) {
+                                    options.pageSize = value
+                                }
+                            }
+                        ),
+                        theme: theme
+                    )
+                    .frame(maxWidth: 230)
                 }
 
                 SettingsRow(theme: theme, title: "Margins", detail: "Control the rendered content density.") {
-                    Picker("", selection: $options.marginPreset) {
-                        ForEach(MarkdownPDFMarginPreset.allCases) { preset in
-                            Text(preset.title).tag(preset)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .frame(width: 180)
+                    MonknotSettingsSegmentedControl(
+                        options: MarkdownPDFMarginPreset.allCases.map {
+                            MonknotSettingsSegment(id: $0.rawValue, title: $0.title)
+                        },
+                        selection: Binding(
+                            get: { options.marginPreset.rawValue },
+                            set: { raw in
+                                if let value = MarkdownPDFMarginPreset(rawValue: raw) {
+                                    options.marginPreset = value
+                                }
+                            }
+                        ),
+                        theme: theme
+                    )
+                    .frame(maxWidth: 180)
                 }
 
                 SettingsSliderRow(
@@ -58,37 +72,33 @@ struct MarkdownPDFExportOptionsSheet: View {
                 )
 
                 SettingsRow(theme: theme, title: "Theme", detail: "Use the current view or force a light/dark PDF.", showsDivider: false) {
-                    Picker("", selection: $options.themeMode) {
-                        ForEach(MarkdownPDFThemeMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .frame(width: 230)
+                    MonknotSettingsSegmentedControl(
+                        options: MarkdownPDFThemeMode.allCases.map {
+                            MonknotSettingsSegment(id: $0.rawValue, title: $0.title)
+                        },
+                        selection: Binding(
+                            get: { options.themeMode.rawValue },
+                            set: { raw in
+                                if let value = MarkdownPDFThemeMode(rawValue: raw) {
+                                    options.themeMode = value
+                                }
+                            }
+                        ),
+                        theme: theme
+                    )
+                    .frame(maxWidth: 230)
                 }
             }
 
             HStack {
                 Spacer()
                 SettingsOutlineButton(title: "Cancel", theme: theme, isDisabled: isExporting, action: cancel)
-                Button(action: export) {
-                    HStack(spacing: 8) {
-                        if isExporting {
-                            ProgressView()
-                                .controlSize(.small)
-                        }
-                        Text(isExporting ? "Exporting..." : "Export...")
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                    .foregroundStyle(Color.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 7)
-                    .background(theme.accentColor, in: RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius))
-                }
-                .buttonStyle(.plain)
-                .disabled(isExporting)
-                .monknotPointerCursor(enabled: !isExporting)
+                MonknotAccentButton(
+                    title: isExporting ? "Exporting..." : "Export...",
+                    theme: theme,
+                    isDisabled: isExporting,
+                    action: export
+                )
             }
         }
         .padding(22)

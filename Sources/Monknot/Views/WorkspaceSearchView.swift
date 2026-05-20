@@ -14,7 +14,7 @@ struct WorkspaceSearchView: View {
     @FocusState private var isSearchFocused: Bool
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -59,16 +59,14 @@ struct WorkspaceSearchView: View {
                     }
                 }
 
-                Button(action: close) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: scaled(11), weight: .semibold))
-                        .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
-                        .frame(width: scaled(24), height: scaled(24))
-                }
-                .buttonStyle(.plain)
-                .help("Close Search")
-                .accessibilityLabel("Close Search")
-                .monknotPointerCursor()
+                MonknotIconButton(
+                    systemImage: "xmark",
+                    label: "Close Search",
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    size: .compact,
+                    action: close
+                )
             }
             .padding(.horizontal, scaled(10))
             .padding(.vertical, scaled(7))
@@ -109,7 +107,7 @@ struct WorkspaceSearchView: View {
                 } label: {
                     VStack(alignment: .leading, spacing: scaled(2)) {
                         HStack(spacing: scaled(6)) {
-                            Image(systemName: result.kind == .pdf ? "doc.richtext" : "doc.text")
+                            Image(systemName: result.kind.resolvedSystemImage)
                                 .font(.system(size: scaled(12)))
                                 .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.72))
 

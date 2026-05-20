@@ -7,6 +7,8 @@ struct EditorPaneView: View {
     @Binding var editorMode: EditorMode
     @AppStorage("Monknot.terminalDrawerWidth") private var terminalDrawerWidth = 420.0
     @StateObject private var terminalSessions = TerminalSessionCollectionStore()
+    @State private var markdownCommandSerial = 0
+    @State private var markdownCommandRequest: MarkdownTextEditorCommandRequest?
     let theme: AppTheme
     let zoomScale: Double
     let codeFontSize: CGFloat
@@ -66,7 +68,7 @@ struct EditorPaneView: View {
 
     @ViewBuilder
     private func editorAndDrawer(in size: CGSize) -> some View {
-        let isCompact = size.width < 760
+        let isCompact = size.width < MonknotMetrics.compactLayoutBreakpoint
         let drawerWidth = terminalDrawerWidth(for: size.width)
 
         if isCompact {
@@ -82,62 +84,233 @@ struct EditorPaneView: View {
                         }
                         .accessibilityHidden(true)
 
-                    resizableTerminalDrawer(width: drawerWidth, maxWidth: drawerMaxWidth(for: size.width)) {
-                        setTerminalPresented(false)
-                    }
+                    resizableTerminalDrawer(
+                        width: drawerWidth,
+                        maxWidth: drawerMaxWidth(for: size.width),
+                        close: { setTerminalPresented(false) }
+                    )
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                     .zIndex(1)
                 }
             }
             .animation(drawerAnimation, value: isTerminalPresented)
+        } else if isTerminalPresented {
+            wideLayoutWithTerminal(
+                drawerWidth: drawerWidth,
+                maxDrawerWidth: drawerMaxWidth(for: size.width)
+            )
+            .animation(drawerAnimation, value: isTerminalPresented)
         } else {
-            HStack(spacing: 0) {
-                editorColumn
+            editorColumn
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var showsMarkdownSourceSubchrome: Bool {
+        store.selectedDocument?.kind == .markdown && editorMode == .source
+    }
+
+    /// Wide layout with terminal: primary chrome is one shared row (aligned tops);
+    /// resize gutter and content sit below, not between chrome headers.
+    private func wideLayoutWithTerminal(drawerWidth: CGFloat, maxDrawerWidth: CGFloat) -> some View {
+        let terminalPanelWidth = max(0, drawerWidth - terminalResizeGutterWidth)
+
+        return VStack(spacing: 0) {
+            sharedPrimaryChromeRow(terminalDrawerWidth: drawerWidth)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if showsMarkdownSourceSubchrome {
+                editorSecondaryChromeRow(terminalDrawerWidth: drawerWidth)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(alignment: .top, spacing: 0) {
+                editorContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                if isTerminalPresented {
-                    resizableTerminalDrawer(width: drawerWidth, maxWidth: drawerMaxWidth(for: size.width)) {
-                        setTerminalPresented(false)
-                    }
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                terminalContentColumn(
+                    drawerWidth: drawerWidth,
+                    terminalPanelWidth: terminalPanelWidth,
+                    maxDrawerWidth: maxDrawerWidth,
+                    close: { setTerminalPresented(false) }
+                )
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .layoutPriority(1)
+        }
+    }
+
+    private func sharedPrimaryChromeRow(terminalDrawerWidth: CGFloat) -> some View {
+        let terminalChromeWidth = max(0, terminalDrawerWidth - terminalResizeGutterWidth - 1)
+
+        return HStack(alignment: .top, spacing: 0) {
+            MonknotChromePanel(theme: theme, showsBottomBorder: false) {
+                editorPrimaryChrome
+            }
+            .frame(maxWidth: .infinity)
+
+            editorTerminalVerticalSeparator
+
+            Color.clear
+                .frame(width: terminalResizeGutterWidth)
+                .accessibilityHidden(true)
+
+            MonknotChromePanel(theme: theme, showsBottomBorder: false) {
+                TerminalDrawerChromeRow(
+                    sessions: terminalSessions,
+                    workingDirectory: activeTerminalDirectory,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    uiFontSize: theme.uiFontSize,
+                    close: { setTerminalPresented(false) }
+                )
+            }
+            .frame(width: terminalChromeWidth)
+        }
+        .background {
+            MonknotChromeSurfaceBackground(theme: theme)
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(theme.separatorColor)
+                .frame(height: 1)
+        }
+    }
+
+    @ViewBuilder
+    private func editorSecondaryChromeRow(terminalDrawerWidth: CGFloat) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            MonknotChromePanel(theme: theme) {
+                VStack(spacing: 0) {
+                    MonknotChromeDivider(theme: theme)
+                    MarkdownSourceToolbar(
+                        theme: theme,
+                        zoomScale: zoomScale,
+                        sendCommand: sendMarkdownCommand
+                    )
                 }
             }
-            .animation(drawerAnimation, value: isTerminalPresented)
+            .frame(maxWidth: .infinity)
+
+            editorTerminalVerticalSeparator
+
+            Color.clear
+                .frame(width: terminalResizeGutterWidth)
+                .accessibilityHidden(true)
+
+            Color.clear
+                .frame(width: max(0, terminalDrawerWidth - terminalResizeGutterWidth - 1))
+                .accessibilityHidden(true)
         }
+    }
+
+    private var editorTerminalVerticalSeparator: some View {
+        Rectangle()
+            .fill(theme.separatorColor)
+            .frame(width: 1)
+            .frame(maxHeight: .infinity)
+    }
+
+    private func terminalContentColumn(
+        drawerWidth: CGFloat,
+        terminalPanelWidth: CGFloat,
+        maxDrawerWidth: CGFloat,
+        close: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 0) {
+            editorTerminalVerticalSeparator
+
+            TerminalResizeHandle(
+                width: $terminalDrawerWidth,
+                minWidth: terminalDrawerMinWidth,
+                maxWidth: maxDrawerWidth
+            )
+            .frame(width: terminalResizeGutterWidth)
+
+            TerminalDrawerView(
+                sessions: terminalSessions,
+                workingDirectory: activeTerminalDirectory,
+                theme: theme,
+                zoomScale: zoomScale,
+                usePointerCursors: usePointerCursors,
+                fontSmoothing: fontSmoothing,
+                includesChrome: false,
+                close: close
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(width: drawerWidth)
+        .background(theme.surfaceColor)
     }
 
     private var editorColumn: some View {
         VStack(spacing: 0) {
-            TopNavigationBar(
-                store: store,
-                editorMode: $editorMode,
-                theme: theme,
-                zoomScale: zoomScale,
-                isTerminalPresented: isTerminalPresented,
-                isSidebarVisible: isSidebarVisible,
-                newMarkdown: newMarkdown,
-                openFolder: openFolder,
-                toggleTerminal: toggleTerminal,
-                toggleSidebar: toggleSidebar,
-                outlineItems: outlineItems,
-                selectOutlineItem: selectOutlineItem,
-                documentSearch: $documentSearch,
-                tabs: tabs,
-                activeTabID: activeTabID,
-                missingTabIDs: missingTabIDs,
-                selectTab: selectTab,
-                closeTab: closeTab,
-                togglePinTab: togglePinTab,
-                reorderTab: reorderTab
-            )
+            editorChromePanel
 
             editorContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
-    private func resizableTerminalDrawer(width: CGFloat, maxWidth: CGFloat, close: @escaping () -> Void) -> some View {
+    private var editorChromePanel: some View {
+        MonknotChromePanel(theme: theme) {
+            VStack(spacing: 0) {
+                editorPrimaryChrome
+
+                if showsMarkdownSourceSubchrome {
+                    MonknotChromeDivider(theme: theme)
+                    MarkdownSourceToolbar(
+                        theme: theme,
+                        zoomScale: zoomScale,
+                        sendCommand: sendMarkdownCommand
+                    )
+                }
+            }
+        }
+    }
+
+    private var editorPrimaryChrome: some View {
+        TopNavigationBar(
+            store: store,
+            editorMode: $editorMode,
+            theme: theme,
+            zoomScale: zoomScale,
+            isTerminalPresented: isTerminalPresented,
+            isSidebarVisible: isSidebarVisible,
+            newMarkdown: newMarkdown,
+            openFolder: openFolder,
+            toggleTerminal: toggleTerminal,
+            toggleSidebar: toggleSidebar,
+            outlineItems: outlineItems,
+            selectOutlineItem: selectOutlineItem,
+            documentSearch: $documentSearch,
+            tabs: tabs,
+            activeTabID: activeTabID,
+            missingTabIDs: missingTabIDs,
+            selectTab: selectTab,
+            closeTab: closeTab,
+            togglePinTab: togglePinTab,
+            reorderTab: reorderTab
+        )
+    }
+
+    private func sendMarkdownCommand(_ command: MarkdownTextEditorCommand) {
+        markdownCommandSerial += 1
+        markdownCommandRequest = MarkdownTextEditorCommandRequest(
+            serial: markdownCommandSerial,
+            command: command
+        )
+    }
+
+    private func resizableTerminalDrawer(
+        width: CGFloat,
+        maxWidth: CGFloat,
+        close: @escaping () -> Void
+    ) -> some View {
         HStack(spacing: 0) {
+            editorTerminalVerticalSeparator
+
             TerminalResizeHandle(
                 width: $terminalDrawerWidth,
                 minWidth: terminalDrawerMinWidth,
@@ -154,15 +327,10 @@ struct EditorPaneView: View {
                 fontSmoothing: fontSmoothing,
                 close: close
             )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: width)
         .background(theme.surfaceColor)
-        .overlay(alignment: .leading) {
-            Rectangle()
-                .fill(theme.borderColor)
-                .frame(width: 1)
-        }
     }
 
     private var terminalResizeGutterWidth: CGFloat {
@@ -196,7 +364,7 @@ struct EditorPaneView: View {
                     }
                 }
         } else {
-            EmptyDetailView(theme: theme)
+            EmptyDetailView(theme: theme, zoomScale: zoomScale)
         }
     }
 
@@ -282,11 +450,11 @@ struct EditorPaneView: View {
                 ),
                 theme: theme,
                 fontSize: codeFontSize * zoomScale,
-                zoomScale: zoomScale,
                 fontSmoothing: fontSmoothing,
                 scrollPosition: activeViewportState?.textScrollPosition,
                 sourceLocation: $sourceLocation,
                 searchState: $documentSearch,
+                commandRequest: markdownCommandRequest,
                 onScrollPositionChange: { position in
                     updateViewportState(selectedDocument.id, .textScrollPosition(position))
                 }
@@ -331,7 +499,7 @@ struct EditorPaneView: View {
     }
 
     private func drawerMaxWidth(for availableWidth: CGFloat) -> CGFloat {
-        if availableWidth < 760 {
+        if availableWidth < MonknotMetrics.compactLayoutBreakpoint {
             return min(max(availableWidth * 0.92, terminalDrawerMinWidth), availableWidth)
         }
 
@@ -351,7 +519,7 @@ private struct UnsupportedDocumentView: View {
     let zoomScale: Double
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(theme.uiFontSize / 16), base * 0.75)
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -503,26 +671,33 @@ private struct TerminalResizeHandle: NSViewRepresentable {
 
 private struct EmptyDetailView: View {
     let theme: AppTheme
+    let zoomScale: Double
 
     var body: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "markdown")
-                .font(.system(size: 40, weight: .semibold))
+        VStack(spacing: MonknotMetrics.Spacing.xl) {
+            Image(systemName: WorkspaceDocumentKind.markdown.resolvedSystemImage)
+                .font(.system(size: MonknotMetrics.scale(40, theme: theme, zoomScale: zoomScale), weight: .semibold))
                 .foregroundStyle(theme.mutedForegroundColor.opacity(0.6))
+                .accessibilityHidden(true)
 
-            VStack(spacing: 5) {
+            VStack(spacing: MonknotMetrics.Spacing.xs) {
                 Text("Select a document")
-                    .font(.title2.weight(.semibold))
+                    .font(MonknotTypography.emptyStateTitle(theme: theme, zoomScale: zoomScale))
                     .foregroundStyle(theme.foregroundColor)
                 Text("Open a folder or drop Markdown or PDF documents into the sidebar.")
+                    .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
                     .foregroundStyle(theme.mutedForegroundColor)
+                    .multilineTextAlignment(.center)
             }
 
             Text("⇧⌘O to open a folder")
-                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
                 .foregroundStyle(theme.mutedForegroundColor.opacity(0.6))
-                .padding(.top, 2)
+                .padding(.top, MonknotMetrics.Spacing.xxs)
         }
+        .padding(MonknotMetrics.Spacing.windowMargin)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("No document selected. Open a folder or drop Markdown or PDF documents into the sidebar.")
     }
 }

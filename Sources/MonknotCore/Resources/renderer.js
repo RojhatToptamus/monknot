@@ -332,7 +332,7 @@
       }
 
       if (/^ {0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
-        blocks.push(markSource("<hr>", index));
+        // Thematic breaks (---, ***, ___) are ignored; content uses heading spacing only.
         index += 1;
         continue;
       }

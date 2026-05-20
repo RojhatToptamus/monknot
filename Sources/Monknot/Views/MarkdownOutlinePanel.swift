@@ -9,13 +9,13 @@ struct MarkdownOutlinePanel: View {
     let select: (MarkdownOutlineItem) -> Void
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: scaled(8)) {
-                Image(systemName: "list.bullet.indent")
+                Image(systemName: MonknotWorkspaceIcons.outline)
                     .foregroundStyle(theme.accentColor)
                 Text("Outline")
                     .font(.system(size: scaled(13), weight: .semibold))

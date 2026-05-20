@@ -3,6 +3,15 @@ import Foundation
 public enum WorkspaceSearchResultKind: String, Codable, Hashable, Sendable {
     case text
     case pdf
+
+    public var systemImage: String {
+        switch self {
+        case .text:
+            return "doc.text"
+        case .pdf:
+            return WorkspaceDocumentKind.pdf.systemImage
+        }
+    }
 }
 
 public struct WorkspaceSearchPDFTarget: Hashable, Sendable {

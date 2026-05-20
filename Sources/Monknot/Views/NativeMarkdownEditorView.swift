@@ -6,60 +6,44 @@ struct NativeMarkdownEditorView: View {
     @Binding var text: String
     let theme: AppTheme
     let fontSize: CGFloat
-    let zoomScale: Double
     let fontSmoothing: Bool
     let scrollPosition: DocumentScrollPosition?
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var searchState: DocumentSearchState
+    let commandRequest: MarkdownTextEditorCommandRequest?
     let onScrollPositionChange: (DocumentScrollPosition) -> Void
 
-    @State private var commandSerial = 0
-    @State private var commandRequest: MarkdownTextEditorCommandRequest?
-
     var body: some View {
-        VStack(spacing: 0) {
-            MarkdownSourceToolbar(
+        ZStack(alignment: .topLeading) {
+            MarkdownTextEditor(
+                documentID: documentID,
+                text: $text,
                 theme: theme,
-                zoomScale: zoomScale,
-                sendCommand: sendCommand(_:)
+                fontSize: fontSize,
+                fontSmoothing: fontSmoothing,
+                scrollPosition: scrollPosition,
+                sourceLocation: $sourceLocation,
+                searchState: $searchState,
+                onScrollPositionChange: onScrollPositionChange,
+                commandRequest: commandRequest,
+                markdownShortcutsEnabled: true
             )
 
-            ZStack(alignment: .topLeading) {
-                MarkdownTextEditor(
-                    documentID: documentID,
-                    text: $text,
-                    theme: theme,
-                    fontSize: fontSize,
-                    fontSmoothing: fontSmoothing,
-                    scrollPosition: scrollPosition,
-                    sourceLocation: $sourceLocation,
-                    searchState: $searchState,
-                    onScrollPositionChange: onScrollPositionChange,
-                    commandRequest: commandRequest,
-                    markdownShortcutsEnabled: true
-                )
-
-                if text.isEmpty {
-                    Text("Start writing")
-                        .font(.system(size: max(fontSize, 13), weight: .regular))
-                        .foregroundStyle(theme.mutedForegroundColor.opacity(0.52))
-                        .padding(.leading, 28)
-                        .padding(.top, 26)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                }
+            if text.isEmpty {
+                Text("Start writing")
+                    .font(.system(size: max(fontSize, 13), weight: .regular))
+                    .foregroundStyle(theme.mutedForegroundColor.opacity(0.52))
+                    .padding(.leading, 28)
+                    .padding(.top, 26)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
         }
         .background(theme.surfaceColor)
     }
-
-    private func sendCommand(_ command: MarkdownTextEditorCommand) {
-        commandSerial += 1
-        commandRequest = MarkdownTextEditorCommandRequest(serial: commandSerial, command: command)
-    }
 }
 
-private struct MarkdownSourceToolbar: View {
+struct MarkdownSourceToolbar: View {
     let theme: AppTheme
     let zoomScale: Double
     let sendCommand: (MarkdownTextEditorCommand) -> Void
@@ -91,16 +75,9 @@ private struct MarkdownSourceToolbar: View {
                 toolbarButton("photo", "Image", .image)
                 toolbarButton("minus", "Horizontal Rule", .horizontalRule)
             }
-            .padding(.horizontal, 12 * scale)
-            .padding(.vertical, 6 * scale)
+            .padding(.vertical, 4 * scale)
         }
-        .background(theme.surfaceColor)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(theme.borderColor)
-                .frame(height: 1)
-                .allowsHitTesting(false)
-        }
+        .monknotChromeSubrowLayout(theme: theme, zoomScale: zoomScale)
     }
 
     private var headingMenu: some View {
@@ -125,7 +102,7 @@ private struct MarkdownSourceToolbar: View {
             }
             .foregroundStyle(theme.foregroundColor)
             .padding(.horizontal, 10 * scale)
-            .frame(width: 148 * scale, height: 28 * scale)
+            .frame(width: 148 * scale, height: 26 * scale)
             .background(shape.fill(theme.controlTrackFillColor))
             .contentShape(shape)
         }
@@ -138,7 +115,7 @@ private struct MarkdownSourceToolbar: View {
     private var divider: some View {
         Rectangle()
             .fill(theme.borderColor)
-            .frame(width: 1, height: 22 * scale)
+            .frame(width: 1, height: 20 * scale)
             .padding(.horizontal, 2 * scale)
     }
 
@@ -147,22 +124,13 @@ private struct MarkdownSourceToolbar: View {
         _ label: String,
         _ command: MarkdownTextEditorCommand
     ) -> some View {
-        let shape = RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale))
-
-        return Button {
-            sendCommand(command)
-        } label: {
-            Image(systemName: systemImage)
-                .font(.system(size: 13 * scale, weight: .medium))
-                .frame(width: 28 * scale, height: 28 * scale)
-                .contentShape(shape)
-        }
-        .buttonStyle(.plain)
-        .frame(width: 28 * scale, height: 28 * scale)
-        .contentShape(shape)
-        .foregroundStyle(theme.foregroundColor)
-        .background(shape.fill(theme.controlTrackFillColor))
-        .help(label)
-        .accessibilityLabel(label)
+        MonknotIconButton(
+            systemImage: systemImage,
+            label: label,
+            theme: theme,
+            zoomScale: zoomScale,
+            size: .compact,
+            action: { sendCommand(command) }
+        )
     }
 }

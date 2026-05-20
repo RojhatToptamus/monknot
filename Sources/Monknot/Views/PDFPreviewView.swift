@@ -34,21 +34,23 @@ struct PDFPreviewView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PDFAnnotationToolbar(
-                interactionMode: $interactionMode,
-                selectedColor: $selectedColor,
-                strokeWidth: $strokeWidth,
-                saveState: saveState,
-                canUndo: canUndo,
-                canRedo: canRedo,
-                theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: uiFontSize,
-                runMarkup: runMarkup(_:),
-                undo: runUndo,
-                redo: runRedo,
-                saveDocument: saveDocument
-            )
+            MonknotChromePanel(theme: theme) {
+                PDFAnnotationToolbar(
+                    interactionMode: $interactionMode,
+                    selectedColor: $selectedColor,
+                    strokeWidth: $strokeWidth,
+                    saveState: saveState,
+                    canUndo: canUndo,
+                    canRedo: canRedo,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    uiFontSize: uiFontSize,
+                    runMarkup: runMarkup(_:),
+                    undo: runUndo,
+                    redo: runRedo,
+                    saveDocument: saveDocument
+                )
+            }
 
             Divider()
                 .overlay(theme.borderColor)
@@ -122,7 +124,7 @@ private struct PDFAnnotationToolbar: View {
     let saveDocument: () -> Void
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -135,8 +137,7 @@ private struct PDFAnnotationToolbar: View {
 
             saveButton
         }
-        .padding(.horizontal, scaled(12))
-        .frame(height: scaled(42))
+        .monknotChromeRowLayout(theme: theme, zoomScale: zoomScale)
         .animation(.easeOut(duration: 0.14), value: interactionMode)
     }
 
@@ -295,7 +296,7 @@ private struct PDFToolbarIconButton: View {
     @State private var isHovered = false
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -359,7 +360,7 @@ private struct PDFColorSwatchButton: View {
     @State private var isHovered = false
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {

@@ -17,11 +17,11 @@ struct DocumentTabBar: View {
     let reorderTab: (String, String?) -> Void
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     private var chromeRowHeight: CGFloat {
-        scaled(44)
+        MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -67,11 +67,11 @@ private struct DocumentTabStripContent: View {
     @State private var tabFrames: [String: CGRect] = [:]
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     private var chromeRowHeight: CGFloat {
-        scaled(44)
+        MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -96,7 +96,7 @@ private struct DocumentTabStripContent: View {
             }
         }
         .padding(.horizontal, scaled(2))
-        .frame(height: chromeRowHeight, alignment: .center)
+        .frame(maxHeight: .infinity, alignment: .center)
         .fixedSize(horizontal: true, vertical: false)
         .coordinateSpace(name: Self.coordinateSpaceName)
         .onPreferenceChange(TabFramePreferenceKey.self) { frames in
@@ -155,7 +155,7 @@ private struct DocumentTabItemView: View {
     @State private var isHovered = false
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -223,7 +223,8 @@ private struct DocumentTabItemView: View {
             }
         }
         .frame(minWidth: scaled(tab.isPinned ? 82 : 108), maxWidth: scaled(tab.isPinned ? 124 : 168), alignment: .leading)
-        .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale)))
+        .background { tabHoverBackground }
+        .overlay(alignment: .bottom) { tabSelectionIndicator }
         .opacity(opacity)
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovered)
@@ -247,14 +248,22 @@ private struct DocumentTabItemView: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    private var background: Color {
+    @ViewBuilder
+    private var tabHoverBackground: some View {
+        if isHovered && !isSelected && !isDisabled {
+            RoundedRectangle(cornerRadius: theme.chromeRadius(4, zoomScale: zoomScale))
+                .fill(theme.foregroundColor.opacity(theme.isDark ? 0.05 : 0.035))
+        }
+    }
+
+    @ViewBuilder
+    private var tabSelectionIndicator: some View {
         if isSelected {
-            return theme.elevatedSurfaceColor
+            Rectangle()
+                .fill(theme.accentColor)
+                .frame(height: scaled(2))
+                .padding(.horizontal, scaled(4))
         }
-        if isHovered && !isDisabled {
-            return theme.foregroundColor.opacity(theme.isDark ? 0.05 : 0.035)
-        }
-        return .clear
     }
 
     private var opacity: Double {
@@ -305,20 +314,7 @@ private struct DocumentTabItemView: View {
     }
 
     private var documentIconName: String {
-        switch tab.kind {
-        case .markdown:
-            return "chevron.left.forwardslash.chevron.right"
-        case .pdf:
-            return "doc.richtext"
-        case .text:
-            return "doc.plaintext"
-        case .media:
-            return "play.rectangle"
-        case .nativePreview:
-            return "doc.viewfinder"
-        case .unsupported:
-            return "doc"
-        }
+        tab.kind.resolvedSystemImage
     }
 
     private var helpText: String {

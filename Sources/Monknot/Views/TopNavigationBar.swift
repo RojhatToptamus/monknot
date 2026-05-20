@@ -36,12 +36,14 @@ struct TopNavigationBar: View {
 
     private var uiFontSize: Double { theme.uiFontSize }
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
-        HStack(spacing: scaled(6)) {
+        HStack(spacing: scaled(MonknotMetrics.Spacing.s)) {
             leadingNavigation
 
             sidebarToggleButton
@@ -59,23 +61,16 @@ struct TopNavigationBar: View {
 
             if documentSearch.isPresented {
                 documentSearchBar
-                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .trailing)))
+                    .transition(MonknotMotion.searchBarTransition(reduceMotion: reduceMotion))
             } else {
                 trailingActions
-                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .trailing)))
+                    .transition(MonknotMotion.searchBarTransition(reduceMotion: reduceMotion))
 
                 drawerToggleButton
             }
         }
-        .padding(.horizontal, scaled(10))
-        .frame(height: scaled(44))
-        .background(theme.surfaceColor)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(theme.borderColor)
-                .frame(height: 1)
-        }
-        .animation(.easeOut(duration: 0.14), value: documentSearch.isPresented)
+        .monknotChromeRowLayout(theme: theme, zoomScale: zoomScale)
+        .animation(MonknotMotion.chromeTransition(reduceMotion: reduceMotion), value: documentSearch.isPresented)
         .onChange(of: documentSearch.focusSerial) { _, _ in
             isSearchFocused = documentSearch.isPresented
         }
@@ -87,7 +82,7 @@ struct TopNavigationBar: View {
 
     private var drawerToggleButton: some View {
         ChromeBarButton(
-            systemImage: "sidebar.right",
+            systemImage: MonknotWorkspaceIcons.sidebarRight,
             label: isTerminalPresented ? "Hide Right Drawer" : "Show Right Drawer",
             theme: theme,
             zoomScale: zoomScale,
@@ -106,14 +101,14 @@ struct TopNavigationBar: View {
         Group {
             if !isSidebarVisible {
                 Color.clear
-                    .frame(width: 72)
+                    .frame(width: MonknotMetrics.scale(MonknotMetrics.trafficLightReserveBase, theme: theme, zoomScale: zoomScale))
             }
         }
     }
 
     private var sidebarToggleButton: some View {
         ChromeBarButton(
-            systemImage: "sidebar.left",
+            systemImage: MonknotWorkspaceIcons.sidebarLeft,
             label: isSidebarVisible ? "Hide Sidebar" : "Show Sidebar",
             theme: theme,
             zoomScale: zoomScale,
@@ -177,33 +172,17 @@ struct TopNavigationBar: View {
     }
 
     private var sourcePreviewSwitch: some View {
-        HStack(spacing: scaled(2)) {
-            TopBarSegment(
-                systemImage: "chevron.left.forwardslash.chevron.right",
-                accessibilityLabel: EditorMode.source.title,
-                isSelected: editorMode == .source,
-                theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: uiFontSize
-            ) {
-                editorMode = .source
-            }
-
-            TopBarSegment(
-                systemImage: "eye",
-                accessibilityLabel: EditorMode.preview.title,
-                isSelected: editorMode == .preview,
-                theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: uiFontSize
-            ) {
-                editorMode = .preview
-            }
-        }
-        .padding(scaled(2))
-        .background(
-            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                .fill(theme.controlTrackFillColor)
+        MonknotSegmentedControl(
+            options: [
+                MonknotSegmentOption(id: EditorMode.source.rawValue, systemImage: EditorMode.source.resolvedSystemImage, accessibilityLabel: EditorMode.source.title),
+                MonknotSegmentOption(id: EditorMode.preview.rawValue, systemImage: EditorMode.preview.resolvedSystemImage, accessibilityLabel: EditorMode.preview.title)
+            ],
+            selection: Binding(
+                get: { editorMode.rawValue },
+                set: { editorMode = EditorMode(rawValue: $0) ?? .preview }
+            ),
+            theme: theme,
+            zoomScale: zoomScale
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Editor mode")
@@ -269,18 +248,16 @@ struct TopNavigationBar: View {
             }
             .keyboardShortcut(.cancelAction)
         }
-        .padding(.leading, scaled(12))
-        .padding(.trailing, scaled(8))
-        .frame(height: scaled(34))
+        .padding(.horizontal, scaled(MonknotMetrics.Spacing.l))
+        .frame(height: scaled(32))
         .background(
-            RoundedRectangle(cornerRadius: theme.chromeRadius(17, zoomScale: zoomScale))
-                .fill(theme.surfaceColor)
+            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+                .fill(theme.insetFillColor)
                 .overlay {
-                    RoundedRectangle(cornerRadius: theme.chromeRadius(17, zoomScale: zoomScale))
+                    RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
                         .strokeBorder(theme.borderColor, lineWidth: 1)
                 }
         )
-        .shadow(color: theme.foregroundColor.opacity(theme.isDark ? 0.18 : 0.08), radius: 18, y: 8)
         .onAppear {
             isSearchFocused = true
         }
@@ -292,23 +269,20 @@ struct TopNavigationBar: View {
         isDisabled: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: scaled(12), weight: .semibold))
-                .foregroundStyle(isDisabled ? theme.mutedForegroundColor.opacity(0.42) : theme.mutedForegroundColor)
-                .frame(width: scaled(24), height: scaled(24))
-                .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale)))
-        }
-        .buttonStyle(FindBarIconButtonStyle(theme: theme, cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale)))
-        .disabled(isDisabled)
-        .help(label)
-        .accessibilityLabel(label)
-        .monknotPointerCursor(enabled: !isDisabled)
+        MonknotIconButton(
+            systemImage: systemImage,
+            label: label,
+            theme: theme,
+            zoomScale: zoomScale,
+            isDisabled: isDisabled,
+            size: .findBar,
+            action: action
+        )
     }
 
     private var outlineButton: some View {
         ChromeBarButton(
-            systemImage: "list.bullet.indent",
+            systemImage: MonknotWorkspaceIcons.outline,
             label: isOutlinePresented ? "Close Outline" : "Open Outline",
             theme: theme,
             zoomScale: zoomScale,
@@ -331,92 +305,4 @@ struct TopNavigationBar: View {
         }
     }
 
-}
-
-private struct TopBarSegment: View {
-    let systemImage: String
-    let accessibilityLabel: String
-    let isSelected: Bool
-    let theme: AppTheme
-    let zoomScale: Double
-    let uiFontSize: Double
-    let action: () -> Void
-    @State private var isHovered = false
-    @FocusState private var isFocused: Bool
-
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        max(base * zoomScale * CGFloat(uiFontSize / 16), base * 0.75)
-    }
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: scaled(12), weight: .medium))
-                .foregroundStyle(foreground)
-                .frame(width: scaled(32), height: scaled(24))
-                .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale)))
-                .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale)))
-        }
-        .buttonStyle(.plain)
-        .focusable(true)
-        .focused($isFocused)
-        .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.12), value: isHovered)
-        .animation(.easeOut(duration: 0.12), value: isSelected)
-        .help(accessibilityLabel)
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .monknotPointerCursor()
-    }
-
-    private var foreground: Color {
-        if isSelected {
-            return theme.foregroundColor
-        }
-        return theme.mutedForegroundColor.opacity(isHovered ? 1 : 0.85)
-    }
-
-    private var background: Color {
-        if isSelected {
-            return theme.controlTrackFillColor
-        }
-        return .clear
-    }
-}
-
-private struct FindBarIconButtonStyle: ButtonStyle {
-    let theme: AppTheme
-    let cornerRadius: CGFloat
-
-    func makeBody(configuration: Configuration) -> Body {
-        Body(configuration: configuration, theme: theme, cornerRadius: cornerRadius)
-    }
-
-    fileprivate struct Body: View {
-        let configuration: Configuration
-        let theme: AppTheme
-        let cornerRadius: CGFloat
-        @State private var isHovered = false
-
-        var body: some View {
-            configuration.label
-                .background {
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(theme.foregroundColor.opacity(backgroundOpacity(isPressed: configuration.isPressed)))
-                }
-                .opacity(configuration.isPressed ? 0.9 : 1)
-                .animation(.easeOut(duration: 0.12), value: isHovered)
-                .onHover { isHovered = $0 }
-        }
-
-        private func backgroundOpacity(isPressed: Bool) -> Double {
-            if isPressed {
-                return theme.isDark ? 0.11 : 0.08
-            }
-            if isHovered {
-                return theme.isDark ? 0.075 : 0.055
-            }
-            return 0
-        }
-    }
 }

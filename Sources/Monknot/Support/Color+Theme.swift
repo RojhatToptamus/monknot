@@ -39,8 +39,17 @@ extension AppTheme {
         Color(hex: accent)
     }
 
+    /// Hairline borders on controls and cards.
     var borderColor: Color {
         foregroundColor.opacity((isDark ? 0.08 : 0.06) + normalizedContrast * 0.10)
+    }
+
+    /// Structural separators (sidebar rules, chrome edges). Stable when the window is inactive.
+    var separatorColor: Color {
+        if isDark {
+            return Color.white.opacity(0.14 + normalizedContrast * 0.10)
+        }
+        return Color.black.opacity(0.12 + normalizedContrast * 0.10)
     }
 
     var elevatedSurfaceColor: Color {

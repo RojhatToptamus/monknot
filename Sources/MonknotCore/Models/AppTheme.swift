@@ -25,7 +25,7 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
     public let semanticColors: AppThemeSemanticColors
     public let uiFontName: String?
     public let codeFontName: String?
-    public let opaqueWindows: Bool
+    public let chromeSurfaceStyle: MonknotChromeSurfaceStyle
     public let quietSidebar: Bool
     public let uiFontSize: Double
     public let codeFontSize: Double
@@ -48,7 +48,8 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         ),
         uiFontName: String? = nil,
         codeFontName: String? = nil,
-        opaqueWindows: Bool = false,
+        chromeSurfaceStyle: MonknotChromeSurfaceStyle = .translucent,
+        opaqueWindows: Bool? = nil,
         quietSidebar: Bool = false,
         uiFontSize: Double = 16,
         codeFontSize: Double = 15,
@@ -66,7 +67,11 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         self.semanticColors = semanticColors
         self.uiFontName = uiFontName
         self.codeFontName = codeFontName
-        self.opaqueWindows = opaqueWindows
+        if let opaqueWindows {
+            self.chromeSurfaceStyle = opaqueWindows ? .solid : .translucent
+        } else {
+            self.chromeSurfaceStyle = chromeSurfaceStyle
+        }
         self.quietSidebar = quietSidebar
         self.uiFontSize = uiFontSize
         self.codeFontSize = codeFontSize
@@ -101,6 +106,99 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         palette[safe: 8] ?? "#8D939F"
     }
 
+    public var opaqueWindows: Bool {
+        chromeSurfaceStyle.usesOpaqueWindows
+    }
+
+    public static func == (lhs: AppTheme, rhs: AppTheme) -> Bool {
+        lhs.id == rhs.id
+            && lhs.name == rhs.name
+            && lhs.codeThemeID == rhs.codeThemeID
+            && lhs.background == rhs.background
+            && lhs.foreground == rhs.foreground
+            && lhs.cursor == rhs.cursor
+            && lhs.selectionBackground == rhs.selectionBackground
+            && lhs.selectionForeground == rhs.selectionForeground
+            && lhs.palette == rhs.palette
+            && lhs.semanticColors == rhs.semanticColors
+            && lhs.uiFontName == rhs.uiFontName
+            && lhs.codeFontName == rhs.codeFontName
+            && lhs.chromeSurfaceStyle == rhs.chromeSurfaceStyle
+            && lhs.quietSidebar == rhs.quietSidebar
+            && lhs.uiFontSize == rhs.uiFontSize
+            && lhs.codeFontSize == rhs.codeFontSize
+            && lhs.contrast == rhs.contrast
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case codeThemeID
+        case background
+        case foreground
+        case cursor
+        case selectionBackground
+        case selectionForeground
+        case palette
+        case semanticColors
+        case uiFontName
+        case codeFontName
+        case chromeSurfaceStyle
+        case opaqueWindows
+        case quietSidebar
+        case uiFontSize
+        case codeFontSize
+        case contrast
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        codeThemeID = try container.decode(String.self, forKey: .codeThemeID)
+        background = try container.decode(String.self, forKey: .background)
+        foreground = try container.decode(String.self, forKey: .foreground)
+        cursor = try container.decode(String.self, forKey: .cursor)
+        selectionBackground = try container.decode(String.self, forKey: .selectionBackground)
+        selectionForeground = try container.decode(String.self, forKey: .selectionForeground)
+        palette = try container.decode([String].self, forKey: .palette)
+        semanticColors = try container.decode(AppThemeSemanticColors.self, forKey: .semanticColors)
+        uiFontName = try container.decodeIfPresent(String.self, forKey: .uiFontName)
+        codeFontName = try container.decodeIfPresent(String.self, forKey: .codeFontName)
+        quietSidebar = try container.decodeIfPresent(Bool.self, forKey: .quietSidebar) ?? false
+        uiFontSize = try container.decodeIfPresent(Double.self, forKey: .uiFontSize) ?? 16
+        codeFontSize = try container.decodeIfPresent(Double.self, forKey: .codeFontSize) ?? 15
+        contrast = try container.decodeIfPresent(Double.self, forKey: .contrast) ?? 50
+        if let style = try container.decodeIfPresent(MonknotChromeSurfaceStyle.self, forKey: .chromeSurfaceStyle) {
+            chromeSurfaceStyle = style
+        } else {
+            let opaque = try container.decodeIfPresent(Bool.self, forKey: .opaqueWindows) ?? false
+            chromeSurfaceStyle = opaque ? .solid : .translucent
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(codeThemeID, forKey: .codeThemeID)
+        try container.encode(background, forKey: .background)
+        try container.encode(foreground, forKey: .foreground)
+        try container.encode(cursor, forKey: .cursor)
+        try container.encode(selectionBackground, forKey: .selectionBackground)
+        try container.encode(selectionForeground, forKey: .selectionForeground)
+        try container.encode(palette, forKey: .palette)
+        try container.encode(semanticColors, forKey: .semanticColors)
+        try container.encodeIfPresent(uiFontName, forKey: .uiFontName)
+        try container.encodeIfPresent(codeFontName, forKey: .codeFontName)
+        try container.encode(chromeSurfaceStyle, forKey: .chromeSurfaceStyle)
+        try container.encode(opaqueWindows, forKey: .opaqueWindows)
+        try container.encode(quietSidebar, forKey: .quietSidebar)
+        try container.encode(uiFontSize, forKey: .uiFontSize)
+        try container.encode(codeFontSize, forKey: .codeFontSize)
+        try container.encode(contrast, forKey: .contrast)
+    }
+
     public var isDark: Bool {
         guard let rgb = RGBHex(background) else {
             return true
@@ -113,6 +211,7 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         background: String? = nil,
         foreground: String? = nil,
         accent: String? = nil,
+        chromeSurfaceStyle: MonknotChromeSurfaceStyle? = nil,
         opaqueWindows: Bool? = nil,
         quietSidebar: Bool? = nil,
         uiFontSize: Double? = nil,
@@ -150,7 +249,7 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
             semanticColors: semanticColors,
             uiFontName: uiFontName,
             codeFontName: codeFontName,
-            opaqueWindows: opaqueWindows ?? self.opaqueWindows,
+            chromeSurfaceStyle: chromeSurfaceStyle ?? (opaqueWindows.map { $0 ? .solid : .translucent } ?? self.chromeSurfaceStyle),
             quietSidebar: quietSidebar ?? self.quietSidebar,
             uiFontSize: uiFontSize ?? self.uiFontSize,
             codeFontSize: codeFontSize ?? self.codeFontSize,

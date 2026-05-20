@@ -32,9 +32,19 @@ struct PreferencesView: View {
         )
     }
 
+    private var settingsLayoutToken: String {
+        "\(panelTheme.id)-\(themePreferenceRawValue)-\(colorScheme)"
+    }
+
     var body: some View {
+        MonknotChromeSurfaceReader {
+            preferencesRoot
+        }
+    }
+
+    private var preferencesRoot: some View {
         VStack(spacing: 0) {
-            header
+            settingsChromeHeader
 
             Group {
                 switch selectedSection {
@@ -47,39 +57,67 @@ struct PreferencesView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(panelTheme.surfaceColor)
         }
-        .tint(panelTheme.accentColor)
         .frame(width: 760, height: 660)
         .background(panelTheme.surfaceColor)
+        .ignoresSafeArea(.container, edges: .top)
+        .background(
+            WindowBackgroundDragEnabler(
+                surfaceColor: panelTheme.surfaceColor,
+                layoutToken: settingsLayoutToken,
+                suppressToolbarButton: false,
+                usesDarkAppearance: panelTheme.isDark
+            )
+        )
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Color.clear
+                    .frame(width: 0, height: MonknotMetrics.chromeHeight(theme: panelTheme, zoomScale: 1))
+                    .accessibilityHidden(true)
+            }
+        }
+        .preferredColorScheme(themePreference.preferredColorScheme)
     }
 
-    private var header: some View {
-        HStack(alignment: .center, spacing: 18) {
-            Text("Settings")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(panelTheme.foregroundColor)
+    private var settingsChromeHeader: some View {
+        MonknotChromePanel(theme: panelTheme) {
+            HStack(alignment: .center, spacing: 18) {
+                Color.clear
+                    .frame(
+                        width: MonknotMetrics.scale(
+                            MonknotMetrics.trafficLightReserveBase + 6,
+                            theme: panelTheme,
+                            zoomScale: 1
+                        )
+                    )
+                    .accessibilityHidden(true)
 
-            Spacer(minLength: 12)
+                Text("Settings")
+                    .font(MonknotTypography.panelTitle(theme: panelTheme))
+                    .foregroundStyle(panelTheme.foregroundColor)
 
-            Picker("Settings Section", selection: $selectedSection) {
-                ForEach(Section.allCases) { section in
-                    Label(section.rawValue, systemImage: section.systemImage)
-                        .tag(section)
-                }
+                WindowDoubleClickZoomArea()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityHidden(true)
+
+                MonknotSettingsSegmentedControl(
+                    options: Section.allCases.map { section in
+                        MonknotSettingsSegment(id: section.rawValue, title: section.rawValue)
+                    },
+                    selection: Binding(
+                        get: { selectedSection.rawValue },
+                        set: { raw in
+                            if let section = Section(rawValue: raw) {
+                                selectedSection = section
+                            }
+                        }
+                    ),
+                    theme: panelTheme
+                )
+                .frame(maxWidth: 260)
             }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .controlSize(.regular)
-            .frame(width: 260)
-            .monknotPointerCursor()
-        }
-        .padding(.horizontal, 24)
-        .padding(.top, 22)
-        .padding(.bottom, 16)
-        .background(panelTheme.surfaceColor)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(panelTheme.borderColor)
-                .frame(height: 1)
+            .padding(.horizontal, MonknotMetrics.Spacing.windowMargin + 4)
+            .padding(.vertical, MonknotMetrics.Spacing.l)
+            .frame(minHeight: MonknotMetrics.chromeHeight(theme: panelTheme, zoomScale: 1))
         }
     }
 }

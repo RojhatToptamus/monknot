@@ -67,19 +67,19 @@ struct AppearanceSettingsView: View {
     private var appearanceModeCard: some View {
         SettingsGroupCard(theme: uiTheme) {
             SettingsRow(theme: uiTheme, title: "Theme", detail: "Use light, dark, or match your system", showsDivider: false) {
-                Picker("Theme", selection: Binding(
-                    get: { themePreference },
-                    set: { themePreference = $0 }
-                )) {
-                    ForEach(ThemePreference.allCases) { pref in
-                        Label(pref.title, systemImage: pref.systemImage)
-                            .tag(pref)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .controlSize(.regular)
-                .frame(width: 268)
-                .monknotPointerCursor()
+                MonknotSettingsSegmentedControl(
+                    options: ThemePreference.allCases.map { pref in
+                        MonknotSettingsSegment(id: pref.rawValue, title: pref.title)
+                    },
+                    selection: Binding(
+                        get: { themePreference.rawValue },
+                        set: { raw in
+                            themePreference = ThemePreference(rawValue: raw) ?? .system
+                        }
+                    ),
+                    theme: uiTheme
+                )
+                .frame(maxWidth: 268)
             }
         }
     }
@@ -87,17 +87,24 @@ struct AppearanceSettingsView: View {
     private var editorSlotCard: some View {
         SettingsGroupCard(theme: uiTheme) {
             SettingsRow(theme: uiTheme, title: "Customize", detail: "Choose the light or dark theme slot to edit", showsDivider: false) {
-                Picker("Theme Slot", selection: $editingSlot) {
-                    ForEach(ThemeSlot.allCases) { slot in
-                        Text(slot.title.replacingOccurrences(of: " theme", with: ""))
-                            .tag(slot)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .controlSize(.regular)
-                .frame(width: 180)
-                .monknotPointerCursor()
+                MonknotSettingsSegmentedControl(
+                    options: ThemeSlot.allCases.map { slot in
+                        MonknotSettingsSegment(
+                            id: slot.rawValue,
+                            title: slot.title.replacingOccurrences(of: " theme", with: "")
+                        )
+                    },
+                    selection: Binding(
+                        get: { editingSlot.rawValue },
+                        set: { raw in
+                            if let slot = ThemeSlot(rawValue: raw) {
+                                editingSlot = slot
+                            }
+                        }
+                    ),
+                    theme: uiTheme
+                )
+                .frame(maxWidth: 180)
             }
         }
     }
@@ -141,6 +148,44 @@ private struct ThemeEditorSection: View {
         hasUnsavedChanges || themeStore.hasCustomization(for: slot)
     }
 
+    private var chromeSurfaceRow: some View {
+        SettingsRow(
+            theme: uiTheme,
+            title: "Chrome surface",
+            detail: chromeSurfaceDetail
+        ) {
+            MonknotSettingsSegmentedControl(
+                options: availableChromeSurfaceStyles.map { style in
+                    MonknotSettingsSegment(id: style.rawValue, title: style.title)
+                },
+                selection: Binding(
+                    get: { draft.chromeSurfaceStyle.rawValue },
+                    set: { raw in
+                        if let style = MonknotChromeSurfaceStyle(rawValue: raw) {
+                            draft.chromeSurfaceStyle = style
+                        }
+                    }
+                ),
+                theme: uiTheme
+            )
+            .frame(maxWidth: 320)
+        }
+    }
+
+    private var availableChromeSurfaceStyles: [MonknotChromeSurfaceStyle] {
+        if MonknotChromeSurfaceStyleResolver.isLiquidGlassAvailable {
+            return MonknotChromeSurfaceStyle.allCases
+        }
+        return MonknotChromeSurfaceStyle.allCases.filter { $0 != .liquidGlass }
+    }
+
+    private var chromeSurfaceDetail: String {
+        if MonknotChromeSurfaceStyleResolver.isLiquidGlassAvailable {
+            return "Solid, translucent material, or Liquid Glass on navigation chrome"
+        }
+        return "Solid or translucent material on navigation chrome (Liquid Glass requires macOS 26)"
+    }
+
     private var selectedThemeID: Binding<String> {
         Binding(
             get: { themeStore.selectedThemeID(for: slot) },
@@ -160,12 +205,7 @@ private struct ThemeEditorSection: View {
                 EditableThemeColorRow(theme: uiTheme, label: "Background", hex: $draft.background)
                 EditableThemeColorRow(theme: uiTheme, label: "Foreground", hex: $draft.foreground)
 
-                SettingsToggleRow(
-                    theme: uiTheme,
-                    title: "Translucent sidebar",
-                    detail: "Use the theme surface as a tinted macOS material sidebar",
-                    isOn: $draft.translucentSidebar
-                )
+                chromeSurfaceRow
 
                 SettingsToggleRow(
                     theme: uiTheme,
@@ -223,25 +263,22 @@ private struct ThemeEditorSection: View {
             }
             .fixedSize()
 
-            Button("Save") {
+            MonknotAccentButton(
+                title: "Save",
+                theme: uiTheme,
+                isDisabled: !hasUnsavedChanges
+            ) {
                 themeStore.save(draft, for: slot)
                 draft = themeStore.configuration(for: slot)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(uiTheme.accentColor)
-            .controlSize(.regular)
-            .disabled(!hasUnsavedChanges)
-            .monknotPointerCursor(enabled: hasUnsavedChanges)
 
-            Picker(slot.title, selection: selectedThemeID) {
-                ForEach(slot.themes) { theme in
-                    Text(theme.name).tag(theme.id)
-                }
-            }
-            .labelsHidden()
-            .controlSize(.regular)
-            .frame(width: 196)
-            .monknotPointerCursor()
+            MonknotSettingsMenuPicker(
+                title: "Theme preset",
+                selection: selectedThemeID,
+                options: slot.themes.map { ($0.id, $0.name) },
+                theme: uiTheme
+            )
+            .frame(minWidth: 160)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 13)

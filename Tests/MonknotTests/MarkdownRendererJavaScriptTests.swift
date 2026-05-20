@@ -49,6 +49,20 @@ final class MarkdownRendererJavaScriptTests: XCTestCase {
         XCTAssertTrue(html.contains("First line<br>Second line"))
     }
 
+    func testThematicBreakDoesNotRenderHorizontalRule() throws {
+        let html = try renderMarkdown(
+            """
+            # Title
+
+            ---
+
+            ## Section
+            """
+        )
+
+        XCTAssertFalse(html.contains("<hr"))
+    }
+
     func testTableRendersAsScrollableHTMLTable() throws {
         let html = try renderMarkdown(
             """

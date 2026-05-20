@@ -2,28 +2,6 @@ import AppKit
 import MonknotCore
 import SwiftUI
 
-// MARK: - Surfaces
-
-/// Bordered card grouping for settings sections (Codex-style layered panels).
-struct SettingsGroupCard<Content: View>: View {
-    let theme: AppTheme
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            content()
-        }
-        .background(
-            RoundedRectangle(cornerRadius: theme.settingsCardCornerRadius)
-                .fill(theme.elevatedSurfaceColor)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: theme.settingsCardCornerRadius)
-                .strokeBorder(theme.borderColor, lineWidth: 1)
-        )
-    }
-}
-
 // MARK: - Row Primitives
 
 /// Full-width settings row: label + description on the left, control on the right, divider below.
@@ -38,11 +16,11 @@ struct SettingsRow<Control: View>: View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(MonknotTypography.settingsRowTitle(theme: theme))
                     .foregroundStyle(theme.foregroundColor)
                 if let detail {
                     Text(detail)
-                        .font(.system(size: 12))
+                        .font(MonknotTypography.settingsRowDetail(theme: theme))
                         .foregroundStyle(theme.mutedForegroundColor)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -50,8 +28,8 @@ struct SettingsRow<Control: View>: View {
             Spacer(minLength: 20)
             control()
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 13)
+        .padding(.horizontal, MonknotMetrics.Spacing.settingsRowHorizontal)
+        .padding(.vertical, MonknotMetrics.Spacing.settingsRowVertical)
         .overlay(alignment: .bottom) {
             if showsDivider {
                 Rectangle()
@@ -76,7 +54,7 @@ struct SettingsOutlineButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 13, weight: .medium))
+                .font(MonknotTypography.settingsButton(theme: theme))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
                 .foregroundStyle(theme.foregroundColor.opacity(isDisabled ? 0.38 : 0.92))

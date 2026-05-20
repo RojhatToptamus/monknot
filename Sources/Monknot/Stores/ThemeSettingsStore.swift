@@ -54,7 +54,7 @@ struct ThemeConfiguration: Codable, Equatable, Sendable {
     var accent: String
     var background: String
     var foreground: String
-    var translucentSidebar: Bool
+    var chromeSurfaceStyle: MonknotChromeSurfaceStyle
     var quietSidebar: Bool
     var uiFontSize: Double
     var codeFontSize: Double
@@ -64,6 +64,7 @@ struct ThemeConfiguration: Codable, Equatable, Sendable {
         case accent
         case background
         case foreground
+        case chromeSurfaceStyle
         case translucentSidebar
         case quietSidebar
         case uiFontSize
@@ -75,7 +76,7 @@ struct ThemeConfiguration: Codable, Equatable, Sendable {
         self.accent = theme.accent
         self.background = theme.background
         self.foreground = theme.foreground
-        self.translucentSidebar = !theme.opaqueWindows
+        self.chromeSurfaceStyle = theme.chromeSurfaceStyle
         self.quietSidebar = theme.quietSidebar
         self.uiFontSize = theme.uiFontSize
         self.codeFontSize = theme.codeFontSize
@@ -87,11 +88,41 @@ struct ThemeConfiguration: Codable, Equatable, Sendable {
         accent = try container.decode(String.self, forKey: .accent)
         background = try container.decode(String.self, forKey: .background)
         foreground = try container.decode(String.self, forKey: .foreground)
-        translucentSidebar = try container.decodeIfPresent(Bool.self, forKey: .translucentSidebar) ?? true
         quietSidebar = try container.decodeIfPresent(Bool.self, forKey: .quietSidebar) ?? false
         uiFontSize = try container.decode(Double.self, forKey: .uiFontSize)
         codeFontSize = try container.decode(Double.self, forKey: .codeFontSize)
         contrast = try container.decode(Double.self, forKey: .contrast)
+        if let style = try container.decodeIfPresent(MonknotChromeSurfaceStyle.self, forKey: .chromeSurfaceStyle) {
+            chromeSurfaceStyle = style
+        } else {
+            let translucent = try container.decodeIfPresent(Bool.self, forKey: .translucentSidebar) ?? true
+            chromeSurfaceStyle = MonknotChromeSurfaceStyle.fromLegacy(translucentSidebar: translucent)
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(accent, forKey: .accent)
+        try container.encode(background, forKey: .background)
+        try container.encode(foreground, forKey: .foreground)
+        try container.encode(chromeSurfaceStyle, forKey: .chromeSurfaceStyle)
+        try container.encode(quietSidebar, forKey: .quietSidebar)
+        try container.encode(uiFontSize, forKey: .uiFontSize)
+        try container.encode(codeFontSize, forKey: .codeFontSize)
+        try container.encode(contrast, forKey: .contrast)
+    }
+
+    var translucentSidebar: Bool {
+        get { chromeSurfaceStyle != .solid }
+        set {
+            if newValue {
+                if chromeSurfaceStyle == .solid {
+                    chromeSurfaceStyle = .translucent
+                }
+            } else {
+                chromeSurfaceStyle = .solid
+            }
+        }
     }
 
     func applied(to theme: AppTheme) -> AppTheme {
@@ -100,7 +131,7 @@ struct ThemeConfiguration: Codable, Equatable, Sendable {
             background: sanitized.background,
             foreground: sanitized.foreground,
             accent: sanitized.accent,
-            opaqueWindows: !sanitized.translucentSidebar,
+            chromeSurfaceStyle: sanitized.chromeSurfaceStyle,
             quietSidebar: sanitized.quietSidebar,
             uiFontSize: sanitized.uiFontSize,
             codeFontSize: sanitized.codeFontSize,
@@ -113,7 +144,7 @@ struct ThemeConfiguration: Codable, Equatable, Sendable {
             accent: Self.normalizedHex(accent, fallback: theme.accent),
             background: Self.normalizedHex(background, fallback: theme.background),
             foreground: Self.normalizedHex(foreground, fallback: theme.foreground),
-            translucentSidebar: translucentSidebar,
+            chromeSurfaceStyle: chromeSurfaceStyle,
             quietSidebar: quietSidebar,
             uiFontSize: Self.clamped(uiFontSize, range: 12...24),
             codeFontSize: Self.clamped(codeFontSize, range: 11...28),
@@ -125,7 +156,7 @@ struct ThemeConfiguration: Codable, Equatable, Sendable {
         accent: String,
         background: String,
         foreground: String,
-        translucentSidebar: Bool,
+        chromeSurfaceStyle: MonknotChromeSurfaceStyle,
         quietSidebar: Bool,
         uiFontSize: Double,
         codeFontSize: Double,
@@ -134,7 +165,7 @@ struct ThemeConfiguration: Codable, Equatable, Sendable {
         self.accent = accent
         self.background = background
         self.foreground = foreground
-        self.translucentSidebar = translucentSidebar
+        self.chromeSurfaceStyle = chromeSurfaceStyle
         self.quietSidebar = quietSidebar
         self.uiFontSize = uiFontSize
         self.codeFontSize = codeFontSize
