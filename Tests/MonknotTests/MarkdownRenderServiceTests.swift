@@ -131,5 +131,7 @@ final class MarkdownRenderServiceTests: XCTestCase {
         XCTAssertTrue(html.contains("--bg: #111111;"))
         XCTAssertTrue(html.contains("--fg: #fcfcfc;"))
         XCTAssertTrue(html.contains("--preview-max-width: 82%;"))
+        XCTAssertTrue(html.contains("html.monknot-pdf-export"))
+        XCTAssertTrue(html.contains(":root.monknot-pdf-export .markdown-body"))
     }
 }

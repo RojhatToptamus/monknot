@@ -374,7 +374,11 @@ struct EditorPaneView: View {
         case .markdown:
             markdownEditor(for: selectedDocument)
         case .text:
-            textEditor(for: selectedDocument)
+            if selectedDocument.capabilities.canPreviewHTML {
+                htmlEditor(for: selectedDocument)
+            } else {
+                textEditor(for: selectedDocument)
+            }
         case .pdf:
             PDFPreviewView(
                 document: selectedDocument,
@@ -413,6 +417,28 @@ struct EditorPaneView: View {
                 document: selectedDocument,
                 theme: theme,
                 zoomScale: zoomScale
+            )
+            .help(selectedDocument.relativePath)
+        }
+    }
+
+    @ViewBuilder
+    private func htmlEditor(for selectedDocument: WorkspaceDocument) -> some View {
+        switch editorMode {
+        case .source:
+            textEditor(for: selectedDocument)
+        case .preview:
+            HTMLPreviewView(
+                documentID: selectedDocument.id,
+                html: store.documentText,
+                baseURL: URL(fileURLWithPath: selectedDocument.id).deletingLastPathComponent(),
+                theme: theme,
+                zoomScale: zoomScale,
+                scrollPosition: activeViewportState?.htmlPreviewScrollPosition,
+                searchState: $documentSearch,
+                onScrollPositionChange: { position in
+                    updateViewportState(selectedDocument.id, .htmlPreviewScrollPosition(position))
+                }
             )
             .help(selectedDocument.relativePath)
         }
@@ -690,7 +716,7 @@ private struct EmptyDetailView: View {
                     .multilineTextAlignment(.center)
             }
 
-            Text("⇧⌘O to open a folder")
+            Text("⌘O to open a folder")
                 .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
                 .foregroundStyle(theme.mutedForegroundColor.opacity(0.6))
                 .padding(.top, MonknotMetrics.Spacing.xxs)

@@ -273,6 +273,28 @@ mark.monknot-search-current {
   page-break-after: avoid;
 }
 
+html.monknot-pdf-export,
+html.monknot-pdf-export body {
+  width: var(--pdf-page-width);
+  height: var(--pdf-page-height);
+  min-height: var(--pdf-page-height);
+  overflow: hidden;
+  background: var(--bg);
+}
+
+html.monknot-pdf-export body {
+  box-sizing: border-box;
+  padding: var(--pdf-page-margin);
+}
+
+:root.monknot-pdf-export .markdown-body {
+  width: min(var(--preview-max-width, 100%), 100%);
+  max-width: none;
+  margin: 0 auto;
+  padding: 0;
+  transform: translateY(var(--pdf-page-offset-y, 0));
+}
+
 :root.monknot-pdf-export blockquote,
 :root.monknot-pdf-export pre,
 :root.monknot-pdf-export table,

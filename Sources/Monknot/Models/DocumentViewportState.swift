@@ -4,6 +4,7 @@ import Foundation
 struct DocumentViewportState: Equatable {
     var textScrollPosition: DocumentScrollPosition?
     var markdownPreviewScrollPosition: DocumentScrollPosition?
+    var htmlPreviewScrollPosition: DocumentScrollPosition?
     var pdfPosition: PDFDocumentViewportPosition?
 }
 
@@ -43,5 +44,6 @@ struct PDFDocumentViewportPosition: Equatable {
 enum DocumentViewportStateChange {
     case textScrollPosition(DocumentScrollPosition)
     case markdownPreviewScrollPosition(DocumentScrollPosition)
+    case htmlPreviewScrollPosition(DocumentScrollPosition)
     case pdfPosition(PDFDocumentViewportPosition)
 }

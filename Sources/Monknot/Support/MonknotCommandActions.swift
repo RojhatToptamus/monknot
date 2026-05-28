@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct MonknotCommandActions {
@@ -9,6 +10,7 @@ struct MonknotCommandActions {
     let cut: () -> Void
     let copy: () -> Void
     let paste: () -> Void
+    let selectAll: () -> Void
     let refreshWorkspace: () -> Void
     let closeTab: () -> Void
     let canCloseTab: Bool
@@ -40,7 +42,7 @@ struct MonknotCommandMenu: Commands {
     @FocusedValue(\.monknotCommandActions) private var actions
 
     var body: some Commands {
-        CommandMenu("Workspace") {
+        CommandGroup(replacing: .newItem) {
             Button("New Markdown") {
                 actions?.newMarkdown()
             }
@@ -50,9 +52,11 @@ struct MonknotCommandMenu: Commands {
             Button("Open Folder...") {
                 actions?.openFolder()
             }
-            .keyboardShortcut("o", modifiers: [.command, .shift])
+            .keyboardShortcut("o", modifiers: [.command])
             .disabled(actions == nil)
+        }
 
+        CommandMenu("Workspace") {
             Button("Refresh") {
                 actions?.refreshWorkspace()
             }
@@ -72,7 +76,7 @@ struct MonknotCommandMenu: Commands {
             Button("Toggle Terminal") {
                 actions?.toggleTerminal()
             }
-            .keyboardShortcut("t", modifiers: [.command, .option])
+            .keyboardShortcut("j", modifiers: [.command, .option])
             .disabled(actions == nil)
 
             Button("Toggle Sidebar") {
@@ -98,22 +102,46 @@ struct MonknotCommandMenu: Commands {
 
         CommandGroup(replacing: .pasteboard) {
             Button("Cut") {
-                actions?.cut()
+                if let actions {
+                    actions.cut()
+                } else {
+                    _ = MonknotNativePasteboardCommand.performCutIfAvailable()
+                }
             }
             .keyboardShortcut("x", modifiers: [.command])
-            .disabled(actions == nil)
+            .disabled(actions == nil && !MonknotNativePasteboardCommand.hasNativeEditingFocus)
 
             Button("Copy") {
-                actions?.copy()
+                if let actions {
+                    actions.copy()
+                } else {
+                    _ = MonknotNativePasteboardCommand.performCopyIfAvailable()
+                }
             }
             .keyboardShortcut("c", modifiers: [.command])
-            .disabled(actions == nil)
+            .disabled(actions == nil && !MonknotNativePasteboardCommand.hasNativeEditingFocus)
 
             Button("Paste") {
-                actions?.paste()
+                if let actions {
+                    actions.paste()
+                } else {
+                    _ = MonknotNativePasteboardCommand.performPasteIfAvailable()
+                }
             }
             .keyboardShortcut("v", modifiers: [.command])
-            .disabled(actions == nil)
+            .disabled(actions == nil && !MonknotNativePasteboardCommand.hasNativeEditingFocus)
+
+            Divider()
+
+            Button("Select All") {
+                if let actions {
+                    actions.selectAll()
+                } else {
+                    _ = MonknotNativePasteboardCommand.performSelectAllIfAvailable()
+                }
+            }
+            .keyboardShortcut("a", modifiers: [.command])
+            .disabled(actions == nil && !MonknotNativePasteboardCommand.hasNativeEditingFocus)
         }
 
         CommandGroup(replacing: .printItem) {
@@ -154,7 +182,7 @@ struct MonknotCommandMenu: Commands {
             Button("Zoom In") {
                 actions?.zoomIn()
             }
-            .keyboardShortcut("+", modifiers: [.command])
+            .keyboardShortcut("=", modifiers: [.command])
             .disabled(actions == nil)
 
             Button("Zoom Out") {

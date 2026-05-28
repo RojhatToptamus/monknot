@@ -838,7 +838,7 @@ private struct SidebarNodeRow: View {
             Label("Reveal in Finder", systemImage: MonknotWorkspaceIcons.revealInFinder)
         }
 
-        if document.kind == .markdown {
+        if document.capabilities.canExportPDF {
             Button {
                 exportPDF(document)
             } label: {

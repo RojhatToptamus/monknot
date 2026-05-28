@@ -54,12 +54,24 @@ expect(
     "Command-S should not be consumed without an active document"
 )
 expect(
+    action("x", [.command], context: context(selectedDocumentKind: .markdown)) == .cutDocument,
+    "Command-X should cut the selected workspace file when no native text target handles it"
+)
+expect(
     action("c", [.command], context: context(selectedDocumentKind: .markdown)) == .copyDocument,
     "Command-C should copy the selected workspace file when an active document is selected"
 )
 expect(
+    action("x", [.command], context: context(selectedDocumentKind: nil)) == nil,
+    "Command-X should not be consumed without an active document"
+)
+expect(
     action("c", [.command], context: context(selectedDocumentKind: nil)) == nil,
     "Command-C should not be consumed without an active document"
+)
+expect(
+    action("x", [.command], context: context(selectedDocumentKind: .markdown, isBusy: true)) == nil,
+    "Command-X should not start a file cut during busy workspace operations"
 )
 expect(
     action("c", [.command], context: context(selectedDocumentKind: .markdown, isBusy: true)) == nil,
@@ -104,8 +116,11 @@ expect(
 expect(action("=", [.command]) == .zoomIn, "Command-= should zoom in")
 expect(action("-", [.command]) == .zoomOut, "Command-- should zoom out")
 expect(action("0", [.command]) == .resetZoom, "Command-0 should reset zoom")
-expect(action("t", [.command, .option]) == .toggleTerminal, "Option-Command-T should toggle the terminal")
+expect(action("j", [.command, .option]) == .toggleTerminal, "Option-Command-J should toggle the terminal")
 expect(action("s", [.command, .control]) == .toggleSidebar, "Control-Command-S should toggle the sidebar")
+expect(action("o", [.command]) == .openFolder, "Command-O should open a folder")
+expect(action("a", [.command], context: context(selectedDocumentKind: .markdown)) == nil, "Command-A should remain a native Select All shortcut")
+expect(action("f", [.control], context: context(selectedDocumentKind: .markdown)) == nil, "Control-F should remain a native text movement shortcut")
 expect(
     action(
         "",

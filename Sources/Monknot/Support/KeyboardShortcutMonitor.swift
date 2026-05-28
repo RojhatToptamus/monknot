@@ -10,13 +10,14 @@ struct KeyboardShortcutMonitor: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSView {
-        context.coordinator.install()
-        return NSView(frame: .zero)
+        let view = NSView(frame: .zero)
+        context.coordinator.install(from: view)
+        return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
         context.coordinator.handler = handler
-        context.coordinator.install()
+        context.coordinator.install(from: nsView)
     }
 
     static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
@@ -26,6 +27,7 @@ struct KeyboardShortcutMonitor: NSViewRepresentable {
     final class Coordinator {
         var handler: (NSEvent) -> Bool
         private var monitor: Any?
+        private weak var view: NSView?
 
         init(handler: @escaping (NSEvent) -> Bool) {
             self.handler = handler
@@ -35,10 +37,17 @@ struct KeyboardShortcutMonitor: NSViewRepresentable {
             uninstall()
         }
 
-        func install() {
+        func install(from view: NSView) {
+            self.view = view
             guard monitor == nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard self?.handler(event) == true else { return event }
+                guard let self,
+                      event.window === self.view?.window,
+                      self.view?.window?.isKeyWindow == true,
+                      self.handler(event)
+                else {
+                    return event
+                }
                 return nil
             }
         }
@@ -91,6 +100,11 @@ extension NSEvent {
 }
 
 enum MonknotNativePasteboardCommand {
+    static var hasNativeEditingFocus: Bool {
+        guard let target = NSApp.keyWindow?.firstResponder else { return false }
+        return monknotIsNativeTextTarget(target)
+    }
+
     static func performCopyIfAvailable() -> Bool {
         perform(#selector(NSText.copy(_:)), ifTargetMatches: monknotCanNativeCopyTargetHandleCopy(_:))
     }
@@ -101,6 +115,10 @@ enum MonknotNativePasteboardCommand {
 
     static func performCutIfAvailable() -> Bool {
         perform(#selector(NSText.cut(_:)), ifTargetMatches: monknotCanNativeCutTargetHandleCut(_:))
+    }
+
+    static func performSelectAllIfAvailable() -> Bool {
+        perform(#selector(NSText.selectAll(_:)), ifTargetMatches: monknotIsNativeTextTarget(_:))
     }
 
     private static func perform(

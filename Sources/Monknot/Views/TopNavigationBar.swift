@@ -34,6 +34,11 @@ struct TopNavigationBar: View {
         store.selectedDocument?.kind == .markdown
     }
 
+    private var supportsSourcePreviewToggle: Bool {
+        guard let document = store.selectedDocument else { return false }
+        return document.kind == .markdown || document.capabilities.canPreviewHTML
+    }
+
     private var uiFontSize: Double { theme.uiFontSize }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -90,7 +95,7 @@ struct TopNavigationBar: View {
             isActive: isTerminalPresented,
             action: toggleTerminal
         )
-        .keyboardShortcut("t", modifiers: [.command, .option])
+        .keyboardShortcut("j", modifiers: [.command, .option])
         .accessibilityValue(isTerminalPresented ? "Open" : "Closed")
     }
 
@@ -165,6 +170,8 @@ struct TopNavigationBar: View {
         HStack(spacing: scaled(4)) {
             if isMarkdownSelected {
                 outlineButton
+            }
+            if supportsSourcePreviewToggle {
                 sourcePreviewSwitch
                     .disabled(store.isDocumentLoading)
             }

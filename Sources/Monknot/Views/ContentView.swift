@@ -309,7 +309,7 @@ struct ContentView: View {
     }
 
     private func exportSelectedMarkdownPDF() {
-        guard let document = store.selectedDocument, document.kind == .markdown else {
+        guard let document = store.selectedDocument, document.capabilities.canExportPDF else {
             return
         }
 
@@ -338,9 +338,6 @@ struct ContentView: View {
                     markdown: markdown,
                     baseURL: document.url.deletingLastPathComponent(),
                     theme: exportTheme,
-                    zoomScale: options.resolvedScale,
-                    codeFontSize: exportTheme.codeFontSize,
-                    previewWidthPercent: previewWidthPercent,
                     usePointerCursors: usePointerCursors,
                     fontSmoothing: fontSmoothing,
                     options: options
@@ -564,6 +561,9 @@ struct ContentView: View {
         case .markdownPreviewScrollPosition(let position):
             guard position.isMeaningfullyDifferent(from: state.markdownPreviewScrollPosition) else { return }
             state.markdownPreviewScrollPosition = position
+        case .htmlPreviewScrollPosition(let position):
+            guard position.isMeaningfullyDifferent(from: state.htmlPreviewScrollPosition) else { return }
+            state.htmlPreviewScrollPosition = position
         case .pdfPosition(let position):
             guard position != state.pdfPosition else { return }
             state.pdfPosition = position
@@ -589,11 +589,12 @@ struct ContentView: View {
             newMarkdown: { store.createMarkdownFile() },
             openFolder: openFolderPanel,
             exportPDF: { exportSelectedMarkdownPDF() },
-            canExportPDF: store.selectedDocument?.kind == .markdown,
+            canExportPDF: store.selectedDocument?.capabilities.canExportPDF == true,
             saveDocument: { store.saveSelectedFile() },
             cut: { _ = cutFromCommand() },
             copy: { _ = copyFromCommand() },
             paste: { _ = pasteFromCommand() },
+            selectAll: { _ = MonknotNativePasteboardCommand.performSelectAllIfAvailable() },
             refreshWorkspace: { store.refresh() },
             closeTab: { closeActiveTab() },
             canCloseTab: tabState.selectedDocumentID != nil && !store.isBusy,
@@ -625,6 +626,10 @@ struct ContentView: View {
             return pasteFromCommand()
         }
 
+        if action == .cutDocument {
+            return cutFromCommand()
+        }
+
         if action == .copyDocument {
             return copyFromCommand()
         }
@@ -634,11 +639,23 @@ struct ContentView: View {
     }
 
     private func cutFromCommand() -> Bool {
-        MonknotNativePasteboardCommand.performCutIfAvailable()
+        if MonknotNativePasteboardCommand.performCutIfAvailable() {
+            return true
+        }
+
+        if MonknotNativePasteboardCommand.hasNativeEditingFocus {
+            return true
+        }
+
+        return cutSelectedDocumentFromCommand()
     }
 
     private func copyFromCommand() -> Bool {
         if MonknotNativePasteboardCommand.performCopyIfAvailable() {
+            return true
+        }
+
+        if MonknotNativePasteboardCommand.hasNativeEditingFocus {
             return true
         }
 
@@ -647,6 +664,10 @@ struct ContentView: View {
 
     private func pasteFromCommand() -> Bool {
         if MonknotNativePasteboardCommand.performPasteIfAvailable() {
+            return true
+        }
+
+        if MonknotNativePasteboardCommand.hasNativeEditingFocus {
             return true
         }
 
@@ -666,6 +687,13 @@ struct ContentView: View {
         } catch {
             store.errorMessage = "Could not copy \(document.displayName): \(error.localizedDescription)"
         }
+        return true
+    }
+
+    private func cutSelectedDocumentFromCommand() -> Bool {
+        guard let document = store.selectedDocument, !store.isBusy else { return false }
+        WorkspacePasteboardExportService.clearFileTransferPasteboard()
+        store.cutDocument(document)
         return true
     }
 
@@ -689,7 +717,7 @@ struct ContentView: View {
             selectedDocumentKind: selectedDocument?.kind,
             canCloseTab: tabState.selectedDocumentID != nil && !store.isBusy,
             canTogglePinTab: tabState.selectedDocumentID != nil && !store.isBusy,
-            canExportPDF: selectedDocument?.kind == .markdown,
+            canExportPDF: selectedDocument?.capabilities.canExportPDF == true,
             canUndoPDFAnnotation: selectedDocument?.kind == .pdf && canUndoPDFAnnotation,
             canRedoPDFAnnotation: selectedDocument?.kind == .pdf && canRedoPDFAnnotation,
             isDocumentSearchPresented: documentSearch.isPresented,
@@ -705,6 +733,8 @@ struct ContentView: View {
             openFolderPanel()
         case .saveDocument:
             store.saveSelectedFile()
+        case .cutDocument:
+            _ = cutFromCommand()
         case .copyDocument:
             _ = copyFromCommand()
         case .refreshWorkspace:

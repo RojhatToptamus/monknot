@@ -13,14 +13,24 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         )
     }
 
-    func testCopyShortcutRequiresSelectedDocumentAndIdleState() {
+    func testPasteboardFileTransferShortcutsRequireSelectedDocumentAndIdleState() {
+        XCTAssertEqual(
+            action(for: "x", modifiers: [.command], context: shortcutContext(selectedDocumentKind: .markdown)),
+            .cutDocument
+        )
         XCTAssertEqual(
             action(for: "c", modifiers: [.command], context: shortcutContext(selectedDocumentKind: .markdown)),
             .copyDocument
         )
 
         XCTAssertNil(
+            action(for: "x", modifiers: [.command], context: shortcutContext(selectedDocumentKind: nil))
+        )
+        XCTAssertNil(
             action(for: "c", modifiers: [.command], context: shortcutContext(selectedDocumentKind: nil))
+        )
+        XCTAssertNil(
+            action(for: "x", modifiers: [.command], context: shortcutContext(selectedDocumentKind: .markdown, isBusy: true))
         )
         XCTAssertNil(
             action(for: "c", modifiers: [.command], context: shortcutContext(selectedDocumentKind: .markdown, isBusy: true))
@@ -117,12 +127,11 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
             action(for: "f", modifiers: [.command], context: shortcutContext(selectedDocumentKind: .markdown)),
             .showDocumentSearch
         )
-        XCTAssertEqual(
-            action(for: "f", modifiers: [.control], context: shortcutContext(selectedDocumentKind: .markdown)),
-            .showDocumentSearch
-        )
         XCTAssertNil(
             action(for: "f", modifiers: [.command], context: shortcutContext(selectedDocumentKind: nil))
+        )
+        XCTAssertNil(
+            action(for: "f", modifiers: [.control], context: shortcutContext(selectedDocumentKind: .markdown))
         )
 
         XCTAssertEqual(
@@ -165,9 +174,9 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         XCTAssertEqual(action(for: "+", modifiers: [.command]), .zoomIn)
         XCTAssertEqual(action(for: "-", modifiers: [.command]), .zoomOut)
         XCTAssertEqual(action(for: "0", modifiers: [.command]), .resetZoom)
-        XCTAssertEqual(action(for: "t", modifiers: [.command, .option]), .toggleTerminal)
+        XCTAssertEqual(action(for: "j", modifiers: [.command, .option]), .toggleTerminal)
         XCTAssertEqual(action(for: "s", modifiers: [.command, .control]), .toggleSidebar)
-        XCTAssertEqual(action(for: "o", modifiers: [.command, .shift]), .openFolder)
+        XCTAssertEqual(action(for: "o", modifiers: [.command]), .openFolder)
 
         XCTAssertEqual(
             action(for: "p", modifiers: [.command], context: shortcutContext(canExportPDF: true)),
@@ -176,6 +185,12 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         XCTAssertNil(
             action(for: "p", modifiers: [.command], context: shortcutContext(canExportPDF: false))
         )
+    }
+
+    func testStandardTextEditingShortcutsAreNotConsumedByRouter() {
+        XCTAssertNil(action(for: "a", modifiers: [.command], context: shortcutContext(selectedDocumentKind: .markdown)))
+        XCTAssertNil(action(for: "a", modifiers: [.control], context: shortcutContext(selectedDocumentKind: .markdown)))
+        XCTAssertNil(action(for: "f", modifiers: [.control], context: shortcutContext(selectedDocumentKind: .markdown)))
     }
 
     private func action(

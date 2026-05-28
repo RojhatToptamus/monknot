@@ -17,6 +17,7 @@ public struct WorkspaceDocumentCapabilities: Codable, Hashable, Sendable {
     public let canSearchPDF: Bool
     public let canExportPDF: Bool
     public let canShowOutline: Bool
+    public let canPreviewHTML: Bool
     public let usesQuickLookPreview: Bool
 
     public init(
@@ -26,6 +27,7 @@ public struct WorkspaceDocumentCapabilities: Codable, Hashable, Sendable {
         canSearchPDF: Bool,
         canExportPDF: Bool,
         canShowOutline: Bool,
+        canPreviewHTML: Bool = false,
         usesQuickLookPreview: Bool
     ) {
         self.canPreview = canPreview
@@ -34,6 +36,7 @@ public struct WorkspaceDocumentCapabilities: Codable, Hashable, Sendable {
         self.canSearchPDF = canSearchPDF
         self.canExportPDF = canExportPDF
         self.canShowOutline = canShowOutline
+        self.canPreviewHTML = canPreviewHTML
         self.usesQuickLookPreview = usesQuickLookPreview
     }
 }
@@ -79,6 +82,7 @@ public enum WorkspaceDocumentSupport {
         "mkd"
     ]
     public static let pdfExtensions: Set<String> = ["pdf"]
+    public static let htmlExtensions: Set<String> = ["html", "htm"]
     public static let textExtensions: Set<String> = [
         "txt", "text", "log",
         "mmd", "mermaid", "mdx",
@@ -94,7 +98,7 @@ public enum WorkspaceDocumentSupport {
     ]
     public static let nativePreviewExtensions: Set<String> = [
         "png", "jpg", "jpeg", "gif", "heic", "tif", "tiff", "webp", "bmp", "ico",
-        "html", "htm", "webarchive",
+        "webarchive",
         "rtf", "rtfd",
         "doc", "docx", "xls", "xlsx", "ppt", "pptx", "pages", "numbers", "key",
         "epub"
@@ -105,6 +109,7 @@ public enum WorkspaceDocumentSupport {
     ]
     public static let supportedExtensions = markdownExtensions
         .union(pdfExtensions)
+        .union(htmlExtensions)
         .union(textExtensions)
         .union(mediaExtensions)
         .union(nativePreviewExtensions)
@@ -137,6 +142,15 @@ public enum WorkspaceDocumentSupport {
                 contentTypeIdentifier: contentTypeIdentifier,
                 localizedTypeDescription: localizedTypeDescription,
                 capabilities: capabilities(for: .pdf)
+            )
+        }
+
+        if htmlExtensions.contains(fileExtension) || type?.conforms(to: .html) == true {
+            return Classification(
+                kind: .text,
+                contentTypeIdentifier: contentTypeIdentifier,
+                localizedTypeDescription: localizedTypeDescription,
+                capabilities: htmlCapabilities()
             )
         }
 
@@ -201,6 +215,7 @@ public enum WorkspaceDocumentSupport {
                 canSearchPDF: false,
                 canExportPDF: true,
                 canShowOutline: true,
+                canPreviewHTML: false,
                 usesQuickLookPreview: false
             )
         case .pdf:
@@ -211,6 +226,7 @@ public enum WorkspaceDocumentSupport {
                 canSearchPDF: true,
                 canExportPDF: false,
                 canShowOutline: false,
+                canPreviewHTML: false,
                 usesQuickLookPreview: false
             )
         case .text:
@@ -221,6 +237,7 @@ public enum WorkspaceDocumentSupport {
                 canSearchPDF: false,
                 canExportPDF: false,
                 canShowOutline: false,
+                canPreviewHTML: false,
                 usesQuickLookPreview: false
             )
         case .media:
@@ -231,6 +248,7 @@ public enum WorkspaceDocumentSupport {
                 canSearchPDF: false,
                 canExportPDF: false,
                 canShowOutline: false,
+                canPreviewHTML: false,
                 usesQuickLookPreview: false
             )
         case .nativePreview:
@@ -241,6 +259,7 @@ public enum WorkspaceDocumentSupport {
                 canSearchPDF: false,
                 canExportPDF: false,
                 canShowOutline: false,
+                canPreviewHTML: false,
                 usesQuickLookPreview: true
             )
         case .unsupported:
@@ -251,9 +270,23 @@ public enum WorkspaceDocumentSupport {
                 canSearchPDF: false,
                 canExportPDF: false,
                 canShowOutline: false,
+                canPreviewHTML: false,
                 usesQuickLookPreview: false
             )
         }
+    }
+
+    private static func htmlCapabilities() -> WorkspaceDocumentCapabilities {
+        WorkspaceDocumentCapabilities(
+            canPreview: true,
+            canEditText: true,
+            canSearchText: true,
+            canSearchPDF: false,
+            canExportPDF: false,
+            canShowOutline: false,
+            canPreviewHTML: true,
+            usesQuickLookPreview: false
+        )
     }
 
     public static func isWorkspaceDocument(_ url: URL) -> Bool {

@@ -6,24 +6,32 @@ public struct MarkdownPDFExportOptions: Codable, Equatable, Sendable {
     public var marginPreset: MarkdownPDFMarginPreset = .normal
     public var themeMode: MarkdownPDFThemeMode = .current
     public var scalePercent: Double = 100
+    public var textSizePoints: Double = 13
+    public var contentWidthPercent: Double = 100
 
     private enum CodingKeys: String, CodingKey {
         case pageSize
         case marginPreset
         case themeMode
         case scalePercent
+        case textSizePoints
+        case contentWidthPercent
     }
 
     public init(
         pageSize: MarkdownPDFPageSize = .automatic,
         marginPreset: MarkdownPDFMarginPreset = .normal,
         themeMode: MarkdownPDFThemeMode = .current,
-        scalePercent: Double = 100
+        scalePercent: Double = 100,
+        textSizePoints: Double = 13,
+        contentWidthPercent: Double = 100
     ) {
         self.pageSize = pageSize
         self.marginPreset = marginPreset
         self.themeMode = themeMode
         self.scalePercent = Self.clampedScale(scalePercent)
+        self.textSizePoints = Self.clampedTextSize(textSizePoints)
+        self.contentWidthPercent = Self.clampedContentWidth(contentWidthPercent)
     }
 
     public init(from decoder: Decoder) throws {
@@ -32,6 +40,8 @@ public struct MarkdownPDFExportOptions: Codable, Equatable, Sendable {
         marginPreset = try container.decodeIfPresent(MarkdownPDFMarginPreset.self, forKey: .marginPreset) ?? .normal
         themeMode = try container.decodeIfPresent(MarkdownPDFThemeMode.self, forKey: .themeMode) ?? .current
         scalePercent = Self.clampedScale(try container.decodeIfPresent(Double.self, forKey: .scalePercent) ?? 100)
+        textSizePoints = Self.clampedTextSize(try container.decodeIfPresent(Double.self, forKey: .textSizePoints) ?? 13)
+        contentWidthPercent = Self.clampedContentWidth(try container.decodeIfPresent(Double.self, forKey: .contentWidthPercent) ?? 100)
     }
 
     public var resolvedScale: Double {
@@ -58,7 +68,15 @@ public struct MarkdownPDFExportOptions: Codable, Equatable, Sendable {
     }
 
     private static func clampedScale(_ value: Double) -> Double {
-        min(180, max(70, value))
+        min(130, max(70, value))
+    }
+
+    private static func clampedTextSize(_ value: Double) -> Double {
+        min(18, max(10, value))
+    }
+
+    private static func clampedContentWidth(_ value: Double) -> Double {
+        min(100, max(65, value))
     }
 }
 

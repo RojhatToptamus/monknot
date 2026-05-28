@@ -113,6 +113,21 @@ final class WorkspaceSearchServiceTests: XCTestCase {
         XCTAssertEqual(results[0].relativePath, "plain.txt")
     }
 
+    func testSearchReturnsMatchesForHTMLSourceDocuments() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let html = root.appendingPathComponent("preview.html")
+        try "<article><h1>Needle</h1></article>".write(to: html, atomically: true, encoding: .utf8)
+
+        let documents = [WorkspaceDocument(url: html, rootURL: root)]
+
+        let results = try WorkspaceSearchService().search(query: "needle", documents: documents)
+
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results[0].kind, .text)
+        XCTAssertEqual(results[0].relativePath, "preview.html")
+    }
+
     func testSearchSkipsUnsupportedFiles() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

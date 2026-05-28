@@ -70,6 +70,7 @@ public enum MonknotKeyboardShortcutAction: Equatable, Sendable {
     case newMarkdown
     case openFolder
     case saveDocument
+    case cutDocument
     case copyDocument
     case refreshWorkspace
     case closeTab
@@ -108,8 +109,12 @@ public enum MonknotKeyboardShortcutRouter {
             switch key {
             case "n":
                 return context.hasWorkspace && !context.isBusy ? .newMarkdown : nil
+            case "o":
+                return .openFolder
             case "s":
                 return context.hasSelectedDocument ? .saveDocument : nil
+            case "x":
+                return context.hasSelectedDocument && !context.isBusy ? .cutDocument : nil
             case "c":
                 return context.hasSelectedDocument && !context.isBusy ? .copyDocument : nil
             case "r":
@@ -139,8 +144,6 @@ public enum MonknotKeyboardShortcutRouter {
 
         if modifiers == [.command, .shift] {
             switch key {
-            case "o":
-                return .openFolder
             case "f":
                 return context.hasWorkspace ? .showWorkspaceSearch : nil
             case "g":
@@ -154,16 +157,12 @@ public enum MonknotKeyboardShortcutRouter {
             }
         }
 
-        if modifiers == [.command, .option], key == "t" {
+        if modifiers == [.command, .option], key == "j" {
             return .toggleTerminal
         }
 
         if modifiers == [.command, .control], key == "s" {
             return .toggleSidebar
-        }
-
-        if modifiers == [.control], key == "f" {
-            return context.hasSelectedDocument ? .showDocumentSearch : nil
         }
 
         return nil

@@ -62,12 +62,36 @@ struct MarkdownPDFExportOptionsSheet: View {
                 SettingsSliderRow(
                     theme: theme,
                     title: "Scale",
-                    detail: "Set the PDF render scale explicitly.",
+                    detail: "Scale exported content before pagination.",
                     value: Binding(
                         get: { options.scalePercent },
-                        set: { options.scalePercent = min(180, max(70, $0)) }
+                        set: { options.scalePercent = min(130, max(70, $0)) }
                     ),
-                    range: 70...180,
+                    range: 70...130,
+                    suffix: "%"
+                )
+
+                SettingsStepperRow(
+                    theme: theme,
+                    title: "Text size",
+                    detail: "Set the base reading size for exported Markdown.",
+                    value: Binding(
+                        get: { options.textSizePoints },
+                        set: { options.textSizePoints = min(18, max(10, $0)) }
+                    ),
+                    range: 10...18,
+                    suffix: "pt"
+                )
+
+                SettingsSliderRow(
+                    theme: theme,
+                    title: "Line width",
+                    detail: "Control how much of the printable width the text uses.",
+                    value: Binding(
+                        get: { options.contentWidthPercent },
+                        set: { options.contentWidthPercent = min(100, max(65, $0)) }
+                    ),
+                    range: 65...100,
                     suffix: "%"
                 )
 

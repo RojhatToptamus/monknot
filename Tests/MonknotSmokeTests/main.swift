@@ -51,6 +51,7 @@ defer { try? FileManager.default.removeItem(at: root) }
 try write("# Monknot", to: root.appendingPathComponent("README.md"))
 try writeSearchablePDF("Guide pdf-only-token", to: root.appendingPathComponent("Guide.pdf"))
 try write("- [ ] item", to: root.appendingPathComponent("Notes/Todo.markdown"))
+try write("<p>html-only-token</p>", to: root.appendingPathComponent("Notes/Preview.html"))
 try write("ignored", to: root.appendingPathComponent("Notes/image.png"))
 try write("media", to: root.appendingPathComponent("Notes/movie.mp4"))
 try FileManager.default.createSymbolicLink(
@@ -60,8 +61,9 @@ try FileManager.default.createSymbolicLink(
 
 let scan = try WorkspaceDocumentScanner().scan(rootURL: root)
 let paths = scan.documents.map(\.relativePath).sorted()
-expect(paths == ["Guide.pdf", "Notes/Todo.markdown", "Notes/image.png", "Notes/movie.mp4", "README.md"], "scanner should include regular workspace files")
+expect(paths == ["Guide.pdf", "Notes/Preview.html", "Notes/Todo.markdown", "Notes/image.png", "Notes/movie.mp4", "README.md"], "scanner should include regular workspace files")
 expect(scan.documents.first(where: { $0.relativePath == "Guide.pdf" })?.kind == .pdf, "scanner should classify PDFs")
+expect(scan.documents.first(where: { $0.relativePath == "Notes/Preview.html" })?.capabilities.canPreviewHTML == true, "scanner should classify HTML files as editable previewable text")
 expect(scan.documents.first(where: { $0.relativePath == "Notes/image.png" })?.kind == .nativePreview, "scanner should classify image files as native-preview documents")
 expect(scan.documents.first(where: { $0.relativePath == "Notes/movie.mp4" })?.kind == .media, "scanner should classify video files as media documents")
 expect(!scan.root.children!.contains(where: { $0.name == "Loop" }), "scanner should skip symbolic link directories")
@@ -156,6 +158,10 @@ expect(searchMatches.count == 1, "workspace search should find Markdown matches"
 expect(searchMatches.first?.relativePath == "Notes/Todo.markdown", "workspace search should report the matched document")
 expect(searchMatches.first?.line == 1, "workspace search should report the matched line")
 
+let htmlSearchMatches = try WorkspaceSearchService().search(query: "html-only-token", documents: scan.documents)
+expect(htmlSearchMatches.count == 1, "workspace search should find HTML source matches")
+expect(htmlSearchMatches.first?.relativePath == "Notes/Preview.html", "workspace search should report HTML documents as text matches")
+
 let pdfSearchMatches = try WorkspaceSearchService().search(query: "pdf-only-token", documents: scan.documents)
 expect(pdfSearchMatches.count == 1, "workspace search should find searchable PDF matches")
 expect(pdfSearchMatches.first?.kind == .pdf, "workspace search should mark PDF matches")
@@ -167,7 +173,7 @@ let lowScale = MarkdownPDFExportOptions(scalePercent: 40)
 let highScale = MarkdownPDFExportOptions(scalePercent: 250)
 let customScale = MarkdownPDFExportOptions(scalePercent: 125)
 expect(lowScale.scalePercent == 70, "PDF export scale should clamp the lower bound")
-expect(highScale.scalePercent == 180, "PDF export scale should clamp the upper bound")
+expect(highScale.scalePercent == 130, "PDF export scale should clamp the upper bound")
 expect(customScale.resolvedScale == 1.25, "PDF export scale should resolve from percent")
 
 let renderService = MarkdownRenderService(stylesheet: "body {}", rendererJavaScript: "window.ready = true;")

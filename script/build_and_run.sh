@@ -164,6 +164,7 @@ APP_SOURCES=(
   "Sources/Monknot/Views/MarkdownTextEditor.swift"
   "Sources/Monknot/Views/NativeMarkdownEditorView.swift"
   "Sources/Monknot/Views/MarkdownPreviewView.swift"
+  "Sources/Monknot/Views/HTMLPreviewView.swift"
   "Sources/Monknot/Views/PDFPreviewView.swift"
   "Sources/Monknot/Views/MediaPreviewView.swift"
   "Sources/Monknot/Views/QuickLookPreviewView.swift"
