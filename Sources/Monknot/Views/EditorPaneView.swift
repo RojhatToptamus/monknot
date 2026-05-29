@@ -149,7 +149,7 @@ struct EditorPaneView: View {
 
             editorTerminalVerticalSeparator
 
-            MonknotChromePanel(theme: theme, showsBottomBorder: false, surface: theme.terminalSurfaceColor) {
+            MonknotChromePanel(theme: theme, showsBottomBorder: false, surface: theme.contentSurfaceColor) {
                 TerminalDrawerChromeRow(
                     sessions: terminalSessions,
                     workingDirectory: activeTerminalDirectory,
@@ -190,7 +190,7 @@ struct EditorPaneView: View {
 
             Color.clear
                 .frame(width: max(0, terminalDrawerWidth - 1))
-                .background(theme.terminalSurfaceColor)
+                .background(theme.contentSurfaceColor)
                 .accessibilityHidden(true)
         }
         .background(theme.contentSurfaceColor)
@@ -224,7 +224,7 @@ struct EditorPaneView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: drawerWidth)
-        .background(theme.terminalSurfaceColor)
+        .background(theme.contentSurfaceColor)
         .overlay(alignment: .leading) {
             TerminalResizeHandle(
                 width: $terminalDrawerWidth,
@@ -314,7 +314,7 @@ struct EditorPaneView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: width)
-        .background(theme.terminalSurfaceColor)
+        .background(theme.contentSurfaceColor)
         .overlay(alignment: .leading) {
             TerminalResizeHandle(
                 width: $terminalDrawerWidth,

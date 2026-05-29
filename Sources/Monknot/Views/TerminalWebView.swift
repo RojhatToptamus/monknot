@@ -140,11 +140,11 @@ struct TerminalWebView: NSViewRepresentable {
             fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
             fontSize: \(fontSize),
             theme: {
-              background: '\(theme.terminalSurfaceHex)',
+              background: '\(theme.background)',
               foreground: '\(theme.foreground)',
               cursor: '\(theme.accent)',
               selectionBackground: '\(theme.selectionBackground)',
-              black: '\(theme.terminalSurfaceHex)',
+              black: '\(theme.background)',
               white: '\(theme.foreground)',
               brightWhite: '\(theme.foreground)',
               blue: '\(theme.accent)',
@@ -234,7 +234,7 @@ struct TerminalWebView: NSViewRepresentable {
 
     private static func configureBackground(of webView: WKWebView, theme: AppTheme) {
         webView.wantsLayer = true
-        webView.layer?.backgroundColor = NSColor(hex: theme.terminalSurfaceHex).cgColor
+        webView.layer?.backgroundColor = NSColor(hex: theme.background).cgColor
     }
 
     private static func bundledResource(named name: String, extension fileExtension: String) -> String {
@@ -253,7 +253,7 @@ struct TerminalWebView: NSViewRepresentable {
         fontSmoothing: Bool
     ) -> String {
         """
-        --terminal-bg: \(theme.terminalSurfaceHex);
+        --terminal-bg: \(theme.background);
         --terminal-fg: \(theme.foreground);
         --terminal-font-smoothing: \(fontSmoothing ? "antialiased" : "auto");
         --terminal-interactive-cursor: \(usePointerCursors ? "pointer" : "default");
@@ -359,7 +359,7 @@ struct TerminalWebView: NSViewRepresentable {
                 "fontSize": fontSize,
                 "colorScheme": theme.isDark ? "dark" : "light",
                 "css": [
-                    "--terminal-bg": theme.terminalSurfaceHex,
+                    "--terminal-bg": theme.background,
                     "--terminal-fg": theme.foreground,
                     "--terminal-font-smoothing": fontSmoothing ? "antialiased" : "auto",
                     "--terminal-interactive-cursor": usePointerCursors ? "pointer" : "default",
@@ -367,11 +367,11 @@ struct TerminalWebView: NSViewRepresentable {
                     "--terminal-scrollbar-thumb-hover": TerminalWebView.rgba(theme.foreground, alpha: theme.isDark ? 0.46 : 0.34)
                 ],
                 "theme": [
-                    "background": theme.terminalSurfaceHex,
+                    "background": theme.background,
                     "foreground": theme.foreground,
                     "cursor": theme.accent,
                     "selectionBackground": theme.selectionBackground,
-                    "black": theme.terminalSurfaceHex,
+                    "black": theme.background,
                     "blue": theme.accent,
                     "green": theme.semanticColors.diffAdded,
                     "red": theme.semanticColors.diffRemoved,

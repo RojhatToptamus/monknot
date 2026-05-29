@@ -43,7 +43,8 @@ extension AppTheme {
         Color(hex: sidebarSurfaceHex)
     }
 
-    /// Recessed tool-panel surface for the terminal (the deepest tool panel).
+    /// The terminal shares the content canvas in the two-tier surface model, so
+    /// this is an explicit alias of the canvas surface (theme background).
     var terminalSurfaceColor: Color {
         Color(hex: terminalSurfaceHex)
     }

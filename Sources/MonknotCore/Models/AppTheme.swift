@@ -329,13 +329,18 @@ public extension AppTheme {
         AppTheme.blendHex(background, toward: foreground, amount: amount)
     }
 
-    /// Tool-panel surface for the sidebar (one step off the content canvas).
+    /// The single distinct tool-panel tier (sidebar). Subtly offset from the
+    /// content canvas so the sidebar reads apart without heavy borders: lighter
+    /// in dark themes, a hair darker in light themes. Magnitudes are tuned to
+    /// the reference design, where the sidebar offset is small in light and a
+    /// touch stronger in dark so it remains perceptible against a dark canvas.
     var sidebarSurfaceHex: String {
-        recessedSurfaceHex(amount: isDark ? 0.05 : 0.045)
+        recessedSurfaceHex(amount: isDark ? 0.075 : 0.018)
     }
 
-    /// Tool-panel surface for the terminal (the deepest tool panel).
+    /// The terminal shares the content canvas in the two-tier model, so its
+    /// surface is exactly the theme background (not a separate tier).
     var terminalSurfaceHex: String {
-        recessedSurfaceHex(amount: isDark ? 0.08 : 0.065)
+        background
     }
 }
