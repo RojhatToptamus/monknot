@@ -4,12 +4,34 @@ import XCTest
 final class ThemeConfigurationTests: XCTestCase {
     func testChromeSurfaceStyleEncodesAndDecodes() throws {
         var configuration = ThemeConfiguration(theme: AppTheme.codexLight)
-        configuration.chromeSurfaceStyle = .liquidGlass
+        configuration.chromeSurfaceStyle = .translucent
 
         let data = try JSONEncoder().encode(configuration)
         let decoded = try JSONDecoder().decode(ThemeConfiguration.self, from: data)
 
-        XCTAssertEqual(decoded.chromeSurfaceStyle, .liquidGlass)
+        XCTAssertEqual(decoded.chromeSurfaceStyle, .translucent)
+    }
+
+    func testUnknownChromeSurfaceStyleDecodesToTranslucent() throws {
+        let json = """
+        {
+          "accent": "#339cff",
+          "background": "#ffffff",
+          "foreground": "#1a1c1f",
+          "chromeSurfaceStyle": "removedStyle",
+          "quietSidebar": false,
+          "uiFontSize": 16,
+          "codeFontSize": 15,
+          "contrast": 50
+        }
+        """
+
+        let decoded = try JSONDecoder().decode(
+            ThemeConfiguration.self,
+            from: Data(json.utf8)
+        )
+
+        XCTAssertEqual(decoded.chromeSurfaceStyle, .translucent)
     }
 
     func testLegacyTranslucentSidebarDecodesToChromeSurfaceStyle() throws {

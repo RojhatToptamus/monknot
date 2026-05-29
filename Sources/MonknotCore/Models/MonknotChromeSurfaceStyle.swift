@@ -4,7 +4,6 @@ import Foundation
 public enum MonknotChromeSurfaceStyle: String, Codable, CaseIterable, Sendable, Identifiable {
     case solid
     case translucent
-    case liquidGlass
 
     public var id: String { rawValue }
 
@@ -14,8 +13,6 @@ public enum MonknotChromeSurfaceStyle: String, Codable, CaseIterable, Sendable, 
             return "Solid"
         case .translucent:
             return "Translucent"
-        case .liquidGlass:
-            return "Liquid Glass"
         }
     }
 
@@ -25,8 +22,6 @@ public enum MonknotChromeSurfaceStyle: String, Codable, CaseIterable, Sendable, 
             return "Opaque theme surface on chrome regions"
         case .translucent:
             return "Tinted macOS material behind chrome"
-        case .liquidGlass:
-            return "System Liquid Glass on chrome when available"
         }
     }
 
@@ -37,5 +32,16 @@ public enum MonknotChromeSurfaceStyle: String, Codable, CaseIterable, Sendable, 
 
     public var usesOpaqueWindows: Bool {
         self == .solid
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = MonknotChromeSurfaceStyle(rawValue: rawValue) ?? .translucent
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
     }
 }

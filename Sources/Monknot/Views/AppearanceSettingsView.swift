@@ -173,17 +173,11 @@ private struct ThemeEditorSection: View {
     }
 
     private var availableChromeSurfaceStyles: [MonknotChromeSurfaceStyle] {
-        if MonknotChromeSurfaceStyleResolver.isLiquidGlassAvailable {
-            return MonknotChromeSurfaceStyle.allCases
-        }
-        return MonknotChromeSurfaceStyle.allCases.filter { $0 != .liquidGlass }
+        MonknotChromeSurfaceStyle.allCases
     }
 
     private var chromeSurfaceDetail: String {
-        if MonknotChromeSurfaceStyleResolver.isLiquidGlassAvailable {
-            return "Solid, translucent material, or Liquid Glass on navigation chrome"
-        }
-        return "Solid or translucent material on navigation chrome (Liquid Glass requires macOS 26)"
+        "Solid or translucent material on navigation chrome"
     }
 
     private var selectedThemeID: Binding<String> {

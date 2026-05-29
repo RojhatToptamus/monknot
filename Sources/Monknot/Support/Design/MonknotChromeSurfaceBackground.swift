@@ -21,20 +21,7 @@ struct MonknotChromeSurfaceBackground: View {
             case .translucent:
                 Rectangle().fill(.thinMaterial)
                 theme.surfaceColor.opacity(theme.isDark ? 0.42 : 0.55)
-            case .liquidGlass:
-                liquidGlassFill
             }
-        }
-    }
-
-    @ViewBuilder
-    private var liquidGlassFill: some View {
-        if #available(macOS 26.0, *) {
-            Rectangle().fill(.ultraThinMaterial)
-            theme.surfaceColor.opacity(theme.isDark ? 0.28 : 0.38)
-        } else {
-            Rectangle().fill(.thinMaterial)
-            theme.surfaceColor.opacity(theme.isDark ? 0.42 : 0.55)
         }
     }
 }

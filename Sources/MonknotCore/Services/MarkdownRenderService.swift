@@ -54,7 +54,7 @@ public struct MarkdownRenderService: Sendable {
 
         return """
         <!doctype html>
-        <html lang="en" data-theme="\(appTheme.isDark ? "dark" : "light")" data-chrome-surface="\(appTheme.chromeSurfaceStyle.rawValue)">
+        <html lang="en" data-theme="\(appTheme.isDark ? "dark" : "light")">
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -176,21 +176,8 @@ public struct MarkdownRenderService: Sendable {
             ("--font-smoothing", fontSmoothing ? "antialiased" : "auto"),
             ("--interactive-cursor", usePointerCursors ? "pointer" : "default"),
             ("--ui-font", uiFontStack),
-            ("--code-font", codeFontStack),
-            ("--chrome-surface-style", theme.chromeSurfaceStyle.rawValue),
-            ("--chrome-edge-opacity", chromeEdgeOpacity(for: theme.chromeSurfaceStyle))
+            ("--code-font", codeFontStack)
         ]
-    }
-
-    private func chromeEdgeOpacity(for style: MonknotChromeSurfaceStyle) -> String {
-        switch style {
-        case .solid:
-            return "1"
-        case .translucent:
-            return "0.92"
-        case .liquidGlass:
-            return "0.88"
-        }
     }
 
     private func fontStack(preferred: String?, fallback: String) -> String {

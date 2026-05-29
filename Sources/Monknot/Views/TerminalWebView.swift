@@ -242,7 +242,6 @@ struct TerminalWebView: NSViewRepresentable {
         --terminal-interactive-cursor: \(usePointerCursors ? "pointer" : "default");
         --terminal-scrollbar-thumb: \(rgba(theme.foreground, alpha: theme.isDark ? 0.30 : 0.22));
         --terminal-scrollbar-thumb-hover: \(rgba(theme.foreground, alpha: theme.isDark ? 0.46 : 0.34));
-        --chrome-surface-style: \(theme.chromeSurfaceStyle.rawValue);
         """
     }
 

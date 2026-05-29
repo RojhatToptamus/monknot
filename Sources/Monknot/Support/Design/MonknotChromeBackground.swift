@@ -42,11 +42,4 @@ enum MonknotChromeSurfaceStyleResolver {
         }
         return requested
     }
-
-    static var isLiquidGlassAvailable: Bool {
-        if #available(macOS 26.0, *) {
-            return true
-        }
-        return false
-    }
 }
