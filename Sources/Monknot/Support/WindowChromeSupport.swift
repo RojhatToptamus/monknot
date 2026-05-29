@@ -47,41 +47,25 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             if coordinator.suppressToolbarButton {
                 coordinator.suppressDuplicateToolbarButton(in: window)
             }
-            coordinator.configureSplitViewDividers(in: window)
+            coordinator.configureSplitViewChrome(in: window)
         }
     }
 
-    /// Hides only AppKit NSSplitView divider subviews (not column content).
-    /// Must not run on key-window changes — inactive windows recreate dividers and
-    /// broad name matching previously hid non-divider views.
-    fileprivate static func hideSplitViewDividers(in window: NSWindow) {
+    /// Keeps AppKit's native sidebar split item from drawing its own material
+    /// and edge overlays over Monknot's solid SwiftUI sidebar surface.
+    fileprivate static func configureSplitViewChrome(in window: NSWindow) {
         guard let contentView = window.contentView else { return }
         for splitView in splitViews(in: contentView) {
-            for subview in splitView.subviews where isNSSplitViewDividerSubview(subview, in: splitView) {
+            for subview in splitView.subviews where isNonArrangedChromeOverlay(subview, in: splitView) {
                 subview.isHidden = true
             }
+            neutralizeSidebarSystemMaterial(in: splitView)
         }
     }
 
-    private static let splitDividerTypeMarkers = [
-        "NSSplitViewDivider",
-        "_NSSplitViewDivider",
-        "SplitDivider",
-        "NSSplitViewSplitter"
-    ]
-
-    private static func isNSSplitViewDividerSubview(_ view: NSView, in splitView: NSSplitView) -> Bool {
-        let typeName = String(describing: type(of: view))
-        if splitDividerTypeMarkers.contains(where: { typeName.contains($0) }) {
-            return true
-        }
-
-        guard splitView.subviews.count > 2 else { return false }
-        let thickness = max(splitView.dividerThickness, 1)
-        if splitView.isVertical {
-            return view.frame.width <= thickness + 0.5
-        }
-        return view.frame.height <= thickness + 0.5
+    private static func isNonArrangedChromeOverlay(_ view: NSView, in splitView: NSSplitView) -> Bool {
+        guard !splitView.arrangedSubviews.contains(where: { $0 === view }) else { return false }
+        return isInteriorEdgeOverlay(view, in: splitView)
     }
 
     private static func splitViews(in view: NSView) -> [NSSplitView] {
@@ -93,6 +77,75 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             results.append(contentsOf: splitViews(in: subview))
         }
         return results
+    }
+
+    private static func isInteriorEdgeOverlay(_ view: NSView, in splitView: NSSplitView) -> Bool {
+        let frame = view.frame
+        let bounds = splitView.bounds
+        let maximumOverlayThickness: CGFloat = 16
+        let edgeInset: CGFloat = 20
+
+        if splitView.isVertical {
+            guard approximatelyEqual(frame.height, bounds.height) else { return false }
+            guard frame.width <= maximumOverlayThickness else { return false }
+            guard frame.minX > bounds.minX + edgeInset else { return false }
+            guard frame.maxX < bounds.maxX - edgeInset else { return false }
+            return true
+        }
+
+        guard approximatelyEqual(frame.width, bounds.width) else { return false }
+        guard frame.height <= maximumOverlayThickness else { return false }
+        guard frame.minY > bounds.minY + edgeInset else { return false }
+        guard frame.maxY < bounds.maxY - edgeInset else { return false }
+        return true
+    }
+
+    private static func neutralizeSidebarSystemMaterial(in splitView: NSSplitView) {
+        guard let sidebarColumn = sidebarColumn(in: splitView) else { return }
+        for subview in sidebarColumn.subviews where isMaterialBackdropOnlyView(subview, filling: sidebarColumn) {
+            subview.isHidden = true
+        }
+        configureSystemMaterialEffects(in: sidebarColumn)
+    }
+
+    private static func sidebarColumn(in splitView: NSSplitView) -> NSView? {
+        guard splitView.isVertical else { return nil }
+        return splitView.arrangedSubviews
+            .filter { isSplitColumnView($0, in: splitView) }
+            .min { $0.frame.minX < $1.frame.minX }
+    }
+
+    private static func configureSystemMaterialEffects(in view: NSView) {
+        if #available(macOS 26.0, *), let effectView = view as? NSGlassEffectView {
+            effectView.style = .clear
+            effectView.tintColor = .clear
+        }
+        for subview in view.subviews {
+            configureSystemMaterialEffects(in: subview)
+        }
+    }
+
+    private static func isSplitColumnView(_ view: NSView, in splitView: NSSplitView) -> Bool {
+        approximatelyEqual(view.frame.height, splitView.bounds.height) && view.frame.width > 40
+    }
+
+    private static func isMaterialBackdropOnlyView(_ view: NSView, filling container: NSView) -> Bool {
+        guard fills(view.frame, container.bounds) else { return false }
+        guard view.subviews.count == 1, let child = view.subviews.first else { return false }
+        guard fills(child.frame, view.bounds) else { return false }
+        guard child.subviews.isEmpty else { return false }
+        return child.layer != nil
+    }
+
+    private static func fills(_ frame: NSRect, _ bounds: NSRect) -> Bool {
+        approximatelyEqual(frame.minX, bounds.minX)
+            && approximatelyEqual(frame.minY, bounds.minY)
+            && approximatelyEqual(frame.width, bounds.width)
+            && approximatelyEqual(frame.height, bounds.height)
+    }
+
+    private static func approximatelyEqual(_ lhs: CGFloat, _ rhs: CGFloat) -> Bool {
+        abs(lhs - rhs) <= 1
     }
 
     /// AppKit reinstalls `.toolbarButton` whenever the window changes state.
@@ -142,6 +195,8 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
 
             let layoutNames: [NSNotification.Name] = [
                 NSWindow.didResizeNotification,
+                NSWindow.didBecomeKeyNotification,
+                NSWindow.didResignKeyNotification,
                 NSWindow.didEnterFullScreenNotification,
                 NSWindow.didExitFullScreenNotification,
                 NSWindow.didUpdateNotification
@@ -149,14 +204,14 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             for name in layoutNames {
                 let token = center.addObserver(forName: name, object: window, queue: .main) { [weak window] _ in
                     guard let window else { return }
-                    WindowBackgroundDragEnabler.hideSplitViewDividers(in: window)
+                    WindowBackgroundDragEnabler.configureSplitViewChrome(in: window)
                 }
                 observers.append(token)
             }
         }
 
-        func configureSplitViewDividers(in window: NSWindow) {
-            WindowBackgroundDragEnabler.hideSplitViewDividers(in: window)
+        func configureSplitViewChrome(in window: NSWindow) {
+            WindowBackgroundDragEnabler.configureSplitViewChrome(in: window)
         }
 
         func suppressDuplicateToolbarButton(in window: NSWindow) {

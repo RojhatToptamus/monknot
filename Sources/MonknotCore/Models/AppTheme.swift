@@ -25,7 +25,6 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
     public let semanticColors: AppThemeSemanticColors
     public let uiFontName: String?
     public let codeFontName: String?
-    public let chromeSurfaceStyle: MonknotChromeSurfaceStyle
     public let quietSidebar: Bool
     public let uiFontSize: Double
     public let codeFontSize: Double
@@ -48,8 +47,6 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         ),
         uiFontName: String? = nil,
         codeFontName: String? = nil,
-        chromeSurfaceStyle: MonknotChromeSurfaceStyle = .translucent,
-        opaqueWindows: Bool? = nil,
         quietSidebar: Bool = false,
         uiFontSize: Double = 16,
         codeFontSize: Double = 15,
@@ -67,11 +64,6 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         self.semanticColors = semanticColors
         self.uiFontName = uiFontName
         self.codeFontName = codeFontName
-        if let opaqueWindows {
-            self.chromeSurfaceStyle = opaqueWindows ? .solid : .translucent
-        } else {
-            self.chromeSurfaceStyle = chromeSurfaceStyle
-        }
         self.quietSidebar = quietSidebar
         self.uiFontSize = uiFontSize
         self.codeFontSize = codeFontSize
@@ -106,10 +98,6 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         palette[safe: 8] ?? "#8D939F"
     }
 
-    public var opaqueWindows: Bool {
-        chromeSurfaceStyle.usesOpaqueWindows
-    }
-
     public static func == (lhs: AppTheme, rhs: AppTheme) -> Bool {
         lhs.id == rhs.id
             && lhs.name == rhs.name
@@ -123,7 +111,6 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
             && lhs.semanticColors == rhs.semanticColors
             && lhs.uiFontName == rhs.uiFontName
             && lhs.codeFontName == rhs.codeFontName
-            && lhs.chromeSurfaceStyle == rhs.chromeSurfaceStyle
             && lhs.quietSidebar == rhs.quietSidebar
             && lhs.uiFontSize == rhs.uiFontSize
             && lhs.codeFontSize == rhs.codeFontSize
@@ -143,8 +130,6 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         case semanticColors
         case uiFontName
         case codeFontName
-        case chromeSurfaceStyle
-        case opaqueWindows
         case quietSidebar
         case uiFontSize
         case codeFontSize
@@ -169,12 +154,6 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         uiFontSize = try container.decodeIfPresent(Double.self, forKey: .uiFontSize) ?? 16
         codeFontSize = try container.decodeIfPresent(Double.self, forKey: .codeFontSize) ?? 15
         contrast = try container.decodeIfPresent(Double.self, forKey: .contrast) ?? 50
-        if let style = try container.decodeIfPresent(MonknotChromeSurfaceStyle.self, forKey: .chromeSurfaceStyle) {
-            chromeSurfaceStyle = style
-        } else {
-            let opaque = try container.decodeIfPresent(Bool.self, forKey: .opaqueWindows) ?? false
-            chromeSurfaceStyle = opaque ? .solid : .translucent
-        }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -191,8 +170,6 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         try container.encode(semanticColors, forKey: .semanticColors)
         try container.encodeIfPresent(uiFontName, forKey: .uiFontName)
         try container.encodeIfPresent(codeFontName, forKey: .codeFontName)
-        try container.encode(chromeSurfaceStyle, forKey: .chromeSurfaceStyle)
-        try container.encode(opaqueWindows, forKey: .opaqueWindows)
         try container.encode(quietSidebar, forKey: .quietSidebar)
         try container.encode(uiFontSize, forKey: .uiFontSize)
         try container.encode(codeFontSize, forKey: .codeFontSize)
@@ -211,8 +188,6 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         background: String? = nil,
         foreground: String? = nil,
         accent: String? = nil,
-        chromeSurfaceStyle: MonknotChromeSurfaceStyle? = nil,
-        opaqueWindows: Bool? = nil,
         quietSidebar: Bool? = nil,
         uiFontSize: Double? = nil,
         codeFontSize: Double? = nil,
@@ -249,7 +224,6 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
             semanticColors: semanticColors,
             uiFontName: uiFontName,
             codeFontName: codeFontName,
-            chromeSurfaceStyle: chromeSurfaceStyle ?? (opaqueWindows.map { $0 ? .solid : .translucent } ?? self.chromeSurfaceStyle),
             quietSidebar: quietSidebar ?? self.quietSidebar,
             uiFontSize: uiFontSize ?? self.uiFontSize,
             codeFontSize: codeFontSize ?? self.codeFontSize,
@@ -320,5 +294,48 @@ public struct RGBHex: Sendable {
 extension Array {
     subscript(safe index: Index) -> Element? {
         indices.contains(index) ? self[index] : nil
+    }
+}
+
+// MARK: - Layered surface hierarchy
+
+public extension AppTheme {
+    /// Linearly blends `baseHex` toward `targetHex` by `amount` (0...1) and
+    /// returns a `#RRGGBB` string. Returns `baseHex` unchanged if either input
+    /// cannot be parsed.
+    static func blendHex(_ baseHex: String, toward targetHex: String, amount: Double) -> String {
+        guard let base = RGBHex(baseHex), let target = RGBHex(targetHex) else {
+            return baseHex
+        }
+
+        let clamped = max(0, min(1, amount))
+        let red = base.red + (target.red - base.red) * clamped
+        let green = base.green + (target.green - base.green) * clamped
+        let blue = base.blue + (target.blue - base.blue) * clamped
+
+        return String(
+            format: "#%02X%02X%02X",
+            Int((red * 255).rounded()),
+            Int((green * 255).rounded()),
+            Int((blue * 255).rounded())
+        )
+    }
+
+    /// A surface tone derived from `background`, nudged toward the `foreground`
+    /// ink. In dark themes this reads as a gently raised panel; in light themes
+    /// it reads as a recessed gray. Used to build calm, theme-driven surface
+    /// hierarchy instead of relying on heavy borders.
+    func recessedSurfaceHex(amount: Double) -> String {
+        AppTheme.blendHex(background, toward: foreground, amount: amount)
+    }
+
+    /// Tool-panel surface for the sidebar (one step off the content canvas).
+    var sidebarSurfaceHex: String {
+        recessedSurfaceHex(amount: isDark ? 0.05 : 0.045)
+    }
+
+    /// Tool-panel surface for the terminal (the deepest tool panel).
+    var terminalSurfaceHex: String {
+        recessedSurfaceHex(amount: isDark ? 0.08 : 0.065)
     }
 }

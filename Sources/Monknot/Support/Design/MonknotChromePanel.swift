@@ -1,17 +1,14 @@
 import MonknotCore
 import SwiftUI
 
-extension AppTheme {
-    /// Legacy alias; chrome panels use `MonknotChromeSurfaceBackground` for the real fill.
-    var chromeFillColor: Color {
-        surfaceColor
-    }
-}
-
 /// One continuous chrome block: themed surface fill and a single bottom edge.
+///
+/// `surface` overrides the fill tier so chrome that belongs to a recessed
+/// region (sidebar, terminal) matches that region instead of the content canvas.
 struct MonknotChromePanel<Content: View>: View {
     let theme: AppTheme
     var showsBottomBorder: Bool = true
+    var surface: Color? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -21,7 +18,7 @@ struct MonknotChromePanel<Content: View>: View {
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity)
         .background {
-            MonknotChromeSurfaceBackground(theme: theme)
+            MonknotChromeSurfaceBackground(theme: theme, surface: surface)
         }
         .overlay(alignment: .bottom) {
             if showsBottomBorder {

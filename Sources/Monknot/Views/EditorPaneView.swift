@@ -113,8 +113,6 @@ struct EditorPaneView: View {
     /// Wide layout with terminal: primary chrome is one shared row (aligned tops);
     /// resize gutter and content sit below, not between chrome headers.
     private func wideLayoutWithTerminal(drawerWidth: CGFloat, maxDrawerWidth: CGFloat) -> some View {
-        let terminalPanelWidth = max(0, drawerWidth - terminalResizeGutterWidth)
-
         return VStack(spacing: 0) {
             sharedPrimaryChromeRow(terminalDrawerWidth: drawerWidth)
                 .fixedSize(horizontal: false, vertical: true)
@@ -130,7 +128,6 @@ struct EditorPaneView: View {
 
                 terminalContentColumn(
                     drawerWidth: drawerWidth,
-                    terminalPanelWidth: terminalPanelWidth,
                     maxDrawerWidth: maxDrawerWidth,
                     close: { setTerminalPresented(false) }
                 )
@@ -142,7 +139,7 @@ struct EditorPaneView: View {
     }
 
     private func sharedPrimaryChromeRow(terminalDrawerWidth: CGFloat) -> some View {
-        let terminalChromeWidth = max(0, terminalDrawerWidth - terminalResizeGutterWidth - 1)
+        let terminalChromeWidth = max(0, terminalDrawerWidth - 1)
 
         return HStack(alignment: .top, spacing: 0) {
             MonknotChromePanel(theme: theme, showsBottomBorder: false) {
@@ -152,11 +149,7 @@ struct EditorPaneView: View {
 
             editorTerminalVerticalSeparator
 
-            Color.clear
-                .frame(width: terminalResizeGutterWidth)
-                .accessibilityHidden(true)
-
-            MonknotChromePanel(theme: theme, showsBottomBorder: false) {
+            MonknotChromePanel(theme: theme, showsBottomBorder: false, surface: theme.terminalSurfaceColor) {
                 TerminalDrawerChromeRow(
                     sessions: terminalSessions,
                     workingDirectory: activeTerminalDirectory,
@@ -169,7 +162,7 @@ struct EditorPaneView: View {
             .frame(width: terminalChromeWidth)
         }
         .background {
-            MonknotChromeSurfaceBackground(theme: theme)
+            MonknotChromeSurfaceBackground(theme: theme, surface: theme.contentSurfaceColor)
         }
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -196,13 +189,11 @@ struct EditorPaneView: View {
             editorTerminalVerticalSeparator
 
             Color.clear
-                .frame(width: terminalResizeGutterWidth)
-                .accessibilityHidden(true)
-
-            Color.clear
-                .frame(width: max(0, terminalDrawerWidth - terminalResizeGutterWidth - 1))
+                .frame(width: max(0, terminalDrawerWidth - 1))
+                .background(theme.terminalSurfaceColor)
                 .accessibilityHidden(true)
         }
+        .background(theme.contentSurfaceColor)
     }
 
     private var editorTerminalVerticalSeparator: some View {
@@ -214,19 +205,11 @@ struct EditorPaneView: View {
 
     private func terminalContentColumn(
         drawerWidth: CGFloat,
-        terminalPanelWidth: CGFloat,
         maxDrawerWidth: CGFloat,
         close: @escaping () -> Void
     ) -> some View {
         HStack(spacing: 0) {
             editorTerminalVerticalSeparator
-
-            TerminalResizeHandle(
-                width: $terminalDrawerWidth,
-                minWidth: terminalDrawerMinWidth,
-                maxWidth: maxDrawerWidth
-            )
-            .frame(width: terminalResizeGutterWidth)
 
             TerminalDrawerView(
                 sessions: terminalSessions,
@@ -241,7 +224,15 @@ struct EditorPaneView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: drawerWidth)
-        .background(theme.surfaceColor)
+        .background(theme.terminalSurfaceColor)
+        .overlay(alignment: .leading) {
+            TerminalResizeHandle(
+                width: $terminalDrawerWidth,
+                minWidth: terminalDrawerMinWidth,
+                maxWidth: maxDrawerWidth
+            )
+            .frame(width: terminalResizeHitWidth)
+        }
     }
 
     private var editorColumn: some View {
@@ -311,13 +302,6 @@ struct EditorPaneView: View {
         HStack(spacing: 0) {
             editorTerminalVerticalSeparator
 
-            TerminalResizeHandle(
-                width: $terminalDrawerWidth,
-                minWidth: terminalDrawerMinWidth,
-                maxWidth: maxWidth
-            )
-            .frame(width: terminalResizeGutterWidth)
-
             TerminalDrawerView(
                 sessions: terminalSessions,
                 workingDirectory: activeTerminalDirectory,
@@ -330,10 +314,18 @@ struct EditorPaneView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: width)
-        .background(theme.surfaceColor)
+        .background(theme.terminalSurfaceColor)
+        .overlay(alignment: .leading) {
+            TerminalResizeHandle(
+                width: $terminalDrawerWidth,
+                minWidth: terminalDrawerMinWidth,
+                maxWidth: maxWidth
+            )
+            .frame(width: terminalResizeHitWidth)
+        }
     }
 
-    private var terminalResizeGutterWidth: CGFloat {
+    private var terminalResizeHitWidth: CGFloat {
         12
     }
 

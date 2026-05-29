@@ -27,8 +27,25 @@ extension AppTheme {
         min(100, max(0, contrast)) / 100
     }
 
+    /// The primary reading/editing canvas (editor, preview, top bar, tabs).
     var surfaceColor: Color {
         Color(hex: background)
+    }
+
+    /// Alias for the content canvas, used where intent should be explicit.
+    var contentSurfaceColor: Color {
+        surfaceColor
+    }
+
+    /// Recessed tool-panel surface for the sidebar. Distinct-but-related to the
+    /// content canvas so regions read apart without heavy borders.
+    var sidebarSurfaceColor: Color {
+        Color(hex: sidebarSurfaceHex)
+    }
+
+    /// Recessed tool-panel surface for the terminal (the deepest tool panel).
+    var terminalSurfaceColor: Color {
+        Color(hex: terminalSurfaceHex)
     }
 
     var foregroundColor: Color {
@@ -39,17 +56,17 @@ extension AppTheme {
         Color(hex: accent)
     }
 
-    /// Hairline borders on controls and cards.
+    /// Hairline borders on controls and cards. Surface tone carries region
+    /// separation, so borders stay subtle.
     var borderColor: Color {
-        foregroundColor.opacity((isDark ? 0.08 : 0.06) + normalizedContrast * 0.10)
+        foregroundColor.opacity((isDark ? 0.05 : 0.045) + normalizedContrast * 0.04)
     }
 
-    /// Structural separators (sidebar rules, chrome edges). Stable when the window is inactive.
+    /// Structural separators (region edges, chrome rules). Derived from the
+    /// theme ink rather than pure white/black so it stays stable when the
+    /// window is inactive.
     var separatorColor: Color {
-        if isDark {
-            return Color.white.opacity(0.14 + normalizedContrast * 0.10)
-        }
-        return Color.black.opacity(0.12 + normalizedContrast * 0.10)
+        foregroundColor.opacity((isDark ? 0.07 : 0.06) + normalizedContrast * 0.04)
     }
 
     var elevatedSurfaceColor: Color {

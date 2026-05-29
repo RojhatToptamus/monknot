@@ -37,9 +37,7 @@ struct PreferencesView: View {
     }
 
     var body: some View {
-        MonknotChromeSurfaceReader {
-            preferencesRoot
-        }
+        preferencesRoot
     }
 
     private var preferencesRoot: some View {

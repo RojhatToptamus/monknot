@@ -21,7 +21,7 @@ struct TerminalDrawerView: View {
     var body: some View {
         VStack(spacing: 0) {
             if includesChrome {
-                MonknotChromePanel(theme: theme) {
+                MonknotChromePanel(theme: theme, surface: theme.terminalSurfaceColor) {
                     TerminalDrawerChromeRow(
                         sessions: sessions,
                         workingDirectory: workingDirectory,
@@ -37,7 +37,7 @@ struct TerminalDrawerView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.surfaceColor)
+        .background(theme.terminalSurfaceColor)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Terminal panel")
         .onAppear {
@@ -304,7 +304,7 @@ private struct TerminalEmptySurface: View {
             .font(.system(size: scaled(30), weight: .regular))
             .foregroundStyle(theme.mutedForegroundColor.opacity(0.54))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(theme.surfaceColor)
+            .background(theme.terminalSurfaceColor)
             .accessibilityLabel("No terminal session")
     }
 }

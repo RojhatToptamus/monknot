@@ -1,27 +1,18 @@
 import MonknotCore
 import SwiftUI
 
-/// Chrome fill driven by the theme's `chromeSurfaceStyle` and Reduce Transparency.
+/// Solid chrome fill for a region's surface tier.
+///
+/// Chrome is intentionally solid: vibrancy materials shift appearance with the
+/// window's active state (e.g. when the Settings window takes key focus), which
+/// reads as an inconsistent "shadow" on the sidebar. A solid theme-derived tone
+/// keeps every region calm and stable. `surface` overrides the fill so a region
+/// can paint its own tier (recessed sidebar or terminal); defaults to content.
 struct MonknotChromeSurfaceBackground: View {
     let theme: AppTheme
-    @Environment(\.monknotReduceTransparency) private var reduceTransparency
-
-    private var effectiveStyle: MonknotChromeSurfaceStyle {
-        MonknotChromeSurfaceStyleResolver.effective(
-            requested: theme.chromeSurfaceStyle,
-            reduceTransparency: reduceTransparency
-        )
-    }
+    var surface: Color? = nil
 
     var body: some View {
-        ZStack {
-            switch effectiveStyle {
-            case .solid:
-                theme.surfaceColor
-            case .translucent:
-                Rectangle().fill(.thinMaterial)
-                theme.surfaceColor.opacity(theme.isDark ? 0.42 : 0.55)
-            }
-        }
+        surface ?? theme.surfaceColor
     }
 }

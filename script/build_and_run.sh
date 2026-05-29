@@ -87,7 +87,6 @@ CORE_SOURCES=(
   "Sources/MonknotCore/Models/EditorMode.swift"
   "Sources/MonknotCore/Models/ThemePreference.swift"
   "Sources/MonknotCore/Models/AppTheme.swift"
-  "Sources/MonknotCore/Models/MonknotChromeSurfaceStyle.swift"
   "Sources/MonknotCore/Models/CodexThemeCatalog.swift"
   "Sources/MonknotCore/Models/WorkspaceDocument.swift"
   "Sources/MonknotCore/Models/WorkspaceDocumentKind+SystemImage.swift"

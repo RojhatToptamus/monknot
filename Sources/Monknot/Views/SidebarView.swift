@@ -33,7 +33,7 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MonknotChromePanel(theme: theme) {
+            MonknotChromePanel(theme: theme, surface: theme.sidebarSurfaceColor) {
                 SidebarChromeRow(
                     openFolder: openFolder,
                     createMarkdown: newMarkdown,
@@ -71,7 +71,7 @@ struct SidebarView: View {
         }
         .padding(.top, -nativeSidebarTopInsetCompensation)
         .background {
-            MonknotChromeSurfaceBackground(theme: theme)
+            MonknotChromeSurfaceBackground(theme: theme, surface: theme.sidebarSurfaceColor)
         }
         .overlay(alignment: .trailing) {
             Rectangle()

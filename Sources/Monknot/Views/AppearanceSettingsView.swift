@@ -148,38 +148,6 @@ private struct ThemeEditorSection: View {
         hasUnsavedChanges || themeStore.hasCustomization(for: slot)
     }
 
-    private var chromeSurfaceRow: some View {
-        SettingsRow(
-            theme: uiTheme,
-            title: "Chrome surface",
-            detail: chromeSurfaceDetail
-        ) {
-            MonknotSettingsSegmentedControl(
-                options: availableChromeSurfaceStyles.map { style in
-                    MonknotSettingsSegment(id: style.rawValue, title: style.title)
-                },
-                selection: Binding(
-                    get: { draft.chromeSurfaceStyle.rawValue },
-                    set: { raw in
-                        if let style = MonknotChromeSurfaceStyle(rawValue: raw) {
-                            draft.chromeSurfaceStyle = style
-                        }
-                    }
-                ),
-                theme: uiTheme
-            )
-            .frame(maxWidth: 320)
-        }
-    }
-
-    private var availableChromeSurfaceStyles: [MonknotChromeSurfaceStyle] {
-        MonknotChromeSurfaceStyle.allCases
-    }
-
-    private var chromeSurfaceDetail: String {
-        "Solid or translucent material on navigation chrome"
-    }
-
     private var selectedThemeID: Binding<String> {
         Binding(
             get: { themeStore.selectedThemeID(for: slot) },
@@ -198,8 +166,6 @@ private struct ThemeEditorSection: View {
                 EditableThemeColorRow(theme: uiTheme, label: "Accent", hex: $draft.accent)
                 EditableThemeColorRow(theme: uiTheme, label: "Background", hex: $draft.background)
                 EditableThemeColorRow(theme: uiTheme, label: "Foreground", hex: $draft.foreground)
-
-                chromeSurfaceRow
 
                 SettingsToggleRow(
                     theme: uiTheme,

@@ -62,9 +62,7 @@ struct ContentView: View {
     }
 
     private var chromeContent: AnyView {
-        AnyView(MonknotChromeSurfaceReader {
-            rootContent
-        }
+        AnyView(rootContent
             .ignoresSafeArea(.container, edges: .top)
             .background(activeTheme.surfaceColor)
             .background(WindowBackgroundDragEnabler(
@@ -190,6 +188,7 @@ struct ContentView: View {
         )
         .toolbar(removing: .sidebarToggle)
         .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 440)
+        .monknotStableNavigationChrome()
     }
 
     private var detailContent: some View {
