@@ -101,12 +101,21 @@ struct TopNavigationBar: View {
 
     /// When the sidebar is hidden, the editor pane spans the full window
     /// width and the chrome row sits behind the macOS traffic lights.
-    /// Reserve the leading space so chrome content is not under them.
+    /// Reserve just enough leading space to clear them. The chrome row
+    /// already insets content by its horizontal padding and adds spacing
+    /// before the first control, so subtract both to avoid an oversized
+    /// gap while keeping the toggle clear of the traffic lights.
     private var leadingNavigation: some View {
         Group {
             if !isSidebarVisible {
                 Color.clear
-                    .frame(width: MonknotMetrics.scale(MonknotMetrics.trafficLightReserveBase, theme: theme, zoomScale: zoomScale))
+                    .frame(width: MonknotMetrics.scale(
+                        MonknotMetrics.trafficLightReserveBase
+                            - MonknotMetrics.chromeHorizontalPaddingBase
+                            - MonknotMetrics.Spacing.s,
+                        theme: theme,
+                        zoomScale: zoomScale
+                    ))
             }
         }
     }

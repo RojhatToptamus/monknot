@@ -15,11 +15,11 @@ enum MonknotWorkspaceIcons {
     static let searchWorkspace = "magnifyingglass"
 
     static var revealInFinder: String {
-        MonknotSFSymbol.resolve("arrow.forward.folder", fallback: "folder.fill")
+        MonknotSFSymbol.resolve("arrow.up.forward.app", fallback: "folder")
     }
     static let copyPath = "link"
     static let outline = "list.bullet.indent"
-    static let exportPDF = "arrow.down.doc.fill"
+    static let exportPDF = "arrow.down.doc"
     static let settings = "gearshape"
     static let terminal = "terminal"
     static let sidebarLeft = "sidebar.left"
