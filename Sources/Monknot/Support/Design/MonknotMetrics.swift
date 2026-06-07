@@ -6,9 +6,9 @@ enum MonknotMetrics {
     static let chromeHeightBase: CGFloat = 44
     static let chromeSecondaryHeightBase: CGFloat = 36
     static let chromeHorizontalPaddingBase: CGFloat = 10
-    static let iconButtonSizeBase: CGFloat = 28
-    static let iconPointSizeBase: CGFloat = 13
-    static let iconCornerRadiusBase: CGFloat = 7
+    static let iconButtonSizeBase: CGFloat = 24
+    static let iconPointSizeBase: CGFloat = 11
+    static let iconCornerRadiusBase: CGFloat = 6
     static let trafficLightReserveBase: CGFloat = 72
     static let compactLayoutBreakpoint: CGFloat = 760
     static let tabMinWidthBase: CGFloat = 82

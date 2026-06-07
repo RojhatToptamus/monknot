@@ -3,11 +3,11 @@ import Foundation
 /// SF Symbols for workspace chrome actions (toolbar, sidebar header, menus).
 enum MonknotWorkspaceIcons {
     static var newMarkdown: String {
-        MonknotSFSymbol.resolve("doc.text.badge.plus", fallback: "doc.text.fill")
+        MonknotSFSymbol.resolve("square.and.pencil", fallback: "plus")
     }
 
     static var newFile: String {
-        MonknotSFSymbol.resolve("doc.badge.plus", fallback: "doc")
+        MonknotSFSymbol.resolve("square.and.pencil", fallback: "plus")
     }
 
     static let newFolder = "folder.badge.plus"
