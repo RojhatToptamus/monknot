@@ -64,15 +64,19 @@ struct DocumentSearchState: Equatable {
     }
 
     mutating func updateResult(_ result: DocumentSearchResult) {
-        currentIndex = max(0, result.currentIndex)
-        totalCount = max(0, result.totalCount)
-        if totalCount == 0 {
-            currentIndex = 0
-        } else if currentIndex == 0 {
-            currentIndex = 1
-        } else if currentIndex > totalCount {
-            currentIndex = totalCount
+        let nextTotalCount = max(0, result.totalCount)
+        var nextCurrentIndex = max(0, result.currentIndex)
+        if nextTotalCount == 0 {
+            nextCurrentIndex = 0
+        } else if nextCurrentIndex == 0 {
+            nextCurrentIndex = 1
+        } else if nextCurrentIndex > nextTotalCount {
+            nextCurrentIndex = nextTotalCount
         }
+
+        guard currentIndex != nextCurrentIndex || totalCount != nextTotalCount else { return }
+        currentIndex = nextCurrentIndex
+        totalCount = nextTotalCount
     }
 }
 

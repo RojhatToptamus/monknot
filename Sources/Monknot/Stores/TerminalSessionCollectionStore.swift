@@ -30,8 +30,17 @@ final class TerminalSessionCollectionStore: ObservableObject {
     }
 
     func setDefaultDirectory(_ url: URL?) {
-        defaultDirectory = TerminalSessionStore.resolvedDirectory(url)
-        activeSession?.setDefaultDirectory(defaultDirectory)
+        if let url,
+           let defaultDirectory,
+           url.standardizedFileURL.path == defaultDirectory.path {
+            return
+        }
+
+        let resolvedDirectory = TerminalSessionStore.resolvedDirectory(url)
+        guard resolvedDirectory?.path != defaultDirectory?.path else { return }
+
+        defaultDirectory = resolvedDirectory
+        activeSession?.setDefaultDirectory(resolvedDirectory)
     }
 
     func ensureActiveTerminal(in directory: URL?) {

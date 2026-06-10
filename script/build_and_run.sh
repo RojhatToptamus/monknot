@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# Build and run the Monknot app bundle without code signing.
+# Usage:
+#   script/build_and_run.sh            # build and open dist/monknot.app
+#   script/build_and_run.sh --build    # build dist/monknot.app without opening it
+#   script/build_and_run.sh --verify   # build and confirm launch
+#   script/build_and_run.sh --logs     # build and stream app logs
+#   script/build_and_run.sh --debug    # build and run under lldb
 set -euo pipefail
 
 MODE="${1:-run}"
@@ -84,26 +91,58 @@ build_app_icon() {
 }
 
 CORE_SOURCES=(
-  "Sources/MonknotCore/Models/EditorMode.swift"
-  "Sources/MonknotCore/Models/ThemePreference.swift"
   "Sources/MonknotCore/Models/AppTheme.swift"
   "Sources/MonknotCore/Models/CodexThemeCatalog.swift"
-  "Sources/MonknotCore/Models/WorkspaceDocument.swift"
-  "Sources/MonknotCore/Models/WorkspaceDocumentKind+SystemImage.swift"
-  "Sources/MonknotCore/Models/MarkdownSourceLocation.swift"
+  "Sources/MonknotCore/Models/EditorMode.swift"
   "Sources/MonknotCore/Models/MarkdownOutlineItem.swift"
   "Sources/MonknotCore/Models/MarkdownPDFExportOptions.swift"
+  "Sources/MonknotCore/Models/MarkdownSourceLocation.swift"
+  "Sources/MonknotCore/Models/MonknotKeyboardShortcut.swift"
+  "Sources/MonknotCore/Models/MonknotKeyboardShortcutCatalog.swift"
+  "Sources/MonknotCore/Models/SidebarNode.swift"
+  "Sources/MonknotCore/Models/TerminalTabState.swift"
+  "Sources/MonknotCore/Models/ThemePreference.swift"
+  "Sources/MonknotCore/Models/WorkspaceContextChunk.swift"
+  "Sources/MonknotCore/Models/WorkspaceDocument.swift"
+  "Sources/MonknotCore/Models/WorkspaceDocumentKind+SystemImage.swift"
+  "Sources/MonknotCore/Models/WorkspaceReplaceScope.swift"
+  "Sources/MonknotCore/Models/WorkspaceReplacePreview.swift"
   "Sources/MonknotCore/Models/WorkspaceSearchResult.swift"
   "Sources/MonknotCore/Models/WorkspaceTabState.swift"
-  "Sources/MonknotCore/Models/MonknotKeyboardShortcut.swift"
-  "Sources/MonknotCore/Models/TerminalTabState.swift"
-  "Sources/MonknotCore/Models/SidebarNode.swift"
-  "Sources/MonknotCore/Services/WorkspaceDocumentScanner.swift"
-  "Sources/MonknotCore/Services/WorkspaceTabStatePersistence.swift"
-  "Sources/MonknotCore/Services/RecentWorkspaceStore.swift"
+  "Sources/MonknotCore/Services/BetaFeedbackRecorder.swift"
+  "Sources/MonknotCore/Services/DailyNotePlanner.swift"
+  "Sources/MonknotCore/Services/DocumentSplitViewPersistence.swift"
+  "Sources/MonknotCore/Services/HTMLScrollSync.swift"
+  "Sources/MonknotCore/Services/MonknotCaptureURLBuilder.swift"
   "Sources/MonknotCore/Services/MarkdownOutlineParser.swift"
-  "Sources/MonknotCore/Services/WorkspaceSearchService.swift"
   "Sources/MonknotCore/Services/MarkdownRenderService.swift"
+  "Sources/MonknotCore/Services/MarkdownScrollSync.swift"
+  "Sources/MonknotCore/Services/MarkdownSymbolQuickOpenMatcher.swift"
+  "Sources/MonknotCore/Services/PDFAnnotationMarkdownExportService.swift"
+  "Sources/MonknotCore/Services/RecentDocumentStore.swift"
+  "Sources/MonknotCore/Services/RecentWorkspaceStore.swift"
+  "Sources/MonknotCore/Services/RelatedNotesService.swift"
+  "Sources/MonknotCore/Services/WikilinkAutocompleteService.swift"
+  "Sources/MonknotCore/Services/WorkspaceContextAssembler.swift"
+  "Sources/MonknotCore/Services/WorkspaceDocumentScanner.swift"
+  "Sources/MonknotCore/Services/WorkspaceGitStatusService.swift"
+  "Sources/MonknotCore/Services/WorkspaceContextOrdering.swift"
+  "Sources/MonknotCore/Services/WorkspaceQuickOpenMatcher.swift"
+  "Sources/MonknotCore/Services/WorkspaceReadOnlyExport.swift"
+  "Sources/MonknotCore/Services/WorkspaceReplaceService.swift"
+  "Sources/MonknotCore/Services/WorkspacePDFSearchIndex.swift"
+  "Sources/MonknotCore/Services/WorkspacePDFTextCache.swift"
+  "Sources/MonknotCore/Services/WorkspaceScanResultPatcher.swift"
+  "Sources/MonknotCore/Services/WorkspaceSearchResultExporter.swift"
+  "Sources/MonknotCore/Services/WorkspaceSearchIndex.swift"
+  "Sources/MonknotCore/Services/WorkspaceSearchPrewarmService.swift"
+  "Sources/MonknotCore/Services/WorkspaceSearchService.swift"
+  "Sources/MonknotCore/Services/WorkspaceTabStatePersistence.swift"
+  "Sources/MonknotCore/Services/WorkspaceTemplateService.swift"
+  "Sources/MonknotCore/Services/WorkspaceTextContentCache.swift"
+  "Sources/MonknotCore/Services/WorkspaceTextFileGuard.swift"
+  "Sources/MonknotCore/Services/WorkspaceTreeFormatter.swift"
+  "Sources/MonknotCore/Support/MonknotSignposting.swift"
 )
 
 APP_SOURCES=(
@@ -111,26 +150,39 @@ APP_SOURCES=(
   "Sources/Monknot/Models/DocumentSaveState.swift"
   "Sources/Monknot/Models/DocumentSearchState.swift"
   "Sources/Monknot/Models/DocumentViewportState.swift"
+  "Sources/Monknot/Models/MarkdownSymbolQuickOpenState.swift"
   "Sources/Monknot/Models/TerminalWorkingDirectoryPolicy.swift"
+  "Sources/Monknot/Models/WorkspaceQuickOpenState.swift"
   "Sources/Monknot/Models/WorkspaceSearchState.swift"
+  "Sources/Monknot/Services/MarkdownPDFExportService.swift"
+  "Sources/Monknot/Services/MonknotLaunchCaptureParser.swift"
+  "Sources/Monknot/Services/TerminalPTYSession.swift"
+  "Sources/Monknot/Services/WorkspaceFileWatcher.swift"
+  "Sources/Monknot/Services/WorkspacePasteboardExportService.swift"
+  "Sources/Monknot/Services/WorkspacePasteboardImportService.swift"
+  "Sources/Monknot/Stores/MarkdownOutlineStore.swift"
+  "Sources/Monknot/Stores/TerminalSessionCollectionStore.swift"
+  "Sources/Monknot/Stores/TerminalSessionStore.swift"
+  "Sources/Monknot/Stores/ThemeSettingsStore.swift"
+  "Sources/Monknot/Stores/WorkspaceStore.swift"
+  "Sources/Monknot/Support/Color+Theme.swift"
+  "Sources/Monknot/Support/CursorSupport.swift"
+  "Sources/Monknot/Support/DocumentSplitViewRatioAccessor.swift"
   "Sources/Monknot/Support/Design/MonknotAccentButton.swift"
   "Sources/Monknot/Support/Design/MonknotChromeBackground.swift"
   "Sources/Monknot/Support/Design/MonknotChromePanel.swift"
   "Sources/Monknot/Support/Design/MonknotChromeSurfaceBackground.swift"
-  "Sources/Monknot/Support/Design/MonknotSFSymbol.swift"
-  "Sources/Monknot/Support/WorkspaceDocumentKind+ResolvedSymbol.swift"
   "Sources/Monknot/Support/Design/MonknotIconButton.swift"
   "Sources/Monknot/Support/Design/MonknotMetrics.swift"
   "Sources/Monknot/Support/Design/MonknotMotion.swift"
   "Sources/Monknot/Support/Design/MonknotPanelCard.swift"
   "Sources/Monknot/Support/Design/MonknotRow.swift"
+  "Sources/Monknot/Support/Design/MonknotSFSymbol.swift"
   "Sources/Monknot/Support/Design/MonknotSearchField.swift"
   "Sources/Monknot/Support/Design/MonknotSegmentedControl.swift"
   "Sources/Monknot/Support/Design/MonknotSettingsSegmentedControl.swift"
   "Sources/Monknot/Support/Design/MonknotTypography.swift"
   "Sources/Monknot/Support/Design/MonknotWorkspaceIcons.swift"
-  "Sources/Monknot/Support/Color+Theme.swift"
-  "Sources/Monknot/Support/CursorSupport.swift"
   "Sources/Monknot/Support/EditorMode+SwiftUI.swift"
   "Sources/Monknot/Support/FileURLDropTarget.swift"
   "Sources/Monknot/Support/InitialWorkspaceRestorationCoordinator.swift"
@@ -139,38 +191,32 @@ APP_SOURCES=(
   "Sources/Monknot/Support/PDFAnnotationHitTesting.swift"
   "Sources/Monknot/Support/ThemePreference+SwiftUI.swift"
   "Sources/Monknot/Support/WindowChromeSupport.swift"
+  "Sources/Monknot/Support/WorkspaceDocumentKind+ResolvedSymbol.swift"
   "Sources/Monknot/Support/WorkspaceWindowRequestCenter.swift"
-  "Sources/Monknot/Services/MarkdownPDFExportService.swift"
-  "Sources/Monknot/Services/WorkspacePasteboardImportService.swift"
-  "Sources/Monknot/Services/WorkspacePasteboardExportService.swift"
-  "Sources/Monknot/Services/WorkspaceFileWatcher.swift"
-  "Sources/Monknot/Services/TerminalPTYSession.swift"
-  "Sources/Monknot/Stores/MarkdownOutlineStore.swift"
-  "Sources/Monknot/Stores/WorkspaceStore.swift"
-  "Sources/Monknot/Stores/ThemeSettingsStore.swift"
-  "Sources/Monknot/Stores/TerminalSessionStore.swift"
-  "Sources/Monknot/Stores/TerminalSessionCollectionStore.swift"
+  "Sources/Monknot/Views/AppearanceSettingsView.swift"
   "Sources/Monknot/Views/ContentView.swift"
-  "Sources/Monknot/Views/SidebarView.swift"
-  "Sources/Monknot/Views/EditorPaneView.swift"
   "Sources/Monknot/Views/DocumentTabBar.swift"
-  "Sources/Monknot/Views/TopNavigationBar.swift"
-  "Sources/Monknot/Views/TerminalDrawerView.swift"
-  "Sources/Monknot/Views/TerminalWebView.swift"
-  "Sources/Monknot/Views/WorkspaceSearchView.swift"
+  "Sources/Monknot/Views/EditorPaneView.swift"
+  "Sources/Monknot/Views/ExternalDocumentChangeBanner.swift"
+  "Sources/Monknot/Views/GeneralSettingsView.swift"
+  "Sources/Monknot/Views/HTMLPreviewView.swift"
   "Sources/Monknot/Views/MarkdownOutlinePanel.swift"
   "Sources/Monknot/Views/MarkdownPDFExportOptionsSheet.swift"
-  "Sources/Monknot/Views/MarkdownTextEditor.swift"
-  "Sources/Monknot/Views/NativeMarkdownEditorView.swift"
   "Sources/Monknot/Views/MarkdownPreviewView.swift"
-  "Sources/Monknot/Views/HTMLPreviewView.swift"
+  "Sources/Monknot/Views/MarkdownSymbolQuickOpenView.swift"
+  "Sources/Monknot/Views/MarkdownTextEditor.swift"
+  "Sources/Monknot/Views/MonknotKeyboardShortcutsHelpView.swift"
+  "Sources/Monknot/Views/NativeMarkdownEditorView.swift"
   "Sources/Monknot/Views/PDFPreviewView.swift"
-  "Sources/Monknot/Views/MediaPreviewView.swift"
-  "Sources/Monknot/Views/QuickLookPreviewView.swift"
   "Sources/Monknot/Views/PreferencesView.swift"
-  "Sources/Monknot/Views/GeneralSettingsView.swift"
-  "Sources/Monknot/Views/AppearanceSettingsView.swift"
+  "Sources/Monknot/Views/RelatedNotesPanel.swift"
   "Sources/Monknot/Views/SettingsComponents.swift"
+  "Sources/Monknot/Views/SidebarView.swift"
+  "Sources/Monknot/Views/TerminalDrawerView.swift"
+  "Sources/Monknot/Views/TerminalWebView.swift"
+  "Sources/Monknot/Views/TopNavigationBar.swift"
+  "Sources/Monknot/Views/WorkspaceQuickOpenView.swift"
+  "Sources/Monknot/Views/WorkspaceSearchView.swift"
 )
 
 "$SWIFTC_BIN" \
@@ -224,6 +270,17 @@ cat >"$INFO_PLIST" <<PLIST
   <string>$APP_NAME</string>
   <key>CFBundleDisplayName</key>
   <string>$APP_NAME</string>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>$BUNDLE_ID.capture</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>monknot</string>
+      </array>
+    </dict>
+  </array>
   <key>CFBundleDocumentTypes</key>
   <array>
     <dict>
@@ -270,6 +327,8 @@ open_app() {
 }
 
 case "$MODE" in
+  --build|build)
+    ;;
   run)
     open_app
     ;;
@@ -290,7 +349,7 @@ case "$MODE" in
     pgrep -x "$APP_NAME" >/dev/null
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify]" >&2
+    echo "usage: $0 [run|--build|--debug|--logs|--telemetry|--verify]" >&2
     exit 2
     ;;
 esac

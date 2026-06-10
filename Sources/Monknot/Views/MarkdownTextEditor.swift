@@ -29,11 +29,15 @@ struct MarkdownTextEditor: NSViewRepresentable {
     let fontSize: CGFloat
     let fontSmoothing: Bool
     let scrollPosition: DocumentScrollPosition?
+    let syncScrollEnabled: Bool
+    let syncScrollTargetLine: Int?
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var searchState: DocumentSearchState
     let onScrollPositionChange: (DocumentScrollPosition) -> Void
+    let onVisibleTopLineChange: ((Int) -> Void)?
     let commandRequest: MarkdownTextEditorCommandRequest?
     let markdownShortcutsEnabled: Bool
+    let wikilinkDocuments: [WorkspaceDocument]
 
     init(
         documentID: String,
@@ -45,8 +49,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
         sourceLocation: Binding<MarkdownSourceLocation?>,
         searchState: Binding<DocumentSearchState>,
         onScrollPositionChange: @escaping (DocumentScrollPosition) -> Void,
+        syncScrollEnabled: Bool = false,
+        syncScrollTargetLine: Int? = nil,
+        onVisibleTopLineChange: ((Int) -> Void)? = nil,
         commandRequest: MarkdownTextEditorCommandRequest? = nil,
-        markdownShortcutsEnabled: Bool = false
+        markdownShortcutsEnabled: Bool = false,
+        wikilinkDocuments: [WorkspaceDocument] = []
     ) {
         self.documentID = documentID
         self._text = text
@@ -54,11 +62,15 @@ struct MarkdownTextEditor: NSViewRepresentable {
         self.fontSize = fontSize
         self.fontSmoothing = fontSmoothing
         self.scrollPosition = scrollPosition
+        self.syncScrollEnabled = syncScrollEnabled
+        self.syncScrollTargetLine = syncScrollTargetLine
         self._sourceLocation = sourceLocation
         self._searchState = searchState
         self.onScrollPositionChange = onScrollPositionChange
+        self.onVisibleTopLineChange = onVisibleTopLineChange
         self.commandRequest = commandRequest
         self.markdownShortcutsEnabled = markdownShortcutsEnabled
+        self.wikilinkDocuments = wikilinkDocuments
     }
 
     func makeCoordinator() -> Coordinator {
@@ -90,7 +102,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
         textView.textContainerInset = NSSize(width: 24, height: 24)
-        textView.font = font(for: theme, size: fontSize)
+        let resolvedFont = font(for: theme, size: fontSize)
+        textView.font = resolvedFont
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
         textView.minSize = NSSize(width: 0, height: scrollView.contentSize.height)
@@ -102,6 +115,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.onScrollPositionChange = onScrollPositionChange
         context.coordinator.attach(to: scrollView)
         applyTheme(theme, to: textView, in: scrollView)
+        context.coordinator.markFontApplied(resolvedFont)
+        context.coordinator.markThemeApplied(theme)
+        context.coordinator.markFontSmoothingApplied(fontSmoothing)
+        context.coordinator.markMarkdownShortcutsApplied(markdownShortcutsEnabled)
 
         return scrollView
     }
@@ -110,6 +127,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         guard let textView = context.coordinator.textView else { return }
         let didChangeDocument = context.coordinator.prepareForDocument(documentID, in: scrollView)
         context.coordinator.onScrollPositionChange = onScrollPositionChange
+        context.coordinator.onVisibleTopLineChange = onVisibleTopLineChange
+        context.coordinator.syncScrollEnabled = syncScrollEnabled
         let visibleOrigin = scrollView.contentView.bounds.origin
 
         if textView.string != text {
@@ -122,12 +141,22 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
         }
 
-        textView.font = font(for: theme, size: fontSize)
-        if let textView = textView as? MarkdownNSTextView {
-            textView.fontSmoothingEnabled = fontSmoothing
-            textView.markdownShortcutsEnabled = markdownShortcutsEnabled
+        let resolvedFont = font(for: theme, size: fontSize)
+        if context.coordinator.shouldApplyFont(resolvedFont) {
+            textView.font = resolvedFont
         }
-        applyTheme(theme, to: textView, in: scrollView)
+        if let textView = textView as? MarkdownNSTextView {
+            if context.coordinator.shouldApplyFontSmoothing(fontSmoothing) {
+                textView.fontSmoothingEnabled = fontSmoothing
+            }
+            if context.coordinator.shouldApplyMarkdownShortcuts(markdownShortcutsEnabled) {
+                textView.markdownShortcutsEnabled = markdownShortcutsEnabled
+            }
+            textView.wikilinkDocuments = wikilinkDocuments
+        }
+        if context.coordinator.shouldApplyTheme(theme) {
+            applyTheme(theme, to: textView, in: scrollView)
+        }
 
         if let commandRequest {
             context.coordinator.apply(commandRequest)
@@ -145,6 +174,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 self.sourceLocation = nil
             }
         }
+
+        context.coordinator.applySyncScrollTargetLine(syncScrollTargetLine, in: textView, scrollView: scrollView)
 
         let searchResult = context.coordinator.applySearch(searchState, theme: theme, in: textView)
         if DocumentSearchResult(currentIndex: searchState.currentIndex, totalCount: searchState.totalCount) != searchResult {
@@ -184,6 +215,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         weak var textView: NSTextView?
         var documentID: String?
         var onScrollPositionChange: (DocumentScrollPosition) -> Void = { _ in }
+        var onVisibleTopLineChange: ((Int) -> Void)?
+        var syncScrollEnabled = false
         private var lastNavigatedLocation: MarkdownSourceLocation?
         private var searchMatches: [NSRange] = []
         private var highlightedRanges: [NSRange] = []
@@ -194,8 +227,15 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private var lastHighlightTheme: SearchHighlightTheme?
         private weak var scrollView: NSScrollView?
         private var lastPublishedScrollPosition: DocumentScrollPosition?
+        private var lastPublishedTopLine: Int?
+        private var lastAppliedSyncScrollLine: Int?
         private var isRestoringScrollPosition = false
         private var lastCommandSerial = 0
+        private var lastAppliedFontName: String?
+        private var lastAppliedFontSize: CGFloat?
+        private var lastAppliedTheme: AppTheme?
+        private var lastAppliedFontSmoothing: Bool?
+        private var lastAppliedMarkdownShortcuts: Bool?
 
         init(text: Binding<String>) {
             self._text = text
@@ -217,6 +257,49 @@ struct MarkdownTextEditor: NSViewRepresentable {
             scrollView = nil
         }
 
+        func markFontApplied(_ font: NSFont) {
+            lastAppliedFontName = font.fontName
+            lastAppliedFontSize = font.pointSize
+        }
+
+        func shouldApplyFont(_ font: NSFont) -> Bool {
+            let shouldApply = lastAppliedFontName != font.fontName ||
+                abs((lastAppliedFontSize ?? -1) - font.pointSize) > 0.001
+            guard shouldApply else { return false }
+            markFontApplied(font)
+            return true
+        }
+
+        func markThemeApplied(_ theme: AppTheme) {
+            lastAppliedTheme = theme
+        }
+
+        func shouldApplyTheme(_ theme: AppTheme) -> Bool {
+            guard lastAppliedTheme != theme else { return false }
+            markThemeApplied(theme)
+            return true
+        }
+
+        func markFontSmoothingApplied(_ enabled: Bool) {
+            lastAppliedFontSmoothing = enabled
+        }
+
+        func shouldApplyFontSmoothing(_ enabled: Bool) -> Bool {
+            guard lastAppliedFontSmoothing != enabled else { return false }
+            markFontSmoothingApplied(enabled)
+            return true
+        }
+
+        func markMarkdownShortcutsApplied(_ enabled: Bool) {
+            lastAppliedMarkdownShortcuts = enabled
+        }
+
+        func shouldApplyMarkdownShortcuts(_ enabled: Bool) -> Bool {
+            guard lastAppliedMarkdownShortcuts != enabled else { return false }
+            markMarkdownShortcutsApplied(enabled)
+            return true
+        }
+
         func prepareForDocument(_ nextDocumentID: String, in scrollView: NSScrollView) -> Bool {
             self.scrollView = scrollView
             guard documentID != nextDocumentID else { return false }
@@ -225,6 +308,32 @@ struct MarkdownTextEditor: NSViewRepresentable {
             documentID = nextDocumentID
             lastPublishedScrollPosition = nil
             return true
+        }
+
+        func applySyncScrollTargetLine(_ line: Int?, in textView: NSTextView, scrollView: NSScrollView) {
+            guard syncScrollEnabled, let line, line > 0, line != lastAppliedSyncScrollLine else { return }
+
+            lastAppliedSyncScrollLine = line
+            let offset = MarkdownScrollSync.characterOffset(forLine: line, in: textView.string)
+            let range = NSRange(location: offset, length: 0)
+            isRestoringScrollPosition = true
+            textView.scrollRangeToVisible(range)
+            isRestoringScrollPosition = false
+        }
+
+        func visibleTopLine(in textView: NSTextView, scrollView: NSScrollView) -> Int {
+            guard let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer else {
+                return 1
+            }
+
+            var point = scrollView.contentView.bounds.origin
+            point.x += textView.textContainerInset.width + 4
+            point.y += textView.textContainerInset.height + 4
+            let containerPoint = textView.convert(point, from: scrollView.contentView)
+            let glyphIndex = layoutManager.glyphIndex(for: containerPoint, in: textContainer)
+            let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+            return MarkdownScrollSync.lineNumber(forCharacterIndex: charIndex, in: textView.string)
         }
 
         func restoreScrollPosition(_ point: CGPoint, in scrollView: NSScrollView, shouldPublish: Bool = true) {
@@ -248,15 +357,30 @@ struct MarkdownTextEditor: NSViewRepresentable {
             publishCurrentScrollPosition()
         }
 
+        private func publishVisibleTopLineIfNeeded(in textView: NSTextView, scrollView: NSScrollView) {
+            guard syncScrollEnabled, !isRestoringScrollPosition else { return }
+            let line = visibleTopLine(in: textView, scrollView: scrollView)
+            guard line > 0, line != lastPublishedTopLine else { return }
+            lastPublishedTopLine = line
+            onVisibleTopLineChange?(line)
+        }
+
         private func publish(_ position: DocumentScrollPosition) {
             guard documentID != nil,
                   position.isMeaningfullyDifferent(from: lastPublishedScrollPosition)
             else {
+                if syncScrollEnabled, let textView, let scrollView {
+                    publishVisibleTopLineIfNeeded(in: textView, scrollView: scrollView)
+                }
                 return
             }
 
             lastPublishedScrollPosition = position
             onScrollPositionChange(position)
+
+            if let textView, let scrollView {
+                publishVisibleTopLineIfNeeded(in: textView, scrollView: scrollView)
+            }
         }
 
         func textDidChange(_ notification: Notification) {
@@ -750,7 +874,10 @@ private extension String {
 
 private final class MarkdownNSTextView: NSTextView {
     var markdownShortcutsEnabled = false
+    var wikilinkDocuments: [WorkspaceDocument] = []
     var commandHandler: ((MarkdownTextEditorCommand) -> Bool)?
+    private var wikilinkSuggestionIndex = 0
+    private var lastWikilinkPartial = ""
     var fontSmoothingEnabled = true {
         didSet {
             guard fontSmoothingEnabled != oldValue else { return }
@@ -759,6 +886,12 @@ private final class MarkdownNSTextView: NSTextView {
     }
 
     override func keyDown(with event: NSEvent) {
+        if event.keyCode == 48,
+           event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock]).isEmpty,
+           completeActiveWikilink() {
+            return
+        }
+
         guard markdownShortcutsEnabled,
               let command = markdownCommand(for: event),
               commandHandler?(command) == true
@@ -766,6 +899,49 @@ private final class MarkdownNSTextView: NSTextView {
             super.keyDown(with: event)
             return
         }
+    }
+
+    @discardableResult
+    private func completeActiveWikilink() -> Bool {
+        let cursor = selectedRange().location + selectedRange().length
+        guard let context = WikilinkAutocompleteService.activeCompletion(in: string, cursorUTF16Offset: cursor) else {
+            resetWikilinkSuggestionCycle()
+            return false
+        }
+
+        let suggestions = WikilinkAutocompleteService.suggestions(
+            partial: context.partialText,
+            documents: wikilinkDocuments
+        )
+        guard !suggestions.isEmpty else {
+            resetWikilinkSuggestionCycle()
+            return false
+        }
+
+        if context.partialText != lastWikilinkPartial {
+            wikilinkSuggestionIndex = 0
+            lastWikilinkPartial = context.partialText
+        } else {
+            wikilinkSuggestionIndex = (wikilinkSuggestionIndex + 1) % suggestions.count
+        }
+
+        let suggestion = suggestions[wikilinkSuggestionIndex]
+        let replacement = suggestion + "]]"
+        let replaceRange = NSRange(location: context.replaceRangeLocation, length: context.replaceRangeLength)
+        guard let textStorage = textStorage else { return false }
+
+        if shouldChangeText(in: replaceRange, replacementString: replacement) {
+            textStorage.replaceCharacters(in: replaceRange, with: replacement)
+            didChangeText()
+            setSelectedRange(NSRange(location: replaceRange.location + (replacement as NSString).length, length: 0))
+        }
+
+        return true
+    }
+
+    private func resetWikilinkSuggestionCycle() {
+        wikilinkSuggestionIndex = 0
+        lastWikilinkPartial = ""
     }
 
     override func draw(_ dirtyRect: NSRect) {

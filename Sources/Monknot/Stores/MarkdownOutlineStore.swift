@@ -15,6 +15,7 @@ final class MarkdownOutlineStore: ObservableObject {
         parseTask?.cancel()
 
         guard isMarkdown else {
+            guard !items.isEmpty else { return }
             items = []
             return
         }
@@ -35,12 +36,14 @@ final class MarkdownOutlineStore: ObservableObject {
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
                     guard token == self.generation else { return }
+                    guard self.items != parsed else { return }
                     self.items = parsed
                 }
             } catch is CancellationError {
             } catch {
                 await MainActor.run {
                     guard token == self.generation else { return }
+                    guard !self.items.isEmpty else { return }
                     self.items = []
                 }
             }

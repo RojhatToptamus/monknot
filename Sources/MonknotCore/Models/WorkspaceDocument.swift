@@ -18,7 +18,6 @@ public struct WorkspaceDocumentCapabilities: Codable, Hashable, Sendable {
     public let canExportPDF: Bool
     public let canShowOutline: Bool
     public let canPreviewHTML: Bool
-    public let usesQuickLookPreview: Bool
 
     public init(
         canPreview: Bool,
@@ -27,8 +26,7 @@ public struct WorkspaceDocumentCapabilities: Codable, Hashable, Sendable {
         canSearchPDF: Bool,
         canExportPDF: Bool,
         canShowOutline: Bool,
-        canPreviewHTML: Bool = false,
-        usesQuickLookPreview: Bool
+        canPreviewHTML: Bool = false
     ) {
         self.canPreview = canPreview
         self.canEditText = canEditText
@@ -37,7 +35,6 @@ public struct WorkspaceDocumentCapabilities: Codable, Hashable, Sendable {
         self.canExportPDF = canExportPDF
         self.canShowOutline = canShowOutline
         self.canPreviewHTML = canPreviewHTML
-        self.usesQuickLookPreview = usesQuickLookPreview
     }
 }
 
@@ -55,6 +52,11 @@ public struct WorkspaceDocument: Identifiable, Hashable, Codable, Sendable {
     public init(url: URL, rootURL: URL) {
         let standardizedURL = url.standardizedFileURL
         let classification = WorkspaceDocumentSupport.classification(for: standardizedURL)
+        self.init(url: standardizedURL, rootURL: rootURL, classification: classification)
+    }
+
+    init(url: URL, rootURL: URL, classification: WorkspaceDocumentSupport.Classification) {
+        let standardizedURL = url.standardizedFileURL
         self.url = standardizedURL
         self.id = standardizedURL.path
         self.displayName = standardizedURL.lastPathComponent
@@ -96,23 +98,42 @@ public enum WorkspaceDocumentSupport {
     public static let textFilenames: Set<String> = [
         "dockerfile", "makefile", "procfile", "gemfile", "rakefile", "justfile"
     ]
-    public static let nativePreviewExtensions: Set<String> = [
+    public static let ignoredUnsupportedExtensions: Set<String> = [
         "png", "jpg", "jpeg", "gif", "heic", "tif", "tiff", "webp", "bmp", "ico",
-        "webarchive",
-        "rtf", "rtfd",
+        "mov", "mp4", "m4v", "avi", "mpg", "mpeg",
+        "mp3", "m4a", "aac", "wav", "aif", "aiff", "caf", "flac",
+        "zip", "rar", "7z", "tar", "gz", "bz2", "xz",
+        "webarchive", "rtf", "rtfd",
         "doc", "docx", "xls", "xlsx", "ppt", "pptx", "pages", "numbers", "key",
         "epub"
-    ]
-    public static let mediaExtensions: Set<String> = [
-        "mov", "mp4", "m4v", "avi", "mpg", "mpeg",
-        "mp3", "m4a", "aac", "wav", "aif", "aiff", "caf", "flac"
     ]
     public static let supportedExtensions = markdownExtensions
         .union(pdfExtensions)
         .union(htmlExtensions)
         .union(textExtensions)
-        .union(mediaExtensions)
-        .union(nativePreviewExtensions)
+
+    public static func shouldIncludeInWorkspaceScan(_ url: URL) -> Bool {
+        let fileExtension = url.pathExtension.lowercased()
+        let filename = url.lastPathComponent.lowercased()
+
+        if ignoredUnsupportedExtensions.contains(fileExtension) {
+            return false
+        }
+
+        if supportedExtensions.contains(fileExtension) || textFilenames.contains(filename) {
+            return true
+        }
+
+        guard let type = UTType(filenameExtension: fileExtension) else {
+            return false
+        }
+
+        return type.conforms(to: .pdf) ||
+            type.conforms(to: .html) ||
+            type.conforms(to: .text) ||
+            type.conforms(to: .plainText) ||
+            type.conforms(to: .sourceCode)
+    }
 
     public static func kind(for url: URL) -> WorkspaceDocumentKind? {
         let kind = classification(for: url).kind
@@ -122,10 +143,9 @@ public enum WorkspaceDocumentSupport {
     public static func classification(for url: URL) -> Classification {
         let fileExtension = url.pathExtension.lowercased()
         let filename = url.lastPathComponent.lowercased()
-        let resourceValues = try? url.resourceValues(forKeys: [.contentTypeKey, .localizedTypeDescriptionKey])
-        let type = resourceValues?.contentType ?? UTType(filenameExtension: fileExtension)
+        let type = UTType(filenameExtension: fileExtension)
         let contentTypeIdentifier = type?.identifier
-        let localizedTypeDescription = resourceValues?.localizedTypeDescription ?? type?.localizedDescription
+        let localizedTypeDescription = type?.localizedDescription
 
         if markdownExtensions.contains(fileExtension) {
             return Classification(
@@ -163,29 +183,6 @@ public enum WorkspaceDocumentSupport {
             )
         }
 
-        if mediaExtensions.contains(fileExtension) ||
-            type?.conforms(to: .audio) == true ||
-            type?.conforms(to: .movie) == true ||
-            type?.conforms(to: .video) == true {
-            return Classification(
-                kind: .media,
-                contentTypeIdentifier: contentTypeIdentifier,
-                localizedTypeDescription: localizedTypeDescription,
-                capabilities: capabilities(for: .media)
-            )
-        }
-
-        if nativePreviewExtensions.contains(fileExtension) ||
-            type?.conforms(to: .image) == true ||
-            type?.conforms(to: .html) == true {
-            return Classification(
-                kind: .nativePreview,
-                contentTypeIdentifier: contentTypeIdentifier,
-                localizedTypeDescription: localizedTypeDescription,
-                capabilities: capabilities(for: .nativePreview)
-            )
-        }
-
         if type?.conforms(to: .text) == true ||
             type?.conforms(to: .plainText) == true ||
             type?.conforms(to: .sourceCode) == true {
@@ -215,8 +212,7 @@ public enum WorkspaceDocumentSupport {
                 canSearchPDF: false,
                 canExportPDF: true,
                 canShowOutline: true,
-                canPreviewHTML: false,
-                usesQuickLookPreview: false
+                canPreviewHTML: false
             )
         case .pdf:
             return WorkspaceDocumentCapabilities(
@@ -226,8 +222,7 @@ public enum WorkspaceDocumentSupport {
                 canSearchPDF: true,
                 canExportPDF: false,
                 canShowOutline: false,
-                canPreviewHTML: false,
-                usesQuickLookPreview: false
+                canPreviewHTML: false
             )
         case .text:
             return WorkspaceDocumentCapabilities(
@@ -237,30 +232,27 @@ public enum WorkspaceDocumentSupport {
                 canSearchPDF: false,
                 canExportPDF: false,
                 canShowOutline: false,
-                canPreviewHTML: false,
-                usesQuickLookPreview: false
+                canPreviewHTML: false
             )
         case .media:
             return WorkspaceDocumentCapabilities(
-                canPreview: true,
+                canPreview: false,
                 canEditText: false,
                 canSearchText: false,
                 canSearchPDF: false,
                 canExportPDF: false,
                 canShowOutline: false,
-                canPreviewHTML: false,
-                usesQuickLookPreview: false
+                canPreviewHTML: false
             )
         case .nativePreview:
             return WorkspaceDocumentCapabilities(
-                canPreview: true,
+                canPreview: false,
                 canEditText: false,
                 canSearchText: false,
                 canSearchPDF: false,
                 canExportPDF: false,
                 canShowOutline: false,
-                canPreviewHTML: false,
-                usesQuickLookPreview: true
+                canPreviewHTML: false
             )
         case .unsupported:
             return WorkspaceDocumentCapabilities(
@@ -270,8 +262,7 @@ public enum WorkspaceDocumentSupport {
                 canSearchPDF: false,
                 canExportPDF: false,
                 canShowOutline: false,
-                canPreviewHTML: false,
-                usesQuickLookPreview: false
+                canPreviewHTML: false
             )
         }
     }
@@ -284,8 +275,7 @@ public enum WorkspaceDocumentSupport {
             canSearchPDF: false,
             canExportPDF: false,
             canShowOutline: false,
-            canPreviewHTML: true,
-            usesQuickLookPreview: false
+            canPreviewHTML: true
         )
     }
 
@@ -299,6 +289,10 @@ public enum WorkspaceDocumentSupport {
 
     public static func isPDFDocument(_ url: URL) -> Bool {
         classification(for: url).kind == .pdf
+    }
+
+    public static func displayName(forRelativePath relativePath: String) -> String {
+        URL(fileURLWithPath: relativePath).lastPathComponent
     }
 
     public static func relativePath(for url: URL, in rootURL: URL) -> String {

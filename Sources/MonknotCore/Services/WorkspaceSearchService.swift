@@ -1,39 +1,87 @@
 import Foundation
-import PDFKit
+import OSLog
+
+public struct WorkspaceSearchBatch: Sendable {
+    public let results: [WorkspaceSearchResult]
+    public let skippedLargeFileCount: Int
+
+    public init(results: [WorkspaceSearchResult], skippedLargeFileCount: Int = 0) {
+        self.results = results
+        self.skippedLargeFileCount = skippedLargeFileCount
+    }
+}
 
 public struct WorkspaceSearchService: Sendable {
     public let maxMatches: Int
     public let maxMatchesPerFile: Int
+    public let maxTextFileBytes: Int64
+    public let textCache: WorkspaceTextContentCache
+    public let textIndex: WorkspaceSearchIndex
+    public let pdfCache: WorkspacePDFTextCache
+    public let pdfIndex: WorkspacePDFSearchIndex
 
-    public init(maxMatches: Int = 500, maxMatchesPerFile: Int = 50) {
+    public init(
+        maxMatches: Int = 500,
+        maxMatchesPerFile: Int = 50,
+        maxTextFileBytes: Int64 = WorkspaceTextFileGuard.defaultMaxBytes,
+        textCache: WorkspaceTextContentCache = .shared,
+        textIndex: WorkspaceSearchIndex? = nil,
+        pdfCache: WorkspacePDFTextCache = .shared,
+        pdfIndex: WorkspacePDFSearchIndex? = nil
+    ) {
         self.maxMatches = maxMatches
         self.maxMatchesPerFile = maxMatchesPerFile
+        self.maxTextFileBytes = maxTextFileBytes
+        self.textCache = textCache
+        self.textIndex = textIndex ?? (textCache === WorkspaceTextContentCache.shared
+            ? .shared
+            : WorkspaceSearchIndex(textCache: textCache))
+        self.pdfCache = pdfCache
+        self.pdfIndex = pdfIndex ?? (pdfCache === WorkspacePDFTextCache.shared
+            ? .shared
+            : WorkspacePDFSearchIndex(pdfCache: pdfCache))
     }
 
-    public func search(query: String, documents: [WorkspaceDocument]) throws -> [WorkspaceSearchResult] {
+    public func search(
+        query: String,
+        documents: [WorkspaceDocument],
+        dirtyPDFDataByDocumentID: [String: Data] = [:]
+    ) throws -> WorkspaceSearchBatch {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !needle.isEmpty else { return [] }
+        guard !needle.isEmpty else { return WorkspaceSearchBatch(results: []) }
+        let foldedNeedle = needle.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+
+        let signpostID = MonknotSignposting.workspaceSearch.beginInterval("WorkspaceSearch")
+        defer { MonknotSignposting.workspaceSearch.endInterval("WorkspaceSearch", signpostID) }
 
         var results: [WorkspaceSearchResult] = []
+        var skippedLargeFileCount = 0
         for document in documents {
             try Task.checkCancellation()
 
             let matches: [WorkspaceSearchResult]
             switch document.kind {
             case .markdown, .text:
-                let text = try String(contentsOf: document.url, encoding: .utf8)
-                matches = Self.matches(
-                    needle: needle,
-                    text: text,
-                    document: document,
-                    resultKind: .text,
-                    limit: maxMatchesPerFile
-                )
+                let batch = try textIndex.hasIndexedDocument(document.id)
+                    ? textIndex.matches(
+                        foldedNeedle: foldedNeedle,
+                        document: document,
+                        limit: maxMatchesPerFile,
+                        maxBytes: maxTextFileBytes
+                    )
+                    : uncachedTextMatches(
+                        foldedNeedle: foldedNeedle,
+                        document: document,
+                        limit: maxMatchesPerFile
+                    )
+                skippedLargeFileCount += batch.skippedLargeFileCount
+                matches = batch.results
             case .pdf:
-                matches = try Self.pdfMatches(
-                    needle: needle,
+                matches = try pdfMatches(
+                    foldedNeedle: foldedNeedle,
                     document: document,
-                    limit: maxMatchesPerFile
+                    limit: maxMatchesPerFile,
+                    pdfData: dirtyPDFDataByDocumentID[document.id]
                 )
             case .media, .nativePreview, .unsupported:
                 continue
@@ -41,37 +89,54 @@ public struct WorkspaceSearchService: Sendable {
 
             results.append(contentsOf: matches)
             if results.count >= maxMatches {
-                return Array(results.prefix(maxMatches))
+                return WorkspaceSearchBatch(
+                    results: Array(results.prefix(maxMatches)),
+                    skippedLargeFileCount: skippedLargeFileCount
+                )
             }
         }
 
-        return results
+        return WorkspaceSearchBatch(results: results, skippedLargeFileCount: skippedLargeFileCount)
     }
 
-    private static func matches(
-        needle: String,
-        text: String,
+    private func uncachedTextMatches(
+        foldedNeedle: String,
         document: WorkspaceDocument,
-        resultKind: WorkspaceSearchResultKind,
         limit: Int
-    ) -> [WorkspaceSearchResult] {
-        guard limit > 0 else { return [] }
+    ) throws -> WorkspaceSearchIndex.DocumentMatchBatch {
+        guard limit > 0 else {
+            return WorkspaceSearchIndex.DocumentMatchBatch(results: [], skippedLargeFileCount: 0)
+        }
+
+        let text: String
+        do {
+            text = try WorkspaceTextFileGuard.readUTF8Text(
+                from: document.url,
+                maxBytes: maxTextFileBytes,
+                cache: textCache
+            )
+        } catch WorkspaceTextFileGuard.Error.fileTooLarge {
+            return WorkspaceSearchIndex.DocumentMatchBatch(results: [], skippedLargeFileCount: 1)
+        }
 
         var results: [WorkspaceSearchResult] = []
-        let nsNeedle = needle as NSString
+        let nsNeedle = foldedNeedle as NSString
         var lineNumber = 1
+        var cancelled = false
 
         text.enumerateLines { line, stop in
-            let nsLine = line as NSString
+            if Task.isCancelled {
+                cancelled = true
+                stop = true
+                return
+            }
+
+            let foldedLine = line.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            let nsLine = foldedLine as NSString
             var searchRange = NSRange(location: 0, length: nsLine.length)
 
             while searchRange.length > 0 {
-                let found = nsLine.range(
-                    of: nsNeedle as String,
-                    options: [.caseInsensitive, .diacriticInsensitive],
-                    range: searchRange
-                )
-
+                let found = nsLine.range(of: nsNeedle as String, options: [], range: searchRange)
                 guard found.location != NSNotFound, found.length > 0 else { break }
 
                 let preview = line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -80,7 +145,7 @@ public struct WorkspaceSearchService: Sendable {
                     documentID: document.id,
                     relativePath: document.relativePath,
                     displayName: document.displayName,
-                    kind: resultKind,
+                    kind: .text,
                     line: lineNumber,
                     column: found.location,
                     preview: preview.isEmpty ? line : preview
@@ -99,42 +164,28 @@ public struct WorkspaceSearchService: Sendable {
             lineNumber += 1
         }
 
-        return results
-    }
-
-    private static func pdfMatches(needle: String, document: WorkspaceDocument, limit: Int) throws -> [WorkspaceSearchResult] {
-        guard let pdf = PDFDocument(url: document.url) else { return [] }
-
-        var results: [WorkspaceSearchResult] = []
-        for pageIndex in 0..<pdf.pageCount {
+        if cancelled {
             try Task.checkCancellation()
-            guard let page = pdf.page(at: pageIndex), let text = page.string else { continue }
-            let matches = matches(
-                needle: needle,
-                text: text,
-                document: document,
-                resultKind: .pdf,
-                limit: max(0, limit - results.count)
-            ).enumerated().map { offset, match in
-                let matchIndex = results.count + offset
-                return WorkspaceSearchResult(
-                    id: "\(document.id):pdf:\(pageIndex + 1):\(match.column):\(matchIndex)",
-                    documentID: match.documentID,
-                    relativePath: match.relativePath,
-                    displayName: match.displayName,
-                    kind: .pdf,
-                    line: pageIndex + 1,
-                    column: match.column,
-                    preview: match.preview,
-                    pdfTarget: WorkspaceSearchPDFTarget(page: pageIndex + 1, matchIndex: matchIndex)
-                )
-            }
-            results.append(contentsOf: matches)
-            if results.count >= limit {
-                return Array(results.prefix(limit))
-            }
         }
 
-        return results
+        return WorkspaceSearchIndex.DocumentMatchBatch(results: results, skippedLargeFileCount: 0)
+    }
+
+    private func pdfMatches(
+        foldedNeedle: String,
+        document: WorkspaceDocument,
+        limit: Int,
+        pdfData: Data?
+    ) throws -> [WorkspaceSearchResult] {
+        let signpostID = MonknotSignposting.pdfSearch.beginInterval("PDFSearch")
+        defer { MonknotSignposting.pdfSearch.endInterval("PDFSearch", signpostID) }
+
+        try Task.checkCancellation()
+        return try pdfIndex.matches(
+            foldedNeedle: foldedNeedle,
+            document: document,
+            limit: limit,
+            pdfData: pdfData
+        )
     }
 }

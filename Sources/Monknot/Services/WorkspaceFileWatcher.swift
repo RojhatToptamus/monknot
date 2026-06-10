@@ -4,6 +4,7 @@ import Foundation
 final class WorkspaceFileWatcher {
     struct Event: Sendable {
         let changedPaths: Set<String>
+        let modifiedOnlyPaths: Set<String>
         let requiresFullRescan: Bool
     }
 
@@ -73,23 +74,55 @@ final class WorkspaceFileWatcher {
         let pathArray = unsafeBitCast(eventPaths, to: NSArray.self)
         let paths = (pathArray as? [String]) ?? []
 
+        guard let event = WorkspaceFileWatcher.makeEvent(paths: paths, flags: Array(UnsafeBufferPointer(start: eventFlags, count: eventCount))) else {
+            return
+        }
+        watcher.callback?(event)
+    }
+
+    internal static func makeEvent(paths: [String], flags eventFlags: [FSEventStreamEventFlags]) -> Event? {
         var changedPaths = Set<String>()
+        var modifiedOnlyPaths = Set<String>()
         var requiresFullRescan = false
+        let contentChangeFlags = FSEventStreamEventFlags(
+            kFSEventStreamEventFlagItemCreated |
+                kFSEventStreamEventFlagItemRemoved |
+                kFSEventStreamEventFlagItemRenamed |
+                kFSEventStreamEventFlagItemModified
+        )
+        let structuralChangeFlags = FSEventStreamEventFlags(
+            kFSEventStreamEventFlagItemCreated |
+                kFSEventStreamEventFlagItemRemoved |
+                kFSEventStreamEventFlagItemRenamed
+        )
 
-        for index in 0..<eventCount {
-            if index < paths.count {
-                changedPaths.insert(paths[index])
-            }
-
+        for index in eventFlags.indices {
             let flags = eventFlags[index]
+
             if flags & FSEventStreamEventFlags(kFSEventStreamEventFlagMustScanSubDirs) != 0 ||
                 flags & FSEventStreamEventFlags(kFSEventStreamEventFlagUserDropped) != 0 ||
                 flags & FSEventStreamEventFlags(kFSEventStreamEventFlagKernelDropped) != 0 {
                 requiresFullRescan = true
             }
+
+            guard flags & contentChangeFlags != 0, index < paths.count else {
+                continue
+            }
+
+            let path = paths[index]
+            changedPaths.insert(path)
+            if flags & FSEventStreamEventFlags(kFSEventStreamEventFlagItemModified) != 0,
+               flags & structuralChangeFlags == 0 {
+                modifiedOnlyPaths.insert(path)
+            }
         }
 
-        watcher.callback?(Event(changedPaths: changedPaths, requiresFullRescan: requiresFullRescan))
+        guard requiresFullRescan || !changedPaths.isEmpty else { return nil }
+        return Event(
+            changedPaths: changedPaths,
+            modifiedOnlyPaths: modifiedOnlyPaths,
+            requiresFullRescan: requiresFullRescan
+        )
     }
 
     deinit {

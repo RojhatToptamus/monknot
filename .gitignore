@@ -4,8 +4,23 @@ dist/
 .swiftpm/
 .playwright-mcp/
 chrome-debug-handoff.json
+.test-output.txt
 
-docs/
+.codex/*
+!.codex/environments/
+.codex/environments/*
+!.codex/environments/environment.toml
 
-./codex
-./claude
+docs/*
+!docs/RELEASE.md
+!docs/research/
+docs/research/*
+!docs/research/README.md
+!docs/tasks/
+docs/tasks/*
+!docs/tasks/README.md
+
+codex
+claude
+
+screenshots/

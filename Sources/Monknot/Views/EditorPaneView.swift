@@ -5,10 +5,15 @@ import SwiftUI
 struct EditorPaneView: View {
     @ObservedObject var store: WorkspaceStore
     @Binding var editorMode: EditorMode
+    @Binding var isSplitViewEnabled: Bool
     @AppStorage("Monknot.terminalDrawerWidth") private var terminalDrawerWidth = 420.0
     @StateObject private var terminalSessions = TerminalSessionCollectionStore()
     @State private var markdownCommandSerial = 0
     @State private var markdownCommandRequest: MarkdownTextEditorCommandRequest?
+    @State private var splitScrollSyncLock = false
+    @State private var splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
+    @State private var previewSyncLine: Int?
+    @State private var sourceSyncLine: Int?
     let theme: AppTheme
     let zoomScale: Double
     let codeFontSize: CGFloat
@@ -34,11 +39,14 @@ struct EditorPaneView: View {
     @Binding var documentSearch: DocumentSearchState
     let isSidebarVisible: Bool
     let newMarkdown: () -> Void
+    let bootstrapStarterWorkspace: () -> Void
     let openFolder: () -> Void
     let toggleTerminal: () -> Void
     let toggleSidebar: () -> Void
     let outlineItems: [MarkdownOutlineItem]
     let selectOutlineItem: (MarkdownOutlineItem) -> Void
+    let toggleSplitView: () -> Void
+    let canToggleSplitView: Bool
     let onPreviewSourceJump: (MarkdownSourceLocation) -> Void
 
     var body: some View {
@@ -57,11 +65,28 @@ struct EditorPaneView: View {
         }
         .onAppear {
             terminalSessions.setDefaultDirectory(activeTerminalDirectory)
+            if let documentID = store.selectedDocument?.id,
+               supportsSplitViewRatioPersistence(forDocumentID: documentID) {
+                splitSourcePaneRatio = DocumentSplitViewPersistence.sourcePaneRatio(forDocumentPath: documentID)
+            }
         }
         .onChange(of: store.workspaceURL) { _, _ in
             terminalSessions.setDefaultDirectory(activeTerminalDirectory)
         }
-        .onChange(of: store.selectedDocument?.id) { _, _ in
+        .onChange(of: store.selectedDocument?.id) { oldDocumentID, newDocumentID in
+            if let oldDocumentID,
+               supportsSplitViewRatioPersistence(forDocumentID: oldDocumentID) {
+                DocumentSplitViewPersistence.setSourcePaneRatio(
+                    splitSourcePaneRatio,
+                    forDocumentPath: oldDocumentID
+                )
+            }
+            if let newDocumentID,
+               supportsSplitViewRatioPersistence(forDocumentID: newDocumentID) {
+                splitSourcePaneRatio = DocumentSplitViewPersistence.sourcePaneRatio(forDocumentPath: newDocumentID)
+            } else {
+                splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
+            }
             terminalSessions.setDefaultDirectory(activeTerminalDirectory)
         }
     }
@@ -107,7 +132,13 @@ struct EditorPaneView: View {
     }
 
     private var showsMarkdownSourceSubchrome: Bool {
-        store.selectedDocument?.kind == .markdown && editorMode == .source
+        guard store.selectedDocument?.kind == .markdown else { return false }
+        return editorMode == .source || isSplitViewEnabled
+    }
+
+    private func supportsSplitViewRatioPersistence(forDocumentID documentID: String) -> Bool {
+        guard let document = store.document(id: documentID) else { return false }
+        return document.kind == .markdown || document.capabilities.canPreviewHTML
     }
 
     /// Wide layout with terminal: primary chrome is one shared row (aligned tops);
@@ -263,8 +294,13 @@ struct EditorPaneView: View {
 
     private var editorPrimaryChrome: some View {
         TopNavigationBar(
-            store: store,
             editorMode: $editorMode,
+            isSplitViewEnabled: $isSplitViewEnabled,
+            emptyStateTitle: store.workspaceURL?.lastPathComponent ?? "monknot",
+            selectedDocument: store.selectedDocument,
+            isBusy: store.isBusy,
+            isDocumentLoading: store.isDocumentLoading,
+            isSaving: store.isSaving,
             theme: theme,
             zoomScale: zoomScale,
             isTerminalPresented: isTerminalPresented,
@@ -275,10 +311,13 @@ struct EditorPaneView: View {
             toggleSidebar: toggleSidebar,
             outlineItems: outlineItems,
             selectOutlineItem: selectOutlineItem,
+            toggleSplitView: toggleSplitView,
+            canToggleSplitView: canToggleSplitView,
             documentSearch: $documentSearch,
             tabs: tabs,
             activeTabID: activeTabID,
             missingTabIDs: missingTabIDs,
+            saveState: { store.saveState(for: $0) },
             selectTab: selectTab,
             closeTab: closeTab,
             togglePinTab: togglePinTab,
@@ -338,25 +377,41 @@ struct EditorPaneView: View {
 
     @ViewBuilder
     private var editorContent: some View {
-        if let selectedDocument = store.selectedDocument {
-            editor(for: selectedDocument)
-                .overlay {
-                    if store.isDocumentLoading {
-                        ProgressView()
-                            .controlSize(.small)
-                            .padding(12)
-                            .background(
-                                theme.elevatedSurfaceColor,
-                                in: RoundedRectangle(cornerRadius: theme.chromeRadius(10, zoomScale: zoomScale))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: theme.chromeRadius(10, zoomScale: zoomScale))
-                                    .strokeBorder(theme.borderColor, lineWidth: 1)
-                            )
-                    }
+        VStack(spacing: 0) {
+            if store.selectedDocumentExternalChange {
+                ExternalDocumentChangeBanner(
+                    isRemovedExternally: store.isSelectedDocumentRemovedExternally,
+                    isSaving: store.isSaving,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    reload: { store.reloadSelectedDocumentFromDisk() },
+                    keepEditing: { store.acknowledgeExternalChange() },
+                    save: { store.saveSelectedFile() }
+                )
+            }
+
+            if let selectedDocument = store.selectedDocument {
+                if store.isDocumentLoading, selectedDocument.capabilities.canEditText {
+                    DocumentLoadingPlaceholder(
+                        documentName: selectedDocument.displayName,
+                        theme: theme,
+                        zoomScale: zoomScale
+                    )
+                } else {
+                    editor(for: selectedDocument)
                 }
-        } else {
-            EmptyDetailView(theme: theme, zoomScale: zoomScale)
+            } else {
+                EmptyDetailView(
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    hasWorkspace: store.workspaceURL != nil,
+                    isLoadingWorkspace: store.isWorkspaceOpening,
+                    canBootstrapStarterWorkspace: store.canBootstrapStarterWorkspace,
+                    newMarkdown: newMarkdown,
+                    bootstrapStarterWorkspace: bootstrapStarterWorkspace,
+                    openFolder: openFolder
+                )
+            }
         }
     }
 
@@ -384,7 +439,11 @@ struct EditorPaneView: View {
                 searchState: $documentSearch,
                 searchTarget: $pdfSearchTarget,
                 markEdited: { previousData, data in
-                    store.markPDFDocumentEdited(id: selectedDocument.id, previousData: previousData, data: data)
+                    store.markPDFDocumentEdited(
+                        id: selectedDocument.id,
+                        previousData: previousData,
+                        data: data
+                    )
                 },
                 reportError: { message in
                     store.reportPDFAnnotationError(message)
@@ -398,13 +457,7 @@ struct EditorPaneView: View {
                 updateAnnotationUndoState: updatePDFAnnotationUndoState
             )
             .help(selectedDocument.relativePath)
-        case .media:
-            MediaPreviewView(url: selectedDocument.url, theme: theme)
-                .help(selectedDocument.relativePath)
-        case .nativePreview:
-            QuickLookPreviewView(url: selectedDocument.url, theme: theme)
-                .help(selectedDocument.relativePath)
-        case .unsupported:
+        case .media, .nativePreview, .unsupported:
             UnsupportedDocumentView(
                 document: selectedDocument,
                 theme: theme,
@@ -416,24 +469,78 @@ struct EditorPaneView: View {
 
     @ViewBuilder
     private func htmlEditor(for selectedDocument: WorkspaceDocument) -> some View {
-        switch editorMode {
-        case .source:
-            textEditor(for: selectedDocument)
-        case .preview:
-            HTMLPreviewView(
-                documentID: selectedDocument.id,
-                html: store.documentText,
-                baseURL: URL(fileURLWithPath: selectedDocument.id).deletingLastPathComponent(),
-                theme: theme,
-                zoomScale: zoomScale,
-                scrollPosition: activeViewportState?.htmlPreviewScrollPosition,
-                searchState: $documentSearch,
-                onScrollPositionChange: { position in
-                    updateViewportState(selectedDocument.id, .htmlPreviewScrollPosition(position))
-                }
+        if isSplitViewEnabled {
+            HSplitView {
+                htmlSourceEditor(for: selectedDocument)
+                    .frame(minWidth: 240)
+                htmlPreviewPane(for: selectedDocument)
+                    .frame(minWidth: 240)
+            }
+            .background(
+                DocumentSplitViewRatioAccessor(
+                    sourcePaneRatio: $splitSourcePaneRatio,
+                    minPaneWidth: 240,
+                    onCommit: { ratio in
+                        guard let documentID = store.selectedDocument?.id else { return }
+                        DocumentSplitViewPersistence.setSourcePaneRatio(ratio, forDocumentPath: documentID)
+                    }
+                )
             )
-            .help(selectedDocument.relativePath)
+        } else {
+            switch editorMode {
+            case .source:
+                htmlSourceEditor(for: selectedDocument)
+            case .preview:
+                htmlPreviewPane(for: selectedDocument)
+            }
         }
+    }
+
+    private func htmlSourceEditor(for selectedDocument: WorkspaceDocument) -> some View {
+        MarkdownTextEditor(
+            documentID: selectedDocument.id,
+            text: Binding(
+                get: { store.documentText },
+                set: { store.setDocumentText($0) }
+            ),
+            theme: theme,
+            fontSize: codeFontSize * zoomScale,
+            fontSmoothing: fontSmoothing,
+            scrollPosition: activeViewportState?.textScrollPosition,
+            sourceLocation: $sourceLocation,
+            searchState: $documentSearch,
+            onScrollPositionChange: { position in
+                updateViewportState(selectedDocument.id, .textScrollPosition(position))
+            },
+            syncScrollEnabled: isSplitViewEnabled,
+            syncScrollTargetLine: sourceSyncLine,
+            onVisibleTopLineChange: { line in
+                syncHTMLPreviewScroll(to: line, in: store.documentText)
+            }
+        )
+        .help(selectedDocument.relativePath)
+    }
+
+    private func htmlPreviewPane(for selectedDocument: WorkspaceDocument) -> some View {
+        HTMLPreviewView(
+            documentID: selectedDocument.id,
+            html: store.documentText,
+            baseURL: URL(fileURLWithPath: selectedDocument.id).deletingLastPathComponent(),
+            theme: theme,
+            zoomScale: zoomScale,
+            scrollPosition: activeViewportState?.htmlPreviewScrollPosition,
+            syncScrollEnabled: isSplitViewEnabled,
+            syncScrollTargetLine: previewSyncLine,
+            sourceLineCount: HTMLScrollSync.totalLines(in: store.documentText),
+            searchState: $documentSearch,
+            onScrollPositionChange: { position in
+                updateViewportState(selectedDocument.id, .htmlPreviewScrollPosition(position))
+            },
+            onVisibleSourceLineChange: { line in
+                syncSourceScroll(to: line)
+            }
+        )
+        .help(selectedDocument.relativePath)
     }
 
     private func textEditor(for selectedDocument: WorkspaceDocument) -> some View {
@@ -458,47 +565,111 @@ struct EditorPaneView: View {
 
     @ViewBuilder
     private func markdownEditor(for selectedDocument: WorkspaceDocument) -> some View {
-        switch editorMode {
-        case .source:
-            NativeMarkdownEditorView(
-                documentID: selectedDocument.id,
-                text: Binding(
-                    get: { store.documentText },
-                    set: { store.setDocumentText($0) }
-                ),
-                theme: theme,
-                fontSize: codeFontSize * zoomScale,
-                fontSmoothing: fontSmoothing,
-                scrollPosition: activeViewportState?.textScrollPosition,
-                sourceLocation: $sourceLocation,
-                searchState: $documentSearch,
-                commandRequest: markdownCommandRequest,
-                onScrollPositionChange: { position in
-                    updateViewportState(selectedDocument.id, .textScrollPosition(position))
-                }
+        if isSplitViewEnabled {
+            HSplitView {
+                markdownSourceEditor(for: selectedDocument)
+                    .frame(minWidth: 240)
+                markdownPreviewPane(for: selectedDocument)
+                    .frame(minWidth: 240)
+            }
+            .background(
+                DocumentSplitViewRatioAccessor(
+                    sourcePaneRatio: $splitSourcePaneRatio,
+                    minPaneWidth: 240,
+                    onCommit: { ratio in
+                        guard let documentID = store.selectedDocument?.id else { return }
+                        DocumentSplitViewPersistence.setSourcePaneRatio(ratio, forDocumentPath: documentID)
+                    }
+                )
             )
-            .help(selectedDocument.relativePath)
+        } else {
+            switch editorMode {
+            case .source:
+                markdownSourceEditor(for: selectedDocument)
+            case .preview:
+                markdownPreviewPane(for: selectedDocument)
+            }
+        }
+    }
 
-        case .preview:
-            MarkdownPreviewView(
-                documentID: selectedDocument.id,
-                markdown: store.documentText,
-                baseURL: URL(fileURLWithPath: selectedDocument.id).deletingLastPathComponent(),
-                theme: theme,
-                zoomScale: zoomScale,
-                codeFontSize: Double(codeFontSize),
-                previewWidthPercent: previewWidthPercent,
-                usePointerCursors: usePointerCursors,
-                fontSmoothing: fontSmoothing,
-                scrollPosition: activeViewportState?.markdownPreviewScrollPosition,
-                sourceLocation: $previewLocation,
-                searchState: $documentSearch,
-                onSourceJump: onPreviewSourceJump,
-                onScrollPositionChange: { position in
-                    updateViewportState(selectedDocument.id, .markdownPreviewScrollPosition(position))
-                }
-            )
-            .help(selectedDocument.relativePath)
+    private func markdownSourceEditor(for selectedDocument: WorkspaceDocument) -> some View {
+        NativeMarkdownEditorView(
+            documentID: selectedDocument.id,
+            text: Binding(
+                get: { store.documentText },
+                set: { store.setDocumentText($0) }
+            ),
+            theme: theme,
+            fontSize: codeFontSize * zoomScale,
+            fontSmoothing: fontSmoothing,
+            scrollPosition: activeViewportState?.textScrollPosition,
+            syncScrollEnabled: isSplitViewEnabled,
+            syncScrollTargetLine: sourceSyncLine,
+            sourceLocation: $sourceLocation,
+            searchState: $documentSearch,
+            commandRequest: markdownCommandRequest,
+            wikilinkDocuments: store.markdownDocuments,
+            onScrollPositionChange: { position in
+                updateViewportState(selectedDocument.id, .textScrollPosition(position))
+            },
+            onVisibleTopLineChange: { line in
+                syncPreviewScroll(to: line)
+            }
+        )
+        .help(selectedDocument.relativePath)
+    }
+
+    private func markdownPreviewPane(for selectedDocument: WorkspaceDocument) -> some View {
+        MarkdownPreviewView(
+            documentID: selectedDocument.id,
+            markdown: store.documentText,
+            baseURL: URL(fileURLWithPath: selectedDocument.id).deletingLastPathComponent(),
+            theme: theme,
+            zoomScale: zoomScale,
+            codeFontSize: Double(codeFontSize),
+            previewWidthPercent: previewWidthPercent,
+            usePointerCursors: usePointerCursors,
+            fontSmoothing: fontSmoothing,
+            scrollPosition: activeViewportState?.markdownPreviewScrollPosition,
+            syncScrollEnabled: isSplitViewEnabled,
+            syncScrollTargetLine: previewSyncLine,
+            sourceLocation: $previewLocation,
+            searchState: $documentSearch,
+            onSourceJump: onPreviewSourceJump,
+            onScrollPositionChange: { position in
+                updateViewportState(selectedDocument.id, .markdownPreviewScrollPosition(position))
+            },
+            onVisibleSourceLineChange: { line in
+                syncSourceScroll(to: line)
+            }
+        )
+        .help(selectedDocument.relativePath)
+    }
+
+    private func syncPreviewScroll(to line: Int) {
+        guard isSplitViewEnabled, !splitScrollSyncLock, line > 0 else { return }
+        splitScrollSyncLock = true
+        previewSyncLine = line
+        DispatchQueue.main.async {
+            splitScrollSyncLock = false
+        }
+    }
+
+    private func syncHTMLPreviewScroll(to line: Int, in text: String) {
+        guard isSplitViewEnabled, !splitScrollSyncLock, line > 0 else { return }
+        splitScrollSyncLock = true
+        previewSyncLine = line
+        DispatchQueue.main.async {
+            splitScrollSyncLock = false
+        }
+    }
+
+    private func syncSourceScroll(to line: Int) {
+        guard isSplitViewEnabled, !splitScrollSyncLock, line > 0 else { return }
+        splitScrollSyncLock = true
+        sourceSyncLine = line
+        DispatchQueue.main.async {
+            splitScrollSyncLock = false
         }
     }
 
@@ -557,6 +728,32 @@ private struct UnsupportedDocumentView: View {
                     .font(.system(size: scaled(13)))
                     .foregroundStyle(theme.mutedForegroundColor)
             }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.surfaceColor)
+    }
+}
+
+private struct DocumentLoadingPlaceholder: View {
+    let documentName: String
+    let theme: AppTheme
+    let zoomScale: Double
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
+        VStack(spacing: scaled(12)) {
+            ProgressView()
+                .controlSize(.small)
+
+            Text(documentName)
+                .font(.system(size: scaled(13), weight: .medium))
+                .foregroundStyle(theme.mutedForegroundColor)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: scaled(280))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.surfaceColor)
@@ -690,6 +887,12 @@ private struct TerminalResizeHandle: NSViewRepresentable {
 private struct EmptyDetailView: View {
     let theme: AppTheme
     let zoomScale: Double
+    let hasWorkspace: Bool
+    let isLoadingWorkspace: Bool
+    let canBootstrapStarterWorkspace: Bool
+    let newMarkdown: () -> Void
+    let bootstrapStarterWorkspace: () -> Void
+    let openFolder: () -> Void
 
     var body: some View {
         VStack(spacing: MonknotMetrics.Spacing.xl) {
@@ -699,23 +902,105 @@ private struct EmptyDetailView: View {
                 .accessibilityHidden(true)
 
             VStack(spacing: MonknotMetrics.Spacing.xs) {
-                Text("Select a document")
+                Text(title)
                     .font(MonknotTypography.emptyStateTitle(theme: theme, zoomScale: zoomScale))
                     .foregroundStyle(theme.foregroundColor)
-                Text("Open a folder or drop Markdown or PDF documents into the sidebar.")
+                Text(message)
                     .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
                     .foregroundStyle(theme.mutedForegroundColor)
                     .multilineTextAlignment(.center)
             }
 
-            Text("⌘O to open a folder")
-                .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
-                .foregroundStyle(theme.mutedForegroundColor.opacity(0.6))
-                .padding(.top, MonknotMetrics.Spacing.xxs)
+            if isLoadingWorkspace {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                HStack(spacing: MonknotMetrics.Spacing.s) {
+                    if hasWorkspace {
+                        Button(action: newMarkdown) {
+                            Label("New Markdown", systemImage: "square.and.pencil")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(theme.accentColor)
+                        .monknotPointerCursor()
+
+                        if canBootstrapStarterWorkspace {
+                            Button(action: bootstrapStarterWorkspace) {
+                                Label("Starter Workspace", systemImage: "wand.and.stars")
+                            }
+                            .buttonStyle(.bordered)
+                            .monknotPointerCursor()
+                        }
+                    } else {
+                        Button(action: openFolder) {
+                            Label("Open Folder", systemImage: MonknotWorkspaceIcons.openFolder)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(theme.accentColor)
+                        .monknotPointerCursor()
+                    }
+                }
+            }
+
+            if !isLoadingWorkspace {
+                Text(hasWorkspace ? "⌘N for a new note" : "⌘O to open a folder")
+                    .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
+                    .foregroundStyle(theme.mutedForegroundColor.opacity(0.6))
+                    .padding(.top, MonknotMetrics.Spacing.xxs)
+            }
+
+            if !isLoadingWorkspace, !hasWorkspace, UserDefaults.standard.data(forKey: "Monknot.workspaceBookmark") != nil {
+                Text("Your last workspace reopens automatically on launch.")
+                    .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
+                    .foregroundStyle(theme.mutedForegroundColor.opacity(0.55))
+                    .multilineTextAlignment(.center)
+            }
         }
         .padding(MonknotMetrics.Spacing.windowMargin)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("No document selected. Open a folder or drop Markdown or PDF documents into the sidebar.")
+        .accessibilityLabel(
+            accessibilityLabel
+        )
+    }
+
+    private var title: String {
+        if isLoadingWorkspace {
+            return "Opening workspace"
+        }
+
+        if canBootstrapStarterWorkspace {
+            return "No documents yet"
+        }
+
+        return hasWorkspace ? "Select a document" : "Open a workspace"
+    }
+
+    private var message: String {
+        if isLoadingWorkspace {
+            return "Scanning files..."
+        }
+
+        if canBootstrapStarterWorkspace {
+            return "Create a note or generate starter files."
+        }
+
+        return hasWorkspace
+            ? "Choose a file from the sidebar, or start a new Markdown note."
+            : "Open a folder to browse Markdown, text, and PDF files."
+    }
+
+    private var accessibilityLabel: String {
+        if isLoadingWorkspace {
+            return "Opening workspace. Scanning files."
+        }
+
+        if canBootstrapStarterWorkspace {
+            return "No documents yet. Create a note or generate starter files."
+        }
+
+        return hasWorkspace
+            ? "No document selected. Choose a file from the sidebar or create a new Markdown note."
+            : "No workspace open. Open a folder to browse Markdown, text, and PDF files."
     }
 }

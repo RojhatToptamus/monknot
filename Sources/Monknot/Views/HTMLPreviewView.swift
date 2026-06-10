@@ -9,8 +9,12 @@ struct HTMLPreviewView: NSViewRepresentable {
     let theme: AppTheme
     let zoomScale: Double
     let scrollPosition: DocumentScrollPosition?
+    let syncScrollEnabled: Bool
+    let syncScrollTargetLine: Int?
+    let sourceLineCount: Int
     @Binding var searchState: DocumentSearchState
     let onScrollPositionChange: (DocumentScrollPosition) -> Void
+    let onVisibleSourceLineChange: ((Int) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -32,6 +36,9 @@ struct HTMLPreviewView: NSViewRepresentable {
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.applyZoom(zoomScale, in: webView)
         context.coordinator.onScrollPositionChange = onScrollPositionChange
+        context.coordinator.onVisibleSourceLineChange = onVisibleSourceLineChange
+        context.coordinator.syncScrollEnabled = syncScrollEnabled
+        context.coordinator.sourceLineCount = sourceLineCount
         context.coordinator.onSearchResult = { result in
             DispatchQueue.main.async {
                 let current = DocumentSearchResult(
@@ -54,6 +61,7 @@ struct HTMLPreviewView: NSViewRepresentable {
 
         context.coordinator.applySearch(searchState, in: webView)
         context.coordinator.applyPendingScrollPositionIfNeeded(in: webView)
+        context.coordinator.applySyncScrollTargetLine(syncScrollTargetLine, in: webView)
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
@@ -76,17 +84,53 @@ struct HTMLPreviewView: NSViewRepresentable {
               installSearchStyle();
               window.monknotHTMLSearch = searchDocument;
 
+              window.monknotHTMLScrollToLine = scrollToSourceLine;
+              window.monknotHTMLVisibleSourceLine = visibleSourceLine;
+
               window.addEventListener('scroll', () => {
                 if (window.__monknotHTMLScrollPending) return;
                 window.__monknotHTMLScrollPending = true;
                 window.requestAnimationFrame(() => {
                   window.__monknotHTMLScrollPending = false;
-                  window.webkit.messageHandlers.monknotHTMLScrollPosition.postMessage({
+                  const payload = {
                     x: window.scrollX || 0,
                     y: window.scrollY || 0
-                  });
+                  };
+                  if (window.monknotHTMLVisibleSourceLine) {
+                    payload.sourceLine = window.monknotHTMLVisibleSourceLine();
+                  }
+                  window.webkit.messageHandlers.monknotHTMLScrollPosition.postMessage(payload);
                 });
               }, { passive: true });
+
+              function scrollToSourceLine(nextState = {}) {
+                const line = Number.isFinite(Number(nextState.line)) ? Number(nextState.line) : 1;
+                const totalLines = Number.isFinite(Number(nextState.totalLines)) ? Number(nextState.totalLines) : 1;
+                const clampedLine = Math.max(1, Math.min(line, Math.max(totalLines, 1)));
+                const fraction = totalLines > 1 ? (clampedLine - 1) / (totalLines - 1) : 0;
+                const maxScroll = Math.max(
+                  0,
+                  (document.documentElement.scrollHeight || 0) - (window.innerHeight || 0)
+                );
+                window.scrollTo({
+                  top: fraction * maxScroll,
+                  left: window.scrollX || 0,
+                  behavior: "auto"
+                });
+              }
+
+              function visibleSourceLine() {
+                const totalLines = Number.isFinite(Number(window.__monknotHTMLSourceLineCount))
+                  ? Number(window.__monknotHTMLSourceLineCount)
+                  : 1;
+                const maxScroll = Math.max(
+                  0,
+                  (document.documentElement.scrollHeight || 0) - (window.innerHeight || 0)
+                );
+                const fraction = maxScroll > 0 ? (window.scrollY || 0) / maxScroll : 0;
+                if (totalLines <= 1) return 1;
+                return Math.max(1, Math.min(totalLines, Math.round(fraction * (totalLines - 1)) + 1));
+              }
 
               function installSearchStyle() {
                 if (document.getElementById("monknot-html-preview-style")) return;
@@ -249,6 +293,9 @@ struct HTMLPreviewView: NSViewRepresentable {
         )
 
         var onScrollPositionChange: (DocumentScrollPosition) -> Void = { _ in }
+        var onVisibleSourceLineChange: ((Int) -> Void)?
+        var syncScrollEnabled = false
+        var sourceLineCount = 1
         var onSearchResult: (DocumentSearchResult) -> Void = { _ in }
         private var documentID: String?
         private var lastContentRequest: HTMLPreviewContentRequest?
@@ -257,6 +304,10 @@ struct HTMLPreviewView: NSViewRepresentable {
         private var pendingScrollPosition: DocumentScrollPosition?
         private var shouldRestorePendingScrollPosition = false
         private var lastPublishedScrollPosition: DocumentScrollPosition?
+        private var lastPublishedSourceLine: Int?
+        private var lastAppliedSyncScrollLine: Int?
+        private var pendingSyncScrollTargetLine: Int?
+        private var isApplyingSyncScroll = false
         private var lastAppliedZoomScale: Double?
         private(set) var isLoaded = false
 
@@ -334,10 +385,34 @@ struct HTMLPreviewView: NSViewRepresentable {
             webView.evaluateJavaScript("window.scrollTo(\(position.x), \(position.y));")
         }
 
+        fileprivate func applySyncScrollTargetLine(_ line: Int?, in webView: WKWebView) {
+            pendingSyncScrollTargetLine = line
+            guard syncScrollEnabled, isLoaded else { return }
+            guard let line, line > 0, line != lastAppliedSyncScrollLine else { return }
+
+            lastAppliedSyncScrollLine = line
+            isApplyingSyncScroll = true
+
+            let payload: [String: Any] = [
+                "line": line,
+                "totalLines": max(sourceLineCount, 1)
+            ]
+            do {
+                let json = try javaScriptPayload(payload)
+                webView.evaluateJavaScript("window.__monknotHTMLSourceLineCount = \(max(sourceLineCount, 1)); window.monknotHTMLScrollToLine && window.monknotHTMLScrollToLine(\(json));") { [weak self] _, _ in
+                    self?.isApplyingSyncScroll = false
+                }
+            } catch {
+                isApplyingSyncScroll = false
+            }
+        }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             isLoaded = true
+            webView.evaluateJavaScript("window.__monknotHTMLSourceLineCount = \(max(sourceLineCount, 1));")
             applySearch(pendingSearch ?? DocumentSearchState(), in: webView)
             applyPendingScrollPositionIfNeeded(in: webView)
+            applySyncScrollTargetLine(pendingSyncScrollTargetLine, in: webView)
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -351,9 +426,16 @@ struct HTMLPreviewView: NSViewRepresentable {
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard message.name == Self.scrollPositionHandlerName else { return }
             let position = Self.scrollPosition(from: message.body)
-            guard position.isMeaningfullyDifferent(from: lastPublishedScrollPosition) else { return }
-            lastPublishedScrollPosition = position
-            onScrollPositionChange(position)
+            if position.isMeaningfullyDifferent(from: lastPublishedScrollPosition) {
+                lastPublishedScrollPosition = position
+                onScrollPositionChange(position)
+            }
+
+            guard syncScrollEnabled, !isApplyingSyncScroll else { return }
+            let sourceLine = Self.sourceLine(from: message.body)
+            guard sourceLine > 0, sourceLine != lastPublishedSourceLine else { return }
+            lastPublishedSourceLine = sourceLine
+            onVisibleSourceLineChange?(sourceLine)
         }
 
         private static func scrollPosition(from body: Any?) -> DocumentScrollPosition {
@@ -364,6 +446,13 @@ struct HTMLPreviewView: NSViewRepresentable {
             let x = (body["x"] as? NSNumber)?.doubleValue ?? body["x"] as? Double ?? 0
             let y = (body["y"] as? NSNumber)?.doubleValue ?? body["y"] as? Double ?? 0
             return DocumentScrollPosition(x: x, y: y)
+        }
+
+        private static func sourceLine(from body: Any?) -> Int {
+            guard let body = body as? [String: Any] else { return 0 }
+            return (body["sourceLine"] as? NSNumber)?.intValue
+                ?? body["sourceLine"] as? Int
+                ?? 0
         }
 
         private static func parseSearchResult(_ value: Any?) -> DocumentSearchResult {

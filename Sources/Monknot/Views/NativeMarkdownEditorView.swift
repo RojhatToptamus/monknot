@@ -8,10 +8,14 @@ struct NativeMarkdownEditorView: View {
     let fontSize: CGFloat
     let fontSmoothing: Bool
     let scrollPosition: DocumentScrollPosition?
+    let syncScrollEnabled: Bool
+    let syncScrollTargetLine: Int?
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var searchState: DocumentSearchState
     let commandRequest: MarkdownTextEditorCommandRequest?
+    let wikilinkDocuments: [WorkspaceDocument]
     let onScrollPositionChange: (DocumentScrollPosition) -> Void
+    let onVisibleTopLineChange: ((Int) -> Void)?
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -25,8 +29,12 @@ struct NativeMarkdownEditorView: View {
                 sourceLocation: $sourceLocation,
                 searchState: $searchState,
                 onScrollPositionChange: onScrollPositionChange,
+                syncScrollEnabled: syncScrollEnabled,
+                syncScrollTargetLine: syncScrollTargetLine,
+                onVisibleTopLineChange: onVisibleTopLineChange,
                 commandRequest: commandRequest,
-                markdownShortcutsEnabled: true
+                markdownShortcutsEnabled: true,
+                wikilinkDocuments: wikilinkDocuments
             )
 
             if text.isEmpty {

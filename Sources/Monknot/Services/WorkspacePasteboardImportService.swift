@@ -5,6 +5,7 @@ struct WorkspacePasteboardImportItem: Equatable, Sendable {
     enum Payload: Equatable, Sendable {
         case fileURL(URL)
         case pngImageData(Data, suggestedName: String)
+        case capturedMarkdown(String, suggestedName: String)
     }
 
     let payload: Payload
@@ -15,6 +16,17 @@ struct WorkspacePasteboardImportItem: Equatable, Sendable {
 
     static func pngImageData(_ data: Data, suggestedName: String = "Pasted Image.png") -> WorkspacePasteboardImportItem {
         WorkspacePasteboardImportItem(payload: .pngImageData(data, suggestedName: suggestedName))
+    }
+
+    static func capturedMarkdown(_ markdown: String, suggestedName: String = "Clipboard.md") -> WorkspacePasteboardImportItem {
+        WorkspacePasteboardImportItem(payload: .capturedMarkdown(markdown, suggestedName: suggestedName))
+    }
+
+    var prefersSelectionAfterImport: Bool {
+        if case .capturedMarkdown = payload {
+            return true
+        }
+        return false
     }
 }
 
@@ -39,7 +51,7 @@ enum WorkspacePasteboardImportService {
         }
 
         let imageObjects = pasteboard.readObjects(forClasses: [NSImage.self], options: nil) ?? []
-        return try imageObjects.enumerated().compactMap { index, object in
+        let imageItems: [WorkspacePasteboardImportItem] = try imageObjects.enumerated().compactMap { index, object in
             guard let image = object as? NSImage else { return nil }
             guard let pngData = pngData(for: image) else {
                 throw WorkspacePasteboardImportError.couldNotEncodeImage
@@ -50,6 +62,21 @@ enum WorkspacePasteboardImportService {
                 : "Pasted Image \(index + 1).png"
             return .pngImageData(pngData, suggestedName: suggestedName)
         }
+        if !imageItems.isEmpty {
+            return imageItems
+        }
+
+        if let urlString = pasteboard.string(forType: .URL),
+           let item = capturedTextItem(from: urlString, isURL: true) {
+            return [item]
+        }
+
+        if let text = pasteboard.string(forType: .string),
+           let item = capturedTextItem(from: text, isURL: false) {
+            return [item]
+        }
+
+        return []
     }
 
     static func importItems(_ items: [WorkspacePasteboardImportItem], into directoryURL: URL) throws -> [URL] {
@@ -68,6 +95,15 @@ enum WorkspacePasteboardImportService {
                     in: directoryURL
                 )
                 try data.write(to: destinationURL, options: .atomic)
+                importedURLs.append(destinationURL)
+            case .capturedMarkdown(let markdown, let suggestedName):
+                let inboxURL = directoryURL.appendingPathComponent("inbox", isDirectory: true)
+                try FileManager.default.createDirectory(at: inboxURL, withIntermediateDirectories: true)
+                let destinationURL = uniqueURL(
+                    for: sanitizedFileName(suggestedName, fallback: "Clipboard.md"),
+                    in: inboxURL
+                )
+                try markdown.write(to: destinationURL, atomically: true, encoding: .utf8)
                 importedURLs.append(destinationURL)
             }
         }
@@ -135,6 +171,125 @@ enum WorkspacePasteboardImportService {
         }
 
         return trimmed
+    }
+
+    static func capturedTextItem(
+        from rawText: String,
+        isURL: Bool,
+        titleOverride: String? = nil
+    ) -> WorkspacePasteboardImportItem? {
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let capturedURL = captureURL(from: trimmed, explicitURLType: isURL)
+        let title = captureTitle(for: trimmed, url: capturedURL, override: titleOverride)
+        let timestamp = captureTimestamp()
+        let fileName = sanitizedFileName("\(timestamp) \(title).md", fallback: "\(timestamp) Clipboard.md")
+        let markdown: String
+
+        if let url = capturedURL {
+            let sourceURL = canonicalSourceURL(url)
+            let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            var metadataLines = [
+                "Source: \(sourceURL.absoluteString)"
+            ]
+            if let host = url.host, !host.isEmpty {
+                metadataLines.append("Host: \(host)")
+            }
+            if !path.isEmpty {
+                metadataLines.append("Path: /\(path)")
+            }
+
+            markdown = """
+            # \(title)
+
+            \(metadataLines.joined(separator: "\n"))
+
+            """
+        } else {
+            markdown = """
+            # \(title)
+
+            \(trimmed)
+
+            """
+        }
+
+        return .capturedMarkdown(markdown, suggestedName: fileName)
+    }
+
+    private static func captureURL(from text: String, explicitURLType: Bool) -> URL? {
+        guard !text.contains(where: \.isNewline), let url = URL(string: text) else {
+            return nil
+        }
+
+        let allowedSchemes: Set<String> = ["http", "https"]
+        guard let scheme = url.scheme?.lowercased(), allowedSchemes.contains(scheme), url.host?.isEmpty == false else {
+            return explicitURLType ? url : nil
+        }
+
+        return url
+    }
+
+    private static func captureTitle(for text: String, url: URL?, override: String?) -> String {
+        let overrideTitle = override?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !overrideTitle.isEmpty {
+            return String(overrideTitle.prefix(80)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        if let url {
+            if let title = titleFromURLPath(url) {
+                return title
+            }
+            if let host = url.host, !host.isEmpty {
+                return host
+            }
+        }
+
+        let firstLine = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? "Clipboard"
+        let trimmed = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        let limited = String(trimmed.prefix(48)).trimmingCharacters(in: .whitespacesAndNewlines)
+        return limited.isEmpty ? "Clipboard" : limited
+    }
+
+    private static func titleFromURLPath(_ url: URL) -> String? {
+        let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !path.isEmpty else { return nil }
+
+        let lastComponent = path
+            .split(separator: "/")
+            .last
+            .map(String.init)?
+            .removingPercentEncoding ?? ""
+        let withoutExtension = URL(fileURLWithPath: lastComponent).deletingPathExtension().lastPathComponent
+        let words = withoutExtension
+            .replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+            .split(separator: " ")
+            .map { word in
+                let lower = word.lowercased()
+                guard let first = lower.first else { return "" }
+                return String(first).uppercased() + lower.dropFirst()
+            }
+
+        let title = words.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard title.count >= 3 else { return nil }
+        return String(title.prefix(64)).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func canonicalSourceURL(_ url: URL) -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+        components.fragment = nil
+        return components.url ?? url
+    }
+
+    private static func captureTimestamp() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH-mm-ss"
+        return formatter.string(from: Date())
     }
 
     private static func pngData(for image: NSImage) -> Data? {

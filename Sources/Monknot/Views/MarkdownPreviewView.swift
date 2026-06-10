@@ -13,10 +13,13 @@ struct MarkdownPreviewView: NSViewRepresentable {
     let usePointerCursors: Bool
     let fontSmoothing: Bool
     let scrollPosition: DocumentScrollPosition?
+    let syncScrollEnabled: Bool
+    let syncScrollTargetLine: Int?
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var searchState: DocumentSearchState
     let onSourceJump: (MarkdownSourceLocation) -> Void
     let onScrollPositionChange: (DocumentScrollPosition) -> Void
+    let onVisibleSourceLineChange: ((Int) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onSourceJump: onSourceJump)
@@ -40,6 +43,8 @@ struct MarkdownPreviewView: NSViewRepresentable {
         let didChangeDocument = context.coordinator.prepareForDocument(documentID, in: webView)
         context.coordinator.onSourceJump = onSourceJump
         context.coordinator.onScrollPositionChange = onScrollPositionChange
+        context.coordinator.onVisibleSourceLineChange = onVisibleSourceLineChange
+        context.coordinator.syncScrollEnabled = syncScrollEnabled
         context.coordinator.onSearchResult = { result in
             DispatchQueue.main.async {
                 let current = DocumentSearchResult(
@@ -58,6 +63,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         }
         context.coordinator.setPendingSourceReveal(sourceLocation)
         context.coordinator.setPendingScrollPosition(scrollPosition, force: didChangeDocument)
+        context.coordinator.applySyncScrollTargetLine(syncScrollTargetLine, in: webView)
 
         guard let service = context.coordinator.service else {
             webView.loadHTMLString(Self.errorHTML("Preview resources could not be loaded."), baseURL: nil)
@@ -227,10 +233,14 @@ struct MarkdownPreviewView: NSViewRepresentable {
               let pending = false;
               const publish = () => {
                 pending = false;
-                window.webkit.messageHandlers.monknotScrollPosition.postMessage({
+                const payload = {
                   x: window.scrollX || 0,
                   y: window.scrollY || 0
-                });
+                };
+                if (window.monknotVisibleSourceLine) {
+                  payload.sourceLine = window.monknotVisibleSourceLine();
+                }
+                window.webkit.messageHandlers.monknotScrollPosition.postMessage(payload);
               };
               window.addEventListener('scroll', () => {
                 if (pending) return;
@@ -246,6 +256,8 @@ struct MarkdownPreviewView: NSViewRepresentable {
         let service = try? MarkdownRenderService()
         var onSourceJump: (MarkdownSourceLocation) -> Void
         var onScrollPositionChange: (DocumentScrollPosition) -> Void = { _ in }
+        var onVisibleSourceLineChange: ((Int) -> Void)?
+        var syncScrollEnabled = false
         var onSearchResult: (DocumentSearchResult) -> Void = { _ in }
         var onSourceRevealConsumed: () -> Void = {}
         private var shellTask: Task<Void, Never>?
@@ -265,6 +277,9 @@ struct MarkdownPreviewView: NSViewRepresentable {
         private var pendingScrollPosition: DocumentScrollPosition?
         private var shouldRestorePendingScrollPosition = false
         private var lastPublishedScrollPosition: DocumentScrollPosition?
+        private var lastPublishedSourceLine: Int?
+        private var lastAppliedSyncScrollLine: Int?
+        private var isApplyingSyncScroll = false
         private(set) var isShellLoaded = false
 
         init(onSourceJump: @escaping (MarkdownSourceLocation) -> Void) {
@@ -445,7 +460,10 @@ struct MarkdownPreviewView: NSViewRepresentable {
             setPendingSourceReveal(sourceLocation)
             renderTask?.cancel()
 
-            let delayNanoseconds = Self.renderDebounceNanoseconds(for: request)
+            let delayNanoseconds = Self.renderDebounceNanoseconds(
+                for: request,
+                lastRenderedContent: lastRenderedContent
+            )
             renderTask = Task { [weak self, weak webView] in
                 if delayNanoseconds > 0 {
                     try? await Task.sleep(nanoseconds: delayNanoseconds)
@@ -495,7 +513,14 @@ struct MarkdownPreviewView: NSViewRepresentable {
             }
         }
 
-        private static func renderDebounceNanoseconds(for request: PreviewContentRequest) -> UInt64 {
+        private static func renderDebounceNanoseconds(
+            for request: PreviewContentRequest,
+            lastRenderedContent: PreviewContentRequest?
+        ) -> UInt64 {
+            guard lastRenderedContent?.documentID == request.documentID else {
+                return 0
+            }
+
             let byteCount = request.markdown.utf8.count
             if byteCount >= 500_000 {
                 return 450_000_000
@@ -526,6 +551,24 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 }
             } catch {
                 onConsumed()
+            }
+        }
+
+        fileprivate func applySyncScrollTargetLine(_ line: Int?, in webView: WKWebView) {
+            guard syncScrollEnabled, isShellLoaded, lastRenderedContent != nil else { return }
+            guard let line, line > 0, line != lastAppliedSyncScrollLine else { return }
+
+            lastAppliedSyncScrollLine = line
+            isApplyingSyncScroll = true
+
+            let payload: [String: Any] = ["line": line]
+            do {
+                let json = try MarkdownPreviewView.javaScriptPayload(payload)
+                webView.evaluateJavaScript("window.monknotScrollToLine && window.monknotScrollToLine(\(json));") { [weak self] _, _ in
+                    self?.isApplyingSyncScroll = false
+                }
+            } catch {
+                isApplyingSyncScroll = false
             }
         }
 
@@ -621,6 +664,17 @@ struct MarkdownPreviewView: NSViewRepresentable {
             guard position.isMeaningfullyDifferent(from: lastPublishedScrollPosition) else { return }
             lastPublishedScrollPosition = position
             onScrollPositionChange(position)
+
+            guard syncScrollEnabled, !isApplyingSyncScroll else { return }
+            let sourceLine = Self.sourceLine(from: body)
+            guard sourceLine > 0, sourceLine != lastPublishedSourceLine else { return }
+            lastPublishedSourceLine = sourceLine
+            onVisibleSourceLineChange?(sourceLine)
+        }
+
+        private static func sourceLine(from body: Any?) -> Int {
+            guard let body = body as? [String: Any] else { return 0 }
+            return (body["sourceLine"] as? NSNumber)?.intValue ?? body["sourceLine"] as? Int ?? 0
         }
 
         private static func scrollPosition(from body: Any?) -> DocumentScrollPosition {

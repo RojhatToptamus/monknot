@@ -23,8 +23,8 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
         let result = try WorkspaceDocumentScanner().scan(rootURL: root)
         let relativePaths = result.documents.map(\.relativePath).sorted()
 
-        XCTAssertEqual(relativePaths, ["Clip.mp4", "Guide.pdf", "Makefile", "Notes.txt", "Notes/Todo.markdown", "Notes/archive.zip", "Notes/image.png", "Preview.html", "README.md", "diagram.mmd"])
-        XCTAssertEqual(result.documents.first(where: { $0.displayName == "Clip.mp4" })?.kind, .media)
+        XCTAssertEqual(relativePaths, ["Guide.pdf", "Makefile", "Notes.txt", "Notes/Todo.markdown", "Preview.html", "README.md", "diagram.mmd"])
+        XCTAssertNil(result.documents.first(where: { $0.displayName == "Clip.mp4" }))
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "Guide.pdf" })?.kind, .pdf)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "README.md" })?.kind, .markdown)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "Notes.txt" })?.kind, .text)
@@ -32,10 +32,10 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "Preview.html" })?.capabilities.canPreviewHTML, true)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "diagram.mmd" })?.kind, .text)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "Makefile" })?.kind, .text)
-        XCTAssertEqual(result.documents.first(where: { $0.displayName == "image.png" })?.kind, .nativePreview)
-        XCTAssertEqual(result.documents.first(where: { $0.displayName == "archive.zip" })?.kind, .unsupported)
-        XCTAssertEqual(result.root.children?.map(\.name), ["Empty", "Notes", "Clip.mp4", "diagram.mmd", "Guide.pdf", "Makefile", "Notes.txt", "Preview.html", "README.md"])
-        XCTAssertEqual(result.root.children?.first(where: { $0.name == "Notes" })?.children?.map(\.name), ["archive.zip", "image.png", "Todo.markdown"])
+        XCTAssertNil(result.documents.first(where: { $0.displayName == "image.png" }))
+        XCTAssertNil(result.documents.first(where: { $0.displayName == "archive.zip" }))
+        XCTAssertEqual(result.root.children?.map(\.name), ["Empty", "Notes", "diagram.mmd", "Guide.pdf", "Makefile", "Notes.txt", "Preview.html", "README.md"])
+        XCTAssertEqual(result.root.children?.first(where: { $0.name == "Notes" })?.children?.map(\.name), ["Todo.markdown"])
     }
 
     func testSupportedExtensionsAreCaseInsensitive() {
@@ -48,9 +48,9 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
         XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/guide.PDF")))
         XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/notes.TXT")))
         XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/Preview.HTML")))
-        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/image.PNG")))
-        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/movie.MP4")))
-        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/sound.M4A")))
+        XCTAssertFalse(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/image.PNG")))
+        XCTAssertFalse(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/movie.MP4")))
+        XCTAssertFalse(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/sound.M4A")))
         XCTAssertTrue(WorkspaceDocumentSupport.isPDFDocument(URL(fileURLWithPath: "/tmp/guide.pdf")))
         XCTAssertTrue(WorkspaceDocumentSupport.isMarkdownDocument(URL(fileURLWithPath: "/tmp/doc.mkd")))
         XCTAssertFalse(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/archive.zip")))
@@ -58,9 +58,18 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
         XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/preview.html"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .text)
         XCTAssertTrue(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/preview.html"), rootURL: URL(fileURLWithPath: "/tmp")).capabilities.canPreviewHTML)
         XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/Makefile"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .text)
-        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/image.png"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .nativePreview)
-        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/movie.mp4"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .media)
+        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/image.png"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .unsupported)
+        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/movie.mp4"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .unsupported)
         XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/archive.zip"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .unsupported)
+    }
+
+    func testWorkspaceScanGateSkipsKnownUnsupportedExtensionsBeforeDocumentCreation() {
+        XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/README.md")))
+        XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/Guide.PDF")))
+        XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/Makefile")))
+        XCTAssertFalse(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/image.PNG")))
+        XCTAssertFalse(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/movie.MP4")))
+        XCTAssertFalse(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/archive.zip")))
     }
 
     func testDocumentCapabilitiesAreClassifiedByFormatGroup() {
@@ -85,14 +94,12 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
         XCTAssertTrue(html.capabilities.canEditText)
         XCTAssertTrue(html.capabilities.canSearchText)
         XCTAssertTrue(html.capabilities.canPreviewHTML)
-        XCTAssertFalse(html.capabilities.usesQuickLookPreview)
         XCTAssertTrue(mermaid.capabilities.canEditText)
         XCTAssertTrue(mermaid.capabilities.canSearchText)
-        XCTAssertTrue(image.capabilities.usesQuickLookPreview)
-        XCTAssertTrue(media.capabilities.canPreview)
+        XCTAssertFalse(image.capabilities.canPreview)
+        XCTAssertFalse(media.capabilities.canPreview)
         XCTAssertFalse(media.capabilities.canEditText)
         XCTAssertFalse(media.capabilities.canSearchText)
-        XCTAssertFalse(media.capabilities.usesQuickLookPreview)
         XCTAssertFalse(archive.capabilities.canPreview)
     }
 
@@ -113,11 +120,54 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
         XCTAssertEqual(result.root.children?.map(\.name), ["Real"])
     }
 
+    func testScannerSkipsSymbolicLinkFiles() throws {
+        let root = try makeTemporaryDirectory()
+        let outside = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: outside)
+        }
+
+        let outsideFile = outside.appendingPathComponent("Outside.md")
+        try write("# Outside", to: outsideFile)
+        try FileManager.default.createSymbolicLink(
+            at: root.appendingPathComponent("Linked.md"),
+            withDestinationURL: outsideFile
+        )
+
+        let result = try WorkspaceDocumentScanner().scan(rootURL: root)
+        XCTAssertTrue(result.documents.isEmpty)
+        XCTAssertTrue(result.root.children?.isEmpty == true)
+    }
+
     func testRelativePathFallsBackToFilenameOutsideRoot() {
         let root = URL(fileURLWithPath: "/tmp/workspace", isDirectory: true)
         let outside = URL(fileURLWithPath: "/tmp/other/readme.md")
 
         XCTAssertEqual(WorkspaceDocumentSupport.relativePath(for: outside, in: root), "readme.md")
+    }
+
+    func testScannerChecksTaskCancellation() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        for index in 0..<120 {
+            let directory = root.appendingPathComponent("Folder-\(index)", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try write("needle \(index)", to: directory.appendingPathComponent("note.md"))
+        }
+
+        let task = Task {
+            await Task.yield()
+            _ = try WorkspaceDocumentScanner().scan(rootURL: root)
+        }
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            XCTFail("Expected workspace scan to throw CancellationError")
+        } catch is CancellationError {
+        }
     }
 
     private func makeTemporaryDirectory() throws -> URL {

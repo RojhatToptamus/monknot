@@ -63,6 +63,22 @@ final class MarkdownRendererJavaScriptTests: XCTestCase {
         XCTAssertFalse(html.contains("<hr"))
     }
 
+    func testFencedCodeBlockRendersSyntaxHighlightTokens() throws {
+        let html = try renderMarkdown(
+            """
+            ```swift
+            let count = 42
+            // comment
+            ```
+            """
+        )
+
+        XCTAssertTrue(html.contains(#"class="language-swift""#))
+        XCTAssertTrue(html.contains(#"<span class="tok-keyword">let</span>"#))
+        XCTAssertTrue(html.contains(#"<span class="tok-number">42</span>"#))
+        XCTAssertTrue(html.contains(#"<span class="tok-comment">// comment</span>"#))
+    }
+
     func testTableRendersAsScrollableHTMLTable() throws {
         let html = try renderMarkdown(
             """
@@ -84,7 +100,7 @@ final class MarkdownRendererJavaScriptTests: XCTestCase {
         let rendererURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MonknotCore/Resources/renderer.js")
         let renderer = try String(contentsOf: rendererURL, encoding: .utf8)
-        let context = JSContext()!
+        let context = try XCTUnwrap(JSContext())
         context.exceptionHandler = { _, exception in
             XCTFail(exception?.toString() ?? "Unknown JavaScript exception")
         }
@@ -101,7 +117,7 @@ final class MarkdownRendererJavaScriptTests: XCTestCase {
               getElementById: function(id) { return id === "content" ? target : null; }
             };
             var window = {
-              monknot: { markdown: \(javascriptStringLiteral(markdown)) }
+              monknot: { markdown: \(try javascriptStringLiteral(markdown)) }
             };
             """
         )
@@ -115,13 +131,13 @@ final class MarkdownRendererJavaScriptTests: XCTestCase {
             )
         }
 
-        return context.objectForKeyedSubscript("target")!
-            .objectForKeyedSubscript("innerHTML")!
-            .toString()
+        let target = try XCTUnwrap(context.objectForKeyedSubscript("target"))
+        let innerHTML = try XCTUnwrap(target.objectForKeyedSubscript("innerHTML")?.toString())
+        return innerHTML
     }
 
-    private func javascriptStringLiteral(_ value: String) -> String {
-        let data = try! JSONEncoder().encode(value)
-        return String(data: data, encoding: .utf8)!
+    private func javascriptStringLiteral(_ value: String) throws -> String {
+        let data = try JSONEncoder().encode(value)
+        return try XCTUnwrap(String(data: data, encoding: .utf8))
     }
 }

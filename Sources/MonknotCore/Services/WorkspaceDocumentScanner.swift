@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 public struct WorkspaceDocumentScanResult: Sendable {
     public let root: SidebarNode
@@ -24,6 +25,8 @@ public struct WorkspaceDocumentScanner: WorkspaceDocumentScanning {
     }
 
     public func scan(rootURL: URL) throws -> WorkspaceDocumentScanResult {
+        let signpostID = MonknotSignposting.workspaceScan.beginInterval("WorkspaceScan")
+        defer { MonknotSignposting.workspaceScan.endInterval("WorkspaceScan", signpostID) }
         try Task.checkCancellation()
         var documents: [WorkspaceDocument] = []
         let rootChildren = try scanDirectory(rootURL, rootURL: rootURL, documents: &documents)
@@ -70,8 +73,13 @@ public struct WorkspaceDocumentScanner: WorkspaceDocumentScanning {
                     kind: .folder,
                     children: children
                 ))
-            } else if resourceValues.isRegularFile == true {
-                let document = WorkspaceDocument(url: url, rootURL: rootURL)
+            } else if resourceValues.isRegularFile == true, resourceValues.isSymbolicLink != true {
+                guard WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(url) else { continue }
+
+                let classification = WorkspaceDocumentSupport.classification(for: url)
+                guard classification.kind != .unsupported else { continue }
+
+                let document = WorkspaceDocument(url: url, rootURL: rootURL, classification: classification)
                 documents.append(document)
                 nodes.append(SidebarNode(
                     id: document.id,

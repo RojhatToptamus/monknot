@@ -22,4 +22,5 @@ final class WorkspaceTabStateTests: XCTestCase {
         XCTAssertEqual(state.tabs.map(\.documentID), reorderedIDs)
         XCTAssertEqual(state.selectedDocumentID, readme.id)
     }
+
 }

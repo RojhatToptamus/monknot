@@ -6,9 +6,45 @@ final class WorkspaceSearchState: ObservableObject {
     @Published var isPresented = false
     @Published private(set) var isSearching = false
     @Published private(set) var results: [WorkspaceSearchResult] = []
+    @Published private(set) var selectedResultIndex = 0
     @Published private(set) var errorMessage: String?
+    @Published private(set) var skippedLargeFileCount = 0
     @Published private(set) var query = ""
+    @Published var replaceText = ""
+    @Published var replaceScope: WorkspaceReplaceScope = .entireWorkspace
+    @Published private(set) var replaceStatusMessage: String?
     @Published var focusSerial = 0
+
+    var replaceableSearchResultDocumentIDs: Set<String> {
+        Set(
+            results
+                .filter { $0.kind == .text }
+                .map(\.documentID)
+        )
+    }
+
+    var replaceScopeDocumentIDs: Set<String> {
+        switch replaceScope {
+        case .entireWorkspace:
+            return []
+        case .searchResultsOnly:
+            return replaceableSearchResultDocumentIDs
+        case .selectedSearchResult:
+            guard let selectedResult, selectedResult.kind == .text else { return [] }
+            return [selectedResult.documentID]
+        }
+    }
+
+    var canReplaceInCurrentScope: Bool {
+        switch replaceScope {
+        case .entireWorkspace:
+            return true
+        case .searchResultsOnly:
+            return !replaceableSearchResultDocumentIDs.isEmpty
+        case .selectedSearchResult:
+            return selectedResult?.kind == .text
+        }
+    }
 
     private let service = WorkspaceSearchService()
     private var searchTask: Task<Void, Never>?
@@ -23,7 +59,11 @@ final class WorkspaceSearchState: ObservableObject {
             return "Searching..."
         }
 
-        return "\(results.count) result\(results.count == 1 ? "" : "s")"
+        var text = "\(results.count) result\(results.count == 1 ? "" : "s")"
+        if skippedLargeFileCount > 0 {
+            text += " · \(skippedLargeFileCount) large file\(skippedLargeFileCount == 1 ? "" : "s") skipped"
+        }
+        return text
     }
 
     func present(documents: [WorkspaceDocument]) {
@@ -35,6 +75,42 @@ final class WorkspaceSearchState: ObservableObject {
     func dismiss() {
         isPresented = false
         cancelSearch()
+        selectedResultIndex = 0
+        replaceStatusMessage = nil
+    }
+
+    func setReplaceText(_ text: String) {
+        replaceText = text
+        replaceStatusMessage = nil
+    }
+
+    func clearReplaceStatus() {
+        replaceStatusMessage = nil
+    }
+
+    func setReplaceStatusMessage(_ message: String?) {
+        replaceStatusMessage = message
+    }
+
+    func selectNextResult() {
+        guard !results.isEmpty else { return }
+        selectedResultIndex = (selectedResultIndex + 1) % results.count
+    }
+
+    func selectPreviousResult() {
+        guard !results.isEmpty else { return }
+        selectedResultIndex = (selectedResultIndex - 1 + results.count) % results.count
+    }
+
+    func selectResult(at index: Int) {
+        guard results.indices.contains(index) else { return }
+        selectedResultIndex = index
+    }
+
+    var selectedResult: WorkspaceSearchResult? {
+        guard !results.isEmpty else { return nil }
+        let index = min(max(selectedResultIndex, 0), results.count - 1)
+        return results[index]
     }
 
     func setQuery(_ query: String, documents: [WorkspaceDocument]) {
@@ -56,10 +132,18 @@ final class WorkspaceSearchState: ObservableObject {
 
         searchTask?.cancel()
         errorMessage = nil
+        skippedLargeFileCount = 0
 
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            isSearching = false
-            results = []
+            if isSearching {
+                isSearching = false
+            }
+            if !results.isEmpty {
+                results = []
+            }
+            if selectedResultIndex != 0 {
+                selectedResultIndex = 0
+            }
             return
         }
 
@@ -70,7 +154,7 @@ final class WorkspaceSearchState: ObservableObject {
                 let worker = Task.detached(priority: .utility) {
                     try service.search(query: query, documents: snapshot)
                 }
-                let matches = try await withTaskCancellationHandler {
+                let batch = try await withTaskCancellationHandler {
                     try await worker.value
                 } onCancel: {
                     worker.cancel()
@@ -79,7 +163,9 @@ final class WorkspaceSearchState: ObservableObject {
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
                     guard generation == self.searchGeneration else { return }
-                    self.results = matches
+                    self.results = batch.results
+                    self.skippedLargeFileCount = batch.skippedLargeFileCount
+                    self.selectedResultIndex = 0
                     self.isSearching = false
                 }
             } catch is CancellationError {

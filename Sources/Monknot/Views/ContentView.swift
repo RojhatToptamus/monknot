@@ -6,14 +6,17 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @ObservedObject var store: WorkspaceStore
     @ObservedObject var themeStore: ThemeSettingsStore
-    @AppStorage("Monknot.editorMode") private var editorModeRawValue = EditorMode.preview.rawValue
+    @AppStorage("Monknot.editorMode") private var editorModeRawValue = EditorMode.source.rawValue
     @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.system.rawValue
     @AppStorage("Monknot.zoomScale") private var zoomScale = 1.0
     @AppStorage("Monknot.previewWidthPercent") private var previewWidthPercent = 88.0
+    @State private var isMarkdownSplitViewEnabled = false
     @AppStorage("Monknot.usePointerCursors") private var usePointerCursors = false
     @AppStorage("Monknot.fontSmoothing") private var fontSmoothing = true
     @SceneStorage("Monknot.isTerminalDrawerOpen") private var isTerminalDrawerOpen = false
     @StateObject private var workspaceSearch = WorkspaceSearchState()
+    @StateObject private var quickOpen = WorkspaceQuickOpenState()
+    @StateObject private var symbolQuickOpen = MarkdownSymbolQuickOpenState()
     @StateObject private var outlineStore = MarkdownOutlineStore()
     @State private var pendingSourceLocation: MarkdownSourceLocation?
     @State private var pendingPreviewLocation: MarkdownSourceLocation?
@@ -21,6 +24,7 @@ struct ContentView: View {
     @State private var deferredWorkspaceSourceJump: DeferredWorkspaceSourceJump?
     @State private var tabState = WorkspaceTabState()
     @State private var restoredTabStateWorkspacePath: String?
+    @State private var pendingTabStatePersistenceTask: Task<Void, Never>?
     @State private var documentViewportStates: [String: DocumentViewportState] = [:]
     @State private var pdfUndoCommandSerial = 0
     @State private var pdfRedoCommandSerial = 0
@@ -33,11 +37,12 @@ struct ContentView: View {
     @State private var pdfExportOptions = MarkdownPDFExportOptions.loadLastUsed()
     @State private var isExportingPDF = false
     @State private var isResolvingUnsavedChanges = false
+    @State private var isKeyboardShortcutsHelpPresented = false
     @Environment(\.colorScheme) private var systemColorScheme
     private let tabStatePersistence = WorkspaceTabStatePersistence()
 
     private var editorMode: EditorMode {
-        get { EditorMode(rawValue: editorModeRawValue) ?? .preview }
+        get { EditorMode(rawValue: editorModeRawValue) ?? .source }
         nonmutating set { editorModeRawValue = newValue.rawValue }
     }
 
@@ -90,24 +95,54 @@ struct ContentView: View {
 
     private var lifecycleContent: AnyView {
         AnyView(chromeContent
-            .onChange(of: store.selectedDocument?.id) { _, _ in
+            .onChange(of: store.selectedDocument?.id) { oldDocumentID, newDocumentID in
                 resetPDFAnnotationShortcutState()
-                reconcileTabsWithStore()
-                documentSearch.updateResult(.init())
-                workspaceSearch.refresh(documents: store.documents)
+                pendingPDFSearchTarget = nil
+                if let oldDocumentID, supportsSplitView(store.document(id: oldDocumentID)) {
+                    DocumentSplitViewPersistence.setEnabled(
+                        isMarkdownSplitViewEnabled,
+                        forDocumentPath: oldDocumentID
+                    )
+                }
+                if let newDocumentID, supportsSplitView(store.document(id: newDocumentID)) {
+                    isMarkdownSplitViewEnabled = DocumentSplitViewPersistence.isEnabled(forDocumentPath: newDocumentID)
+                } else {
+                    isMarkdownSplitViewEnabled = false
+                }
+                syncSelectedTabWithStore()
+                if !canShowDocumentSearch {
+                    documentSearch.dismiss()
+                } else if documentSearch.currentIndex != 0 || documentSearch.totalCount != 0 {
+                    documentSearch.updateResult(.init())
+                }
                 updateOutline()
                 fulfillDeferredWorkspaceSourceJump()
+            }
+            .onChange(of: isMarkdownSplitViewEnabled) { _, isEnabled in
+                guard let documentID = store.selectedDocument?.id,
+                      supportsSplitView(store.selectedDocument)
+                else {
+                    return
+                }
+                DocumentSplitViewPersistence.setEnabled(isEnabled, forDocumentPath: documentID)
             }
             .onChange(of: store.documentText) { _, _ in
                 updateOutline()
                 fulfillDeferredWorkspaceSourceJump()
             }
-            .onChange(of: store.isDocumentLoading) { _, _ in
+            .onChange(of: store.isDocumentLoading) { _, isLoading in
+                if !isLoading {
+                    updateOutline()
+                }
                 fulfillDeferredWorkspaceSourceJump()
             }
             .onChange(of: store.documents) { _, documents in
                 workspaceSearch.refresh(documents: documents)
+                quickOpen.refresh(documents: documents)
                 reconcileTabsWithStore()
+            }
+            .onChange(of: store.workspaceSearchContentChangeSerial) { _, _ in
+                workspaceSearch.refresh(documents: store.documents)
             }
             .onChange(of: store.workspaceURL?.standardizedFileURL.path ?? "") { _, _ in
                 tabState.reset()
@@ -120,6 +155,9 @@ struct ContentView: View {
             }
             .onChange(of: store.documentIDRemapEvent?.serial ?? 0) { _, _ in
                 applyDocumentIDRemapEvent()
+            }
+            .onDisappear {
+                flushPendingTabStatePersistence()
             }
             .focusedSceneValue(\.monknotCommandActions, commandActions)
         )
@@ -166,11 +204,58 @@ struct ContentView: View {
     }
 
     private var rootContent: some View {
-        NavigationSplitView(columnVisibility: $sidebarVisibility) {
-            sidebarContent
-        } detail: {
-            detailContent
+        ZStack {
+            NavigationSplitView(columnVisibility: $sidebarVisibility) {
+                sidebarContent
+            } detail: {
+                detailContent
+            }
+
+            if quickOpen.isPresented {
+                WorkspaceQuickOpenView(
+                    state: quickOpen,
+                    documents: store.documents,
+                    theme: activeTheme,
+                    zoomScale: zoomScale,
+                    close: { quickOpen.dismiss() },
+                    openDocument: { documentID in
+                        quickOpen.dismiss()
+                        openDocumentTab(id: documentID)
+                    }
+                )
+                .transition(.opacity)
+            }
+
+            if isKeyboardShortcutsHelpPresented {
+                MonknotKeyboardShortcutsHelpView(
+                    theme: activeTheme,
+                    zoomScale: zoomScale,
+                    close: { isKeyboardShortcutsHelpPresented = false }
+                )
+                .transition(.opacity)
+            }
+
+            if symbolQuickOpen.isPresented {
+                MarkdownSymbolQuickOpenView(
+                    state: symbolQuickOpen,
+                    items: outlineStore.items,
+                    theme: activeTheme,
+                    zoomScale: zoomScale,
+                    close: { symbolQuickOpen.dismiss() },
+                    selectItem: { item in
+                        symbolQuickOpen.dismiss()
+                        openOutlineItem(item)
+                    }
+                )
+                .transition(.opacity)
+            }
+
         }
+    }
+
+    private var themeScrim: some View {
+        activeTheme.scrimColor
+            .ignoresSafeArea()
     }
 
     private var sidebarContent: some View {
@@ -181,7 +266,9 @@ struct ContentView: View {
             zoomScale: zoomScale,
             uiFontSize: activeTheme.uiFontSize,
             openFolder: openFolderPanel,
+            openRecentWorkspace: { url in store.openWorkspace(url) },
             newMarkdown: { store.createMarkdownFile() },
+            bootstrapStarterWorkspace: { store.bootstrapStarterWorkspace() },
             exportPDF: exportMarkdownPDF(_:),
             openDocument: openDocumentTab(id:),
             openWorkspaceSearchResult: openWorkspaceSearchResult(_:)
@@ -198,6 +285,7 @@ struct ContentView: View {
                 get: { editorMode },
                 set: { editorMode = $0 }
             ),
+            isSplitViewEnabled: $isMarkdownSplitViewEnabled,
             theme: activeTheme,
             zoomScale: zoomScale,
             codeFontSize: CGFloat(activeTheme.codeFontSize),
@@ -223,11 +311,14 @@ struct ContentView: View {
             documentSearch: $documentSearch,
             isSidebarVisible: sidebarVisibility != .detailOnly,
             newMarkdown: { store.createMarkdownFile() },
+            bootstrapStarterWorkspace: { store.bootstrapStarterWorkspace() },
             openFolder: openFolderPanel,
             toggleTerminal: toggleTerminalDrawer,
             toggleSidebar: toggleSidebar,
             outlineItems: outlineStore.items,
             selectOutlineItem: openOutlineItem(_:),
+            toggleSplitView: toggleMarkdownSplitView,
+            canToggleSplitView: canToggleMarkdownSplitView,
             onPreviewSourceJump: openSourceFromPreview(location:)
         )
     }
@@ -461,6 +552,7 @@ struct ContentView: View {
             return
         }
 
+        let previousState = tabState
         let availableDocumentIDs = Set(store.documents.map(\.id))
         tabState.updateSnapshots(from: store.documents)
         tabState.pruneUnavailableDocuments(
@@ -479,16 +571,47 @@ struct ContentView: View {
             tabState.activate(documentID: nil)
         }
 
-        publishOpenTabIDs()
+        if tabState != previousState {
+            publishOpenTabIDs()
+        }
 
         if tabState.selectedDocumentID != store.selectedDocumentID {
             _ = store.selectDocument(id: tabState.selectedDocumentID)
         }
     }
 
+    private func syncSelectedTabWithStore() {
+        guard !store.isBusy else { return }
+        if restorePersistedTabsIfNeeded() {
+            return
+        }
+
+        let previousState = tabState
+
+        if let selectedDocument = store.selectedDocument {
+            if tabState.contains(documentID: selectedDocument.id) || !tabState.isEmptyByUserChoice {
+                tabState.open(selectedDocument)
+            }
+        } else if store.selectedDocumentID == nil, tabState.tabs.isEmpty {
+            tabState.activate(documentID: nil)
+        }
+
+        if tabState.selectedDocumentID != store.selectedDocumentID {
+            _ = store.selectDocument(id: tabState.selectedDocumentID)
+        }
+
+        if tabState != previousState {
+            publishOpenTabIDs()
+        }
+    }
+
     private func applyDocumentIDRemapEvent() {
         guard let event = store.documentIDRemapEvent else { return }
         for mapping in event.mappings {
+            DocumentSplitViewPersistence.remapDocumentPath(
+                from: mapping.sourceID,
+                to: mapping.destinationID
+            )
             tabState.remapDocumentID(
                 sourceID: mapping.sourceID,
                 destinationID: mapping.destinationID,
@@ -496,6 +619,15 @@ struct ContentView: View {
             )
             if let viewportState = documentViewportStates.removeValue(forKey: mapping.sourceID) {
                 documentViewportStates[mapping.destinationID] = viewportState
+            }
+        }
+        if let selectedDocumentID = store.selectedDocument?.id {
+            if supportsSplitView(store.selectedDocument) {
+                isMarkdownSplitViewEnabled = DocumentSplitViewPersistence.isEnabled(
+                    forDocumentPath: selectedDocumentID
+                )
+            } else {
+                isMarkdownSplitViewEnabled = false
             }
         }
         publishOpenTabIDs()
@@ -542,6 +674,24 @@ struct ContentView: View {
 
     private func persistTabState() {
         guard let workspaceURL = store.workspaceURL?.standardizedFileURL else { return }
+        let state = tabState
+        let persistence = tabStatePersistence
+        pendingTabStatePersistenceTask?.cancel()
+        pendingTabStatePersistenceTask = Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: 250_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            persistence.save(state, for: workspaceURL)
+        }
+    }
+
+    private func flushPendingTabStatePersistence() {
+        pendingTabStatePersistenceTask?.cancel()
+        pendingTabStatePersistenceTask = nil
+        guard let workspaceURL = store.workspaceURL?.standardizedFileURL else { return }
         tabStatePersistence.save(tabState, for: workspaceURL)
     }
 
@@ -564,7 +714,7 @@ struct ContentView: View {
             guard position.isMeaningfullyDifferent(from: state.htmlPreviewScrollPosition) else { return }
             state.htmlPreviewScrollPosition = position
         case .pdfPosition(let position):
-            guard position != state.pdfPosition else { return }
+            guard state.pdfPosition != position else { return }
             state.pdfPosition = position
         }
 
@@ -586,9 +736,26 @@ struct ContentView: View {
     private var commandActions: MonknotCommandActions {
         MonknotCommandActions(
             newMarkdown: { store.createMarkdownFile() },
+            newDailyNote: { store.createDailyNote() },
             openFolder: openFolderPanel,
             exportPDF: { exportSelectedMarkdownPDF() },
             canExportPDF: store.selectedDocument?.capabilities.canExportPDF == true,
+            exportPDFAnnotationsMarkdown: {
+                if let document = store.selectedDocument {
+                    store.exportPDFAnnotationsToMarkdown(for: document)
+                }
+            },
+            canExportPDFAnnotationsMarkdown: store.selectedDocument?.kind == .pdf,
+            exportAllPDFAnnotationsMarkdown: {
+                store.exportAllPDFAnnotationsToMarkdown()
+            },
+            canExportAllPDFAnnotationsMarkdown: !store.isBusy && store.hasPDFDocuments,
+            exportAnnotatedPDFCopy: {
+                if let document = store.selectedDocument {
+                    store.exportAnnotatedPDFCopy(for: document)
+                }
+            },
+            canExportAnnotatedPDFCopy: store.selectedDocument?.kind == .pdf,
             saveDocument: { store.saveSelectedFile() },
             cut: { _ = cutFromCommand() },
             copy: { _ = copyFromCommand() },
@@ -603,12 +770,34 @@ struct ContentView: View {
             zoomOut: { adjustZoom(by: -0.1) },
             resetZoom: { zoomScale = 1.0 },
             showFind: { showDocumentSearch() },
+            canShowFind: canShowDocumentSearch,
             showWorkspaceSearch: { showWorkspaceSearch() },
+            showQuickOpen: { showQuickOpen() },
+            canShowQuickOpen: store.workspaceURL != nil && !store.isBusy,
             findNext: { documentSearch.findNext() },
             findPrevious: { documentSearch.findPrevious() },
             toggleTerminal: { toggleTerminalDrawer() },
-            toggleSidebar: { toggleSidebar() }
+            toggleSidebar: { toggleSidebar() },
+            toggleSplitView: { toggleMarkdownSplitView() },
+            canToggleSplitView: canToggleMarkdownSplitView,
+            undoWorkspaceReplace: { store.undoLastWorkspaceReplace() },
+            canUndoWorkspaceReplace: store.canUndoWorkspaceReplace && !store.isBusy
         )
+    }
+
+    private var canToggleMarkdownSplitView: Bool {
+        guard !store.isBusy else { return false }
+        return supportsSplitView(store.selectedDocument)
+    }
+
+    private func supportsSplitView(_ document: WorkspaceDocument?) -> Bool {
+        guard let document else { return false }
+        return document.kind == .markdown || document.capabilities.canPreviewHTML
+    }
+
+    private func toggleMarkdownSplitView() {
+        guard canToggleMarkdownSplitView else { return }
+        isMarkdownSplitViewEnabled.toggle()
     }
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
@@ -720,6 +909,13 @@ struct ContentView: View {
             canUndoPDFAnnotation: selectedDocument?.kind == .pdf && canUndoPDFAnnotation,
             canRedoPDFAnnotation: selectedDocument?.kind == .pdf && canRedoPDFAnnotation,
             isDocumentSearchPresented: documentSearch.isPresented,
+            isQuickOpenPresented: quickOpen.isPresented,
+            isKeyboardShortcutsHelpPresented: isKeyboardShortcutsHelpPresented,
+            isWorkspaceSearchPresented: workspaceSearch.isPresented,
+            isSymbolQuickOpenPresented: symbolQuickOpen.isPresented,
+            hasMarkdownOutline: store.selectedDocument?.kind == .markdown && !outlineStore.items.isEmpty,
+            canToggleSplitView: canToggleMarkdownSplitView,
+            canUndoWorkspaceReplace: store.canUndoWorkspaceReplace && !store.isBusy,
             isBusy: store.isBusy
         )
     }
@@ -728,6 +924,8 @@ struct ContentView: View {
         switch action {
         case .newMarkdown:
             store.createMarkdownFile()
+        case .newDailyNote:
+            store.createDailyNote()
         case .openFolder:
             openFolderPanel()
         case .saveDocument:
@@ -744,14 +942,20 @@ struct ContentView: View {
             toggleActiveTabPin()
         case .exportPDF:
             exportSelectedMarkdownPDF()
-        case .showDocumentSearch:
-            showDocumentSearch()
         case .showWorkspaceSearch:
             showWorkspaceSearch()
+        case .dismissWorkspaceSearch:
+            workspaceSearch.dismiss()
+        case .showDocumentSearch:
+            showDocumentSearch()
         case .findNext:
-            documentSearch.findNext()
+            if canShowDocumentSearch {
+                documentSearch.findNext()
+            }
         case .findPrevious:
-            documentSearch.findPrevious()
+            if canShowDocumentSearch {
+                documentSearch.findPrevious()
+            }
         case .zoomIn:
             adjustZoom(by: 0.1)
         case .zoomOut:
@@ -770,6 +974,30 @@ struct ContentView: View {
             pdfRedoCommandSerial += 1
         case .dismissDocumentSearch:
             documentSearch.dismiss()
+        case .showQuickOpen:
+            showQuickOpen()
+        case .dismissQuickOpen:
+            quickOpen.dismiss()
+        case .showGoToSymbol:
+            showGoToSymbol()
+        case .dismissGoToSymbol:
+            symbolQuickOpen.dismiss()
+        case .workspaceSearchNext:
+            workspaceSearch.selectNextResult()
+        case .workspaceSearchPrevious:
+            workspaceSearch.selectPreviousResult()
+        case .workspaceSearchConfirm:
+            if let result = workspaceSearch.selectedResult {
+                openWorkspaceSearchResult(result)
+            }
+        case .showKeyboardShortcutsHelp:
+            isKeyboardShortcutsHelpPresented = true
+        case .dismissKeyboardShortcutsHelp:
+            isKeyboardShortcutsHelpPresented = false
+        case .toggleSplitView:
+            toggleMarkdownSplitView()
+        case .undoWorkspaceReplace:
+            store.undoLastWorkspaceReplace()
         }
     }
 
@@ -787,9 +1015,32 @@ struct ContentView: View {
         }
     }
 
+    private func showQuickOpen() {
+        guard store.workspaceURL != nil, !store.isBusy else { return }
+        isKeyboardShortcutsHelpPresented = false
+        symbolQuickOpen.dismiss()
+        workspaceSearch.dismiss()
+        quickOpen.present(documents: store.documents)
+    }
+
+    private func showGoToSymbol() {
+        guard store.selectedDocument?.kind == .markdown, !outlineStore.items.isEmpty else { return }
+        isKeyboardShortcutsHelpPresented = false
+        quickOpen.dismiss()
+        workspaceSearch.dismiss()
+        symbolQuickOpen.present(items: outlineStore.items)
+    }
+
     private func showDocumentSearch() {
-        guard store.selectedDocument != nil else { return }
+        guard canShowDocumentSearch else { return }
         documentSearch.present()
+    }
+
+    private var canShowDocumentSearch: Bool {
+        guard let document = store.selectedDocument, !store.isBusy else { return false }
+        return document.capabilities.canSearchText ||
+            document.capabilities.canPreviewHTML ||
+            document.capabilities.canSearchPDF
     }
 
     private func showWorkspaceSearch() {
@@ -801,8 +1052,11 @@ struct ContentView: View {
     private func openWorkspaceSearchResult(_ result: WorkspaceSearchResult) {
         let query = workspaceSearch.query
         workspaceSearch.dismiss()
-        documentSearch.present()
-        documentSearch.setQuery(query)
+
+        if result.kind == .text || result.kind == .pdf {
+            documentSearch.present()
+            documentSearch.setQuery(query)
+        }
 
         if result.kind == .text {
             editorMode = .source
@@ -841,7 +1095,7 @@ struct ContentView: View {
     private func updateOutline() {
         outlineStore.update(
             markdown: store.documentText,
-            isMarkdown: store.selectedDocument?.kind == .markdown
+            isMarkdown: store.selectedDocument?.kind == .markdown && !store.isDocumentLoading
         )
     }
 

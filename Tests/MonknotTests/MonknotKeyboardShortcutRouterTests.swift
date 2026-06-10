@@ -37,6 +37,41 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         )
     }
 
+    func testWorkspaceReplaceUndoShortcutTakesPriorityOverPDFUndo() {
+        XCTAssertEqual(
+            action(
+                for: "z",
+                modifiers: [.command],
+                context: shortcutContext(
+                    selectedDocumentKind: .pdf,
+                    canUndoPDFAnnotation: true,
+                    canUndoWorkspaceReplace: true
+                )
+            ),
+            .undoWorkspaceReplace
+        )
+    }
+
+    func testToggleSplitViewShortcutRequiresEligibleDocument() {
+        XCTAssertEqual(
+            action(
+                for: "\\",
+                modifiers: [.command],
+                keyCode: 42,
+                context: shortcutContext(selectedDocumentKind: .markdown, canToggleSplitView: true)
+            ),
+            .toggleSplitView
+        )
+
+        XCTAssertNil(
+            action(
+                for: "\\",
+                modifiers: [.command],
+                context: shortcutContext(selectedDocumentKind: .pdf, canToggleSplitView: false)
+            )
+        )
+    }
+
     func testPDFUndoRedoShortcutsDoNotStealTextUndo() {
         XCTAssertEqual(
             action(
@@ -134,6 +169,10 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
             action(for: "f", modifiers: [.control], context: shortcutContext(selectedDocumentKind: .markdown))
         )
 
+        XCTAssertNil(
+            action(for: "k", modifiers: [.command, .shift], context: shortcutContext(hasWorkspace: true))
+        )
+
         XCTAssertEqual(
             action(for: "f", modifiers: [.command, .shift], context: shortcutContext(hasWorkspace: true)),
             .showWorkspaceSearch
@@ -179,11 +218,62 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         XCTAssertEqual(action(for: "o", modifiers: [.command]), .openFolder)
 
         XCTAssertEqual(
-            action(for: "p", modifiers: [.command], context: shortcutContext(canExportPDF: true)),
-            .exportPDF
+            action(for: "p", modifiers: [.command], context: shortcutContext(hasWorkspace: true)),
+            .showQuickOpen
         )
         XCTAssertNil(
-            action(for: "p", modifiers: [.command], context: shortcutContext(canExportPDF: false))
+            action(for: "p", modifiers: [.command], context: shortcutContext(hasWorkspace: false))
+        )
+    }
+
+    func testQuickOpenAndHelpShortcutsRespectOverlayState() {
+        XCTAssertEqual(
+            action(for: "?", modifiers: [], context: shortcutContext()),
+            .showKeyboardShortcutsHelp
+        )
+        XCTAssertNil(
+            action(
+                for: "?",
+                modifiers: [],
+                context: shortcutContext(isKeyboardShortcutsHelpPresented: true)
+            )
+        )
+        XCTAssertEqual(
+            action(
+                for: "",
+                modifiers: [],
+                keyCode: MonknotKeyboardShortcutRouter.escapeKeyCode,
+                context: shortcutContext(isQuickOpenPresented: true)
+            ),
+            .dismissQuickOpen
+        )
+    }
+
+    func testDailyNoteAndGoToSymbolShortcuts() {
+        XCTAssertEqual(
+            action(for: "n", modifiers: [.command, .shift], context: shortcutContext(hasWorkspace: true)),
+            .newDailyNote
+        )
+        XCTAssertEqual(
+            action(for: "o", modifiers: [.command, .shift], context: shortcutContext(selectedDocumentKind: .markdown, hasMarkdownOutline: true)),
+            .showGoToSymbol
+        )
+        XCTAssertEqual(
+            action(
+                for: "g",
+                modifiers: [.command],
+                context: shortcutContext(selectedDocumentKind: .markdown, isWorkspaceSearchPresented: true)
+            ),
+            .workspaceSearchNext
+        )
+        XCTAssertEqual(
+            action(
+                for: "",
+                modifiers: [],
+                keyCode: MonknotKeyboardShortcutRouter.escapeKeyCode,
+                context: shortcutContext(isWorkspaceSearchPresented: true)
+            ),
+            .dismissWorkspaceSearch
         )
     }
 
@@ -214,6 +304,13 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         canUndoPDFAnnotation: Bool = false,
         canRedoPDFAnnotation: Bool = false,
         isDocumentSearchPresented: Bool = false,
+        isQuickOpenPresented: Bool = false,
+        isKeyboardShortcutsHelpPresented: Bool = false,
+        isWorkspaceSearchPresented: Bool = false,
+        isSymbolQuickOpenPresented: Bool = false,
+        hasMarkdownOutline: Bool = false,
+        canToggleSplitView: Bool = false,
+        canUndoWorkspaceReplace: Bool = false,
         isBusy: Bool = false
     ) -> MonknotKeyboardShortcutContext {
         MonknotKeyboardShortcutContext(
@@ -226,6 +323,13 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
             canUndoPDFAnnotation: canUndoPDFAnnotation,
             canRedoPDFAnnotation: canRedoPDFAnnotation,
             isDocumentSearchPresented: isDocumentSearchPresented,
+            isQuickOpenPresented: isQuickOpenPresented,
+            isKeyboardShortcutsHelpPresented: isKeyboardShortcutsHelpPresented,
+            isWorkspaceSearchPresented: isWorkspaceSearchPresented,
+            isSymbolQuickOpenPresented: isSymbolQuickOpenPresented,
+            hasMarkdownOutline: hasMarkdownOutline,
+            canToggleSplitView: canToggleSplitView,
+            canUndoWorkspaceReplace: canUndoWorkspaceReplace,
             isBusy: isBusy
         )
     }

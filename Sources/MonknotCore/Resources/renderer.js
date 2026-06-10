@@ -15,6 +15,8 @@
   window.monknotApplyAppearance = applyAppearance;
   window.monknotSearch = searchDocument;
   window.monknotRevealSourceLine = revealSourceLine;
+  window.monknotScrollToLine = scrollToSourceLine;
+  window.monknotVisibleSourceLine = visibleSourceLine;
   render(window.monknot || {});
   target.addEventListener("dblclick", handleSourceJump);
 
@@ -196,6 +198,10 @@
   }
 
   function revealSourceLine(nextState = {}) {
+    return scrollToSourceLine(nextState, { highlight: true });
+  }
+
+  function scrollToSourceLine(nextState = {}, options = {}) {
     const line = Number(nextState.line || 0);
     if (!Number.isFinite(line) || line < 1) return false;
 
@@ -223,17 +229,40 @@
     const targetElement = bestElement || nextElement;
     if (!targetElement) return false;
 
-    target.querySelectorAll(".monknot-source-reveal").forEach((element) => {
-      element.classList.remove("monknot-source-reveal");
-    });
-    targetElement.classList.add("monknot-source-reveal");
-    targetElement.scrollIntoView({ block: "start", inline: "nearest", behavior: "smooth" });
+    if (options.highlight) {
+      target.querySelectorAll(".monknot-source-reveal").forEach((element) => {
+        element.classList.remove("monknot-source-reveal");
+      });
+      targetElement.classList.add("monknot-source-reveal");
+      window.setTimeout(() => {
+        targetElement.classList.remove("monknot-source-reveal");
+      }, 1400);
+    }
 
-    window.setTimeout(() => {
-      targetElement.classList.remove("monknot-source-reveal");
-    }, 1400);
+    targetElement.scrollIntoView({
+      block: "start",
+      inline: "nearest",
+      behavior: options.highlight ? "smooth" : "auto"
+    });
 
     return true;
+  }
+
+  function visibleSourceLine() {
+    const probeY = Math.max(0, (window.scrollY || 0) + 12);
+    const elements = Array.from(target.querySelectorAll("[data-source-line]"));
+    let bestLine = 1;
+
+    for (const element of elements) {
+      const sourceLine = Number(element.dataset.sourceLine || "0");
+      if (!Number.isFinite(sourceLine) || sourceLine < 1) continue;
+      const top = element.getBoundingClientRect().top + (window.scrollY || 0);
+      if (top <= probeY && sourceLine >= bestLine) {
+        bestLine = sourceLine;
+      }
+    }
+
+    return bestLine;
   }
 
   function captureScrollAnchor() {

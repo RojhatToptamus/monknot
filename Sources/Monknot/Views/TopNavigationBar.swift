@@ -2,8 +2,13 @@ import MonknotCore
 import SwiftUI
 
 struct TopNavigationBar: View {
-    @ObservedObject var store: WorkspaceStore
     @Binding var editorMode: EditorMode
+    @Binding var isSplitViewEnabled: Bool
+    let emptyStateTitle: String
+    let selectedDocument: WorkspaceDocument?
+    let isBusy: Bool
+    let isDocumentLoading: Bool
+    let isSaving: Bool
     let theme: AppTheme
     let zoomScale: Double
     let isTerminalPresented: Bool
@@ -14,10 +19,13 @@ struct TopNavigationBar: View {
     let toggleSidebar: () -> Void
     let outlineItems: [MarkdownOutlineItem]
     let selectOutlineItem: (MarkdownOutlineItem) -> Void
+    let toggleSplitView: () -> Void
+    let canToggleSplitView: Bool
     @Binding var documentSearch: DocumentSearchState
     let tabs: [WorkspaceTabItem]
     let activeTabID: String?
     let missingTabIDs: Set<String>
+    let saveState: (String) -> DocumentSaveState
     let selectTab: (String) -> Void
     let closeTab: (String) -> Void
     let togglePinTab: (String) -> Void
@@ -26,16 +34,17 @@ struct TopNavigationBar: View {
     @FocusState private var isSearchFocused: Bool
     @State private var isOutlinePresented = false
 
-    private var emptyStateTitle: String {
-        store.workspaceURL?.lastPathComponent ?? "monknot"
-    }
-
     private var isMarkdownSelected: Bool {
-        store.selectedDocument?.kind == .markdown
+        selectedDocument?.kind == .markdown
     }
 
     private var supportsSourcePreviewToggle: Bool {
-        guard let document = store.selectedDocument else { return false }
+        guard let document = selectedDocument else { return false }
+        return (document.kind == .markdown || document.capabilities.canPreviewHTML) && !isSplitViewEnabled
+    }
+
+    private var supportsSplitView: Bool {
+        guard let document = selectedDocument else { return false }
         return document.kind == .markdown || document.capabilities.canPreviewHTML
     }
 
@@ -55,7 +64,7 @@ struct TopNavigationBar: View {
 
             tabsOrEmptyTitle
 
-            if store.isBusy || store.isDocumentLoading || store.isSaving {
+            if isBusy || isDocumentLoading || isSaving {
                 ProgressView()
                     .controlSize(.small)
                     .scaleEffect(zoomScale * (uiFontSize / 16))
@@ -158,8 +167,8 @@ struct TopNavigationBar: View {
                 theme: theme,
                 zoomScale: zoomScale,
                 uiFontSize: uiFontSize,
-                isDisabled: store.isBusy,
-                saveState: { store.saveState(for: $0) },
+                isDisabled: isBusy,
+                saveState: saveState,
                 selectTab: selectTab,
                 closeTab: closeTab,
                 togglePin: togglePinTab,
@@ -177,14 +186,32 @@ struct TopNavigationBar: View {
     @ViewBuilder
     private var trailingActions: some View {
         HStack(spacing: scaled(4)) {
+            if isSplitViewEnabled && supportsSplitView {
+                splitViewIndicator
+            }
             if isMarkdownSelected {
                 outlineButton
             }
             if supportsSourcePreviewToggle {
                 sourcePreviewSwitch
-                    .disabled(store.isDocumentLoading)
+                    .disabled(isDocumentLoading)
             }
         }
+    }
+
+    private var splitViewIndicator: some View {
+        ChromeBarButton(
+            systemImage: "rectangle.split.2x1",
+            label: isSplitViewEnabled ? "Turn Off Split View" : "Split View",
+            theme: theme,
+            zoomScale: zoomScale,
+            uiFontSize: uiFontSize,
+            isActive: isSplitViewEnabled,
+            isDisabled: !canToggleSplitView || isDocumentLoading,
+            action: toggleSplitView
+        )
+        .help("Split view is on (⌘\\). Click to turn off.")
+        .accessibilityValue(isSplitViewEnabled ? "On" : "Off")
     }
 
     private var sourcePreviewSwitch: some View {
@@ -304,7 +331,7 @@ struct TopNavigationBar: View {
             zoomScale: zoomScale,
             uiFontSize: uiFontSize,
             isActive: isOutlinePresented,
-            isDisabled: store.isDocumentLoading,
+            isDisabled: isDocumentLoading,
             action: { isOutlinePresented.toggle() }
         )
         .popover(isPresented: $isOutlinePresented, arrowEdge: .bottom) {

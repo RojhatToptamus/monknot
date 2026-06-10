@@ -9,7 +9,9 @@ struct SidebarView: View {
     let zoomScale: Double
     let uiFontSize: Double
     let openFolder: () -> Void
+    let openRecentWorkspace: (URL) -> Void
     let newMarkdown: () -> Void
+    let bootstrapStarterWorkspace: () -> Void
     let exportPDF: (WorkspaceDocument) -> Void
     let openDocument: (String) -> Void
     let openWorkspaceSearchResult: (WorkspaceSearchResult) -> Void
@@ -21,14 +23,27 @@ struct SidebarView: View {
     @State private var draggedSidebarNodeID: String?
     @State private var moveDropTargetFolderID: String?
     @State private var isMoveDropTargetingRoot = false
+    @State private var recentDocuments: [RecentDocumentEntry] = []
+    @State private var visibleNodes: [VisibleSidebarNode] = []
     private let nativeSidebarTopInsetCompensation: CGFloat = 8
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
-    private var visibleNodes: [VisibleSidebarNode] {
-        flattenVisibleNodes(from: store.rootNode?.children ?? [])
+    private var displayedVisibleNodes: [VisibleSidebarNode] {
+        guard visibleNodes.isEmpty,
+              let rootChildren = store.rootNode?.children,
+              !rootChildren.isEmpty
+        else {
+            return visibleNodes
+        }
+
+        return flattenVisibleNodes(from: rootChildren)
+    }
+
+    private var tracksSidebarMoveFrames: Bool {
+        draggedSidebarNodeID != nil
     }
 
     var body: some View {
@@ -51,7 +66,8 @@ struct SidebarView: View {
 
             VStack(spacing: 0) {
                 SidebarProjectHeader(
-                    store: store,
+                    workspaceURL: store.workspaceURL,
+                    selectedDocumentRelativePath: store.selectedDocument?.relativePath,
                     theme: theme,
                     zoomScale: zoomScale,
                     uiFontSize: uiFontSize
@@ -92,12 +108,24 @@ struct SidebarView: View {
         }
         .onChange(of: store.rootNode?.id ?? "") {
             expandedFolderIDs = initialExpandedFolderIDs()
+            refreshVisibleNodes()
         }
         .onChange(of: store.selectedDocumentID ?? "") {
-            expandedFolderIDs.formUnion(ancestorFolderIDs(for: store.selectedDocumentID))
+            expandAncestorsForSelectedDocument()
+        }
+        .onChange(of: store.documents) { _, _ in
+            refreshVisibleNodes()
+        }
+        .onChange(of: store.recentDocumentChangeSerial) { _, _ in
+            refreshRecentDocuments()
+        }
+        .onChange(of: store.workspaceURL?.standardizedFileURL.path ?? "") { _, _ in
+            refreshRecentDocuments()
         }
         .onAppear {
             expandedFolderIDs = initialExpandedFolderIDs()
+            refreshVisibleNodes()
+            refreshRecentDocuments()
         }
         .background {
             FileURLDropTarget(isTargeted: $isDropTargeted) { urls in
@@ -135,60 +163,110 @@ struct SidebarView: View {
                 zoomScale: zoomScale,
                 uiFontSize: uiFontSize,
                 close: { workspaceSearch.dismiss() },
-                openResult: openWorkspaceSearchResult
+                openResult: openWorkspaceSearchResult,
+                replaceAll: {
+                    workspaceSearch.clearReplaceStatus()
+                    store.replaceInWorkspace(
+                        find: workspaceSearch.query,
+                        replacement: workspaceSearch.replaceText,
+                        scope: workspaceSearch.replaceScope,
+                        searchResultDocumentIDs: workspaceSearch.replaceScopeDocumentIDs
+                    )
+                },
+                makeReplacePreview: makeWorkspaceReplacePreview,
+                copyResults: copyWorkspaceSearchResults,
+                canReplace: canReplaceInWorkspace
             )
-        } else if !visibleNodes.isEmpty {
-            SidebarScrollContainer {
-                LazyVStack(alignment: .leading, spacing: scaled(1)) {
-                    ForEach(visibleNodes) { visibleNode in
-                        SidebarNodeRow(
-                            visibleNode: visibleNode,
+            .onChange(of: store.workspaceReplaceSummary) { _, summary in
+                workspaceSearch.setReplaceStatusMessage(summary)
+                if summary != nil {
+                    workspaceSearch.refresh(documents: store.documents)
+                }
+            }
+        } else {
+            let nodes = displayedVisibleNodes
+
+            if !nodes.isEmpty {
+                SidebarScrollContainer {
+                    VStack(alignment: .leading, spacing: scaled(8)) {
+                        SidebarRecentDocumentsSection(
+                            entries: recentDocuments,
                             selectedDocumentID: store.selectedDocumentID,
-                            saveState: visibleNode.node.document.map { store.saveState(for: $0.id) } ?? .clean,
-                            isExpanded: expandedFolderIDs.contains(visibleNode.node.id),
                             theme: theme,
                             zoomScale: zoomScale,
-                            uiFontSize: uiFontSize,
-                            toggleFolder: toggleFolder(_:),
-                            selectDocument: openDocument,
-                            createFileInFolder: beginCreateFile(in:),
-                            createFolderInFolder: beginCreateFolder(in:),
-                            copyFolderPath: copyPath(_:),
-                            revealFolderInFinder: revealInFinder(_:),
-                            renameFolder: beginRenameFolder(_:),
-                            isMoveSource: draggedSidebarNodeID == visibleNode.id,
-                            isMoveTarget: moveDropTargetFolderID == visibleNode.id,
-                            dragChanged: handleSidebarNodeDragChanged(id:location:),
-                            dragEnded: handleSidebarNodeDragEnded(id:location:),
-                            renameDocument: beginRename(_:),
-                            copyPath: copyPath(_:),
-                            revealInFinder: revealInFinder(_:),
-                            exportPDF: exportPDF,
-                            copyDocument: copyDocument(_:),
-                            cutDocument: cutDocument(_:),
-                            deleteDocument: store.deleteDocument(_:)
+                            openDocument: openDocument
                         )
+
+                        LazyVStack(alignment: .leading, spacing: scaled(1)) {
+                            ForEach(nodes) { visibleNode in
+                                SidebarNodeRow(
+                                    visibleNode: visibleNode,
+                                    selectedDocumentID: store.selectedDocumentID,
+                                    saveState: visibleNode.node.document.map { store.saveState(for: $0.id) } ?? .clean,
+                                    gitStatus: visibleNode.node.document.flatMap { document in
+                                        store.gitStatusByRelativePath[document.relativePath]
+                                    },
+                                    isExpanded: expandedFolderIDs.contains(visibleNode.node.id),
+                                    tracksMoveFrame: tracksSidebarMoveFrames,
+                                    theme: theme,
+                                    zoomScale: zoomScale,
+                                    uiFontSize: uiFontSize,
+                                    toggleFolder: toggleFolder(_:),
+                                    selectDocument: openDocument,
+                                    createFileInFolder: beginCreateFile(in:),
+                                    createFolderInFolder: beginCreateFolder(in:),
+                                    copyFolderPath: copyPath(_:),
+                                    revealFolderInFinder: revealInFinder(_:),
+                                    renameFolder: beginRenameFolder(_:),
+                                    isMoveSource: draggedSidebarNodeID == visibleNode.id,
+                                    isMoveTarget: moveDropTargetFolderID == visibleNode.id,
+                                    dragChanged: handleSidebarNodeDragChanged(id:location:),
+                                    dragEnded: handleSidebarNodeDragEnded(id:location:),
+                                    renameDocument: beginRename(_:),
+                                    copyPath: copyPath(_:),
+                                    revealInFinder: revealInFinder(_:),
+                                    exportPDF: exportPDF,
+                                    copyDocument: copyDocument(_:),
+                                    cutDocument: cutDocument(_:),
+                                    deleteDocument: store.deleteDocument(_:)
+                                )
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal, scaled(5))
                 .padding(.vertical, scaled(6))
                 .coordinateSpace(name: SidebarMoveCoordinateSpace.name)
-                .background(SidebarTreeFrameReader())
+                .background {
+                    if tracksSidebarMoveFrames {
+                        SidebarTreeFrameReader()
+                    }
+                }
                 .onPreferenceChange(SidebarTreeFramePreferenceKey.self) { frame in
                     sidebarTreeFrame = frame
                 }
                 .onPreferenceChange(SidebarNodeFramePreferenceKey.self) { frames in
                     sidebarNodeFrames = frames
                 }
-            }
-            .contextMenu {
-                sidebarContextMenu
-            }
-        } else {
-            EmptySidebarView(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize, openFolder: openFolder)
                 .contextMenu {
                     sidebarContextMenu
                 }
+            } else {
+                EmptySidebarView(
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    uiFontSize: uiFontSize,
+                    hasWorkspace: store.workspaceURL != nil,
+                    isLoadingWorkspace: store.isWorkspaceOpening,
+                    canBootstrapStarterWorkspace: store.canBootstrapStarterWorkspace,
+                    openFolder: openFolder,
+                    bootstrapStarterWorkspace: bootstrapStarterWorkspace,
+                    openRecentWorkspace: openRecentWorkspace
+                )
+                    .contextMenu {
+                        sidebarContextMenu
+                    }
+            }
         }
     }
 
@@ -209,31 +287,38 @@ struct SidebarView: View {
         return visibleNodes
     }
 
+    private func refreshVisibleNodes() {
+        visibleNodes = flattenVisibleNodes(from: store.rootNode?.children ?? [])
+    }
+
     private func initialExpandedFolderIDs() -> Set<String> {
         ancestorFolderIDs(for: store.selectedDocumentID ?? store.documents.first?.id)
     }
 
     private func ancestorFolderIDs(for fileID: String?) -> Set<String> {
-        guard let fileID, let rootNode = store.rootNode else { return [] }
-        return ancestorFolderIDs(for: fileID, in: rootNode).map(Set.init) ?? []
+        guard let fileID,
+              let document = store.document(id: fileID),
+              let workspaceURL = store.workspaceURL
+        else { return [] }
+
+        var ancestorIDs: Set<String> = []
+        var folderURL = workspaceURL.standardizedFileURL
+        let folderComponents = document.relativePath.split(separator: "/").dropLast()
+
+        for component in folderComponents {
+            folderURL.appendPathComponent(String(component), isDirectory: true)
+            ancestorIDs.insert(folderURL.standardizedFileURL.path)
+        }
+
+        return ancestorIDs
     }
 
-    private func ancestorFolderIDs(for fileID: String, in node: SidebarNode) -> [String]? {
-        if node.document?.id == fileID {
-            return []
-        }
+    private func expandAncestorsForSelectedDocument() {
+        let nextExpandedFolderIDs = expandedFolderIDs.union(ancestorFolderIDs(for: store.selectedDocumentID))
+        guard nextExpandedFolderIDs != expandedFolderIDs else { return }
 
-        guard node.kind == .folder, let children = node.children else {
-            return nil
-        }
-
-        for child in children {
-            if let descendantIDs = ancestorFolderIDs(for: fileID, in: child) {
-                return node.relativePath.isEmpty ? descendantIDs : [node.id] + descendantIDs
-            }
-        }
-
-        return nil
+        expandedFolderIDs = nextExpandedFolderIDs
+        refreshVisibleNodes()
     }
 
     private func toggleFolder(_ id: String) {
@@ -242,6 +327,44 @@ struct SidebarView: View {
         } else {
             expandedFolderIDs.insert(id)
         }
+        refreshVisibleNodes()
+    }
+
+    private func refreshRecentDocuments() {
+        recentDocuments = store.recentDocuments()
+    }
+
+    private var canReplaceInWorkspace: Bool {
+        store.workspaceURL != nil
+            && !store.isBusy
+            && !workspaceSearch.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func makeWorkspaceReplacePreview() -> WorkspaceReplacePreview? {
+        let needle = workspaceSearch.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return nil }
+
+        let skipDocumentIDs = Set(store.documentSaveStates.filter { !$0.value.isClean }.map(\.key))
+        let limitToDocumentIDs = workspaceSearch.replaceScope == .entireWorkspace
+            ? nil
+            : workspaceSearch.replaceScopeDocumentIDs
+
+        return try? WorkspaceReplaceService().preview(
+            find: needle,
+            replacement: workspaceSearch.replaceText,
+            documents: store.documents,
+            skipDocumentIDs: skipDocumentIDs,
+            limitToDocumentIDs: limitToDocumentIDs
+        )
+    }
+
+    private func copyWorkspaceSearchResults() {
+        let text = WorkspaceSearchResultExporter.tabSeparatedText(
+            results: workspaceSearch.results,
+            query: workspaceSearch.query
+        )
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     private func handleDroppedURLs(_ urls: [URL]) {
@@ -322,8 +445,9 @@ struct SidebarView: View {
     }
 
     private func handleSidebarNodeDragChanged(id: String, location: CGPoint) {
-        guard store.workspaceURL != nil, !store.isBusy, sidebarNodeFrames[id] != nil else { return }
+        guard store.workspaceURL != nil, !store.isBusy else { return }
         draggedSidebarNodeID = id
+        guard sidebarNodeFrames[id] != nil else { return }
         updateMoveDropTarget(at: location, excluding: id)
     }
 
@@ -332,6 +456,8 @@ struct SidebarView: View {
             draggedSidebarNodeID = nil
             moveDropTargetFolderID = nil
             isMoveDropTargetingRoot = false
+            sidebarTreeFrame = .zero
+            sidebarNodeFrames = [:]
         }
 
         guard store.workspaceURL != nil, !store.isBusy, sidebarNodeFrames[id] != nil else { return }
@@ -590,7 +716,8 @@ private struct SidebarChromeRow: View {
 /// (below the chrome row), now showing only the project name (search lives
 /// in the chrome row alongside New Markdown / Open Folder).
 private struct SidebarProjectHeader: View {
-    @ObservedObject var store: WorkspaceStore
+    let workspaceURL: URL?
+    let selectedDocumentRelativePath: String?
     let theme: AppTheme
     let zoomScale: Double
     let uiFontSize: Double
@@ -600,19 +727,37 @@ private struct SidebarProjectHeader: View {
     }
 
     var body: some View {
-        HStack(spacing: scaled(8)) {
-            Text(store.workspaceURL?.lastPathComponent ?? "monknot")
-                .font(.system(size: scaled(13), weight: .semibold))
-                .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.92))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .help(store.workspaceURL?.path ?? "No workspace open")
+        VStack(alignment: .leading, spacing: scaled(2)) {
+            HStack(spacing: scaled(8)) {
+                Text(workspaceURL?.lastPathComponent ?? "monknot")
+                    .font(.system(size: scaled(13), weight: .semibold))
+                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.92))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(workspaceURL?.path ?? "No workspace open")
 
-            Spacer(minLength: 0)
+                Spacer(minLength: 0)
+            }
+
+            if let breadcrumb = selectedDocumentBreadcrumb {
+                Text(breadcrumb)
+                    .font(.system(size: scaled(10), weight: .medium))
+                    .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(breadcrumb)
+            }
         }
         .padding(.horizontal, scaled(12))
         .padding(.top, scaled(8))
         .padding(.bottom, scaled(4))
+    }
+
+    private var selectedDocumentBreadcrumb: String? {
+        guard let relativePath = selectedDocumentRelativePath else { return nil }
+        let components = relativePath.split(separator: "/").map(String.init)
+        guard components.count > 1 else { return nil }
+        return components.dropLast().joined(separator: " › ")
     }
 }
 
@@ -622,7 +767,9 @@ private struct SidebarNodeRow: View {
     let visibleNode: VisibleSidebarNode
     let selectedDocumentID: String?
     let saveState: DocumentSaveState
+    let gitStatus: WorkspaceGitFileStatus?
     let isExpanded: Bool
+    let tracksMoveFrame: Bool
     let theme: AppTheme
     let zoomScale: Double
     let uiFontSize: Double
@@ -689,7 +836,11 @@ private struct SidebarNodeRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .sidebarHoverRow(theme: theme, isSelected: false, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-        .background(SidebarNodeFrameReader(id: node.id))
+        .background {
+            if tracksMoveFrame {
+                SidebarNodeFrameReader(id: node.id)
+            }
+        }
         .onTapGesture {
             withAnimation(.easeInOut(duration: 0.18)) {
                 toggleFolder(node.id)
@@ -736,6 +887,10 @@ private struct SidebarNodeRow: View {
 
             Spacer(minLength: 0)
 
+            if let gitStatus {
+                GitStatusBadge(status: gitStatus, theme: theme, zoomScale: zoomScale)
+            }
+
             SaveStateIndicator(
                 state: saveState,
                 theme: theme,
@@ -749,7 +904,11 @@ private struct SidebarNodeRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .sidebarHoverRow(theme: theme, isSelected: isSelected, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-        .background(SidebarNodeFrameReader(id: node.id))
+        .background {
+            if tracksMoveFrame {
+                SidebarNodeFrameReader(id: node.id)
+            }
+        }
         .onTapGesture {
             if let document = node.document {
                 selectDocument(document.id)
@@ -775,6 +934,9 @@ private struct SidebarNodeRow: View {
         }
         if !saveState.isClean {
             parts.append(saveState.accessibilityDescription)
+        }
+        if let gitStatus {
+            parts.append(gitStatus.accessibilityDescription)
         }
         return parts.joined(separator: ", ")
     }
@@ -1142,13 +1304,135 @@ private struct SidebarSettingsButton: View {
     }
 }
 
+// MARK: - Git Status
+
+private struct GitStatusBadge: View {
+    let status: WorkspaceGitFileStatus
+    let theme: AppTheme
+    let zoomScale: Double
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
+        Text(status.label)
+            .font(.system(size: scaled(9), weight: .bold, design: .rounded))
+            .foregroundStyle(status.badgeForegroundColor(theme: theme))
+            .padding(.horizontal, scaled(4))
+            .padding(.vertical, scaled(2))
+            .background(
+                Capsule()
+                    .fill(status.badgeBackgroundColor(theme: theme))
+            )
+            .help(status.accessibilityDescription)
+            .accessibilityLabel(status.accessibilityDescription)
+    }
+}
+
+private struct SidebarRecentDocumentsSection: View {
+    let entries: [RecentDocumentEntry]
+    let selectedDocumentID: String?
+    let theme: AppTheme
+    let zoomScale: Double
+    let openDocument: (String) -> Void
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
+        if !entries.isEmpty {
+            VStack(alignment: .leading, spacing: scaled(4)) {
+                Text("Recent")
+                    .font(.system(size: scaled(11), weight: .semibold))
+                    .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
+                    .padding(.horizontal, scaled(6))
+
+                ForEach(entries.prefix(5), id: \.documentID) { entry in
+                    Button {
+                        openDocument(entry.documentID)
+                    } label: {
+                        HStack(spacing: scaled(8)) {
+                            Image(systemName: "clock")
+                                .font(.system(size: scaled(11)))
+                                .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.75))
+
+                            Text(entry.displayName)
+                                .font(.system(size: scaled(12), weight: entry.documentID == selectedDocumentID ? .semibold : .regular))
+                                .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.9))
+                                .lineLimit(1)
+
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, scaled(8))
+                        .padding(.vertical, scaled(5))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(SidebarHoverButtonStyle(
+                        theme: theme,
+                        isSelected: entry.documentID == selectedDocumentID,
+                        cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
+                    ))
+                    .monknotPointerCursor()
+                }
+            }
+            .padding(.bottom, scaled(4))
+        }
+    }
+}
+
+private extension WorkspaceGitFileStatus {
+    var label: String {
+        switch self {
+        case .modified: return "M"
+        case .added: return "A"
+        case .deleted: return "D"
+        case .untracked: return "?"
+        case .renamed: return "R"
+        }
+    }
+
+    var accessibilityDescription: String {
+        switch self {
+        case .modified: return "modified in git"
+        case .added: return "added in git"
+        case .deleted: return "deleted in git"
+        case .untracked: return "untracked in git"
+        case .renamed: return "renamed in git"
+        }
+    }
+
+    func badgeForegroundColor(theme: AppTheme) -> Color {
+        switch self {
+        case .modified: return Color(hex: theme.semanticColors.skill)
+        case .added: return Color(hex: theme.semanticColors.diffAdded)
+        case .deleted: return Color(hex: theme.semanticColors.diffRemoved)
+        case .untracked: return theme.sidebarColor(theme.mutedForegroundColor)
+        case .renamed: return Color(hex: theme.semanticColors.skill)
+        }
+    }
+
+    func badgeBackgroundColor(theme: AppTheme) -> Color {
+        badgeForegroundColor(theme: theme).opacity(0.16)
+    }
+}
+
 // MARK: - Empty Sidebar
 
 private struct EmptySidebarView: View {
     let theme: AppTheme
     let zoomScale: Double
     let uiFontSize: Double
+    let hasWorkspace: Bool
+    let isLoadingWorkspace: Bool
+    let canBootstrapStarterWorkspace: Bool
     let openFolder: () -> Void
+    let bootstrapStarterWorkspace: () -> Void
+    let openRecentWorkspace: (URL) -> Void
+
+    @State private var recentWorkspaces: [RecentWorkspaceEntry] = []
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
@@ -1163,32 +1447,106 @@ private struct EmptySidebarView: View {
                 .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.5))
 
             VStack(spacing: scaled(6)) {
-                Text("No workspace")
+                Text(isLoadingWorkspace ? "Opening workspace" : "Welcome to monknot")
                     .font(.system(size: scaled(16), weight: .semibold))
                     .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
-                Text("Drop a folder here or open one.")
+                Text(emptyStateMessage)
                     .font(.system(size: scaled(14)))
                     .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
                     .multilineTextAlignment(.center)
             }
 
-            Button(action: openFolder) {
-                Label("Open Folder", systemImage: MonknotWorkspaceIcons.openFolder)
-                    .font(.system(size: scaled(14), weight: .medium))
-                    .padding(.horizontal, scaled(16))
-                    .padding(.vertical, scaled(8))
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(theme.accentColor)
-            .monknotPointerCursor()
+            if isLoadingWorkspace {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(.vertical, scaled(10))
+            } else {
+                Button(action: canBootstrapStarterWorkspace ? bootstrapStarterWorkspace : openFolder) {
+                    Label(
+                        canBootstrapStarterWorkspace ? "Create Starter Files" : "Open Folder",
+                        systemImage: canBootstrapStarterWorkspace ? "wand.and.stars" : MonknotWorkspaceIcons.openFolder
+                    )
+                        .font(.system(size: scaled(14), weight: .medium))
+                        .padding(.horizontal, scaled(16))
+                        .padding(.vertical, scaled(8))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(theme.accentColor)
+                .monknotPointerCursor()
 
-            Text("⇧⌘O")
-                .font(.system(size: scaled(12), weight: .medium, design: .rounded))
-                .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.5))
+                Text(canBootstrapStarterWorkspace ? "README, docs, notes, inbox" : "⇧⌘O")
+                    .font(.system(size: scaled(12), weight: .medium, design: .rounded))
+                    .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.5))
+            }
+
+            if !isLoadingWorkspace, UserDefaults.standard.data(forKey: "Monknot.workspaceBookmark") != nil {
+                Text("Your last workspace reopens automatically on launch.")
+                    .font(.system(size: scaled(12)))
+                    .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.55))
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: scaled(260))
+            }
+
+            if !isLoadingWorkspace, !recentWorkspaces.isEmpty {
+                VStack(alignment: .leading, spacing: scaled(8)) {
+                    Text("Recent workspaces")
+                        .font(.system(size: scaled(12), weight: .semibold))
+                        .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
+
+                    ForEach(recentWorkspaces.prefix(5), id: \.path) { entry in
+                        Button {
+                            openRecentWorkspace(URL(fileURLWithPath: entry.path, isDirectory: true))
+                        } label: {
+                            HStack(spacing: scaled(8)) {
+                                Image(systemName: "clock.arrow.circlepath")
+                                    .font(.system(size: scaled(12)))
+                                Text(entry.displayName)
+                                    .font(.system(size: scaled(13), weight: .medium))
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                            }
+                            .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.9))
+                            .padding(.horizontal, scaled(10))
+                            .padding(.vertical, scaled(6))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+                                    .fill(theme.insetFillColor.opacity(0.65))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .monknotPointerCursor()
+                    }
+                }
+                .frame(maxWidth: scaled(260))
+            }
 
             Spacer()
         }
         .padding(scaled(24))
+        .onAppear(perform: refreshRecentWorkspaces)
+    }
+
+    private var emptyStateMessage: String {
+        if isLoadingWorkspace {
+            return "Scanning files..."
+        }
+
+        if canBootstrapStarterWorkspace {
+            return "Create starter files or add your first note."
+        }
+
+        return hasWorkspace
+            ? "Choose a file from the sidebar, or create a new note."
+            : "Open a folder to browse Markdown, text, and PDF files."
+    }
+
+    private func refreshRecentWorkspaces() {
+        let store = RecentWorkspaceStore()
+        recentWorkspaces = store.entries().filter { entry in
+            var isDirectory = ObjCBool(false)
+            return FileManager.default.fileExists(atPath: entry.path, isDirectory: &isDirectory) && isDirectory.boolValue
+        }
     }
 }
 

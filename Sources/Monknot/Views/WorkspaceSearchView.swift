@@ -10,6 +10,12 @@ struct WorkspaceSearchView: View {
     let uiFontSize: Double
     let close: () -> Void
     let openResult: (WorkspaceSearchResult) -> Void
+    let replaceAll: () -> Void
+    let makeReplacePreview: () -> WorkspaceReplacePreview?
+    let copyResults: () -> Void
+    let canReplace: Bool
+
+    @State private var replaceConfirmation: WorkspaceReplacePreview?
 
     @FocusState private var isSearchFocused: Bool
 
@@ -33,6 +39,30 @@ struct WorkspaceSearchView: View {
             focusSearchField()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .confirmationDialog(
+            "Replace in workspace?",
+            isPresented: Binding(
+                get: { replaceConfirmation != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        replaceConfirmation = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Replace All", role: .destructive) {
+                replaceConfirmation = nil
+                replaceAll()
+            }
+            Button("Cancel", role: .cancel) {
+                replaceConfirmation = nil
+            }
+        } message: {
+            if let preview = replaceConfirmation {
+                Text(WorkspaceReplacePreview.summaryMessage(for: preview))
+            }
+        }
     }
 
     private var searchField: some View {
@@ -46,7 +76,9 @@ struct WorkspaceSearchView: View {
                     "Search workspace...",
                     text: Binding(
                         get: { state.query },
-                        set: { state.setQuery($0, documents: documents) }
+                        set: {
+                            state.setQuery($0, documents: documents)
+                        }
                     )
                 )
                 .textFieldStyle(.plain)
@@ -54,8 +86,8 @@ struct WorkspaceSearchView: View {
                 .font(.system(size: scaled(13)))
                 .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
                 .onSubmit {
-                    if let first = state.results.first {
-                        openResult(first)
+                    if let selected = state.selectedResult ?? state.results.first {
+                        openResult(selected)
                     }
                 }
 
@@ -79,13 +111,105 @@ struct WorkspaceSearchView: View {
                     .strokeBorder(theme.borderColor, lineWidth: 1)
             }
 
-            Text(state.errorMessage ?? state.resultCountText)
-                .font(.system(size: scaled(11), weight: .medium))
-                .foregroundStyle(state.errorMessage == nil ? theme.sidebarColor(theme.mutedForegroundColor) : Color(hex: theme.semanticColors.diffRemoved))
-                .lineLimit(1)
+            HStack(spacing: scaled(8)) {
+                Text(state.errorMessage ?? state.resultCountText)
+                    .font(.system(size: scaled(11), weight: .medium))
+                    .foregroundStyle(state.errorMessage == nil ? theme.sidebarColor(theme.mutedForegroundColor) : Color(hex: theme.semanticColors.diffRemoved))
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+
+                if !state.results.isEmpty {
+                    MonknotIconButton(
+                        systemImage: "doc.on.doc",
+                        label: "Copy Results",
+                        theme: theme,
+                        zoomScale: zoomScale,
+                        size: .compact,
+                        action: copyResults
+                    )
+                }
+            }
+
+            replaceScopeControl
+
+            replaceField
         }
         .padding(.horizontal, scaled(12))
         .padding(.vertical, scaled(10))
+    }
+
+    private var replaceScopeControl: some View {
+        MonknotSegmentedControl(
+            options: WorkspaceReplaceScope.allCases.map { scope in
+                MonknotSegmentOption(
+                    id: scope.rawValue,
+                    systemImage: scope.systemImage,
+                    accessibilityLabel: scope.title
+                )
+            },
+            selection: Binding(
+                get: { state.replaceScope.rawValue },
+                set: { state.replaceScope = WorkspaceReplaceScope(rawValue: $0) ?? .entireWorkspace }
+            ),
+            theme: theme,
+            zoomScale: zoomScale
+        )
+        .disabled(!canReplace)
+        .accessibilityLabel("Replace scope")
+    }
+
+    private var replaceField: some View {
+        HStack(spacing: scaled(8)) {
+            Image(systemName: "arrow.left.arrow.right")
+                .font(.system(size: scaled(13), weight: .medium))
+                .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
+
+            TextField(
+                "Replace with...",
+                text: Binding(
+                    get: { state.replaceText },
+                    set: { state.setReplaceText($0) }
+                )
+            )
+            .textFieldStyle(.plain)
+            .font(.system(size: scaled(13)))
+            .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
+            .disabled(!canReplace)
+
+            Button("Replace All") {
+                guard let preview = makeReplacePreview() else { return }
+                if preview.hasMatches {
+                    replaceConfirmation = preview
+                } else {
+                    state.setReplaceStatusMessage(WorkspaceReplacePreview.summaryMessage(for: preview))
+                }
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: scaled(11), weight: .semibold))
+            .foregroundStyle(canReplace ? theme.accentColor : theme.sidebarColor(theme.mutedForegroundColor))
+            .disabled(!canReplace)
+            .monknotPointerCursor(enabled: canReplace)
+        }
+        .padding(.horizontal, scaled(10))
+        .padding(.vertical, scaled(7))
+        .background(
+            theme.insetFillColor,
+            in: RoundedRectangle(cornerRadius: theme.chromeRadius(9, zoomScale: zoomScale))
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: theme.chromeRadius(9, zoomScale: zoomScale))
+                .strokeBorder(theme.borderColor, lineWidth: 1)
+        }
+        .overlay(alignment: .bottomLeading) {
+            if let message = state.replaceStatusMessage {
+                Text(message)
+                    .font(.system(size: scaled(10), weight: .medium))
+                    .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
+                    .lineLimit(2)
+                    .offset(y: scaled(22))
+            }
+        }
     }
 
     private var searchBody: some View {
@@ -101,8 +225,9 @@ struct WorkspaceSearchView: View {
 
     private var resultList: some View {
         LazyVStack(alignment: .leading, spacing: scaled(2)) {
-            ForEach(state.results) { result in
+            ForEach(Array(state.results.enumerated()), id: \.element.id) { index, result in
                 Button {
+                    state.selectResult(at: index)
                     openResult(result)
                 } label: {
                     VStack(alignment: .leading, spacing: scaled(2)) {
@@ -133,7 +258,11 @@ struct WorkspaceSearchView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(SidebarSearchResultButtonStyle(theme: theme, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)))
+                .buttonStyle(SidebarSearchResultButtonStyle(
+                    theme: theme,
+                    cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale),
+                    isSelected: index == state.selectedResultIndex
+                ))
             }
         }
         .padding(.horizontal, scaled(6))
@@ -200,15 +329,17 @@ struct WorkspaceSearchView: View {
 private struct SidebarSearchResultButtonStyle: ButtonStyle {
     let theme: AppTheme
     let cornerRadius: CGFloat
+    var isSelected: Bool = false
 
     func makeBody(configuration: Configuration) -> Body {
-        Body(configuration: configuration, theme: theme, cornerRadius: cornerRadius)
+        Body(configuration: configuration, theme: theme, cornerRadius: cornerRadius, isSelected: isSelected)
     }
 
     fileprivate struct Body: View {
         let configuration: Configuration
         let theme: AppTheme
         let cornerRadius: CGFloat
+        let isSelected: Bool
         @State private var isHovered = false
 
         var body: some View {
@@ -228,7 +359,7 @@ private struct SidebarSearchResultButtonStyle: ButtonStyle {
         }
 
         private var backgroundFill: Color {
-            if configuration.isPressed {
+            if configuration.isPressed || isSelected {
                 return theme.selectedRowColor
             }
             if isHovered {

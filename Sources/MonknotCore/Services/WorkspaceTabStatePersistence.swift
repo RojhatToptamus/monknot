@@ -24,7 +24,9 @@ public struct WorkspaceTabStatePersistence {
 
     public func save(_ state: WorkspaceTabState, for workspaceURL: URL) {
         guard let data = try? encoder.encode(state) else { return }
-        defaults.set(data, forKey: key(for: workspaceURL))
+        let storageKey = key(for: workspaceURL)
+        guard defaults.data(forKey: storageKey) != data else { return }
+        defaults.set(data, forKey: storageKey)
     }
 
     public func remove(for workspaceURL: URL) {

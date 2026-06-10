@@ -61,11 +61,11 @@ try FileManager.default.createSymbolicLink(
 
 let scan = try WorkspaceDocumentScanner().scan(rootURL: root)
 let paths = scan.documents.map(\.relativePath).sorted()
-expect(paths == ["Guide.pdf", "Notes/Preview.html", "Notes/Todo.markdown", "Notes/image.png", "Notes/movie.mp4", "README.md"], "scanner should include regular workspace files")
+expect(paths == ["Guide.pdf", "Notes/Preview.html", "Notes/Todo.markdown", "README.md"], "scanner should include only openable workspace documents")
 expect(scan.documents.first(where: { $0.relativePath == "Guide.pdf" })?.kind == .pdf, "scanner should classify PDFs")
 expect(scan.documents.first(where: { $0.relativePath == "Notes/Preview.html" })?.capabilities.canPreviewHTML == true, "scanner should classify HTML files as editable previewable text")
-expect(scan.documents.first(where: { $0.relativePath == "Notes/image.png" })?.kind == .nativePreview, "scanner should classify image files as native-preview documents")
-expect(scan.documents.first(where: { $0.relativePath == "Notes/movie.mp4" })?.kind == .media, "scanner should classify video files as media documents")
+expect(scan.documents.first(where: { $0.relativePath == "Notes/image.png" }) == nil, "scanner should skip image files")
+expect(scan.documents.first(where: { $0.relativePath == "Notes/movie.mp4" }) == nil, "scanner should skip video files")
 expect(!scan.root.children!.contains(where: { $0.name == "Loop" }), "scanner should skip symbolic link directories")
 expect(scan.root.children?.first?.name == "Notes", "folders should sort before documents")
 
@@ -153,16 +153,16 @@ let outline = MarkdownOutlineParser().parse("""
 expect(outline.map(\.title) == ["Title", "Section"], "outline parser should skip fenced code headings")
 expect(outline.map { $0.location.line } == [1, 7], "outline parser should preserve source line numbers")
 
-let searchMatches = try WorkspaceSearchService().search(query: "item", documents: scan.documents)
+let searchMatches = try WorkspaceSearchService().search(query: "item", documents: scan.documents).results
 expect(searchMatches.count == 1, "workspace search should find Markdown matches")
 expect(searchMatches.first?.relativePath == "Notes/Todo.markdown", "workspace search should report the matched document")
 expect(searchMatches.first?.line == 1, "workspace search should report the matched line")
 
-let htmlSearchMatches = try WorkspaceSearchService().search(query: "html-only-token", documents: scan.documents)
+let htmlSearchMatches = try WorkspaceSearchService().search(query: "html-only-token", documents: scan.documents).results
 expect(htmlSearchMatches.count == 1, "workspace search should find HTML source matches")
 expect(htmlSearchMatches.first?.relativePath == "Notes/Preview.html", "workspace search should report HTML documents as text matches")
 
-let pdfSearchMatches = try WorkspaceSearchService().search(query: "pdf-only-token", documents: scan.documents)
+let pdfSearchMatches = try WorkspaceSearchService().search(query: "pdf-only-token", documents: scan.documents).results
 expect(pdfSearchMatches.count == 1, "workspace search should find searchable PDF matches")
 expect(pdfSearchMatches.first?.kind == .pdf, "workspace search should mark PDF matches")
 expect(pdfSearchMatches.first?.locationLabel == "p1", "workspace search should report PDF page labels")

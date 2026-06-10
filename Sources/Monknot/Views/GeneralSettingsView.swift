@@ -7,6 +7,8 @@ struct GeneralSettingsView: View {
     @AppStorage("Monknot.previewWidthPercent") private var previewWidthPercent = 88.0
     @AppStorage("Monknot.usePointerCursors") private var usePointerCursors = false
     @AppStorage("Monknot.fontSmoothing") private var fontSmoothing = true
+    @State private var betaFeedback = ""
+    @State private var betaFeedbackNotice: String?
 
     var body: some View {
         ScrollView {
@@ -40,11 +42,36 @@ struct GeneralSettingsView: View {
                         theme: uiTheme,
                         title: "Preview width",
                         detail: "Set Markdown preview max width as a percentage of the editor pane",
-                        showsDivider: false,
                         value: $previewWidthPercent,
                         range: 55...100,
                         suffix: "%"
                     )
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Beta feedback")
+                            .font(MonknotTypography.settingsRowTitle(theme: uiTheme))
+                            .foregroundStyle(uiTheme.foregroundColor)
+                        Text("Saved locally on this Mac only. No network calls.")
+                            .font(MonknotTypography.settingsRowDetail(theme: uiTheme))
+                            .foregroundStyle(uiTheme.mutedForegroundColor)
+
+                        TextField("What should improve?", text: $betaFeedback, axis: .vertical)
+                            .textFieldStyle(.roundedBorder)
+                            .lineLimit(3...6)
+
+                        HStack(spacing: 12) {
+                            MonknotAccentButton(title: "Save feedback", theme: uiTheme, isDisabled: betaFeedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+                                saveBetaFeedback()
+                            }
+
+                            if let betaFeedbackNotice {
+                                Text(betaFeedbackNotice)
+                                    .font(MonknotTypography.settingsRowDetail(theme: uiTheme))
+                                    .foregroundStyle(uiTheme.mutedForegroundColor)
+                            }
+                        }
+                    }
+                    .padding(.top, 4)
                 }
             }
             .padding(20)
@@ -53,5 +80,15 @@ struct GeneralSettingsView: View {
             .frame(maxWidth: .infinity)
         }
         .scrollContentBackground(.hidden)
+    }
+
+    private func saveBetaFeedback() {
+        do {
+            _ = try BetaFeedbackRecorder().append(message: betaFeedback)
+            betaFeedback = ""
+            betaFeedbackNotice = "Saved locally."
+        } catch {
+            betaFeedbackNotice = error.localizedDescription
+        }
     }
 }

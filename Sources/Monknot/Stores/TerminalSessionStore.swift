@@ -33,6 +33,7 @@ final class TerminalSessionStore: ObservableObject {
     func setDefaultDirectory(_ url: URL?) {
         guard ptySession == nil, status == .idle else { return }
         guard let directory = Self.resolvedDirectory(url) else { return }
+        guard directory.path != workingDirectory.path else { return }
         workingDirectory = directory
     }
 

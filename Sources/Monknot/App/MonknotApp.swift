@@ -2,7 +2,9 @@ import AppKit
 import MonknotCore
 import SwiftUI
 
+#if !SWIFT_PACKAGE
 @main
+#endif
 struct MonknotApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var workspaceRestoration = InitialWorkspaceRestorationCoordinator()
@@ -58,6 +60,9 @@ private struct MonknotWindowRootView: View {
                     }
 
                     workspaceStore.openWorkspace(workspaceURL, selecting: request.selectedDocumentURL)
+                    Task { @MainActor in
+                        await importCaptureIfNeeded(from: request)
+                    }
                     return true
                 }
             }
@@ -70,15 +75,37 @@ private struct MonknotWindowRootView: View {
 
                 if let workspaceURL = request.workspaceURL {
                     workspaceStore.openWorkspace(workspaceURL, selecting: request.selectedDocumentURL)
+                    await importCaptureIfNeeded(from: request)
                 } else if let pendingRequest = workspaceWindowRequests.consumePendingInitialWorkspaceRequest(),
                           let workspaceURL = pendingRequest.workspaceURL {
                     workspaceStore.openWorkspace(workspaceURL, selecting: pendingRequest.selectedDocumentURL)
+                    await importCaptureIfNeeded(from: pendingRequest)
                 } else if workspaceRestoration.claimInitialRestore() {
                     workspaceStore.restoreWorkspace()
                 }
 
                 workspaceWindowRequests.finishInitialWorkspaceRequestHandling()
             }
+    }
+
+    private func importCaptureIfNeeded(from request: MonknotWorkspaceWindowRequest) async {
+        guard let item = request.captureItem else { return }
+        guard await waitForWorkspaceReady(request.workspaceURL) else { return }
+        workspaceStore.importPasteboardItems([item])
+    }
+
+    private func waitForWorkspaceReady(_ workspaceURL: URL?) async -> Bool {
+        let expectedPath = workspaceURL?.standardizedFileURL.path
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if !workspaceStore.isBusy,
+               let currentPath = workspaceStore.workspaceURL?.standardizedFileURL.path,
+               expectedPath == nil || currentPath == expectedPath {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return false
     }
 }
 
@@ -107,10 +134,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        openLaunchCaptureIfPresent()
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        openWorkspaceItems(at: urls)
+        openCaptureURLsIfPresent(urls)
+        openWorkspaceItems(at: urls.filter(\.isFileURL))
     }
 
     func application(_ sender: NSApplication, openFile filename: String) -> Bool {
@@ -165,6 +194,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 selecting: request.selectedDocumentURL
             )
         }
+    }
+
+    private func openCaptureURLsIfPresent(_ urls: [URL]) {
+        let requests = urls.compactMap(MonknotLaunchCaptureParser.request(url:))
+        guard !requests.isEmpty else { return }
+
+        NSApp.activate(ignoringOtherApps: true)
+        for request in requests {
+            WorkspaceWindowRequestCenter.shared.openWorkspaceWindow(MonknotWorkspaceWindowRequest(
+                workspaceURL: request.workspaceURL,
+                captureItem: request.item
+            ))
+        }
+    }
+
+    private func openLaunchCaptureIfPresent(arguments: [String] = CommandLine.arguments) {
+        guard let request = MonknotLaunchCaptureParser.request(arguments: arguments) else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        WorkspaceWindowRequestCenter.shared.openWorkspaceWindow(MonknotWorkspaceWindowRequest(
+            workspaceURL: request.workspaceURL,
+            captureItem: request.item
+        ))
     }
 
     private static func workspaceRequest(for url: URL) -> MonknotWorkspaceWindowRequest? {

@@ -6,11 +6,25 @@ struct MonknotWorkspaceWindowRequest: Codable, Hashable, Sendable {
     var id: UUID
     var workspacePath: String?
     var selectedDocumentPath: String?
+    var captureMarkdown: String?
+    var captureSuggestedName: String?
 
-    init(id: UUID = UUID(), workspaceURL: URL? = nil, selectedDocumentURL: URL? = nil) {
+    init(
+        id: UUID = UUID(),
+        workspaceURL: URL? = nil,
+        selectedDocumentURL: URL? = nil,
+        captureItem: WorkspacePasteboardImportItem? = nil
+    ) {
         self.id = id
         self.workspacePath = workspaceURL?.standardizedFileURL.path
         self.selectedDocumentPath = selectedDocumentURL?.standardizedFileURL.path
+        if case .capturedMarkdown(let markdown, let suggestedName) = captureItem?.payload {
+            self.captureMarkdown = markdown
+            self.captureSuggestedName = suggestedName
+        } else {
+            self.captureMarkdown = nil
+            self.captureSuggestedName = nil
+        }
     }
 
     var workspaceURL: URL? {
@@ -21,6 +35,11 @@ struct MonknotWorkspaceWindowRequest: Codable, Hashable, Sendable {
     var selectedDocumentURL: URL? {
         guard let selectedDocumentPath else { return nil }
         return URL(fileURLWithPath: selectedDocumentPath)
+    }
+
+    var captureItem: WorkspacePasteboardImportItem? {
+        guard let captureMarkdown, let captureSuggestedName else { return nil }
+        return .capturedMarkdown(captureMarkdown, suggestedName: captureSuggestedName)
     }
 }
 
@@ -76,7 +95,10 @@ final class WorkspaceWindowRequestCenter {
 
     func openWorkspaceWindow(at url: URL, selecting selectedDocumentURL: URL? = nil) {
         let request = MonknotWorkspaceWindowRequest(workspaceURL: url, selectedDocumentURL: selectedDocumentURL)
+        openWorkspaceWindow(request)
+    }
 
+    func openWorkspaceWindow(_ request: MonknotWorkspaceWindowRequest) {
         if didHandleInitialWorkspaceRequest, openInReusableWindow(request) {
             return
         }

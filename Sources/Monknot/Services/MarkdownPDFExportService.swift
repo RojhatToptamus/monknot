@@ -175,23 +175,14 @@ final class MarkdownPDFExportService: NSObject, WKNavigationDelegate {
 
     private func evaluateJavaScript(_ script: String, in webView: WKWebView) async throws -> Any? {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Any?, Error>) in
-            var didResume = false
-
-            func finish(_ result: Result<Any?, Error>) {
-                guard !didResume else { return }
-                didResume = true
-                continuation.resume(with: result)
-            }
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-                finish(.failure(MarkdownPDFExportError.timedOut))
-            }
+            let gate = TimedContinuation(continuation)
+            gate.scheduleTimeout(after: 4, error: MarkdownPDFExportError.timedOut)
 
             webView.evaluateJavaScript(script) { value, error in
                 if let error {
-                    finish(.failure(error))
+                    gate.resume(.failure(error))
                 } else {
-                    finish(.success(value))
+                    gate.resume(.success(value))
                 }
             }
         }
@@ -199,20 +190,11 @@ final class MarkdownPDFExportService: NSObject, WKNavigationDelegate {
 
     private func createPDFData(in webView: WKWebView, configuration: WKPDFConfiguration) async throws -> Data {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
-            var didResume = false
-
-            func finish(_ result: Result<Data, Error>) {
-                guard !didResume else { return }
-                didResume = true
-                continuation.resume(with: result)
-            }
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
-                finish(.failure(MarkdownPDFExportError.timedOut))
-            }
+            let gate = TimedContinuation(continuation)
+            gate.scheduleTimeout(after: 8, error: MarkdownPDFExportError.timedOut)
 
             webView.createPDF(configuration: configuration) { result in
-                finish(result)
+                gate.resume(result)
             }
         }
     }
@@ -253,6 +235,44 @@ final class MarkdownPDFExportService: NSObject, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         navigationError = error
+    }
+}
+
+private final class TimedContinuation<Value> {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Error>?
+    private var timeoutWorkItem: DispatchWorkItem?
+
+    init(_ continuation: CheckedContinuation<Value, Error>) {
+        self.continuation = continuation
+    }
+
+    func scheduleTimeout(after seconds: TimeInterval, error: Error) {
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.resume(.failure(error))
+        }
+
+        lock.lock()
+        timeoutWorkItem = workItem
+        lock.unlock()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: workItem)
+    }
+
+    func resume(_ result: Result<Value, Error>) {
+        lock.lock()
+        guard let continuation else {
+            lock.unlock()
+            return
+        }
+
+        self.continuation = nil
+        let timeoutWorkItem = timeoutWorkItem
+        self.timeoutWorkItem = nil
+        lock.unlock()
+
+        timeoutWorkItem?.cancel()
+        continuation.resume(with: result)
     }
 }
 

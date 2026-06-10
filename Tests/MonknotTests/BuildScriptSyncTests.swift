@@ -53,10 +53,54 @@ final class BuildScriptSyncTests: XCTestCase {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
         let script = try String(contentsOf: root.appendingPathComponent("script/build_and_run.sh"), encoding: .utf8)
 
+        XCTAssertTrue(script.contains("<key>CFBundleURLTypes</key>"))
+        XCTAssertTrue(script.contains("<string>monknot</string>"))
         XCTAssertTrue(script.contains("<key>CFBundleDocumentTypes</key>"))
         XCTAssertTrue(script.contains("<string>public.folder</string>"))
         XCTAssertTrue(script.contains("<string>public.data</string>"))
         XCTAssertTrue(script.contains("<key>LSSupportsOpeningDocumentsInPlace</key>"))
+    }
+
+    func testCodexRunActionUsesManualBuildScript() throws {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let environment = try String(
+            contentsOf: root.appendingPathComponent(".codex/environments/environment.toml"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(environment.contains("name = \"Run\""))
+        XCTAssertTrue(environment.contains("icon = \"run\""))
+        XCTAssertTrue(environment.contains("command = \"./script/build_and_run.sh\""))
+    }
+
+    func testReleasePreflightDocumentsDeveloperIDNotarizationRequirements() throws {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let scriptURL = root.appendingPathComponent("script/release_preflight.sh")
+        let script = try String(contentsOf: scriptURL, encoding: .utf8)
+
+        XCTAssertTrue(script.hasPrefix("#!/usr/bin/env bash"))
+        XCTAssertTrue(script.contains("Developer ID Application"))
+        XCTAssertTrue(script.contains("codesign --force --options runtime --timestamp"))
+        XCTAssertTrue(script.contains("xcrun notarytool submit"))
+        XCTAssertTrue(script.contains("xcrun stapler staple"))
+        XCTAssertTrue(script.contains("--allow-missing-identity"))
+    }
+
+    func testReleasePackageBuildsSignsPackagesAndNotarizesDMG() throws {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let scriptURL = root.appendingPathComponent("script/release_package.sh")
+        let script = try String(contentsOf: scriptURL, encoding: .utf8)
+
+        XCTAssertTrue(script.hasPrefix("#!/usr/bin/env bash"))
+        XCTAssertTrue(script.contains("script/build_and_run.sh\" --build"))
+        XCTAssertTrue(script.contains("Developer ID Application"))
+        XCTAssertTrue(script.contains("codesign --force --options runtime --timestamp --sign"))
+        XCTAssertTrue(script.contains("hdiutil create -volname Monknot"))
+        XCTAssertTrue(script.contains("xcrun notarytool submit"))
+        XCTAssertTrue(script.contains("xcrun stapler staple"))
+        XCTAssertTrue(script.contains("spctl --assess"))
+        XCTAssertTrue(script.contains("--skip-notarize"))
+        XCTAssertTrue(script.contains("--dry-run"))
     }
 
     private func sourceEntries(named arrayName: String, in script: String) throws -> Set<String> {

@@ -1,34 +1,5 @@
 import Foundation
-import MonknotCore
-
-func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
-    if !condition() {
-        fputs("FAIL: \(message)\n", stderr)
-        exit(1)
-    }
-}
-
-func write(_ text: String, to url: URL) throws {
-    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try text.write(to: url, atomically: true, encoding: .utf8)
-}
-
-func write(_ data: Data, to url: URL) throws {
-    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try data.write(to: url, options: .atomic)
-}
-
-@MainActor
-func waitUntil(_ timeout: TimeInterval = 3, _ condition: @escaping @MainActor () -> Bool) async -> Bool {
-    let deadline = Date().addingTimeInterval(timeout)
-    while Date() < deadline {
-        if condition() {
-            return true
-        }
-        try? await Task.sleep(nanoseconds: 50_000_000)
-    }
-    return condition()
-}
+@testable import MonknotApp
 
 @main
 struct MonknotStoreSmokeTests {
@@ -76,7 +47,6 @@ struct MonknotStoreSmokeTests {
         expect(store.hasUnsavedChanges, "edited document should be dirty")
         expect(store.saveState(for: first.id) == .edited, "edited document should show edited state")
 
-        try await Task.sleep(nanoseconds: 1_100_000_000)
         let diskBeforeSave = try String(contentsOf: first.url, encoding: .utf8)
         expect(diskBeforeSave == "# A\n", "editing should not autosave to disk")
 
@@ -148,20 +118,30 @@ struct MonknotStoreSmokeTests {
         store.importPasteboardItems([.pngImageData(Data("png image bytes\n".utf8))])
         let didImportClipboardImage = await waitUntil {
             !store.isBusy &&
-                store.documents.contains { $0.relativePath == "Pasted Image.png" }
+                FileManager.default.fileExists(atPath: root.appendingPathComponent("Pasted Image.png").path)
         }
         expect(didImportClipboardImage, "pasteboard image import should write a PNG file into the workspace")
+        expect(!store.documents.contains { $0.relativePath == "Pasted Image.png" }, "pasteboard image import should not add unsupported PNG files to workspace documents")
         let importedImageData = try Data(contentsOf: root.appendingPathComponent("Pasted Image.png"))
         expect(importedImageData == Data("png image bytes\n".utf8), "pasteboard image import should write the provided PNG data")
 
         store.selectDocument(id: first.id)
         let didRestoreDirtySource = await waitUntil { !store.isDocumentLoading && store.selectedDocumentID == first.id }
         expect(didRestoreDirtySource, "dirty source document should restore before external conflict test")
-        try await Task.sleep(nanoseconds: 2_500_000_000)
         try "# A\nexternal version\n".write(to: first.url, atomically: false, encoding: .utf8)
+        store.testing_clearWatcherSuppression()
         store.refresh()
         let didDetectExternalConflict = await waitUntil(8) { store.selectedDocumentExternalChange }
         expect(didDetectExternalConflict, "dirty selected document should report an external disk change conflict")
+
+        store.acknowledgeExternalChange()
+        expect(!store.selectedDocumentExternalChange, "acknowledging external change should dismiss conflict banner")
+        expect(store.documentText == "# A\ncopied dirty text\n", "acknowledging external change should keep dirty buffer")
+
+        store.reloadSelectedDocumentFromDisk()
+        _ = await waitUntil { !store.isDocumentLoading }
+        expect(!store.hasUnsavedChanges, "reload from disk should clear dirty state after external change")
+        expect(store.documentText == "# A\nexternal version\n", "reload from disk should read external file contents")
 
         store.selectDocument(id: text.id)
         let didLoadText = await waitUntil { !store.isDocumentLoading && store.selectedDocumentID == text.id }
@@ -259,6 +239,11 @@ struct MonknotStoreSmokeTests {
         store.moveItem(id: movedFolder.path, toDirectory: movedFolder)
         expect(store.errorMessage?.contains("cannot be moved into itself") == true, "drag-moving a folder into itself should be blocked")
 
+        store.selectDocument(id: first.id)
+        let didLoadFirstBeforeDelete = await waitUntil { !store.isDocumentLoading && store.selectedDocumentID == first.id }
+        expect(didLoadFirstBeforeDelete, "first document should load before dirty delete guard test")
+        store.setDocumentText(store.documentText + "\nunsaved delete guard\n")
+        expect(store.saveState(for: first.id) == .edited, "first document should be dirty before delete guard test")
         store.setOpenDocumentIDs([first.id])
         store.deleteDocument(first)
         expect(store.errorMessage?.contains("Save or close") == true, "deleting a dirty open document should be blocked")

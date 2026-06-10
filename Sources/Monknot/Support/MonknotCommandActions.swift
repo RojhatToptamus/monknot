@@ -3,9 +3,16 @@ import SwiftUI
 
 struct MonknotCommandActions {
     let newMarkdown: () -> Void
+    let newDailyNote: () -> Void
     let openFolder: () -> Void
     let exportPDF: () -> Void
     let canExportPDF: Bool
+    let exportPDFAnnotationsMarkdown: () -> Void
+    let canExportPDFAnnotationsMarkdown: Bool
+    let exportAllPDFAnnotationsMarkdown: () -> Void
+    let canExportAllPDFAnnotationsMarkdown: Bool
+    let exportAnnotatedPDFCopy: () -> Void
+    let canExportAnnotatedPDFCopy: Bool
     let saveDocument: () -> Void
     let cut: () -> Void
     let copy: () -> Void
@@ -20,11 +27,18 @@ struct MonknotCommandActions {
     let zoomOut: () -> Void
     let resetZoom: () -> Void
     let showFind: () -> Void
+    let canShowFind: Bool
     let showWorkspaceSearch: () -> Void
+    let showQuickOpen: () -> Void
+    let canShowQuickOpen: Bool
     let findNext: () -> Void
     let findPrevious: () -> Void
     let toggleTerminal: () -> Void
     let toggleSidebar: () -> Void
+    let toggleSplitView: () -> Void
+    let canToggleSplitView: Bool
+    let undoWorkspaceReplace: () -> Void
+    let canUndoWorkspaceReplace: Bool
 }
 
 private struct MonknotCommandActionsKey: FocusedValueKey {
@@ -47,6 +61,12 @@ struct MonknotCommandMenu: Commands {
                 actions?.newMarkdown()
             }
             .keyboardShortcut("n", modifiers: [.command])
+            .disabled(actions == nil)
+
+            Button("Daily Note") {
+                actions?.newDailyNote()
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
             .disabled(actions == nil)
 
             Button("Open Folder...") {
@@ -148,16 +168,44 @@ struct MonknotCommandMenu: Commands {
             Button("Export PDF...") {
                 actions?.exportPDF()
             }
-            .keyboardShortcut("p", modifiers: [.command])
             .disabled(actions?.canExportPDF != true)
+
+            Button("Export PDF Annotations as Markdown...") {
+                actions?.exportPDFAnnotationsMarkdown()
+            }
+            .disabled(actions?.canExportPDFAnnotationsMarkdown != true)
+
+            Button("Export All PDF Annotations as Markdown...") {
+                actions?.exportAllPDFAnnotationsMarkdown()
+            }
+            .disabled(actions?.canExportAllPDFAnnotationsMarkdown != true)
+
+            Button("Export Annotated PDF Copy...") {
+                actions?.exportAnnotatedPDFCopy()
+            }
+            .disabled(actions?.canExportAnnotatedPDFCopy != true)
+        }
+
+        CommandMenu("View") {
+            Button("Toggle Split Editor") {
+                actions?.toggleSplitView()
+            }
+            .keyboardShortcut("\\", modifiers: [.command])
+            .disabled(actions?.canToggleSplitView != true)
         }
 
         CommandGroup(after: .toolbar) {
+            Button("Quick Open...") {
+                actions?.showQuickOpen()
+            }
+            .keyboardShortcut("p", modifiers: [.command])
+            .disabled(actions?.canShowQuickOpen != true)
+
             Button("Find in Document") {
                 actions?.showFind()
             }
             .keyboardShortcut("f", modifiers: [.command])
-            .disabled(actions == nil)
+            .disabled(actions?.canShowFind != true)
 
             Button("Find in Workspace") {
                 actions?.showWorkspaceSearch()
