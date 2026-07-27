@@ -46,7 +46,7 @@ final class WorkspaceSearchIndexTests: XCTestCase {
         XCTAssertEqual(batch.results[0].relativePath, "Docs/doc-0.md")
     }
 
-    func testWorkspaceSearchServiceColdTextSearchDoesNotPopulateIndex() throws {
+    func testWorkspaceSearchServicePopulatesIndexOnFirstTextSearch() throws {
         let root = try makeSearchFixtureWorkspace(fileCount: 1)
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -57,7 +57,7 @@ final class WorkspaceSearchIndexTests: XCTestCase {
 
         let first = try service.search(query: "fixture-token", documents: scan.documents)
         XCTAssertEqual(first.results.count, 1)
-        XCTAssertTrue(index.indexedDocumentIDs.isEmpty)
+        XCTAssertEqual(index.indexedDocumentIDs, Set(scan.documents.map(\.id)))
     }
 
     func testWorkspaceSearchServiceUsesProvidedPrewarmedIndex() throws {
@@ -74,6 +74,32 @@ final class WorkspaceSearchIndexTests: XCTestCase {
         let first = try service.search(query: "fixture-token", documents: scan.documents)
         XCTAssertEqual(first.results.count, 1)
         XCTAssertEqual(index.indexedDocumentIDs, Set(scan.documents.map(\.id)))
+    }
+
+    func testWorkspaceSearchServiceBoundsAutomaticIndexingBySourceBytes() throws {
+        let root = try makeSearchFixtureWorkspace(fileCount: 2)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let scan = try WorkspaceDocumentScanner().scan(rootURL: root)
+        let documents = scan.documents.sorted { $0.relativePath < $1.relativePath }
+        let firstFileSize = try XCTUnwrap(
+            documents[0].url.resourceValues(forKeys: [.fileSizeKey]).fileSize
+        )
+        let cache = WorkspaceTextContentCache()
+        let index = WorkspaceSearchIndex(textCache: cache)
+        let service = WorkspaceSearchService(
+            maxAutoIndexedTextBytes: Int64(firstFileSize),
+            textCache: cache,
+            textIndex: index
+        )
+
+        let first = try service.search(query: "fixture-token", documents: documents)
+        XCTAssertEqual(first.results.count, 2)
+        XCTAssertEqual(index.indexedDocumentIDs, Set([documents[0].id]))
+
+        let second = try service.search(query: "fixture-token", documents: documents)
+        XCTAssertEqual(second.results.count, 2)
+        XCTAssertEqual(index.indexedDocumentIDs, Set([documents[0].id]))
     }
 
     func testPrewarmServiceIndexesTextDocumentsWithinLimit() throws {

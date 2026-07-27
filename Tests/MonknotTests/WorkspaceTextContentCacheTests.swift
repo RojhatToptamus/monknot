@@ -2,6 +2,34 @@ import XCTest
 @testable import MonknotCore
 
 final class WorkspaceTextContentCacheTests: XCTestCase {
+    func testCapacityEvictionDoesNotInvalidateAnExistingSearchIndexEntry() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = root.appendingPathComponent("first.md")
+        let second = root.appendingPathComponent("second.md")
+        try "first".write(to: first, atomically: true, encoding: .utf8)
+        try "second".write(to: second, atomically: true, encoding: .utf8)
+
+        let cache = WorkspaceTextContentCache(maxEntryCount: 1)
+        let document = try XCTUnwrap(
+            WorkspaceDocumentScanner().scan(rootURL: root).documents.first(where: {
+                $0.url == first.standardizedFileURL
+            })
+        )
+        let searchIndex = WorkspaceSearchIndex(textCache: cache)
+        try searchIndex.update(document: document)
+        let revisionBeforeEviction = cache.revision(for: first)
+
+        cache.store(text: "second", for: second)
+
+        XCTAssertNil(cache.text(for: first))
+        XCTAssertEqual(cache.revision(for: first), revisionBeforeEviction)
+
+        let search = try searchIndex.search(query: "first", documents: [document])
+        XCTAssertEqual(search.results.count, 1)
+        XCTAssertNil(cache.text(for: first), "A valid search-index entry should not reread an evicted text-cache entry")
+    }
+
     func testCacheReturnsTextUntilFileChanges() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

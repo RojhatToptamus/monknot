@@ -173,7 +173,6 @@ public final class WorkspaceTextContentCache: @unchecked Sendable {
 
         for path in evictedPaths {
             entries.removeValue(forKey: path)
-            pathRevisions[path, default: 0] &+= 1
         }
     }
 }

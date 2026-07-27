@@ -580,6 +580,7 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
                 pdfView.layoutDocumentView()
             }
             pdfView.clearAnnotationUndoHistory()
+            pdfView.resetEditBaselineCapture(needsSnapshot: dirtyData == nil)
             shouldRestoreViewportPosition = true
             onSearchResult(.init())
             return true
@@ -860,6 +861,7 @@ private final class AnnotatingPDFView: PDFView {
     private var toolTrackingArea: NSTrackingArea?
     private var undoStack: [PDFAnnotationEditOperation] = []
     private var redoStack: [PDFAnnotationEditOperation] = []
+    private var needsEditBaselineSnapshot = true
     private var toolCursor: NSCursor {
         PDFAnnotationToolCursor.cursor(for: annotationMode)
     }
@@ -960,7 +962,7 @@ private final class AnnotatingPDFView: PDFView {
             activeInkPage = target.page
             activeInkPoints = [target.point]
             activeInkAnnotation = nil
-            activeInkBaselineData = document?.dataRepresentation()
+            activeInkBaselineData = takeEditBaselineSnapshotIfNeeded()
         case .eraser:
             eraseAnnotation(at: event)
         }
@@ -1025,7 +1027,7 @@ private final class AnnotatingPDFView: PDFView {
         }
 
         guard let document else { return }
-        let previousData = document.dataRepresentation()
+        let previousData = takeEditBaselineSnapshotIfNeeded()
 
         let lineSelections = selection.selectionsByLine()
         var addedAnnotations: [PDFAnnotationEditOperation.Item] = []
@@ -1141,7 +1143,7 @@ private final class AnnotatingPDFView: PDFView {
             return
         }
 
-        let previousData = document.dataRepresentation()
+        let previousData = takeEditBaselineSnapshotIfNeeded()
         let removedItem = PDFAnnotationEditOperation.Item(pageIndex: document.index(for: target.page), annotation: annotation)
         target.page.removeAnnotation(annotation)
         registerAnnotationEdit(PDFAnnotationEditOperation(added: [], removed: [removedItem]))
@@ -1169,6 +1171,16 @@ private final class AnnotatingPDFView: PDFView {
         undoStack = []
         redoStack = []
         publishUndoState()
+    }
+
+    func resetEditBaselineCapture(needsSnapshot: Bool) {
+        needsEditBaselineSnapshot = needsSnapshot
+    }
+
+    private func takeEditBaselineSnapshotIfNeeded() -> Data? {
+        guard needsEditBaselineSnapshot else { return nil }
+        needsEditBaselineSnapshot = false
+        return document?.dataRepresentation()
     }
 
     private func registerAnnotationEdit(_ operation: PDFAnnotationEditOperation) {

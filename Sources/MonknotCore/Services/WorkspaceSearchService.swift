@@ -15,6 +15,7 @@ public struct WorkspaceSearchService: Sendable {
     public let maxMatches: Int
     public let maxMatchesPerFile: Int
     public let maxTextFileBytes: Int64
+    public let maxAutoIndexedTextBytes: Int64
     public let textCache: WorkspaceTextContentCache
     public let textIndex: WorkspaceSearchIndex
     public let pdfCache: WorkspacePDFTextCache
@@ -24,6 +25,7 @@ public struct WorkspaceSearchService: Sendable {
         maxMatches: Int = 500,
         maxMatchesPerFile: Int = 50,
         maxTextFileBytes: Int64 = WorkspaceTextFileGuard.defaultMaxBytes,
+        maxAutoIndexedTextBytes: Int64 = 16 * 1_024 * 1_024,
         textCache: WorkspaceTextContentCache = .shared,
         textIndex: WorkspaceSearchIndex? = nil,
         pdfCache: WorkspacePDFTextCache = .shared,
@@ -32,6 +34,7 @@ public struct WorkspaceSearchService: Sendable {
         self.maxMatches = maxMatches
         self.maxMatchesPerFile = maxMatchesPerFile
         self.maxTextFileBytes = maxTextFileBytes
+        self.maxAutoIndexedTextBytes = max(0, maxAutoIndexedTextBytes)
         self.textCache = textCache
         self.textIndex = textIndex ?? (textCache === WorkspaceTextContentCache.shared
             ? .shared
@@ -56,13 +59,25 @@ public struct WorkspaceSearchService: Sendable {
 
         var results: [WorkspaceSearchResult] = []
         var skippedLargeFileCount = 0
+        var remainingAutoIndexedTextBytes = maxAutoIndexedTextBytes
+        var remainingAutoIndexedTextDocuments = textIndex.maxEntryCount
         for document in documents {
             try Task.checkCancellation()
 
             let matches: [WorkspaceSearchResult]
             switch document.kind {
             case .markdown, .text:
-                let batch = try textIndex.hasIndexedDocument(document.id)
+                let isIndexed = textIndex.hasIndexedDocument(document.id)
+                let fileSize = Self.fileSize(for: document.url)
+                let canAutoIndex = !isIndexed
+                    && remainingAutoIndexedTextDocuments > 0
+                    && fileSize.map { $0 <= remainingAutoIndexedTextBytes } == true
+                if isIndexed || canAutoIndex {
+                    remainingAutoIndexedTextDocuments -= 1
+                    remainingAutoIndexedTextBytes = max(0, remainingAutoIndexedTextBytes - (fileSize ?? 0))
+                }
+
+                let batch = try isIndexed || canAutoIndex
                     ? textIndex.matches(
                         foldedNeedle: foldedNeedle,
                         document: document,
@@ -169,6 +184,10 @@ public struct WorkspaceSearchService: Sendable {
         }
 
         return WorkspaceSearchIndex.DocumentMatchBatch(results: results, skippedLargeFileCount: 0)
+    }
+
+    private static func fileSize(for url: URL) -> Int64? {
+        try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize.map(Int64.init)
     }
 
     private func pdfMatches(

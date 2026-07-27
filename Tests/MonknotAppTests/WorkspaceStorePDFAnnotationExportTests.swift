@@ -126,6 +126,34 @@ final class WorkspaceStorePDFAnnotationExportTests: XCTestCase {
         XCTAssertEqual(store.dirtyPDFDataByDocumentID[pdfDocument.id], dirtyData)
     }
 
+    func testRepeatedPDFEditsReuseTheOriginalBaselineWithoutAnotherSnapshot() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pdfURL = root.appendingPathComponent("Paper.pdf")
+        let diskData = try makePDFData(annotationText: "Disk highlight")
+        let firstEdit = try makePDFData(annotationText: "First unsaved highlight")
+        let secondEdit = try makePDFData(annotationText: "Second unsaved highlight")
+        try diskData.write(to: pdfURL)
+
+        let store = WorkspaceStore()
+        store.openWorkspace(root)
+        let didLoad = await waitUntil { !store.isBusy && store.selectedDocument != nil }
+        XCTAssertTrue(didLoad)
+
+        let pdfDocument = try XCTUnwrap(store.documents.first(where: { $0.url == pdfURL.standardizedFileURL }))
+        store.markPDFDocumentEdited(id: pdfDocument.id, previousData: diskData, data: firstEdit)
+        store.markPDFDocumentEdited(id: pdfDocument.id, previousData: nil, data: secondEdit)
+
+        XCTAssertEqual(store.dirtyPDFDataByDocumentID[pdfDocument.id], secondEdit)
+
+        store.markPDFDocumentEdited(id: pdfDocument.id, previousData: nil, data: diskData)
+
+        XCTAssertNil(store.dirtyPDFDataByDocumentID[pdfDocument.id])
+        XCTAssertTrue(store.saveState(for: pdfDocument.id).isClean)
+        XCTAssertFalse(store.hasUnsavedChanges)
+    }
+
     private func makePDFData(annotationText: String) throws -> Data {
         let image = NSImage(size: NSSize(width: 240, height: 240))
         image.lockFocus()

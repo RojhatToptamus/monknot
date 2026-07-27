@@ -796,9 +796,9 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        let undoSnapshot = previousData ?? currentPDFData(for: file)
-        if pdfDocumentBaselines[documentID] == nil, let undoSnapshot {
-            pdfDocumentBaselines[documentID] = undoSnapshot
+        if pdfDocumentBaselines[documentID] == nil,
+           let baseline = previousData ?? currentPDFData(for: file) {
+            pdfDocumentBaselines[documentID] = baseline
         }
 
         applyPDFData(data, to: file)
