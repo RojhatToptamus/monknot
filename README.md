@@ -66,6 +66,10 @@ or independently verify the app.
 
 ## Development
 
+Building the full app requires Xcode 26 or newer because Monknot conditionally
+uses macOS 26 AppKit APIs. The resulting app still targets macOS 14 or later;
+the build SDK and deployment target are separate.
+
 Run the test suite:
 
 ```sh

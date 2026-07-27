@@ -23,6 +23,11 @@ release builds, and CLI-entry-point checks on both architectures through
 `.github/workflows/ci.yml`. Keep the `CI / Test macOS (arm64)` and
 `CI / Test macOS (x86_64)` checks passing before tagging.
 
+Both workflows select Xcode 26.3 and require a macOS 26 SDK because the app
+conditionally uses `NSGlassEffectView`. This does not raise the deployment
+target: the package, manual compiler target, bundle metadata, and artifact
+verifier continue to require macOS 14.0.
+
 ## Before tagging
 
 - Update `VERSION` and release notes, then commit them.
