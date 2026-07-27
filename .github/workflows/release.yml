@@ -1,0 +1,227 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    name: Validate release metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      release_version: ${{ steps.version.outputs.release_version }}
+      build_number: ${{ steps.version.outputs.build_number }}
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Require a matching semantic version and main-branch commit
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_version="$(tr -d '\r\n' < VERSION)"
+          if [[ ! "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+            echo "VERSION is not a supported semantic version: $release_version" >&2
+            exit 1
+          fi
+
+          expected_tag="v$release_version"
+          if [[ "$GITHUB_REF_NAME" != "$expected_tag" ]]; then
+            echo "tag $GITHUB_REF_NAME does not match VERSION ($expected_tag)" >&2
+            exit 1
+          fi
+
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "release tag must point to a commit reachable from origin/main" >&2
+            exit 1
+          fi
+
+          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
+          echo "build_number=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and verify macOS ${{ matrix.arch }}
+    needs: metadata
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            os: macos-15
+          - arch: x86_64
+            os: macos-15-intel
+
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Record and validate the build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "${{ matrix.arch }}"
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version
+          swift --version
+          git diff --check
+          bash -n script/*.sh
+
+      - name: Build shipping SwiftPM products in release mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift build -c release --product monknot-export
+          swift build -c release --product monknot-capture
+
+      - name: Run XCTest suite
+        run: swift test
+
+      - name: Run executable smoke suites and CLI entry points
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift run MonknotSmokeTests
+          swift run MonknotStoreSmokeTests
+          swift run MonknotRecentWorkspaceSmokeTests
+          swift run MonknotShortcutSmokeTests
+          swift run MonknotWorkspaceExport
+          swift run monknot-export --help
+          swift run monknot-capture --help
+
+      - name: Package the ad-hoc-signed alpha
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg_path="dist/Monknot-${{ needs.metadata.outputs.release_version }}-macos-${{ matrix.arch }}.dmg"
+          script/release_package.sh \
+            --adhoc \
+            --version "${{ needs.metadata.outputs.release_version }}" \
+            --build-number "${{ needs.metadata.outputs.build_number }}" \
+            --dmg "$dmg_path"
+          echo "dmg_path=$dmg_path" >> "$GITHUB_OUTPUT"
+
+      - name: Run app-bundle release preflight
+        run: script/release_preflight.sh --adhoc
+
+      - name: Verify mounted DMG and packaged runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          script/verify_release_artifact.sh \
+            --adhoc \
+            --expected-version "${{ needs.metadata.outputs.release_version }}" \
+            --expected-build "${{ needs.metadata.outputs.build_number }}" \
+            --expected-arch "${{ matrix.arch }}" \
+            "${{ steps.package.outputs.dmg_path }}"
+
+      - name: Upload verified release assets
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: monknot-macos-${{ matrix.arch }}
+          path: |
+            ${{ steps.package.outputs.dmg_path }}
+            ${{ steps.package.outputs.dmg_path }}.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  draft-release:
+    name: Create verified draft release
+    needs:
+      - metadata
+      - build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download verified release assets
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: monknot-macos-*
+          path: release
+          merge-multiple: true
+
+      - name: Create aggregate checksum file
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(find release -maxdepth 1 -type f -name '*.dmg' | wc -l | tr -d ' ')" = "2"
+          test "$(find release -maxdepth 1 -type f -name '*.dmg.sha256' | wc -l | tr -d ' ')" = "2"
+          (
+            cd release
+            for checksum in *.dmg.sha256; do
+              shasum -a 256 -c "$checksum"
+            done
+          )
+          for checksum in release/*.dmg.sha256; do
+            cat "$checksum"
+          done > release/SHA256SUMS-macOS.txt
+
+      - name: Attest public release artifacts
+        if: ${{ github.event.repository.private == false }}
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
+        with:
+          subject-path: |
+            release/*.dmg
+            release/SHA256SUMS-macOS.txt
+
+      - name: Create or update the draft GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.metadata.outputs.release_version }}
+        run: |
+          set -euo pipefail
+
+          tag="v$RELEASE_VERSION"
+          cat > release/RELEASE_NOTES.md <<EOF
+          Automated verified draft for Monknot $RELEASE_VERSION.
+
+          This alpha is ad-hoc signed for bundle integrity, but it is not signed with an Apple Developer ID and is not notarized. Verify the SHA-256 checksum before opening it and follow the macOS Guide in README.md if Gatekeeper blocks the first launch.
+
+          Before publishing, download and test both architectures, complete the manual checklist in docs/RELEASE.md, and mark alpha, beta, or release-candidate builds as pre-releases.
+          EOF
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            if [[ "$(gh release view "$tag" --json isDraft --jq '.isDraft')" != "true" ]]; then
+              echo "refusing to replace an already-published release: $tag" >&2
+              exit 1
+            fi
+          else
+            gh release create "$tag" \
+              --verify-tag \
+              --draft \
+              --title "Monknot $RELEASE_VERSION" \
+              --notes-file release/RELEASE_NOTES.md
+          fi
+
+          gh release upload "$tag" \
+            release/*.dmg \
+            release/*.dmg.sha256 \
+            release/SHA256SUMS-macOS.txt \
+            --clobber

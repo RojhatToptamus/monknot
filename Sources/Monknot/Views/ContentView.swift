@@ -165,7 +165,7 @@ struct ContentView: View {
 
     private var alertContent: AnyView {
         AnyView(lifecycleContent
-            .alert("monknot", isPresented: Binding(
+            .alert("Monknot", isPresented: Binding(
                 get: { store.errorMessage != nil },
                 set: { if !$0 { store.errorMessage = nil } }
             )) {

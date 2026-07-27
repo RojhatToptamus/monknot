@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test macOS (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            os: macos-15
+          - arch: x86_64
+            os: macos-15-intel
+
+    steps:
+      - name: Check out the source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Validate the build environment and scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "${{ matrix.arch }}"
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version
+          swift --version
+          git diff --check
+          bash -n script/*.sh
+
+      - name: Build shipping SwiftPM products in release mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift build -c release --product monknot-export
+          swift build -c release --product monknot-capture
+
+      - name: Run XCTest suite
+        run: swift test
+
+      - name: Run executable smoke suites and CLI entry points
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift run MonknotSmokeTests
+          swift run MonknotStoreSmokeTests
+          swift run MonknotRecentWorkspaceSmokeTests
+          swift run MonknotShortcutSmokeTests
+          swift run MonknotWorkspaceExport
+          swift run monknot-export --help
+          swift run monknot-capture --help

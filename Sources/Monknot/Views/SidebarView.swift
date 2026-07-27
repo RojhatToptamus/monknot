@@ -729,7 +729,7 @@ private struct SidebarProjectHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: scaled(2)) {
             HStack(spacing: scaled(8)) {
-                Text(workspaceURL?.lastPathComponent ?? "monknot")
+                Text(workspaceURL?.lastPathComponent ?? "Monknot")
                     .font(.system(size: scaled(13), weight: .semibold))
                     .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.92))
                     .lineLimit(1)

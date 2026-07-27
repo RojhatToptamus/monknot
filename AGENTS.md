@@ -41,7 +41,7 @@ The package declares these test targets:
 - `Tests/MonknotStoreSmokeTests`: executable smoke tests for `WorkspaceStore`.
 - `Tests/MonknotRecentWorkspaceSmokeTests`, `Tests/MonknotShortcutSmokeTests`: additional SwiftPM executable smoke tests for core integration edges.
 - `Tests/MonknotPDFAnnotationSmokeTests`, `Tests/MonknotPDFExportSmokeTests`, `Tests/MonknotTerminalSmokeTests`, `Tests/MonknotWindowSmokeTests`: historical manual smoke sources that exercise app-internal types; prefer XCTest in `MonknotAppTests` or manual compile paths when reviving them.
-- `script/build_and_run.sh`: manual app bundle builder/runner. It compiles explicit source-file lists and copies runtime resources into `dist/monknot.app`.
+- `script/build_and_run.sh`: manual ad-hoc-signed app bundle builder/runner. It compiles explicit source-file lists and copies runtime resources into `dist/Monknot.app`.
 - `dist`: local build output. Treat as generated.
 
 ## Main Runtime Flow
@@ -190,6 +190,10 @@ The script also manually copies these runtime resources into the app bundle:
 - `Sources/Monknot/Resources/xterm.css`
 - `Sources/Monknot/Resources/xterm.js`
 - `Sources/Monknot/Resources/xterm-addon-fit.js`
+- `LICENSE`
+- `THIRD_PARTY_NOTICES.md`
+- `ThirdPartyLicenses/xterm-MIT.txt`
+- `ThirdPartyLicenses/xterm-addon-fit-MIT.txt`
 
 When adding a Swift source file to the app or core target, update `script/build_and_run.sh`. The declared XCTest suite includes a build-script sync check, but the local SwiftPM command may be blocked until the current CommandLineTools issue is fixed.
 

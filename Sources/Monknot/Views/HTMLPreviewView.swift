@@ -22,7 +22,9 @@ struct HTMLPreviewView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        // Workspace HTML is untrusted content. App-injected WKUserScripts continue
+        // to provide search and scroll sync when page-authored JavaScript is off.
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.userContentController.add(context.coordinator, name: Coordinator.scrollPositionHandlerName)
         configuration.userContentController.addUserScript(Coordinator.previewBehaviorScript)
 

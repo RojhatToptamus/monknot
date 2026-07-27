@@ -13,7 +13,7 @@ struct MonknotApp: App {
 
     var body: some Scene {
         WindowGroup(
-            "monknot",
+            "Monknot",
             id: MonknotWorkspaceWindowRequest.windowGroupID,
             for: MonknotWorkspaceWindowRequest.self
         ) { request in
@@ -201,7 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !requests.isEmpty else { return }
 
         NSApp.activate(ignoringOtherApps: true)
-        for request in requests {
+        for request in requests where confirmCapture(request) {
             WorkspaceWindowRequestCenter.shared.openWorkspaceWindow(MonknotWorkspaceWindowRequest(
                 workspaceURL: request.workspaceURL,
                 captureItem: request.item
@@ -211,11 +211,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func openLaunchCaptureIfPresent(arguments: [String] = CommandLine.arguments) {
         guard let request = MonknotLaunchCaptureParser.request(arguments: arguments) else { return }
+        guard confirmCapture(request) else { return }
         NSApp.activate(ignoringOtherApps: true)
         WorkspaceWindowRequestCenter.shared.openWorkspaceWindow(MonknotWorkspaceWindowRequest(
             workspaceURL: request.workspaceURL,
             captureItem: request.item
         ))
+    }
+
+    private func confirmCapture(_ request: MonknotLaunchCaptureRequest) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "Save this capture to Monknot?"
+        alert.informativeText = """
+        Another app or link requested permission to add a new note to:
+        \(request.workspaceURL.path)/inbox
+        """
+        alert.addButton(withTitle: "Save Capture")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private static func workspaceRequest(for url: URL) -> MonknotWorkspaceWindowRequest? {

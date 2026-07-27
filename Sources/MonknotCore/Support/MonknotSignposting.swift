@@ -1,7 +1,7 @@
 import OSLog
 
 public enum MonknotSignposting {
-    public static let subsystem = "com.local.monknot"
+    public static let subsystem = "io.github.rojhattoptamus.monknot"
     private static let logger = Logger(subsystem: subsystem, category: "performance")
 
     public static let workspaceScan = OSSignposter(logger: logger)

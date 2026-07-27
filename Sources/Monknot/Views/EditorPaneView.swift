@@ -296,7 +296,7 @@ struct EditorPaneView: View {
         TopNavigationBar(
             editorMode: $editorMode,
             isSplitViewEnabled: $isSplitViewEnabled,
-            emptyStateTitle: store.workspaceURL?.lastPathComponent ?? "monknot",
+            emptyStateTitle: store.workspaceURL?.lastPathComponent ?? "Monknot",
             selectedDocument: store.selectedDocument,
             isBusy: store.isBusy,
             isDocumentLoading: store.isDocumentLoading,

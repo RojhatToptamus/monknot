@@ -2,9 +2,23 @@
 .build/
 dist/
 .swiftpm/
+DerivedData/
+xcuserdata/
+*.xcuserstate
 .playwright-mcp/
 chrome-debug-handoff.json
 .test-output.txt
+
+.env
+.env.*
+!.env.example
+*.cer
+*.key
+*.mobileprovision
+*.p12
+*.pem
+*.pfx
+*.provisionprofile
 
 .codex/*
 !.codex/environments/
@@ -13,12 +27,6 @@ chrome-debug-handoff.json
 
 docs/*
 !docs/RELEASE.md
-!docs/research/
-docs/research/*
-!docs/research/README.md
-!docs/tasks/
-docs/tasks/*
-!docs/tasks/README.md
 
 codex
 claude

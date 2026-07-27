@@ -1,28 +1,44 @@
 #!/usr/bin/env bash
-# Build and run the Monknot app bundle without code signing.
+# Build and run the ad-hoc-signed Monknot app bundle.
 # Usage:
-#   script/build_and_run.sh            # build and open dist/monknot.app
-#   script/build_and_run.sh --build    # build dist/monknot.app without opening it
+#   script/build_and_run.sh            # build and open dist/Monknot.app
+#   script/build_and_run.sh --build    # build dist/Monknot.app without opening it
 #   script/build_and_run.sh --verify   # build and confirm launch
 #   script/build_and_run.sh --logs     # build and stream app logs
 #   script/build_and_run.sh --debug    # build and run under lldb
 set -euo pipefail
 
 MODE="${1:-run}"
-APP_NAME="monknot"
-BUNDLE_ID="com.local.monknot"
-MIN_SYSTEM_VERSION="14.0"
-
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION_FILE="$ROOT_DIR/VERSION"
+APP_NAME="Monknot"
+BUNDLE_ID="${MONKNOT_BUNDLE_ID:-io.github.rojhattoptamus.monknot}"
+BUILD_NUMBER="${MONKNOT_BUILD_NUMBER:-1}"
+MIN_SYSTEM_VERSION="14.0"
+TARGET_ARCH="${MONKNOT_TARGET_ARCH:-$(uname -m)}"
+TARGET_TRIPLE="${MONKNOT_TARGET_TRIPLE:-$TARGET_ARCH-apple-macosx$MIN_SYSTEM_VERSION}"
+
+if [[ ! -f "$VERSION_FILE" ]]; then
+  echo "missing release version file: $VERSION_FILE" >&2
+  exit 66
+fi
+
+RELEASE_VERSION="$(tr -d '\r\n' <"$VERSION_FILE")"
+DEFAULT_BUNDLE_VERSION="${RELEASE_VERSION%%[-+]*}"
+BUNDLE_VERSION="${MONKNOT_VERSION:-$DEFAULT_BUNDLE_VERSION}"
+
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
+APP_LEGAL_RESOURCES="$APP_RESOURCES/Legal"
+APP_THIRD_PARTY_RESOURCES="$APP_LEGAL_RESOURCES/ThirdParty"
 APP_FRAMEWORKS="$APP_CONTENTS/Frameworks"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 BUILD_DIR="$ROOT_DIR/.build/manual"
+MODULE_CACHE_DIR="$BUILD_DIR/ModuleCache"
 OVERLAY_FILE="$BUILD_DIR/swift-vfs-overlay.yaml"
 EMPTY_MODULEMAP="$BUILD_DIR/empty.modulemap"
 APP_ICON_NAME="AppIcon"
@@ -33,15 +49,54 @@ APP_ICON_BASE_PNG="$BUILD_DIR/$APP_ICON_NAME-base.png"
 APP_ICONSET_BUILD="$BUILD_DIR/$APP_ICON_NAME.iconset"
 APP_ICON_ICNS="$BUILD_DIR/$APP_ICON_NAME.icns"
 
+if [[ ! "$BUNDLE_ID" =~ ^[A-Za-z0-9.-]+$ ]]; then
+  echo "invalid MONKNOT_BUNDLE_ID: $BUNDLE_ID" >&2
+  exit 64
+fi
+if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+  echo "invalid VERSION (expected semantic version such as 1.2.3 or 1.2.3-alpha.1): $RELEASE_VERSION" >&2
+  exit 64
+fi
+if [[ ! "$BUNDLE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "invalid MONKNOT_VERSION (expected three numeric components): $BUNDLE_VERSION" >&2
+  exit 64
+fi
+if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+  echo "invalid MONKNOT_BUILD_NUMBER (expected digits): $BUILD_NUMBER" >&2
+  exit 64
+fi
+if [[ ! "$TARGET_ARCH" =~ ^(arm64|x86_64)$ ]]; then
+  echo "unsupported MONKNOT_TARGET_ARCH: $TARGET_ARCH" >&2
+  exit 64
+fi
+if [[ "$TARGET_TRIPLE" != "$TARGET_ARCH-apple-macosx$MIN_SYSTEM_VERSION" ]]; then
+  echo "invalid MONKNOT_TARGET_TRIPLE (expected $TARGET_ARCH-apple-macosx$MIN_SYSTEM_VERSION): $TARGET_TRIPLE" >&2
+  exit 64
+fi
+if ! command -v codesign >/dev/null 2>&1; then
+  echo "codesign is required to create the ad-hoc bundle signature" >&2
+  exit 69
+fi
+if ! command -v xcrun >/dev/null 2>&1; then
+  echo "xcrun is required to select the Xcode Swift toolchain" >&2
+  exit 69
+fi
+
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 
 cd "$ROOT_DIR"
-mkdir -p "$BUILD_DIR" "$APP_MACOS" "$APP_RESOURCES" "$APP_FRAMEWORKS"
+mkdir -p "$BUILD_DIR" "$MODULE_CACHE_DIR" "$APP_MACOS" "$APP_RESOURCES" "$APP_FRAMEWORKS"
 
-SWIFTC_BIN="$(command -v swiftc)"
-TOOLCHAIN_SWIFTC="$(xcrun --find swiftc)"
-TOOLCHAIN_DIR="$(cd "$(dirname "$TOOLCHAIN_SWIFTC")/.." && pwd)"
+SWIFTC_BIN="$(xcrun --find swiftc)"
+SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
+TOOLCHAIN_DIR="$(cd "$(dirname "$SWIFTC_BIN")/.." && pwd)"
 SWIFT_MODULEMAP="$TOOLCHAIN_DIR/include/swift/module.modulemap"
+COMMON_SWIFT_FLAGS=(
+  -target "$TARGET_TRIPLE"
+  -sdk "$SDK_PATH"
+  -module-cache-path "$MODULE_CACHE_DIR"
+  -O
+)
 
 printf "" >"$EMPTY_MODULEMAP"
 cat >"$OVERLAY_FILE" <<OVERLAY
@@ -220,6 +275,7 @@ APP_SOURCES=(
 )
 
 "$SWIFTC_BIN" \
+  "${COMMON_SWIFT_FLAGS[@]}" \
   -vfsoverlay "$OVERLAY_FILE" \
   -parse-as-library \
   -module-name MonknotCore \
@@ -232,6 +288,7 @@ APP_SOURCES=(
   -o "$BUILD_DIR/libMonknotCore.dylib"
 
 "$SWIFTC_BIN" \
+  "${COMMON_SWIFT_FLAGS[@]}" \
   -vfsoverlay "$OVERLAY_FILE" \
   -I "$BUILD_DIR" \
   -L "$BUILD_DIR" \
@@ -244,7 +301,7 @@ APP_SOURCES=(
 build_app_icon
 
 rm -rf "$APP_BUNDLE"
-mkdir -p "$APP_MACOS" "$APP_RESOURCES" "$APP_FRAMEWORKS"
+mkdir -p "$APP_MACOS" "$APP_RESOURCES" "$APP_FRAMEWORKS" "$APP_THIRD_PARTY_RESOURCES"
 cp "$BUILD_DIR/$APP_NAME" "$APP_BINARY"
 cp "$BUILD_DIR/libMonknotCore.dylib" "$APP_FRAMEWORKS/libMonknotCore.dylib"
 chmod +x "$APP_BINARY"
@@ -254,6 +311,10 @@ cp "$ROOT_DIR/Sources/MonknotCore/Resources/renderer.js" "$APP_RESOURCES/rendere
 cp "$ROOT_DIR/Sources/Monknot/Resources/xterm.css" "$APP_RESOURCES/xterm.css"
 cp "$ROOT_DIR/Sources/Monknot/Resources/xterm.js" "$APP_RESOURCES/xterm.js"
 cp "$ROOT_DIR/Sources/Monknot/Resources/xterm-addon-fit.js" "$APP_RESOURCES/xterm-addon-fit.js"
+cp "$ROOT_DIR/LICENSE" "$APP_LEGAL_RESOURCES/LICENSE"
+cp "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$APP_LEGAL_RESOURCES/THIRD_PARTY_NOTICES.md"
+cp "$ROOT_DIR/ThirdPartyLicenses/xterm-MIT.txt" "$APP_THIRD_PARTY_RESOURCES/xterm-MIT.txt"
+cp "$ROOT_DIR/ThirdPartyLicenses/xterm-addon-fit-MIT.txt" "$APP_THIRD_PARTY_RESOURCES/xterm-addon-fit-MIT.txt"
 
 cat >"$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -262,6 +323,8 @@ cat >"$INFO_PLIST" <<PLIST
 <dict>
   <key>CFBundleExecutable</key>
   <string>$APP_NAME</string>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
   <key>CFBundleIdentifier</key>
   <string>$BUNDLE_ID</string>
   <key>CFBundleIconFile</key>
@@ -270,6 +333,10 @@ cat >"$INFO_PLIST" <<PLIST
   <string>$APP_NAME</string>
   <key>CFBundleDisplayName</key>
   <string>$APP_NAME</string>
+  <key>CFBundleShortVersionString</key>
+  <string>$BUNDLE_VERSION</string>
+  <key>CFBundleVersion</key>
+  <string>$BUILD_NUMBER</string>
   <key>CFBundleURLTypes</key>
   <array>
     <dict>
@@ -314,13 +381,44 @@ cat >"$INFO_PLIST" <<PLIST
   <true/>
   <key>LSMinimumSystemVersion</key>
   <string>$MIN_SYSTEM_VERSION</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.productivity</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSHumanReadableCopyright</key>
+  <string>Copyright © 2026 Monknot contributors.</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>
 </plist>
 PLIST
+
+# Ad-hoc signing detects bundle changes locally but provides no developer
+# identity and is not accepted by Gatekeeper as trusted distribution signing.
+codesign --force --sign - "$APP_FRAMEWORKS/libMonknotCore.dylib"
+codesign --force --sign - "$APP_BUNDLE"
+codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+
+verify_macho_release_metadata() {
+  local binary_path="$1"
+  local architectures
+  local minimum_version
+
+  architectures="$(lipo -archs "$binary_path")"
+  if [[ "$architectures" != "$TARGET_ARCH" ]]; then
+    echo "unexpected architecture for $binary_path: $architectures (expected $TARGET_ARCH)" >&2
+    exit 1
+  fi
+
+  minimum_version="$(xcrun vtool -show-build "$binary_path" | awk '$1 == "minos" { print $2; exit }')"
+  if [[ "$minimum_version" != "$MIN_SYSTEM_VERSION" ]]; then
+    echo "unexpected deployment target for $binary_path: $minimum_version (expected $MIN_SYSTEM_VERSION)" >&2
+    exit 1
+  fi
+}
+
+verify_macho_release_metadata "$APP_BINARY"
+verify_macho_release_metadata "$APP_FRAMEWORKS/libMonknotCore.dylib"
 
 open_app() {
   /usr/bin/open -n "$APP_BUNDLE"
@@ -345,8 +443,19 @@ case "$MODE" in
     ;;
   --verify|verify)
     open_app
-    sleep 1
-    pgrep -x "$APP_NAME" >/dev/null
+    LAUNCHED=0
+    for _ in {1..20}; do
+      if pgrep -x "$APP_NAME" >/dev/null; then
+        LAUNCHED=1
+        break
+      fi
+      sleep 0.25
+    done
+    if [[ "$LAUNCHED" != "1" ]]; then
+      echo "$APP_NAME did not remain running after launch" >&2
+      exit 1
+    fi
+    pkill -x "$APP_NAME" >/dev/null 2>&1 || true
     ;;
   *)
     echo "usage: $0 [run|--build|--debug|--logs|--telemetry|--verify]" >&2
