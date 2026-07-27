@@ -9,7 +9,6 @@ struct TerminalDrawerView: View {
     let zoomScale: Double
     let usePointerCursors: Bool
     let fontSmoothing: Bool
-    var includesChrome: Bool = true
     let close: () -> Void
 
     private var uiFontSize: Double { theme.uiFontSize }
@@ -20,17 +19,19 @@ struct TerminalDrawerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if includesChrome {
-                MonknotChromePanel(theme: theme, surface: theme.contentSurfaceColor) {
-                    TerminalDrawerChromeRow(
-                        sessions: sessions,
-                        workingDirectory: workingDirectory,
-                        theme: theme,
-                        zoomScale: zoomScale,
-                        uiFontSize: uiFontSize,
-                        close: close
-                    )
-                }
+            MonknotChromePanel(
+                theme: theme,
+                showsBottomBorder: false,
+                surface: theme.contentSurfaceColor
+            ) {
+                TerminalDrawerChromeRow(
+                    sessions: sessions,
+                    workingDirectory: workingDirectory,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    uiFontSize: uiFontSize,
+                    close: close
+                )
             }
 
             terminalSurface

@@ -38,7 +38,10 @@ struct MonknotChromeRowLayout: ViewModifier {
     func body(content: Content) -> some View {
         content
             .padding(.horizontal, MonknotMetrics.chromeHorizontalPadding(theme: theme, zoomScale: zoomScale))
-            .frame(height: MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale))
+            .frame(
+                height: MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale),
+                alignment: .center
+            )
             .frame(maxWidth: .infinity)
     }
 }

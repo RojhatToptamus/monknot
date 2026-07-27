@@ -48,6 +48,7 @@ struct EditorPaneView: View {
     let toggleSplitView: () -> Void
     let canToggleSplitView: Bool
     let onPreviewSourceJump: (MarkdownSourceLocation) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { proxy in
@@ -114,20 +115,17 @@ struct EditorPaneView: View {
                         maxWidth: drawerMaxWidth(for: size.width),
                         close: { setTerminalPresented(false) }
                     )
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .transition(.move(edge: .trailing))
                     .zIndex(1)
                 }
             }
             .animation(drawerAnimation, value: isTerminalPresented)
-        } else if isTerminalPresented {
-            wideLayoutWithTerminal(
+        } else {
+            wideLayout(
                 drawerWidth: drawerWidth,
                 maxDrawerWidth: drawerMaxWidth(for: size.width)
             )
             .animation(drawerAnimation, value: isTerminalPresented)
-        } else {
-            editorColumn
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -141,128 +139,24 @@ struct EditorPaneView: View {
         return document.kind == .markdown || document.capabilities.canPreviewHTML
     }
 
-    /// Wide layout with terminal: primary chrome is one shared row (aligned tops);
-    /// resize gutter and content sit below, not between chrome headers.
-    private func wideLayoutWithTerminal(drawerWidth: CGFloat, maxDrawerWidth: CGFloat) -> some View {
-        return VStack(spacing: 0) {
-            sharedPrimaryChromeRow(terminalDrawerWidth: drawerWidth)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if showsMarkdownSourceSubchrome {
-                editorSecondaryChromeRow(terminalDrawerWidth: drawerWidth)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            HStack(alignment: .top, spacing: 0) {
-                editorContent
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                terminalContentColumn(
-                    drawerWidth: drawerWidth,
-                    maxDrawerWidth: maxDrawerWidth,
-                    close: { setTerminalPresented(false) }
-                )
-                .transition(.move(edge: .trailing).combined(with: .opacity))
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .layoutPriority(1)
-        }
-    }
-
-    private func sharedPrimaryChromeRow(terminalDrawerWidth: CGFloat) -> some View {
-        let terminalChromeWidth = max(0, terminalDrawerWidth - 1)
-
-        return HStack(alignment: .top, spacing: 0) {
-            MonknotChromePanel(theme: theme, showsBottomBorder: false) {
-                editorPrimaryChrome
-            }
-            .frame(maxWidth: .infinity)
-
-            editorTerminalVerticalSeparator
-
-            MonknotChromePanel(theme: theme, showsBottomBorder: false, surface: theme.contentSurfaceColor) {
-                TerminalDrawerChromeRow(
-                    sessions: terminalSessions,
-                    workingDirectory: activeTerminalDirectory,
-                    theme: theme,
-                    zoomScale: zoomScale,
-                    uiFontSize: theme.uiFontSize,
-                    close: { setTerminalPresented(false) }
-                )
-            }
-            .frame(width: terminalChromeWidth)
-        }
-        .background {
-            MonknotChromeSurfaceBackground(theme: theme, surface: theme.contentSurfaceColor)
-        }
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(theme.separatorColor)
-                .frame(height: 1)
-        }
-    }
-
-    @ViewBuilder
-    private func editorSecondaryChromeRow(terminalDrawerWidth: CGFloat) -> some View {
+    /// Keep the editor and terminal as independent columns. Both primary
+    /// chrome rows use the same shared height, while an editor-only formatting
+    /// row must not reserve empty space above the terminal.
+    private func wideLayout(drawerWidth: CGFloat, maxDrawerWidth: CGFloat) -> some View {
         HStack(alignment: .top, spacing: 0) {
-            MonknotChromePanel(theme: theme) {
-                VStack(spacing: 0) {
-                    MonknotChromeDivider(theme: theme)
-                    MarkdownSourceToolbar(
-                        theme: theme,
-                        zoomScale: zoomScale,
-                        sendCommand: sendMarkdownCommand
-                    )
-                }
+            editorColumn
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(1)
+
+            if isTerminalPresented {
+                resizableTerminalDrawer(
+                    width: drawerWidth,
+                    maxWidth: maxDrawerWidth,
+                    close: { setTerminalPresented(false) }
+                )
+                .transition(.move(edge: .trailing))
+                .frame(maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity)
-
-            editorTerminalVerticalSeparator
-
-            Color.clear
-                .frame(width: max(0, terminalDrawerWidth - 1))
-                .background(theme.contentSurfaceColor)
-                .accessibilityHidden(true)
-        }
-        .background(theme.contentSurfaceColor)
-    }
-
-    private var editorTerminalVerticalSeparator: some View {
-        Rectangle()
-            .fill(theme.separatorColor)
-            .frame(width: 1)
-            .frame(maxHeight: .infinity)
-    }
-
-    private func terminalContentColumn(
-        drawerWidth: CGFloat,
-        maxDrawerWidth: CGFloat,
-        close: @escaping () -> Void
-    ) -> some View {
-        HStack(spacing: 0) {
-            editorTerminalVerticalSeparator
-
-            TerminalDrawerView(
-                sessions: terminalSessions,
-                workingDirectory: activeTerminalDirectory,
-                theme: theme,
-                zoomScale: zoomScale,
-                usePointerCursors: usePointerCursors,
-                fontSmoothing: fontSmoothing,
-                includesChrome: false,
-                close: close
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .frame(width: drawerWidth)
-        .background(theme.contentSurfaceColor)
-        .overlay(alignment: .leading) {
-            TerminalResizeHandle(
-                width: $terminalDrawerWidth,
-                minWidth: terminalDrawerMinWidth,
-                maxWidth: maxDrawerWidth
-            )
-            .frame(width: terminalResizeHitWidth)
         }
     }
 
@@ -305,8 +199,6 @@ struct EditorPaneView: View {
             zoomScale: zoomScale,
             isTerminalPresented: isTerminalPresented,
             isSidebarVisible: isSidebarVisible,
-            newMarkdown: newMarkdown,
-            openFolder: openFolder,
             toggleTerminal: toggleTerminal,
             toggleSidebar: toggleSidebar,
             outlineItems: outlineItems,
@@ -339,7 +231,7 @@ struct EditorPaneView: View {
         close: @escaping () -> Void
     ) -> some View {
         HStack(spacing: 0) {
-            editorTerminalVerticalSeparator
+            middleContentTrailingDivider
 
             TerminalDrawerView(
                 sessions: terminalSessions,
@@ -361,11 +253,21 @@ struct EditorPaneView: View {
                 maxWidth: maxWidth
             )
             .frame(width: terminalResizeHitWidth)
+            .offset(x: -terminalResizeHitWidth / 2)
         }
     }
 
     private var terminalResizeHitWidth: CGFloat {
-        12
+        20
+    }
+
+    /// The editor owns the single boundary line between the middle content
+    /// and the trailing drawer. The drawer itself does not draw an edge.
+    private var middleContentTrailingDivider: some View {
+        Rectangle()
+            .fill(theme.separatorColor)
+            .frame(width: 1)
+            .frame(maxHeight: .infinity)
     }
 
     private var activeTerminalDirectory: URL? {
@@ -472,19 +374,12 @@ struct EditorPaneView: View {
             HSplitView {
                 htmlSourceEditor(for: selectedDocument)
                     .frame(minWidth: 240)
+                    .background(
+                        splitViewRatioAccessor(for: selectedDocument)
+                    )
                 htmlPreviewPane(for: selectedDocument)
                     .frame(minWidth: 240)
             }
-            .background(
-                DocumentSplitViewRatioAccessor(
-                    sourcePaneRatio: $splitSourcePaneRatio,
-                    minPaneWidth: 240,
-                    onCommit: { ratio in
-                        guard let documentID = store.selectedDocument?.id else { return }
-                        DocumentSplitViewPersistence.setSourcePaneRatio(ratio, forDocumentPath: documentID)
-                    }
-                )
-            )
         } else {
             switch editorMode {
             case .source:
@@ -568,19 +463,12 @@ struct EditorPaneView: View {
             HSplitView {
                 markdownSourceEditor(for: selectedDocument)
                     .frame(minWidth: 240)
+                    .background(
+                        splitViewRatioAccessor(for: selectedDocument)
+                    )
                 markdownPreviewPane(for: selectedDocument)
                     .frame(minWidth: 240)
             }
-            .background(
-                DocumentSplitViewRatioAccessor(
-                    sourcePaneRatio: $splitSourcePaneRatio,
-                    minPaneWidth: 240,
-                    onCommit: { ratio in
-                        guard let documentID = store.selectedDocument?.id else { return }
-                        DocumentSplitViewPersistence.setSourcePaneRatio(ratio, forDocumentPath: documentID)
-                    }
-                )
-            )
         } else {
             switch editorMode {
             case .source:
@@ -672,8 +560,21 @@ struct EditorPaneView: View {
         }
     }
 
+    private func splitViewRatioAccessor(for document: WorkspaceDocument) -> some View {
+        DocumentSplitViewRatioAccessor(
+            sourcePaneRatio: $splitSourcePaneRatio,
+            minPaneWidth: 240,
+            onCommit: { ratio in
+                DocumentSplitViewPersistence.setSourcePaneRatio(
+                    ratio,
+                    forDocumentPath: document.id
+                )
+            }
+        )
+    }
+
     private var drawerAnimation: Animation {
-        .spring(response: 0.32, dampingFraction: 0.88, blendDuration: 0.08)
+        MonknotMotion.sidebarTransition(reduceMotion: reduceMotion)
     }
 
     private func terminalDrawerWidth(for availableWidth: CGFloat) -> CGFloat {
@@ -759,7 +660,7 @@ private struct DocumentLoadingPlaceholder: View {
     }
 }
 
-private struct TerminalResizeHandle: NSViewRepresentable {
+struct TerminalResizeHandle: NSViewRepresentable {
     @Binding var width: Double
     let minWidth: CGFloat
     let maxWidth: CGFloat
@@ -773,6 +674,7 @@ private struct TerminalResizeHandle: NSViewRepresentable {
         view.coordinator = context.coordinator
         view.setAccessibilityElement(true)
         view.setAccessibilityLabel("Resize terminal sidebar")
+        view.setAccessibilityHelp("Drag left or right to resize the terminal sidebar.")
         return view
     }
 
@@ -797,7 +699,7 @@ private struct TerminalResizeHandle: NSViewRepresentable {
         }
 
         func beginDrag(at screenX: CGFloat) {
-            dragStartWidth = width.wrappedValue
+            dragStartWidth = clamped(width.wrappedValue)
             dragStartX = screenX
         }
 

@@ -3,13 +3,16 @@ import SwiftUI
 enum MonknotMotion {
     static let hoverDuration: Double = 0.12
     static let chromeTransitionDuration: Double = 0.14
+    static let sidebarTransitionDuration: Double = 0.22
 
     static var hoverAnimation: Animation {
         .easeOut(duration: hoverDuration)
     }
 
-    static var drawerSpring: Animation {
-        .spring(response: 0.32, dampingFraction: 0.88, blendDuration: 0.08)
+    static func sidebarTransition(reduceMotion: Bool) -> Animation {
+        reduceMotion
+            ? .linear(duration: 0.001)
+            : .easeInOut(duration: sidebarTransitionDuration)
     }
 
     static func searchBarTransition(reduceMotion: Bool) -> AnyTransition {

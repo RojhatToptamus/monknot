@@ -10,6 +10,7 @@ enum MonknotMetrics {
     static let iconPointSizeBase: CGFloat = 11
     static let iconCornerRadiusBase: CGFloat = 6
     static let trafficLightReserveBase: CGFloat = 72
+    static let windowNavigationLeadingGapBase: CGFloat = 8
     static let compactLayoutBreakpoint: CGFloat = 760
     static let tabMinWidthBase: CGFloat = 82
     static let tabMaxWidthBase: CGFloat = 168
@@ -39,14 +40,29 @@ enum MonknotMetrics {
     }
 
     static func chromeHeight(theme: AppTheme, zoomScale: Double) -> CGFloat {
-        scale(chromeHeightBase, theme: theme, zoomScale: zoomScale)
+        scale(chromeHeightBase, theme: theme, zoomScale: zoomScale).rounded()
     }
 
     static func chromeSecondaryHeight(theme: AppTheme, zoomScale: Double) -> CGFloat {
-        scale(chromeSecondaryHeightBase, theme: theme, zoomScale: zoomScale)
+        scale(chromeSecondaryHeightBase, theme: theme, zoomScale: zoomScale).rounded()
     }
 
     static func chromeHorizontalPadding(theme: AppTheme, zoomScale: Double) -> CGFloat {
         scale(chromeHorizontalPaddingBase, theme: theme, zoomScale: zoomScale)
+    }
+
+    static func windowNavigationButtonDimension(theme: AppTheme, zoomScale: Double) -> CGFloat {
+        scale(iconButtonSizeBase, theme: theme, zoomScale: zoomScale)
+    }
+
+    static func windowNavigationLeadingGap(theme: AppTheme, zoomScale: Double) -> CGFloat {
+        scale(windowNavigationLeadingGapBase, theme: theme, zoomScale: zoomScale)
+    }
+
+    static func windowChromeLeadingReservedWidth(theme: AppTheme, zoomScale: Double) -> CGFloat {
+        trafficLightReserveBase
+            + windowNavigationLeadingGap(theme: theme, zoomScale: zoomScale)
+            + windowNavigationButtonDimension(theme: theme, zoomScale: zoomScale) * 2
+            + scale(10, theme: theme, zoomScale: zoomScale)
     }
 }

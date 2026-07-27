@@ -1,19 +1,22 @@
 import AppKit
 import SwiftUI
 
-/// Aligns the NSWindow's appearance with our SwiftUI surface and suppresses
-/// the AppKit-injected `.toolbarButton`, which duplicates our own sidebar
-/// toggle. Standard traffic-light positioning stays under AppKit's control;
-/// moving those buttons manually causes visible jumps during split-view
-/// relayout.
+/// Aligns the NSWindow's appearance with our SwiftUI surface, keeps the native
+/// window controls centered in Monknot's primary chrome row, and suppresses
+/// the AppKit-injected `.toolbarButton`, which duplicates our sidebar toggle.
+/// Uses AppKit's standard controls rather than recreating the traffic lights:
+/// https://developer.apple.com/documentation/appkit/nswindow/standardwindowbutton(_:)
 struct WindowBackgroundDragEnabler: NSViewRepresentable {
     var surfaceColor: Color
-    var layoutToken: String
+    var chromeHeight: CGFloat
     var suppressToolbarButton: Bool = true
     var usesDarkAppearance: Bool?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(suppressToolbarButton: suppressToolbarButton)
+        Coordinator(
+            chromeHeight: chromeHeight,
+            suppressToolbarButton: suppressToolbarButton
+        )
     }
 
     func makeNSView(context: Context) -> NSView {
@@ -23,6 +26,7 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.chromeHeight = chromeHeight
         updateWindow(from: nsView, coordinator: context.coordinator)
     }
 
@@ -44,108 +48,8 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             }
 
             coordinator.observeWindow(window)
-            if coordinator.suppressToolbarButton {
-                coordinator.suppressDuplicateToolbarButton(in: window)
-            }
-            coordinator.configureSplitViewChrome(in: window)
+            coordinator.configureWindowChrome(in: window)
         }
-    }
-
-    /// Keeps AppKit's native sidebar split item from drawing its own material
-    /// and edge overlays over Monknot's solid SwiftUI sidebar surface.
-    fileprivate static func configureSplitViewChrome(in window: NSWindow) {
-        guard let contentView = window.contentView else { return }
-        for splitView in splitViews(in: contentView) {
-            for subview in splitView.subviews where isNonArrangedChromeOverlay(subview, in: splitView) {
-                subview.isHidden = true
-            }
-            neutralizeSidebarSystemMaterial(in: splitView)
-        }
-    }
-
-    private static func isNonArrangedChromeOverlay(_ view: NSView, in splitView: NSSplitView) -> Bool {
-        guard !splitView.arrangedSubviews.contains(where: { $0 === view }) else { return false }
-        return isInteriorEdgeOverlay(view, in: splitView)
-    }
-
-    private static func splitViews(in view: NSView) -> [NSSplitView] {
-        var results: [NSSplitView] = []
-        if let splitView = view as? NSSplitView {
-            results.append(splitView)
-        }
-        for subview in view.subviews {
-            results.append(contentsOf: splitViews(in: subview))
-        }
-        return results
-    }
-
-    private static func isInteriorEdgeOverlay(_ view: NSView, in splitView: NSSplitView) -> Bool {
-        let frame = view.frame
-        let bounds = splitView.bounds
-        let maximumOverlayThickness: CGFloat = 16
-        let edgeInset: CGFloat = 20
-
-        if splitView.isVertical {
-            guard approximatelyEqual(frame.height, bounds.height) else { return false }
-            guard frame.width <= maximumOverlayThickness else { return false }
-            guard frame.minX > bounds.minX + edgeInset else { return false }
-            guard frame.maxX < bounds.maxX - edgeInset else { return false }
-            return true
-        }
-
-        guard approximatelyEqual(frame.width, bounds.width) else { return false }
-        guard frame.height <= maximumOverlayThickness else { return false }
-        guard frame.minY > bounds.minY + edgeInset else { return false }
-        guard frame.maxY < bounds.maxY - edgeInset else { return false }
-        return true
-    }
-
-    private static func neutralizeSidebarSystemMaterial(in splitView: NSSplitView) {
-        guard let sidebarColumn = sidebarColumn(in: splitView) else { return }
-        for subview in sidebarColumn.subviews where isMaterialBackdropOnlyView(subview, filling: sidebarColumn) {
-            subview.isHidden = true
-        }
-        configureSystemMaterialEffects(in: sidebarColumn)
-    }
-
-    private static func sidebarColumn(in splitView: NSSplitView) -> NSView? {
-        guard splitView.isVertical else { return nil }
-        return splitView.arrangedSubviews
-            .filter { isSplitColumnView($0, in: splitView) }
-            .min { $0.frame.minX < $1.frame.minX }
-    }
-
-    private static func configureSystemMaterialEffects(in view: NSView) {
-        if #available(macOS 26.0, *), let effectView = view as? NSGlassEffectView {
-            effectView.style = .clear
-            effectView.tintColor = .clear
-        }
-        for subview in view.subviews {
-            configureSystemMaterialEffects(in: subview)
-        }
-    }
-
-    private static func isSplitColumnView(_ view: NSView, in splitView: NSSplitView) -> Bool {
-        approximatelyEqual(view.frame.height, splitView.bounds.height) && view.frame.width > 40
-    }
-
-    private static func isMaterialBackdropOnlyView(_ view: NSView, filling container: NSView) -> Bool {
-        guard fills(view.frame, container.bounds) else { return false }
-        guard view.subviews.count == 1, let child = view.subviews.first else { return false }
-        guard fills(child.frame, view.bounds) else { return false }
-        guard child.subviews.isEmpty else { return false }
-        return child.layer != nil
-    }
-
-    private static func fills(_ frame: NSRect, _ bounds: NSRect) -> Bool {
-        approximatelyEqual(frame.minX, bounds.minX)
-            && approximatelyEqual(frame.minY, bounds.minY)
-            && approximatelyEqual(frame.width, bounds.width)
-            && approximatelyEqual(frame.height, bounds.height)
-    }
-
-    private static func approximatelyEqual(_ lhs: CGFloat, _ rhs: CGFloat) -> Bool {
-        abs(lhs - rhs) <= 1
     }
 
     /// AppKit reinstalls `.toolbarButton` whenever the window changes state.
@@ -157,16 +61,55 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
         button.removeFromSuperview()
     }
 
+    fileprivate static func alignStandardWindowButtons(
+        in window: NSWindow,
+        chromeHeight: CGFloat
+    ) {
+        guard chromeHeight > 0 else { return }
+
+        let buttonTypes: [NSWindow.ButtonType] = [
+            .closeButton,
+            .miniaturizeButton,
+            .zoomButton
+        ]
+        for buttonType in buttonTypes {
+            guard let button = window.standardWindowButton(buttonType),
+                  !button.isHidden,
+                  let superview = button.superview
+            else {
+                continue
+            }
+
+            let titlebarTopY = superview.isFlipped
+                ? superview.bounds.minY
+                : superview.bounds.maxY
+            let targetOriginY = NativeWindowChromeGeometry.centeredButtonOriginY(
+                buttonHeight: button.frame.height,
+                chromeHeight: chromeHeight,
+                contentTopY: titlebarTopY,
+                isFlipped: superview.isFlipped
+            )
+            guard abs(button.frame.minY - targetOriginY) > 0.25 else { continue }
+
+            superview.clipsToBounds = false
+            button.setFrameOrigin(NSPoint(x: button.frame.minX, y: targetOriginY))
+        }
+    }
+
     final class Coordinator {
+        var chromeHeight: CGFloat
         let suppressToolbarButton: Bool
         private weak var observedWindow: NSWindow?
         private var observers: [NSObjectProtocol] = []
+        private var pendingChromeUpdate: DispatchWorkItem?
 
-        init(suppressToolbarButton: Bool) {
+        init(chromeHeight: CGFloat, suppressToolbarButton: Bool) {
+            self.chromeHeight = chromeHeight
             self.suppressToolbarButton = suppressToolbarButton
         }
 
         deinit {
+            pendingChromeUpdate?.cancel()
             removeObservers()
         }
 
@@ -176,46 +119,44 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             observedWindow = window
 
             let center = NotificationCenter.default
-            let toolbarNames: [NSNotification.Name] = [
+            let windowLayoutNames: [NSNotification.Name] = [
                 NSWindow.didResizeNotification,
                 NSWindow.didBecomeKeyNotification,
                 NSWindow.didResignKeyNotification,
                 NSWindow.didEnterFullScreenNotification,
                 NSWindow.didExitFullScreenNotification,
+                NSWindow.didChangeBackingPropertiesNotification,
                 NSWindow.didChangeOcclusionStateNotification,
                 NSWindow.didUpdateNotification
             ]
-            for name in toolbarNames {
+            for name in windowLayoutNames {
                 let token = center.addObserver(forName: name, object: window, queue: .main) { [weak self, weak window] _ in
-                    guard let window, let self, self.suppressToolbarButton else { return }
-                    self.suppressDuplicateToolbarButton(in: window)
-                }
-                observers.append(token)
-            }
-
-            let layoutNames: [NSNotification.Name] = [
-                NSWindow.didResizeNotification,
-                NSWindow.didBecomeKeyNotification,
-                NSWindow.didResignKeyNotification,
-                NSWindow.didEnterFullScreenNotification,
-                NSWindow.didExitFullScreenNotification,
-                NSWindow.didUpdateNotification
-            ]
-            for name in layoutNames {
-                let token = center.addObserver(forName: name, object: window, queue: .main) { [weak window] _ in
-                    guard let window else { return }
-                    WindowBackgroundDragEnabler.configureSplitViewChrome(in: window)
+                    guard let window, let self else { return }
+                    self.scheduleWindowChromeUpdate(in: window)
                 }
                 observers.append(token)
             }
         }
 
-        func configureSplitViewChrome(in window: NSWindow) {
-            WindowBackgroundDragEnabler.configureSplitViewChrome(in: window)
+        func configureWindowChrome(in window: NSWindow) {
+            if suppressToolbarButton {
+                WindowBackgroundDragEnabler.suppressSystemToolbarButton(in: window)
+            }
+            WindowBackgroundDragEnabler.alignStandardWindowButtons(
+                in: window,
+                chromeHeight: chromeHeight
+            )
         }
 
-        func suppressDuplicateToolbarButton(in window: NSWindow) {
-            WindowBackgroundDragEnabler.suppressSystemToolbarButton(in: window)
+        private func scheduleWindowChromeUpdate(in window: NSWindow) {
+            pendingChromeUpdate?.cancel()
+            let workItem = DispatchWorkItem { [weak self, weak window] in
+                guard let self, let window else { return }
+                window.contentView?.layoutSubtreeIfNeeded()
+                self.configureWindowChrome(in: window)
+            }
+            pendingChromeUpdate = workItem
+            DispatchQueue.main.async(execute: workItem)
         }
 
         private func removeObservers() {
@@ -223,6 +164,20 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             observers.forEach(center.removeObserver(_:))
             observers.removeAll()
         }
+    }
+}
+
+enum NativeWindowChromeGeometry {
+    static func centeredButtonOriginY(
+        buttonHeight: CGFloat,
+        chromeHeight: CGFloat,
+        contentTopY: CGFloat,
+        isFlipped: Bool
+    ) -> CGFloat {
+        if isFlipped {
+            return contentTopY + (chromeHeight - buttonHeight) / 2
+        }
+        return contentTopY - (chromeHeight + buttonHeight) / 2
     }
 }
 

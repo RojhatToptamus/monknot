@@ -25,7 +25,6 @@ struct SidebarView: View {
     @State private var isMoveDropTargetingRoot = false
     @State private var recentDocuments: [RecentDocumentEntry] = []
     @State private var visibleNodes: [VisibleSidebarNode] = []
-    private let nativeSidebarTopInsetCompensation: CGFloat = 8
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
@@ -48,7 +47,11 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MonknotChromePanel(theme: theme, surface: theme.sidebarSurfaceColor) {
+            MonknotChromePanel(
+                theme: theme,
+                showsBottomBorder: false,
+                surface: theme.sidebarSurfaceColor
+            ) {
                 SidebarChromeRow(
                     openFolder: openFolder,
                     createMarkdown: newMarkdown,
@@ -100,14 +103,8 @@ struct SidebarView: View {
             SidebarSettingsButton(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize)
                 .layoutPriority(2)
         }
-        .padding(.top, -nativeSidebarTopInsetCompensation)
         .background {
             MonknotChromeSurfaceBackground(theme: theme, surface: theme.sidebarSurfaceColor)
-        }
-        .overlay(alignment: .trailing) {
-            Rectangle()
-                .fill(theme.separatorColor)
-                .frame(width: 1)
         }
         .ignoresSafeArea(.container, edges: .top)
         .overlay {
@@ -656,10 +653,11 @@ private struct SidebarNodeFrameReader: View {
 // MARK: - Sidebar Header
 
 /// Sidebar chrome row that lines up with the editor's top nav. Reserves
-/// the leading width for the macOS traffic lights and exposes the
+/// the leading width for the macOS traffic lights and window navigation
+/// controls, then exposes the
 /// workspace-level action icons on the trailing side: New Markdown, Open
 /// Folder, and Search Workspace.
-private struct SidebarChromeRow: View {
+struct SidebarChromeRow: View {
     let openFolder: () -> Void
     let createMarkdown: () -> Void
     let showWorkspaceSearch: () -> Void
@@ -674,10 +672,19 @@ private struct SidebarChromeRow: View {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
+    private var windowControlClearance: CGFloat {
+        max(
+            0,
+            MonknotMetrics.windowChromeLeadingReservedWidth(theme: theme, zoomScale: zoomScale)
+                - MonknotMetrics.chromeHorizontalPadding(theme: theme, zoomScale: zoomScale)
+                - scaled(2)
+        )
+    }
+
     var body: some View {
         HStack(spacing: scaled(2)) {
             Color.clear
-                .frame(width: MonknotMetrics.scale(MonknotMetrics.trafficLightReserveBase + 6, theme: theme, zoomScale: zoomScale))
+                .frame(width: windowControlClearance)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
 
@@ -1395,7 +1402,7 @@ private struct SidebarRecentDocumentsSection: View {
                                         .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.75))
 
                                     Text(entry.displayName)
-                                        .font(.system(size: scaled(12), weight: entry.documentID == selectedDocumentID ? .semibold : .regular))
+                                        .font(.system(size: scaled(12), weight: .regular))
                                         .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.9))
                                         .lineLimit(1)
 

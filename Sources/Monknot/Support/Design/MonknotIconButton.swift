@@ -17,12 +17,13 @@ struct MonknotIconButton: View {
 
     enum IconButtonSize {
         case chrome
+        case windowNavigation
         case compact
         case findBar
 
         func dimension(theme: AppTheme, zoomScale: Double) -> CGFloat {
             switch self {
-            case .chrome:
+            case .chrome, .windowNavigation:
                 return MonknotMetrics.scale(MonknotMetrics.iconButtonSizeBase, theme: theme, zoomScale: zoomScale)
             case .compact:
                 return MonknotMetrics.scale(24, theme: theme, zoomScale: zoomScale)
@@ -33,7 +34,7 @@ struct MonknotIconButton: View {
 
         func iconSize(theme: AppTheme, zoomScale: Double) -> CGFloat {
             switch self {
-            case .chrome:
+            case .chrome, .windowNavigation:
                 return MonknotMetrics.scale(MonknotMetrics.iconPointSizeBase, theme: theme, zoomScale: zoomScale)
             case .compact, .findBar:
                 return MonknotMetrics.scale(12, theme: theme, zoomScale: zoomScale)
@@ -42,10 +43,37 @@ struct MonknotIconButton: View {
 
         func cornerRadius(theme: AppTheme, zoomScale: Double) -> CGFloat {
             switch self {
-            case .chrome:
+            case .chrome, .windowNavigation:
                 return theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
             case .compact, .findBar:
                 return theme.chromeRadius(6, zoomScale: zoomScale)
+            }
+        }
+
+        func hoverBackgroundOpacity(isDark: Bool) -> Double {
+            switch self {
+            case .windowNavigation:
+                return isDark ? 0.10 : 0.065
+            case .chrome, .compact, .findBar:
+                return isDark ? 0.065 : 0.048
+            }
+        }
+
+        var disabledControlOpacity: Double {
+            switch self {
+            case .windowNavigation:
+                return 0.72
+            case .chrome, .compact, .findBar:
+                return 0.4
+            }
+        }
+
+        var disabledIconOpacity: Double {
+            switch self {
+            case .windowNavigation:
+                return 1
+            case .chrome, .compact, .findBar:
+                return 0.42
             }
         }
     }
@@ -64,7 +92,7 @@ struct MonknotIconButton: View {
         .disabled(isDisabled)
         .focusable(!isDisabled)
         .focused($isFocused)
-        .opacity(isDisabled ? 0.4 : 1)
+        .opacity(isDisabled ? size.disabledControlOpacity : 1)
         .onHover { isHovered = $0 }
         .animation(MonknotMotion.hoverAnimation, value: isHovered)
         .animation(MonknotMotion.hoverAnimation, value: isActive)
@@ -78,14 +106,14 @@ struct MonknotIconButton: View {
             return theme.controlTrackFillColor
         }
         if isHovered && !isDisabled {
-            return theme.foregroundColor.opacity(theme.isDark ? 0.065 : 0.048)
+            return theme.foregroundColor.opacity(size.hoverBackgroundOpacity(isDark: theme.isDark))
         }
         return .clear
     }
 
     private var iconColor: Color {
         if isDisabled {
-            return theme.mutedForegroundColor.opacity(0.42)
+            return theme.mutedForegroundColor.opacity(size.disabledIconOpacity)
         }
         if isActive {
             return theme.foregroundColor

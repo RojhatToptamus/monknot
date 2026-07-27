@@ -32,10 +32,6 @@ struct PreferencesView: View {
         )
     }
 
-    private var settingsLayoutToken: String {
-        "\(panelTheme.id)-\(themePreferenceRawValue)-\(colorScheme)"
-    }
-
     var body: some View {
         preferencesRoot
     }
@@ -61,7 +57,7 @@ struct PreferencesView: View {
         .background(
             WindowBackgroundDragEnabler(
                 surfaceColor: panelTheme.surfaceColor,
-                layoutToken: settingsLayoutToken,
+                chromeHeight: MonknotMetrics.chromeHeight(theme: panelTheme, zoomScale: 1),
                 suppressToolbarButton: false,
                 usesDarkAppearance: panelTheme.isDark
             )

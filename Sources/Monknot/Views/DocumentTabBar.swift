@@ -42,7 +42,7 @@ struct DocumentTabBar: View {
                     reorderTab: reorderTab
                 )
             }
-            .frame(maxHeight: chromeRowHeight)
+            .frame(height: chromeRowHeight)
         }
     }
 }
@@ -96,7 +96,7 @@ private struct DocumentTabStripContent: View {
             }
         }
         .padding(.horizontal, scaled(2))
-        .frame(maxHeight: .infinity, alignment: .center)
+        .frame(height: chromeRowHeight, alignment: .center)
         .fixedSize(horizontal: true, vertical: false)
         .coordinateSpace(name: Self.coordinateSpaceName)
         .onPreferenceChange(TabFramePreferenceKey.self) { frames in
@@ -156,6 +156,10 @@ private struct DocumentTabItemView: View {
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    private var chromeRowHeight: CGFloat {
+        MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -223,7 +227,11 @@ private struct DocumentTabItemView: View {
             }
         }
         .frame(minWidth: scaled(tab.isPinned ? 82 : 108), maxWidth: scaled(tab.isPinned ? 124 : 168), alignment: .leading)
-        .background { tabHoverBackground }
+        .frame(height: chromeRowHeight, alignment: .center)
+        .background {
+            tabHoverBackground
+                .padding(.vertical, scaled(6))
+        }
         .overlay(alignment: .bottom) { tabSelectionIndicator }
         .opacity(opacity)
         .onHover { isHovered = $0 }

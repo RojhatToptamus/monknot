@@ -19,6 +19,10 @@ struct MonknotCommandActions {
     let paste: () -> Void
     let selectAll: () -> Void
     let refreshWorkspace: () -> Void
+    let navigateBack: () -> Void
+    let canNavigateBack: Bool
+    let navigateForward: () -> Void
+    let canNavigateForward: Bool
     let closeTab: () -> Void
     let canCloseTab: Bool
     let togglePinTab: () -> Void
@@ -195,6 +199,20 @@ struct MonknotCommandMenu: Commands {
         }
 
         CommandGroup(after: .toolbar) {
+            Button("Back") {
+                actions?.navigateBack()
+            }
+            .keyboardShortcut("[", modifiers: [.command])
+            .disabled(actions?.canNavigateBack != true)
+
+            Button("Forward") {
+                actions?.navigateForward()
+            }
+            .keyboardShortcut("]", modifiers: [.command])
+            .disabled(actions?.canNavigateForward != true)
+
+            Divider()
+
             Button("Quick Open...") {
                 actions?.showQuickOpen()
             }

@@ -13,8 +13,6 @@ struct TopNavigationBar: View {
     let zoomScale: Double
     let isTerminalPresented: Bool
     let isSidebarVisible: Bool
-    let newMarkdown: () -> Void
-    let openFolder: () -> Void
     let toggleTerminal: () -> Void
     let toggleSidebar: () -> Void
     let outlineItems: [MarkdownOutlineItem]
@@ -58,9 +56,7 @@ struct TopNavigationBar: View {
 
     var body: some View {
         HStack(spacing: scaled(MonknotMetrics.Spacing.s)) {
-            leadingNavigation
-
-            sidebarToggleButton
+            leadingSidebarControl
 
             tabsOrEmptyTitle
 
@@ -94,39 +90,29 @@ struct TopNavigationBar: View {
         }
     }
 
-    private var drawerToggleButton: some View {
-        ChromeBarButton(
-            systemImage: MonknotWorkspaceIcons.sidebarRight,
-            label: isTerminalPresented ? "Hide Right Drawer" : "Show Right Drawer",
-            theme: theme,
-            zoomScale: zoomScale,
-            uiFontSize: uiFontSize,
-            isActive: isTerminalPresented,
-            action: toggleTerminal
-        )
-        .keyboardShortcut("j", modifiers: [.command, .option])
-        .accessibilityValue(isTerminalPresented ? "Open" : "Closed")
+    /// The leading toggle always belongs to the middle toolbar. A persistent
+    /// clearance view grows with the same transition as the split column when
+    /// the sidebar is hidden, keeping the control clear of the traffic lights
+    /// without inserting or reparenting it during the animation.
+    private var leadingSidebarControl: some View {
+        HStack(spacing: 0) {
+            Color.clear
+                .frame(width: hiddenSidebarLeadingClearance)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+
+            sidebarToggleButton
+        }
+        .animation(MonknotMotion.sidebarTransition(reduceMotion: reduceMotion), value: isSidebarVisible)
     }
 
-    /// When the sidebar is hidden, the editor pane spans the full window
-    /// width and the chrome row sits behind the macOS traffic lights.
-    /// Reserve just enough leading space to clear them. The chrome row
-    /// already insets content by its horizontal padding and adds spacing
-    /// before the first control, so subtract both to avoid an oversized
-    /// gap while keeping the toggle clear of the traffic lights.
-    private var leadingNavigation: some View {
-        Group {
-            if !isSidebarVisible {
-                Color.clear
-                    .frame(width: MonknotMetrics.scale(
-                        MonknotMetrics.trafficLightReserveBase
-                            - MonknotMetrics.chromeHorizontalPaddingBase
-                            - MonknotMetrics.Spacing.s,
-                        theme: theme,
-                        zoomScale: zoomScale
-                    ))
-            }
-        }
+    private var hiddenSidebarLeadingClearance: CGFloat {
+        guard !isSidebarVisible else { return 0 }
+        return max(
+            0,
+            MonknotMetrics.windowChromeLeadingReservedWidth(theme: theme, zoomScale: zoomScale)
+                - MonknotMetrics.chromeHorizontalPadding(theme: theme, zoomScale: zoomScale)
+        )
     }
 
     private var sidebarToggleButton: some View {
@@ -140,6 +126,21 @@ struct TopNavigationBar: View {
             action: toggleSidebar
         )
         .keyboardShortcut("s", modifiers: [.command, .control])
+        .accessibilityValue(isSidebarVisible ? "Open" : "Closed")
+    }
+
+    private var drawerToggleButton: some View {
+        ChromeBarButton(
+            systemImage: MonknotWorkspaceIcons.sidebarRight,
+            label: isTerminalPresented ? "Hide Right Drawer" : "Show Right Drawer",
+            theme: theme,
+            zoomScale: zoomScale,
+            uiFontSize: uiFontSize,
+            isActive: isTerminalPresented,
+            action: toggleTerminal
+        )
+        .keyboardShortcut("j", modifiers: [.command, .option])
+        .accessibilityValue(isTerminalPresented ? "Open" : "Closed")
     }
 
     @ViewBuilder

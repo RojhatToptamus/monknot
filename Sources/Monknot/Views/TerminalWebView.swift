@@ -58,7 +58,7 @@ struct TerminalWebView: NSViewRepresentable {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.resizeHandlerName)
     }
 
-    private static func html(
+    static func html(
         theme: AppTheme,
         fontSize: CGFloat,
         usePointerCursors: Bool,
@@ -88,7 +88,7 @@ struct TerminalWebView: NSViewRepresentable {
             -webkit-font-smoothing: var(--terminal-font-smoothing);
           }
           .xterm {
-            padding: 18px 20px;
+            padding: 12px 20px;
             box-sizing: border-box;
             background: var(--terminal-bg) !important;
           }

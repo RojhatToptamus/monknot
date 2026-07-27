@@ -23,6 +23,7 @@ struct ContentView: View {
     @State private var pendingPDFSearchTarget: WorkspaceSearchPDFTarget?
     @State private var deferredWorkspaceSourceJump: DeferredWorkspaceSourceJump?
     @State private var tabState = WorkspaceTabState()
+    @State private var documentNavigationHistory = DocumentNavigationHistory()
     @State private var restoredTabStateWorkspacePath: String?
     @State private var pendingTabStatePersistenceTask: Task<Void, Never>?
     @State private var documentViewportStates: [String: DocumentViewportState] = [:]
@@ -39,6 +40,7 @@ struct ContentView: View {
     @State private var isResolvingUnsavedChanges = false
     @State private var isKeyboardShortcutsHelpPresented = false
     @Environment(\.colorScheme) private var systemColorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let tabStatePersistence = WorkspaceTabStatePersistence()
 
     private var editorMode: EditorMode {
@@ -72,7 +74,7 @@ struct ContentView: View {
             .background(activeTheme.surfaceColor)
             .background(WindowBackgroundDragEnabler(
                 surfaceColor: activeTheme.surfaceColor,
-                layoutToken: nativeChromeLayoutToken,
+                chromeHeight: nativeChromeHeight,
                 usesDarkAppearance: activeTheme.isDark
             ))
             .background(WindowCloseGuard(
@@ -81,7 +83,8 @@ struct ContentView: View {
             .background(KeyboardShortcutMonitor(handler: handleKeyDown))
             .toolbar {
                 // Keep the unified title-bar zone in step with our SwiftUI
-                // chrome height without manually moving the traffic lights.
+                // chrome height. WindowBackgroundDragEnabler uses this same
+                // value to center AppKit's native window controls.
                 ToolbarItem(placement: .principal) {
                     Color.clear
                         .frame(width: 0, height: nativeChromeHeight)
@@ -96,6 +99,9 @@ struct ContentView: View {
     private var lifecycleContent: AnyView {
         AnyView(chromeContent
             .onChange(of: store.selectedDocument?.id) { oldDocumentID, newDocumentID in
+                if documentNavigationHistory.currentDocumentID != newDocumentID {
+                    documentNavigationHistory.replaceCurrent(with: newDocumentID)
+                }
                 resetPDFAnnotationShortcutState()
                 pendingPDFSearchTarget = nil
                 if let oldDocumentID, supportsSplitView(store.document(id: oldDocumentID)) {
@@ -146,6 +152,7 @@ struct ContentView: View {
             }
             .onChange(of: store.workspaceURL?.standardizedFileURL.path ?? "") { _, _ in
                 tabState.reset()
+                documentNavigationHistory.reset()
                 restoredTabStateWorkspacePath = nil
                 documentViewportStates.removeAll()
                 publishOpenTabIDs(persistTabs: false)
@@ -209,6 +216,25 @@ struct ContentView: View {
                 sidebarContent
             } detail: {
                 detailContent
+            }
+            .overlay(alignment: .topLeading) {
+                WindowNavigationControls(
+                    navigateBack: navigateBack,
+                    navigateForward: navigateForward,
+                    canNavigateBack: canNavigateBack,
+                    canNavigateForward: canNavigateForward,
+                    theme: activeTheme,
+                    zoomScale: zoomScale,
+                    uiFontSize: activeTheme.uiFontSize
+                )
+                .padding(
+                    .leading,
+                    MonknotMetrics.trafficLightReserveBase
+                        + MonknotMetrics.windowNavigationLeadingGap(
+                            theme: activeTheme,
+                            zoomScale: zoomScale
+                        )
+                )
             }
 
             if quickOpen.isPresented {
@@ -482,9 +508,55 @@ struct ContentView: View {
         zoomScale = min(3.0, max(0.7, stepped))
     }
 
+    private var canNavigateBack: Bool {
+        !store.isBusy && documentNavigationHistory.canGoBack
+    }
+
+    private var canNavigateForward: Bool {
+        !store.isBusy && documentNavigationHistory.canGoForward
+    }
+
+    private func recordDocumentNavigation(from previousDocumentID: String?, to documentID: String) {
+        if documentNavigationHistory.currentDocumentID != previousDocumentID {
+            documentNavigationHistory.replaceCurrent(with: previousDocumentID)
+        }
+        documentNavigationHistory.recordSelection(documentID)
+    }
+
+    private func navigateBack() {
+        navigateHistory(destination: documentNavigationHistory.backDocumentID) {
+            documentNavigationHistory.goBack()
+        }
+    }
+
+    private func navigateForward() {
+        navigateHistory(destination: documentNavigationHistory.forwardDocumentID) {
+            documentNavigationHistory.goForward()
+        }
+    }
+
+    private func navigateHistory(
+        destination documentID: String?,
+        commit: () -> String?
+    ) {
+        guard !store.isBusy,
+              let documentID,
+              let document = store.document(id: documentID),
+              store.selectDocument(id: documentID)
+        else {
+            return
+        }
+
+        guard commit() == documentID else { return }
+        tabState.open(document)
+        publishOpenTabIDs()
+    }
+
     private func openDocumentTab(id documentID: String) {
         guard !store.isBusy, let document = store.document(id: documentID) else { return }
+        let previousDocumentID = store.selectedDocumentID
         guard store.selectDocument(id: documentID) else { return }
+        recordDocumentNavigation(from: previousDocumentID, to: documentID)
         tabState.open(document)
         publishOpenTabIDs()
     }
@@ -492,7 +564,9 @@ struct ContentView: View {
     private func activateTab(id documentID: String) {
         guard !store.isBusy else { return }
         guard tabState.contains(documentID: documentID) else { return }
+        let previousDocumentID = store.selectedDocumentID
         guard store.selectDocument(id: documentID) else { return }
+        recordDocumentNavigation(from: previousDocumentID, to: documentID)
 
         if let document = store.document(id: documentID) {
             tabState.open(document)
@@ -517,11 +591,13 @@ struct ContentView: View {
     private func closeResolvedTab(id documentID: String) {
         let wasActive = tabState.selectedDocumentID == documentID
         let nextDocumentID = tabState.close(documentID: documentID)
+        documentNavigationHistory.remove(documentID: documentID)
         documentViewportStates.removeValue(forKey: documentID)
         publishOpenTabIDs()
 
         if wasActive || store.selectedDocumentID == documentID {
             _ = store.selectDocument(id: nextDocumentID)
+            documentNavigationHistory.replaceCurrent(with: nextDocumentID)
         }
     }
 
@@ -558,6 +634,9 @@ struct ContentView: View {
         tabState.pruneUnavailableDocuments(
             availableDocumentIDs: availableDocumentIDs,
             preserving: store.removedDirtyOpenDocumentIDs
+        )
+        documentNavigationHistory.prune(
+            availableDocumentIDs: availableDocumentIDs.union(store.removedDirtyOpenDocumentIDs)
         )
         pruneDocumentViewportStates()
 
@@ -620,6 +699,10 @@ struct ContentView: View {
             if let viewportState = documentViewportStates.removeValue(forKey: mapping.sourceID) {
                 documentViewportStates[mapping.destinationID] = viewportState
             }
+            documentNavigationHistory.remapDocumentID(
+                from: mapping.sourceID,
+                to: mapping.destinationID
+            )
         }
         if let selectedDocumentID = store.selectedDocument?.id {
             if supportsSplitView(store.selectedDocument) {
@@ -762,6 +845,10 @@ struct ContentView: View {
             paste: { _ = pasteFromCommand() },
             selectAll: { _ = MonknotNativePasteboardCommand.performSelectAllIfAvailable() },
             refreshWorkspace: { store.refresh() },
+            navigateBack: navigateBack,
+            canNavigateBack: canNavigateBack,
+            navigateForward: navigateForward,
+            canNavigateForward: canNavigateForward,
             closeTab: { closeActiveTab() },
             canCloseTab: tabState.selectedDocumentID != nil && !store.isBusy,
             togglePinTab: { toggleActiveTabPin() },
@@ -1100,13 +1187,9 @@ struct ContentView: View {
     }
 
     private func toggleTerminalDrawer() {
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.88, blendDuration: 0.08)) {
+        withAnimation(MonknotMotion.sidebarTransition(reduceMotion: reduceMotion)) {
             isTerminalDrawerOpen.toggle()
         }
-    }
-
-    private var nativeChromeLayoutToken: String {
-        "\(themePreference.rawValue)-\(systemColorScheme == .dark ? "dark" : "light")-\(zoomScale)-\(activeTheme.uiFontSize)"
     }
 
     /// Single source of truth for the chrome row height (in points). The
@@ -1122,15 +1205,143 @@ struct ContentView: View {
     }
 
     private func setSidebarVisibility(_ visibility: NavigationSplitViewVisibility) {
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
+        withAnimation(MonknotMotion.sidebarTransition(reduceMotion: reduceMotion)) {
             sidebarVisibility = visibility
         }
+    }
+}
+
+struct WindowNavigationControls: View {
+    let navigateBack: () -> Void
+    let navigateForward: () -> Void
+    let canNavigateBack: Bool
+    let canNavigateForward: Bool
+    let theme: AppTheme
+    let zoomScale: Double
+    let uiFontSize: Double
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
+        HStack(spacing: scaled(2)) {
+            ChromeBarButton(
+                systemImage: "arrow.left",
+                label: "Back",
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize,
+                isDisabled: !canNavigateBack,
+                size: .windowNavigation,
+                action: navigateBack
+            )
+
+            ChromeBarButton(
+                systemImage: "arrow.right",
+                label: "Forward",
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize,
+                isDisabled: !canNavigateForward,
+                size: .windowNavigation,
+                action: navigateForward
+            )
+        }
+        .frame(height: MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale))
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
 private struct DeferredWorkspaceSourceJump: Equatable {
     let documentID: String
     let location: MarkdownSourceLocation
+}
+
+struct DocumentNavigationHistory: Equatable {
+    static let maximumStackDepth = 100
+
+    private(set) var backStack: [String] = []
+    private(set) var currentDocumentID: String?
+    private(set) var forwardStack: [String] = []
+
+    var backDocumentID: String? { backStack.last }
+    var forwardDocumentID: String? { forwardStack.last }
+    var canGoBack: Bool { backDocumentID != nil }
+    var canGoForward: Bool { forwardDocumentID != nil }
+
+    mutating func recordSelection(_ documentID: String) {
+        guard documentID != currentDocumentID else { return }
+
+        if let currentDocumentID {
+            backStack.append(currentDocumentID)
+            Self.trimOldestEntriesIfNeeded(in: &backStack)
+        }
+        currentDocumentID = documentID
+        forwardStack.removeAll()
+    }
+
+    @discardableResult
+    mutating func goBack() -> String? {
+        guard let destination = backStack.popLast() else { return nil }
+        if let currentDocumentID {
+            forwardStack.append(currentDocumentID)
+            Self.trimOldestEntriesIfNeeded(in: &forwardStack)
+        }
+        currentDocumentID = destination
+        return destination
+    }
+
+    @discardableResult
+    mutating func goForward() -> String? {
+        guard let destination = forwardStack.popLast() else { return nil }
+        if let currentDocumentID {
+            backStack.append(currentDocumentID)
+            Self.trimOldestEntriesIfNeeded(in: &backStack)
+        }
+        currentDocumentID = destination
+        return destination
+    }
+
+    mutating func replaceCurrent(with documentID: String?) {
+        currentDocumentID = documentID
+    }
+
+    mutating func remove(documentID: String) {
+        backStack.removeAll { $0 == documentID }
+        forwardStack.removeAll { $0 == documentID }
+        if currentDocumentID == documentID {
+            currentDocumentID = nil
+        }
+    }
+
+    mutating func prune(availableDocumentIDs: Set<String>) {
+        backStack.removeAll { !availableDocumentIDs.contains($0) }
+        forwardStack.removeAll { !availableDocumentIDs.contains($0) }
+        if let currentDocumentID, !availableDocumentIDs.contains(currentDocumentID) {
+            self.currentDocumentID = nil
+        }
+    }
+
+    mutating func remapDocumentID(from sourceID: String, to destinationID: String) {
+        guard sourceID != destinationID else { return }
+        backStack = backStack.map { $0 == sourceID ? destinationID : $0 }
+        forwardStack = forwardStack.map { $0 == sourceID ? destinationID : $0 }
+        if currentDocumentID == sourceID {
+            currentDocumentID = destinationID
+        }
+    }
+
+    mutating func reset(currentDocumentID: String? = nil) {
+        backStack.removeAll()
+        self.currentDocumentID = currentDocumentID
+        forwardStack.removeAll()
+    }
+
+    private static func trimOldestEntriesIfNeeded(in stack: inout [String]) {
+        let overflow = stack.count - Self.maximumStackDepth
+        if overflow > 0 {
+            stack.removeFirst(overflow)
+        }
+    }
 }
