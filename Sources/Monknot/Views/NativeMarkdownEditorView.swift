@@ -14,6 +14,13 @@ struct NativeMarkdownEditorView: View {
     @Binding var searchState: DocumentSearchState
     let commandRequest: MarkdownTextEditorCommandRequest?
     let wikilinkDocuments: [WorkspaceDocument]
+    let typingAssistantSuggestion: TypingAssistanceSuggestion?
+    let typingAssistantActionRequest: TypingAssistantEditorActionRequest?
+    let onTypingEditorChange:
+        ((TypingAssistanceEditorSnapshot) -> TypingAssistanceTextEdit?)?
+    let onTypingSelectionChange: ((TypingAssistanceEditorSnapshot) -> Void)?
+    let onTypingDismissSuggestion: (() -> Void)?
+    let onTypingSuggestionApplicationFinished: ((Bool) -> Void)?
     let onScrollPositionChange: (DocumentScrollPosition) -> Void
     let onVisibleTopLineChange: ((Int) -> Void)?
 
@@ -34,7 +41,14 @@ struct NativeMarkdownEditorView: View {
                 onVisibleTopLineChange: onVisibleTopLineChange,
                 commandRequest: commandRequest,
                 markdownShortcutsEnabled: true,
-                wikilinkDocuments: wikilinkDocuments
+                wikilinkDocuments: wikilinkDocuments,
+                typingAssistantSuggestion: typingAssistantSuggestion,
+                typingAssistantActionRequest: typingAssistantActionRequest,
+                onTypingEditorChange: onTypingEditorChange,
+                onTypingSelectionChange: onTypingSelectionChange,
+                onTypingDismissSuggestion: onTypingDismissSuggestion,
+                onTypingSuggestionApplicationFinished:
+                    onTypingSuggestionApplicationFinished
             )
 
             if text.isEmpty {

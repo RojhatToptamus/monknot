@@ -1,0 +1,561 @@
+import Foundation
+
+public struct TypingAssistanceScheduler {
+    public let pauseTriggerMilliseconds: Int
+    public let fastInterKeyMilliseconds: Int
+    public let completionEnabled: Bool
+
+    public init(
+        pauseTriggerMilliseconds: Int = 350,
+        fastInterKeyMilliseconds: Int = 120,
+        completionEnabled: Bool = false
+    ) {
+        precondition(pauseTriggerMilliseconds > 0)
+        precondition(fastInterKeyMilliseconds > 0)
+        self.pauseTriggerMilliseconds = pauseTriggerMilliseconds
+        self.fastInterKeyMilliseconds = fastInterKeyMilliseconds
+        self.completionEnabled = completionEnabled
+    }
+
+    public func decide(
+        _ event: TypingAssistanceEditorEvent
+    ) -> TypingAssistanceScheduleDecision {
+        if event.kind == .textChange || event.kind == .focusLost {
+            return silent(
+                reason: event.kind == .textChange ? "typing_active" : "focus_lost",
+                cancelPending: true
+            )
+        }
+        if event.contentMode == .code {
+            return silent(reason: "code_mode_not_supported", cancelPending: true)
+        }
+        if event.kind == .wordBoundary {
+            return TypingAssistanceScheduleDecision(
+                intent: .wordBoundaryCorrection,
+                reason: "completed_token_available",
+                cancelPending: true,
+                modelCallAllowed: false,
+                automaticApplicationAllowed: false,
+                visibleSuggestionAllowed: false
+            )
+        }
+        if event.kind == .pause {
+            guard event.idleMilliseconds >= pauseTriggerMilliseconds else {
+                return silent(reason: "pause_below_threshold", cancelPending: false)
+            }
+            return TypingAssistanceScheduleDecision(
+                intent: .pauseGrammar,
+                reason: "pause_threshold_met",
+                cancelPending: true,
+                modelCallAllowed: true,
+                automaticApplicationAllowed: false,
+                visibleSuggestionAllowed: true
+            )
+        }
+        guard completionEnabled else {
+            return silent(reason: "completion_disabled", cancelPending: false)
+        }
+        return TypingAssistanceScheduleDecision(
+            intent: .completion,
+            reason: "explicit_completion_request",
+            cancelPending: true,
+            modelCallAllowed: true,
+            automaticApplicationAllowed: false,
+            visibleSuggestionAllowed: true
+        )
+    }
+
+    private func silent(
+        reason: String,
+        cancelPending: Bool
+    ) -> TypingAssistanceScheduleDecision {
+        TypingAssistanceScheduleDecision(
+            intent: .silent,
+            reason: reason,
+            cancelPending: cancelPending,
+            modelCallAllowed: false,
+            automaticApplicationAllowed: false,
+            visibleSuggestionAllowed: false
+        )
+    }
+}
+
+public enum TypingAssistanceContextExtractor {
+    public static let maximumCorrectionUTF16Length = 1_200
+    public static let maximumCompletionPrefixUTF16Length = 600
+
+    public static func correctionContext(
+        for snapshot: TypingAssistanceEditorSnapshot
+    ) -> TypingAssistanceContext? {
+        guard snapshot.selectionLength == 0 else { return nil }
+        let source = snapshot.text as NSString
+        let cursor = boundedCursor(snapshot.cursorUTF16Offset, in: source)
+        let paragraph = source.paragraphRange(for: NSRange(location: cursor, length: 0))
+        let trimmed = trimNewlines(from: paragraph, in: source)
+        guard trimmed.length > 0,
+              trimmed.length <= maximumCorrectionUTF16Length
+        else {
+            return nil
+        }
+        return TypingAssistanceContext(
+            text: source.substring(with: trimmed),
+            range: trimmed
+        )
+    }
+
+    public static func completionContext(
+        for snapshot: TypingAssistanceEditorSnapshot
+    ) -> TypingAssistanceContext? {
+        guard snapshot.selectionLength == 0 else { return nil }
+        let source = snapshot.text as NSString
+        let cursor = boundedCursor(snapshot.cursorUTF16Offset, in: source)
+        guard cursor > 0 else { return nil }
+        let start = max(0, cursor - maximumCompletionPrefixUTF16Length)
+        let range = NSRange(location: start, length: cursor - start)
+        return TypingAssistanceContext(text: source.substring(with: range), range: range)
+    }
+
+    private static func boundedCursor(_ cursor: Int, in text: NSString) -> Int {
+        max(0, min(cursor, text.length))
+    }
+
+    private static func trimNewlines(from range: NSRange, in text: NSString) -> NSRange {
+        var lower = range.location
+        var upper = NSMaxRange(range)
+        let newlines = CharacterSet.newlines
+        while lower < upper,
+              let scalar = UnicodeScalar(text.character(at: lower)),
+              newlines.contains(scalar) {
+            lower += 1
+        }
+        while upper > lower,
+              let scalar = UnicodeScalar(text.character(at: upper - 1)),
+              newlines.contains(scalar) {
+            upper -= 1
+        }
+        return NSRange(location: lower, length: upper - lower)
+    }
+}
+
+public enum TypingAssistanceAcceptancePolicy {
+    public static func apply(
+        _ suggestion: TypingAssistanceSuggestion,
+        to snapshot: TypingAssistanceEditorSnapshot
+    ) -> TypingAssistanceApplicationResult {
+        if suggestion.sourceDocumentID != snapshot.documentID {
+            return rejected(snapshot, .documentChanged)
+        }
+        if suggestion.sourceRevision != snapshot.revision {
+            return rejected(snapshot, .revisionChanged)
+        }
+        if suggestion.sourceText != snapshot.text {
+            return rejected(snapshot, .textChanged)
+        }
+        if suggestion.sourceCursorUTF16Offset != snapshot.cursorUTF16Offset {
+            return rejected(snapshot, .cursorChanged)
+        }
+
+        let source = snapshot.text as NSString
+        guard suggestion.replacementRange.location >= 0,
+              suggestion.replacementRange.length >= 0,
+              NSMaxRange(suggestion.replacementRange) <= source.length
+        else {
+            return rejected(snapshot, .invalidRange)
+        }
+
+        let replacement = replacementText(
+            for: suggestion,
+            in: source
+        )
+        let updated = source.replacingCharacters(
+            in: suggestion.replacementRange,
+            with: replacement
+        )
+        let cursor = suggestion.replacementRange.location + (replacement as NSString).length
+        return TypingAssistanceApplicationResult(
+            accepted: true,
+            text: updated,
+            selectedRange: NSRange(location: cursor, length: 0),
+            rejection: nil
+        )
+    }
+
+    private static func rejected(
+        _ snapshot: TypingAssistanceEditorSnapshot,
+        _ rejection: TypingAssistanceApplicationRejection
+    ) -> TypingAssistanceApplicationResult {
+        TypingAssistanceApplicationResult(
+            accepted: false,
+            text: snapshot.text,
+            selectedRange: NSRange(
+                location: snapshot.cursorUTF16Offset,
+                length: snapshot.selectionLength
+            ),
+            rejection: rejection
+        )
+    }
+
+    private static func replacementText(
+        for suggestion: TypingAssistanceSuggestion,
+        in source: NSString
+    ) -> String {
+        let trimmed = suggestion.replacementText.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard suggestion.requestKind == .completion, !trimmed.isEmpty else {
+            return suggestion.replacementText
+        }
+
+        let location = suggestion.replacementRange.location
+        let needsLeadingSpace = location > 0
+            && !isSpacingOrOpeningPunctuation(source.character(at: location - 1))
+        let needsTrailingSpace = location < source.length
+            && !isSpacingOrClosingPunctuation(source.character(at: location))
+        return (needsLeadingSpace ? " " : "")
+            + trimmed
+            + (needsTrailingSpace ? " " : "")
+    }
+
+    private static func isSpacingOrOpeningPunctuation(_ character: unichar) -> Bool {
+        guard let scalar = UnicodeScalar(character) else { return false }
+        return CharacterSet.whitespacesAndNewlines.contains(scalar)
+            || "([{\"'".unicodeScalars.contains(scalar)
+    }
+
+    private static func isSpacingOrClosingPunctuation(_ character: unichar) -> Bool {
+        guard let scalar = UnicodeScalar(character) else { return false }
+        return CharacterSet.whitespacesAndNewlines.contains(scalar)
+            || ".,;:!?)]}\"'".unicodeScalars.contains(scalar)
+    }
+}
+
+public struct TypingAssistanceWordBoundaryCorrector {
+    public static let conservativeDefaults = [
+        "adn": "and",
+        "becuase": "because",
+        "definately": "definitely",
+        "occured": "occurred",
+        "recieve": "receive",
+        "seperate": "separate",
+        "teh": "the",
+        "thier": "their",
+        "wich": "which",
+    ]
+
+    public let replacements: [String: String]
+
+    public init(replacements: [String: String] = conservativeDefaults) {
+        self.replacements = replacements
+    }
+
+    public func edit(
+        for snapshot: TypingAssistanceEditorSnapshot
+    ) -> TypingAssistanceTextEdit? {
+        guard snapshot.selectionLength == 0 else { return nil }
+        let source = snapshot.text as NSString
+        let cursor = max(0, min(snapshot.cursorUTF16Offset, source.length))
+        guard cursor >= 2,
+              isBoundary(source.character(at: cursor - 1)),
+              !isCodeLikeContext(source: source, cursor: cursor)
+        else {
+            return nil
+        }
+
+        var start = cursor - 1
+        while start > 0, isASCIIAlpha(source.character(at: start - 1)) {
+            start -= 1
+        }
+        let range = NSRange(location: start, length: cursor - 1 - start)
+        guard range.length > 0 else { return nil }
+        if start > 0, isTechnicalJoiner(source.character(at: start - 1)) {
+            return nil
+        }
+
+        let word = source.substring(with: range)
+        guard let replacement = replacements[word.lowercased()] else { return nil }
+        return TypingAssistanceTextEdit(
+            range: range,
+            replacementText: matchCase(replacement, source: word)
+        )
+    }
+
+    private func matchCase(_ replacement: String, source: String) -> String {
+        if source == source.uppercased() {
+            return replacement.uppercased()
+        }
+        if source.first?.isUppercase == true {
+            return replacement.prefix(1).uppercased() + replacement.dropFirst()
+        }
+        return replacement
+    }
+
+    private func isBoundary(_ character: unichar) -> Bool {
+        character == 9 || character == 10 || character == 13 || character == 32
+    }
+
+    private func isASCIIAlpha(_ character: unichar) -> Bool {
+        (character >= 65 && character <= 90) || (character >= 97 && character <= 122)
+    }
+
+    private func isTechnicalJoiner(_ character: unichar) -> Bool {
+        character == 45 || character == 46 || character == 47 || character == 95
+    }
+
+    private func isCodeLikeContext(source: NSString, cursor: Int) -> Bool {
+        let prefix = source.substring(
+            with: NSRange(location: 0, length: cursor)
+        )
+        var insideFence = false
+        for line in prefix.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+                insideFence.toggle()
+            }
+        }
+        if insideFence {
+            return true
+        }
+
+        let line = prefix.components(separatedBy: .newlines).last ?? prefix
+        let leadingTrimmed = line.drop(while: { $0 == " " || $0 == "\t" })
+        if line.hasPrefix("    ")
+            || line.hasPrefix("\t")
+            || leadingTrimmed.hasPrefix("$ ") {
+            return true
+        }
+        return leadingTrimmed.filter({ $0 == "`" }).count % 2 == 1
+    }
+}
+
+public enum TypingAssistanceSafetyPolicy {
+    public static func allowsCorrection(original: String, corrected: String) -> Bool {
+        guard !corrected.isEmpty else { return false }
+        for span in protectedSpans(in: original) where !corrected.contains(span) {
+            return false
+        }
+        guard canonicalNegations(in: original) == canonicalNegations(in: corrected),
+              canonicalModals(in: original) == canonicalModals(in: corrected)
+        else {
+            return false
+        }
+        return lexicallyLocal(original: original, corrected: corrected)
+    }
+
+    public static func protectedSpans(in text: String) -> [String] {
+        let patterns = [
+            #"https?://[^\s)>\]\"']+"#,
+            #"`[^`]+`"#,
+            #"(?<!\w)--?[A-Za-z][\w-]*"#,
+            #"(?:~|/|\./|\.\./)[A-Za-z0-9_./~:-]+"#,
+            #"\b[A-Z][A-Z0-9_]{2,}\b"#,
+            #"\b[A-Za-z]+[A-Za-z0-9_.-]*:[A-Za-z0-9_.-]+\b"#,
+            #"\b[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+\b"#,
+            #"\b[A-Za-z0-9]*[a-z][A-Z][A-Za-z0-9]*\b"#,
+            #"\b[A-Z][a-z]{1,}\b"#,
+        ]
+        var spans: [String] = []
+        let fullRange = NSRange(location: 0, length: (text as NSString).length)
+        for pattern in patterns {
+            guard let expression = try? NSRegularExpression(pattern: pattern) else {
+                continue
+            }
+            for match in expression.matches(in: text, range: fullRange) {
+                let value = (text as NSString).substring(with: match.range)
+                if !spans.contains(value) {
+                    spans.append(value)
+                }
+            }
+        }
+        return spans
+    }
+
+    private static let negationCanonical = [
+        "not": "not", "no": "no", "never": "never", "cannot": "not",
+        "can't": "not", "cant": "not", "don't": "not", "dont": "not",
+        "doesn't": "not", "doesnt": "not", "dosnt": "not", "didn't": "not",
+        "didnt": "not", "won't": "not", "wont": "not", "wouldn't": "not",
+        "wouldnt": "not", "shouldn't": "not", "shouldnt": "not",
+        "isn't": "not", "isnt": "not", "aren't": "not", "arent": "not",
+        "without": "without",
+    ]
+    private static let modalCanonical = [
+        "can": "can", "could": "could", "should": "should", "shoud": "should",
+        "must": "must", "may": "may", "might": "might", "will": "will",
+        "would": "would", "shall": "shall",
+    ]
+    private static let grammarGroups = [
+        Set(["a", "an"]),
+        Set(["am", "is", "are", "was", "were", "be", "been", "being"]),
+        Set(["do", "does", "did"]),
+        Set(["have", "has", "had"]),
+    ]
+    private static let safeInsertions = Set([
+        "am", "are", "be", "been", "being", "did", "do", "does", "had", "has",
+        "have", "is", "to", "was", "were",
+    ])
+    private static let contractionCanonical: [[String]: [String]] = [
+        ["arent"]: ["are", "not"], ["aren't"]: ["are", "not"],
+        ["cant"]: ["can", "not"], ["can't"]: ["can", "not"],
+        ["cannot"]: ["can", "not"], ["couldnt"]: ["could", "not"],
+        ["couldn't"]: ["could", "not"], ["didnt"]: ["did", "not"],
+        ["didn't"]: ["did", "not"], ["doesnt"]: ["does", "not"],
+        ["doesn't"]: ["does", "not"], ["dosnt"]: ["does", "not"],
+        ["dont"]: ["do", "not"], ["don't"]: ["do", "not"],
+        ["isnt"]: ["is", "not"], ["isn't"]: ["is", "not"],
+        ["shouldnt"]: ["should", "not"], ["shouldn't"]: ["should", "not"],
+        ["wont"]: ["will", "not"], ["won't"]: ["will", "not"],
+        ["wouldnt"]: ["would", "not"], ["wouldn't"]: ["would", "not"],
+    ]
+
+    private static func canonicalNegations(in text: String) -> [String] {
+        words(in: text).compactMap { negationCanonical[$0] }
+    }
+
+    private static func canonicalModals(in text: String) -> [String] {
+        words(in: text).compactMap { modalCanonical[$0] }
+    }
+
+    private static func lexicallyLocal(original: String, corrected: String) -> Bool {
+        let before = canonicalizedContractions(words(in: original))
+        let after = canonicalizedContractions(words(in: corrected))
+        let operations = alignedOperations(before, after)
+        return operations.allSatisfy { operation in
+            switch operation {
+            case .equal:
+                return true
+            case let .replace(left, right):
+                return sameGrammarGroup(left, right)
+                    || (!changesLexicalNumber(left, right)
+                        && tokenSimilarity(left, right) >= 0.65)
+            case let .insert(token), let .delete(token):
+                return safeInsertions.contains(token)
+            }
+        }
+    }
+
+    private static func canonicalizedContractions(_ tokens: [String]) -> [String] {
+        tokens.flatMap { contractionCanonical[[$0]] ?? [$0] }
+    }
+
+    private static func words(in text: String) -> [String] {
+        guard let expression = try? NSRegularExpression(
+            pattern: #"[A-Za-z]+(?:'[A-Za-z]+)?"#
+        ) else {
+            return []
+        }
+        let source = text as NSString
+        let range = NSRange(location: 0, length: source.length)
+        return expression.matches(in: text, range: range).map {
+            source.substring(with: $0.range).lowercased()
+        }
+    }
+
+    private enum AlignmentOperation {
+        case equal
+        case replace(String, String)
+        case insert(String)
+        case delete(String)
+    }
+
+    private static func alignedOperations(
+        _ before: [String],
+        _ after: [String]
+    ) -> [AlignmentOperation] {
+        var costs = Array(
+            repeating: Array(repeating: 0, count: after.count + 1),
+            count: before.count + 1
+        )
+        for index in 0...before.count { costs[index][0] = index }
+        for index in 0...after.count { costs[0][index] = index }
+        if !before.isEmpty, !after.isEmpty {
+            for left in 1...before.count {
+                for right in 1...after.count {
+                    let substitution = costs[left - 1][right - 1]
+                        + (before[left - 1] == after[right - 1] ? 0 : 1)
+                    costs[left][right] = min(
+                        substitution,
+                        costs[left - 1][right] + 1,
+                        costs[left][right - 1] + 1
+                    )
+                }
+            }
+        }
+
+        var operations: [AlignmentOperation] = []
+        var left = before.count
+        var right = after.count
+        while left > 0 || right > 0 {
+            if left > 0, right > 0,
+               before[left - 1] == after[right - 1],
+               costs[left][right] == costs[left - 1][right - 1] {
+                operations.append(.equal)
+                left -= 1
+                right -= 1
+            } else if left > 0, right > 0,
+                      costs[left][right] == costs[left - 1][right - 1] + 1 {
+                operations.append(.replace(before[left - 1], after[right - 1]))
+                left -= 1
+                right -= 1
+            } else if right > 0,
+                      costs[left][right] == costs[left][right - 1] + 1 {
+                operations.append(.insert(after[right - 1]))
+                right -= 1
+            } else {
+                operations.append(.delete(before[left - 1]))
+                left -= 1
+            }
+        }
+        return operations.reversed()
+    }
+
+    private static func sameGrammarGroup(_ left: String, _ right: String) -> Bool {
+        grammarGroups.contains { $0.contains(left) && $0.contains(right) }
+    }
+
+    private static func changesLexicalNumber(_ left: String, _ right: String) -> Bool {
+        let demonstrativePairs = [
+            Set(["this", "these"]),
+            Set(["that", "those"]),
+        ]
+        if demonstrativePairs.contains(where: { $0.contains(left) && $0.contains(right) }) {
+            return true
+        }
+
+        return isRegularPlural(right, of: left)
+            || isRegularPlural(left, of: right)
+    }
+
+    private static func isRegularPlural(_ candidate: String, of singular: String) -> Bool {
+        if candidate == singular + "s" || candidate == singular + "es" {
+            return true
+        }
+        guard singular.hasSuffix("y"), singular.count > 1 else { return false }
+        return candidate == singular.dropLast() + "ies"
+    }
+
+    private static func tokenSimilarity(_ left: String, _ right: String) -> Double {
+        let maximum = max(left.count, right.count)
+        guard maximum > 0 else { return 1 }
+        return 1 - Double(levenshtein(left, right)) / Double(maximum)
+    }
+
+    private static func levenshtein(_ left: String, _ right: String) -> Int {
+        let leftCharacters = Array(left)
+        let rightCharacters = Array(right)
+        var previous = Array(0...rightCharacters.count)
+        for (leftIndex, leftCharacter) in leftCharacters.enumerated() {
+            var current = [leftIndex + 1]
+            for (rightIndex, rightCharacter) in rightCharacters.enumerated() {
+                current.append(
+                    min(
+                        current[rightIndex] + 1,
+                        previous[rightIndex + 1] + 1,
+                        previous[rightIndex] + (leftCharacter == rightCharacter ? 0 : 1)
+                    )
+                )
+            }
+            previous = current
+        }
+        return previous[rightCharacters.count]
+    }
+}

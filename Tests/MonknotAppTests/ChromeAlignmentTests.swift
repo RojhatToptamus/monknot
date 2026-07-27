@@ -171,7 +171,10 @@ final class ChromeAlignmentTests: XCTestCase {
                     selectTab: { _ in },
                     closeTab: { _ in },
                     togglePinTab: { _ in },
-                    reorderTab: { _, _ in }
+                    reorderTab: { _, _ in },
+                    typingAssistantAvailable: false,
+                    typingAssistantEnabled: false,
+                    toggleTypingAssistant: {}
                 )
                 let host = NSHostingView(rootView: topBar.frame(width: 2_000))
 

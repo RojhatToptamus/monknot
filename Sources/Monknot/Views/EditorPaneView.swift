@@ -8,8 +8,12 @@ struct EditorPaneView: View {
     @Binding var isSplitViewEnabled: Bool
     @AppStorage("Monknot.terminalDrawerWidth") private var terminalDrawerWidth = 420.0
     @StateObject private var terminalSessions = TerminalSessionCollectionStore()
+    @StateObject private var typingAssistant = TypingAssistantSession()
     @State private var markdownCommandSerial = 0
     @State private var markdownCommandRequest: MarkdownTextEditorCommandRequest?
+    @State private var typingAssistantActionSerial = 0
+    @State private var typingAssistantActionRequest:
+        TypingAssistantEditorActionRequest?
     @State private var splitScrollSyncLock = false
     @State private var splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
     @State private var previewSyncLine: Int?
@@ -75,6 +79,7 @@ struct EditorPaneView: View {
             terminalSessions.setDefaultDirectory(activeTerminalDirectory)
         }
         .onChange(of: store.selectedDocument?.id) { oldDocumentID, newDocumentID in
+            typingAssistant.invalidate()
             if let oldDocumentID,
                supportsSplitViewRatioPersistence(forDocumentID: oldDocumentID) {
                 DocumentSplitViewPersistence.setSourcePaneRatio(
@@ -89,6 +94,12 @@ struct EditorPaneView: View {
                 splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
             }
             terminalSessions.setDefaultDirectory(activeTerminalDirectory)
+        }
+        .onChange(of: editorMode) { _, _ in
+            typingAssistant.invalidate()
+        }
+        .onDisappear {
+            typingAssistant.invalidate()
         }
     }
 
@@ -164,6 +175,20 @@ struct EditorPaneView: View {
         VStack(spacing: 0) {
             editorChromePanel
 
+            if typingAssistantIsAvailable {
+                TypingAssistantBar(
+                    session: typingAssistant,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    accept: {
+                        sendTypingAssistantAction(.accept)
+                    },
+                    dismiss: {
+                        typingAssistant.dismissSuggestion()
+                    }
+                )
+            }
+
             editorContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -213,7 +238,12 @@ struct EditorPaneView: View {
             selectTab: selectTab,
             closeTab: closeTab,
             togglePinTab: togglePinTab,
-            reorderTab: reorderTab
+            reorderTab: reorderTab,
+            typingAssistantAvailable: typingAssistantIsAvailable,
+            typingAssistantEnabled: typingAssistant.isEnabled,
+            toggleTypingAssistant: {
+                typingAssistant.isEnabled.toggle()
+            }
         )
     }
 
@@ -223,6 +253,30 @@ struct EditorPaneView: View {
             serial: markdownCommandSerial,
             command: command
         )
+    }
+
+    private func sendTypingAssistantAction(
+        _ action: TypingAssistantEditorAction
+    ) {
+        typingAssistantActionSerial += 1
+        typingAssistantActionRequest = TypingAssistantEditorActionRequest(
+            serial: typingAssistantActionSerial,
+            action: action
+        )
+    }
+
+    private var typingAssistantIsAvailable: Bool {
+        guard let document = store.selectedDocument else { return false }
+        switch document.kind {
+        case .markdown:
+            return editorMode == .source || isSplitViewEnabled
+        case .text:
+            return ["txt", "text"].contains(
+                document.url.pathExtension.lowercased()
+            )
+        case .pdf, .media, .nativePreview, .unsupported:
+            return false
+        }
     }
 
     private func resizableTerminalDrawer(
@@ -452,7 +506,14 @@ struct EditorPaneView: View {
             searchState: $documentSearch,
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
-            }
+            },
+            typingAssistantSuggestion: typingAssistant.suggestion,
+            typingAssistantActionRequest: typingAssistantActionRequest,
+            onTypingEditorChange: handleTypingEditorChange,
+            onTypingSelectionChange: typingAssistant.selectionDidChange,
+            onTypingDismissSuggestion: typingAssistant.dismissSuggestion,
+            onTypingSuggestionApplicationFinished:
+                typingAssistant.suggestionApplicationFinished
         )
         .help(selectedDocument.relativePath)
     }
@@ -496,6 +557,13 @@ struct EditorPaneView: View {
             searchState: $documentSearch,
             commandRequest: markdownCommandRequest,
             wikilinkDocuments: store.markdownDocuments,
+            typingAssistantSuggestion: typingAssistant.suggestion,
+            typingAssistantActionRequest: typingAssistantActionRequest,
+            onTypingEditorChange: handleTypingEditorChange,
+            onTypingSelectionChange: typingAssistant.selectionDidChange,
+            onTypingDismissSuggestion: typingAssistant.dismissSuggestion,
+            onTypingSuggestionApplicationFinished:
+                typingAssistant.suggestionApplicationFinished,
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
             },
@@ -504,6 +572,15 @@ struct EditorPaneView: View {
             }
         )
         .help(selectedDocument.relativePath)
+    }
+
+    private func handleTypingEditorChange(
+        _ snapshot: TypingAssistanceEditorSnapshot
+    ) -> TypingAssistanceTextEdit? {
+        typingAssistant.editorDidChange(
+            snapshot,
+            allowsGenerativeAssistance: typingAssistantIsAvailable
+        )
     }
 
     private func markdownPreviewPane(for selectedDocument: WorkspaceDocument) -> some View {

@@ -119,6 +119,9 @@ gh attestation verify Monknot-0.2.0-alpha.1-macos-arm64.dmg \
 - State that macOS 14 or later is required and identify the two architectures.
 - Note known limitations, including no notarization, automatic updates, or
   iCloud sync.
+- Confirm Flow is disabled by default, uses only its documented loopback
+  endpoint, and leaves editor text unchanged when Ollama is absent or times
+  out.
 
 ## Packaged legal payload
 
@@ -183,9 +186,15 @@ reviewers.
 - App Sandbox is off. Monknot is a local workspace editor with an embedded
   interactive shell and intentionally needs broad access to folders the user
   opens.
-- No network entitlement is required and Monknot stores no AI-provider keys.
+- Monknot stores no AI-provider keys. Optional Flow writing assistance makes
+  HTTP requests only to the loopback Ollama endpoint documented in
+  `docs/TYPING_ASSISTANCE.md`; it does not call a cloud inference API.
 - Markdown preview escapes raw HTML and blocks active URL schemes.
 - HTML preview disables page-authored JavaScript while retaining Monknot’s
   injected search and scroll-sync helpers.
 - `monknot://capture` asks before writing a new inbox note.
 - xterm.js license texts and provenance are included in every release bundle.
+
+Flow is experimental and must not be advertised as production-ready until the
+model-quality, independent-review, and real-user trace gates in the companion
+research repository pass.

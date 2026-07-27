@@ -28,6 +28,9 @@ struct TopNavigationBar: View {
     let closeTab: (String) -> Void
     let togglePinTab: (String) -> Void
     let reorderTab: (String, String?) -> Void
+    let typingAssistantAvailable: Bool
+    let typingAssistantEnabled: Bool
+    let toggleTypingAssistant: () -> Void
     @Environment(\.openSettings) private var openSettings
     @FocusState private var isSearchFocused: Bool
     @State private var isOutlinePresented = false
@@ -187,6 +190,20 @@ struct TopNavigationBar: View {
     @ViewBuilder
     private var trailingActions: some View {
         HStack(spacing: scaled(4)) {
+            if typingAssistantAvailable {
+                ChromeBarButton(
+                    systemImage: "sparkles",
+                    label: typingAssistantEnabled
+                        ? "Turn Off Local Writing Assistance"
+                        : "Turn On Local Writing Assistance",
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    uiFontSize: uiFontSize,
+                    isActive: typingAssistantEnabled,
+                    action: toggleTypingAssistant
+                )
+                .accessibilityValue(typingAssistantEnabled ? "On" : "Off")
+            }
             if isSplitViewEnabled && supportsSplitView {
                 splitViewIndicator
             }
