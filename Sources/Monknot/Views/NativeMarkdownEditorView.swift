@@ -21,6 +21,8 @@ struct NativeMarkdownEditorView: View {
     let onTypingSelectionChange: ((TypingAssistanceEditorSnapshot) -> Void)?
     let onTypingDismissSuggestion: (() -> Void)?
     let onTypingSuggestionApplicationFinished: ((Bool) -> Void)?
+    let onTypingAutomaticApplicationFinished:
+        ((TypingAssistanceEditorSnapshot, Bool) -> Void)?
     let onScrollPositionChange: (DocumentScrollPosition) -> Void
     let onVisibleTopLineChange: ((Int) -> Void)?
 
@@ -48,7 +50,9 @@ struct NativeMarkdownEditorView: View {
                 onTypingSelectionChange: onTypingSelectionChange,
                 onTypingDismissSuggestion: onTypingDismissSuggestion,
                 onTypingSuggestionApplicationFinished:
-                    onTypingSuggestionApplicationFinished
+                    onTypingSuggestionApplicationFinished,
+                onTypingAutomaticApplicationFinished:
+                    onTypingAutomaticApplicationFinished
             )
 
             if text.isEmpty {

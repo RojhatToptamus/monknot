@@ -55,6 +55,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
     let onTypingSelectionChange: ((TypingAssistanceEditorSnapshot) -> Void)?
     let onTypingDismissSuggestion: (() -> Void)?
     let onTypingSuggestionApplicationFinished: ((Bool) -> Void)?
+    let onTypingAutomaticApplicationFinished:
+        ((TypingAssistanceEditorSnapshot, Bool) -> Void)?
 
     init(
         documentID: String,
@@ -79,7 +81,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
         onTypingSelectionChange:
             ((TypingAssistanceEditorSnapshot) -> Void)? = nil,
         onTypingDismissSuggestion: (() -> Void)? = nil,
-        onTypingSuggestionApplicationFinished: ((Bool) -> Void)? = nil
+        onTypingSuggestionApplicationFinished: ((Bool) -> Void)? = nil,
+        onTypingAutomaticApplicationFinished:
+            ((TypingAssistanceEditorSnapshot, Bool) -> Void)? = nil
     ) {
         self.documentID = documentID
         self._text = text
@@ -103,6 +107,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         self.onTypingDismissSuggestion = onTypingDismissSuggestion
         self.onTypingSuggestionApplicationFinished =
             onTypingSuggestionApplicationFinished
+        self.onTypingAutomaticApplicationFinished =
+            onTypingAutomaticApplicationFinished
     }
 
     func makeCoordinator() -> Coordinator {
@@ -155,7 +161,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
             onSelectionChange: onTypingSelectionChange,
             onDismissSuggestion: onTypingDismissSuggestion,
             onSuggestionApplicationFinished:
-                onTypingSuggestionApplicationFinished
+                onTypingSuggestionApplicationFinished,
+            onAutomaticApplicationFinished:
+                onTypingAutomaticApplicationFinished
         )
         _ = context.coordinator.prepareForDocument(documentID, in: scrollView)
         context.coordinator.synchronizeExternalText(
@@ -184,7 +192,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
             onSelectionChange: onTypingSelectionChange,
             onDismissSuggestion: onTypingDismissSuggestion,
             onSuggestionApplicationFinished:
-                onTypingSuggestionApplicationFinished
+                onTypingSuggestionApplicationFinished,
+            onAutomaticApplicationFinished:
+                onTypingAutomaticApplicationFinished
         )
         let visibleOrigin = scrollView.contentView.bounds.origin
 
@@ -311,6 +321,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
             ((TypingAssistanceEditorSnapshot) -> Void)?
         private var onTypingDismissSuggestion: (() -> Void)?
         private var onTypingSuggestionApplicationFinished: ((Bool) -> Void)?
+        private var onTypingAutomaticApplicationFinished:
+            ((TypingAssistanceEditorSnapshot, Bool) -> Void)?
         private var isApplyingTypingAssistantSuggestion = false
         private var undoChangeObservers: [NSObjectProtocol] = []
 
@@ -383,7 +395,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
             onSelectionChange:
                 ((TypingAssistanceEditorSnapshot) -> Void)?,
             onDismissSuggestion: (() -> Void)?,
-            onSuggestionApplicationFinished: ((Bool) -> Void)?
+            onSuggestionApplicationFinished: ((Bool) -> Void)?,
+            onAutomaticApplicationFinished:
+                ((TypingAssistanceEditorSnapshot, Bool) -> Void)? = nil
         ) {
             typingAssistantSuggestion = suggestion
             self.onTypingEditorChange = onEditorChange
@@ -391,6 +405,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
             self.onTypingDismissSuggestion = onDismissSuggestion
             self.onTypingSuggestionApplicationFinished =
                 onSuggestionApplicationFinished
+            self.onTypingAutomaticApplicationFinished =
+                onAutomaticApplicationFinished
         }
 
         func applyTypingAssistantHighlight(
@@ -699,6 +715,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                   edit.range.length >= 0,
                   NSMaxRange(edit.range) <= (textView.string as NSString).length
             else {
+                onTypingAutomaticApplicationFinished?(source, false)
                 return
             }
             let cursorDelta = (edit.replacementText as NSString).length
@@ -707,13 +724,14 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 edit.range.location + (edit.replacementText as NSString).length,
                 source.cursorUTF16Offset + cursorDelta
             )
-            _ = applyRegisteredTextEdit(
+            let accepted = applyRegisteredTextEdit(
                 range: edit.range,
                 replacement: edit.replacementText,
                 selectedRange: NSRange(location: nextCursor, length: 0),
                 actionName: "Correct Typo",
                 in: textView
             )
+            onTypingAutomaticApplicationFinished?(source, accepted)
         }
 
         @discardableResult

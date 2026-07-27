@@ -1,3 +1,4 @@
+import AppKit
 import MonknotCore
 import SwiftUI
 
@@ -92,6 +93,19 @@ struct TypingAssistantBar: View {
                 "Grammar Suggestions",
                 isOn: $session.grammarSuggestionsEnabled
             )
+            Toggle(
+                "Record Local Diagnostics",
+                isOn: $session.telemetryRecordingEnabled
+            )
+            if FileManager.default.fileExists(
+                atPath: session.telemetryFileURL.path
+            ) {
+                Button("Reveal Diagnostics File") {
+                    NSWorkspace.shared.activateFileViewerSelecting([
+                        session.telemetryFileURL
+                    ])
+                }
+            }
             Divider()
             Button(session.isEnabled ? "Turn Off Flow" : "Turn On Flow") {
                 session.isEnabled.toggle()

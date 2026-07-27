@@ -1,6 +1,6 @@
 import Foundation
 
-public enum TypingAssistanceRequestKind: String, Codable, Equatable {
+public enum TypingAssistanceRequestKind: String, Codable, Equatable, Sendable {
     case wordBoundary
     case grammar
     case completion

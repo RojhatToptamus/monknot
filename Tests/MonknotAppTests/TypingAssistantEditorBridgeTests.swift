@@ -120,12 +120,16 @@ final class TypingAssistantEditorBridgeTests: XCTestCase {
         coordinator.documentID = "note.md"
         coordinator.synchronizeExternalText("", documentChanged: true)
         let corrector = TypingAssistanceWordBoundaryCorrector()
+        var automaticAccepted: Bool?
         coordinator.configureTypingAssistance(
             suggestion: nil,
             onEditorChange: { corrector.edit(for: $0) },
             onSelectionChange: { _ in },
             onDismissSuggestion: nil,
-            onSuggestionApplicationFinished: nil
+            onSuggestionApplicationFinished: nil,
+            onAutomaticApplicationFinished: { _, accepted in
+                automaticAccepted = accepted
+            }
         )
 
         textView.insertText(
@@ -134,6 +138,7 @@ final class TypingAssistantEditorBridgeTests: XCTestCase {
         )
         try? await Task.sleep(nanoseconds: 10_000_000)
         XCTAssertEqual(textView.string, "and ")
+        XCTAssertEqual(automaticAccepted, true)
 
         textView.undoManager?.undo()
         XCTAssertEqual(textView.string, "adn ")

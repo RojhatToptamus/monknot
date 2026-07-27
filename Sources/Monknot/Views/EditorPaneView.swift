@@ -513,7 +513,9 @@ struct EditorPaneView: View {
             onTypingSelectionChange: typingAssistant.selectionDidChange,
             onTypingDismissSuggestion: typingAssistant.dismissSuggestion,
             onTypingSuggestionApplicationFinished:
-                typingAssistant.suggestionApplicationFinished
+                typingAssistant.suggestionApplicationFinished,
+            onTypingAutomaticApplicationFinished:
+                typingAssistant.automaticWordCorrectionApplicationFinished
         )
         .help(selectedDocument.relativePath)
     }
@@ -564,6 +566,8 @@ struct EditorPaneView: View {
             onTypingDismissSuggestion: typingAssistant.dismissSuggestion,
             onTypingSuggestionApplicationFinished:
                 typingAssistant.suggestionApplicationFinished,
+            onTypingAutomaticApplicationFinished:
+                typingAssistant.automaticWordCorrectionApplicationFinished,
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
             },

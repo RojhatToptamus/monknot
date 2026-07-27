@@ -23,6 +23,10 @@ final class TypingAssistantSessionTests: XCTestCase {
                 replacementText: "the"
             )
         )
+        session.automaticWordCorrectionApplicationFinished(
+            source: snapshot,
+            accepted: true
+        )
         XCTAssertEqual(session.diagnostics().automaticWordCorrectionCount, 1)
     }
 
@@ -140,8 +144,57 @@ final class TypingAssistantSessionTests: XCTestCase {
         XCTAssertEqual(requestCount, 2)
     }
 
+    func testTelemetryIsOptInAndContainsNoEditorText() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileURL = root.appendingPathComponent("flow.jsonl")
+        let recorder = TypingAssistanceTelemetryRecorder(fileURL: fileURL)
+        let session = makeSession(
+            runtime: FakeTypingAssistantRuntime(),
+            telemetryRecorder: recorder
+        )
+        session.isEnabled = true
+        let sourceText = "private source phrase"
+
+        _ = session.editorDidChange(
+            makeSnapshot(sourceText, revision: 1),
+            allowsGenerativeAssistance: true
+        )
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+        session.dismissSuggestion()
+
+        session.telemetryRecordingEnabled = true
+        _ = session.editorDidChange(
+            makeSnapshot(sourceText, revision: 2),
+            allowsGenerativeAssistance: true
+        )
+        try? await Task.sleep(nanoseconds: 30_000_000)
+
+        let contents = try String(contentsOf: fileURL, encoding: .utf8)
+        XCTAssertFalse(contents.contains(sourceText))
+        XCTAssertFalse(contents.contains("note.md"))
+        XCTAssertTrue(contents.contains("\"noteTextIncluded\":false"))
+        XCTAssertTrue(contents.contains("\"trainingDataProduced\":false"))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let events = try contents.split(separator: "\n").map {
+            try decoder.decode(
+                TypingAssistanceTelemetryEvent.self,
+                from: Data($0.utf8)
+            )
+        }
+        XCTAssertEqual(events.map(\.kind), [.editorChange, .modelResult])
+        XCTAssertTrue(events.allSatisfy { !$0.staleCancellation })
+        XCTAssertNil(events[0].observedPeakModelConcurrency)
+        XCTAssertEqual(events[1].observedPeakModelConcurrency, 1)
+    }
+
     private func makeSession(
-        runtime: FakeTypingAssistantRuntime
+        runtime: FakeTypingAssistantRuntime,
+        telemetryRecorder: TypingAssistanceTelemetryRecorder =
+            TypingAssistanceTelemetryRecorder()
     ) -> TypingAssistantSession {
         let suite = "TypingAssistantSessionTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -149,6 +202,7 @@ final class TypingAssistantSessionTests: XCTestCase {
         return TypingAssistantSession(
             runtime: runtime,
             defaults: defaults,
+            telemetryRecorder: telemetryRecorder,
             pauseNanoseconds: 1_000_000,
             modelBusyRetryNanoseconds: 1_000_000
         )

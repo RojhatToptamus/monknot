@@ -78,6 +78,22 @@ final class TypingAssistantSession: ObservableObject {
         }
     }
     @Published private(set) var phraseCompletionEnabled: Bool
+    @Published var telemetryRecordingEnabled: Bool {
+        didSet {
+            defaults.set(
+                telemetryRecordingEnabled,
+                forKey: Self.telemetryRecordingDefaultsKey
+            )
+            if telemetryRecordingEnabled, participantID == nil {
+                let identifier = UUID().uuidString
+                participantID = identifier
+                defaults.set(
+                    identifier,
+                    forKey: Self.telemetryParticipantDefaultsKey
+                )
+            }
+        }
+    }
 
     private static let enabledDefaultsKey = "Monknot.typingAssistant.enabled"
     private static let wordBoundaryDefaultsKey =
@@ -86,13 +102,20 @@ final class TypingAssistantSession: ObservableObject {
         "Monknot.typingAssistant.grammarEnabled"
     private static let completionDefaultsKey =
         "Monknot.typingAssistant.completionEnabled"
+    private static let telemetryRecordingDefaultsKey =
+        "Monknot.typingAssistant.telemetryRecordingEnabled"
+    private static let telemetryParticipantDefaultsKey =
+        "Monknot.typingAssistant.telemetryParticipantID"
 
     private let runtime: TypingAssistantRuntimeProviding
     private let defaults: UserDefaults
+    private let telemetryRecorder: TypingAssistanceTelemetryRecorder
+    private let telemetrySessionID = UUID().uuidString
     private let pauseNanoseconds: UInt64
     private let modelBusyRetryNanoseconds: UInt64
     private let wordCorrector: TypingAssistanceWordBoundaryCorrector
     private var pendingTask: Task<Void, Never>?
+    private var telemetryWriteTask: Task<Void, Never>?
     private var latestSnapshot: TypingAssistanceEditorSnapshot?
     private var requestGeneration = 0
     private var runtimeDiagnostics: LocalTypingAssistantRuntimeDiagnostics?
@@ -102,10 +125,13 @@ final class TypingAssistantSession: ObservableObject {
     private var acceptedSuggestionCount = 0
     private var dismissedSuggestionCount = 0
     private var automaticWordCorrectionCount = 0
+    private var participantID: String?
 
     init(
         runtime: TypingAssistantRuntimeProviding = LocalTypingAssistantRuntime.shared,
         defaults: UserDefaults = .standard,
+        telemetryRecorder: TypingAssistanceTelemetryRecorder =
+            TypingAssistanceTelemetryRecorder(),
         pauseNanoseconds: UInt64 = 350_000_000,
         modelBusyRetryNanoseconds: UInt64 = 40_000_000,
         wordCorrector: TypingAssistanceWordBoundaryCorrector =
@@ -113,6 +139,7 @@ final class TypingAssistantSession: ObservableObject {
     ) {
         self.runtime = runtime
         self.defaults = defaults
+        self.telemetryRecorder = telemetryRecorder
         self.pauseNanoseconds = pauseNanoseconds
         self.modelBusyRetryNanoseconds = modelBusyRetryNanoseconds
         self.wordCorrector = wordCorrector
@@ -131,7 +158,21 @@ final class TypingAssistantSession: ObservableObject {
             : defaults.bool(forKey: Self.grammarDefaultsKey)
         phraseCompletionEnabled = false
         defaults.set(false, forKey: Self.completionDefaultsKey)
+        telemetryRecordingEnabled = defaults.bool(
+            forKey: Self.telemetryRecordingDefaultsKey
+        )
+        participantID = defaults.string(
+            forKey: Self.telemetryParticipantDefaultsKey
+        )
         status = enabled ? .idle : .disabled
+        if telemetryRecordingEnabled, participantID == nil {
+            let identifier = UUID().uuidString
+            participantID = identifier
+            defaults.set(
+                identifier,
+                forKey: Self.telemetryParticipantDefaultsKey
+            )
+        }
     }
 
     deinit {
@@ -142,6 +183,8 @@ final class TypingAssistantSession: ObservableObject {
         _ snapshot: TypingAssistanceEditorSnapshot,
         allowsGenerativeAssistance: Bool
     ) -> TypingAssistanceTextEdit? {
+        let dispatchStarted = Date()
+        let supersededWork = pendingTask != nil || suggestion != nil
         latestSnapshot = snapshot
         requestGeneration += 1
         pendingTask?.cancel()
@@ -158,8 +201,21 @@ final class TypingAssistantSession: ObservableObject {
         if allowsGenerativeAssistance,
            wordBoundaryCorrectionEnabled,
            let edit = wordCorrector.edit(for: snapshot) {
-            automaticWordCorrectionCount += 1
             status = .idle
+            recordTelemetry(
+                kind: .editorChange,
+                inputText: snapshot.text,
+                requestKind: .wordBoundary,
+                result: nil,
+                dispatchMilliseconds: elapsedMilliseconds(
+                    since: dispatchStarted
+                ),
+                suggestionShown: false,
+                automaticApplication: false,
+                accepted: false,
+                staleCancellation: supersededWork,
+                editorTextUnchanged: true
+            )
             return edit
         }
 
@@ -170,6 +226,20 @@ final class TypingAssistantSession: ObservableObject {
               ) != nil
         else {
             status = .idle
+            recordTelemetry(
+                kind: .editorChange,
+                inputText: snapshot.text,
+                requestKind: nil,
+                result: nil,
+                dispatchMilliseconds: elapsedMilliseconds(
+                    since: dispatchStarted
+                ),
+                suggestionShown: false,
+                automaticApplication: false,
+                accepted: false,
+                staleCancellation: supersededWork,
+                editorTextUnchanged: true
+            )
             return nil
         }
 
@@ -187,6 +257,20 @@ final class TypingAssistantSession: ObservableObject {
                 generation: generation
             )
         }
+        recordTelemetry(
+            kind: .editorChange,
+            inputText: snapshot.text,
+            requestKind: .grammar,
+            result: nil,
+            dispatchMilliseconds: elapsedMilliseconds(
+                since: dispatchStarted
+            ),
+            suggestionShown: false,
+            automaticApplication: false,
+            accepted: false,
+            staleCancellation: supersededWork,
+            editorTextUnchanged: true
+        )
         return nil
     }
 
@@ -229,7 +313,8 @@ final class TypingAssistantSession: ObservableObject {
             await receive(
                 result,
                 source: snapshot,
-                generation: generation
+                generation: generation,
+                requestKind: .completion
             )
         }
     }
@@ -240,14 +325,30 @@ final class TypingAssistantSession: ObservableObject {
     }
 
     func dismissSuggestion() {
-        if suggestion != nil {
+        let dismissed = suggestion
+        if dismissed != nil {
             dismissedSuggestionCount += 1
         }
         suggestion = nil
         status = isEnabled ? .idle : .disabled
+        if let dismissed {
+            recordTelemetry(
+                kind: .suggestionDismissed,
+                inputText: dismissed.sourceText,
+                requestKind: dismissed.requestKind,
+                result: nil,
+                dispatchMilliseconds: nil,
+                suggestionShown: true,
+                automaticApplication: false,
+                accepted: false,
+                staleCancellation: false,
+                editorTextUnchanged: true
+            )
+        }
     }
 
     func suggestionApplicationFinished(accepted: Bool) {
+        let applied = suggestion
         if accepted {
             acceptedSuggestionCount += 1
         } else {
@@ -255,6 +356,41 @@ final class TypingAssistantSession: ObservableObject {
         }
         suggestion = nil
         status = isEnabled ? .idle : .disabled
+        if let applied {
+            recordTelemetry(
+                kind: .suggestionAccepted,
+                inputText: applied.sourceText,
+                requestKind: applied.requestKind,
+                result: nil,
+                dispatchMilliseconds: nil,
+                suggestionShown: true,
+                automaticApplication: false,
+                accepted: accepted,
+                staleCancellation: !accepted,
+                editorTextUnchanged: !accepted
+            )
+        }
+    }
+
+    func automaticWordCorrectionApplicationFinished(
+        source: TypingAssistanceEditorSnapshot,
+        accepted: Bool
+    ) {
+        if accepted {
+            automaticWordCorrectionCount += 1
+        }
+        recordTelemetry(
+            kind: .automaticCorrection,
+            inputText: source.text,
+            requestKind: .wordBoundary,
+            result: nil,
+            dispatchMilliseconds: nil,
+            suggestionShown: false,
+            automaticApplication: accepted,
+            accepted: accepted,
+            staleCancellation: !accepted,
+            editorTextUnchanged: !accepted
+        )
     }
 
     func invalidate() {
@@ -322,23 +458,44 @@ final class TypingAssistantSession: ObservableObject {
             )
             return
         }
-        await receive(result, source: snapshot, generation: generation)
+        await receive(
+            result,
+            source: snapshot,
+            generation: generation,
+            requestKind: .grammar
+        )
     }
 
     private func receive(
         _ result: LocalTypingAssistantRuntimeResult,
         source: TypingAssistanceEditorSnapshot,
-        generation: Int
+        generation: Int,
+        requestKind: TypingAssistanceRequestKind
     ) async {
         runtimeDiagnostics = await runtime.diagnostics()
         latestRoute = result.route
         latestLatencyMilliseconds = result.latencyMilliseconds
         latestSuppressionReason = result.suppressionReason
+        if generation == requestGeneration {
+            pendingTask = nil
+        }
 
         guard generation == requestGeneration,
               latestSnapshot == source
         else {
             staleResultCount += 1
+            recordTelemetry(
+                kind: .staleResult,
+                inputText: source.text,
+                requestKind: requestKind,
+                result: result,
+                dispatchMilliseconds: nil,
+                suggestionShown: false,
+                automaticApplication: false,
+                accepted: false,
+                staleCancellation: true,
+                editorTextUnchanged: true
+            )
             return
         }
 
@@ -351,6 +508,24 @@ final class TypingAssistantSession: ObservableObject {
         } else {
             status = .fallback(result.route)
         }
+        recordTelemetry(
+            kind: .modelResult,
+            inputText: requestKind == .completion
+                ? TypingAssistanceContextExtractor.completionContext(
+                    for: source
+                )?.text ?? source.text
+                : TypingAssistanceContextExtractor.correctionContext(
+                    for: source
+                )?.text ?? source.text,
+            requestKind: requestKind,
+            result: result,
+            dispatchMilliseconds: nil,
+            suggestionShown: result.suggestion != nil,
+            automaticApplication: false,
+            accepted: false,
+            staleCancellation: false,
+            editorTextUnchanged: true
+        )
     }
 
     private func matchesCurrentSnapshot(
@@ -370,5 +545,88 @@ final class TypingAssistantSession: ObservableObject {
         pendingTask = nil
         suggestion = nil
         status = isEnabled ? .idle : .disabled
+    }
+
+    var telemetryFileURL: URL {
+        telemetryRecorder.fileURL
+    }
+
+    private func recordTelemetry(
+        kind: TypingAssistanceTelemetryEventKind,
+        inputText: String,
+        requestKind: TypingAssistanceRequestKind?,
+        result: LocalTypingAssistantRuntimeResult?,
+        dispatchMilliseconds: Double?,
+        suggestionShown: Bool,
+        automaticApplication: Bool,
+        accepted: Bool,
+        staleCancellation: Bool,
+        editorTextUnchanged: Bool
+    ) {
+        guard telemetryRecordingEnabled, let participantID else { return }
+        let route = result?.route
+        let event = TypingAssistanceTelemetryEvent(
+            participantID: participantID,
+            sessionID: telemetrySessionID,
+            kind: kind,
+            requestKind: requestKind,
+            inputCategory: TypingAssistanceInputCategory.classify(inputText),
+            route: route?.rawValue,
+            path: telemetryPath(for: route),
+            timeoutResult: telemetryTimeout(for: route),
+            fallbackResult: telemetryFallback(for: route),
+            dispatchMilliseconds: dispatchMilliseconds,
+            modelLatencyMilliseconds: result?.latencyMilliseconds,
+            suggestionShown: suggestionShown,
+            automaticApplication: automaticApplication,
+            accepted: accepted,
+            staleCancellation: staleCancellation,
+            editorTextUnchanged: editorTextUnchanged,
+            observedPeakModelConcurrency: result == nil
+                ? nil
+                : runtimeDiagnostics?.observedPeakModelConcurrency
+        )
+        let previousWrite = telemetryWriteTask
+        let recorder = telemetryRecorder
+        telemetryWriteTask = Task {
+            await previousWrite?.value
+            try? await recorder.append(event)
+        }
+    }
+
+    private func telemetryPath(
+        for route: LocalTypingAssistantRoute?
+    ) -> String {
+        switch route {
+        case .unloadedBackgroundWarmup, .probeFailure:
+            return "background"
+        case nil:
+            return "none"
+        default:
+            return "foreground"
+        }
+    }
+
+    private func telemetryTimeout(
+        for route: LocalTypingAssistantRoute?
+    ) -> String {
+        route == .foregroundTimeout ? "foregroundTimeout" : "notTimedOut"
+    }
+
+    private func telemetryFallback(
+        for route: LocalTypingAssistantRoute?
+    ) -> String {
+        switch route {
+        case .loadedForeground:
+            return "notFallback"
+        case nil:
+            return "notFallback"
+        default:
+            return "noSuggestion"
+        }
+    }
+
+    private func elapsedMilliseconds(since started: Date) -> Double {
+        Date().timeIntervalSince(started) * 1_000
     }
 }

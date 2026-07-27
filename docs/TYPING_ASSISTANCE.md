@@ -40,6 +40,24 @@ installed. If the model is unloaded, Monknot returns no suggestion immediately
 and warms it in the background. Probe failures and foreground or background
 timeouts also return no suggestion.
 
+## Local diagnostics
+
+Flow can record opt-in diagnostics to:
+
+```text
+~/Library/Application Support/Monknot/flow-telemetry.jsonl
+```
+
+Recording is disabled by default and can be enabled from the Flow settings menu. The
+records contain an opaque install identifier, an ephemeral session identifier, event
+and input-length categories, routes, timing, acceptance, cancellation, concurrency,
+and fallback invariants. They do not contain note text, suggestion text, paths,
+document identifiers, hidden-regression content, or training data. Writes are ordered
+and asynchronous so the editor typing path does not wait for file I/O.
+
+This local file is runtime evidence only. It does not prove consent, real-user origin,
+human review, usefulness, or production readiness.
+
 ## Release status
 
 The current Qwen profile is a failed research baseline, not an approved product

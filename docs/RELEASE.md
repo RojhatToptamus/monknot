@@ -122,6 +122,8 @@ gh attestation verify Monknot-0.2.0-alpha.1-macos-arm64.dmg \
 - Confirm Flow is disabled by default, uses only its documented loopback
   endpoint, and leaves editor text unchanged when Ollama is absent or times
   out.
+- Confirm Flow diagnostics remain disabled by default and that enabled records contain
+  no note text, suggestion text, file path, or document identifier.
 
 ## Packaged legal payload
 
