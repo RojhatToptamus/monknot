@@ -16,35 +16,45 @@ struct MarkdownSymbolQuickOpenView: View {
     }
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.28)
-                .ignoresSafeArea()
-                .onTapGesture(perform: close)
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.opacity(0.28)
+                    .ignoresSafeArea()
+                    .onTapGesture(perform: close)
 
-            VStack(spacing: 0) {
-                searchField
+                VStack(spacing: 0) {
+                    searchField
 
-                Divider()
-                    .overlay(theme.borderColor)
+                    Divider()
+                        .overlay(theme.borderColor)
 
-                resultBody
+                    resultBody
+                }
+                .frame(width: max(1, min(scaled(520), geometry.size.width - scaled(32))))
+                .frame(height: max(1, min(panelHeight, geometry.size.height - scaled(32))))
+                .background(
+                    RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
+                        .fill(theme.surfaceColor)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
+                        .strokeBorder(theme.borderColor, lineWidth: 1)
+                }
+                .shadow(color: .black.opacity(0.18), radius: scaled(18), y: scaled(8))
             }
-            .frame(width: scaled(520))
-            .frame(maxHeight: scaled(380))
-            .background(
-                RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
-                    .fill(theme.surfaceColor)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
-                    .strokeBorder(theme.borderColor, lineWidth: 1)
-            }
-            .shadow(color: .black.opacity(0.18), radius: scaled(18), y: scaled(8))
         }
         .onAppear { focusSearchField() }
         .onChange(of: state.focusSerial) { _, _ in
             focusSearchField()
         }
+    }
+
+    private var panelHeight: CGFloat {
+        let visibleRows = min(max(state.matches.count, 1), 8)
+        let resultHeight = state.matches.isEmpty
+            ? CGFloat(54)
+            : CGFloat(visibleRows) * 38 + 12
+        return min(scaled(380), scaled(52 + resultHeight))
     }
 
     private var searchField: some View {

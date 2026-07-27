@@ -339,8 +339,8 @@ struct ContentView: View {
             newMarkdown: { store.createMarkdownFile() },
             bootstrapStarterWorkspace: { store.bootstrapStarterWorkspace() },
             openFolder: openFolderPanel,
-            toggleTerminal: toggleTerminalDrawer,
-            toggleSidebar: toggleSidebar,
+            toggleTerminal: { toggleTerminalDrawer(animated: true) },
+            toggleSidebar: { toggleSidebar(animated: true) },
             outlineItems: outlineStore.items,
             selectOutlineItem: openOutlineItem(_:),
             toggleSplitView: toggleMarkdownSplitView,
@@ -603,6 +603,12 @@ struct ContentView: View {
 
     private func closeActiveTab() {
         guard let selectedDocumentID = tabState.selectedDocumentID else { return }
+
+        if tabState.tab(for: selectedDocumentID)?.isPinned == true {
+            togglePinTab(id: selectedDocumentID)
+            return
+        }
+
         closeTab(id: selectedDocumentID)
     }
 
@@ -863,8 +869,8 @@ struct ContentView: View {
             canShowQuickOpen: store.workspaceURL != nil && !store.isBusy,
             findNext: { documentSearch.findNext() },
             findPrevious: { documentSearch.findPrevious() },
-            toggleTerminal: { toggleTerminalDrawer() },
-            toggleSidebar: { toggleSidebar() },
+            toggleTerminal: { toggleTerminalDrawer(animated: false) },
+            toggleSidebar: { toggleSidebar(animated: false) },
             toggleSplitView: { toggleMarkdownSplitView() },
             canToggleSplitView: canToggleMarkdownSplitView,
             undoWorkspaceReplace: { store.undoLastWorkspaceReplace() },
@@ -1052,9 +1058,9 @@ struct ContentView: View {
         case .importPasteboard:
             _ = pasteFromCommand()
         case .toggleTerminal:
-            toggleTerminalDrawer()
+            toggleTerminalDrawer(animated: false)
         case .toggleSidebar:
-            toggleSidebar()
+            toggleSidebar(animated: false)
         case .undoPDFAnnotation:
             pdfUndoCommandSerial += 1
         case .redoPDFAnnotation:
@@ -1132,7 +1138,7 @@ struct ContentView: View {
 
     private func showWorkspaceSearch() {
         guard store.workspaceURL != nil else { return }
-        setSidebarVisibility(.all)
+        setSidebarVisibility(.all, animated: false)
         workspaceSearch.present(documents: store.documents)
     }
 
@@ -1186,29 +1192,45 @@ struct ContentView: View {
         )
     }
 
-    private func toggleTerminalDrawer() {
-        withAnimation(MonknotMotion.sidebarTransition(reduceMotion: reduceMotion)) {
+    private func toggleTerminalDrawer(animated: Bool) {
+        updateChromeState(animated: animated) {
             isTerminalDrawerOpen.toggle()
         }
     }
 
+    private func toggleSidebar(animated: Bool) {
+        setSidebarVisibility(
+            sidebarVisibility == .detailOnly ? .all : .detailOnly,
+            animated: animated
+        )
+    }
+
+    private func setSidebarVisibility(
+        _ visibility: NavigationSplitViewVisibility,
+        animated: Bool
+    ) {
+        updateChromeState(animated: animated) {
+            sidebarVisibility = visibility
+        }
+    }
+
+    private func updateChromeState(animated: Bool, updates: () -> Void) {
+        if animated && !reduceMotion {
+            withAnimation(MonknotMotion.sidebarTransition, updates)
+        } else {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction, updates)
+        }
+    }
+
     /// Single source of truth for the chrome row height (in points). The
-    /// same formula is mirrored by SwiftUI chrome views (`scaled(44)`),
-    /// so the AppKit unified toolbar and the SwiftUI chrome stay in
-    /// lockstep when the user changes zoom or font size.
+    /// same metric drives the AppKit unified toolbar and the SwiftUI chrome,
+    /// keeping them in lockstep when the user changes zoom or font size.
     private var nativeChromeHeight: CGFloat {
         MonknotMetrics.chromeHeight(theme: activeTheme, zoomScale: zoomScale)
     }
 
-    private func toggleSidebar() {
-        setSidebarVisibility(sidebarVisibility == .detailOnly ? .all : .detailOnly)
-    }
-
-    private func setSidebarVisibility(_ visibility: NavigationSplitViewVisibility) {
-        withAnimation(MonknotMotion.sidebarTransition(reduceMotion: reduceMotion)) {
-            sidebarVisibility = visibility
-        }
-    }
 }
 
 struct WindowNavigationControls: View {

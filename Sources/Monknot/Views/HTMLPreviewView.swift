@@ -32,7 +32,9 @@ struct HTMLPreviewView: NSViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
-        webView.setValue(false, forKey: "drawsBackground")
+        // Keep WebKit's normal page-derived background. Making this view
+        // transparent can turn otherwise valid dark text invisible when
+        // Monknot itself uses a dark appearance.
         return webView
     }
 

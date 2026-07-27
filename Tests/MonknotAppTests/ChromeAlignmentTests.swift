@@ -6,6 +6,11 @@ import XCTest
 
 @MainActor
 final class ChromeAlignmentTests: XCTestCase {
+    func testReducedMotionDisablesSidebarAndDrawerMovement() {
+        XCTAssertNil(MonknotMotion.sidebarTransition(reduceMotion: true))
+        XCTAssertNotNil(MonknotMotion.sidebarTransition(reduceMotion: false))
+    }
+
     func testDisabledWindowNavigationAvoidsDoubleAttenuation() {
         let size = MonknotIconButton.IconButtonSize.windowNavigation
 
@@ -43,6 +48,75 @@ final class ChromeAlignmentTests: XCTestCase {
         }
     }
 
+    func testPrimaryChromeKeepsCompactBalancedInsetsAcrossThemesAndZooms() {
+        for theme in [AppTheme.codexLight, AppTheme.codexDark] {
+            for zoomStep in 7...30 {
+                let zoomScale = Double(zoomStep) / 10
+                let chromeHeight = MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
+                let buttonDimension = MonknotMetrics.chromeButtonDimension(
+                    theme: theme,
+                    zoomScale: zoomScale
+                )
+                let verticalInset = (chromeHeight - buttonDimension) / 2
+
+                XCTAssertEqual(
+                    chromeHeight,
+                    MonknotMetrics.chromeSecondaryHeight(theme: theme, zoomScale: zoomScale),
+                    accuracy: 0.001,
+                    "Primary and secondary chrome drifted at zoom \(zoomScale)"
+                )
+                XCTAssertGreaterThanOrEqual(verticalInset, 0)
+                XCTAssertLessThanOrEqual(
+                    verticalInset,
+                    MonknotMetrics.scale(
+                        MonknotMetrics.Spacing.xs,
+                        theme: theme,
+                        zoomScale: zoomScale
+                    ) + 0.5,
+                    "Primary chrome regained excessive vertical padding at zoom \(zoomScale)"
+                )
+            }
+        }
+    }
+
+    func testSegmentButtonsMatchSharedToolbarButtonSizeAcrossThemesAndZooms() {
+        for theme in [AppTheme.codexLight, AppTheme.codexDark] {
+            for zoomStep in 7...30 {
+                let zoomScale = Double(zoomStep) / 10
+                let segment = MonknotSegmentButton(
+                    systemImage: "text.alignleft",
+                    accessibilityLabel: "Write",
+                    isSelected: true,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    action: {}
+                )
+                let toolbarButton = MonknotIconButton(
+                    systemImage: "sidebar.right",
+                    label: "Show Right Drawer",
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    action: {}
+                )
+                let segmentHost = NSHostingView(rootView: segment)
+                let toolbarButtonHost = NSHostingView(rootView: toolbarButton)
+
+                XCTAssertEqual(
+                    segmentHost.fittingSize.width,
+                    toolbarButtonHost.fittingSize.width,
+                    accuracy: 0.01,
+                    "Segment width diverged from toolbar buttons at zoom \(zoomScale)"
+                )
+                XCTAssertEqual(
+                    segmentHost.fittingSize.height,
+                    toolbarButtonHost.fittingSize.height,
+                    accuracy: 0.01,
+                    "Segment height diverged from toolbar buttons at zoom \(zoomScale)"
+                )
+            }
+        }
+    }
+
     func testWindowNavigationHoverIsMoreProminentThanStandardChromeHover() {
         let navigationSize = MonknotIconButton.IconButtonSize.windowNavigation
         let chromeSize = MonknotIconButton.IconButtonSize.chrome
@@ -52,6 +126,30 @@ final class ChromeAlignmentTests: XCTestCase {
                 navigationSize.hoverBackgroundOpacity(isDark: isDark),
                 chromeSize.hoverBackgroundOpacity(isDark: isDark)
             )
+        }
+    }
+
+    func testChromeButtonsOnlyDrawBackgroundWhileEnabledAndHovered() {
+        for size in [
+            MonknotIconButton.IconButtonSize.chrome,
+            .windowNavigation,
+            .compact,
+            .findBar
+        ] {
+            for isDark in [false, true] {
+                XCTAssertNil(
+                    size.backgroundOpacity(isHovered: false, isDisabled: false, isDark: isDark),
+                    "Idle controls must not create a background"
+                )
+                XCTAssertNil(
+                    size.backgroundOpacity(isHovered: true, isDisabled: true, isDark: isDark),
+                    "Disabled controls must not create a hover background"
+                )
+                XCTAssertNotNil(
+                    size.backgroundOpacity(isHovered: true, isDisabled: false, isDark: isDark),
+                    "Enabled controls should retain a hover affordance"
+                )
+            }
         }
     }
 

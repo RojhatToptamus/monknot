@@ -15,14 +15,6 @@ struct AppearanceSettingsView: View {
         nonmutating set { themePreferenceRawValue = newValue.rawValue }
     }
 
-    private var draftLightTheme: AppTheme {
-        lightDraft.applied(to: themeStore.presetTheme(for: .light))
-    }
-
-    private var draftDarkTheme: AppTheme {
-        darkDraft.applied(to: themeStore.presetTheme(for: .dark))
-    }
-
     private var activeSlot: ThemeSlot {
         themeStore.activeSlot(
             themePreference: themePreference,
@@ -33,14 +25,7 @@ struct AppearanceSettingsView: View {
     var body: some View {
         MonknotScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                appearanceModeCard
-
-                SettingsGroupCard(theme: uiTheme) {
-                    CodePreviewCard(chromeTheme: uiTheme, lightTheme: draftLightTheme, darkTheme: draftDarkTheme)
-                        .padding(12)
-                }
-
-                editorSlotCard
+                appearanceControlsCard
 
                 selectedThemeEditor
             }
@@ -64,9 +49,9 @@ struct AppearanceSettingsView: View {
         darkDraft = themeStore.configuration(for: .dark)
     }
 
-    private var appearanceModeCard: some View {
+    private var appearanceControlsCard: some View {
         SettingsGroupCard(theme: uiTheme) {
-            SettingsRow(theme: uiTheme, title: "Theme", detail: "Use light, dark, or match your system", showsDivider: false) {
+            SettingsRow(theme: uiTheme, title: "Appearance", detail: "Use light, dark, or match your system") {
                 MonknotSettingsSegmentedControl(
                     options: ThemePreference.allCases.map { pref in
                         MonknotSettingsSegment(id: pref.rawValue, title: pref.title)
@@ -81,11 +66,7 @@ struct AppearanceSettingsView: View {
                 )
                 .frame(maxWidth: 268)
             }
-        }
-    }
 
-    private var editorSlotCard: some View {
-        SettingsGroupCard(theme: uiTheme) {
             SettingsRow(theme: uiTheme, title: "Customize", detail: "Choose the light or dark theme slot to edit", showsDivider: false) {
                 MonknotSettingsSegmentedControl(
                     options: ThemeSlot.allCases.map { slot in
@@ -217,6 +198,14 @@ private struct ThemeEditorSection: View {
 
             Spacer(minLength: 12)
 
+            MonknotSettingsMenuPicker(
+                title: "Theme preset",
+                selection: selectedThemeID,
+                options: slot.themes.map { ($0.id, $0.name) },
+                theme: uiTheme
+            )
+            .frame(minWidth: 160)
+
             SettingsOutlineButton(title: "Reset", theme: uiTheme, isDisabled: !canReset) {
                 themeStore.reset(slot)
                 draft = themeStore.configuration(for: slot)
@@ -231,14 +220,6 @@ private struct ThemeEditorSection: View {
                 themeStore.save(draft, for: slot)
                 draft = themeStore.configuration(for: slot)
             }
-
-            MonknotSettingsMenuPicker(
-                title: "Theme preset",
-                selection: selectedThemeID,
-                options: slot.themes.map { ($0.id, $0.name) },
-                theme: uiTheme
-            )
-            .frame(minWidth: 160)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 13)
@@ -248,70 +229,5 @@ private struct ThemeEditorSection: View {
                 .frame(height: 1)
                 .padding(.leading, 18)
         }
-    }
-}
-
-// MARK: - Code Preview
-
-private struct CodePreviewCard: View {
-    let chromeTheme: AppTheme
-    let lightTheme: AppTheme
-    let darkTheme: AppTheme
-
-    var body: some View {
-        HStack(spacing: 0) {
-            codePane(theme: lightTheme, surface: "sidebar", contrast: lightTheme.contrast)
-            Rectangle()
-                .fill(chromeTheme.borderColor)
-                .frame(width: 1)
-            codePane(theme: darkTheme, surface: "sidebar-editor", contrast: darkTheme.contrast)
-        }
-        .frame(height: 176)
-        .clipShape(RoundedRectangle(cornerRadius: chromeTheme.settingsControlCornerRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: chromeTheme.settingsControlCornerRadius)
-                .strokeBorder(chromeTheme.borderColor.opacity(0.92), lineWidth: 1)
-        )
-    }
-
-    private func codePane(theme: AppTheme, surface: String, contrast: Double) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            codeLine(n: "1", text: "const themePreview: Theme = {", color: Color(hex: theme.codeKeyword), theme: theme)
-            highlightedLine(theme: theme) {
-                codeLine(n: "2", text: "  surface: \"\(surface)\",", color: Color(hex: theme.codeBuiltin), theme: theme)
-            }
-            highlightedLine(theme: theme) {
-                codeLine(n: "3", text: "  accent: \"\(theme.accent)\",", color: Color(hex: theme.codeString), theme: theme)
-            }
-            highlightedLine(theme: theme) {
-                codeLine(n: "4", text: "  contrast: \(Int(contrast.rounded())),", color: Color(hex: theme.codeNumber), theme: theme)
-            }
-            codeLine(n: "5", text: "};", color: theme.mutedForegroundColor, theme: theme)
-            Spacer()
-        }
-        .font(.system(size: 13, weight: .regular, design: .monospaced))
-        .lineSpacing(1)
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(theme.surfaceColor)
-    }
-
-    private func highlightedLine<Content: View>(theme: AppTheme, @ViewBuilder content: () -> Content) -> some View {
-        content()
-            .padding(.vertical, 1)
-            .background(Color(hex: theme.selectionBackground).opacity(theme.isDark ? 0.38 : 0.28))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-    }
-
-    private func codeLine(n: String, text: String, color: Color, theme: AppTheme) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(n)
-                .foregroundStyle(theme.mutedForegroundColor)
-                .frame(width: 18, alignment: .trailing)
-            Text(text)
-                .foregroundStyle(color)
-                .lineLimit(1)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

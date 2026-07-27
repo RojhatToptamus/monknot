@@ -119,6 +119,7 @@ expect(action("0", [.command]) == .resetZoom, "Command-0 should reset zoom")
 expect(action("j", [.command, .option]) == .toggleTerminal, "Option-Command-J should toggle the terminal")
 expect(action("s", [.command, .control]) == .toggleSidebar, "Control-Command-S should toggle the sidebar")
 expect(action("o", [.command]) == .openFolder, "Command-O should open a folder")
+expect(action("?", [.shift]) == .showKeyboardShortcutsHelp, "Question mark should open keyboard shortcuts help")
 expect(action("a", [.command], context: context(selectedDocumentKind: .markdown)) == nil, "Command-A should remain a native Select All shortcut")
 expect(action("f", [.control], context: context(selectedDocumentKind: .markdown)) == nil, "Control-F should remain a native text movement shortcut")
 expect(

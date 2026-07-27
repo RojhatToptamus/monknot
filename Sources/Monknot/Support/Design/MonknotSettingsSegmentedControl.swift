@@ -105,9 +105,6 @@ struct MonknotSettingsMenuPicker: View {
                     .font(MonknotTypography.settingsButton(theme: theme))
                     .foregroundStyle(theme.foregroundColor)
                     .lineLimit(1)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(theme.mutedForegroundColor)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)

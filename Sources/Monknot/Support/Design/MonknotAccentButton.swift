@@ -16,18 +16,36 @@ struct MonknotAccentButton: View {
     var isDisabled: Bool = false
     let action: () -> Void
 
+    @State private var isHovered = false
+
     var body: some View {
         Button(title, action: action)
             .font(MonknotTypography.settingsButton(theme: theme))
-            .foregroundStyle(theme.onAccentForegroundColor.opacity(isDisabled ? 0.5 : 1))
+            .foregroundStyle(
+                isDisabled
+                    ? theme.mutedForegroundColor.opacity(0.72)
+                    : theme.onAccentForegroundColor
+            )
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius)
-                    .fill(theme.accentColor.opacity(isDisabled ? 0.45 : 1))
+                    .fill(
+                        isDisabled
+                            ? theme.insetFillColor
+                            : theme.accentColor.opacity(isHovered ? 0.9 : 1)
+                    )
             )
+            .overlay {
+                if isDisabled {
+                    RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius)
+                        .strokeBorder(theme.borderColor, lineWidth: 1)
+                }
+            }
             .buttonStyle(.plain)
             .disabled(isDisabled)
+            .onHover { isHovered = $0 }
+            .animation(MonknotMotion.hoverAnimation, value: isHovered)
             .monknotPointerCursor(enabled: !isDisabled)
     }
 }

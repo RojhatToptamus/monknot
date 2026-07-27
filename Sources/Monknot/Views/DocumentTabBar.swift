@@ -180,7 +180,7 @@ private struct DocumentTabItemView: View {
                     }
 
                     Text(compactDisplayName)
-                        .font(.system(size: scaled(12), weight: isSelected ? .medium : .regular))
+                        .font(.system(size: scaled(12), weight: .regular))
                         .foregroundStyle(textColor)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -269,7 +269,7 @@ private struct DocumentTabItemView: View {
         if isSelected {
             Rectangle()
                 .fill(theme.accentColor)
-                .frame(height: scaled(2))
+                .frame(height: max(1, scaled(1)))
                 .padding(.horizontal, scaled(4))
         }
     }

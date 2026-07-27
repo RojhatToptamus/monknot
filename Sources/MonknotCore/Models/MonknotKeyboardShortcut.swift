@@ -143,7 +143,10 @@ public enum MonknotKeyboardShortcutRouter {
             return context.isDocumentSearchPresented ? .dismissDocumentSearch : nil
         }
 
-        if modifiers.isEmpty, key == "?" {
+        let isKeyboardHelpShortcut =
+            (modifiers.isEmpty && key == "?")
+            || (modifiers == [.shift] && (key == "?" || key == "/"))
+        if isKeyboardHelpShortcut {
             return context.isKeyboardShortcutsHelpPresented ? nil : .showKeyboardShortcutsHelp
         }
 

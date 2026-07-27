@@ -82,7 +82,11 @@ if ! command -v xcrun >/dev/null 2>&1; then
   exit 69
 fi
 
-pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+# A build-only invocation must not interrupt someone using an existing bundle.
+case "$MODE" in
+  --build|build) ;;
+  *) pkill -x "$APP_NAME" >/dev/null 2>&1 || true ;;
+esac
 
 cd "$ROOT_DIR"
 mkdir -p "$BUILD_DIR" "$MODULE_CACHE_DIR" "$APP_MACOS" "$APP_RESOURCES" "$APP_FRAMEWORKS"

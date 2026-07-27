@@ -231,6 +231,14 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
             action(for: "?", modifiers: [], context: shortcutContext()),
             .showKeyboardShortcutsHelp
         )
+        XCTAssertEqual(
+            action(for: "?", modifiers: [.shift], context: shortcutContext()),
+            .showKeyboardShortcutsHelp
+        )
+        XCTAssertEqual(
+            action(for: "/", modifiers: [.shift], context: shortcutContext()),
+            .showKeyboardShortcutsHelp
+        )
         XCTAssertNil(
             action(
                 for: "?",

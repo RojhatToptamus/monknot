@@ -16,30 +16,32 @@ struct WorkspaceQuickOpenView: View {
     }
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.28)
-                .ignoresSafeArea()
-                .onTapGesture(perform: close)
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.opacity(0.28)
+                    .ignoresSafeArea()
+                    .onTapGesture(perform: close)
 
-            VStack(spacing: 0) {
-                searchField
+                VStack(spacing: 0) {
+                    searchField
 
-                Divider()
-                    .overlay(theme.borderColor)
+                    Divider()
+                        .overlay(theme.borderColor)
 
-                resultBody
+                    resultBody
+                }
+                .frame(width: max(1, min(scaled(560), geometry.size.width - scaled(32))))
+                .frame(maxHeight: max(1, min(scaled(420), geometry.size.height - scaled(32))))
+                .background(
+                    RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
+                        .fill(theme.surfaceColor)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
+                        .strokeBorder(theme.borderColor, lineWidth: 1)
+                }
+                .shadow(color: .black.opacity(0.18), radius: scaled(18), y: scaled(8))
             }
-            .frame(width: scaled(560))
-            .frame(maxHeight: scaled(420))
-            .background(
-                RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
-                    .fill(theme.surfaceColor)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
-                    .strokeBorder(theme.borderColor, lineWidth: 1)
-            }
-            .shadow(color: .black.opacity(0.18), radius: scaled(18), y: scaled(8))
         }
         .onAppear { focusSearchField() }
         .onChange(of: state.focusSerial) { _, _ in

@@ -61,7 +61,13 @@ struct TerminalDrawerView: View {
             )
             .id(sessions.activeTerminalID)
         } else {
-            TerminalEmptySurface(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize)
+            TerminalEmptySurface(
+                theme: theme,
+                zoomScale: zoomScale,
+                createTerminal: {
+                    sessions.createTerminal(in: workingDirectory)
+                }
+            )
         }
     }
 }
@@ -84,18 +90,20 @@ struct TerminalDrawerChromeRow: View {
 
     var body: some View {
         HStack(spacing: scaled(4)) {
-            terminalTabs
+            if !sessions.tabs.isEmpty {
+                terminalTabs
 
-            ChromeBarButton(
-                systemImage: "plus",
-                label: "New Terminal",
-                theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: uiFontSize,
-                action: {
-                    sessions.createTerminal(in: workingDirectory)
-                }
-            )
+                ChromeBarButton(
+                    systemImage: "plus",
+                    label: "New Terminal",
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    uiFontSize: uiFontSize,
+                    action: {
+                        sessions.createTerminal(in: workingDirectory)
+                    }
+                )
+            }
 
             Spacer(minLength: 0)
 
@@ -294,18 +302,33 @@ private struct TerminalTabChip: View {
 private struct TerminalEmptySurface: View {
     let theme: AppTheme
     let zoomScale: Double
-    let uiFontSize: Double
+    let createTerminal: () -> Void
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
-        Image(systemName: "terminal")
-            .font(.system(size: scaled(30), weight: .regular))
-            .foregroundStyle(theme.mutedForegroundColor.opacity(0.54))
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(theme.contentSurfaceColor)
-            .accessibilityLabel("No terminal session")
+        VStack(spacing: scaled(12)) {
+            Image(systemName: "terminal")
+                .font(.system(size: scaled(30), weight: .regular))
+                .foregroundStyle(theme.mutedForegroundColor.opacity(0.54))
+                .accessibilityHidden(true)
+
+            Text("No active terminal")
+                .font(MonknotTypography.emptyStateTitle(theme: theme, zoomScale: zoomScale))
+                .foregroundStyle(theme.foregroundColor)
+
+            Button(action: createTerminal) {
+                Label("New Terminal", systemImage: "plus")
+            }
+            .font(.system(size: scaled(13), weight: .medium))
+            .buttonStyle(.borderedProminent)
+            .tint(theme.accentColor)
+            .monknotPointerCursor()
+        }
+        .padding(scaled(24))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.contentSurfaceColor)
     }
 }

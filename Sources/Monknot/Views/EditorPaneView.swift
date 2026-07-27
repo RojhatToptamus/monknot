@@ -654,7 +654,7 @@ struct EditorPaneView: View {
         )
     }
 
-    private var drawerAnimation: Animation {
+    private var drawerAnimation: Animation? {
         MonknotMotion.sidebarTransition(reduceMotion: reduceMotion)
     }
 

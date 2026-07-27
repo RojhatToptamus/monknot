@@ -48,14 +48,36 @@ struct MonknotSegmentButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: MonknotMetrics.scale(12, theme: theme, zoomScale: zoomScale), weight: .medium))
+                .font(.system(
+                    size: MonknotMetrics.scale(
+                        MonknotMetrics.iconPointSizeBase,
+                        theme: theme,
+                        zoomScale: zoomScale
+                    ),
+                    weight: .medium
+                ))
                 .foregroundStyle(foreground)
                 .frame(
-                    width: MonknotMetrics.scale(32, theme: theme, zoomScale: zoomScale),
-                    height: MonknotMetrics.scale(24, theme: theme, zoomScale: zoomScale)
+                    width: MonknotMetrics.chromeButtonDimension(theme: theme, zoomScale: zoomScale),
+                    height: MonknotMetrics.chromeButtonDimension(theme: theme, zoomScale: zoomScale)
                 )
-                .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale)))
-                .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale)))
+                .background(
+                    background,
+                    in: RoundedRectangle(
+                        cornerRadius: theme.chromeRadius(
+                            MonknotMetrics.iconCornerRadiusBase,
+                            zoomScale: zoomScale
+                        )
+                    )
+                )
+                .contentShape(
+                    RoundedRectangle(
+                        cornerRadius: theme.chromeRadius(
+                            MonknotMetrics.iconCornerRadiusBase,
+                            zoomScale: zoomScale
+                        )
+                    )
+                )
         }
         .buttonStyle(.plain)
         .focusable(true)

@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Layout tokens aligned to the macOS 8pt grid, scaled with zoom and UI font size.
 enum MonknotMetrics {
-    static let chromeHeightBase: CGFloat = 44
+    static let chromeHeightBase: CGFloat = 36
     static let chromeSecondaryHeightBase: CGFloat = 36
     static let chromeHorizontalPaddingBase: CGFloat = 10
     static let iconButtonSizeBase: CGFloat = 24
@@ -51,8 +51,12 @@ enum MonknotMetrics {
         scale(chromeHorizontalPaddingBase, theme: theme, zoomScale: zoomScale)
     }
 
-    static func windowNavigationButtonDimension(theme: AppTheme, zoomScale: Double) -> CGFloat {
+    static func chromeButtonDimension(theme: AppTheme, zoomScale: Double) -> CGFloat {
         scale(iconButtonSizeBase, theme: theme, zoomScale: zoomScale)
+    }
+
+    static func windowNavigationButtonDimension(theme: AppTheme, zoomScale: Double) -> CGFloat {
+        chromeButtonDimension(theme: theme, zoomScale: zoomScale)
     }
 
     static func windowNavigationLeadingGap(theme: AppTheme, zoomScale: Double) -> CGFloat {

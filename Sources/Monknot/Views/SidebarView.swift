@@ -898,22 +898,23 @@ private struct SidebarNodeRow: View {
                 .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: isSelected ? 0.98 : 0.88))
                 .lineLimit(1)
                 .truncationMode(.middle)
-
-            Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             if let gitStatus {
                 GitStatusBadge(status: gitStatus, theme: theme, zoomScale: zoomScale)
             }
 
-            SaveStateIndicator(
-                state: saveState,
-                theme: theme,
-                zoomScale: zoomScale,
-                size: scaled(12)
-            )
+            if !saveState.isClean {
+                SaveStateIndicator(
+                    state: saveState,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    size: scaled(12)
+                )
+            }
         }
         .padding(.leading, CGFloat(visibleNode.depth) * scaled(14) + scaled(8))
-        .padding(.trailing, scaled(5))
+        .padding(.trailing, scaled(10))
         .padding(.vertical, scaled(5))
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
@@ -1487,91 +1488,113 @@ private struct EmptySidebarView: View {
     }
 
     var body: some View {
-        VStack(spacing: scaled(16)) {
-            Spacer()
+        GeometryReader { geometry in
+            MonknotScrollView {
+                VStack(spacing: scaled(16)) {
+                    Spacer(minLength: scaled(16))
 
-            Image(systemName: "folder.badge.plus")
-                .font(.system(size: scaled(36), weight: .medium))
-                .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.5))
+                    Image(systemName: "folder.badge.plus")
+                        .font(.system(size: scaled(36), weight: .medium))
+                        .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.5))
 
-            VStack(spacing: scaled(6)) {
-                Text(isLoadingWorkspace ? "Opening workspace" : "Welcome to monknot")
-                    .font(.system(size: scaled(16), weight: .semibold))
-                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
-                Text(emptyStateMessage)
-                    .font(.system(size: scaled(14)))
-                    .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
-                    .multilineTextAlignment(.center)
-            }
+                    VStack(spacing: scaled(6)) {
+                        Text(isLoadingWorkspace ? "Opening workspace" : "Welcome to monknot")
+                            .font(.system(size: scaled(16), weight: .semibold))
+                            .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
 
-            if isLoadingWorkspace {
-                ProgressView()
-                    .controlSize(.small)
-                    .padding(.vertical, scaled(10))
-            } else {
-                Button(action: canBootstrapStarterWorkspace ? bootstrapStarterWorkspace : openFolder) {
-                    Label(
-                        canBootstrapStarterWorkspace ? "Create Starter Files" : "Open Folder",
-                        systemImage: canBootstrapStarterWorkspace ? "wand.and.stars" : MonknotWorkspaceIcons.openFolder
-                    )
-                        .font(.system(size: scaled(14), weight: .medium))
-                        .padding(.horizontal, scaled(16))
-                        .padding(.vertical, scaled(8))
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(theme.accentColor)
-                .monknotPointerCursor()
-
-                Text(canBootstrapStarterWorkspace ? "README, docs, notes, inbox" : "⇧⌘O")
-                    .font(.system(size: scaled(12), weight: .medium, design: .rounded))
-                    .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.5))
-            }
-
-            if !isLoadingWorkspace, UserDefaults.standard.data(forKey: "Monknot.workspaceBookmark") != nil {
-                Text("Your last workspace reopens automatically on launch.")
-                    .font(.system(size: scaled(12)))
-                    .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.55))
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: scaled(260))
-            }
-
-            if !isLoadingWorkspace, !recentWorkspaces.isEmpty {
-                VStack(alignment: .leading, spacing: scaled(8)) {
-                    Text("Recent workspaces")
-                        .font(.system(size: scaled(12), weight: .semibold))
-                        .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
-
-                    ForEach(recentWorkspaces.prefix(5), id: \.path) { entry in
-                        Button {
-                            openRecentWorkspace(URL(fileURLWithPath: entry.path, isDirectory: true))
-                        } label: {
-                            HStack(spacing: scaled(8)) {
-                                Image(systemName: "clock.arrow.circlepath")
-                                    .font(.system(size: scaled(12)))
-                                Text(entry.displayName)
-                                    .font(.system(size: scaled(13), weight: .medium))
-                                    .lineLimit(1)
-                                Spacer(minLength: 0)
-                            }
-                            .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.9))
-                            .padding(.horizontal, scaled(10))
-                            .padding(.vertical, scaled(6))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(
-                                RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                                    .fill(theme.insetFillColor.opacity(0.65))
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .monknotPointerCursor()
+                        Text(emptyStateMessage)
+                            .font(.system(size: scaled(14)))
+                            .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                }
-                .frame(maxWidth: scaled(260))
-            }
+                    .frame(maxWidth: scaled(260))
 
-            Spacer()
+                    if isLoadingWorkspace {
+                        ProgressView()
+                            .controlSize(.small)
+                            .padding(.vertical, scaled(10))
+                    } else {
+                        Button(action: canBootstrapStarterWorkspace ? bootstrapStarterWorkspace : openFolder) {
+                            Label(
+                                canBootstrapStarterWorkspace ? "Create Starter Files" : "Open Folder",
+                                systemImage: canBootstrapStarterWorkspace ? "wand.and.stars" : MonknotWorkspaceIcons.openFolder
+                            )
+                                .font(.system(size: scaled(14), weight: .medium))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.72)
+                                .padding(.horizontal, scaled(12))
+                                .padding(.vertical, scaled(8))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(theme.accentColor)
+                        .monknotPointerCursor()
+
+                        Text(canBootstrapStarterWorkspace ? "README, docs, notes, inbox" : "⇧⌘O")
+                            .font(.system(size: scaled(12), weight: .medium, design: .rounded))
+                            .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.5))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if !isLoadingWorkspace, UserDefaults.standard.data(forKey: "Monknot.workspaceBookmark") != nil {
+                        Text("Your last workspace reopens automatically on launch.")
+                            .font(.system(size: scaled(12)))
+                            .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.55))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: scaled(260))
+                    }
+
+                    if !isLoadingWorkspace, !recentWorkspaces.isEmpty {
+                        VStack(alignment: .leading, spacing: scaled(8)) {
+                            Text("Recent workspaces")
+                                .font(.system(size: scaled(12), weight: .semibold))
+                                .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
+
+                            ForEach(recentWorkspaces.prefix(5), id: \.path) { entry in
+                                Button {
+                                    openRecentWorkspace(URL(fileURLWithPath: entry.path, isDirectory: true))
+                                } label: {
+                                    HStack(spacing: scaled(8)) {
+                                        Image(systemName: "clock.arrow.circlepath")
+                                            .font(.system(size: scaled(12)))
+                                        Text(entry.displayName)
+                                            .font(.system(size: scaled(13), weight: .medium))
+                                            .lineLimit(1)
+                                        Spacer(minLength: 0)
+                                    }
+                                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.9))
+                                    .padding(.horizontal, scaled(10))
+                                    .padding(.vertical, scaled(6))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+                                            .fill(theme.insetFillColor.opacity(0.65))
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .monknotPointerCursor()
+                            }
+                        }
+                        .frame(maxWidth: scaled(260))
+                    }
+
+                    Spacer(minLength: scaled(16))
+                }
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: max(0, geometry.size.height - scaled(40)))
+                .padding(.horizontal, scaled(16))
+                .padding(.vertical, scaled(20))
+            }
+            .scrollContentBackground(.hidden)
         }
-        .padding(scaled(24))
         .onAppear(perform: refreshRecentWorkspaces)
     }
 

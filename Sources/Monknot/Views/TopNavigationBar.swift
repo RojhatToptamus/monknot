@@ -58,7 +58,7 @@ struct TopNavigationBar: View {
     }
 
     var body: some View {
-        HStack(spacing: scaled(MonknotMetrics.Spacing.s)) {
+        HStack(spacing: scaled(MonknotMetrics.Spacing.xxs)) {
             leadingSidebarControl
 
             tabsOrEmptyTitle
@@ -74,16 +74,13 @@ struct TopNavigationBar: View {
 
             if documentSearch.isPresented {
                 documentSearchBar
-                    .transition(MonknotMotion.searchBarTransition(reduceMotion: reduceMotion))
             } else {
                 trailingActions
-                    .transition(MonknotMotion.searchBarTransition(reduceMotion: reduceMotion))
 
                 drawerToggleButton
             }
         }
         .monknotChromeRowLayout(theme: theme, zoomScale: zoomScale)
-        .animation(MonknotMotion.chromeTransition(reduceMotion: reduceMotion), value: documentSearch.isPresented)
         .onChange(of: documentSearch.focusSerial) { _, _ in
             isSearchFocused = documentSearch.isPresented
         }
@@ -128,7 +125,6 @@ struct TopNavigationBar: View {
             isActive: isSidebarVisible,
             action: toggleSidebar
         )
-        .keyboardShortcut("s", modifiers: [.command, .control])
         .accessibilityValue(isSidebarVisible ? "Open" : "Closed")
     }
 
@@ -142,7 +138,6 @@ struct TopNavigationBar: View {
             isActive: isTerminalPresented,
             action: toggleTerminal
         )
-        .keyboardShortcut("j", modifiers: [.command, .option])
         .accessibilityValue(isTerminalPresented ? "Open" : "Closed")
     }
 

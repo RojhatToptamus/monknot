@@ -23,7 +23,7 @@ struct GeneralSettingsView: View {
 
                     SettingsToggleRow(
                         theme: uiTheme,
-                        title: "Font Smoothing",
+                        title: "Font smoothing",
                         detail: "Use native macOS font anti-aliasing",
                         isOn: $fontSmoothing
                     )
@@ -47,31 +47,7 @@ struct GeneralSettingsView: View {
                         suffix: "%"
                     )
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Beta feedback")
-                            .font(MonknotTypography.settingsRowTitle(theme: uiTheme))
-                            .foregroundStyle(uiTheme.foregroundColor)
-                        Text("Saved locally on this Mac only. No network calls.")
-                            .font(MonknotTypography.settingsRowDetail(theme: uiTheme))
-                            .foregroundStyle(uiTheme.mutedForegroundColor)
-
-                        TextField("What should improve?", text: $betaFeedback, axis: .vertical)
-                            .textFieldStyle(.roundedBorder)
-                            .lineLimit(3...6)
-
-                        HStack(spacing: 12) {
-                            MonknotAccentButton(title: "Save feedback", theme: uiTheme, isDisabled: betaFeedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
-                                saveBetaFeedback()
-                            }
-
-                            if let betaFeedbackNotice {
-                                Text(betaFeedbackNotice)
-                                    .font(MonknotTypography.settingsRowDetail(theme: uiTheme))
-                                    .foregroundStyle(uiTheme.mutedForegroundColor)
-                            }
-                        }
-                    }
-                    .padding(.top, 4)
+                    feedbackSection
                 }
             }
             .padding(20)
@@ -89,6 +65,59 @@ struct GeneralSettingsView: View {
             betaFeedbackNotice = "Saved locally."
         } catch {
             betaFeedbackNotice = error.localizedDescription
+        }
+    }
+
+    private var feedbackSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Beta feedback")
+                    .font(MonknotTypography.settingsRowTitle(theme: uiTheme))
+                    .foregroundStyle(uiTheme.foregroundColor)
+
+                Text("Saved locally on this Mac only. No network calls.")
+                    .font(MonknotTypography.settingsRowDetail(theme: uiTheme))
+                    .foregroundStyle(uiTheme.mutedForegroundColor)
+            }
+
+            TextField("What should improve?", text: $betaFeedback, axis: .vertical)
+                .textFieldStyle(.plain)
+                .lineLimit(3...6)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .frame(minHeight: 72, alignment: .topLeading)
+                .background(
+                    uiTheme.insetFillColor,
+                    in: RoundedRectangle(cornerRadius: uiTheme.settingsControlCornerRadius)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: uiTheme.settingsControlCornerRadius)
+                        .strokeBorder(uiTheme.borderColor, lineWidth: 1)
+                }
+
+            HStack(spacing: 12) {
+                MonknotAccentButton(
+                    title: "Save feedback",
+                    theme: uiTheme,
+                    isDisabled: betaFeedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ) {
+                    saveBetaFeedback()
+                }
+
+                if let betaFeedbackNotice {
+                    Text(betaFeedbackNotice)
+                        .font(MonknotTypography.settingsRowDetail(theme: uiTheme))
+                        .foregroundStyle(uiTheme.mutedForegroundColor)
+                }
+            }
+        }
+        .padding(.horizontal, MonknotMetrics.Spacing.settingsRowHorizontal)
+        .padding(.vertical, MonknotMetrics.Spacing.settingsRowVertical)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(uiTheme.borderColor)
+                .frame(height: 1)
+                .padding(.leading, MonknotMetrics.Spacing.settingsRowHorizontal)
         }
     }
 }

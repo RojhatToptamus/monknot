@@ -24,7 +24,7 @@ struct MonknotIconButton: View {
         func dimension(theme: AppTheme, zoomScale: Double) -> CGFloat {
             switch self {
             case .chrome, .windowNavigation:
-                return MonknotMetrics.scale(MonknotMetrics.iconButtonSizeBase, theme: theme, zoomScale: zoomScale)
+                return MonknotMetrics.chromeButtonDimension(theme: theme, zoomScale: zoomScale)
             case .compact:
                 return MonknotMetrics.scale(24, theme: theme, zoomScale: zoomScale)
             case .findBar:
@@ -59,6 +59,11 @@ struct MonknotIconButton: View {
             }
         }
 
+        func backgroundOpacity(isHovered: Bool, isDisabled: Bool, isDark: Bool) -> Double? {
+            guard isHovered, !isDisabled else { return nil }
+            return hoverBackgroundOpacity(isDark: isDark)
+        }
+
         var disabledControlOpacity: Double {
             switch self {
             case .windowNavigation:
@@ -85,7 +90,16 @@ struct MonknotIconButton: View {
                 .symbolRenderingMode(.monochrome)
                 .foregroundStyle(iconColor)
                 .frame(width: size.dimension(theme: theme, zoomScale: zoomScale), height: size.dimension(theme: theme, zoomScale: zoomScale))
-                .background(background, in: RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale)))
+                .background {
+                    if let opacity = size.backgroundOpacity(
+                        isHovered: isHovered,
+                        isDisabled: isDisabled,
+                        isDark: theme.isDark
+                    ) {
+                        RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
+                            .fill(theme.foregroundColor.opacity(opacity))
+                    }
+                }
                 .contentShape(RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale)))
         }
         .buttonStyle(.plain)
@@ -99,16 +113,6 @@ struct MonknotIconButton: View {
         .help(label)
         .accessibilityLabel(label)
         .monknotPointerCursor(enabled: !isDisabled)
-    }
-
-    private var background: Color {
-        if isActive {
-            return theme.controlTrackFillColor
-        }
-        if isHovered && !isDisabled {
-            return theme.foregroundColor.opacity(size.hoverBackgroundOpacity(isDark: theme.isDark))
-        }
-        return .clear
     }
 
     private var iconColor: Color {
