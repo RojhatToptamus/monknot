@@ -80,6 +80,45 @@ final class TypingAssistantEditorBridgeTests: XCTestCase {
         XCTAssertEqual(accepted, false)
     }
 
+    func testSameCaretDifferentSelectionLengthCannotMutateEditorText() {
+        let boundText = TextBox("Keep this text.")
+        let coordinator = makeCoordinator(text: boundText)
+        let (_, textView) = makeHostedTextView()
+        coordinator.textView = textView
+        coordinator.documentID = "note.md"
+        coordinator.synchronizeExternalText(
+            boundText.value,
+            documentChanged: true
+        )
+        let cursor = (boundText.value as NSString).length
+        textView.setSelectedRange(
+            NSRange(location: cursor - 5, length: 5)
+        )
+
+        var accepted: Bool?
+        coordinator.configureTypingAssistance(
+            suggestion: suggestion(
+                source: boundText.value,
+                revision: 1,
+                cursor: cursor,
+                replacement: "Changed."
+            ),
+            onEditorChange: nil,
+            onSelectionChange: nil,
+            onDismissSuggestion: nil,
+            onSuggestionApplicationFinished: { accepted = $0 }
+        )
+
+        XCTAssertFalse(coordinator.apply(.accept))
+        XCTAssertEqual(textView.string, "Keep this text.")
+        XCTAssertEqual(boundText.value, "Keep this text.")
+        XCTAssertEqual(
+            textView.selectedRange(),
+            NSRange(location: cursor - 5, length: 5)
+        )
+        XCTAssertEqual(accepted, false)
+    }
+
     func testDismissDoesNotMutateEditorText() {
         let boundText = TextBox("Keep this text.")
         let coordinator = makeCoordinator(text: boundText)
@@ -239,6 +278,8 @@ final class TypingAssistantEditorBridgeTests: XCTestCase {
             sourceRevision: revision,
             sourceText: source,
             sourceCursorUTF16Offset: cursor,
+            sourceSelectionUTF16Location: cursor,
+            sourceSelectionLength: 0,
             replacementRange: NSRange(
                 location: 0,
                 length: (source as NSString).length

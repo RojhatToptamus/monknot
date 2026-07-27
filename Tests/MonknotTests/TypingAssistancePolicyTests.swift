@@ -91,6 +91,8 @@ final class TypingAssistancePolicyTests: XCTestCase {
             sourceRevision: snapshot.revision,
             sourceText: snapshot.text,
             sourceCursorUTF16Offset: snapshot.cursorUTF16Offset,
+            sourceSelectionUTF16Location: snapshot.selectionUTF16Location,
+            sourceSelectionLength: snapshot.selectionLength,
             replacementRange: NSRange(location: 0, length: (source as NSString).length),
             replacementText: "Please send the report.",
             model: "local",
@@ -115,6 +117,51 @@ final class TypingAssistancePolicyTests: XCTestCase {
         XCTAssertEqual(stale.text, source + " now")
     }
 
+    func testApplicationRejectsSameCaretWithDifferentSelectionLength() {
+        let source = "Please send the report."
+        let cursor = (source as NSString).length
+        let originatingSnapshot = TypingAssistanceEditorSnapshot(
+            documentID: "note.md",
+            revision: 3,
+            text: source,
+            cursorUTF16Offset: cursor
+        )
+        let suggestion = TypingAssistanceSuggestion(
+            requestKind: .grammar,
+            sourceDocumentID: originatingSnapshot.documentID,
+            sourceRevision: originatingSnapshot.revision,
+            sourceText: originatingSnapshot.text,
+            sourceCursorUTF16Offset: originatingSnapshot.cursorUTF16Offset,
+            sourceSelectionUTF16Location:
+                originatingSnapshot.selectionUTF16Location,
+            sourceSelectionLength: originatingSnapshot.selectionLength,
+            replacementRange: NSRange(location: 0, length: cursor),
+            replacementText: "Please send the report.",
+            model: "local",
+            latencyMilliseconds: 10
+        )
+        let changedSelection = TypingAssistanceEditorSnapshot(
+            documentID: originatingSnapshot.documentID,
+            revision: originatingSnapshot.revision,
+            text: originatingSnapshot.text,
+            cursorUTF16Offset: cursor,
+            selectionLength: 7
+        )
+
+        let result = TypingAssistanceAcceptancePolicy.apply(
+            suggestion,
+            to: changedSelection
+        )
+
+        XCTAssertFalse(result.accepted)
+        XCTAssertEqual(result.rejection, .selectionChanged)
+        XCTAssertEqual(result.text, source)
+        XCTAssertEqual(
+            result.selectedRange,
+            NSRange(location: cursor - 7, length: 7)
+        )
+    }
+
     func testCompletionApplicationPreservesSuffixSpacing() {
         let text = "Please review today"
         let cursor = ("Please review " as NSString).length
@@ -130,6 +177,8 @@ final class TypingAssistancePolicyTests: XCTestCase {
             sourceRevision: snapshot.revision,
             sourceText: snapshot.text,
             sourceCursorUTF16Offset: snapshot.cursorUTF16Offset,
+            sourceSelectionUTF16Location: snapshot.selectionUTF16Location,
+            sourceSelectionLength: snapshot.selectionLength,
             replacementRange: NSRange(location: cursor, length: 0),
             replacementText: "notes",
             model: "local",

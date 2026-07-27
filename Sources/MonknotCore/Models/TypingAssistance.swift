@@ -12,6 +12,9 @@ public struct TypingAssistanceEditorSnapshot: Equatable {
     public let text: String
     public let cursorUTF16Offset: Int
     public let selectionLength: Int
+    public var selectionUTF16Location: Int {
+        cursorUTF16Offset - selectionLength
+    }
 
     public init(
         documentID: String,
@@ -55,6 +58,8 @@ public struct TypingAssistanceSuggestion: Equatable, Identifiable {
     public let sourceRevision: Int
     public let sourceText: String
     public let sourceCursorUTF16Offset: Int
+    public let sourceSelectionUTF16Location: Int
+    public let sourceSelectionLength: Int
     public let replacementRange: NSRange
     public let replacementText: String
     public let model: String
@@ -67,6 +72,8 @@ public struct TypingAssistanceSuggestion: Equatable, Identifiable {
         sourceRevision: Int,
         sourceText: String,
         sourceCursorUTF16Offset: Int,
+        sourceSelectionUTF16Location: Int,
+        sourceSelectionLength: Int,
         replacementRange: NSRange,
         replacementText: String,
         model: String,
@@ -78,6 +85,8 @@ public struct TypingAssistanceSuggestion: Equatable, Identifiable {
         self.sourceRevision = sourceRevision
         self.sourceText = sourceText
         self.sourceCursorUTF16Offset = sourceCursorUTF16Offset
+        self.sourceSelectionUTF16Location = sourceSelectionUTF16Location
+        self.sourceSelectionLength = sourceSelectionLength
         self.replacementRange = replacementRange
         self.replacementText = replacementText
         self.model = model
@@ -90,6 +99,7 @@ public enum TypingAssistanceApplicationRejection: String, Equatable {
     case revisionChanged
     case textChanged
     case cursorChanged
+    case selectionChanged
     case invalidRange
 }
 

@@ -28,6 +28,14 @@ final class LocalTypingAssistantRuntimeTests: XCTestCase {
 
         XCTAssertEqual(result.route, .loadedForeground)
         XCTAssertEqual(result.suggestion?.replacementText, "This is ready.")
+        XCTAssertEqual(
+            result.suggestion?.sourceSelectionUTF16Location,
+            snapshot.selectionUTF16Location
+        )
+        XCTAssertEqual(
+            result.suggestion?.sourceSelectionLength,
+            snapshot.selectionLength
+        )
         XCTAssertEqual(diagnostics.observedPeakModelConcurrency, 1)
     }
 

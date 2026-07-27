@@ -446,6 +446,8 @@ actor LocalTypingAssistantRuntime {
                     sourceRevision: snapshot.revision,
                     sourceText: snapshot.text,
                     sourceCursorUTF16Offset: snapshot.cursorUTF16Offset,
+                    sourceSelectionUTF16Location: snapshot.selectionUTF16Location,
+                    sourceSelectionLength: snapshot.selectionLength,
                     replacementRange: NSRange(
                         location: snapshot.cursorUTF16Offset,
                         length: 0
@@ -485,6 +487,8 @@ actor LocalTypingAssistantRuntime {
                 sourceRevision: snapshot.revision,
                 sourceText: snapshot.text,
                 sourceCursorUTF16Offset: snapshot.cursorUTF16Offset,
+                sourceSelectionUTF16Location: snapshot.selectionUTF16Location,
+                sourceSelectionLength: snapshot.selectionLength,
                 replacementRange: context.range,
                 replacementText: text,
                 model: configuration.model,

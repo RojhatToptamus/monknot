@@ -537,6 +537,10 @@ final class TypingAssistantSession: ObservableObject {
             && suggestion.sourceText == latestSnapshot.text
             && suggestion.sourceCursorUTF16Offset
                 == latestSnapshot.cursorUTF16Offset
+            && suggestion.sourceSelectionUTF16Location
+                == latestSnapshot.selectionUTF16Location
+            && suggestion.sourceSelectionLength
+                == latestSnapshot.selectionLength
     }
 
     private func cancelPendingRequest() {

@@ -154,6 +154,11 @@ public enum TypingAssistanceAcceptancePolicy {
         if suggestion.sourceCursorUTF16Offset != snapshot.cursorUTF16Offset {
             return rejected(snapshot, .cursorChanged)
         }
+        if suggestion.sourceSelectionUTF16Location
+            != snapshot.selectionUTF16Location
+            || suggestion.sourceSelectionLength != snapshot.selectionLength {
+            return rejected(snapshot, .selectionChanged)
+        }
 
         let source = snapshot.text as NSString
         guard suggestion.replacementRange.location >= 0,
@@ -188,7 +193,7 @@ public enum TypingAssistanceAcceptancePolicy {
             accepted: false,
             text: snapshot.text,
             selectedRange: NSRange(
-                location: snapshot.cursorUTF16Offset,
+                location: snapshot.selectionUTF16Location,
                 length: snapshot.selectionLength
             ),
             rejection: rejection

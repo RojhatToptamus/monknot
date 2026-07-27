@@ -83,6 +83,29 @@ final class TypingAssistantSessionTests: XCTestCase {
         XCTAssertNil(session.suggestion)
     }
 
+    func testSameCaretDifferentSelectionLengthInvalidatesSuggestion() async {
+        let runtime = FakeTypingAssistantRuntime()
+        let session = makeSession(runtime: runtime)
+        session.isEnabled = true
+        let source = makeSnapshot("source text", revision: 1)
+
+        _ = session.editorDidChange(source, allowsGenerativeAssistance: true)
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertNotNil(session.suggestion)
+
+        session.selectionDidChange(
+            TypingAssistanceEditorSnapshot(
+                documentID: source.documentID,
+                revision: source.revision,
+                text: source.text,
+                cursorUTF16Offset: source.cursorUTF16Offset,
+                selectionLength: 4
+            )
+        )
+
+        XCTAssertNil(session.suggestion)
+    }
+
     func testDuplicateSelectionNotificationKeepsPauseRequest() async {
         let runtime = FakeTypingAssistantRuntime()
         let session = makeSession(runtime: runtime)
@@ -258,6 +281,8 @@ private actor FakeTypingAssistantRuntime: TypingAssistantRuntimeProviding {
                 sourceRevision: snapshot.revision,
                 sourceText: snapshot.text,
                 sourceCursorUTF16Offset: snapshot.cursorUTF16Offset,
+                sourceSelectionUTF16Location: snapshot.selectionUTF16Location,
+                sourceSelectionLength: snapshot.selectionLength,
                 replacementRange: context.range,
                 replacementText: context.text.capitalized + ".",
                 model: "fake",
