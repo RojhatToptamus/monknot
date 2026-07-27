@@ -27,6 +27,9 @@ chrome-debug-handoff.json
 
 docs/*
 !docs/RELEASE.md
+!docs/images/
+!docs/images/monknot-readme-icon.png
+!docs/images/monknot-workspace.png
 
 codex
 claude
