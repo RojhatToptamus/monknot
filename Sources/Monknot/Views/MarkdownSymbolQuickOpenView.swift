@@ -84,7 +84,7 @@ struct MarkdownSymbolQuickOpenView: View {
     }
 
     private var resultBody: some View {
-        ScrollView {
+        MonknotScrollView {
             if state.matches.isEmpty {
                 Text(state.query.isEmpty ? "No headings in this document" : "No matching headings")
                     .font(.system(size: scaled(12), weight: .medium))

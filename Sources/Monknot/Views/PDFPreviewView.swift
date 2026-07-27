@@ -870,6 +870,13 @@ private final class AnnotatingPDFView: PDFView {
         true
     }
 
+    override func layout() {
+        super.layout()
+        if let scrollView = documentView?.enclosingScrollView {
+            MonknotScrollbarStyle.apply(to: scrollView)
+        }
+    }
+
     override func keyDown(with event: NSEvent) {
         guard let characters = event.charactersIgnoringModifiers?.lowercased() else {
             super.keyDown(with: event)
@@ -1044,7 +1051,7 @@ private final class AnnotatingPDFView: PDFView {
                 annotation.modificationDate = Date()
                 annotation.shouldDisplay = true
                 annotation.shouldPrint = true
-                annotation.setValue(quadPoints(for: bounds), forAnnotationKey: .quadPoints)
+                annotation.quadrilateralPoints = pdfTextMarkupQuadrilateralPoints(for: bounds.size)
                 page.addAnnotation(annotation)
                 addedAnnotations.append(.init(pageIndex: document.index(for: page), annotation: annotation))
             }
@@ -1273,24 +1280,20 @@ private final class AnnotatingPDFView: PDFView {
         return PDFAnnotationHitTesting.annotationForErasing(on: page, at: point, tolerance: tolerance)
     }
 
-    private func quadPoints(for bounds: CGRect) -> [NSNumber] {
-        [
-            NSNumber(value: Double(bounds.minX)),
-            NSNumber(value: Double(bounds.maxY)),
-            NSNumber(value: Double(bounds.maxX)),
-            NSNumber(value: Double(bounds.maxY)),
-            NSNumber(value: Double(bounds.minX)),
-            NSNumber(value: Double(bounds.minY)),
-            NSNumber(value: Double(bounds.maxX)),
-            NSNumber(value: Double(bounds.minY))
-        ]
-    }
-
     private func squaredDistance(from lhs: CGPoint, to rhs: CGPoint) -> CGFloat {
         let dx = lhs.x - rhs.x
         let dy = lhs.y - rhs.y
         return dx * dx + dy * dy
     }
+}
+
+func pdfTextMarkupQuadrilateralPoints(for size: CGSize) -> [NSValue] {
+    [
+        NSValue(point: NSPoint(x: 0, y: size.height)),
+        NSValue(point: NSPoint(x: size.width, y: size.height)),
+        NSValue(point: .zero),
+        NSValue(point: NSPoint(x: size.width, y: 0))
+    ]
 }
 
 private enum PDFAnnotationInteractionMode: Equatable {

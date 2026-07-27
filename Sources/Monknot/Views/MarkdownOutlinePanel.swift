@@ -43,7 +43,7 @@ struct MarkdownOutlinePanel: View {
                 .padding(scaled(14))
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                ScrollView {
+                MonknotScrollView {
                     LazyVStack(alignment: .leading, spacing: scaled(1)) {
                         ForEach(items) { item in
                             Button {

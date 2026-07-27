@@ -213,7 +213,7 @@ struct WorkspaceSearchView: View {
     }
 
     private var searchBody: some View {
-        ScrollView {
+        MonknotScrollView {
             if state.results.isEmpty {
                 emptyState
             } else {

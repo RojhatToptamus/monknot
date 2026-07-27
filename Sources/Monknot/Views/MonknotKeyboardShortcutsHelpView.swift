@@ -34,7 +34,7 @@ struct MonknotKeyboardShortcutsHelpView: View {
                     )
                 }
 
-                ScrollView {
+                MonknotScrollView {
                     LazyVStack(spacing: scaled(6)) {
                         ForEach(Array(MonknotKeyboardShortcutCatalog.entries.enumerated()), id: \.offset) { _, entry in
                             HStack(spacing: scaled(12)) {

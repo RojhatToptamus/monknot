@@ -232,6 +232,7 @@ APP_SOURCES=(
   "Sources/Monknot/Support/Design/MonknotMotion.swift"
   "Sources/Monknot/Support/Design/MonknotPanelCard.swift"
   "Sources/Monknot/Support/Design/MonknotRow.swift"
+  "Sources/Monknot/Support/Design/MonknotScrollbarStyle.swift"
   "Sources/Monknot/Support/Design/MonknotSFSymbol.swift"
   "Sources/Monknot/Support/Design/MonknotSearchField.swift"
   "Sources/Monknot/Support/Design/MonknotSegmentedControl.swift"

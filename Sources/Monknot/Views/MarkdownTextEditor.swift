@@ -84,6 +84,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = true
+        MonknotScrollbarStyle.apply(to: scrollView)
 
         let textView = MarkdownNSTextView()
         textView.fontSmoothingEnabled = fontSmoothing

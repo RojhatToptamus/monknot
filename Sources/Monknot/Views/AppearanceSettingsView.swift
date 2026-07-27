@@ -31,7 +31,7 @@ struct AppearanceSettingsView: View {
     }
 
     var body: some View {
-        ScrollView {
+        MonknotScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 appearanceModeCard
 

@@ -456,7 +456,6 @@ struct EditorPaneView: View {
                 },
                 updateAnnotationUndoState: updatePDFAnnotationUndoState
             )
-            .help(selectedDocument.relativePath)
         case .media, .nativePreview, .unsupported:
             UnsupportedDocumentView(
                 document: selectedDocument,

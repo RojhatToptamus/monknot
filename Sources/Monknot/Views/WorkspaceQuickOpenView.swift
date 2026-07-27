@@ -84,7 +84,7 @@ struct WorkspaceQuickOpenView: View {
     }
 
     private var resultBody: some View {
-        ScrollView {
+        MonknotScrollView {
             if state.matches.isEmpty {
                 Text(state.query.isEmpty ? "Type to filter workspace files" : "No matching files")
                     .font(.system(size: scaled(12), weight: .medium))

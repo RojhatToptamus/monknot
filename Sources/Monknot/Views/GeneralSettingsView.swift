@@ -11,7 +11,7 @@ struct GeneralSettingsView: View {
     @State private var betaFeedbackNotice: String?
 
     var body: some View {
-        ScrollView {
+        MonknotScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 SettingsGroupCard(theme: uiTheme) {
                     SettingsToggleRow(

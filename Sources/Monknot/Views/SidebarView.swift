@@ -78,6 +78,21 @@ struct SidebarView: View {
             }
             .layoutPriority(1)
 
+            if !recentDocuments.isEmpty {
+                Rectangle()
+                    .fill(theme.separatorColor)
+                    .frame(height: 1)
+
+                SidebarRecentDocumentsSection(
+                    entries: recentDocuments,
+                    selectedDocumentID: store.selectedDocumentID,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    openDocument: openDocument
+                )
+                .layoutPriority(2)
+            }
+
             Rectangle()
                 .fill(theme.separatorColor)
                 .frame(height: 1)
@@ -189,14 +204,6 @@ struct SidebarView: View {
             if !nodes.isEmpty {
                 SidebarScrollContainer {
                     VStack(alignment: .leading, spacing: scaled(8)) {
-                        SidebarRecentDocumentsSection(
-                            entries: recentDocuments,
-                            selectedDocumentID: store.selectedDocumentID,
-                            theme: theme,
-                            zoomScale: zoomScale,
-                            openDocument: openDocument
-                        )
-
                         LazyVStack(alignment: .leading, spacing: scaled(1)) {
                             ForEach(nodes) { visibleNode in
                                 SidebarNodeRow(
@@ -811,7 +818,7 @@ private struct SidebarNodeRow: View {
         }
     }
 
-    /// Folder row — styled like a Codex section header with a disclosure chevron.
+    /// Folder row with a disclosure chevron.
     private var folderRow: some View {
         HStack(spacing: scaled(8)) {
             Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
@@ -824,8 +831,8 @@ private struct SidebarNodeRow: View {
                 .foregroundStyle(theme.sidebarColor(theme.accentColor, opacity: 0.8))
 
             Text(node.name)
-                .font(.system(size: scaled(13), weight: .semibold))
-                .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.9))
+                .font(.system(size: scaled(14), weight: .regular))
+                .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.88))
                 .lineLimit(1)
 
             Spacer(minLength: 0)
@@ -1122,10 +1129,9 @@ private final class SidebarNativeScrollView<Content: View>: NSScrollView {
         borderType = .noBorder
         hasVerticalScroller = true
         hasHorizontalScroller = false
-        autohidesScrollers = true
-        scrollerStyle = .overlay
         horizontalScrollElasticity = .none
         verticalScrollElasticity = .allowed
+        MonknotScrollbarStyle.apply(to: self)
     }
 }
 
@@ -1336,49 +1342,84 @@ private struct SidebarRecentDocumentsSection: View {
     let theme: AppTheme
     let zoomScale: Double
     let openDocument: (String) -> Void
+    @State private var isExpanded = false
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
-        if !entries.isEmpty {
-            VStack(alignment: .leading, spacing: scaled(4)) {
-                Text("Recent")
-                    .font(.system(size: scaled(11), weight: .semibold))
-                    .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor))
-                    .padding(.horizontal, scaled(6))
-
-                ForEach(entries.prefix(5), id: \.documentID) { entry in
-                    Button {
-                        openDocument(entry.documentID)
-                    } label: {
-                        HStack(spacing: scaled(8)) {
-                            Image(systemName: "clock")
-                                .font(.system(size: scaled(11)))
-                                .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.75))
-
-                            Text(entry.displayName)
-                                .font(.system(size: scaled(12), weight: entry.documentID == selectedDocumentID ? .semibold : .regular))
-                                .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.9))
-                                .lineLimit(1)
-
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.horizontal, scaled(8))
-                        .padding(.vertical, scaled(5))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(SidebarHoverButtonStyle(
-                        theme: theme,
-                        isSelected: entry.documentID == selectedDocumentID,
-                        cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
-                    ))
-                    .monknotPointerCursor()
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    isExpanded.toggle()
                 }
+            } label: {
+                HStack(spacing: scaled(7)) {
+                    Text("Recents")
+                        .font(.system(size: scaled(14), weight: .regular))
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: scaled(10), weight: .semibold))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.82))
+                .padding(.horizontal, scaled(10))
+                .padding(.vertical, scaled(8))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .padding(.bottom, scaled(4))
+            .buttonStyle(SidebarHoverButtonStyle(
+                theme: theme,
+                isSelected: false,
+                cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
+            ))
+            .padding(.horizontal, scaled(5))
+            .padding(.vertical, scaled(4))
+            .help(isExpanded ? "Hide recent documents" : "Show recent documents")
+            .accessibilityLabel("Recent documents")
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+
+            if isExpanded {
+                MonknotScrollView {
+                    VStack(alignment: .leading, spacing: scaled(1)) {
+                        ForEach(entries.prefix(5), id: \.documentID) { entry in
+                            Button {
+                                openDocument(entry.documentID)
+                            } label: {
+                                HStack(spacing: scaled(8)) {
+                                    Image(systemName: "clock")
+                                        .font(.system(size: scaled(11)))
+                                        .foregroundStyle(theme.sidebarColor(theme.mutedForegroundColor, opacity: 0.75))
+
+                                    Text(entry.displayName)
+                                        .font(.system(size: scaled(12), weight: entry.documentID == selectedDocumentID ? .semibold : .regular))
+                                        .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.9))
+                                        .lineLimit(1)
+
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(.horizontal, scaled(8))
+                                .padding(.vertical, scaled(5))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(SidebarHoverButtonStyle(
+                                theme: theme,
+                                isSelected: entry.documentID == selectedDocumentID,
+                                cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
+                            ))
+                            .monknotPointerCursor()
+                        }
+                    }
+                }
+                .padding(.horizontal, scaled(5))
+                .padding(.bottom, scaled(5))
+                .frame(maxHeight: scaled(72))
+                .transition(.opacity)
+            }
         }
     }
 }

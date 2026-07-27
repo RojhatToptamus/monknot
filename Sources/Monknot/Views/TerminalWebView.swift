@@ -104,27 +104,12 @@ struct TerminalWebView: NSViewRepresentable {
           }
           .xterm-viewport {
             scrollbar-gutter: stable;
-            scrollbar-color: var(--terminal-scrollbar-thumb) transparent;
           }
-          .xterm .xterm-viewport::-webkit-scrollbar {
-            width: 11px;
-            height: 11px;
-            background: transparent;
-          }
-          .xterm .xterm-viewport::-webkit-scrollbar-track {
-            background: transparent;
-          }
-          .xterm .xterm-viewport::-webkit-scrollbar-thumb {
-            background: var(--terminal-scrollbar-thumb);
-            border: 3px solid var(--terminal-bg);
-            border-radius: 999px;
-          }
-          .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
-            background: var(--terminal-scrollbar-thumb-hover);
-          }
-          .xterm .xterm-viewport::-webkit-scrollbar-corner {
-            background: transparent;
-          }
+          \(MonknotScrollbarStyle.webCSS(
+              selector: ".xterm .xterm-viewport",
+              restingColor: "var(--terminal-scrollbar-thumb)",
+              hoveredColor: "var(--terminal-scrollbar-thumb-hover)"
+          ))
           </style>
         </head>
         <body>
@@ -257,8 +242,8 @@ struct TerminalWebView: NSViewRepresentable {
         --terminal-fg: \(theme.foreground);
         --terminal-font-smoothing: \(fontSmoothing ? "antialiased" : "auto");
         --terminal-interactive-cursor: \(usePointerCursors ? "pointer" : "default");
-        --terminal-scrollbar-thumb: \(rgba(theme.foreground, alpha: theme.isDark ? 0.30 : 0.22));
-        --terminal-scrollbar-thumb-hover: \(rgba(theme.foreground, alpha: theme.isDark ? 0.46 : 0.34));
+        --terminal-scrollbar-thumb: \(rgba(theme.foreground, alpha: Double(MonknotScrollbarStyle.restingOpacity)));
+        --terminal-scrollbar-thumb-hover: \(rgba(theme.foreground, alpha: Double(MonknotScrollbarStyle.hoveredOpacity)));
         """
     }
 
@@ -363,8 +348,14 @@ struct TerminalWebView: NSViewRepresentable {
                     "--terminal-fg": theme.foreground,
                     "--terminal-font-smoothing": fontSmoothing ? "antialiased" : "auto",
                     "--terminal-interactive-cursor": usePointerCursors ? "pointer" : "default",
-                    "--terminal-scrollbar-thumb": TerminalWebView.rgba(theme.foreground, alpha: theme.isDark ? 0.30 : 0.22),
-                    "--terminal-scrollbar-thumb-hover": TerminalWebView.rgba(theme.foreground, alpha: theme.isDark ? 0.46 : 0.34)
+                    "--terminal-scrollbar-thumb": TerminalWebView.rgba(
+                        theme.foreground,
+                        alpha: Double(MonknotScrollbarStyle.restingOpacity)
+                    ),
+                    "--terminal-scrollbar-thumb-hover": TerminalWebView.rgba(
+                        theme.foreground,
+                        alpha: Double(MonknotScrollbarStyle.hoveredOpacity)
+                    )
                 ],
                 "theme": [
                     "background": theme.background,
