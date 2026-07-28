@@ -229,6 +229,13 @@ final class TypingAssistancePolicyTests: XCTestCase {
             "cargo teh ",
             "kubectl teh ",
             "swift teh ",
+            "cd teh ",
+            "echo \"teh ",
+            "curl -o teh ",
+            "wget teh ",
+            "printf teh ",
+            "source setup.sh teh ",
+            "export TEH ",
             "./deploy.sh teh ",
             "value = teh ",
             "render(teh ",
@@ -236,6 +243,9 @@ final class TypingAssistancePolicyTests: XCTestCase {
             "C:\\work\\teh ",
             "https://example.com/teh ",
             "ssh://example.com/teh ",
+            "$env:teh ",
+            "urn:example:teh ",
+            "data:text/plain,teh ",
             "--teh ",
             "NODE_ENV=teh ",
             "`teh ",
@@ -257,12 +267,34 @@ final class TypingAssistancePolicyTests: XCTestCase {
         }
     }
 
+    func testBoundaryCorrectorDoesNotEditInsideBracedParameterExpansion() {
+        let corrector = TypingAssistanceWordBoundaryCorrector()
+        let text = "${NAME:-fallback teh value}"
+        let typoRange = (text as NSString).range(of: "teh")
+        let snapshot = TypingAssistanceEditorSnapshot(
+            documentID: "note.md",
+            revision: 1,
+            text: text,
+            cursorUTF16Offset: NSMaxRange(typoRange) + 1
+        )
+
+        XCTAssertNil(corrector.edit(for: snapshot))
+    }
+
     func testBoundaryCorrectorPreservesOrdinaryCommandMentions() {
         let corrector = TypingAssistanceWordBoundaryCorrector()
         let examples = [
             "git definately helps this workflow",
             "swift definately makes local builds easier",
             "open source definately matters here",
+            "cd collections definately remain popular",
+            "echo chambers definately distort discussion",
+            "curl patterns definately appear in vector fields",
+            "source material definately supports the conclusion",
+            "export growth definately supports local jobs",
+            "time definately flies during long reviews",
+            "env settings definately belong in local configuration",
+            "command wording definately matters in documentation",
         ]
 
         for (revision, text) in examples.enumerated() {
@@ -295,6 +327,17 @@ final class TypingAssistancePolicyTests: XCTestCase {
             "cargo build --release",
             "kubectl get pods",
             "swift test",
+            "cd project",
+            "cd",
+            "echo \"build complete\"",
+            "curl https://example.com/archive",
+            "wget https://example.com/archive",
+            "printf \"%s\\n\" value",
+            "source setup.sh",
+            "export EDITOR=nano",
+            "time swift test",
+            "env DEBUG=1 npm test",
+            "command git status",
             "python3 scripts/check.py",
             "./scripts/check.sh --verbose",
             "C:\\Tools\\formatter.exe --check",
@@ -309,6 +352,10 @@ final class TypingAssistancePolicyTests: XCTestCase {
             "C:\\Users\\example\\notes\\todo.md",
             "$PROJECT_ROOT",
             "${PROJECT_ROOT}",
+            "$env:PROJECT_ROOT",
+            "${PROJECT_ROOT:-/tmp/project}",
+            "urn:example:project",
+            "data:text/plain,example",
             "--verbose",
             "--verbose --force",
             "NODE_ENV=production",
@@ -347,6 +394,20 @@ final class TypingAssistancePolicyTests: XCTestCase {
             "swift makes local development convenient",
             "open source software helps this project",
             "find the note before lunch",
+            "cd collections remain popular",
+            "echo chamber",
+            "echo chambers distort the discussion",
+            "curl pattern",
+            "curl patterns appear in vector fields",
+            "printf formatting improves diagnostics",
+            "source text",
+            "source material supports the conclusion",
+            "export data",
+            "export growth supports local jobs",
+            "wget is the executable name in this sentence",
+            "time flies during long reviews",
+            "env settings belong in local configuration",
+            "command wording matters in documentation",
             "please use render(value) after teh meeting",
         ]
 
@@ -377,6 +438,26 @@ final class TypingAssistancePolicyTests: XCTestCase {
             ("Open /tmp/result.txt after teh meeting.", "/tmp/result.txt", "teh"),
             ("Use --verbose if teh build fails.", "--verbose", "teh"),
             ("Read $PROJECT_ROOT before teh build.", "$PROJECT_ROOT", "teh"),
+            (
+                "Read $env:PROJECT_ROOT before teh build.",
+                "$env:PROJECT_ROOT",
+                "teh"
+            ),
+            (
+                "Use ${NAME:-default} before teh build.",
+                "${NAME:-default}",
+                "teh"
+            ),
+            (
+                "Reference urn:example:project after teh meeting.",
+                "urn:example:project",
+                "teh"
+            ),
+            (
+                "Embed data:text/plain,example after teh meeting.",
+                "data:text/plain,example",
+                "teh"
+            ),
             (
                 "Open C:\\Users\\sam\\notes.txt after teh meeting.",
                 "C:\\Users\\sam\\notes.txt",
@@ -420,6 +501,94 @@ final class TypingAssistancePolicyTests: XCTestCase {
                         in: snapshot,
                         targetRange: source.range(of: example.2)
                     )
+            )
+        }
+    }
+
+    func testTechnicalClassifierFailsClosedForMalformedTargetRanges() {
+        let text = "🙂 Read $env:PROJECT_ROOT after teh meeting."
+        let sourceUTF16Length = text.utf16.count
+        let snapshot = TypingAssistanceEditorSnapshot(
+            documentID: "note.md",
+            revision: 1,
+            text: text,
+            cursorUTF16Offset: sourceUTF16Length
+        )
+        let malformedRanges = [
+            NSRange(location: -1, length: 1),
+            NSRange(location: 0, length: -1),
+            NSRange(location: sourceUTF16Length + 1, length: 0),
+            NSRange(location: 1, length: Int.max),
+            NSRange(location: Int.max, length: Int.max),
+        ]
+
+        for range in malformedRanges {
+            XCTAssertTrue(
+                TypingAssistanceTechnicalContextClassifier
+                    .shouldSuppressAssistance(
+                        in: snapshot,
+                        targetRange: range
+                    )
+            )
+        }
+
+        let source = text as NSString
+        XCTAssertTrue(
+            TypingAssistanceTechnicalContextClassifier
+                .shouldSuppressAssistance(
+                    in: snapshot,
+                    targetRange: source.range(of: "$env:PROJECT_ROOT")
+                )
+        )
+        XCTAssertFalse(
+            TypingAssistanceTechnicalContextClassifier
+                .shouldSuppressAssistance(
+                    in: snapshot,
+                    targetRange: source.range(of: "teh")
+                )
+        )
+    }
+
+    func testConditionalWrappersRequireCredibleInvocation() {
+        let commands = [
+            "time swift test",
+            "env DEBUG=1 npm test",
+            "env -i",
+            "command git status",
+            "command -v git",
+        ]
+        let prose = [
+            "time flies during long reviews",
+            "env settings belong in local configuration",
+            "command wording matters in documentation",
+        ]
+
+        for text in commands {
+            XCTAssertTrue(
+                TypingAssistanceTechnicalContextClassifier
+                    .shouldSuppressAssistance(
+                        in: TypingAssistanceEditorSnapshot(
+                            documentID: "note.md",
+                            revision: 1,
+                            text: text,
+                            cursorUTF16Offset: text.utf16.count
+                        )
+                    ),
+                "Did not classify wrapped command: \(text)"
+            )
+        }
+        for text in prose {
+            XCTAssertFalse(
+                TypingAssistanceTechnicalContextClassifier
+                    .shouldSuppressAssistance(
+                        in: TypingAssistanceEditorSnapshot(
+                            documentID: "note.md",
+                            revision: 1,
+                            text: text,
+                            cursorUTF16Offset: text.utf16.count
+                        )
+                    ),
+                "Misclassified wrapper prose: \(text)"
             )
         }
     }

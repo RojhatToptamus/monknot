@@ -142,9 +142,18 @@ public enum TypingAssistanceTechnicalContextClassifier {
         in snapshot: TypingAssistanceEditorSnapshot,
         targetRange: NSRange? = nil
     ) -> Bool {
+        let sourceUTF16Length = snapshot.text.utf16.count
+        if let targetRange,
+           !isValidTargetRange(
+               targetRange,
+               sourceUTF16Length: sourceUTF16Length
+           ) {
+            return true
+        }
+
         let source = snapshot.text as NSString
         let cursor = max(0, min(snapshot.cursorUTF16Offset, source.length))
-        let location = min(targetRange?.location ?? cursor, source.length)
+        let location = targetRange?.location ?? cursor
         let lineRange = source.lineRange(
             for: NSRange(location: location, length: 0)
         )
@@ -187,22 +196,27 @@ public enum TypingAssistanceTechnicalContextClassifier {
     }
 
     private static let commandNames: Set<String> = [
-        "bash", "bundle", "cargo", "cat", "chmod", "cmake", "code",
-        "cp", "docker", "find", "fish", "git", "go", "gradle", "grep",
-        "head", "helm", "java", "javac", "jq", "kubectl", "less", "ls",
-        "make", "mkdir", "mv", "ninja", "node", "npm", "npx", "open",
-        "pip", "pip3", "pnpm", "podman", "pwd", "python", "python3",
-        "rg", "rm", "rsync", "ruby", "rustc", "scp", "sed", "sh",
-        "ssh", "swift", "tail", "terraform", "test", "touch", "uv",
+        "bash", "bundle", "cargo", "cat", "cd", "chmod", "cmake",
+        "code", "cp", "curl", "docker", "echo", "export", "find",
+        "fish", "git", "go", "gradle", "grep", "head", "helm", "java",
+        "javac", "jq", "kubectl", "less", "ls", "make", "mkdir", "mv",
+        "ninja", "node", "npm", "npx", "open", "pip", "pip3", "pnpm",
+        "podman", "printf", "pwd", "python", "python3", "rg", "rm",
+        "rsync", "ruby", "rustc", "scp", "sed", "sh", "source", "ssh",
+        "swift", "tail", "terraform", "test", "touch", "uv", "wget",
         "xed", "xcodebuild", "yarn", "zsh",
     ]
     private static let ambiguousCommandNames: Set<String> = [
-        "code", "find", "go", "head", "less", "make", "open", "tail",
+        "code", "curl", "echo", "export", "find", "go", "head", "less",
+        "make", "open", "source", "tail",
     ]
     private static let toolCommandNames: Set<String> = [
-        "cargo", "docker", "git", "kubectl", "node", "npm", "swift",
+        "cargo", "cd", "docker", "git", "kubectl", "node", "npm",
+        "printf", "swift",
     ]
-    private static let standaloneCommandNames: Set<String> = ["ls", "pwd"]
+    private static let standaloneCommandNames: Set<String> = [
+        "cd", "ls", "pwd",
+    ]
     private static let commandActions: Set<String> = [
         "add", "apply", "branch", "build", "check", "checkout", "ci",
         "clean", "clone", "commit", "compose", "config", "container",
@@ -213,8 +227,9 @@ public enum TypingAssistanceTechnicalContextClassifier {
         "show", "start", "status", "stop", "switch", "tag", "test",
         "update", "upgrade", "worktree",
     ]
-    private static let commandWrappers: Set<String> = [
-        "command", "env", "nohup", "sudo", "time",
+    private static let commandWrappers: Set<String> = ["nohup", "sudo"]
+    private static let conditionalCommandWrappers: Set<String> = [
+        "command", "env", "time",
     ]
     private static let prosePredicates: Set<String> = [
         "are", "be", "been", "being", "can", "could", "does", "feels",
@@ -226,9 +241,11 @@ public enum TypingAssistanceTechnicalContextClassifier {
         expression(
             #"[A-Za-z][A-Za-z0-9+.-]{1,31}://[^\s<>()\[\]{}\"']+"#
         ),
-        expression(#"mailto:[^\s<>()\[\]{}\"']+"#),
         expression(
-            #"(?<![A-Za-z0-9_])\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\}|[0-9#?*@!$-])"#
+            #"(?i:\b(?:data|mailto|urn)):[^\s<>()\[\]{}\"']+"#
+        ),
+        expression(
+            #"(?<![A-Za-z0-9_])\$(?:(?i:env):[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*(?::?[-+=?][^}\r\n]*)?\}|[A-Za-z_][A-Za-z0-9_]*|[0-9#?*@!$-])"#
         ),
         expression(
             #"(?<![A-Za-z0-9_])(?:[A-Za-z]:\\|\\\\)[^\s<>"|]+"#
@@ -250,8 +267,11 @@ public enum TypingAssistanceTechnicalContextClassifier {
     private static let environmentAssignmentExpression = expression(
         #"^[A-Za-z_][A-Za-z0-9_]*=[^\s]+$"#
     )
+    private static let environmentNameExpression = expression(
+        #"^[A-Z_][A-Z0-9_]*$"#
+    )
     private static let shellVariableExpression = expression(
-        #"^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\}|[0-9#?*@!$-])$"#
+        #"^\$(?:(?i:env):[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*(?::?[-+=?][^}\r\n]*)?\}|[A-Za-z_][A-Za-z0-9_]*|[0-9#?*@!$-])$"#
     )
     private static let fileNameExpression = expression(
         #"^[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,12}$"#
@@ -412,35 +432,56 @@ public enum TypingAssistanceTechnicalContextClassifier {
     }
 
     private static func isCommandLine(_ line: String) -> Bool {
-        var commandText = line
-        var hasExplicitInvocation = false
+        let commandText = line
         if commandText.hasPrefix("$ ") || commandText.hasPrefix("% ") {
-            commandText = String(commandText.dropFirst(2))
-            hasExplicitInvocation = true
-        }
-
-        var tokens = commandText.split(
-            whereSeparator: \.isWhitespace
-        ).map(String.init)
-        while let first = tokens.first, isEnvironmentAssignment(first) {
-            tokens.removeFirst()
-            hasExplicitInvocation = true
-        }
-        if let first = tokens.first,
-           commandWrappers.contains(first.lowercased()) {
-            tokens.removeFirst()
-            hasExplicitInvocation = true
-            while let first = tokens.first, isEnvironmentAssignment(first) {
-                tokens.removeFirst()
-            }
-        }
-        guard let command = tokens.first else {
-            return hasExplicitInvocation
-        }
-        if isExecutablePath(command) {
             return true
         }
-        if hasExplicitInvocation {
+
+        let tokens = commandText.split(
+            whereSeparator: \.isWhitespace
+        ).map(String.init)
+        guard let first = tokens.first else { return false }
+        if isEnvironmentAssignment(first) {
+            return true
+        }
+        let normalizedFirst = first.lowercased()
+        if commandWrappers.contains(normalizedFirst) {
+            return tokens.count > 1
+        }
+        if conditionalCommandWrappers.contains(normalizedFirst) {
+            return isCredibleWrappedInvocation(Array(tokens.dropFirst()))
+        }
+        return isCommandInvocation(tokens, commandText: commandText)
+    }
+
+    private static func isCredibleWrappedInvocation(
+        _ wrappedTokens: [String]
+    ) -> Bool {
+        var tokens = wrappedTokens
+        var containsEnvironmentAssignment = false
+        while let first = tokens.first, isEnvironmentAssignment(first) {
+            tokens.removeFirst()
+            containsEnvironmentAssignment = true
+        }
+        if containsEnvironmentAssignment {
+            return true
+        }
+        guard let first = tokens.first else { return false }
+        if first.hasPrefix("-") && first != "-" {
+            return true
+        }
+        return isCommandInvocation(
+            tokens,
+            commandText: tokens.joined(separator: " ")
+        )
+    }
+
+    private static func isCommandInvocation(
+        _ tokens: [String],
+        commandText: String
+    ) -> Bool {
+        guard let command = tokens.first else { return false }
+        if isExecutablePath(command) {
             return true
         }
         let normalizedCommand = command.lowercased()
@@ -454,6 +495,12 @@ public enum TypingAssistanceTechnicalContextClassifier {
         }
 
         let arguments = Array(tokens.dropFirst())
+        if normalizedCommand == "export",
+           arguments.contains(where: {
+               matches($0, expression: environmentNameExpression)
+           }) {
+            return true
+        }
         if containsShellOperator(commandText)
             || arguments.contains(where: isTechnicalArgument) {
             return true
@@ -493,6 +540,11 @@ public enum TypingAssistanceTechnicalContextClassifier {
         if token.hasPrefix("-") && token != "-" {
             return true
         }
+        if token.hasPrefix("\"")
+            || token.hasPrefix("'")
+            || token.hasPrefix("%") {
+            return true
+        }
         return isExecutablePath(token)
             || isEnvironmentAssignment(token)
             || matches(token, expression: shellVariableExpression)
@@ -517,6 +569,19 @@ public enum TypingAssistanceTechnicalContextClassifier {
         token.trimmingCharacters(
             in: .punctuationCharacters
         ).lowercased()
+    }
+
+    private static func isValidTargetRange(
+        _ range: NSRange,
+        sourceUTF16Length: Int
+    ) -> Bool {
+        guard range.location >= 0,
+              range.length >= 0,
+              range.location <= sourceUTF16Length
+        else {
+            return false
+        }
+        return range.length <= sourceUTF16Length - range.location
     }
 
     private static func isEnvironmentAssignment(_ token: String) -> Bool {
