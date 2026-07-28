@@ -54,11 +54,15 @@ final class TypingAssistantSessionTests: XCTestCase {
             "swift test",
             "cd project",
             "cd",
+            "echo teh",
             "echo \"build complete\"",
+            "curl teh",
             "curl https://example.com/archive",
             "wget https://example.com/archive",
             "printf \"%s\\n\" value",
+            "source teh",
             "source setup.sh",
+            "export teh",
             "export EDITOR=nano",
             "time swift test",
             "env DEBUG=1 npm test",
@@ -119,15 +123,13 @@ final class TypingAssistantSessionTests: XCTestCase {
             "swift makes local development convenient",
             "open source software helps this project",
             "cd collections remain popular",
-            "echo chamber",
             "echo chambers distort the discussion",
-            "curl pattern",
             "curl patterns appear in vector fields",
             "printf formatting improves diagnostics",
-            "source text",
             "source material supports the conclusion",
-            "export data",
+            "source material, however, supports the conclusion",
             "export growth supports local jobs",
+            "export growth, while uneven, supports local jobs",
             "wget is the executable name in this sentence",
             "time flies during long reviews",
             "env settings belong in local configuration",
@@ -175,7 +177,7 @@ final class TypingAssistantSessionTests: XCTestCase {
         let runtime = FakeTypingAssistantRuntime()
         let session = makeSession(runtime: runtime)
         session.isEnabled = true
-        let source = makeSnapshot("source text", revision: 1)
+        let source = makeSnapshot("ordinary prose remains editable", revision: 1)
 
         _ = session.editorDidChange(source, allowsGenerativeAssistance: true)
         try? await Task.sleep(nanoseconds: 20_000_000)
@@ -198,7 +200,7 @@ final class TypingAssistantSessionTests: XCTestCase {
         let runtime = FakeTypingAssistantRuntime()
         let session = makeSession(runtime: runtime)
         session.isEnabled = true
-        let source = makeSnapshot("source text", revision: 1)
+        let source = makeSnapshot("ordinary prose remains editable", revision: 1)
 
         _ = session.editorDidChange(source, allowsGenerativeAssistance: true)
         try? await Task.sleep(nanoseconds: 20_000_000)
@@ -221,7 +223,7 @@ final class TypingAssistantSessionTests: XCTestCase {
         let runtime = FakeTypingAssistantRuntime()
         let session = makeSession(runtime: runtime)
         session.isEnabled = true
-        let source = makeSnapshot("source text", revision: 1)
+        let source = makeSnapshot("ordinary prose remains editable", revision: 1)
 
         _ = session.editorDidChange(source, allowsGenerativeAssistance: true)
         session.selectionDidChange(source)

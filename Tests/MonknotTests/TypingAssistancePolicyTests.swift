@@ -230,11 +230,15 @@ final class TypingAssistancePolicyTests: XCTestCase {
             "kubectl teh ",
             "swift teh ",
             "cd teh ",
+            "echo teh ",
             "echo \"teh ",
+            "curl teh ",
             "curl -o teh ",
             "wget teh ",
             "printf teh ",
+            "source teh ",
             "source setup.sh teh ",
+            "export teh ",
             "export TEH ",
             "./deploy.sh teh ",
             "value = teh ",
@@ -329,11 +333,15 @@ final class TypingAssistancePolicyTests: XCTestCase {
             "swift test",
             "cd project",
             "cd",
+            "echo teh",
             "echo \"build complete\"",
+            "curl teh",
             "curl https://example.com/archive",
             "wget https://example.com/archive",
             "printf \"%s\\n\" value",
+            "source teh",
             "source setup.sh",
+            "export teh",
             "export EDITOR=nano",
             "time swift test",
             "env DEBUG=1 npm test",
@@ -395,15 +403,13 @@ final class TypingAssistancePolicyTests: XCTestCase {
             "open source software helps this project",
             "find the note before lunch",
             "cd collections remain popular",
-            "echo chamber",
             "echo chambers distort the discussion",
-            "curl pattern",
             "curl patterns appear in vector fields",
             "printf formatting improves diagnostics",
-            "source text",
             "source material supports the conclusion",
-            "export data",
+            "source material, however, supports the conclusion",
             "export growth supports local jobs",
+            "export growth, while uneven, supports local jobs",
             "wget is the executable name in this sentence",
             "time flies during long reviews",
             "env settings belong in local configuration",
@@ -531,6 +537,14 @@ final class TypingAssistancePolicyTests: XCTestCase {
                     )
             )
         }
+
+        XCTAssertTrue(
+            TypingAssistanceTechnicalContextClassifier
+                .shouldSuppressAssistance(
+                    in: snapshot,
+                    targetRange: NSRange(location: 1, length: 1)
+                )
+        )
 
         let source = text as NSString
         XCTAssertTrue(

@@ -142,11 +142,10 @@ public enum TypingAssistanceTechnicalContextClassifier {
         in snapshot: TypingAssistanceEditorSnapshot,
         targetRange: NSRange? = nil
     ) -> Bool {
-        let sourceUTF16Length = snapshot.text.utf16.count
         if let targetRange,
            !isValidTargetRange(
                targetRange,
-               sourceUTF16Length: sourceUTF16Length
+               in: snapshot.text
            ) {
             return true
         }
@@ -213,6 +212,9 @@ public enum TypingAssistanceTechnicalContextClassifier {
     private static let toolCommandNames: Set<String> = [
         "cargo", "cd", "docker", "git", "kubectl", "node", "npm",
         "printf", "swift",
+    ]
+    private static let bareArgumentCommandNames: Set<String> = [
+        "curl", "echo", "export", "source",
     ]
     private static let standaloneCommandNames: Set<String> = [
         "cd", "ls", "pwd",
@@ -495,6 +497,10 @@ public enum TypingAssistanceTechnicalContextClassifier {
         }
 
         let arguments = Array(tokens.dropFirst())
+        if bareArgumentCommandNames.contains(normalizedCommand),
+           arguments.count == 1 {
+            return true
+        }
         if normalizedCommand == "export",
            arguments.contains(where: {
                matches($0, expression: environmentNameExpression)
@@ -573,15 +579,33 @@ public enum TypingAssistanceTechnicalContextClassifier {
 
     private static func isValidTargetRange(
         _ range: NSRange,
-        sourceUTF16Length: Int
+        in source: String
     ) -> Bool {
+        let sourceUTF16Length = source.utf16.count
         guard range.location >= 0,
               range.length >= 0,
               range.location <= sourceUTF16Length
         else {
             return false
         }
-        return range.length <= sourceUTF16Length - range.location
+        guard range.length <= sourceUTF16Length - range.location else {
+            return false
+        }
+        let utf16 = source.utf16
+        let lowerBound = utf16.index(
+            utf16.startIndex,
+            offsetBy: range.location
+        )
+        let upperBound = utf16.index(
+            lowerBound,
+            offsetBy: range.length
+        )
+        guard lowerBound.samePosition(in: source) != nil,
+              upperBound.samePosition(in: source) != nil
+        else {
+            return false
+        }
+        return Range<String.Index>(range, in: source) != nil
     }
 
     private static func isEnvironmentAssignment(_ token: String) -> Bool {
