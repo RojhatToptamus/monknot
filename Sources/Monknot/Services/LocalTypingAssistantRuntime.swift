@@ -138,6 +138,9 @@ private actor LocalTypingAssistantModelGate {
         active = true
         activeCount += 1
         peakCount = max(peakCount, activeCount)
+    }
+
+    func markStarted() {
         totalCalls += 1
     }
 
@@ -164,16 +167,13 @@ private actor LocalTypingAssistantDeadlineState<Value> {
         }
     }
 
-    func resolve(
-        _ outcome: Result<Value, Error>,
-        cancelling operation: Task<Value, Error>? = nil
-    ) {
-        guard self.outcome == nil else { return }
+    func resolve(_ outcome: Result<Value, Error>) -> Bool {
+        guard self.outcome == nil else { return false }
         self.outcome = outcome
-        operation?.cancel()
         let continuation = continuation
         self.continuation = nil
         continuation?.resume(returning: outcome)
+        return true
     }
 }
 
@@ -182,17 +182,22 @@ actor LocalTypingAssistantRuntime {
 
     private let configuration: LocalTypingAssistantConfiguration
     private let transport: LocalTypingAssistantTransport
+    private let afterModelGateAcquire: (() async -> Void)?
     private let modelGate = LocalTypingAssistantModelGate()
     private var warmupScheduled = false
     private var foregroundTimeouts = 0
     private var backgroundWarmups = 0
+    // Caller deadlines bound UI waiting; this bounds the client request itself.
+    private static let modelTransportTimeout: TimeInterval = 60
 
     init(
         configuration: LocalTypingAssistantConfiguration = .researchDefault,
-        transport: LocalTypingAssistantTransport = URLSessionTypingAssistantTransport()
+        transport: LocalTypingAssistantTransport = URLSessionTypingAssistantTransport(),
+        afterModelGateAcquire: (() async -> Void)? = nil
     ) {
         self.configuration = configuration
         self.transport = transport
+        self.afterModelGateAcquire = afterModelGateAcquire
     }
 
     func requestCorrection(
@@ -273,16 +278,21 @@ actor LocalTypingAssistantRuntime {
             }
             let prediction = try await withDeadline(
                 configuration.foregroundDeadline,
-                operation: operation
+                operation: operation,
+                cancelOperation: false
             )
             try Task.checkCancellation()
-            return makeResult(
+            let result = makeResult(
                 prediction: prediction,
                 snapshot: snapshot,
                 context: context,
                 kind: kind,
                 latencyMilliseconds: elapsedMilliseconds(since: started)
             )
+            // The runtime binds source identity; the session decides whether
+            // that source is still current before presentation or acceptance.
+            try Task.checkCancellation()
+            return result
         } catch LocalTypingAssistantRuntimeError.modelBusy {
             return .noSuggestion(
                 route: .modelBusy,
@@ -327,7 +337,8 @@ actor LocalTypingAssistantRuntime {
         }
         let data = try await withDeadline(
             configuration.probeDeadline,
-            operation: operation
+            operation: operation,
+            cancelOperation: true
         )
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let models = object["models"] as? [[String: Any]]
@@ -365,7 +376,7 @@ actor LocalTypingAssistantRuntime {
                     path: "/api/generate",
                     method: "POST",
                     body: body,
-                    timeout: self.configuration.backgroundDeadline
+                    timeout: Self.modelTransportTimeout
                 )
                 let (_, response) = try await self.transport.send(request)
                 guard (200..<300).contains(response.statusCode) else {
@@ -376,7 +387,8 @@ actor LocalTypingAssistantRuntime {
             }
             _ = try await withDeadline(
                 configuration.backgroundDeadline,
-                operation: operation
+                operation: operation,
+                cancelOperation: false
             )
             backgroundWarmups += 1
         } catch {
@@ -426,7 +438,7 @@ actor LocalTypingAssistantRuntime {
             path: "/api/chat",
             method: "POST",
             body: body,
-            timeout: configuration.foregroundDeadline
+            timeout: Self.modelTransportTimeout
         )
         let (data, response) = try await transport.send(request)
         guard (200..<300).contains(response.statusCode) else {
@@ -636,8 +648,18 @@ actor LocalTypingAssistantRuntime {
     ) async throws -> Task<T, Error> {
         try Task.checkCancellation()
         try await modelGate.acquire()
+        if let afterModelGateAcquire {
+            await afterModelGateAcquire()
+        }
+        do {
+            try Task.checkCancellation()
+        } catch {
+            await modelGate.release()
+            throw error
+        }
         let gate = modelGate
         return Task {
+            await gate.markStarted()
             do {
                 let value = try await operation()
                 await gate.release()
@@ -651,14 +673,15 @@ actor LocalTypingAssistantRuntime {
 
     private func withDeadline<T>(
         _ seconds: TimeInterval,
-        operation: Task<T, Error>
+        operation: Task<T, Error>,
+        cancelOperation: Bool
     ) async throws -> T {
         let state = LocalTypingAssistantDeadlineState<T>()
         Task {
             do {
-                await state.resolve(.success(try await operation.value))
+                _ = await state.resolve(.success(try await operation.value))
             } catch {
-                await state.resolve(.failure(error))
+                _ = await state.resolve(.failure(error))
             }
         }
         Task {
@@ -669,10 +692,12 @@ actor LocalTypingAssistantRuntime {
             } catch {
                 return
             }
-            await state.resolve(
-                .failure(LocalTypingAssistantRuntimeError.timeout),
-                cancelling: operation
+            let won = await state.resolve(
+                .failure(LocalTypingAssistantRuntimeError.timeout)
             )
+            if won, cancelOperation {
+                operation.cancel()
+            }
         }
 
         return try await withTaskCancellationHandler {
@@ -681,12 +706,11 @@ actor LocalTypingAssistantRuntime {
             try Task.checkCancellation()
             return try outcome.get()
         } onCancel: {
-            operation.cancel()
             Task {
-                await state.resolve(
-                    .failure(CancellationError()),
-                    cancelling: operation
-                )
+                let won = await state.resolve(.failure(CancellationError()))
+                if won, cancelOperation {
+                    operation.cancel()
+                }
             }
         }
     }

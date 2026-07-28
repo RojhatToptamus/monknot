@@ -14,13 +14,14 @@ final class LoopbackHTTPTestServer {
 
     private let listener: NWListener
     private let queue = DispatchQueue(label: "MonknotTests.LoopbackHTTP")
-    private let handler: (String) -> Response
+    private let handler: (String, Int) -> Response
     private let lock = NSLock()
     private var startContinuation: CheckedContinuation<URL, Error>?
-    private var clientClosureCounts: [String: Int] = [:]
+    private var requestCounts: [String: Int] = [:]
+    private var successfulResponseCounts: [String: Int] = [:]
     private var connections: [ObjectIdentifier: NWConnection] = [:]
 
-    init(handler: @escaping (String) -> Response) throws {
+    init(handler: @escaping (String, Int) -> Response) throws {
         self.handler = handler
         listener = try NWListener(using: .tcp, on: .any)
     }
@@ -65,9 +66,15 @@ final class LoopbackHTTPTestServer {
         active.forEach { $0.cancel() }
     }
 
-    func clientClosureCount(for path: String) -> Int {
+    func requestCount(for path: String) -> Int {
         lock.withLock {
-            clientClosureCounts[path, default: 0]
+            requestCounts[path, default: 0]
+        }
+    }
+
+    func successfulResponseCount(for path: String) -> Int {
+        lock.withLock {
+            successfulResponseCounts[path, default: 0]
         }
     }
 
@@ -125,31 +132,13 @@ final class LoopbackHTTPTestServer {
             let path = firstLine.split(separator: " ").dropFirst().first
                 .map(String.init)
                 ?? "/"
-            let response = self.handler(path)
-            if response.delay > 0 {
-                self.observeClientClosure(on: connection, path: path)
+            let requestNumber = self.lock.withLock {
+                self.requestCounts[path, default: 0] += 1
+                return self.requestCounts[path, default: 0]
             }
+            let response = self.handler(path, requestNumber)
             self.queue.asyncAfter(deadline: .now() + response.delay) {
                 self.send(response.body, on: connection, path: path)
-            }
-        }
-    }
-
-    private func observeClientClosure(
-        on connection: NWConnection,
-        path: String
-    ) {
-        connection.receive(
-            minimumIncompleteLength: 1,
-            maximumLength: 1
-        ) { [weak self] _, _, isComplete, error in
-            guard let self else { return }
-            if isComplete || error != nil {
-                self.lock.withLock {
-                    self.clientClosureCounts[path, default: 0] += 1
-                }
-            } else {
-                self.observeClientClosure(on: connection, path: path)
             }
         }
     }
@@ -171,9 +160,9 @@ final class LoopbackHTTPTestServer {
                     connection.cancel()
                     return
                 }
-                if error != nil {
+                if error == nil {
                     self.lock.withLock {
-                        self.clientClosureCounts[path, default: 0] += 1
+                        self.successfulResponseCounts[path, default: 0] += 1
                     }
                 }
                 self.remove(connection)
