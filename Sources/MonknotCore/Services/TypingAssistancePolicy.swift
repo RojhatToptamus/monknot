@@ -178,20 +178,61 @@ public enum TypingAssistanceTechnicalContextClassifier {
             return true
         }
 
-        return isCommandLine(
-            trimmed,
-            targetIsSpecific: targetRange != nil
-        ) || isCodeLine(trimmed)
+        return isCommandLine(trimmed) || isCodeLine(trimmed)
     }
 
-    private static let commandActions: [String: Set<String>] = [
-        "cargo": ["build", "check", "run", "test"],
-        "git": ["add", "commit", "diff", "pull", "push", "status"],
-        "kubectl": ["apply", "delete", "describe", "get", "logs"],
-        "npm": ["install", "run", "start", "test"],
+    private struct FenceDelimiter {
+        let marker: unichar
+        let length: Int
+    }
+
+    private static let commandNames: Set<String> = [
+        "bash", "bundle", "cargo", "cat", "chmod", "cmake", "code",
+        "cp", "docker", "find", "fish", "git", "go", "gradle", "grep",
+        "head", "helm", "java", "javac", "jq", "kubectl", "less", "ls",
+        "make", "mkdir", "mv", "ninja", "node", "npm", "npx", "open",
+        "pip", "pip3", "pnpm", "podman", "pwd", "python", "python3",
+        "rg", "rm", "rsync", "ruby", "rustc", "scp", "sed", "sh",
+        "ssh", "swift", "tail", "terraform", "test", "touch", "uv",
+        "xed", "xcodebuild", "yarn", "zsh",
+    ]
+    private static let ambiguousCommandNames: Set<String> = [
+        "code", "find", "go", "head", "less", "make", "open", "tail",
+    ]
+    private static let toolCommandNames: Set<String> = [
+        "cargo", "docker", "git", "kubectl", "node", "npm", "swift",
+    ]
+    private static let standaloneCommandNames: Set<String> = ["ls", "pwd"]
+    private static let commandActions: Set<String> = [
+        "add", "apply", "branch", "build", "check", "checkout", "ci",
+        "clean", "clone", "commit", "compose", "config", "container",
+        "delete", "describe", "diff", "doctor", "exec", "fetch", "fmt",
+        "format", "get", "image", "init", "install", "list", "log",
+        "logs", "merge", "package", "publish", "pull", "push", "remove",
+        "reset", "resolve", "restart", "restore", "rollout", "run",
+        "show", "start", "status", "stop", "switch", "tag", "test",
+        "update", "upgrade", "worktree",
+    ]
+    private static let commandWrappers: Set<String> = [
+        "command", "env", "nohup", "sudo", "time",
+    ]
+    private static let prosePredicates: Set<String> = [
+        "are", "be", "been", "being", "can", "could", "does", "feels",
+        "had", "has", "have", "helped", "helps", "is", "made", "makes",
+        "may", "means", "might", "must", "seems", "should", "sounds",
+        "was", "were", "will", "works", "would",
     ]
     private static let technicalTokenExpressions = [
-        expression(#"https?://[^\s<>()\[\]{}\"']+"#),
+        expression(
+            #"[A-Za-z][A-Za-z0-9+.-]{1,31}://[^\s<>()\[\]{}\"']+"#
+        ),
+        expression(#"mailto:[^\s<>()\[\]{}\"']+"#),
+        expression(
+            #"(?<![A-Za-z0-9_])\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\}|[0-9#?*@!$-])"#
+        ),
+        expression(
+            #"(?<![A-Za-z0-9_])(?:[A-Za-z]:\\|\\\\)[^\s<>"|]+"#
+        ),
         expression(
             #"(?<![A-Za-z0-9_])(?:~|/|\./|\.\./)[A-Za-z0-9_./~:@%+=,-]+"#
         ),
@@ -207,7 +248,19 @@ public enum TypingAssistanceTechnicalContextClassifier {
         ),
     ]
     private static let environmentAssignmentExpression = expression(
-        #"^[A-Z_][A-Z0-9_]*=[^\s]+$"#
+        #"^[A-Za-z_][A-Za-z0-9_]*=[^\s]+$"#
+    )
+    private static let shellVariableExpression = expression(
+        #"^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\}|[0-9#?*@!$-])$"#
+    )
+    private static let fileNameExpression = expression(
+        #"^[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,12}$"#
+    )
+    private static let windowsPathExpression = expression(
+        #"^(?:[A-Za-z]:\\|\\\\)[^\s<>"|]+$"#
+    )
+    private static let shellOperatorExpression = expression(
+        #"(?:^|\s)(?:&&|\|\||[|;<>])(?:\s|$)"#
     )
     private static let completeCallExpression = expression(
         #"^[A-Za-z_][A-Za-z0-9_.]*\([^)\n]*\)\s*;?$"#
@@ -224,47 +277,91 @@ public enum TypingAssistanceTechnicalContextClassifier {
         let prefix = source.substring(
             with: NSRange(location: 0, length: lineStart)
         )
-        var fence: String?
+        var fence: FenceDelimiter?
         for line in prefix.components(separatedBy: .newlines) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if let activeFence = fence {
-                if trimmed.hasPrefix(activeFence) {
+                if closesFence(trimmed, delimiter: activeFence) {
                     fence = nil
                 }
-            } else if trimmed.hasPrefix("```") {
-                fence = "```"
-            } else if trimmed.hasPrefix("~~~") {
-                fence = "~~~"
+            } else if let opening = fenceDelimiter(in: trimmed) {
+                fence = opening
             }
         }
         return fence != nil
     }
 
     private static func isFenceDelimiter(_ text: String) -> Bool {
-        text.hasPrefix("```") || text.hasPrefix("~~~")
+        fenceDelimiter(in: text) != nil
+    }
+
+    private static func fenceDelimiter(in text: String) -> FenceDelimiter? {
+        let source = text as NSString
+        guard source.length >= 3 else { return nil }
+        let marker = source.character(at: 0)
+        guard marker == 96 || marker == 126 else { return nil }
+        var length = 1
+        while length < source.length,
+              source.character(at: length) == marker {
+            length += 1
+        }
+        guard length >= 3 else { return nil }
+        return FenceDelimiter(marker: marker, length: length)
+    }
+
+    private static func closesFence(
+        _ text: String,
+        delimiter: FenceDelimiter
+    ) -> Bool {
+        guard let candidate = fenceDelimiter(in: text),
+              candidate.marker == delimiter.marker,
+              candidate.length >= delimiter.length
+        else {
+            return false
+        }
+        let source = text as NSString
+        let remainder = source.substring(
+            from: candidate.length
+        ).trimmingCharacters(in: .whitespaces)
+        return remainder.isEmpty
     }
 
     private static func inlineCodeRanges(in line: String) -> [NSRange] {
         let source = line as NSString
         var ranges: [NSRange] = []
-        var opening: Int?
+        var opening: (location: Int, length: Int)?
         var index = 0
         while index < source.length {
-            if source.character(at: index) == 96 {
-                if let start = opening {
+            guard source.character(at: index) == 96 else {
+                index += 1
+                continue
+            }
+            let runStart = index
+            while index < source.length,
+                  source.character(at: index) == 96 {
+                index += 1
+            }
+            let runLength = index - runStart
+            if let start = opening {
+                if runLength == start.length {
                     ranges.append(
-                        NSRange(location: start, length: index - start + 1)
+                        NSRange(
+                            location: start.location,
+                            length: index - start.location
+                        )
                     )
                     opening = nil
-                } else {
-                    opening = index
                 }
+            } else {
+                opening = (runStart, runLength)
             }
-            index += 1
         }
         if let opening {
             ranges.append(
-                NSRange(location: opening, length: source.length - opening)
+                NSRange(
+                    location: opening.location,
+                    length: source.length - opening.location
+                )
             )
         }
         return ranges
@@ -314,27 +411,112 @@ public enum TypingAssistanceTechnicalContextClassifier {
         }
     }
 
-    private static func isCommandLine(
-        _ line: String,
-        targetIsSpecific: Bool
-    ) -> Bool {
-        if line.hasPrefix("$ ") || line.hasPrefix("% ") {
-            return true
+    private static func isCommandLine(_ line: String) -> Bool {
+        var commandText = line
+        var hasExplicitInvocation = false
+        if commandText.hasPrefix("$ ") || commandText.hasPrefix("% ") {
+            commandText = String(commandText.dropFirst(2))
+            hasExplicitInvocation = true
         }
-        var tokens = line.split(whereSeparator: \.isWhitespace).map(String.init)
+
+        var tokens = commandText.split(
+            whereSeparator: \.isWhitespace
+        ).map(String.init)
         while let first = tokens.first, isEnvironmentAssignment(first) {
             tokens.removeFirst()
+            hasExplicitInvocation = true
         }
-        guard let command = tokens.first,
-              let actions = commandActions[command]
+        if let first = tokens.first,
+           commandWrappers.contains(first.lowercased()) {
+            tokens.removeFirst()
+            hasExplicitInvocation = true
+            while let first = tokens.first, isEnvironmentAssignment(first) {
+                tokens.removeFirst()
+            }
+        }
+        guard let command = tokens.first else {
+            return hasExplicitInvocation
+        }
+        if isExecutablePath(command) {
+            return true
+        }
+        if hasExplicitInvocation {
+            return true
+        }
+        let normalizedCommand = command.lowercased()
+        guard command == normalizedCommand,
+              commandNames.contains(normalizedCommand)
         else {
             return false
         }
-        if targetIsSpecific {
+        guard tokens.count >= 2 else {
+            return standaloneCommandNames.contains(normalizedCommand)
+        }
+
+        let arguments = Array(tokens.dropFirst())
+        if containsShellOperator(commandText)
+            || arguments.contains(where: isTechnicalArgument) {
             return true
         }
-        guard tokens.count >= 2 else { return false }
-        return actions.contains(tokens[1])
+        if looksLikeProseMention(arguments) {
+            return false
+        }
+        if !ambiguousCommandNames.contains(normalizedCommand) {
+            if toolCommandNames.contains(normalizedCommand) {
+                return arguments.count == 1
+                    || commandActions.contains(normalizedWord(arguments[0]))
+            }
+            return true
+        }
+        return commandActions.contains(normalizedWord(arguments[0]))
+    }
+
+    private static func isExecutablePath(_ token: String) -> Bool {
+        let path = token.trimmingCharacters(
+            in: CharacterSet(charactersIn: "\"'")
+        )
+        let lowercased = path.lowercased()
+        if path == "." || path == ".."
+            || path.hasPrefix("/")
+            || path.hasPrefix("./")
+            || path.hasPrefix("../")
+            || path.hasPrefix("~/")
+            || path.contains("/")
+            || matches(path, expression: windowsPathExpression) {
+            return true
+        }
+        return [".bat", ".cmd", ".command", ".com", ".exe", ".ps1", ".sh"]
+            .contains { lowercased.hasSuffix($0) }
+    }
+
+    private static func isTechnicalArgument(_ token: String) -> Bool {
+        if token.hasPrefix("-") && token != "-" {
+            return true
+        }
+        return isExecutablePath(token)
+            || isEnvironmentAssignment(token)
+            || matches(token, expression: shellVariableExpression)
+            || matches(token, expression: fileNameExpression)
+    }
+
+    private static func containsShellOperator(_ line: String) -> Bool {
+        let range = NSRange(location: 0, length: (line as NSString).length)
+        return shellOperatorExpression.firstMatch(
+            in: line,
+            range: range
+        ) != nil
+    }
+
+    private static func looksLikeProseMention(_ arguments: [String]) -> Bool {
+        arguments.prefix(3).contains {
+            prosePredicates.contains(normalizedWord($0))
+        }
+    }
+
+    private static func normalizedWord(_ token: String) -> String {
+        token.trimmingCharacters(
+            in: .punctuationCharacters
+        ).lowercased()
     }
 
     private static func isEnvironmentAssignment(_ token: String) -> Bool {

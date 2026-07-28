@@ -46,18 +46,31 @@ final class TypingAssistantSessionTests: XCTestCase {
     func testPauseGrammarSuppressesTechnicalContexts() async {
         let contexts = [
             "git status",
+            "git checkout feature/local-fix",
             "npm test",
+            "npm ci",
             "cargo build --release",
             "kubectl get pods",
+            "swift test",
+            "python3 scripts/check.py",
+            "./scripts/check.sh --verbose",
+            "C:\\Tools\\formatter.exe --check",
+            "\"C:\\Program Files\\Formatter\\format.exe\" --check",
+            "EDITOR=nano swift build",
             "render(value)",
             "result = render(value)",
             "/Users/example/notes/todo.md",
             "https://example.com/docs",
+            "ssh://example.com/repository",
+            "C:\\Users\\example\\notes\\todo.md",
+            "$PROJECT_ROOT",
             "--verbose",
             "--verbose --force",
             "NODE_ENV=production",
             "`npm test`",
+            "``npm `test` --silent``",
             "```\nnpm test\n```",
+            "````swift\n```\nnpm test",
         ]
 
         for (revision, text) in contexts.enumerated() {
@@ -81,20 +94,35 @@ final class TypingAssistantSessionTests: XCTestCase {
         }
     }
 
-    func testPauseGrammarKeepsLowercaseProseAroundInlineCodeEligible() async {
-        let runtime = FakeTypingAssistantRuntime()
-        let session = makeSession(runtime: runtime)
-        session.isEnabled = true
-        let text = "please run `npm test` after teh meeting"
+    func testPauseGrammarKeepsOrdinaryToolMentionsEligible() async {
+        let texts = [
+            "please run `npm test` after teh meeting",
+            "git status is useful for checking changes",
+            "npm packages are cached locally",
+            "cargo shipments arrive tomorrow",
+            "docker containers simplify local testing",
+            "swift makes local development convenient",
+            "open source software helps this project",
+        ]
 
-        _ = session.editorDidChange(
-            makeSnapshot(text, revision: 1),
-            allowsGenerativeAssistance: true
-        )
-        try? await Task.sleep(nanoseconds: 20_000_000)
-        let requestCount = await runtime.correctionRequestCount()
+        for (revision, text) in texts.enumerated() {
+            let runtime = FakeTypingAssistantRuntime()
+            let session = makeSession(runtime: runtime)
+            session.isEnabled = true
 
-        XCTAssertEqual(requestCount, 1)
+            _ = session.editorDidChange(
+                makeSnapshot(text, revision: revision),
+                allowsGenerativeAssistance: true
+            )
+            try? await Task.sleep(nanoseconds: 20_000_000)
+            let requestCount = await runtime.correctionRequestCount()
+
+            XCTAssertEqual(
+                requestCount,
+                1,
+                "Suppressed ordinary prose mentioning a tool: \(text)"
+            )
+        }
     }
 
     func testRapidTypingOnlyPresentsLatestSuggestion() async {

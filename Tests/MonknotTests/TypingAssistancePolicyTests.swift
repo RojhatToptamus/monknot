@@ -220,19 +220,26 @@ final class TypingAssistancePolicyTests: XCTestCase {
         let corrector = TypingAssistanceWordBoundaryCorrector()
         let technicalContexts = [
             "```\nteh ",
+            "````\n```\nteh ",
             "$ teh ",
+            "$teh ",
             "    teh ",
             "git teh ",
             "npm teh ",
             "cargo teh ",
             "kubectl teh ",
+            "swift teh ",
+            "./deploy.sh teh ",
             "value = teh ",
             "render(teh ",
             "/tmp/teh ",
+            "C:\\work\\teh ",
             "https://example.com/teh ",
+            "ssh://example.com/teh ",
             "--teh ",
             "NODE_ENV=teh ",
             "`teh ",
+            "``teh`` ",
         ]
 
         for (revision, text) in technicalContexts.enumerated() {
@@ -250,21 +257,65 @@ final class TypingAssistancePolicyTests: XCTestCase {
         }
     }
 
+    func testBoundaryCorrectorPreservesOrdinaryCommandMentions() {
+        let corrector = TypingAssistanceWordBoundaryCorrector()
+        let examples = [
+            "git definately helps this workflow",
+            "swift definately makes local builds easier",
+            "open source definately matters here",
+        ]
+
+        for (revision, text) in examples.enumerated() {
+            let source = text as NSString
+            let typoRange = source.range(of: "definately")
+            let snapshot = TypingAssistanceEditorSnapshot(
+                documentID: "note.md",
+                revision: revision,
+                text: text,
+                cursorUTF16Offset: NSMaxRange(typoRange) + 1
+            )
+
+            XCTAssertEqual(
+                corrector.edit(for: snapshot),
+                TypingAssistanceTextEdit(
+                    range: typoRange,
+                    replacementText: "definitely"
+                ),
+                "Suppressed ordinary prose mentioning a tool: \(text)"
+            )
+        }
+    }
+
     func testTechnicalClassifierRecognizesCompleteTechnicalContexts() {
         let contexts = [
             "git status",
+            "git checkout feature/local-fix",
             "npm test",
+            "npm ci",
             "cargo build --release",
             "kubectl get pods",
+            "swift test",
+            "python3 scripts/check.py",
+            "./scripts/check.sh --verbose",
+            "C:\\Tools\\formatter.exe --check",
+            "\"C:\\Program Files\\Formatter\\format.exe\" --check",
+            "EDITOR=nano swift build",
             "render(value)",
             "result = render(value)",
             "/Users/example/notes/todo.md",
             "https://example.com/docs",
+            "ftp://example.com/releases",
+            "ssh://example.com/repository",
+            "C:\\Users\\example\\notes\\todo.md",
+            "$PROJECT_ROOT",
+            "${PROJECT_ROOT}",
             "--verbose",
             "--verbose --force",
             "NODE_ENV=production",
             "`npm test`",
+            "``npm `test` --silent``",
             "```\nnpm test\n```",
+            "````swift\n```\nnpm test",
         ]
 
         for (revision, text) in contexts.enumerated() {
@@ -289,6 +340,13 @@ final class TypingAssistancePolicyTests: XCTestCase {
             "please run the test tomorrow",
             "we should update the package",
             "git is useful for this project",
+            "git status is useful for checking changes",
+            "npm packages are cached locally",
+            "cargo shipments arrive tomorrow",
+            "docker containers simplify local testing",
+            "swift makes local development convenient",
+            "open source software helps this project",
+            "find the note before lunch",
             "please use render(value) after teh meeting",
         ]
 
@@ -318,6 +376,22 @@ final class TypingAssistancePolicyTests: XCTestCase {
             ),
             ("Open /tmp/result.txt after teh meeting.", "/tmp/result.txt", "teh"),
             ("Use --verbose if teh build fails.", "--verbose", "teh"),
+            ("Read $PROJECT_ROOT before teh build.", "$PROJECT_ROOT", "teh"),
+            (
+                "Open C:\\Users\\sam\\notes.txt after teh meeting.",
+                "C:\\Users\\sam\\notes.txt",
+                "teh"
+            ),
+            (
+                "Use ssh://example.com/repo after teh meeting.",
+                "ssh://example.com/repo",
+                "teh"
+            ),
+            (
+                "Run ``npm `test` --silent`` after teh meeting.",
+                "npm `test` --silent",
+                "teh"
+            ),
         ]
 
         for (revision, example) in examples.enumerated() {
@@ -348,6 +422,72 @@ final class TypingAssistancePolicyTests: XCTestCase {
                     )
             )
         }
+    }
+
+    func testTechnicalClassifierUsesSameLineSemanticsForSpecificTargets() {
+        let examples = [
+            ("git checkout main", "main"),
+            ("npm ci", "ci"),
+            ("swift teh", "teh"),
+            ("./scripts/check.sh value", "value"),
+            ("C:\\Tools\\formatter.exe input", "input"),
+        ]
+
+        for (revision, example) in examples.enumerated() {
+            let source = example.0 as NSString
+            let snapshot = TypingAssistanceEditorSnapshot(
+                documentID: "note.md",
+                revision: revision,
+                text: example.0,
+                cursorUTF16Offset: source.length
+            )
+
+            XCTAssertTrue(
+                TypingAssistanceTechnicalContextClassifier
+                    .shouldSuppressAssistance(in: snapshot)
+            )
+            XCTAssertTrue(
+                TypingAssistanceTechnicalContextClassifier
+                    .shouldSuppressAssistance(
+                        in: snapshot,
+                        targetRange: source.range(of: example.1)
+                    )
+            )
+        }
+    }
+
+    func testTechnicalClassifierHonorsMarkdownDelimiterLengths() {
+        let unterminatedOuterFences = [
+            "````swift\n```\nteh prose",
+            "~~~~\n~~~\nteh prose",
+        ]
+
+        for (revision, text) in unterminatedOuterFences.enumerated() {
+            XCTAssertTrue(
+                TypingAssistanceTechnicalContextClassifier
+                    .shouldSuppressAssistance(
+                        in: TypingAssistanceEditorSnapshot(
+                            documentID: "note.md",
+                            revision: revision,
+                            text: text,
+                            cursorUTF16Offset: (text as NSString).length
+                        )
+                    )
+            )
+        }
+
+        let closedFence = "````swift\n```\n````\nteh prose"
+        XCTAssertFalse(
+            TypingAssistanceTechnicalContextClassifier
+                .shouldSuppressAssistance(
+                    in: TypingAssistanceEditorSnapshot(
+                        documentID: "note.md",
+                        revision: 3,
+                        text: closedFence,
+                        cursorUTF16Offset: (closedFence as NSString).length
+                    )
+                )
+        )
     }
 
     func testSafetyPolicyRejectsProtectedAndMeaningChanges() {
