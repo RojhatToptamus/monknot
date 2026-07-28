@@ -221,9 +221,10 @@ final class TypingAssistantSession: ObservableObject {
 
         guard allowsGenerativeAssistance,
               grammarSuggestionsEnabled,
-              TypingAssistanceContextExtractor.correctionContext(
-                for: snapshot
-              ) != nil
+              TypingAssistanceContextExtractor.correctionContext(for: snapshot)
+                != nil,
+              !TypingAssistanceTechnicalContextClassifier
+                .shouldSuppressAssistance(in: snapshot)
         else {
             status = .idle
             recordTelemetry(

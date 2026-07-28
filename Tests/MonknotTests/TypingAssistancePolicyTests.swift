@@ -218,11 +218,24 @@ final class TypingAssistancePolicyTests: XCTestCase {
 
     func testBoundaryCorrectorLeavesCodeAndCommandsUnchanged() {
         let corrector = TypingAssistanceWordBoundaryCorrector()
-        let fenced = "```\nteh "
-        let command = "$ teh "
-        let indentedCode = "    teh "
+        let technicalContexts = [
+            "```\nteh ",
+            "$ teh ",
+            "    teh ",
+            "git teh ",
+            "npm teh ",
+            "cargo teh ",
+            "kubectl teh ",
+            "value = teh ",
+            "render(teh ",
+            "/tmp/teh ",
+            "https://example.com/teh ",
+            "--teh ",
+            "NODE_ENV=teh ",
+            "`teh ",
+        ]
 
-        for (revision, text) in [fenced, command, indentedCode].enumerated() {
+        for (revision, text) in technicalContexts.enumerated() {
             XCTAssertNil(
                 corrector.edit(
                     for: TypingAssistanceEditorSnapshot(
@@ -233,6 +246,106 @@ final class TypingAssistancePolicyTests: XCTestCase {
                     )
                 ),
                 "Changed code-like text: \(text)"
+            )
+        }
+    }
+
+    func testTechnicalClassifierRecognizesCompleteTechnicalContexts() {
+        let contexts = [
+            "git status",
+            "npm test",
+            "cargo build --release",
+            "kubectl get pods",
+            "render(value)",
+            "result = render(value)",
+            "/Users/example/notes/todo.md",
+            "https://example.com/docs",
+            "--verbose",
+            "--verbose --force",
+            "NODE_ENV=production",
+            "`npm test`",
+            "```\nnpm test\n```",
+        ]
+
+        for (revision, text) in contexts.enumerated() {
+            XCTAssertTrue(
+                TypingAssistanceTechnicalContextClassifier
+                    .shouldSuppressAssistance(
+                        in: TypingAssistanceEditorSnapshot(
+                            documentID: "note.md",
+                            revision: revision,
+                            text: text,
+                            cursorUTF16Offset: (text as NSString).length
+                        )
+                    ),
+                "Did not classify technical context: \(text)"
+            )
+        }
+    }
+
+    func testTechnicalClassifierPreservesOrdinaryLowercaseProse() {
+        let texts = [
+            "teh feature is ready",
+            "please run the test tomorrow",
+            "we should update the package",
+            "git is useful for this project",
+            "please use render(value) after teh meeting",
+        ]
+
+        for (revision, text) in texts.enumerated() {
+            XCTAssertFalse(
+                TypingAssistanceTechnicalContextClassifier
+                    .shouldSuppressAssistance(
+                        in: TypingAssistanceEditorSnapshot(
+                            documentID: "note.md",
+                            revision: revision,
+                            text: text,
+                            cursorUTF16Offset: (text as NSString).length
+                        )
+                    ),
+                "Misclassified lowercase prose: \(text)"
+            )
+        }
+    }
+
+    func testTechnicalClassifierOnlySuppressesTechnicalTargetsWithinProse() {
+        let examples = [
+            ("Please run `npm test` after teh meeting.", "npm", "teh"),
+            (
+                "Visit https://example.com after teh meeting.",
+                "https://example.com",
+                "teh"
+            ),
+            ("Open /tmp/result.txt after teh meeting.", "/tmp/result.txt", "teh"),
+            ("Use --verbose if teh build fails.", "--verbose", "teh"),
+        ]
+
+        for (revision, example) in examples.enumerated() {
+            let source = example.0 as NSString
+            let snapshot = TypingAssistanceEditorSnapshot(
+                documentID: "note.md",
+                revision: revision,
+                text: example.0,
+                cursorUTF16Offset: source.length
+            )
+
+            XCTAssertFalse(
+                TypingAssistanceTechnicalContextClassifier
+                    .shouldSuppressAssistance(in: snapshot)
+            )
+            XCTAssertTrue(
+                TypingAssistanceTechnicalContextClassifier
+                    .shouldSuppressAssistance(
+                        in: snapshot,
+                        targetRange: source.range(of: example.1)
+                    )
+            )
+            XCTAssertFalse(
+                TypingAssistanceTechnicalContextClassifier
+                    .shouldSuppressAssistance(
+                        in: snapshot,
+                        targetRange: source.range(of: example.2)
+                    )
             )
         }
     }

@@ -43,6 +43,60 @@ final class TypingAssistantSessionTests: XCTestCase {
         XCTAssertEqual(session.diagnostics().automaticWordCorrectionCount, 0)
     }
 
+    func testPauseGrammarSuppressesTechnicalContexts() async {
+        let contexts = [
+            "git status",
+            "npm test",
+            "cargo build --release",
+            "kubectl get pods",
+            "render(value)",
+            "result = render(value)",
+            "/Users/example/notes/todo.md",
+            "https://example.com/docs",
+            "--verbose",
+            "--verbose --force",
+            "NODE_ENV=production",
+            "`npm test`",
+            "```\nnpm test\n```",
+        ]
+
+        for (revision, text) in contexts.enumerated() {
+            let runtime = FakeTypingAssistantRuntime()
+            let session = makeSession(runtime: runtime)
+            session.isEnabled = true
+
+            _ = session.editorDidChange(
+                makeSnapshot(text, revision: revision),
+                allowsGenerativeAssistance: true
+            )
+            try? await Task.sleep(nanoseconds: 5_000_000)
+            let requestCount = await runtime.correctionRequestCount()
+
+            XCTAssertEqual(
+                requestCount,
+                0,
+                "Scheduled grammar for technical context: \(text)"
+            )
+            XCTAssertEqual(session.status, .idle)
+        }
+    }
+
+    func testPauseGrammarKeepsLowercaseProseAroundInlineCodeEligible() async {
+        let runtime = FakeTypingAssistantRuntime()
+        let session = makeSession(runtime: runtime)
+        session.isEnabled = true
+        let text = "please run `npm test` after teh meeting"
+
+        _ = session.editorDidChange(
+            makeSnapshot(text, revision: 1),
+            allowsGenerativeAssistance: true
+        )
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        let requestCount = await runtime.correctionRequestCount()
+
+        XCTAssertEqual(requestCount, 1)
+    }
+
     func testRapidTypingOnlyPresentsLatestSuggestion() async {
         let runtime = FakeTypingAssistantRuntime(delayNanoseconds: 10_000_000)
         let session = makeSession(runtime: runtime)

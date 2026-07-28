@@ -137,6 +137,231 @@ public enum TypingAssistanceContextExtractor {
     }
 }
 
+public enum TypingAssistanceTechnicalContextClassifier {
+    public static func shouldSuppressAssistance(
+        in snapshot: TypingAssistanceEditorSnapshot,
+        targetRange: NSRange? = nil
+    ) -> Bool {
+        let source = snapshot.text as NSString
+        let cursor = max(0, min(snapshot.cursorUTF16Offset, source.length))
+        let location = min(targetRange?.location ?? cursor, source.length)
+        let lineRange = source.lineRange(
+            for: NSRange(location: location, length: 0)
+        )
+        let line = source.substring(with: lineRange)
+            .trimmingCharacters(in: .newlines)
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return false }
+
+        if isInsideFence(source: source, lineStart: lineRange.location)
+            || isFenceDelimiter(trimmed)
+            || line.hasPrefix("    ")
+            || line.hasPrefix("\t") {
+            return true
+        }
+
+        let localTarget = targetRange.map {
+            NSRange(
+                location: $0.location - lineRange.location,
+                length: $0.length
+            )
+        }
+        let inlineCode = inlineCodeRanges(in: line)
+        if coversTrimmedLine(inlineCode, line: line)
+            || intersectsAny(localTarget, ranges: inlineCode) {
+            return true
+        }
+
+        let technicalTokens = technicalTokenRanges(in: line)
+        if coversTrimmedLine(technicalTokens, line: line)
+            || intersectsAny(localTarget, ranges: technicalTokens) {
+            return true
+        }
+
+        return isCommandLine(
+            trimmed,
+            targetIsSpecific: targetRange != nil
+        ) || isCodeLine(trimmed)
+    }
+
+    private static let commandActions: [String: Set<String>] = [
+        "cargo": ["build", "check", "run", "test"],
+        "git": ["add", "commit", "diff", "pull", "push", "status"],
+        "kubectl": ["apply", "delete", "describe", "get", "logs"],
+        "npm": ["install", "run", "start", "test"],
+    ]
+    private static let technicalTokenExpressions = [
+        expression(#"https?://[^\s<>()\[\]{}\"']+"#),
+        expression(
+            #"(?<![A-Za-z0-9_])(?:~|/|\./|\.\./)[A-Za-z0-9_./~:@%+=,-]+"#
+        ),
+        expression(
+            #"(?<![A-Za-z0-9_])[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+(?![A-Za-z0-9_])"#
+        ),
+        expression(
+            #"(?<![A-Za-z0-9_])--?[A-Za-z][A-Za-z0-9-]*(?:=[^\s]+)?"#
+        ),
+        expression(#"(?<![A-Za-z0-9_])[A-Z_][A-Z0-9_]*=[^\s]+"#),
+        expression(
+            #"(?<![A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_.]*\([^)\n]*\)?"#
+        ),
+    ]
+    private static let environmentAssignmentExpression = expression(
+        #"^[A-Z_][A-Z0-9_]*=[^\s]+$"#
+    )
+    private static let completeCallExpression = expression(
+        #"^[A-Za-z_][A-Za-z0-9_.]*\([^)\n]*\)\s*;?$"#
+    )
+    private static let assignmentExpression = expression(
+        #"^(?:(?:let|var|const)\s+)?[A-Za-z_][A-Za-z0-9_.]*(?:\[[^\]]+\])?\s*(?:=|\+=|-=|\*=|/=)\s*\S.*$"#
+    )
+
+    private static func isInsideFence(
+        source: NSString,
+        lineStart: Int
+    ) -> Bool {
+        guard lineStart > 0 else { return false }
+        let prefix = source.substring(
+            with: NSRange(location: 0, length: lineStart)
+        )
+        var fence: String?
+        for line in prefix.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if let activeFence = fence {
+                if trimmed.hasPrefix(activeFence) {
+                    fence = nil
+                }
+            } else if trimmed.hasPrefix("```") {
+                fence = "```"
+            } else if trimmed.hasPrefix("~~~") {
+                fence = "~~~"
+            }
+        }
+        return fence != nil
+    }
+
+    private static func isFenceDelimiter(_ text: String) -> Bool {
+        text.hasPrefix("```") || text.hasPrefix("~~~")
+    }
+
+    private static func inlineCodeRanges(in line: String) -> [NSRange] {
+        let source = line as NSString
+        var ranges: [NSRange] = []
+        var opening: Int?
+        var index = 0
+        while index < source.length {
+            if source.character(at: index) == 96 {
+                if let start = opening {
+                    ranges.append(
+                        NSRange(location: start, length: index - start + 1)
+                    )
+                    opening = nil
+                } else {
+                    opening = index
+                }
+            }
+            index += 1
+        }
+        if let opening {
+            ranges.append(
+                NSRange(location: opening, length: source.length - opening)
+            )
+        }
+        return ranges
+    }
+
+    private static func technicalTokenRanges(in line: String) -> [NSRange] {
+        let range = NSRange(location: 0, length: (line as NSString).length)
+        var ranges: [NSRange] = []
+        for expression in technicalTokenExpressions {
+            ranges.append(
+                contentsOf: expression.matches(in: line, range: range)
+                    .map(\.range)
+            )
+        }
+        return ranges
+    }
+
+    private static func coversTrimmedLine(
+        _ ranges: [NSRange],
+        line: String
+    ) -> Bool {
+        guard !ranges.isEmpty else { return false }
+        let source = line as NSString
+        let covered = ranges.reduce(into: IndexSet()) { indexes, range in
+            indexes.insert(integersIn: range.location..<NSMaxRange(range))
+        }
+        for index in 0..<source.length {
+            if covered.contains(index) {
+                continue
+            }
+            guard let scalar = UnicodeScalar(source.character(at: index)),
+                  CharacterSet.whitespaces.contains(scalar)
+            else {
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func intersectsAny(
+        _ target: NSRange?,
+        ranges: [NSRange]
+    ) -> Bool {
+        guard let target, target.location >= 0 else { return false }
+        return ranges.contains {
+            NSIntersectionRange(target, $0).length > 0
+        }
+    }
+
+    private static func isCommandLine(
+        _ line: String,
+        targetIsSpecific: Bool
+    ) -> Bool {
+        if line.hasPrefix("$ ") || line.hasPrefix("% ") {
+            return true
+        }
+        var tokens = line.split(whereSeparator: \.isWhitespace).map(String.init)
+        while let first = tokens.first, isEnvironmentAssignment(first) {
+            tokens.removeFirst()
+        }
+        guard let command = tokens.first,
+              let actions = commandActions[command]
+        else {
+            return false
+        }
+        if targetIsSpecific {
+            return true
+        }
+        guard tokens.count >= 2 else { return false }
+        return actions.contains(tokens[1])
+    }
+
+    private static func isEnvironmentAssignment(_ token: String) -> Bool {
+        matches(token, expression: environmentAssignmentExpression)
+    }
+
+    private static func isCodeLine(_ line: String) -> Bool {
+        matches(line, expression: completeCallExpression)
+            || matches(line, expression: assignmentExpression)
+    }
+
+    private static func matches(
+        _ text: String,
+        expression: NSRegularExpression
+    ) -> Bool {
+        let range = NSRange(location: 0, length: (text as NSString).length)
+        return expression.firstMatch(in: text, range: range)?.range == range
+    }
+
+    private static func expression(_ pattern: String) -> NSRegularExpression {
+        guard let expression = try? NSRegularExpression(pattern: pattern) else {
+            preconditionFailure("Invalid technical-context pattern")
+        }
+        return expression
+    }
+}
+
 public enum TypingAssistanceAcceptancePolicy {
     public static func apply(
         _ suggestion: TypingAssistanceSuggestion,
@@ -260,8 +485,7 @@ public struct TypingAssistanceWordBoundaryCorrector {
         let source = snapshot.text as NSString
         let cursor = max(0, min(snapshot.cursorUTF16Offset, source.length))
         guard cursor >= 2,
-              isBoundary(source.character(at: cursor - 1)),
-              !isCodeLikeContext(source: source, cursor: cursor)
+              isBoundary(source.character(at: cursor - 1))
         else {
             return nil
         }
@@ -277,7 +501,14 @@ public struct TypingAssistanceWordBoundaryCorrector {
         }
 
         let word = source.substring(with: range)
-        guard let replacement = replacements[word.lowercased()] else { return nil }
+        guard !TypingAssistanceTechnicalContextClassifier.shouldSuppressAssistance(
+            in: snapshot,
+            targetRange: range
+        ),
+        let replacement = replacements[word.lowercased()]
+        else {
+            return nil
+        }
         return TypingAssistanceTextEdit(
             range: range,
             replacementText: matchCase(replacement, source: word)
@@ -304,31 +535,6 @@ public struct TypingAssistanceWordBoundaryCorrector {
 
     private func isTechnicalJoiner(_ character: unichar) -> Bool {
         character == 45 || character == 46 || character == 47 || character == 95
-    }
-
-    private func isCodeLikeContext(source: NSString, cursor: Int) -> Bool {
-        let prefix = source.substring(
-            with: NSRange(location: 0, length: cursor)
-        )
-        var insideFence = false
-        for line in prefix.components(separatedBy: .newlines) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
-                insideFence.toggle()
-            }
-        }
-        if insideFence {
-            return true
-        }
-
-        let line = prefix.components(separatedBy: .newlines).last ?? prefix
-        let leadingTrimmed = line.drop(while: { $0 == " " || $0 == "\t" })
-        if line.hasPrefix("    ")
-            || line.hasPrefix("\t")
-            || leadingTrimmed.hasPrefix("$ ") {
-            return true
-        }
-        return leadingTrimmed.filter({ $0 == "`" }).count % 2 == 1
     }
 }
 
