@@ -167,6 +167,75 @@ final class LocalTypingAssistantRuntimeTests: XCTestCase {
         XCTAssertEqual(finalDiagnostics.totalModelCalls, 2)
     }
 
+    func testControlledModelRequestFailsClosedUntilTransportActuallyDrains() async {
+        let loaded = #"{"models":[{"name":"test-model","context_length":2048}]}"#
+        let correction =
+            #"{"message":{"content":"{\"action\":\"correct\",\"text\":\"This is ready.\"}"}}"#
+        let controlledCall = ControlledTransportCall()
+        let transport = FakeTypingAssistantTransport(
+            responses: [
+                .json(loaded),
+                .controlledJSON(correction, control: controlledCall),
+                .json(loaded),
+                .json(loaded),
+                .json(loaded),
+                .json(correction),
+            ]
+        )
+        let runtime = makeRuntime(
+            transport: transport,
+            foregroundDeadline: 0.02
+        )
+        let source = snapshot(text: "this is ready")
+        let started = Date()
+
+        let timedOut = await runtime.requestCorrection(
+            snapshot: source,
+            context: context(for: source)
+        )
+        let deadlineLatency = Date().timeIntervalSince(started)
+        await controlledCall.waitUntilStarted()
+
+        let firstWhileDraining = await runtime.requestCorrection(
+            snapshot: source,
+            context: context(for: source)
+        )
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        let secondWhileDraining = await runtime.requestCorrection(
+            snapshot: source,
+            context: context(for: source)
+        )
+        let drainingDiagnostics = await runtime.diagnostics()
+        let requestsWhileDraining = await transport.requestCount(
+            for: "/api/chat"
+        )
+
+        XCTAssertEqual(timedOut.route, .foregroundTimeout)
+        XCTAssertNil(timedOut.suggestion)
+        XCTAssertLessThan(deadlineLatency, 0.15)
+        XCTAssertEqual(firstWhileDraining.route, .modelBusy)
+        XCTAssertEqual(secondWhileDraining.route, .modelBusy)
+        XCTAssertEqual(requestsWhileDraining, 1)
+        XCTAssertEqual(drainingDiagnostics.observedPeakModelConcurrency, 1)
+        XCTAssertEqual(drainingDiagnostics.totalModelCalls, 1)
+        XCTAssertEqual(source.text, "this is ready")
+
+        await controlledCall.release()
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        let afterDrain = await runtime.requestCorrection(
+            snapshot: source,
+            context: context(for: source)
+        )
+        let finalDiagnostics = await runtime.diagnostics()
+        let finalRequestCount = await transport.requestCount(for: "/api/chat")
+
+        XCTAssertEqual(afterDrain.route, .loadedForeground)
+        XCTAssertEqual(afterDrain.suggestion?.replacementText, "This is ready.")
+        XCTAssertEqual(finalRequestCount, 2)
+        XCTAssertEqual(finalDiagnostics.observedPeakModelConcurrency, 1)
+        XCTAssertEqual(finalDiagnostics.totalModelCalls, 2)
+    }
+
     func testCallerCancellationNeverReturnsLateSuggestion() async {
         let loaded = #"{"models":[{"name":"test-model","context_length":2048}]}"#
         let correction =
@@ -325,12 +394,15 @@ final class LocalTypingAssistantRuntimeTests: XCTestCase {
         }
         let endpoint = try await server.start()
         let session = URLSession(configuration: .ephemeral)
+        let transport = CompletionObservingTransport(
+            base: URLSessionTypingAssistantTransport(session: session)
+        )
         defer {
             session.invalidateAndCancel()
             server.stop()
         }
         let runtime = makeRuntime(
-            transport: URLSessionTypingAssistantTransport(session: session),
+            transport: transport,
             endpoint: endpoint,
             foregroundDeadline: 0.03
         )
@@ -355,18 +427,28 @@ final class LocalTypingAssistantRuntimeTests: XCTestCase {
         XCTAssertEqual(whileDraining.route, .modelBusy)
         XCTAssertEqual(server.requestCount(for: "/api/chat"), 1)
 
-        var firstResponseDrained = false
+        var serverSentFirstResponse = false
         for _ in 0..<100 {
             if server.successfulResponseCount(for: "/api/chat") == 1 {
-                firstResponseDrained = true
+                serverSentFirstResponse = true
                 break
             }
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
-        XCTAssertTrue(firstResponseDrained)
+        XCTAssertTrue(serverSentFirstResponse)
         XCTAssertEqual(server.requestCount(for: "/api/chat"), 1)
 
-        try? await Task.sleep(nanoseconds: 30_000_000)
+        var clientConsumedFirstResponse = false
+        for _ in 0..<100 {
+            if await transport.completionCount(for: "/api/chat") == 1 {
+                clientConsumedFirstResponse = true
+                break
+            }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertTrue(clientConsumedFirstResponse)
+
+        try? await Task.sleep(nanoseconds: 20_000_000)
         let afterDrain = await runtime.requestCorrection(
             snapshot: source,
             context: context(for: source)
@@ -571,6 +653,7 @@ private actor FakeTypingAssistantTransport: LocalTypingAssistantTransport {
         case json(String)
         case delayedJSON(String, nanoseconds: UInt64)
         case uncooperativeDelayedJSON(String, nanoseconds: UInt64)
+        case controlledJSON(String, control: ControlledTransportCall)
         case failure(LocalTypingAssistantRuntimeError)
     }
 
@@ -603,6 +686,9 @@ private actor FakeTypingAssistantTransport: LocalTypingAssistantTransport {
                 }
             }
             text = value
+        case let .controlledJSON(value, control):
+            await control.waitUntilReleased()
+            text = value
         case let .failure(error):
             throw error
         }
@@ -617,6 +703,55 @@ private actor FakeTypingAssistantTransport: LocalTypingAssistantTransport {
 
     func requestCount(for path: String) -> Int {
         requestPaths.filter { $0 == path }.count
+    }
+}
+
+private actor ControlledTransportCall {
+    private var started = false
+    private var released = false
+    private var startedContinuation: CheckedContinuation<Void, Never>?
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    func waitUntilStarted() async {
+        guard !started else { return }
+        await withCheckedContinuation { continuation in
+            startedContinuation = continuation
+        }
+    }
+
+    func waitUntilReleased() async {
+        started = true
+        startedContinuation?.resume()
+        startedContinuation = nil
+        guard !released else { return }
+        await withCheckedContinuation { continuation in
+            releaseContinuation = continuation
+        }
+    }
+
+    func release() {
+        released = true
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+}
+
+private actor CompletionObservingTransport: LocalTypingAssistantTransport {
+    private let base: LocalTypingAssistantTransport
+    private var completionCounts: [String: Int] = [:]
+
+    init(base: LocalTypingAssistantTransport) {
+        self.base = base
+    }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let response = try await base.send(request)
+        completionCounts[request.url?.path ?? "", default: 0] += 1
+        return response
+    }
+
+    func completionCount(for path: String) -> Int {
+        completionCounts[path, default: 0]
     }
 }
 
