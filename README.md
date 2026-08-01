@@ -38,17 +38,10 @@ nothing to import and no account to create.
 - Use headings, related notes, `[[` link completion, and dated Daily Notes to
   navigate a collection. Choose a light or dark theme and adjust text size and
   editor preferences.
-- Optionally use Flow for conservative word-boundary corrections and
-  pause-triggered suggestions through a local, loopback-only Ollama model.
 
 Monknot also watches the files on disk. Changes made in another app appear
 automatically; if one conflicts with unsaved work, Monknot asks which version
 to keep.
-
-Flow is disabled by default and remains an integration research surface. It
-stores no provider key and does not call cloud inference. See
-[`docs/TYPING_ASSISTANCE.md`](docs/TYPING_ASSISTANCE.md) for its runtime and
-safety contract.
 
 ## Useful shortcuts
 

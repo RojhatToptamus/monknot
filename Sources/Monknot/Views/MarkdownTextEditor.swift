@@ -22,16 +22,6 @@ enum MarkdownTextEditorCommand: Equatable {
     case horizontalRule
 }
 
-struct TypingAssistantEditorActionRequest: Equatable {
-    let serial: Int
-    let action: TypingAssistantEditorAction
-}
-
-enum TypingAssistantEditorAction: Equatable {
-    case accept
-    case dismiss
-}
-
 struct MarkdownTextEditor: NSViewRepresentable {
     let documentID: String
     @Binding var text: String
@@ -48,15 +38,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
     let commandRequest: MarkdownTextEditorCommandRequest?
     let markdownShortcutsEnabled: Bool
     let wikilinkDocuments: [WorkspaceDocument]
-    let typingAssistantSuggestion: TypingAssistanceSuggestion?
-    let typingAssistantActionRequest: TypingAssistantEditorActionRequest?
-    let onTypingEditorChange:
-        ((TypingAssistanceEditorSnapshot) -> TypingAssistanceTextEdit?)?
-    let onTypingSelectionChange: ((TypingAssistanceEditorSnapshot) -> Void)?
-    let onTypingDismissSuggestion: (() -> Void)?
-    let onTypingSuggestionApplicationFinished: ((Bool) -> Void)?
-    let onTypingAutomaticApplicationFinished:
-        ((TypingAssistanceEditorSnapshot, Bool) -> Void)?
 
     init(
         documentID: String,
@@ -73,17 +54,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         onVisibleTopLineChange: ((Int) -> Void)? = nil,
         commandRequest: MarkdownTextEditorCommandRequest? = nil,
         markdownShortcutsEnabled: Bool = false,
-        wikilinkDocuments: [WorkspaceDocument] = [],
-        typingAssistantSuggestion: TypingAssistanceSuggestion? = nil,
-        typingAssistantActionRequest: TypingAssistantEditorActionRequest? = nil,
-        onTypingEditorChange:
-            ((TypingAssistanceEditorSnapshot) -> TypingAssistanceTextEdit?)? = nil,
-        onTypingSelectionChange:
-            ((TypingAssistanceEditorSnapshot) -> Void)? = nil,
-        onTypingDismissSuggestion: (() -> Void)? = nil,
-        onTypingSuggestionApplicationFinished: ((Bool) -> Void)? = nil,
-        onTypingAutomaticApplicationFinished:
-            ((TypingAssistanceEditorSnapshot, Bool) -> Void)? = nil
+        wikilinkDocuments: [WorkspaceDocument] = []
     ) {
         self.documentID = documentID
         self._text = text
@@ -100,15 +71,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
         self.commandRequest = commandRequest
         self.markdownShortcutsEnabled = markdownShortcutsEnabled
         self.wikilinkDocuments = wikilinkDocuments
-        self.typingAssistantSuggestion = typingAssistantSuggestion
-        self.typingAssistantActionRequest = typingAssistantActionRequest
-        self.onTypingEditorChange = onTypingEditorChange
-        self.onTypingSelectionChange = onTypingSelectionChange
-        self.onTypingDismissSuggestion = onTypingDismissSuggestion
-        self.onTypingSuggestionApplicationFinished =
-            onTypingSuggestionApplicationFinished
-        self.onTypingAutomaticApplicationFinished =
-            onTypingAutomaticApplicationFinished
     }
 
     func makeCoordinator() -> Coordinator {
@@ -131,10 +93,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.commandHandler = { [weak coordinator = context.coordinator] command in
             coordinator?.apply(command) ?? false
         }
-        textView.typingAssistantCommandHandler = {
-            [weak coordinator = context.coordinator] action in
-            coordinator?.apply(action) ?? false
-        }
         textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
@@ -154,22 +112,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         scrollView.documentView = textView
         context.coordinator.textView = textView
+        context.coordinator.documentID = documentID
         context.coordinator.onScrollPositionChange = onScrollPositionChange
-        context.coordinator.configureTypingAssistance(
-            suggestion: typingAssistantSuggestion,
-            onEditorChange: onTypingEditorChange,
-            onSelectionChange: onTypingSelectionChange,
-            onDismissSuggestion: onTypingDismissSuggestion,
-            onSuggestionApplicationFinished:
-                onTypingSuggestionApplicationFinished,
-            onAutomaticApplicationFinished:
-                onTypingAutomaticApplicationFinished
-        )
-        _ = context.coordinator.prepareForDocument(documentID, in: scrollView)
-        context.coordinator.synchronizeExternalText(
-            text,
-            documentChanged: true
-        )
         context.coordinator.attach(to: scrollView)
         applyTheme(theme, to: textView, in: scrollView)
         context.coordinator.markFontApplied(resolvedFont)
@@ -186,23 +130,16 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.onScrollPositionChange = onScrollPositionChange
         context.coordinator.onVisibleTopLineChange = onVisibleTopLineChange
         context.coordinator.syncScrollEnabled = syncScrollEnabled
-        context.coordinator.configureTypingAssistance(
-            suggestion: typingAssistantSuggestion,
-            onEditorChange: onTypingEditorChange,
-            onSelectionChange: onTypingSelectionChange,
-            onDismissSuggestion: onTypingDismissSuggestion,
-            onSuggestionApplicationFinished:
-                onTypingSuggestionApplicationFinished,
-            onAutomaticApplicationFinished:
-                onTypingAutomaticApplicationFinished
-        )
         let visibleOrigin = scrollView.contentView.bounds.origin
 
-        if didChangeDocument || textView.string != text {
-            context.coordinator.synchronizeExternalText(
-                text,
-                documentChanged: didChangeDocument
-            )
+        if textView.string != text {
+            let selectedRanges = didChangeDocument ? [] : textView.selectedRanges
+            textView.string = text
+            if selectedRanges.isEmpty {
+                textView.setSelectedRange(NSRange(location: 0, length: 0))
+            } else {
+                textView.selectedRanges = selectedRanges
+            }
         }
 
         let resolvedFont = font(for: theme, size: fontSize)
@@ -225,9 +162,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
         if let commandRequest {
             context.coordinator.apply(commandRequest)
         }
-        if let typingAssistantActionRequest {
-            context.coordinator.apply(typingAssistantActionRequest)
-        }
 
         if didChangeDocument {
             context.coordinator.restoreScrollPosition(scrollPosition?.point ?? .zero, in: scrollView)
@@ -245,10 +179,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.applySyncScrollTargetLine(syncScrollTargetLine, in: textView, scrollView: scrollView)
 
         let searchResult = context.coordinator.applySearch(searchState, theme: theme, in: textView)
-        context.coordinator.applyTypingAssistantHighlight(
-            theme: theme,
-            in: textView
-        )
         if DocumentSearchResult(currentIndex: searchState.currentIndex, totalCount: searchState.totalCount) != searchResult {
             DispatchQueue.main.async {
                 self.searchState.updateResult(searchResult)
@@ -283,11 +213,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         @Binding private var text: String
-        weak var textView: NSTextView? {
-            didSet {
-                observeUndoManager()
-            }
-        }
+        weak var textView: NSTextView?
         var documentID: String?
         var onScrollPositionChange: (DocumentScrollPosition) -> Void = { _ in }
         var onVisibleTopLineChange: ((Int) -> Void)?
@@ -311,27 +237,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private var lastAppliedTheme: AppTheme?
         private var lastAppliedFontSmoothing: Bool?
         private var lastAppliedMarkdownShortcuts: Bool?
-        private var revision = 0
-        private var lastTypingAssistantActionSerial = 0
-        private var typingAssistantSuggestion: TypingAssistanceSuggestion?
-        private var typingAssistantHighlightedRange: NSRange?
-        private var onTypingEditorChange:
-            ((TypingAssistanceEditorSnapshot) -> TypingAssistanceTextEdit?)?
-        private var onTypingSelectionChange:
-            ((TypingAssistanceEditorSnapshot) -> Void)?
-        private var onTypingDismissSuggestion: (() -> Void)?
-        private var onTypingSuggestionApplicationFinished: ((Bool) -> Void)?
-        private var onTypingAutomaticApplicationFinished:
-            ((TypingAssistanceEditorSnapshot, Bool) -> Void)?
-        private var isApplyingTypingAssistantSuggestion = false
-        private var undoChangeObservers: [NSObjectProtocol] = []
 
         init(text: Binding<String>) {
             self._text = text
-        }
-
-        deinit {
-            removeUndoManagerObservers()
         }
 
         func attach(to scrollView: NSScrollView) {
@@ -347,118 +255,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         func detach() {
             NotificationCenter.default.removeObserver(self)
-            removeUndoManagerObservers()
             scrollView = nil
-        }
-
-        private func observeUndoManager() {
-            removeUndoManagerObservers()
-            guard let undoManager = textView?.undoManager else { return }
-            let center = NotificationCenter.default
-            undoChangeObservers = [
-                center.addObserver(
-                    forName: .NSUndoManagerDidUndoChange,
-                    object: undoManager,
-                    queue: .main
-                ) { [weak self] _ in
-                    self?.synchronizeAfterUndoOrRedo()
-                },
-                center.addObserver(
-                    forName: .NSUndoManagerDidRedoChange,
-                    object: undoManager,
-                    queue: .main
-                ) { [weak self] _ in
-                    self?.synchronizeAfterUndoOrRedo()
-                },
-            ]
-        }
-
-        private func removeUndoManagerObservers() {
-            let center = NotificationCenter.default
-            undoChangeObservers.forEach(center.removeObserver)
-            undoChangeObservers.removeAll()
-        }
-
-        private func synchronizeAfterUndoOrRedo() {
-            guard let textView else { return }
-            if text != textView.string {
-                revision += 1
-                text = textView.string
-            }
-            onTypingSelectionChange?(snapshot(in: textView))
-        }
-
-        func configureTypingAssistance(
-            suggestion: TypingAssistanceSuggestion?,
-            onEditorChange:
-                ((TypingAssistanceEditorSnapshot) -> TypingAssistanceTextEdit?)?,
-            onSelectionChange:
-                ((TypingAssistanceEditorSnapshot) -> Void)?,
-            onDismissSuggestion: (() -> Void)?,
-            onSuggestionApplicationFinished: ((Bool) -> Void)?,
-            onAutomaticApplicationFinished:
-                ((TypingAssistanceEditorSnapshot, Bool) -> Void)? = nil
-        ) {
-            typingAssistantSuggestion = suggestion
-            self.onTypingEditorChange = onEditorChange
-            self.onTypingSelectionChange = onSelectionChange
-            self.onTypingDismissSuggestion = onDismissSuggestion
-            self.onTypingSuggestionApplicationFinished =
-                onSuggestionApplicationFinished
-            self.onTypingAutomaticApplicationFinished =
-                onAutomaticApplicationFinished
-        }
-
-        func applyTypingAssistantHighlight(
-            theme: AppTheme,
-            in textView: NSTextView
-        ) {
-            guard let layoutManager = textView.layoutManager else { return }
-            if let previous = typingAssistantHighlightedRange {
-                let currentTextRange = NSRange(
-                    location: 0,
-                    length: (textView.string as NSString).length
-                )
-                let removableRange = NSIntersectionRange(
-                    previous,
-                    currentTextRange
-                )
-                if removableRange.length > 0 {
-                    layoutManager.removeTemporaryAttribute(
-                        .underlineStyle,
-                        forCharacterRange: removableRange
-                    )
-                    layoutManager.removeTemporaryAttribute(
-                        .underlineColor,
-                        forCharacterRange: removableRange
-                    )
-                }
-                typingAssistantHighlightedRange = nil
-            }
-
-            guard let suggestion = typingAssistantSuggestion,
-                  suggestion.requestKind != .completion,
-                  suggestion.sourceDocumentID == documentID,
-                  suggestion.sourceText == textView.string,
-                  suggestion.replacementRange.location >= 0,
-                  suggestion.replacementRange.length > 0,
-                  NSMaxRange(suggestion.replacementRange)
-                    <= (textView.string as NSString).length
-            else {
-                return
-            }
-
-            layoutManager.addTemporaryAttribute(
-                .underlineStyle,
-                value: NSUnderlineStyle.single.rawValue,
-                forCharacterRange: suggestion.replacementRange
-            )
-            layoutManager.addTemporaryAttribute(
-                .underlineColor,
-                value: NSColor(hex: theme.accent),
-                forCharacterRange: suggestion.replacementRange
-            )
-            typingAssistantHighlightedRange = suggestion.replacementRange
         }
 
         func markFontApplied(_ font: NSFont) {
@@ -512,24 +309,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
             documentID = nextDocumentID
             lastPublishedScrollPosition = nil
             return true
-        }
-
-        func synchronizeExternalText(
-            _ nextText: String,
-            documentChanged: Bool
-        ) {
-            guard let textView else { return }
-            let selectedRanges = documentChanged ? [] : textView.selectedRanges
-            if textView.string != nextText {
-                textView.string = nextText
-            }
-            if selectedRanges.isEmpty {
-                textView.setSelectedRange(NSRange(location: 0, length: 0))
-            } else {
-                textView.selectedRanges = selectedRanges
-            }
-            revision += 1
-            onTypingSelectionChange?(snapshot(in: textView))
         }
 
         func applySyncScrollTargetLine(_ line: Int?, in textView: NSTextView, scrollView: NSScrollView) {
@@ -607,199 +386,13 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
-            revision += 1
             text = textView.string
-            let source = snapshot(in: textView)
-            if isApplyingTypingAssistantSuggestion
-                || textView.undoManager?.isUndoing == true
-                || textView.undoManager?.isRedoing == true {
-                onTypingSelectionChange?(source)
-                return
-            }
-            guard let edit = onTypingEditorChange?(source) else { return }
-            DispatchQueue.main.async { [weak self, weak textView] in
-                guard let self, let textView else { return }
-                self.applyAutomaticEdit(edit, source: source, in: textView)
-            }
-        }
-
-        func textViewDidChangeSelection(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else {
-                return
-            }
-            onTypingSelectionChange?(snapshot(in: textView))
         }
 
         func apply(_ request: MarkdownTextEditorCommandRequest) {
             guard request.serial != lastCommandSerial else { return }
             lastCommandSerial = request.serial
             _ = apply(request.command)
-        }
-
-        func apply(_ request: TypingAssistantEditorActionRequest) {
-            guard request.serial != lastTypingAssistantActionSerial else {
-                return
-            }
-            lastTypingAssistantActionSerial = request.serial
-            _ = apply(request.action)
-        }
-
-        func apply(_ action: TypingAssistantEditorAction) -> Bool {
-            switch action {
-            case .accept:
-                return applyTypingAssistantSuggestion()
-            case .dismiss:
-                guard typingAssistantSuggestion != nil else { return false }
-                onTypingDismissSuggestion?()
-                return true
-            }
-        }
-
-        private func applyTypingAssistantSuggestion() -> Bool {
-            guard let textView,
-                  let suggestion = typingAssistantSuggestion
-            else {
-                return false
-            }
-            let source = snapshot(in: textView)
-            let result = TypingAssistanceAcceptancePolicy.apply(
-                suggestion,
-                to: source
-            )
-            guard result.accepted else {
-                onTypingSuggestionApplicationFinished?(false)
-                return false
-            }
-
-            let sourceLength = (source.text as NSString).length
-            let resultLength = (result.text as NSString).length
-            let replacementLength = resultLength
-                - sourceLength
-                + suggestion.replacementRange.length
-            guard replacementLength >= 0 else {
-                onTypingSuggestionApplicationFinished?(false)
-                return false
-            }
-            let replacementRange = NSRange(
-                location: suggestion.replacementRange.location,
-                length: replacementLength
-            )
-            let replacement = (result.text as NSString).substring(
-                with: replacementRange
-            )
-            isApplyingTypingAssistantSuggestion = true
-            defer { isApplyingTypingAssistantSuggestion = false }
-            guard applyRegisteredTextEdit(
-                range: suggestion.replacementRange,
-                replacement: replacement,
-                selectedRange: result.selectedRange,
-                actionName: "Apply Writing Suggestion",
-                in: textView
-            ) else {
-                onTypingSuggestionApplicationFinished?(false)
-                return false
-            }
-
-            textView.scrollRangeToVisible(result.selectedRange)
-            onTypingSuggestionApplicationFinished?(true)
-            return true
-        }
-
-        private func applyAutomaticEdit(
-            _ edit: TypingAssistanceTextEdit,
-            source: TypingAssistanceEditorSnapshot,
-            in textView: NSTextView
-        ) {
-            guard source == snapshot(in: textView),
-                  edit.range.location >= 0,
-                  edit.range.length >= 0,
-                  NSMaxRange(edit.range) <= (textView.string as NSString).length
-            else {
-                onTypingAutomaticApplicationFinished?(source, false)
-                return
-            }
-            let cursorDelta = (edit.replacementText as NSString).length
-                - edit.range.length
-            let nextCursor = max(
-                edit.range.location + (edit.replacementText as NSString).length,
-                source.cursorUTF16Offset + cursorDelta
-            )
-            let accepted = applyRegisteredTextEdit(
-                range: edit.range,
-                replacement: edit.replacementText,
-                selectedRange: NSRange(location: nextCursor, length: 0),
-                actionName: "Correct Typo",
-                in: textView
-            )
-            onTypingAutomaticApplicationFinished?(source, accepted)
-        }
-
-        @discardableResult
-        private func applyRegisteredTextEdit(
-            range: NSRange,
-            replacement: String,
-            selectedRange: NSRange,
-            actionName: String,
-            in textView: NSTextView
-        ) -> Bool {
-            guard let textStorage = textView.textStorage,
-                  range.location >= 0,
-                  range.length >= 0,
-                  NSMaxRange(range) <= (textView.string as NSString).length
-            else {
-                return false
-            }
-
-            let undoManager = textView.undoManager
-            undoManager?.disableUndoRegistration()
-            guard textView.shouldChangeText(
-                in: range,
-                replacementString: replacement
-            ) else {
-                undoManager?.enableUndoRegistration()
-                return false
-            }
-
-            let original = (textView.string as NSString).substring(with: range)
-            let previousSelection = textView.selectedRange()
-            let inverseRange = NSRange(
-                location: range.location,
-                length: (replacement as NSString).length
-            )
-            textView.breakUndoCoalescing()
-            textStorage.replaceCharacters(in: range, with: replacement)
-            textView.didChangeText()
-            textView.setSelectedRange(selectedRange)
-            text = textView.string
-            undoManager?.enableUndoRegistration()
-
-            undoManager?.registerUndo(withTarget: self) { target in
-                guard let currentTextView = target.textView else { return }
-                _ = target.applyRegisteredTextEdit(
-                    range: inverseRange,
-                    replacement: original,
-                    selectedRange: previousSelection,
-                    actionName: actionName,
-                    in: currentTextView
-                )
-            }
-            undoManager?.setActionName(actionName)
-            textView.breakUndoCoalescing()
-            return true
-        }
-
-        private func snapshot(
-            in textView: NSTextView
-        ) -> TypingAssistanceEditorSnapshot {
-            let selectedRange = textView.selectedRange()
-            return TypingAssistanceEditorSnapshot(
-                documentID: documentID ?? "",
-                revision: revision,
-                text: textView.string,
-                cursorUTF16Offset: selectedRange.location
-                    + selectedRange.length,
-                selectionLength: selectedRange.length
-            )
         }
 
         func apply(_ command: MarkdownTextEditorCommand) -> Bool {
@@ -1284,8 +877,6 @@ private final class MarkdownNSTextView: NSTextView {
     var markdownShortcutsEnabled = false
     var wikilinkDocuments: [WorkspaceDocument] = []
     var commandHandler: ((MarkdownTextEditorCommand) -> Bool)?
-    var typingAssistantCommandHandler:
-        ((TypingAssistantEditorAction) -> Bool)?
     private var wikilinkSuggestionIndex = 0
     private var lastWikilinkPartial = ""
     var fontSmoothingEnabled = true {
@@ -1296,21 +887,8 @@ private final class MarkdownNSTextView: NSTextView {
     }
 
     override func keyDown(with event: NSEvent) {
-        let modifiers = event.modifierFlags
-            .intersection(.deviceIndependentFlagsMask)
-            .subtracting([.capsLock])
         if event.keyCode == 48,
-           modifiers.isEmpty,
-           typingAssistantCommandHandler?(.accept) == true {
-            return
-        }
-        if event.keyCode == 53,
-           modifiers.isEmpty,
-           typingAssistantCommandHandler?(.dismiss) == true {
-            return
-        }
-        if event.keyCode == 48,
-           modifiers.isEmpty,
+           event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock]).isEmpty,
            completeActiveWikilink() {
             return
         }
