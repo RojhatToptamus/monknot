@@ -9,29 +9,32 @@ struct TerminalDrawerView: View {
     let zoomScale: Double
     let usePointerCursors: Bool
     let fontSmoothing: Bool
+    var showsChrome = true
     let close: () -> Void
 
     private var uiFontSize: Double { theme.uiFontSize }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            MonknotChromePanel(
-                theme: theme,
-                showsBottomBorder: false,
-                surface: theme.contentSurfaceColor
-            ) {
-                TerminalDrawerChromeRow(
-                    sessions: sessions,
-                    workingDirectory: workingDirectory,
+            if showsChrome {
+                MonknotChromePanel(
                     theme: theme,
-                    zoomScale: zoomScale,
-                    uiFontSize: uiFontSize,
-                    close: close
-                )
+                    showsBottomBorder: false,
+                    surface: theme.contentSurfaceColor
+                ) {
+                    TerminalDrawerChromeRow(
+                        sessions: sessions,
+                        workingDirectory: workingDirectory,
+                        theme: theme,
+                        zoomScale: zoomScale,
+                        uiFontSize: uiFontSize,
+                        close: close
+                    )
+                }
             }
 
             terminalSurface
@@ -55,7 +58,7 @@ struct TerminalDrawerView: View {
             TerminalWebView(
                 session: session,
                 theme: theme,
-                fontSize: scaled(13.5),
+                fontSize: CGFloat(13.5 * WorkspaceZoomPolicy.terminalContentScale(zoomScale)),
                 usePointerCursors: usePointerCursors,
                 fontSmoothing: fontSmoothing
             )
@@ -72,6 +75,55 @@ struct TerminalDrawerView: View {
     }
 }
 
+/// Terminal controls embedded in the editor's primary chrome while the
+/// terminal takes over a constrained detail column. The tab lane is bounded
+/// and scrolls horizontally only when its contents exceed the available row.
+struct TerminalDrawerTakeoverSegment: View {
+    @ObservedObject var sessions: TerminalSessionCollectionStore
+    let workingDirectory: URL?
+    let theme: AppTheme
+    let zoomScale: Double
+    let uiFontSize: Double
+    let close: () -> Void
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
+        HStack(spacing: scaled(4)) {
+            TerminalDrawerTabGroup(
+                sessions: sessions,
+                workingDirectory: workingDirectory,
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize
+            )
+            .frame(minWidth: scaled(60), maxWidth: scaled(160))
+
+            ChromeBarButton(
+                systemImage: "xmark",
+                label: "Hide Terminal Panel",
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize,
+                action: close
+            )
+            .keyboardShortcut(.cancelAction)
+        }
+        .padding(.leading, scaled(4))
+        .padding(.trailing, MonknotMetrics.chromeHorizontalPadding(theme: theme, zoomScale: zoomScale))
+        .frame(height: MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale))
+        .frame(
+            minWidth: scaled(MonknotMetrics.takeoverTerminalChromeMinWidthBase),
+            maxWidth: scaled(MonknotMetrics.takeoverTerminalChromeMaxWidthBase),
+            alignment: .trailing
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Terminal controls")
+    }
+}
+
 struct TerminalDrawerChromeRow: View {
     @ObservedObject var sessions: TerminalSessionCollectionStore
     let workingDirectory: URL?
@@ -81,31 +133,23 @@ struct TerminalDrawerChromeRow: View {
     let close: () -> Void
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    private var terminalTabsWidth: CGFloat {
-        min(scaled(220), max(scaled(60), CGFloat(sessions.tabs.count) * scaled(68)))
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
         HStack(spacing: scaled(4)) {
-            if !sessions.tabs.isEmpty {
-                terminalTabs
+            TerminalDrawerTabGroup(
+                sessions: sessions,
+                workingDirectory: workingDirectory,
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize
+            )
+            .frame(minWidth: scaled(60), maxWidth: scaled(320))
 
-                ChromeBarButton(
-                    systemImage: "plus",
-                    label: "New Terminal",
-                    theme: theme,
-                    zoomScale: zoomScale,
-                    uiFontSize: uiFontSize,
-                    action: {
-                        sessions.createTerminal(in: workingDirectory)
-                    }
-                )
-            }
-
-            Spacer(minLength: 0)
+            WindowTitleBarDragArea()
+                .frame(minWidth: scaled(28), maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityHidden(true)
 
             ChromeBarButton(
                 systemImage: "xmark",
@@ -119,36 +163,135 @@ struct TerminalDrawerChromeRow: View {
         }
         .monknotChromeRowLayout(theme: theme, zoomScale: zoomScale)
     }
+}
 
-    private var terminalTabs: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+/// Stable terminal tab controls used in both drawer presentations. Every tab
+/// stays in one horizontal scroll lane; New Terminal remains fixed at its
+/// trailing edge and edge fades appear only when content is offscreen.
+private struct TerminalDrawerTabGroup: View {
+    @ObservedObject var sessions: TerminalSessionCollectionStore
+    let workingDirectory: URL?
+    let theme: AppTheme
+    let zoomScale: Double
+    let uiFontSize: Double
+
+    @State private var viewportTabFrames: [String: CGRect] = [:]
+    @State private var revealRequest = HorizontalTabRevealRequest()
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let viewportWidth = max(0, geometry.size.width - fixedControlsWidth)
+            let overflow = HorizontalTabOverflowState(
+                frames: viewportTabFrames,
+                viewportWidth: viewportWidth
+            )
+
             HStack(spacing: scaled(4)) {
-                ForEach(Array(sessions.tabs.enumerated()), id: \.element.id) { offset, tab in
-                    if let session = sessions.session(for: tab.id) {
-                        TerminalTabChip(
-                            tab: tab,
-                            session: session,
-                            index: offset + 1,
-                            isSelected: tab.id == sessions.activeTerminalID,
-                            theme: theme,
-                            zoomScale: zoomScale,
-                            uiFontSize: uiFontSize,
-                            select: {
-                                sessions.selectTerminal(id: tab.id)
-                            },
-                            restart: {
-                                sessions.restartTerminal(id: tab.id)
-                            },
-                            kill: {
-                                sessions.killTerminal(id: tab.id)
+                ZStack {
+                    ScrollViewReader { proxy in
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: scaled(4)) {
+                                ForEach(Array(sessions.tabs.enumerated()), id: \.element.id) { offset, tab in
+                                    if let session = sessions.session(for: tab.id) {
+                                        TerminalTabChip(
+                                            tab: tab,
+                                            session: session,
+                                            index: offset + 1,
+                                            isSelected: tab.id == sessions.activeTerminalID,
+                                            theme: theme,
+                                            zoomScale: zoomScale,
+                                            uiFontSize: uiFontSize,
+                                            select: {
+                                                sessions.selectTerminal(id: tab.id)
+                                            },
+                                            restart: {
+                                                sessions.restartTerminal(id: tab.id)
+                                            },
+                                            kill: {
+                                                sessions.killTerminal(id: tab.id)
+                                            }
+                                        )
+                                        .id(tab.id)
+                                        .background(
+                                            HorizontalTabFrameReader(
+                                                id: tab.id,
+                                                coordinateSpace: HorizontalTabViewport.terminalTabs
+                                            )
+                                        )
+                                    }
+                                }
+
+                                WindowTitleBarDragArea()
+                                    .frame(minWidth: scaled(28), maxWidth: .infinity, maxHeight: .infinity)
+                                    .accessibilityHidden(true)
                             }
-                        )
+                            .frame(minWidth: viewportWidth, alignment: .leading)
+                        }
+                        .coordinateSpace(name: HorizontalTabViewport.terminalTabs)
+                        .onAppear {
+                            revealRequest.request(sessions.activeTerminalID)
+                            performPendingReveal(using: proxy, viewportWidth: viewportWidth)
+                        }
+                        .onPreferenceChange(HorizontalTabFramePreferenceKey.self) { frames in
+                            viewportTabFrames = frames
+                            performPendingReveal(using: proxy, viewportWidth: viewportWidth)
+                        }
+                        .onChange(of: sessions.activeTerminalID) { _, activeTerminalID in
+                            revealRequest.request(activeTerminalID)
+                            performPendingReveal(using: proxy, viewportWidth: viewportWidth)
+                        }
+                        .onChange(of: viewportWidth) { _, _ in
+                            revealRequest.request(sessions.activeTerminalID)
+                            performPendingReveal(using: proxy, viewportWidth: viewportWidth)
+                        }
                     }
+
+                    HorizontalTabEdgeShadows(
+                        showsLeading: overflow.hasLeadingOverflow,
+                        showsTrailing: overflow.hasTrailingOverflow,
+                        theme: theme,
+                        zoomScale: zoomScale
+                    )
                 }
+                .frame(width: viewportWidth)
+
+                ChromeBarButton(
+                    systemImage: "plus",
+                    label: "New Terminal",
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    uiFontSize: uiFontSize,
+                    action: {
+                        sessions.createTerminal(in: workingDirectory)
+                    }
+                )
             }
         }
-        .frame(minWidth: scaled(60), maxWidth: scaled(220))
-        .frame(width: terminalTabsWidth, alignment: .leading)
+        .frame(height: MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale))
+    }
+
+    private var fixedControlsWidth: CGFloat {
+        MonknotMetrics.chromeButtonDimension(theme: theme, zoomScale: zoomScale) + scaled(4)
+    }
+
+    private func performPendingReveal(
+        using proxy: ScrollViewProxy,
+        viewportWidth: CGFloat
+    ) {
+        guard let action = revealRequest.consume(
+            frames: viewportTabFrames,
+            viewportWidth: viewportWidth
+        ) else { return }
+        DispatchQueue.main.async {
+            proxy.scrollTo(
+                action.id,
+                anchor: action.edge == .leading ? .leading : .trailing
+            )
+        }
     }
 }
 
@@ -167,7 +310,15 @@ private struct TerminalTabChip: View {
     @State private var isHovered = false
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    private func textScaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    private func glyphScaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -175,7 +326,10 @@ private struct TerminalTabChip: View {
             Button(action: select) {
                 HStack(spacing: scaled(5)) {
                     Image(systemName: "terminal")
-                        .font(.system(size: scaled(11), weight: .regular))
+                        .font(.system(
+                            size: MonknotMetrics.chromeGlyphSize(theme: theme, zoomScale: zoomScale),
+                            weight: .regular
+                        ))
                         .foregroundStyle(iconColor)
                         .accessibilityHidden(true)
 
@@ -185,31 +339,37 @@ private struct TerminalTabChip: View {
                         .accessibilityHidden(true)
 
                     Text("\(index)")
-                        .font(.system(size: scaled(11), weight: .medium, design: .rounded))
+                        .font(.system(size: textScaled(11), weight: .medium, design: .rounded))
                         .foregroundStyle(isSelected ? theme.foregroundColor : theme.mutedForegroundColor)
                         .monospacedDigit()
                 }
                 .padding(.leading, scaled(8))
                 .padding(.trailing, scaled(4))
-                .frame(height: scaled(26))
+                .frame(height: MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
 
-            if isSelected || isHovered {
-                Button(action: kill) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: scaled(8), weight: .bold))
-                        .foregroundStyle(theme.mutedForegroundColor.opacity(isHovered ? 0.92 : 0.72))
-                        .frame(width: scaled(16), height: scaled(20))
-                        .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(4, zoomScale: zoomScale)))
-                }
-                .buttonStyle(.plain)
-                .help("Kill Terminal")
-                .accessibilityLabel("Kill terminal \(index)")
-                .monknotPointerCursor()
-                .padding(.trailing, scaled(3))
+            Button(action: kill) {
+                Image(systemName: "xmark")
+                    .font(.system(size: glyphScaled(8), weight: .bold))
+                    .foregroundStyle(theme.mutedForegroundColor.opacity(isHovered ? 0.92 : 0.72))
+                    .frame(
+                        width: max(22, MonknotMetrics.interfaceControl(18, theme: theme, zoomScale: zoomScale)),
+                        height: max(22, MonknotMetrics.interfaceControl(18, theme: theme, zoomScale: zoomScale))
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(4, zoomScale: zoomScale)))
             }
+            .buttonStyle(.plain)
+            .help("Kill Terminal")
+            .accessibilityLabel("Kill terminal \(index)")
+            .accessibilityHidden(!showsCloseButton)
+            .disabled(!showsCloseButton)
+            .opacity(showsCloseButton ? 1 : 0)
+            .monknotPointerCursor(enabled: showsCloseButton)
+            .padding(.trailing, scaled(3))
         }
         .frame(minWidth: scaled(54), maxWidth: scaled(82), alignment: .leading)
         .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale)))
@@ -235,9 +395,6 @@ private struct TerminalTabChip: View {
             }
         }
         .help(helpText)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var background: Color {
@@ -248,6 +405,10 @@ private struct TerminalTabChip: View {
             return theme.foregroundColor.opacity(theme.isDark ? 0.055 : 0.04)
         }
         return theme.controlTrackFillColor.opacity(0.65)
+    }
+
+    private var showsCloseButton: Bool {
+        isSelected || isHovered
     }
 
     private var borderColor: Color {
@@ -304,31 +465,23 @@ private struct TerminalEmptySurface: View {
     let zoomScale: Double
     let createTerminal: () -> Void
 
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
-    }
-
     var body: some View {
-        VStack(spacing: scaled(12)) {
-            Image(systemName: "terminal")
-                .font(.system(size: scaled(30), weight: .regular))
-                .foregroundStyle(theme.mutedForegroundColor.opacity(0.54))
-                .accessibilityHidden(true)
-
-            Text("No active terminal")
-                .font(MonknotTypography.emptyStateTitle(theme: theme, zoomScale: zoomScale))
-                .foregroundStyle(theme.foregroundColor)
-
-            Button(action: createTerminal) {
-                Label("New Terminal", systemImage: "plus")
-            }
-            .font(.system(size: scaled(13), weight: .medium))
-            .buttonStyle(.borderedProminent)
-            .tint(theme.accentColor)
-            .monknotPointerCursor()
+        MonknotEmptyState(
+            systemImage: "terminal",
+            title: "No active terminal",
+            detail: "Start a shell for this workspace.",
+            theme: theme,
+            zoomScale: zoomScale
+        ) {
+            MonknotActionButton(
+                title: "New Terminal",
+                systemImage: "plus",
+                role: .primary,
+                theme: theme,
+                zoomScale: zoomScale,
+                action: createTerminal
+            )
         }
-        .padding(scaled(24))
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.contentSurfaceColor)
     }
 }

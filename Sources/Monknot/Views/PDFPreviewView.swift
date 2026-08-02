@@ -9,7 +9,7 @@ struct PDFPreviewView: View {
     let zoomScale: Double
     let saveState: DocumentSaveState
     let dirtyData: Data?
-    let viewportPosition: PDFDocumentViewportPosition?
+    let viewportState: PDFDocumentViewportState?
     let externalUndoCommandSerial: Int
     let externalRedoCommandSerial: Int
     @Binding var searchState: DocumentSearchState
@@ -17,7 +17,8 @@ struct PDFPreviewView: View {
     let markEdited: (Data?, Data) -> Void
     let reportError: (String) -> Void
     let saveDocument: () -> Void
-    let onViewportPositionChange: (PDFDocumentViewportPosition) -> Void
+
+    let onViewportStateChange: (PDFDocumentViewportState) -> Void
     let updateAnnotationUndoState: (Bool, Bool) -> Void
 
     @State private var interactionMode: PDFAnnotationInteractionMode = .select
@@ -29,8 +30,10 @@ struct PDFPreviewView: View {
     @State private var redoCommandSerial = 0
     @State private var canUndo = false
     @State private var canRedo = false
-
-    private var uiFontSize: Double { theme.uiFontSize }
+    @State private var zoomCommand: PDFZoomCommandRequest?
+    @State private var zoomCommandSerial = 0
+    @State private var zoomStatus = PDFZoomStatus.unavailable
+    @State private var loadState = PDFLoadState.loading
 
     var body: some View {
         VStack(spacing: 0) {
@@ -42,42 +45,51 @@ struct PDFPreviewView: View {
                     saveState: saveState,
                     canUndo: canUndo,
                     canRedo: canRedo,
+                    isDocumentAvailable: loadState == .loaded,
                     theme: theme,
                     zoomScale: zoomScale,
-                    uiFontSize: uiFontSize,
                     runMarkup: runMarkup(_:),
                     undo: runUndo,
                     redo: runRedo,
+                    zoomStatus: zoomStatus,
+                    runZoom: runZoom(_:),
                     saveDocument: saveDocument
                 )
             }
 
-            Divider()
-                .overlay(theme.borderColor)
+            ZStack {
+                PDFKitPreviewRepresentable(
+                    documentID: document.id,
+                    url: document.url,
+                    dirtyData: dirtyData,
+                    theme: theme,
+                    viewportState: viewportState,
+                    annotationMode: interactionMode,
+                    annotationColor: selectedColor,
+                    strokeWidth: CGFloat(strokeWidth),
+                    markupCommand: markupCommand,
+                    zoomCommand: zoomCommand,
+                    undoCommandSerial: externalUndoCommandSerial + undoCommandSerial,
+                    redoCommandSerial: externalRedoCommandSerial + redoCommandSerial,
+                    searchState: $searchState,
+                    searchTarget: $searchTarget,
+                    markEdited: markEdited,
+                    onViewportStateChange: onViewportStateChange,
+                    updateZoomStatus: updateZoomStatus(_:),
+                    updateUndoState: updateUndoState(canUndo:canRedo:),
+                    updateLoadState: updateLoadState(_:),
+                    reportError: reportError
+                )
+                .opacity(loadState == .loaded ? 1 : 0)
 
-            PDFKitPreviewRepresentable(
-                documentID: document.id,
-                url: document.url,
-                dirtyData: dirtyData,
-                theme: theme,
-                zoomScale: zoomScale,
-                viewportPosition: viewportPosition,
-                annotationMode: interactionMode,
-                annotationColor: selectedColor,
-                strokeWidth: CGFloat(strokeWidth),
-                markupCommand: markupCommand,
-                undoCommandSerial: externalUndoCommandSerial + undoCommandSerial,
-                redoCommandSerial: externalRedoCommandSerial + redoCommandSerial,
-                searchState: $searchState,
-                searchTarget: $searchTarget,
-                markEdited: markEdited,
-                onViewportPositionChange: onViewportPositionChange,
-                updateUndoState: updateUndoState(canUndo:canRedo:),
-                reportError: reportError
-            )
+                pdfLoadStatus
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(theme.surfaceColor)
+        .onChange(of: document.id) { _, _ in
+            loadState = .loading
+        }
     }
 
     private func runMarkup(_ kind: PDFTextMarkupKind) {
@@ -97,6 +109,17 @@ struct PDFPreviewView: View {
         redoCommandSerial += 1
     }
 
+    private func runZoom(_ command: PDFZoomCommand) {
+        zoomCommandSerial += 1
+        zoomCommand = PDFZoomCommandRequest(serial: zoomCommandSerial, command: command)
+    }
+
+    private func updateZoomStatus(_ status: PDFZoomStatus) {
+        if zoomStatus != status {
+            zoomStatus = status
+        }
+    }
+
     private func updateUndoState(canUndo: Bool, canRedo: Bool) {
         if self.canUndo != canUndo {
             self.canUndo = canUndo
@@ -105,6 +128,106 @@ struct PDFPreviewView: View {
             self.canRedo = canRedo
         }
         updateAnnotationUndoState(canUndo, canRedo)
+    }
+
+    private func updateLoadState(_ state: PDFLoadState) {
+        if loadState != state {
+            loadState = state
+        }
+    }
+
+    @ViewBuilder
+    private var pdfLoadStatus: some View {
+        switch loadState {
+        case .loading:
+            VStack(spacing: scaled(10)) {
+                ProgressView()
+                    .controlSize(.small)
+
+                Text("Opening PDF…")
+                    .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
+                    .foregroundStyle(theme.mutedForegroundColor)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Opening PDF")
+        case .loaded:
+            EmptyView()
+        case .failed:
+            MonknotEmptyState(
+                systemImage: "exclamationmark.triangle",
+                title: "Unable to open PDF",
+                detail: "The file may be damaged, incomplete, or unavailable.",
+                theme: theme,
+                zoomScale: zoomScale
+            ) {
+                EmptyView()
+            }
+        }
+    }
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+    }
+}
+
+private enum PDFLoadState: Equatable {
+    case loading
+    case loaded
+    case failed
+}
+
+private enum PDFStrokeWidthPopoverAnchor: Equatable {
+    case regular
+    case compact
+    case minimal
+}
+
+private enum PDFToolbarMenuHoverTarget: Equatable {
+    case tool
+    case style
+    case more
+    case history
+    case compactZoom
+}
+
+enum PDFZoomCommand: Equatable {
+    case zoomOut
+    case zoomIn
+    case fitToView
+    case actualSize
+}
+
+struct PDFZoomCommandRequest: Equatable {
+    let serial: Int
+    let command: PDFZoomCommand
+}
+
+struct PDFZoomStatus: Equatable {
+    let mode: PDFZoomMode
+    let canZoomOut: Bool
+    let canZoomIn: Bool
+    let isAvailable: Bool
+
+    static let unavailable = PDFZoomStatus(
+        mode: .fitToView,
+        canZoomOut: false,
+        canZoomIn: false,
+        isAvailable: false
+    )
+
+    var displayLabel: String {
+        switch mode {
+        case .fitToView:
+            return "Fit"
+        case .fixed(let scaleFactor):
+            return "\(Int((scaleFactor * 100).rounded()))%"
+        }
+    }
+
+    var isActualSize: Bool {
+        guard case .fixed(let scaleFactor) = mode else { return false }
+        return abs(scaleFactor - 1) < 0.002
     }
 }
 
@@ -115,131 +238,202 @@ private struct PDFAnnotationToolbar: View {
     let saveState: DocumentSaveState
     let canUndo: Bool
     let canRedo: Bool
+    let isDocumentAvailable: Bool
     let theme: AppTheme
     let zoomScale: Double
-    let uiFontSize: Double
     let runMarkup: (PDFTextMarkupKind) -> Void
     let undo: () -> Void
     let redo: () -> Void
+    let zoomStatus: PDFZoomStatus
+    let runZoom: (PDFZoomCommand) -> Void
     let saveDocument: () -> Void
 
+    @State private var strokeWidthPopoverAnchor: PDFStrokeWidthPopoverAnchor?
+    @State private var hoveredMenu: PDFToolbarMenuHoverTarget?
+
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
-        HStack(spacing: scaled(7)) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                toolbarContent
-                    .padding(.vertical, scaled(7))
-            }
-            .frame(minWidth: 0, maxWidth: .infinity)
-
-            saveButton
+        ViewThatFits(in: .horizontal) {
+            regularToolbar
+            annotationToolbar
+            compactToolbar
+            minimalToolbar
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .monknotChromeRowLayout(theme: theme, zoomScale: zoomScale)
+        .disabled(!isDocumentAvailable)
+        .opacity(isDocumentAvailable ? 1 : 0.42)
         .animation(.easeOut(duration: 0.14), value: interactionMode)
+        .onChange(of: interactionMode) { _, mode in
+            if mode != .pen {
+                strokeWidthPopoverAnchor = nil
+            }
+        }
     }
 
-    private var toolbarContent: some View {
+    private var regularToolbar: some View {
         HStack(spacing: scaled(7)) {
-            PDFToolbarIconButton(
-                systemImage: "arrow.uturn.backward",
-                label: "Undo",
-                isDisabled: !canUndo,
-                theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: uiFontSize
-            ) {
-                undo()
-            }
-
-            PDFToolbarIconButton(
-                systemImage: "arrow.uturn.forward",
-                label: "Redo",
-                isDisabled: !canRedo,
-                theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: uiFontSize
-            ) {
-                redo()
-            }
-
+            toolbarContent
             toolbarDivider
+            zoomToolbar
+            saveButton
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
 
-            PDFToolbarIconButton(
-                systemImage: "cursorarrow",
-                label: "Select",
-                isActive: interactionMode == .select,
-                theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: uiFontSize
-            ) {
-                interactionMode = .select
-            }
-
+    private var compactToolbar: some View {
+        HStack(spacing: scaled(7)) {
+            toolMenu
+            styleMenu(anchor: .compact)
+            moreMenu
             toolbarDivider
+            zoomToolbar
+            saveButton
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
 
-            PDFToolbarIconButton(
+    /// Keeps the high-frequency markup actions visible at ordinary editor
+    /// widths while collapsing the palette, stroke, and history controls.
+    /// `ViewThatFits` selects this only when the complete toolbar cannot fit.
+    private var annotationToolbar: some View {
+        HStack(spacing: scaled(7)) {
+            toolMenu
+
+            MonknotIconButton(
                 systemImage: "highlighter",
                 label: "Highlight Selection",
                 theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: uiFontSize
+                zoomScale: zoomScale
             ) {
                 runMarkup(.highlight)
             }
 
-            PDFToolbarIconButton(
+            MonknotIconButton(
                 systemImage: "underline",
                 label: "Underline Selection",
                 theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: uiFontSize
+                zoomScale: zoomScale
             ) {
                 runMarkup(.underline)
             }
 
-            PDFToolbarIconButton(
+            MonknotIconButton(
                 systemImage: "strikethrough",
                 label: "Strike Through Selection",
                 theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: uiFontSize
+                zoomScale: zoomScale
+            ) {
+                runMarkup(.strikeOut)
+            }
+
+            styleMenu(anchor: .compact)
+            historyMenu
+            toolbarDivider
+            zoomToolbar
+            saveButton
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var minimalToolbar: some View {
+        HStack(spacing: scaled(7)) {
+            toolMenu
+            styleMenu(anchor: .minimal)
+            moreMenu
+            toolbarDivider
+            compactZoomMenu
+            saveButton
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var zoomToolbar: some View {
+        PDFZoomToolbarGroup(
+            status: zoomStatus,
+            theme: theme,
+            zoomScale: zoomScale,
+            runZoom: runZoom
+        )
+    }
+
+    private var toolbarContent: some View {
+        HStack(spacing: scaled(7)) {
+            undoButton
+            redoButton
+
+            toolbarDivider
+
+            selectButton
+
+            toolbarDivider
+
+            MonknotIconButton(
+                systemImage: "highlighter",
+                label: "Highlight Selection",
+                theme: theme,
+                zoomScale: zoomScale
+            ) {
+                runMarkup(.highlight)
+            }
+
+            MonknotIconButton(
+                systemImage: "underline",
+                label: "Underline Selection",
+                theme: theme,
+                zoomScale: zoomScale
+            ) {
+                runMarkup(.underline)
+            }
+
+            MonknotIconButton(
+                systemImage: "strikethrough",
+                label: "Strike Through Selection",
+                theme: theme,
+                zoomScale: zoomScale
             ) {
                 runMarkup(.strikeOut)
             }
 
             toolbarDivider
 
-            PDFToolbarIconButton(
+            MonknotIconButton(
                 systemImage: "pencil.tip",
                 label: "Draw",
-                isActive: interactionMode == .pen,
                 theme: theme,
                 zoomScale: zoomScale,
-                uiFontSize: uiFontSize
+                isActive: interactionMode == .pen
             ) {
                 interactionMode = interactionMode == .pen ? .select : .pen
             }
+            .accessibilityAddTraits(interactionMode == .pen ? .isSelected : [])
 
-            PDFToolbarIconButton(
+            MonknotIconButton(
                 systemImage: "eraser",
                 label: "Erase Annotation",
-                isActive: interactionMode == .eraser,
                 theme: theme,
                 zoomScale: zoomScale,
-                uiFontSize: uiFontSize
+                isActive: interactionMode == .eraser
             ) {
                 interactionMode = interactionMode == .eraser ? .select : .eraser
             }
+            .accessibilityAddTraits(interactionMode == .eraser ? .isSelected : [])
 
-            if interactionMode == .pen {
-                Slider(value: $strokeWidth, in: 1...10, step: 1)
-                    .frame(width: scaled(92))
-                    .tint(selectedColor.color)
-                    .help("Stroke Width")
-                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .leading)))
+            MonknotIconButton(
+                systemImage: "lineweight",
+                label: "Stroke Width",
+                theme: theme,
+                zoomScale: zoomScale,
+                isActive: strokeWidthPopoverAnchor == .regular,
+                isDisabled: interactionMode != .pen
+            ) {
+                strokeWidthPopoverAnchor = strokeWidthPopoverAnchor == .regular ? nil : .regular
+            }
+            .popover(isPresented: popoverBinding(for: .regular), arrowEdge: .top) {
+                strokeWidthPopoverContent
             }
 
             toolbarDivider
@@ -250,8 +444,7 @@ private struct PDFAnnotationToolbar: View {
                         color: color,
                         isSelected: color == selectedColor,
                         theme: theme,
-                        zoomScale: zoomScale,
-                        uiFontSize: uiFontSize
+                        zoomScale: zoomScale
                     ) {
                         selectedColor = color
                     }
@@ -261,15 +454,393 @@ private struct PDFAnnotationToolbar: View {
         .fixedSize(horizontal: true, vertical: false)
     }
 
-    private var saveButton: some View {
-        PDFToolbarIconButton(
-            systemImage: "externaldrive.badge.checkmark",
-            label: "Save PDF",
-            isActive: !saveState.isClean,
-            isDisabled: saveState.isClean || saveState == .saving,
+    private var undoButton: some View {
+        MonknotIconButton(
+            systemImage: "arrow.uturn.backward",
+            label: "Undo",
             theme: theme,
             zoomScale: zoomScale,
-            uiFontSize: uiFontSize
+            isDisabled: !canUndo,
+            action: undo
+        )
+    }
+
+    private var redoButton: some View {
+        MonknotIconButton(
+            systemImage: "arrow.uturn.forward",
+            label: "Redo",
+            theme: theme,
+            zoomScale: zoomScale,
+            isDisabled: !canRedo,
+            action: redo
+        )
+    }
+
+    private var selectButton: some View {
+        MonknotIconButton(
+            systemImage: "cursorarrow",
+            label: "Select",
+            theme: theme,
+            zoomScale: zoomScale,
+            isActive: interactionMode == .select
+        ) {
+            interactionMode = .select
+        }
+        .accessibilityAddTraits(interactionMode == .select ? .isSelected : [])
+    }
+
+    private var toolMenu: some View {
+        Menu {
+            Button("Select", systemImage: "cursorarrow") {
+                interactionMode = .select
+            }
+            Button("Draw", systemImage: "pencil.tip") {
+                interactionMode = .pen
+            }
+            Button("Erase Annotation", systemImage: "eraser") {
+                interactionMode = .eraser
+            }
+        } label: {
+            toolbarMenuLabel(
+                systemImage: interactionModeSystemImage,
+                isActive: true,
+                isHovered: hoveredMenu == .tool
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { updateMenuHover(.tool, isHovered: $0) }
+        .help("Annotation Tool")
+        .accessibilityLabel("Annotation Tool")
+        .accessibilityValue(interactionModeAccessibilityValue)
+        .accessibilityAddTraits(.isSelected)
+    }
+
+    private func styleMenu(anchor: PDFStrokeWidthPopoverAnchor) -> some View {
+        Menu {
+            ForEach(PDFAnnotationPaletteColor.all) { color in
+                Button {
+                    selectedColor = color
+                } label: {
+                    HStack {
+                        Text(color.name)
+                        if color == selectedColor {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button("Stroke Width…", systemImage: "lineweight") {
+                strokeWidthPopoverAnchor = anchor
+            }
+            .disabled(interactionMode != .pen)
+        } label: {
+            styleMenuLabel(isHovered: hoveredMenu == .style)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { updateMenuHover(.style, isHovered: $0) }
+        .help("Annotation Style")
+        .accessibilityLabel("Annotation Style")
+        .accessibilityValue("\(selectedColor.name), \(Int(strokeWidth)) point stroke")
+        .popover(isPresented: popoverBinding(for: anchor), arrowEdge: .top) {
+            strokeWidthPopoverContent
+        }
+    }
+
+    private func popoverBinding(for anchor: PDFStrokeWidthPopoverAnchor) -> Binding<Bool> {
+        Binding(
+            get: { strokeWidthPopoverAnchor == anchor },
+            set: { isPresented in
+                if !isPresented, strokeWidthPopoverAnchor == anchor {
+                    strokeWidthPopoverAnchor = nil
+                }
+            }
+        )
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            Button("Undo", systemImage: "arrow.uturn.backward", action: undo)
+                .disabled(!canUndo)
+            Button("Redo", systemImage: "arrow.uturn.forward", action: redo)
+                .disabled(!canRedo)
+
+            Divider()
+
+            markupCommands
+        } label: {
+            toolbarMenuLabel(
+                systemImage: "ellipsis",
+                isActive: false,
+                isHovered: hoveredMenu == .more
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { updateMenuHover(.more, isHovered: $0) }
+        .help("More PDF actions")
+        .accessibilityLabel("More PDF actions")
+    }
+
+    private var historyMenu: some View {
+        Menu {
+            Button("Undo", systemImage: "arrow.uturn.backward", action: undo)
+                .disabled(!canUndo)
+            Button("Redo", systemImage: "arrow.uturn.forward", action: redo)
+                .disabled(!canRedo)
+        } label: {
+            toolbarMenuLabel(
+                systemImage: "ellipsis",
+                isActive: false,
+                isHovered: hoveredMenu == .history
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { updateMenuHover(.history, isHovered: $0) }
+        .help("Undo and redo")
+        .accessibilityLabel("Undo and redo")
+    }
+
+    @ViewBuilder
+    private var markupCommands: some View {
+        Button("Highlight Selection", systemImage: "highlighter") {
+            runMarkup(.highlight)
+        }
+        Button("Underline Selection", systemImage: "underline") {
+            runMarkup(.underline)
+        }
+        Button("Strike Through Selection", systemImage: "strikethrough") {
+            runMarkup(.strikeOut)
+        }
+    }
+
+    private var compactZoomMenu: some View {
+        Menu {
+            Button("Zoom Out", systemImage: "minus") {
+                runZoom(.zoomOut)
+            }
+            .disabled(!zoomStatus.canZoomOut)
+
+            Divider()
+
+            Button("Fit to View") {
+                runZoom(.fitToView)
+            }
+            Button("Actual Size") {
+                runZoom(.actualSize)
+            }
+
+            Divider()
+
+            Button("Zoom In", systemImage: "plus") {
+                runZoom(.zoomIn)
+            }
+            .disabled(!zoomStatus.canZoomIn)
+        } label: {
+            HStack(spacing: scaled(4)) {
+                Text(zoomStatus.displayLabel)
+                    .font(.system(
+                        size: MonknotMetrics.interfaceText(11, theme: theme, zoomScale: zoomScale),
+                        weight: .medium
+                    ))
+                    .monospacedDigit()
+                    .lineLimit(1)
+
+                Image(systemName: "chevron.down")
+                    .font(.system(
+                        size: MonknotMetrics.interfaceGlyph(8, theme: theme, zoomScale: zoomScale),
+                        weight: .semibold
+                    ))
+            }
+            .foregroundStyle(theme.mutedForegroundColor)
+            .frame(
+                width: scaled(61),
+                height: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)
+            )
+            .background(theme.controlTrackFillColor.opacity(theme.isDark ? 0.74 : 0.62))
+            .overlay {
+                if hoveredMenu == .compactZoom, zoomStatus.isAvailable {
+                    RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale))
+                        .fill(theme.foregroundColor.opacity(
+                            MonknotIconButton.IconButtonSize.chrome.hoverBackgroundOpacity(
+                                isDark: theme.isDark
+                            )
+                        ))
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale)))
+            .overlay {
+                RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale))
+                    .strokeBorder(theme.borderColor, lineWidth: 1)
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(!zoomStatus.isAvailable)
+        .onHover { updateMenuHover(.compactZoom, isHovered: $0) }
+        .help("PDF Zoom")
+        .accessibilityLabel("PDF Zoom")
+        .accessibilityValue(zoomStatus.displayLabel)
+    }
+
+    private func toolbarMenuLabel(
+        systemImage: String,
+        isActive: Bool,
+        isHovered: Bool
+    ) -> some View {
+        let dimension = MonknotMetrics.chromeButtonDimension(theme: theme, zoomScale: zoomScale)
+        let shape = RoundedRectangle(
+            cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
+        )
+
+        return Image(systemName: systemImage)
+            .font(.system(
+                size: MonknotMetrics.interfaceGlyph(
+                    MonknotMetrics.iconPointSizeBase,
+                    theme: theme,
+                    zoomScale: zoomScale
+                ),
+                weight: .medium
+            ))
+            .foregroundStyle(isActive || isHovered ? theme.foregroundColor : theme.mutedForegroundColor)
+            .frame(width: dimension, height: dimension)
+            .background {
+                if isActive || isHovered {
+                    shape.fill(theme.foregroundColor.opacity(
+                        isActive
+                            ? MonknotIconButton.IconButtonSize.chrome.activeBackgroundOpacity(
+                                isDark: theme.isDark
+                            )
+                            : MonknotIconButton.IconButtonSize.chrome.hoverBackgroundOpacity(
+                                isDark: theme.isDark
+                            )
+                    ))
+                }
+            }
+            .overlay {
+                if isActive {
+                    shape.strokeBorder(theme.borderColor, lineWidth: 1)
+                }
+            }
+            .contentShape(shape)
+    }
+
+    private func styleMenuLabel(isHovered: Bool) -> some View {
+        let dimension = MonknotMetrics.chromeButtonDimension(theme: theme, zoomScale: zoomScale)
+        let colorSize = MonknotMetrics.interfaceControl(14, theme: theme, zoomScale: zoomScale)
+        let shape = RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale))
+
+        return HStack(spacing: scaled(4)) {
+            Image(systemName: "circle.fill")
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(selectedColor.color)
+                .font(.system(size: colorSize, weight: .regular))
+                .overlay {
+                    Circle()
+                        .strokeBorder(theme.surfaceColor.opacity(0.85), lineWidth: 1)
+                }
+
+            Image(systemName: "chevron.down")
+                .font(.system(
+                    size: MonknotMetrics.interfaceGlyph(8, theme: theme, zoomScale: zoomScale),
+                    weight: .semibold
+                ))
+                .foregroundStyle(theme.mutedForegroundColor)
+        }
+        .frame(width: scaled(42), height: dimension)
+        .background(theme.controlTrackFillColor, in: shape)
+        .overlay {
+            if isHovered {
+                shape.fill(theme.foregroundColor.opacity(
+                    MonknotIconButton.IconButtonSize.chrome.hoverBackgroundOpacity(
+                        isDark: theme.isDark
+                    )
+                ))
+            }
+        }
+        .overlay {
+            shape
+                .strokeBorder(theme.borderColor, lineWidth: 1)
+        }
+        .contentShape(shape)
+    }
+
+    private func updateMenuHover(_ target: PDFToolbarMenuHoverTarget, isHovered: Bool) {
+        if isHovered {
+            hoveredMenu = target
+        } else if hoveredMenu == target {
+            hoveredMenu = nil
+        }
+    }
+
+    private var interactionModeSystemImage: String {
+        switch interactionMode {
+        case .select:
+            return "cursorarrow"
+        case .pen:
+            return "pencil.tip"
+        case .eraser:
+            return "eraser"
+        }
+    }
+
+    private var interactionModeAccessibilityValue: String {
+        switch interactionMode {
+        case .select:
+            return "Select"
+        case .pen:
+            return "Draw"
+        case .eraser:
+            return "Erase"
+        }
+    }
+
+    private var strokeWidthPopoverContent: some View {
+        VStack(alignment: .leading, spacing: scaled(10)) {
+            HStack {
+                Text("Stroke Width")
+                    .font(.system(
+                        size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale),
+                        weight: .semibold
+                    ))
+
+                Spacer(minLength: scaled(12))
+
+                Text("\(Int(strokeWidth)) pt")
+                    .font(.system(
+                        size: MonknotMetrics.interfaceText(11, theme: theme, zoomScale: zoomScale),
+                        weight: .medium,
+                        design: .monospaced
+                    ))
+                    .foregroundStyle(theme.mutedForegroundColor)
+            }
+
+            Slider(value: $strokeWidth, in: 1...10, step: 1)
+                .tint(selectedColor.color)
+        }
+        .padding(scaled(12))
+        .frame(width: scaled(210))
+        .background(theme.elevatedSurfaceColor)
+    }
+
+    private var saveButton: some View {
+        MonknotIconButton(
+            systemImage: "externaldrive.badge.checkmark",
+            label: "Save PDF",
+            theme: theme,
+            zoomScale: zoomScale,
+            isActive: !saveState.isClean,
+            isDisabled: saveState.isClean || saveState == .saving
         ) {
             saveDocument()
         }
@@ -283,69 +854,135 @@ private struct PDFAnnotationToolbar: View {
     }
 }
 
-private struct PDFToolbarIconButton: View {
-    let systemImage: String
-    let label: String
-    var isActive = false
-    var isDisabled = false
+private struct PDFZoomToolbarGroup: View {
+    let status: PDFZoomStatus
     let theme: AppTheme
     let zoomScale: Double
-    let uiFontSize: Double
-    let action: () -> Void
+    let runZoom: (PDFZoomCommand) -> Void
 
-    @State private var isHovered = false
+    @State private var isMenuHovered = false
+    @FocusState private var isMenuFocused: Bool
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
+    private func textScaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    private func glyphScaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
+    }
+
     var body: some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: scaled(13), weight: .regular))
-                .foregroundStyle(iconColor)
-                .frame(width: scaled(30), height: scaled(28))
-                .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale)))
-                .overlay {
-                    RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale))
-                        .strokeBorder(borderColor, lineWidth: 1)
+        HStack(spacing: 0) {
+            MonknotIconButton(
+                systemImage: "minus",
+                label: "Zoom Out",
+                theme: theme,
+                zoomScale: zoomScale,
+                isDisabled: !status.canZoomOut,
+                size: .segmented
+            ) {
+                runZoom(.zoomOut)
+            }
+
+            segmentDivider
+
+            Menu {
+                Button {
+                    runZoom(.fitToView)
+                } label: {
+                    HStack {
+                        Text("Fit to View")
+                        if status.mode == .fitToView {
+                            Image(systemName: "checkmark")
+                        }
+                    }
                 }
-                .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale)))
+
+                Button {
+                    runZoom(.actualSize)
+                } label: {
+                    HStack {
+                        Text("Actual Size")
+                        if status.isActualSize {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: scaled(4)) {
+                    Text(status.displayLabel)
+                        .font(.system(size: textScaled(11), weight: .medium))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: glyphScaled(8), weight: .semibold))
+                }
+                .foregroundStyle(isMenuHovered ? theme.foregroundColor : theme.mutedForegroundColor)
+                .frame(
+                    width: scaled(61),
+                    height: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)
+                )
+                .background {
+                    if isMenuHovered, status.isAvailable {
+                        RoundedRectangle(cornerRadius: theme.chromeRadius(5, zoomScale: zoomScale))
+                            .fill(theme.foregroundColor.opacity(theme.isDark ? 0.065 : 0.048))
+                    }
+                }
+                .overlay {
+                    if isMenuFocused, status.isAvailable {
+                        RoundedRectangle(cornerRadius: theme.chromeRadius(5, zoomScale: zoomScale))
+                            .strokeBorder(theme.accentColor.opacity(0.9), lineWidth: 1.5)
+                            .padding(1)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .disabled(!status.isAvailable)
+            .focusable(status.isAvailable)
+            .focused($isMenuFocused)
+            .opacity(status.isAvailable ? 1 : 0.42)
+            .onHover { isMenuHovered = $0 }
+            .help("PDF Zoom")
+            .accessibilityLabel("PDF Zoom")
+            .accessibilityValue(status.displayLabel)
+
+            segmentDivider
+
+            MonknotIconButton(
+                systemImage: "plus",
+                label: "Zoom In",
+                theme: theme,
+                zoomScale: zoomScale,
+                isDisabled: !status.canZoomIn,
+                size: .segmented
+            ) {
+                runZoom(.zoomIn)
+            }
         }
-        .buttonStyle(.plain)
-        .disabled(isDisabled)
-        .opacity(isDisabled ? 0.46 : 1)
-        .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.12), value: isHovered)
-        .animation(.easeOut(duration: 0.12), value: isActive)
-        .help(label)
-        .accessibilityLabel(label)
-        .accessibilityAddTraits(isActive ? .isSelected : [])
-        .monknotPointerCursor(enabled: !isDisabled)
+        .background(theme.controlTrackFillColor.opacity(theme.isDark ? 0.74 : 0.62))
+        .clipShape(RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale)))
+        .overlay {
+            RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale))
+                .strokeBorder(theme.borderColor, lineWidth: 1)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .animation(.easeOut(duration: 0.12), value: isMenuHovered)
     }
 
-    private var iconColor: Color {
-        if isActive {
-            return theme.foregroundColor
-        }
-        if isHovered && !isDisabled {
-            return theme.foregroundColor.opacity(0.92)
-        }
-        return theme.mutedForegroundColor
-    }
-
-    private var background: Color {
-        if isActive {
-            return theme.controlTrackFillColor
-        }
-        if isHovered && !isDisabled {
-            return theme.foregroundColor.opacity(theme.isDark ? 0.065 : 0.048)
-        }
-        return .clear
-    }
-
-    private var borderColor: Color {
-        isActive ? theme.borderColor : Color.clear
+    private var segmentDivider: some View {
+        Rectangle()
+            .fill(theme.borderColor)
+            .frame(width: 1, height: scaled(18))
+            .accessibilityHidden(true)
     }
 }
 
@@ -354,10 +991,10 @@ private struct PDFColorSwatchButton: View {
     let isSelected: Bool
     let theme: AppTheme
     let zoomScale: Double
-    let uiFontSize: Double
     let action: () -> Void
 
     @State private var isHovered = false
+    @FocusState private var isFocused: Bool
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
@@ -365,26 +1002,41 @@ private struct PDFColorSwatchButton: View {
 
     var body: some View {
         Button(action: action) {
-            Circle()
-                .fill(color.color)
-                .frame(width: scaled(16), height: scaled(16))
-                .overlay {
+            ZStack {
+                Circle()
+                    .fill(isSelected || isHovered ? theme.controlTrackFillColor : Color.clear)
+
+                Circle()
+                    .fill(color.color)
+                    .frame(
+                        width: MonknotMetrics.interfaceControl(16, theme: theme, zoomScale: zoomScale),
+                        height: MonknotMetrics.interfaceControl(16, theme: theme, zoomScale: zoomScale)
+                    )
+                    .overlay {
+                        Circle()
+                            .strokeBorder(theme.surfaceColor.opacity(0.85), lineWidth: scaled(1))
+                    }
+                    .scaleEffect(isHovered ? 1.06 : 1)
+            }
+            .frame(
+                width: max(28, MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)),
+                height: max(28, MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale))
+            )
+            .overlay {
+                if isFocused {
                     Circle()
-                        .strokeBorder(theme.surfaceColor.opacity(0.85), lineWidth: scaled(1))
+                        .strokeBorder(theme.accentColor.opacity(0.9), lineWidth: 1.5)
+                        .padding(1)
+                } else if isSelected {
+                    Circle()
+                        .strokeBorder(theme.borderColor, lineWidth: 1)
                 }
-                .padding(scaled(4))
-                .background(
-                    Circle()
-                        .fill(isSelected ? theme.controlTrackFillColor : Color.clear)
-                )
-                .overlay {
-                    Circle()
-                        .strokeBorder(isSelected ? theme.borderColor : Color.clear, lineWidth: 1)
-                }
-                .scaleEffect(isHovered ? 1.06 : 1)
-                .contentShape(Circle())
+            }
+            .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MonknotControlPressStyle())
+        .focusable()
+        .focused($isFocused)
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovered)
         .animation(.easeOut(duration: 0.12), value: isSelected)
@@ -400,19 +1052,21 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
     let url: URL
     let dirtyData: Data?
     let theme: AppTheme
-    let zoomScale: Double
-    let viewportPosition: PDFDocumentViewportPosition?
+    let viewportState: PDFDocumentViewportState?
     let annotationMode: PDFAnnotationInteractionMode
     let annotationColor: PDFAnnotationPaletteColor
     let strokeWidth: CGFloat
     let markupCommand: PDFTextMarkupCommand?
+    let zoomCommand: PDFZoomCommandRequest?
     let undoCommandSerial: Int
     let redoCommandSerial: Int
     @Binding var searchState: DocumentSearchState
     @Binding var searchTarget: WorkspaceSearchPDFTarget?
     let markEdited: (Data?, Data) -> Void
-    let onViewportPositionChange: (PDFDocumentViewportPosition) -> Void
+    let onViewportStateChange: (PDFDocumentViewportState) -> Void
+    let updateZoomStatus: (PDFZoomStatus) -> Void
     let updateUndoState: (Bool, Bool) -> Void
+    let updateLoadState: (PDFLoadState) -> Void
     let reportError: (String) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -421,19 +1075,33 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
 
     func makeNSView(context: Context) -> AnnotatingPDFView {
         let view = AnnotatingPDFView()
+        view.identifier = .monknotDocumentFocusTarget
         view.displayMode = .singlePageContinuous
         view.displayDirection = .vertical
         view.displaysPageBreaks = true
         view.pageShadowsEnabled = true
         view.autoScales = true
-        view.minScaleFactor = 0.35
-        view.maxScaleFactor = 4
         view.backgroundColor = NSColor(hex: theme.background)
         context.coordinator.documentID = documentID
-        context.coordinator.onViewportPositionChange = onViewportPositionChange
-        context.coordinator.acceptCurrentUndoRedoSerials(
+        context.coordinator.onViewportStateChange = { state in
+            DispatchQueue.main.async {
+                self.onViewportStateChange(state)
+            }
+        }
+        context.coordinator.onZoomStatusChange = { status in
+            DispatchQueue.main.async {
+                self.updateZoomStatus(status)
+            }
+        }
+        context.coordinator.onLoadStateChange = { state in
+            DispatchQueue.main.async {
+                self.updateLoadState(state)
+            }
+        }
+        context.coordinator.acceptCurrentCommandSerials(
             undoSerial: undoCommandSerial,
-            redoSerial: redoCommandSerial
+            redoSerial: redoCommandSerial,
+            zoomSerial: zoomCommand?.serial ?? 0
         )
         context.coordinator.attach(to: view)
         return view
@@ -444,9 +1112,24 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
             documentID,
             undoSerial: undoCommandSerial,
             redoSerial: redoCommandSerial,
+            zoomSerial: zoomCommand?.serial ?? 0,
             in: pdfView
         )
-        context.coordinator.onViewportPositionChange = onViewportPositionChange
+        context.coordinator.onViewportStateChange = { state in
+            DispatchQueue.main.async {
+                self.onViewportStateChange(state)
+            }
+        }
+        context.coordinator.onZoomStatusChange = { status in
+            DispatchQueue.main.async {
+                self.updateZoomStatus(status)
+            }
+        }
+        context.coordinator.onLoadStateChange = { state in
+            DispatchQueue.main.async {
+                self.updateLoadState(state)
+            }
+        }
         pdfView.annotationMode = annotationMode
         pdfView.annotationColor = annotationColor.nsColor
         pdfView.annotationLineWidth = strokeWidth
@@ -477,20 +1160,21 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
         context.coordinator.setPendingSearchTarget(searchTarget)
 
         let didLoadDocument = context.coordinator.loadDocumentIfNeeded(url, dirtyData: dirtyData, in: pdfView)
-        context.coordinator.applyAppearance(theme: theme, zoomScale: zoomScale, force: didLoadDocument, in: pdfView)
-        context.coordinator.restoreViewportPositionIfNeeded(
-            viewportPosition,
+        context.coordinator.applyAppearance(theme: theme, in: pdfView)
+        context.coordinator.restoreViewportStateIfNeeded(
+            viewportState,
             force: didChangeDocument || didLoadDocument,
-            skip: searchTarget != nil,
+            skipPosition: searchTarget != nil,
             in: pdfView
         )
+        context.coordinator.applyZoomCommand(zoomCommand, in: pdfView)
         context.coordinator.applySearch(searchState, theme: theme, in: pdfView)
         context.coordinator.applyMarkupCommand(markupCommand, in: pdfView)
         context.coordinator.applyUndoRedoCommands(undoSerial: undoCommandSerial, redoSerial: redoCommandSerial, in: pdfView)
     }
 
     static func dismantleNSView(_ pdfView: AnnotatingPDFView, coordinator: Coordinator) {
-        coordinator.publishViewportPosition(from: pdfView)
+        coordinator.publishViewportState(from: pdfView)
         coordinator.detach()
     }
 
@@ -498,10 +1182,11 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
         var documentID: String?
         var onSearchResult: (DocumentSearchResult) -> Void = { _ in }
         var onSearchTargetConsumed: () -> Void = {}
-        var onViewportPositionChange: (PDFDocumentViewportPosition) -> Void = { _ in }
+        var onViewportStateChange: (PDFDocumentViewportState) -> Void = { _ in }
+        var onZoomStatusChange: (PDFZoomStatus) -> Void = { _ in }
+        var onLoadStateChange: (PDFLoadState) -> Void = { _ in }
         private var documentURL: URL?
         private var lastAppliedTheme: AppTheme?
-        private var lastZoomScale: Double?
         private var lastSearchRequest: DocumentSearchRequest?
         private var lastSearchHighlightTheme: SearchHighlightTheme?
         private var matches: [PDFSelection] = []
@@ -510,9 +1195,11 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
         private var lastMarkupCommandSerial = 0
         private var lastUndoCommandSerial = 0
         private var lastRedoCommandSerial = 0
-        private var shouldRestoreViewportPosition = false
-        private var lastPublishedViewportPosition: PDFDocumentViewportPosition?
-        private var isRestoringViewportPosition = false
+        private var lastZoomCommandSerial = 0
+        private var shouldRestoreViewportState = false
+        private var lastPublishedViewportState: PDFDocumentViewportState?
+        private var lastPublishedZoomStatus: PDFZoomStatus?
+        private var isRestoringViewportState = false
 
         func attach(to pdfView: AnnotatingPDFView) {
             NotificationCenter.default.addObserver(
@@ -539,24 +1226,31 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
             NotificationCenter.default.removeObserver(self)
         }
 
-        func acceptCurrentUndoRedoSerials(undoSerial: Int, redoSerial: Int) {
+        func acceptCurrentCommandSerials(undoSerial: Int, redoSerial: Int, zoomSerial: Int) {
             lastUndoCommandSerial = undoSerial
             lastRedoCommandSerial = redoSerial
+            lastZoomCommandSerial = zoomSerial
         }
 
         func prepareForDocument(
             _ nextDocumentID: String,
             undoSerial: Int,
             redoSerial: Int,
+            zoomSerial: Int,
             in pdfView: AnnotatingPDFView
         ) -> Bool {
             guard documentID != nextDocumentID else { return false }
 
-            publishViewportPosition(from: pdfView)
+            publishViewportState(from: pdfView)
             documentID = nextDocumentID
-            acceptCurrentUndoRedoSerials(undoSerial: undoSerial, redoSerial: redoSerial)
-            lastPublishedViewportPosition = nil
-            shouldRestoreViewportPosition = true
+            acceptCurrentCommandSerials(
+                undoSerial: undoSerial,
+                redoSerial: redoSerial,
+                zoomSerial: zoomSerial
+            )
+            lastPublishedViewportState = nil
+            lastPublishedZoomStatus = nil
+            shouldRestoreViewportState = true
             return true
         }
 
@@ -570,18 +1264,21 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
             currentMatchIndex = 0
             lastSearchRequest = nil
             lastSearchHighlightTheme = nil
-            performWithoutPublishingViewportChanges {
+            var loadedDocument: PDFDocument?
+            performWithoutPublishingViewportStateChanges {
                 if let dirtyData, let dirtyDocument = PDFDocument(data: dirtyData) {
-                    pdfView.document = dirtyDocument
+                    loadedDocument = dirtyDocument
                 } else {
-                    pdfView.document = PDFDocument(url: standardizedURL)
+                    loadedDocument = PDFDocument(url: standardizedURL)
                 }
+                pdfView.document = loadedDocument
                 pdfView.autoScales = true
                 pdfView.layoutDocumentView()
             }
+            onLoadStateChange(loadedDocument == nil ? .failed : .loaded)
             pdfView.clearAnnotationUndoHistory()
             pdfView.resetEditBaselineCapture(needsSnapshot: dirtyData == nil)
-            shouldRestoreViewportPosition = true
+            shouldRestoreViewportState = true
             onSearchResult(.init())
             return true
         }
@@ -591,38 +1288,10 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
             pendingSearchTarget = target
         }
 
-        func applyAppearance(theme: AppTheme, zoomScale: Double, force: Bool, in pdfView: AnnotatingPDFView) {
-            pdfView.backgroundColor = NSColor(hex: theme.background)
-
-            guard force || lastAppliedTheme != theme || lastZoomScale != zoomScale else {
-                return
-            }
-
+        func applyAppearance(theme: AppTheme, in pdfView: AnnotatingPDFView) {
+            guard lastAppliedTheme != theme else { return }
             lastAppliedTheme = theme
-            lastZoomScale = zoomScale
-
-            let destination = pdfView.currentDestination
-
-            performWithoutPublishingViewportChanges {
-                if abs(zoomScale - 1) < 0.001 {
-                    pdfView.autoScales = true
-                } else {
-                    let sizeToFitScale = pdfView.scaleFactorForSizeToFit
-                    if sizeToFitScale.isFinite, sizeToFitScale > 0 {
-                        let nextScale = max(pdfView.minScaleFactor, min(pdfView.maxScaleFactor, sizeToFitScale * CGFloat(zoomScale)))
-                        pdfView.autoScales = false
-                        pdfView.scaleFactor = nextScale
-                    } else {
-                        pdfView.autoScales = true
-                    }
-                }
-
-                pdfView.layoutDocumentView()
-
-                if let destination {
-                    pdfView.go(to: destination)
-                }
-            }
+            pdfView.backgroundColor = NSColor(hex: theme.background)
         }
 
         func applySearch(_ state: DocumentSearchState, theme: AppTheme, in pdfView: AnnotatingPDFView) {
@@ -676,7 +1345,7 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
                 if shouldRevealSelection {
                     pdfView.setCurrentSelection(selection, animate: true)
                     pdfView.go(to: selection)
-                    publishViewportPosition(from: pdfView)
+                    publishViewportState(from: pdfView)
                 }
                 onSearchResult(DocumentSearchResult(currentIndex: currentMatchIndex + 1, totalCount: matches.count))
             }
@@ -702,58 +1371,80 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
             }
         }
 
-        func restoreViewportPositionIfNeeded(
-            _ position: PDFDocumentViewportPosition?,
+        func applyZoomCommand(_ request: PDFZoomCommandRequest?, in pdfView: AnnotatingPDFView) {
+            guard let request, request.serial != lastZoomCommandSerial else { return }
+            lastZoomCommandSerial = request.serial
+            guard pdfView.document != nil else {
+                publishZoomStatus(from: pdfView)
+                return
+            }
+
+            performWithoutPublishingViewportStateChanges {
+                applyPDFZoomCommand(request.command, to: pdfView)
+            }
+            publishViewportState(from: pdfView)
+        }
+
+        func restoreViewportStateIfNeeded(
+            _ state: PDFDocumentViewportState?,
             force: Bool,
-            skip: Bool,
+            skipPosition: Bool,
             in pdfView: AnnotatingPDFView
         ) {
             if force {
-                shouldRestoreViewportPosition = true
+                shouldRestoreViewportState = true
             }
 
-            guard shouldRestoreViewportPosition else { return }
-            guard !skip else {
-                shouldRestoreViewportPosition = false
+            guard shouldRestoreViewportState else { return }
+            shouldRestoreViewportState = false
+            guard let document = pdfView.document else {
+                publishZoomStatus(from: pdfView)
                 return
             }
 
-            shouldRestoreViewportPosition = false
-            guard let position,
-                  let document = pdfView.document,
-                  let destination = position.destination(in: document)
-            else {
-                return
-            }
-
-            performWithoutPublishingViewportChanges {
+            performWithoutPublishingViewportStateChanges {
+                applyPDFZoomMode(state?.zoomMode ?? .fitToView, to: pdfView)
                 pdfView.layoutDocumentView()
-                pdfView.go(to: destination)
+
+                if !skipPosition,
+                   let position = state?.position,
+                   let destination = position.destination(in: document) {
+                    pdfView.go(to: destination)
+                }
             }
-            lastPublishedViewportPosition = position
-            onViewportPositionChange(position)
+            publishViewportState(from: pdfView)
         }
 
-        func publishViewportPosition(from pdfView: PDFView) {
-            guard !isRestoringViewportPosition,
-                  let position = PDFDocumentViewportPosition(pdfView: pdfView),
-                  position != lastPublishedViewportPosition
-            else {
+        func publishViewportState(from pdfView: PDFView) {
+            guard !isRestoringViewportState else { return }
+
+            if let state = PDFDocumentViewportState(pdfView: pdfView),
+               state.isMeaningfullyDifferent(from: lastPublishedViewportState) {
+                lastPublishedViewportState = state
+                onViewportStateChange(state)
+            }
+
+            publishZoomStatus(from: pdfView)
+        }
+
+        private func publishZoomStatus(from pdfView: PDFView) {
+            let status = PDFZoomStatus(pdfView: pdfView)
+            guard status != lastPublishedZoomStatus else {
                 return
             }
 
-            lastPublishedViewportPosition = position
-            onViewportPositionChange(position)
+            lastPublishedZoomStatus = status
+            onZoomStatusChange(status)
         }
 
         @objc private func pdfViewViewportDidChange(_ notification: Notification) {
             guard let pdfView = notification.object as? PDFView else { return }
-            publishViewportPosition(from: pdfView)
+            publishViewportState(from: pdfView)
         }
 
-        private func performWithoutPublishingViewportChanges(_ body: () -> Void) {
-            isRestoringViewportPosition = true
-            defer { isRestoringViewportPosition = false }
+        private func performWithoutPublishingViewportStateChanges(_ body: () -> Void) {
+            isRestoringViewportState = true
+            defer { isRestoringViewportState = false }
             body()
         }
 
@@ -810,7 +1501,7 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
     }
 }
 
-private extension PDFDocumentViewportPosition {
+extension PDFDocumentViewportPosition {
     init?(pdfView: PDFView) {
         guard let document = pdfView.document,
               let destination = pdfView.currentDestination,
@@ -835,6 +1526,110 @@ private extension PDFDocumentViewportPosition {
 
         return PDFDestination(page: page, at: point.point)
     }
+}
+
+extension PDFZoomMode {
+    init(pdfView: PDFView) {
+        if pdfView.autoScales {
+            self = .fitToView
+        } else {
+            self = .fixed(scaleFactor: Double(pdfView.scaleFactor))
+        }
+    }
+}
+
+extension PDFDocumentViewportState {
+    init?(pdfView: PDFView) {
+        guard pdfView.document != nil,
+              pdfView.scaleFactor.isFinite,
+              pdfView.scaleFactor > 0
+        else {
+            return nil
+        }
+
+        self.init(
+            position: PDFDocumentViewportPosition(pdfView: pdfView),
+            zoomMode: PDFZoomMode(pdfView: pdfView)
+        )
+    }
+}
+
+extension PDFZoomStatus {
+    init(pdfView: PDFView) {
+        guard pdfView.document != nil,
+              pdfView.scaleFactor.isFinite,
+              pdfView.scaleFactor > 0
+        else {
+            self = .unavailable
+            return
+        }
+
+        self.init(
+            mode: PDFZoomMode(pdfView: pdfView),
+            canZoomOut: pdfView.canZoomOut,
+            canZoomIn: pdfView.canZoomIn,
+            isAvailable: true
+        )
+    }
+}
+
+/// Keeps document magnification in PDFKit instead of Monknot's interface zoom.
+/// `autoScales` is PDFKit's native responsive size-to-fit mode; fixed modes use
+/// PDFKit's own minimum/maximum scale bounds.
+/// https://developer.apple.com/documentation/pdfkit/pdfview/autoscales
+/// https://developer.apple.com/documentation/pdfkit/pdfview/scalefactor
+func applyPDFZoomMode(_ mode: PDFZoomMode, to pdfView: PDFView) {
+    switch mode {
+    case .fitToView:
+        pdfView.autoScales = true
+    case .fixed(let scaleFactor):
+        let requestedScale = CGFloat(scaleFactor)
+        guard requestedScale.isFinite, requestedScale > 0 else {
+            pdfView.autoScales = true
+            pdfView.layoutDocumentView()
+            return
+        }
+
+        pdfView.autoScales = false
+        pdfView.scaleFactor = clampedPDFScaleFactor(requestedScale, in: pdfView)
+    }
+
+    pdfView.layoutDocumentView()
+}
+
+func applyPDFZoomCommand(_ command: PDFZoomCommand, to pdfView: PDFView) {
+    switch command {
+    case .zoomOut:
+        guard pdfView.canZoomOut else { return }
+        pdfView.autoScales = false
+        pdfView.zoomOut(nil)
+    case .zoomIn:
+        guard pdfView.canZoomIn else { return }
+        pdfView.autoScales = false
+        pdfView.zoomIn(nil)
+    case .fitToView:
+        let destination = pdfView.currentDestination
+        applyPDFZoomMode(.fitToView, to: pdfView)
+        if let destination {
+            pdfView.go(to: destination)
+        }
+    case .actualSize:
+        let destination = pdfView.currentDestination
+        applyPDFZoomMode(.fixed(scaleFactor: 1), to: pdfView)
+        if let destination {
+            pdfView.go(to: destination)
+        }
+    }
+}
+
+private func clampedPDFScaleFactor(_ requestedScale: CGFloat, in pdfView: PDFView) -> CGFloat {
+    let nativeMinimum = pdfView.minScaleFactor
+    let nativeMaximum = pdfView.maxScaleFactor
+    let minimum = nativeMinimum.isFinite && nativeMinimum > 0 ? nativeMinimum : requestedScale
+    let maximum = nativeMaximum.isFinite && nativeMaximum >= minimum
+        ? nativeMaximum
+        : Swift.max(requestedScale, minimum)
+    return Swift.min(maximum, Swift.max(minimum, requestedScale))
 }
 
 private final class AnnotatingPDFView: PDFView {

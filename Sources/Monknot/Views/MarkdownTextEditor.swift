@@ -87,6 +87,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         MonknotScrollbarStyle.apply(to: scrollView)
 
         let textView = MarkdownNSTextView()
+        textView.identifier = .monknotDocumentFocusTarget
         textView.fontSmoothingEnabled = fontSmoothing
         textView.delegate = context.coordinator
         textView.markdownShortcutsEnabled = markdownShortcutsEnabled

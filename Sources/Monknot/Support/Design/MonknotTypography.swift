@@ -3,15 +3,15 @@ import SwiftUI
 
 enum MonknotTypography {
     static func chromeLabel(theme: AppTheme, zoomScale: Double) -> Font {
-        .system(size: MonknotMetrics.scale(13, theme: theme, zoomScale: zoomScale), weight: .regular)
+        .system(size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale), weight: .regular)
     }
 
     static func rowTitle(theme: AppTheme, zoomScale: Double) -> Font {
-        .system(size: MonknotMetrics.scale(14, theme: theme, zoomScale: zoomScale), weight: .medium)
+        .system(size: MonknotMetrics.interfaceText(14, theme: theme, zoomScale: zoomScale), weight: .medium)
     }
 
     static func rowDetail(theme: AppTheme, zoomScale: Double) -> Font {
-        .system(size: MonknotMetrics.scale(12, theme: theme, zoomScale: zoomScale))
+        .system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale))
     }
 
     static func panelTitle(theme: AppTheme) -> Font {
@@ -23,26 +23,26 @@ enum MonknotTypography {
     }
 
     static func emptyStateTitle(theme: AppTheme, zoomScale: Double) -> Font {
-        .system(size: MonknotMetrics.scale(17, theme: theme, zoomScale: zoomScale), weight: .semibold)
+        .system(size: MonknotMetrics.interfaceText(17, theme: theme, zoomScale: zoomScale), weight: .semibold)
     }
 
     static func emptyStateDetail(theme: AppTheme, zoomScale: Double) -> Font {
-        .system(size: MonknotMetrics.scale(12, theme: theme, zoomScale: zoomScale))
+        .system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale))
     }
 
     static func tabLabel(theme: AppTheme, zoomScale: Double) -> Font {
-        .system(size: MonknotMetrics.scale(12, theme: theme, zoomScale: zoomScale), weight: .medium)
+        .system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale), weight: .medium)
     }
 
     static func settingsRowTitle(theme: AppTheme) -> Font {
-        .system(size: 14, weight: .medium)
+        .system(size: 13, weight: .regular)
     }
 
     static func settingsRowDetail(theme: AppTheme) -> Font {
-        .system(size: 12)
+        .system(size: 11)
     }
 
     static func settingsButton(theme: AppTheme) -> Font {
-        .system(size: 13, weight: .medium)
+        .system(size: 12, weight: .medium)
     }
 }

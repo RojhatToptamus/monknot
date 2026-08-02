@@ -28,9 +28,9 @@ struct TopNavigationBar: View {
     let closeTab: (String) -> Void
     let togglePinTab: (String) -> Void
     let reorderTab: (String, String?) -> Void
-    @Environment(\.openSettings) private var openSettings
     @FocusState private var isSearchFocused: Bool
     @State private var isOutlinePresented = false
+    @State private var isOverflowMenuHovered = false
 
     private var isMarkdownSelected: Bool {
         selectedDocument?.kind == .markdown
@@ -51,31 +51,46 @@ struct TopNavigationBar: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    private func textScaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    private func glyphScaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
-        HStack(spacing: scaled(MonknotMetrics.Spacing.xxs)) {
-            leadingSidebarControl
+        GeometryReader { proxy in
+            let layoutMode = MonknotMetrics.topBarLayoutMode(
+                availableWidth: proxy.size.width,
+                theme: theme,
+                zoomScale: zoomScale
+            )
 
-            tabsOrEmptyTitle
+            HStack(spacing: scaled(MonknotMetrics.Spacing.xxs)) {
+                leadingSidebarControl
 
-            if isBusy || isDocumentLoading || isSaving {
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(zoomScale * (uiFontSize / 16))
-                    .frame(width: scaled(18), height: scaled(18))
-                    .padding(.horizontal, scaled(2))
-                    .accessibilityLabel("Working")
+                tabsOrEmptyTitle
+
+                if isBusy || isDocumentLoading || isSaving {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(theme.interfaceControlScale(zoomScale: zoomScale))
+                        .frame(width: scaled(18), height: scaled(18))
+                        .padding(.horizontal, scaled(2))
+                        .accessibilityLabel("Working")
+                }
+
+                if documentSearch.isPresented {
+                    documentSearchBar(layoutMode: layoutMode)
+                } else {
+                    adaptiveTrailingActions(layoutMode: layoutMode)
+                }
             }
-
-            if documentSearch.isPresented {
-                documentSearchBar
-            } else {
-                trailingActions
-
-                drawerToggleButton
-            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
         .monknotChromeRowLayout(theme: theme, zoomScale: zoomScale)
         .onChange(of: documentSearch.focusSerial) { _, _ in
@@ -142,14 +157,16 @@ struct TopNavigationBar: View {
     private var tabsOrEmptyTitle: some View {
         if tabs.isEmpty {
             HStack(spacing: scaled(8)) {
-                Text(emptyStateTitle)
-                    .font(.system(size: scaled(13), weight: .medium))
-                    .foregroundStyle(theme.mutedForegroundColor.opacity(0.85))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .accessibilityAddTraits(.isHeader)
+                if !isSidebarVisible {
+                    Text(emptyStateTitle)
+                        .font(.system(size: textScaled(13), weight: .medium))
+                        .foregroundStyle(theme.mutedForegroundColor)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .accessibilityAddTraits(.isHeader)
+                }
 
-                WindowDoubleClickZoomArea()
+                WindowTitleBarDragArea()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .accessibilityHidden(true)
             }
@@ -171,11 +188,6 @@ struct TopNavigationBar: View {
                 reorderTab: reorderTab
             )
             .frame(maxWidth: .infinity, alignment: .leading)
-
-            WindowDoubleClickZoomArea()
-                .frame(width: scaled(20))
-                .frame(maxHeight: .infinity)
-                .accessibilityHidden(true)
         }
     }
 
@@ -192,6 +204,98 @@ struct TopNavigationBar: View {
                 sourcePreviewSwitch
                     .disabled(isDocumentLoading)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func adaptiveTrailingActions(layoutMode: MonknotTopBarLayoutMode) -> some View {
+        switch layoutMode {
+        case .regular:
+            trailingActions
+
+            drawerToggleButton
+                .padding(.leading, scaled(MonknotMetrics.Spacing.xxs))
+        case .compact:
+            if hasOverflowActions(includeDrawer: false) {
+                overflowMenu(includeDrawer: false)
+            }
+
+            drawerToggleButton
+                .padding(.leading, scaled(MonknotMetrics.Spacing.xxs))
+        case .minimal:
+            overflowMenu(includeDrawer: true)
+        }
+    }
+
+    private func hasOverflowActions(includeDrawer: Bool) -> Bool {
+        includeDrawer || isMarkdownSelected || supportsSourcePreviewToggle || (isSplitViewEnabled && supportsSplitView)
+    }
+
+    private func overflowMenu(includeDrawer: Bool) -> some View {
+        Menu {
+            if isSplitViewEnabled && supportsSplitView {
+                Button("Turn Off Split View", systemImage: "rectangle.split.2x1") {
+                    toggleSplitView()
+                }
+                .disabled(!canToggleSplitView || isDocumentLoading)
+            }
+
+            if isMarkdownSelected {
+                Button("Document Outline", systemImage: MonknotWorkspaceIcons.outline) {
+                    isOutlinePresented = true
+                }
+                .disabled(isDocumentLoading)
+            }
+
+            if supportsSourcePreviewToggle {
+                Picker("Editor Mode", selection: Binding(
+                    get: { editorMode },
+                    set: { editorMode = $0 }
+                )) {
+                    ForEach(EditorMode.allCases) { mode in
+                        Label(mode.title, systemImage: mode.resolvedSystemImage)
+                            .tag(mode)
+                    }
+                }
+                .disabled(isDocumentLoading)
+            }
+
+            if includeDrawer {
+                if isMarkdownSelected || supportsSourcePreviewToggle || (isSplitViewEnabled && supportsSplitView) {
+                    Divider()
+                }
+                Button(
+                    isTerminalPresented ? "Hide Right Drawer" : "Show Right Drawer",
+                    systemImage: MonknotWorkspaceIcons.sidebarRight,
+                    action: toggleTerminal
+                )
+            }
+        } label: {
+            TopBarOverflowLabel(
+                theme: theme,
+                zoomScale: zoomScale,
+                isActive: isOutlinePresented || isSplitViewEnabled || (includeDrawer && isTerminalPresented),
+                isHovered: isOverflowMenuHovered
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { isOverflowMenuHovered = $0 }
+        .animation(MonknotMotion.hoverAnimation, value: isOverflowMenuHovered)
+        .help("More document actions")
+        .accessibilityLabel("More document actions")
+        .popover(isPresented: $isOutlinePresented, arrowEdge: .bottom) {
+            MarkdownOutlinePanel(
+                items: outlineItems,
+                theme: theme,
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize,
+                select: { item in
+                    isOutlinePresented = false
+                    selectOutlineItem(item)
+                }
+            )
         }
     }
 
@@ -227,10 +331,10 @@ struct TopNavigationBar: View {
         .accessibilityLabel("Editor mode")
     }
 
-    private var documentSearchBar: some View {
+    private func documentSearchBar(layoutMode: MonknotTopBarLayoutMode) -> some View {
         HStack(spacing: scaled(8)) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: scaled(14), weight: .medium))
+                .font(.system(size: glyphScaled(14), weight: .medium))
                 .foregroundStyle(theme.mutedForegroundColor)
                 .accessibilityHidden(true)
 
@@ -247,39 +351,45 @@ struct TopNavigationBar: View {
             )
             .textFieldStyle(.plain)
             .focused($isSearchFocused)
-            .font(.system(size: scaled(13), weight: .regular))
+            .font(.system(size: textScaled(13), weight: .regular))
             .foregroundStyle(theme.foregroundColor)
-            .frame(width: scaled(190))
+            .frame(width: searchFieldWidth(layoutMode: layoutMode))
             .onSubmit {
                 documentSearch.findNext()
             }
             .accessibilityLabel("Search in document")
 
-            Text(documentSearch.countText)
-                .font(.system(size: scaled(11), weight: .medium, design: .rounded))
-                .foregroundStyle(theme.mutedForegroundColor)
-                .monospacedDigit()
-                .frame(minWidth: scaled(42), alignment: .trailing)
-                .accessibilityLabel("Search result \(documentSearch.countText)")
+            if layoutMode != .minimal {
+                Text(documentSearch.countText)
+                    .font(.system(size: textScaled(11), weight: .medium, design: .rounded))
+                    .foregroundStyle(theme.mutedForegroundColor)
+                    .monospacedDigit()
+                    .frame(minWidth: scaled(42), alignment: .trailing)
+                    .accessibilityLabel("Search result \(documentSearch.countText)")
+            }
 
             Rectangle()
                 .fill(theme.borderColor)
                 .frame(width: 1, height: scaled(20))
 
-            findBarButton(
-                systemImage: "chevron.up",
-                label: "Previous Match",
-                isDisabled: documentSearch.totalCount == 0
-            ) {
-                documentSearch.findPrevious()
-            }
+            if layoutMode == .regular {
+                findBarButton(
+                    systemImage: "chevron.up",
+                    label: "Previous Match",
+                    isDisabled: documentSearch.totalCount == 0
+                ) {
+                    documentSearch.findPrevious()
+                }
 
-            findBarButton(
-                systemImage: "chevron.down",
-                label: "Next Match",
-                isDisabled: documentSearch.totalCount == 0
-            ) {
-                documentSearch.findNext()
+                findBarButton(
+                    systemImage: "chevron.down",
+                    label: "Next Match",
+                    isDisabled: documentSearch.totalCount == 0
+                ) {
+                    documentSearch.findNext()
+                }
+            } else {
+                searchNavigationMenu
             }
 
             findBarButton(systemImage: "xmark", label: "Close Search") {
@@ -300,6 +410,45 @@ struct TopNavigationBar: View {
         .onAppear {
             isSearchFocused = true
         }
+    }
+
+    private func searchFieldWidth(layoutMode: MonknotTopBarLayoutMode) -> CGFloat {
+        switch layoutMode {
+        case .regular:
+            return scaled(190)
+        case .compact:
+            return scaled(112)
+        case .minimal:
+            return scaled(64)
+        }
+    }
+
+    private var searchNavigationMenu: some View {
+        Menu {
+            Button("Previous Match", systemImage: "chevron.up") {
+                documentSearch.findPrevious()
+            }
+            .disabled(documentSearch.totalCount == 0)
+
+            Button("Next Match", systemImage: "chevron.down") {
+                documentSearch.findNext()
+            }
+            .disabled(documentSearch.totalCount == 0)
+        } label: {
+            TopBarOverflowLabel(
+                theme: theme,
+                zoomScale: zoomScale,
+                isActive: false,
+                isHovered: isOverflowMenuHovered
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { isOverflowMenuHovered = $0 }
+        .animation(MonknotMotion.hoverAnimation, value: isOverflowMenuHovered)
+        .help("Search navigation")
+        .accessibilityLabel("Search navigation")
     }
 
     private func findBarButton(
@@ -344,4 +493,43 @@ struct TopNavigationBar: View {
         }
     }
 
+}
+
+private struct TopBarOverflowLabel: View {
+    let theme: AppTheme
+    let zoomScale: Double
+    let isActive: Bool
+    var isHovered = false
+
+    var body: some View {
+        let dimension = MonknotMetrics.chromeButtonDimension(theme: theme, zoomScale: zoomScale)
+        let cornerRadius = theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
+
+        Image(systemName: "ellipsis")
+            .font(.system(
+                size: MonknotMetrics.chromeGlyphSize(theme: theme, zoomScale: zoomScale),
+                weight: .medium
+            ))
+            .foregroundStyle(isActive || isHovered ? theme.foregroundColor : theme.mutedForegroundColor)
+            .frame(width: dimension, height: dimension)
+            .background {
+                if isActive || isHovered {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(theme.foregroundColor.opacity(
+                            isActive
+                                ? (theme.isDark ? 0.12 : 0.08)
+                                : MonknotIconButton.IconButtonSize.chrome.hoverBackgroundOpacity(
+                                    isDark: theme.isDark
+                                )
+                        ))
+                }
+            }
+            .overlay {
+                if isActive {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .strokeBorder(theme.borderColor, lineWidth: 1)
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
+    }
 }

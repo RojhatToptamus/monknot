@@ -23,4 +23,15 @@ enum MonknotMotion {
             ? nil
             : sidebarTransition
     }
+
+    static func toastAnimation(reduceMotion: Bool) -> Animation {
+        .easeOut(duration: reduceMotion ? 0.09 : 0.16)
+    }
+
+    static func toastTransition(reduceMotion: Bool) -> AnyTransition {
+        if reduceMotion {
+            return .opacity
+        }
+        return .move(edge: .bottom).combined(with: .opacity)
+    }
 }

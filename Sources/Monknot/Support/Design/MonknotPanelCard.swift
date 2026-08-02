@@ -5,6 +5,7 @@ import SwiftUI
 struct MonknotPanelCard<Content: View>: View {
     let theme: AppTheme
     var usesSettingsRadii: Bool = true
+    var showsBorder: Bool = true
     @ViewBuilder let content: () -> Content
 
     private var cornerRadius: CGFloat {
@@ -21,7 +22,7 @@ struct MonknotPanelCard<Content: View>: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: cornerRadius)
-                .strokeBorder(theme.borderColor, lineWidth: 1)
+                .strokeBorder(showsBorder ? theme.borderColor : .clear, lineWidth: 1)
         )
     }
 }

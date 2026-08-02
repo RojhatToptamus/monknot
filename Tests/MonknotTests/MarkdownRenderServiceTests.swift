@@ -114,6 +114,26 @@ final class MarkdownRenderServiceTests: XCTestCase {
         XCTAssertTrue(html.contains("--table-border: color-mix(in srgb, #fcfcfc 20.0%, transparent);"))
     }
 
+    func testMarkdownTypographySupportsTheExtendedApplicationZoomRange() {
+        let service = MarkdownRenderService(stylesheet: "", rendererJavaScript: "")
+
+        let compactValues = Dictionary(uniqueKeysWithValues: service.themeVariableValues(
+            for: .codexDark,
+            zoomScale: 0.7,
+            baseFontSize: 16,
+            previewWidthPercent: 88
+        ))
+        let enlargedValues = Dictionary(uniqueKeysWithValues: service.themeVariableValues(
+            for: .codexDark,
+            zoomScale: 5,
+            baseFontSize: 16,
+            previewWidthPercent: 88
+        ))
+
+        XCTAssertEqual(compactValues["--base-font-size"], "11.2px")
+        XCTAssertEqual(enlargedValues["--base-font-size"], "80.0px")
+    }
+
     func testBundledStylesheetPreservesThemeColorsForPDFExport() throws {
         let html = try MarkdownRenderService().htmlDocument(
             markdown: "# Export",

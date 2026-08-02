@@ -1,5 +1,6 @@
 import AppKit
 import MonknotCore
+import PDFKit
 import SwiftUI
 
 struct KeyboardShortcutMonitor: NSViewRepresentable {
@@ -43,11 +44,16 @@ struct KeyboardShortcutMonitor: NSViewRepresentable {
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                 guard let self,
                       event.window === self.view?.window,
-                      self.view?.window?.isKeyWindow == true,
-                      self.handler(event)
+                      self.view?.window?.isKeyWindow == true
                 else {
                     return event
                 }
+
+                if MonknotNativePDFZoomCommand.performIfFocused(for: event) {
+                    return nil
+                }
+
+                guard self.handler(event) else { return event }
                 return nil
             }
         }
@@ -57,6 +63,85 @@ struct KeyboardShortcutMonitor: NSViewRepresentable {
             NSEvent.removeMonitor(monitor)
             self.monitor = nil
         }
+    }
+}
+
+/// Routes standard zoom keys to PDFKit only while a PDF view owns keyboard
+/// focus. Other surfaces continue through Monknot's application-zoom command
+/// path, keeping viewer scale and interface scale independent.
+enum MonknotNativePDFZoomCommand {
+    enum Action: Equatable {
+        case zoomIn
+        case zoomOut
+        case actualSize
+    }
+
+    static func action(for event: NSEvent) -> Action? {
+        let modifiers = event.modifierFlags.independentFlags
+        guard modifiers.contains(.command),
+              !modifiers.contains(.option),
+              !modifiers.contains(.control)
+        else {
+            return nil
+        }
+
+        switch event.charactersIgnoringModifiers {
+        case "=", "+":
+            return .zoomIn
+        case "-":
+            return .zoomOut
+        case "0":
+            return .actualSize
+        default:
+            return nil
+        }
+    }
+
+    @discardableResult
+    static func performIfFocused(for event: NSEvent) -> Bool {
+        guard let action = action(for: event) else { return false }
+        return performIfFocused(action, in: event.window)
+    }
+
+    @discardableResult
+    static func performIfFocused(_ action: Action, in window: NSWindow? = NSApp.keyWindow) -> Bool {
+        guard let pdfView = focusedPDFView(in: window) else { return false }
+
+        switch action {
+        case .zoomIn:
+            applyPDFZoomCommand(.zoomIn, to: pdfView)
+        case .zoomOut:
+            applyPDFZoomCommand(.zoomOut, to: pdfView)
+        case .actualSize:
+            applyPDFZoomCommand(.actualSize, to: pdfView)
+        }
+        return true
+    }
+
+    private static func focusedPDFView(in window: NSWindow?) -> PDFView? {
+        var responder = window?.firstResponder
+        while let current = responder {
+            if let pdfView = current as? PDFView {
+                return pdfView
+            }
+            if let view = current as? NSView,
+               let pdfView = enclosingPDFView(for: view) {
+                return pdfView
+            }
+            responder = current.nextResponder
+        }
+        return nil
+    }
+
+    private static func enclosingPDFView(for view: NSView) -> PDFView? {
+        var current: NSView? = view
+        while let candidate = current {
+            if let pdfView = candidate as? PDFView {
+                return pdfView
+            }
+            current = candidate.superview
+        }
+        return nil
     }
 }
 

@@ -3,6 +3,103 @@ import MonknotCore
 import SwiftUI
 import UniformTypeIdentifiers
 
+@MainActor
+final class TerminalFocusRestorer: ObservableObject {
+    private weak var window: NSWindow?
+    private weak var responder: NSResponder?
+    private var generation: UInt = 0
+
+    func capture(from window: NSWindow?) {
+        generation &+= 1
+        guard !hasValidSavedTarget else { return }
+        self.window = window
+        responder = Self.preferredResponder(in: window)
+    }
+
+    func restore(fallbackFrom fallbackWindow: NSWindow? = nil) {
+        if !hasValidSavedTarget {
+            generation &+= 1
+            window = fallbackWindow
+            responder = Self.fallbackDocumentFocusTarget(in: fallbackWindow)
+        }
+
+        guard let window, let responder else {
+            clear()
+            return
+        }
+
+        let restoreGeneration = generation
+        DispatchQueue.main.async { [weak self, weak window, weak responder] in
+            guard let self, self.generation == restoreGeneration else { return }
+            defer { self.clear() }
+            guard let window, let responder else { return }
+            if let view = responder as? NSView {
+                guard view.window === window else { return }
+            }
+            window.makeFirstResponder(responder)
+        }
+    }
+
+    private var hasValidSavedTarget: Bool {
+        guard let window, let responder else { return false }
+        guard let view = responder as? NSView else { return true }
+        return view.window === window
+    }
+
+    private static func preferredResponder(in window: NSWindow?) -> NSResponder? {
+        guard let window else { return nil }
+        if let view = window.firstResponder as? NSView, view.window === window {
+            return view
+        }
+        return fallbackDocumentFocusTarget(in: window)
+    }
+
+    private static func fallbackDocumentFocusTarget(in window: NSWindow?) -> NSResponder? {
+        guard let window, let contentView = window.contentView else { return nil }
+        return firstDocumentFocusTarget(in: contentView, expectedWindow: window, root: contentView)
+    }
+
+    private static func firstDocumentFocusTarget(
+        in view: NSView,
+        expectedWindow: NSWindow,
+        root: NSView
+    ) -> NSView? {
+        if view.identifier == .monknotDocumentFocusTarget,
+           view.window === expectedWindow,
+           isVisible(view, within: root) {
+            return view
+        }
+        // Source is mounted before preview in split mode. Preserving depth-first
+        // order makes the keyboard-oriented fallback deterministic when a Menu
+        // has already discarded the exact first responder.
+        for subview in view.subviews {
+            if let target = firstDocumentFocusTarget(
+                in: subview,
+                expectedWindow: expectedWindow,
+                root: root
+            ) {
+                return target
+            }
+        }
+        return nil
+    }
+
+    private static func isVisible(_ view: NSView, within root: NSView) -> Bool {
+        var candidate: NSView? = view
+        while let current = candidate {
+            if current.isHidden { return false }
+            if current === root { return true }
+            candidate = current.superview
+        }
+        return false
+    }
+
+    private func clear() {
+        window = nil
+        responder = nil
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var store: WorkspaceStore
     @ObservedObject var themeStore: ThemeSettingsStore
@@ -14,6 +111,7 @@ struct ContentView: View {
     @AppStorage("Monknot.usePointerCursors") private var usePointerCursors = false
     @AppStorage("Monknot.fontSmoothing") private var fontSmoothing = true
     @SceneStorage("Monknot.isTerminalDrawerOpen") private var isTerminalDrawerOpen = false
+    @StateObject private var terminalFocusRestorer = TerminalFocusRestorer()
     @StateObject private var workspaceSearch = WorkspaceSearchState()
     @StateObject private var quickOpen = WorkspaceQuickOpenState()
     @StateObject private var symbolQuickOpen = MarkdownSymbolQuickOpenState()
@@ -32,8 +130,9 @@ struct ContentView: View {
     @State private var canUndoPDFAnnotation = false
     @State private var canRedoPDFAnnotation = false
     @State private var documentSearch = DocumentSearchState()
-    @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
-    @State private var exportNotice: String?
+    @State private var isSidebarVisible = true
+    @SceneStorage("Monknot.sidebarPreferredVisible") private var sidebarPreferredVisible = true
+    @State private var exportNotice: ExportSuccessNotice?
     @State private var pendingPDFExportDocument: WorkspaceDocument?
     @State private var pdfExportOptions = MarkdownPDFExportOptions.loadLastUsed()
     @State private var isExportingPDF = false
@@ -74,23 +173,16 @@ struct ContentView: View {
             .background(activeTheme.surfaceColor)
             .background(WindowBackgroundDragEnabler(
                 surfaceColor: activeTheme.surfaceColor,
-                chromeHeight: nativeChromeHeight,
+                trafficLightRowHeight: MonknotMetrics.chromeHeight(
+                    theme: activeTheme,
+                    zoomScale: zoomScale
+                ),
                 usesDarkAppearance: activeTheme.isDark
             ))
             .background(WindowCloseGuard(
                 shouldClose: { await resolveAllOpenUnsavedChanges() }
             ))
             .background(KeyboardShortcutMonitor(handler: handleKeyDown))
-            .toolbar {
-                // Keep the unified title-bar zone in step with our SwiftUI
-                // chrome height. WindowBackgroundDragEnabler uses this same
-                // value to center AppKit's native window controls.
-                ToolbarItem(placement: .principal) {
-                    Color.clear
-                        .frame(width: 0, height: nativeChromeHeight)
-                        .accessibilityHidden(true)
-                }
-            }
             .preferredColorScheme(themePreference.preferredColorScheme)
             .accentColor(activeTheme.accentColor)
         )
@@ -182,16 +274,6 @@ struct ContentView: View {
             } message: {
                 Text(store.errorMessage ?? "")
             }
-            .alert("Export Complete", isPresented: Binding(
-                get: { exportNotice != nil },
-                set: { if !$0 { exportNotice = nil } }
-            )) {
-                Button("OK", role: .cancel) {
-                    exportNotice = nil
-                }
-            } message: {
-                Text(exportNotice ?? "")
-            }
             .sheet(item: $pendingPDFExportDocument) { document in
                 MarkdownPDFExportOptionsSheet(
                     document: document,
@@ -211,12 +293,20 @@ struct ContentView: View {
     }
 
     private var rootContent: some View {
+        rootContentStack
+            .onAppear {
+                setSidebarPresented(sidebarPreferredVisible, animated: false)
+            }
+    }
+
+    private var rootContentStack: some View {
         ZStack {
-            NavigationSplitView(columnVisibility: $sidebarVisibility) {
+            WorkspaceSplitView(isSidebarPresented: isSidebarVisible) {
                 sidebarContent
             } detail: {
                 detailContent
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .overlay(alignment: .topLeading) {
                 WindowNavigationControls(
                     navigateBack: navigateBack,
@@ -235,6 +325,22 @@ struct ContentView: View {
                             zoomScale: zoomScale
                         )
                 )
+            }
+
+            if let exportNotice {
+                ExportSuccessToast(
+                    notice: exportNotice,
+                    theme: activeTheme,
+                    showInFinder: {
+                        NSWorkspace.shared.activateFileViewerSelecting([exportNotice.url])
+                        self.exportNotice = nil
+                    },
+                    dismiss: { self.exportNotice = nil }
+                )
+                .padding(20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                .transition(MonknotMotion.toastTransition(reduceMotion: reduceMotion))
+                .zIndex(3)
             }
 
             if quickOpen.isPresented {
@@ -277,6 +383,14 @@ struct ContentView: View {
             }
 
         }
+        .task(id: exportNotice?.id) {
+            guard exportNotice != nil else { return }
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(MonknotMotion.toastAnimation(reduceMotion: reduceMotion)) {
+                exportNotice = nil
+            }
+        }
     }
 
     private var themeScrim: some View {
@@ -294,14 +408,12 @@ struct ContentView: View {
             openFolder: openFolderPanel,
             openRecentWorkspace: { url in store.openWorkspace(url) },
             newMarkdown: { store.createMarkdownFile() },
-            bootstrapStarterWorkspace: { store.bootstrapStarterWorkspace() },
             exportPDF: exportMarkdownPDF(_:),
             openDocument: openDocumentTab(id:),
             openWorkspaceSearchResult: openWorkspaceSearchResult(_:)
         )
-        .toolbar(removing: .sidebarToggle)
-        .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 440)
-        .monknotStableNavigationChrome()
+        .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
+        .ignoresSafeArea(.container, edges: .top)
     }
 
     private var detailContent: some View {
@@ -335,11 +447,12 @@ struct ContentView: View {
             previewLocation: $pendingPreviewLocation,
             pdfSearchTarget: $pendingPDFSearchTarget,
             documentSearch: $documentSearch,
-            isSidebarVisible: sidebarVisibility != .detailOnly,
+            isSidebarVisible: isSidebarVisible,
             newMarkdown: { store.createMarkdownFile() },
             bootstrapStarterWorkspace: { store.bootstrapStarterWorkspace() },
             openFolder: openFolderPanel,
             toggleTerminal: { toggleTerminalDrawer(animated: true) },
+            closeTerminal: { setTerminalDrawerPresented(false, animated: true) },
             toggleSidebar: { toggleSidebar(animated: true) },
             outlineItems: outlineStore.items,
             selectOutlineItem: openOutlineItem(_:),
@@ -347,6 +460,8 @@ struct ContentView: View {
             canToggleSplitView: canToggleMarkdownSplitView,
             onPreviewSourceJump: openSourceFromPreview(location:)
         )
+        .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
+        .ignoresSafeArea(.container, edges: .top)
     }
 
     private func openFolderPanel() {
@@ -421,6 +536,7 @@ struct ContentView: View {
     }
 
     private func exportMarkdownPDF(_ document: WorkspaceDocument) {
+        pdfExportOptions = MarkdownPDFExportOptions.loadLastUsed()
         pendingPDFExportDocument = document
     }
 
@@ -463,7 +579,17 @@ struct ContentView: View {
                     store.refresh()
                 }
 
-                exportNotice = "Saved \(destinationURL.lastPathComponent)."
+                withAnimation(MonknotMotion.toastAnimation(reduceMotion: reduceMotion)) {
+                    exportNotice = ExportSuccessNotice(url: destinationURL)
+                }
+                NSAccessibility.post(
+                    element: NSApp as Any,
+                    notification: .announcementRequested,
+                    userInfo: [
+                        .announcement: "Export complete: \(destinationURL.lastPathComponent)",
+                        .priority: NSAccessibilityPriorityLevel.medium.rawValue
+                    ]
+                )
                 pendingPDFExportDocument = nil
             } catch {
                 store.errorMessage = "Could not export \(document.displayName) as PDF: \(error.localizedDescription)"
@@ -504,8 +630,7 @@ struct ContentView: View {
     }
 
     private func adjustZoom(by delta: Double) {
-        let stepped = ((zoomScale + delta) * 10).rounded() / 10
-        zoomScale = min(3.0, max(0.7, stepped))
+        zoomScale = WorkspaceZoomPolicy.stepped(zoomScale, by: delta)
     }
 
     private var canNavigateBack: Bool {
@@ -802,9 +927,9 @@ struct ContentView: View {
         case .htmlPreviewScrollPosition(let position):
             guard position.isMeaningfullyDifferent(from: state.htmlPreviewScrollPosition) else { return }
             state.htmlPreviewScrollPosition = position
-        case .pdfPosition(let position):
-            guard state.pdfPosition != position else { return }
-            state.pdfPosition = position
+        case .pdfViewportState(let viewportState):
+            guard viewportState.isMeaningfullyDifferent(from: state.pdfViewportState) else { return }
+            state.pdfViewportState = viewportState
         }
 
         documentViewportStates[documentID] = state
@@ -1138,13 +1263,12 @@ struct ContentView: View {
 
     private func showWorkspaceSearch() {
         guard store.workspaceURL != nil else { return }
-        setSidebarVisibility(.all, animated: false)
+        setSidebarPresented(true, animated: false)
         workspaceSearch.present(documents: store.documents)
     }
 
     private func openWorkspaceSearchResult(_ result: WorkspaceSearchResult) {
         let query = workspaceSearch.query
-        workspaceSearch.dismiss()
 
         if result.kind == .text || result.kind == .pdf {
             documentSearch.present()
@@ -1193,24 +1317,34 @@ struct ContentView: View {
     }
 
     private func toggleTerminalDrawer(animated: Bool) {
+        setTerminalDrawerPresented(!isTerminalDrawerOpen, animated: animated)
+    }
+
+    private func setTerminalDrawerPresented(_ isPresented: Bool, animated: Bool) {
+        guard isTerminalDrawerOpen != isPresented else { return }
+        if isPresented {
+            terminalFocusRestorer.capture(from: NSApp.keyWindow)
+        }
         updateChromeState(animated: animated) {
-            isTerminalDrawerOpen.toggle()
+            isTerminalDrawerOpen = isPresented
+        }
+        if !isPresented {
+            terminalFocusRestorer.restore(fallbackFrom: NSApp.keyWindow)
         }
     }
 
     private func toggleSidebar(animated: Bool) {
-        setSidebarVisibility(
-            sidebarVisibility == .detailOnly ? .all : .detailOnly,
-            animated: animated
-        )
+        let willShowSidebar = !isSidebarVisible
+        sidebarPreferredVisible = willShowSidebar
+        setSidebarPresented(willShowSidebar, animated: animated)
     }
 
-    private func setSidebarVisibility(
-        _ visibility: NavigationSplitViewVisibility,
+    private func setSidebarPresented(
+        _ isPresented: Bool,
         animated: Bool
     ) {
         updateChromeState(animated: animated) {
-            sidebarVisibility = visibility
+            isSidebarVisible = isPresented
         }
     }
 
@@ -1222,13 +1356,6 @@ struct ContentView: View {
             transaction.disablesAnimations = true
             withTransaction(transaction, updates)
         }
-    }
-
-    /// Single source of truth for the chrome row height (in points). The
-    /// same metric drives the AppKit unified toolbar and the SwiftUI chrome,
-    /// keeping them in lockstep when the user changes zoom or font size.
-    private var nativeChromeHeight: CGFloat {
-        MonknotMetrics.chromeHeight(theme: activeTheme, zoomScale: zoomScale)
     }
 
 }
@@ -1272,6 +1399,68 @@ struct WindowNavigationControls: View {
         }
         .frame(height: MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale))
         .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+private struct ExportSuccessNotice: Identifiable, Equatable {
+    let url: URL
+
+    var id: String { url.standardizedFileURL.path }
+}
+
+private struct ExportSuccessToast: View {
+    let notice: ExportSuccessNotice
+    let theme: AppTheme
+    let showInFinder: () -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color(hex: theme.semanticColors.diffAdded))
+                .accessibilityHidden(true)
+
+            Text("Exported \(notice.url.lastPathComponent)")
+                .font(.system(size: 12.5))
+                .foregroundStyle(theme.foregroundColor)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: 230, alignment: .leading)
+                .accessibilityLabel("Export complete: \(notice.url.lastPathComponent)")
+
+            Button("Show in Finder", action: showInFinder)
+                .buttonStyle(.plain)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(theme.accentColor)
+                .monknotPointerCursor()
+
+            Button(action: dismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(theme.mutedForegroundColor)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss")
+            .accessibilityLabel("Dismiss export notification")
+            .monknotPointerCursor()
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 6)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: theme.chromeRadius(9, zoomScale: 1))
+                .fill(theme.elevatedSurfaceColor)
+                .overlay {
+                    RoundedRectangle(cornerRadius: theme.chromeRadius(9, zoomScale: 1))
+                        .strokeBorder(theme.borderColor, lineWidth: 1)
+                }
+                .shadow(color: .black.opacity(theme.isDark ? 0.38 : 0.16), radius: 18, y: 8)
+        )
+        .frame(maxWidth: 420)
+        .accessibilityElement(children: .contain)
     }
 }
 

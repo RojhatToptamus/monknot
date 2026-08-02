@@ -239,6 +239,12 @@
       }, 1400);
     }
 
+    if (line === 1) {
+      const scroller = document.scrollingElement || document.documentElement;
+      scroller.scrollTop = 0;
+      return true;
+    }
+
     targetElement.scrollIntoView({
       block: "start",
       inline: "nearest",
@@ -267,6 +273,7 @@
 
   function captureScrollAnchor() {
     const scroller = document.scrollingElement || document.documentElement;
+    const wasAtTop = scroller.scrollTop <= 1;
     const maxBefore = Math.max(1, scroller.scrollHeight - window.innerHeight);
     const ratio = scroller.scrollTop / maxBefore;
     const pointX = Math.max(1, Math.floor(window.innerWidth / 2));
@@ -276,6 +283,11 @@
 
     return () => {
       requestAnimationFrame(() => {
+        if (wasAtTop) {
+          scroller.scrollTop = 0;
+          return;
+        }
+
         if (anchor && anchor.isConnected && Number.isFinite(anchorTop)) {
           const nextTop = anchor.getBoundingClientRect().top;
           scroller.scrollTop += nextTop - anchorTop;

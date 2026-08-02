@@ -1,71 +1,67 @@
+import AppKit
 import MonknotCore
 import SwiftUI
 
 struct GeneralSettingsView: View {
     let uiTheme: AppTheme
-    @AppStorage("Monknot.zoomScale") private var zoomScale = 1.0
-    @AppStorage("Monknot.previewWidthPercent") private var previewWidthPercent = 88.0
     @AppStorage("Monknot.usePointerCursors") private var usePointerCursors = false
     @AppStorage("Monknot.fontSmoothing") private var fontSmoothing = true
     @State private var betaFeedback = ""
     @State private var betaFeedbackNotice: String?
+    @State private var betaFeedbackNoticeIsError = false
+    @FocusState private var isFeedbackFocused: Bool
 
     var body: some View {
-        MonknotScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                SettingsGroupCard(theme: uiTheme) {
+        SettingsPage(theme: uiTheme) {
+            SettingsSectionHeader(theme: uiTheme, title: "Behavior")
+            SettingsGroupCard(theme: uiTheme, showsBorder: false) {
                     SettingsToggleRow(
                         theme: uiTheme,
                         title: "Use pointer cursors",
-                        detail: "Change the cursor to a pointer when hovering over interactive elements",
+                        detail: "Non-standard on macOS; off by default",
                         isOn: $usePointerCursors
                     )
 
                     SettingsToggleRow(
                         theme: uiTheme,
                         title: "Font smoothing",
-                        detail: "Use native macOS font anti-aliasing",
+                        detail: "Use native macOS anti-aliasing",
+                        showsDivider: false,
                         isOn: $fontSmoothing
                     )
-
-                    SettingsStepperRow(
-                        theme: uiTheme,
-                        title: "Window zoom",
-                        detail: "Adjust the application scale used by ⌘+ and ⌘−",
-                        value: $zoomScale,
-                        range: 0.7...3.0,
-                        step: 0.1,
-                        suffix: "x"
-                    )
-
-                    SettingsSliderRow(
-                        theme: uiTheme,
-                        title: "Preview width",
-                        detail: "Set Markdown preview max width as a percentage of the editor pane",
-                        value: $previewWidthPercent,
-                        range: 55...100,
-                        suffix: "%"
-                    )
-
-                    feedbackSection
-                }
             }
-            .padding(20)
-            .padding(.bottom, 10)
-            .frame(maxWidth: 720)
-            .frame(maxWidth: .infinity)
+
+            SettingsSectionHeader(theme: uiTheme, title: "Beta")
+                .padding(.top, 22)
+            SettingsGroupCard(theme: uiTheme, showsBorder: false) {
+                feedbackSection
+            }
         }
-        .scrollContentBackground(.hidden)
     }
 
     private func saveBetaFeedback() {
         do {
             _ = try BetaFeedbackRecorder().append(message: betaFeedback)
             betaFeedback = ""
+            betaFeedbackNoticeIsError = false
             betaFeedbackNotice = "Saved locally."
+            announce("Feedback saved locally")
         } catch {
+            betaFeedbackNoticeIsError = true
             betaFeedbackNotice = error.localizedDescription
+            announce("Could not save feedback: \(error.localizedDescription)")
         }
+    }
+
+    private func announce(_ message: String) {
+        NSAccessibility.post(
+            element: NSApp as Any,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: message,
+                .priority: NSAccessibilityPriorityLevel.medium.rawValue
+            ]
+        )
     }
 
     private var feedbackSection: some View {
@@ -82,6 +78,9 @@ struct GeneralSettingsView: View {
 
             TextField("What should improve?", text: $betaFeedback, axis: .vertical)
                 .textFieldStyle(.plain)
+                .focused($isFeedbackFocused)
+                .accessibilityLabel("Beta feedback")
+                .accessibilityHint("Saved locally on this Mac only")
                 .lineLimit(3...6)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
@@ -92,7 +91,10 @@ struct GeneralSettingsView: View {
                 )
                 .overlay {
                     RoundedRectangle(cornerRadius: uiTheme.settingsControlCornerRadius)
-                        .strokeBorder(uiTheme.borderColor, lineWidth: 1)
+                        .strokeBorder(
+                            isFeedbackFocused ? uiTheme.accentColor.opacity(0.9) : uiTheme.borderColor,
+                            lineWidth: isFeedbackFocused ? 1.5 : 1
+                        )
                 }
 
             HStack(spacing: 12) {
@@ -107,17 +109,20 @@ struct GeneralSettingsView: View {
                 if let betaFeedbackNotice {
                     Text(betaFeedbackNotice)
                         .font(MonknotTypography.settingsRowDetail(theme: uiTheme))
-                        .foregroundStyle(uiTheme.mutedForegroundColor)
+                        .foregroundStyle(
+                            betaFeedbackNoticeIsError
+                                ? Color(hex: uiTheme.semanticColors.diffRemoved)
+                                : uiTheme.mutedForegroundColor
+                        )
+                        .accessibilityLabel(
+                            betaFeedbackNoticeIsError
+                                ? "Could not save feedback: \(betaFeedbackNotice)"
+                                : betaFeedbackNotice
+                        )
                 }
             }
         }
         .padding(.horizontal, MonknotMetrics.Spacing.settingsRowHorizontal)
         .padding(.vertical, MonknotMetrics.Spacing.settingsRowVertical)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(uiTheme.borderColor)
-                .frame(height: 1)
-                .padding(.leading, MonknotMetrics.Spacing.settingsRowHorizontal)
-        }
     }
 }

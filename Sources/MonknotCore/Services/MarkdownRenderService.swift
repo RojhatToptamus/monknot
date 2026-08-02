@@ -120,7 +120,7 @@ public struct MarkdownRenderService: Sendable {
         usePointerCursors: Bool = false,
         fontSmoothing: Bool = true
     ) -> [(String, String)] {
-        let baseFont = max(11, min(32, baseFontSize * zoomScale))
+        let baseFont = max(8, min(120, baseFontSize * zoomScale))
         let baseFontSize = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), baseFont)
         let previewWidth = String(
             format: "%.0f",

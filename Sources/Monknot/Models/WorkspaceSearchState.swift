@@ -50,22 +50,6 @@ final class WorkspaceSearchState: ObservableObject {
     private var searchTask: Task<Void, Never>?
     private var searchGeneration = 0
 
-    var resultCountText: String {
-        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "Search text and PDF files"
-        }
-
-        if isSearching {
-            return "Searching..."
-        }
-
-        var text = "\(results.count) result\(results.count == 1 ? "" : "s")"
-        if skippedLargeFileCount > 0 {
-            text += " · \(skippedLargeFileCount) large file\(skippedLargeFileCount == 1 ? "" : "s") skipped"
-        }
-        return text
-    }
-
     func present(documents: [WorkspaceDocument]) {
         isPresented = true
         focusSerial += 1

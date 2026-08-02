@@ -1,21 +1,24 @@
 import AppKit
 import SwiftUI
 
-/// Aligns the NSWindow's appearance with our SwiftUI surface, keeps the native
-/// window controls centered in Monknot's primary chrome row, and suppresses
+extension NSUserInterfaceItemIdentifier {
+    static let monknotDocumentFocusTarget = Self("Monknot.DocumentFocusTarget")
+}
+
+/// Aligns the NSWindow's appearance with our SwiftUI surface and suppresses
 /// the AppKit-injected `.toolbarButton`, which duplicates our sidebar toggle.
-/// Uses AppKit's standard controls rather than recreating the traffic lights:
-/// https://developer.apple.com/documentation/appkit/nswindow/standardwindowbutton(_:)
+/// AppKit remains the sole owner of the traffic-light frames and all native
+/// move, resize, minimize, zoom, and full-screen behavior.
 struct WindowBackgroundDragEnabler: NSViewRepresentable {
     var surfaceColor: Color
-    var chromeHeight: CGFloat
     var suppressToolbarButton: Bool = true
+    var trafficLightRowHeight: CGFloat?
     var usesDarkAppearance: Bool?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
-            chromeHeight: chromeHeight,
-            suppressToolbarButton: suppressToolbarButton
+            suppressToolbarButton: suppressToolbarButton,
+            trafficLightRowHeight: trafficLightRowHeight
         )
     }
 
@@ -26,14 +29,17 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        context.coordinator.chromeHeight = chromeHeight
+        context.coordinator.trafficLightRowHeight = trafficLightRowHeight
         updateWindow(from: nsView, coordinator: context.coordinator)
     }
 
     private func updateWindow(from view: NSView, coordinator: Coordinator) {
         DispatchQueue.main.async {
             guard let window = view.window else { return }
-            window.isMovableByWindowBackground = true
+            // Deliberate title-bar gaps opt in to dragging below. Making the
+            // whole background draggable lets transparent controls and editor
+            // gaps accidentally move the window.
+            window.isMovableByWindowBackground = false
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden
             window.styleMask.insert(.fullSizeContentView)
@@ -41,7 +47,6 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             window.isOpaque = true
             if #available(macOS 11.0, *) {
                 window.titlebarSeparatorStyle = .none
-                window.toolbarStyle = .unified
             }
             if let usesDarkAppearance {
                 window.appearance = NSAppearance(named: usesDarkAppearance ? .darkAqua : .aqua)
@@ -61,55 +66,21 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
         button.removeFromSuperview()
     }
 
-    fileprivate static func alignStandardWindowButtons(
-        in window: NSWindow,
-        chromeHeight: CGFloat
-    ) {
-        guard chromeHeight > 0 else { return }
-
-        let buttonTypes: [NSWindow.ButtonType] = [
-            .closeButton,
-            .miniaturizeButton,
-            .zoomButton
-        ]
-        for buttonType in buttonTypes {
-            guard let button = window.standardWindowButton(buttonType),
-                  !button.isHidden,
-                  let superview = button.superview
-            else {
-                continue
-            }
-
-            let titlebarTopY = superview.isFlipped
-                ? superview.bounds.minY
-                : superview.bounds.maxY
-            let targetOriginY = NativeWindowChromeGeometry.centeredButtonOriginY(
-                buttonHeight: button.frame.height,
-                chromeHeight: chromeHeight,
-                contentTopY: titlebarTopY,
-                isFlipped: superview.isFlipped
-            )
-            guard abs(button.frame.minY - targetOriginY) > 0.25 else { continue }
-
-            superview.clipsToBounds = false
-            button.setFrameOrigin(NSPoint(x: button.frame.minX, y: targetOriginY))
-        }
-    }
-
     final class Coordinator {
-        var chromeHeight: CGFloat
         let suppressToolbarButton: Bool
+        var trafficLightRowHeight: CGFloat?
         private weak var observedWindow: NSWindow?
         private var observers: [NSObjectProtocol] = []
-        private var pendingChromeUpdate: DispatchWorkItem?
 
-        init(chromeHeight: CGFloat, suppressToolbarButton: Bool) {
-            self.chromeHeight = chromeHeight
+        init(
+            suppressToolbarButton: Bool,
+            trafficLightRowHeight: CGFloat? = nil
+        ) {
             self.suppressToolbarButton = suppressToolbarButton
+            self.trafficLightRowHeight = trafficLightRowHeight
         }
 
         deinit {
-            pendingChromeUpdate?.cancel()
             removeObservers()
         }
 
@@ -131,8 +102,8 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             ]
             for name in windowLayoutNames {
                 let token = center.addObserver(forName: name, object: window, queue: .main) { [weak self, weak window] _ in
-                    guard let window, let self else { return }
-                    self.scheduleWindowChromeUpdate(in: window)
+                    guard let self, let window else { return }
+                    self.configureWindowChrome(in: window)
                 }
                 observers.append(token)
             }
@@ -142,21 +113,45 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             if suppressToolbarButton {
                 WindowBackgroundDragEnabler.suppressSystemToolbarButton(in: window)
             }
-            WindowBackgroundDragEnabler.alignStandardWindowButtons(
-                in: window,
-                chromeHeight: chromeHeight
-            )
+            alignTrafficLights(in: window)
         }
 
-        private func scheduleWindowChromeUpdate(in window: NSWindow) {
-            pendingChromeUpdate?.cancel()
-            let workItem = DispatchWorkItem { [weak self, weak window] in
-                guard let self, let window else { return }
-                window.contentView?.layoutSubtreeIfNeeded()
-                self.configureWindowChrome(in: window)
+        /// Keeps AppKit's real window buttons on the same optical centerline as
+        /// Monknot's primary chrome row. Their horizontal positions, targets,
+        /// accessibility, and native window behavior remain AppKit-owned.
+        private func alignTrafficLights(in window: NSWindow) {
+            guard let trafficLightRowHeight,
+                  trafficLightRowHeight > 0,
+                  let closeButton = window.standardWindowButton(.closeButton),
+                  let titlebarContainer = closeButton.superview
+            else {
+                return
             }
-            pendingChromeUpdate = workItem
-            DispatchQueue.main.async(execute: workItem)
+
+            let buttons = [
+                window.standardWindowButton(.closeButton),
+                window.standardWindowButton(.miniaturizeButton),
+                window.standardWindowButton(.zoomButton),
+            ].compactMap { $0 }
+
+            let largestHalfHeight = (buttons.map(\.frame.height).max() ?? 0) / 2
+            let desiredCenterFromTop = trafficLightRowHeight / 2
+            let maximumVisibleCenterFromTop = max(
+                largestHalfHeight,
+                titlebarContainer.bounds.height - largestHalfHeight
+            )
+            let centerFromTop = min(
+                max(desiredCenterFromTop, largestHalfHeight),
+                maximumVisibleCenterFromTop
+            )
+
+            for button in buttons where button.superview === titlebarContainer {
+                let originY = titlebarContainer.bounds.maxY
+                    - centerFromTop
+                    - button.frame.height / 2
+                guard abs(button.frame.minY - originY) > 0.25 else { continue }
+                button.setFrameOrigin(NSPoint(x: button.frame.minX, y: originY))
+            }
         }
 
         private func removeObservers() {
@@ -167,43 +162,36 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
     }
 }
 
-enum NativeWindowChromeGeometry {
-    static func centeredButtonOriginY(
-        buttonHeight: CGFloat,
-        chromeHeight: CGFloat,
-        contentTopY: CGFloat,
-        isFlipped: Bool
-    ) -> CGFloat {
-        if isFlipped {
-            return contentTopY + (chromeHeight - buttonHeight) / 2
+/// A deliberate title-bar gap. macOS 15+ uses SwiftUI's native
+/// `WindowDragGesture`; macOS 14 falls back to AppKit's title-bar hit testing.
+/// Neither path overrides mouse-down handling, so AppKit retains the user's
+/// system double-click preference (Fill, Zoom, Minimize, or No Action).
+/// https://developer.apple.com/documentation/swiftui/windowdraggesture
+/// https://support.apple.com/guide/mac-help/mchlp1119/mac
+struct WindowTitleBarDragArea: View {
+    @ViewBuilder
+    var body: some View {
+        if #available(macOS 15.0, *) {
+            Color.clear
+                .contentShape(Rectangle())
+                .gesture(WindowDragGesture())
+                .allowsWindowActivationEvents()
+        } else {
+            NativeTitleBarDragRepresentable()
         }
-        return contentTopY - (chromeHeight + buttonHeight) / 2
-    }
-}
-
-struct WindowDoubleClickZoomArea: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        DoubleClickZoomView(frame: .zero)
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    private struct NativeTitleBarDragRepresentable: NSViewRepresentable {
+        func makeNSView(context: Context) -> NSView {
+            NativeTitleBarDragView(frame: .zero)
+        }
 
-    final class DoubleClickZoomView: NSView {
+        func updateNSView(_ nsView: NSView, context: Context) {}
+    }
+
+    final class NativeTitleBarDragView: NSView {
         override var mouseDownCanMoveWindow: Bool {
             true
-        }
-
-        override func mouseDown(with event: NSEvent) {
-            guard event.buttonNumber == 0 else {
-                super.mouseDown(with: event)
-                return
-            }
-
-            if event.clickCount == 2 {
-                window?.performZoom(nil)
-            } else {
-                window?.performDrag(with: event)
-            }
         }
     }
 }
@@ -245,16 +233,32 @@ struct WindowCloseGuard: NSViewRepresentable {
         func installIfPossible(from view: NSView) {
             DispatchQueue.main.async { [weak self, weak view] in
                 guard let self, let window = view?.window else { return }
-                guard self.window !== window else { return }
-
-                if self.window?.delegate === self {
-                    self.window?.delegate = self.previousDelegate
-                }
-
-                self.window = window
-                self.previousDelegate = window.delegate
-                window.delegate = self
+                self.install(on: window)
             }
+        }
+
+        func install(on window: NSWindow) {
+            guard self.window !== window else { return }
+
+            if self.window?.delegate === self {
+                self.window?.delegate = previousDelegate
+            }
+
+            self.window = window
+            previousDelegate = window.delegate
+            window.delegate = self
+        }
+
+        override func responds(to aSelector: Selector!) -> Bool {
+            super.responds(to: aSelector)
+                || previousDelegate?.responds(to: aSelector) == true
+        }
+
+        override func forwardingTarget(for aSelector: Selector!) -> Any? {
+            if previousDelegate?.responds(to: aSelector) == true {
+                return previousDelegate
+            }
+            return super.forwardingTarget(for: aSelector)
         }
 
         func windowShouldClose(_ sender: NSWindow) -> Bool {

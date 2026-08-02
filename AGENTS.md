@@ -165,7 +165,10 @@ Before adding custom parsing, indexing, PDF handling, file watching, or renderin
 
 ## UI Conventions
 
-- Main layout is `NavigationSplitView` in `ContentView`.
+- Main layout is owned by `WorkspaceSplitView`, an `NSSplitViewController`
+  bridge in `ContentView`. The existing `SidebarView` remains the leading pane;
+  AppKit owns divider interaction, accessibility, collapse behavior, window
+  resizing, full-screen transitions, and autosaved divider positions.
 - Sidebar-specific state and tree presentation live in `SidebarView`.
 - Detail/editor state lives in `EditorPaneView`.
 - File tabs are rendered by `DocumentTabBar` under `TopNavigationBar`. Keep tabs lightweight: labels, pinned state, close/pin actions, and save indicators only. Inactive tabs must remain metadata only; do not create per-tab editor/preview runtimes. When split view is active for markdown/HTML documents, `TopNavigationBar` shows an active split indicator (click to turn off; ⌘\\ also toggles).

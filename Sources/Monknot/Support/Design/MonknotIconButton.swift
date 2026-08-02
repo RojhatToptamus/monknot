@@ -20,24 +20,33 @@ struct MonknotIconButton: View {
         case windowNavigation
         case compact
         case findBar
+        case segmented
 
         func dimension(theme: AppTheme, zoomScale: Double) -> CGFloat {
             switch self {
             case .chrome, .windowNavigation:
                 return MonknotMetrics.chromeButtonDimension(theme: theme, zoomScale: zoomScale)
             case .compact:
-                return MonknotMetrics.scale(24, theme: theme, zoomScale: zoomScale)
+                return max(26, MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale))
             case .findBar:
-                return MonknotMetrics.scale(24, theme: theme, zoomScale: zoomScale)
+                return max(24, MonknotMetrics.interfaceControl(24, theme: theme, zoomScale: zoomScale))
+            case .segmented:
+                return max(28, MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale))
             }
         }
 
         func iconSize(theme: AppTheme, zoomScale: Double) -> CGFloat {
             switch self {
             case .chrome, .windowNavigation:
-                return MonknotMetrics.scale(MonknotMetrics.iconPointSizeBase, theme: theme, zoomScale: zoomScale)
+                return MonknotMetrics.interfaceGlyph(
+                    MonknotMetrics.iconPointSizeBase,
+                    theme: theme,
+                    zoomScale: zoomScale
+                )
             case .compact, .findBar:
-                return MonknotMetrics.scale(12, theme: theme, zoomScale: zoomScale)
+                return MonknotMetrics.interfaceGlyph(12, theme: theme, zoomScale: zoomScale)
+            case .segmented:
+                return MonknotMetrics.interfaceGlyph(11, theme: theme, zoomScale: zoomScale)
             }
         }
 
@@ -47,6 +56,8 @@ struct MonknotIconButton: View {
                 return theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
             case .compact, .findBar:
                 return theme.chromeRadius(6, zoomScale: zoomScale)
+            case .segmented:
+                return theme.chromeRadius(5, zoomScale: zoomScale)
             }
         }
 
@@ -54,9 +65,13 @@ struct MonknotIconButton: View {
             switch self {
             case .windowNavigation:
                 return isDark ? 0.10 : 0.065
-            case .chrome, .compact, .findBar:
+            case .chrome, .compact, .findBar, .segmented:
                 return isDark ? 0.065 : 0.048
             }
+        }
+
+        func activeBackgroundOpacity(isDark: Bool) -> Double {
+            isDark ? 0.12 : 0.08
         }
 
         func backgroundOpacity(isHovered: Bool, isDisabled: Bool, isDark: Bool) -> Double? {
@@ -68,19 +83,11 @@ struct MonknotIconButton: View {
             switch self {
             case .windowNavigation:
                 return 0.72
-            case .chrome, .compact, .findBar:
-                return 0.4
+            case .chrome, .compact, .findBar, .segmented:
+                return 0.38
             }
         }
 
-        var disabledIconOpacity: Double {
-            switch self {
-            case .windowNavigation:
-                return 1
-            case .chrome, .compact, .findBar:
-                return 0.42
-            }
-        }
     }
 
     var body: some View {
@@ -91,7 +98,10 @@ struct MonknotIconButton: View {
                 .foregroundStyle(iconColor)
                 .frame(width: size.dimension(theme: theme, zoomScale: zoomScale), height: size.dimension(theme: theme, zoomScale: zoomScale))
                 .background {
-                    if let opacity = size.backgroundOpacity(
+                    if isActive, !isDisabled {
+                        RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
+                            .fill(theme.foregroundColor.opacity(size.activeBackgroundOpacity(isDark: theme.isDark)))
+                    } else if let opacity = size.backgroundOpacity(
                         isHovered: isHovered,
                         isDisabled: isDisabled,
                         isDark: theme.isDark
@@ -100,9 +110,19 @@ struct MonknotIconButton: View {
                             .fill(theme.foregroundColor.opacity(opacity))
                     }
                 }
+                .overlay {
+                    if isFocused {
+                        RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
+                            .strokeBorder(theme.accentColor.opacity(0.9), lineWidth: 1.5)
+                            .padding(1)
+                    } else if isActive, !isDisabled {
+                        RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
+                            .strokeBorder(theme.borderColor, lineWidth: 1)
+                    }
+                }
                 .contentShape(RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale)))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MonknotControlPressStyle())
         .disabled(isDisabled)
         .focusable(!isDisabled)
         .focused($isFocused)
@@ -117,7 +137,7 @@ struct MonknotIconButton: View {
 
     private var iconColor: Color {
         if isDisabled {
-            return theme.mutedForegroundColor.opacity(size.disabledIconOpacity)
+            return theme.foregroundColor
         }
         if isActive {
             return theme.foregroundColor
@@ -126,6 +146,15 @@ struct MonknotIconButton: View {
             return theme.foregroundColor.opacity(0.92)
         }
         return theme.mutedForegroundColor
+    }
+}
+
+struct MonknotControlPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.72 : 1)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .animation(MonknotMotion.hoverAnimation, value: configuration.isPressed)
     }
 }
 

@@ -2,6 +2,56 @@ import AppKit
 import MonknotCore
 import SwiftUI
 
+enum TerminalDrawerPresentation: Equatable {
+    case sideBySide
+    case takeover
+}
+
+struct TerminalDrawerLayout: Equatable {
+    let presentation: TerminalDrawerPresentation
+    let drawerWidth: CGFloat
+    let maximumDrawerWidth: CGFloat
+
+    var isResizable: Bool {
+        presentation == .sideBySide
+            && maximumDrawerWidth > MonknotMetrics.terminalDrawerMinWidth
+    }
+}
+
+enum TerminalDrawerLayoutPolicy {
+    static func resolve(
+        availableWidth: CGFloat,
+        preferredDrawerWidth: CGFloat
+    ) -> TerminalDrawerLayout {
+        let availableWidth = max(0, availableWidth)
+        let minimumSideBySideWidth = MonknotMetrics.editorMinimumReadableWidth
+            + MonknotMetrics.terminalDrawerMinWidth
+
+        guard availableWidth >= minimumSideBySideWidth else {
+            return TerminalDrawerLayout(
+                presentation: .takeover,
+                drawerWidth: availableWidth,
+                maximumDrawerWidth: availableWidth
+            )
+        }
+
+        let maximumDrawerWidth = min(
+            MonknotMetrics.terminalDrawerMaxWidth,
+            availableWidth - MonknotMetrics.editorMinimumReadableWidth
+        )
+        let drawerWidth = min(
+            max(preferredDrawerWidth, MonknotMetrics.terminalDrawerMinWidth),
+            maximumDrawerWidth
+        )
+
+        return TerminalDrawerLayout(
+            presentation: .sideBySide,
+            drawerWidth: drawerWidth,
+            maximumDrawerWidth: maximumDrawerWidth
+        )
+    }
+}
+
 struct EditorPaneView: View {
     @ObservedObject var store: WorkspaceStore
     @Binding var editorMode: EditorMode
@@ -42,6 +92,7 @@ struct EditorPaneView: View {
     let bootstrapStarterWorkspace: () -> Void
     let openFolder: () -> Void
     let toggleTerminal: () -> Void
+    let closeTerminal: () -> Void
     let toggleSidebar: () -> Void
     let outlineItems: [MarkdownOutlineItem]
     let selectOutlineItem: (MarkdownOutlineItem) -> Void
@@ -54,7 +105,6 @@ struct EditorPaneView: View {
         GeometryReader { proxy in
             editorAndDrawer(in: proxy.size)
         }
-        .ignoresSafeArea(.container, edges: .top)
         .background(theme.surfaceColor)
         .onExitCommand {
             if documentSearch.isPresented {
@@ -62,7 +112,7 @@ struct EditorPaneView: View {
                 return
             }
             guard isTerminalPresented else { return }
-            setTerminalPresented(false)
+            closeTerminal()
         }
         .onAppear {
             terminalSessions.setDefaultDirectory(activeTerminalDirectory)
@@ -94,39 +144,41 @@ struct EditorPaneView: View {
 
     @ViewBuilder
     private func editorAndDrawer(in size: CGSize) -> some View {
-        let isCompact = size.width < MonknotMetrics.compactLayoutBreakpoint
-        let drawerWidth = terminalDrawerWidth(for: size.width)
+        let layout = TerminalDrawerLayoutPolicy.resolve(
+            availableWidth: size.width,
+            preferredDrawerWidth: terminalDrawerWidth
+        )
+        let editorWidth = isTerminalPresented && layout.presentation == .sideBySide
+            ? max(0, size.width - layout.drawerWidth)
+            : size.width
+        let sharesPrimaryChrome = isTerminalPresented && layout.presentation == .takeover
+        let primaryChromeHeight = MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
+        let terminalHeight = sharesPrimaryChrome
+            ? max(0, size.height - primaryChromeHeight)
+            : size.height
 
-        if isCompact {
-            ZStack(alignment: .trailing) {
-                editorColumn
+        ZStack(alignment: .topTrailing) {
+            editorColumn(sharesPrimaryChromeWithTerminal: sharesPrimaryChrome)
+                .frame(width: editorWidth)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
-                if isTerminalPresented {
-                    theme.scrimColor
-                        .ignoresSafeArea()
-                        .transition(.opacity)
-                        .onTapGesture {
-                            setTerminalPresented(false)
-                        }
-                        .accessibilityHidden(true)
-
-                    resizableTerminalDrawer(
-                        width: drawerWidth,
-                        maxWidth: drawerMaxWidth(for: size.width),
-                        close: { setTerminalPresented(false) }
+            if isTerminalPresented {
+                terminalDrawer(
+                    layout: layout,
+                    showsChrome: !sharesPrimaryChrome,
+                    close: closeTerminal
+                )
+                    .frame(width: layout.drawerWidth, height: terminalHeight)
+                    .frame(
+                        maxWidth: .infinity,
+                        maxHeight: .infinity,
+                        alignment: sharesPrimaryChrome ? .bottomTrailing : .topTrailing
                     )
                     .transition(.move(edge: .trailing))
                     .zIndex(1)
-                }
             }
-            .animation(drawerAnimation, value: isTerminalPresented)
-        } else {
-            wideLayout(
-                drawerWidth: drawerWidth,
-                maxDrawerWidth: drawerMaxWidth(for: size.width)
-            )
-            .animation(drawerAnimation, value: isTerminalPresented)
         }
+        .animation(drawerAnimation, value: isTerminalPresented)
     }
 
     private var showsMarkdownSourceSubchrome: Bool {
@@ -139,42 +191,60 @@ struct EditorPaneView: View {
         return document.kind == .markdown || document.capabilities.canPreviewHTML
     }
 
-    /// Keep the editor and terminal as independent columns. Both primary
-    /// chrome rows use the same shared height, while an editor-only formatting
-    /// row must not reserve empty space above the terminal.
-    private func wideLayout(drawerWidth: CGFloat, maxDrawerWidth: CGFloat) -> some View {
-        HStack(alignment: .top, spacing: 0) {
-            editorColumn
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .layoutPriority(1)
-
-            if isTerminalPresented {
-                resizableTerminalDrawer(
-                    width: drawerWidth,
-                    maxWidth: maxDrawerWidth,
-                    close: { setTerminalPresented(false) }
-                )
-                .transition(.move(edge: .trailing))
-                .frame(maxHeight: .infinity)
-            }
-        }
-    }
-
-    private var editorColumn: some View {
+    private func editorColumn(sharesPrimaryChromeWithTerminal: Bool) -> some View {
         VStack(spacing: 0) {
-            editorChromePanel
+            editorChromePanel(sharesPrimaryChromeWithTerminal: sharesPrimaryChromeWithTerminal)
 
-            editorContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            editorContentPanel(sharesPrimaryChromeWithTerminal: sharesPrimaryChromeWithTerminal)
         }
     }
 
-    private var editorChromePanel: some View {
+    private func editorContentPanel(sharesPrimaryChromeWithTerminal: Bool) -> some View {
+        editorContent
+            .frame(
+                minWidth: 0,
+                maxWidth: .infinity,
+                minHeight: 0,
+                maxHeight: .infinity,
+                alignment: .top
+            )
+            .clipped()
+            .allowsHitTesting(!sharesPrimaryChromeWithTerminal)
+            .accessibilityHidden(sharesPrimaryChromeWithTerminal)
+    }
+
+    private func editorChromePanel(sharesPrimaryChromeWithTerminal: Bool) -> some View {
         MonknotChromePanel(theme: theme) {
             VStack(spacing: 0) {
-                editorPrimaryChrome
+                if sharesPrimaryChromeWithTerminal {
+                    HStack(spacing: 0) {
+                        editorPrimaryChrome
+                            .frame(
+                                minWidth: MonknotMetrics.interfaceDensity(
+                                    MonknotMetrics.takeoverDocumentChromeMinWidthBase,
+                                    theme: theme,
+                                    zoomScale: zoomScale
+                                ),
+                                maxWidth: .infinity
+                            )
+                            .layoutPriority(1)
 
-                if showsMarkdownSourceSubchrome {
+                        TerminalDrawerTakeoverSegment(
+                            sessions: terminalSessions,
+                            workingDirectory: activeTerminalDirectory,
+                            theme: theme,
+                            zoomScale: zoomScale,
+                            uiFontSize: theme.uiFontSize,
+                            close: closeTerminal
+                        )
+                        .layoutPriority(0)
+                    }
+                    .frame(height: MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale))
+                } else {
+                    editorPrimaryChrome
+                }
+
+                if showsMarkdownSourceSubchrome && !sharesPrimaryChromeWithTerminal {
                     MonknotChromeDivider(theme: theme)
                     MarkdownSourceToolbar(
                         theme: theme,
@@ -225,35 +295,38 @@ struct EditorPaneView: View {
         )
     }
 
-    private func resizableTerminalDrawer(
-        width: CGFloat,
-        maxWidth: CGFloat,
+    private func terminalDrawer(
+        layout: TerminalDrawerLayout,
+        showsChrome: Bool,
         close: @escaping () -> Void
     ) -> some View {
-        HStack(spacing: 0) {
-            middleContentTrailingDivider
-
-            TerminalDrawerView(
-                sessions: terminalSessions,
-                workingDirectory: activeTerminalDirectory,
-                theme: theme,
-                zoomScale: zoomScale,
-                usePointerCursors: usePointerCursors,
-                fontSmoothing: fontSmoothing,
-                close: close
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .frame(width: width)
+        TerminalDrawerView(
+            sessions: terminalSessions,
+            workingDirectory: activeTerminalDirectory,
+            theme: theme,
+            zoomScale: zoomScale,
+            usePointerCursors: usePointerCursors,
+            fontSmoothing: fontSmoothing,
+            showsChrome: showsChrome,
+            close: close
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.contentSurfaceColor)
         .overlay(alignment: .leading) {
-            TerminalResizeHandle(
-                width: $terminalDrawerWidth,
-                minWidth: terminalDrawerMinWidth,
-                maxWidth: maxWidth
-            )
-            .frame(width: terminalResizeHitWidth)
-            .offset(x: -terminalResizeHitWidth / 2)
+            if layout.presentation == .sideBySide {
+                middleContentTrailingDivider
+            }
+        }
+        .overlay(alignment: .leading) {
+            if layout.isResizable {
+                TerminalResizeHandle(
+                    width: $terminalDrawerWidth,
+                    minWidth: MonknotMetrics.terminalDrawerMinWidth,
+                    maxWidth: layout.maximumDrawerWidth
+                )
+                .frame(width: terminalResizeHitWidth)
+                .offset(x: -terminalResizeHitWidth / 2)
+            }
         }
     }
 
@@ -335,7 +408,7 @@ struct EditorPaneView: View {
                 zoomScale: zoomScale,
                 saveState: store.saveState(for: selectedDocument.id),
                 dirtyData: store.dirtyPDFData(for: selectedDocument.id),
-                viewportPosition: activeViewportState?.pdfPosition,
+                viewportState: activeViewportState?.pdfViewportState,
                 externalUndoCommandSerial: pdfUndoCommandSerial,
                 externalRedoCommandSerial: pdfRedoCommandSerial,
                 searchState: $documentSearch,
@@ -353,8 +426,8 @@ struct EditorPaneView: View {
                 saveDocument: {
                     store.saveSelectedFile()
                 },
-                onViewportPositionChange: { position in
-                    updateViewportState(selectedDocument.id, .pdfPosition(position))
+                onViewportStateChange: { state in
+                    updateViewportState(selectedDocument.id, .pdfViewportState(state))
                 },
                 updateAnnotationUndoState: updatePDFAnnotationUndoState
             )
@@ -576,30 +649,6 @@ struct EditorPaneView: View {
     private var drawerAnimation: Animation? {
         MonknotMotion.sidebarTransition(reduceMotion: reduceMotion)
     }
-
-    private func terminalDrawerWidth(for availableWidth: CGFloat) -> CGFloat {
-        let maxWidth = Double(drawerMaxWidth(for: availableWidth))
-        let minWidth = Double(terminalDrawerMinWidth)
-        return CGFloat(min(max(terminalDrawerWidth, minWidth), maxWidth))
-    }
-
-    private var terminalDrawerMinWidth: CGFloat {
-        320
-    }
-
-    private func drawerMaxWidth(for availableWidth: CGFloat) -> CGFloat {
-        if availableWidth < MonknotMetrics.compactLayoutBreakpoint {
-            return min(max(availableWidth * 0.92, terminalDrawerMinWidth), availableWidth)
-        }
-
-        return max(terminalDrawerMinWidth, min(720, availableWidth - 360))
-    }
-
-    private func setTerminalPresented(_ value: Bool) {
-        withAnimation(drawerAnimation) {
-            isTerminalPresented = value
-        }
-    }
 }
 
 private struct UnsupportedDocumentView: View {
@@ -607,29 +656,16 @@ private struct UnsupportedDocumentView: View {
     let theme: AppTheme
     let zoomScale: Double
 
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
-    }
-
     var body: some View {
-        VStack(spacing: scaled(12)) {
-            Image(systemName: "doc")
-                .font(.system(size: scaled(34), weight: .regular))
-                .foregroundStyle(theme.mutedForegroundColor.opacity(0.7))
-
-            VStack(spacing: scaled(5)) {
-                Text(document.displayName)
-                    .font(.system(size: scaled(17), weight: .semibold))
-                    .foregroundStyle(theme.foregroundColor)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
-                Text("Preview is not available for this file type.")
-                    .font(.system(size: scaled(13)))
-                    .foregroundStyle(theme.mutedForegroundColor)
-            }
+        MonknotEmptyState(
+            systemImage: "doc",
+            title: document.displayName,
+            detail: "Preview is not available for this file type.",
+            theme: theme,
+            zoomScale: zoomScale
+        ) {
+            EmptyView()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.surfaceColor)
     }
 }
@@ -795,74 +831,75 @@ private struct EmptyDetailView: View {
     let bootstrapStarterWorkspace: () -> Void
     let openFolder: () -> Void
 
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+    }
+
     var body: some View {
-        VStack(spacing: MonknotMetrics.Spacing.xl) {
-            Image(systemName: WorkspaceDocumentKind.markdown.resolvedSystemImage)
-                .font(.system(size: MonknotMetrics.scale(40, theme: theme, zoomScale: zoomScale), weight: .semibold))
-                .foregroundStyle(theme.mutedForegroundColor.opacity(0.6))
-                .accessibilityHidden(true)
-
-            VStack(spacing: MonknotMetrics.Spacing.xs) {
-                Text(title)
-                    .font(MonknotTypography.emptyStateTitle(theme: theme, zoomScale: zoomScale))
-                    .foregroundStyle(theme.foregroundColor)
-                Text(message)
-                    .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
-                    .foregroundStyle(theme.mutedForegroundColor)
-                    .multilineTextAlignment(.center)
-            }
-
+        MonknotEmptyState(
+            systemImage: emptyStateSystemImage,
+            title: title,
+            detail: message,
+            theme: theme,
+            zoomScale: zoomScale
+        ) {
             if isLoadingWorkspace {
                 ProgressView()
                     .controlSize(.small)
             } else {
-                HStack(spacing: MonknotMetrics.Spacing.s) {
+                HStack(spacing: scaled(MonknotMetrics.Spacing.s)) {
                     if hasWorkspace {
-                        Button(action: newMarkdown) {
-                            Label("New Markdown", systemImage: "square.and.pencil")
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(theme.accentColor)
-                        .monknotPointerCursor()
+                        MonknotActionButton(
+                            title: "New Markdown",
+                            systemImage: "square.and.pencil",
+                            role: .primary,
+                            theme: theme,
+                            zoomScale: zoomScale,
+                            action: newMarkdown
+                        )
 
                         if canBootstrapStarterWorkspace {
-                            Button(action: bootstrapStarterWorkspace) {
-                                Label("Starter Workspace", systemImage: "wand.and.stars")
-                            }
-                            .buttonStyle(.bordered)
-                            .monknotPointerCursor()
+                            MonknotActionButton(
+                                title: "Starter Workspace",
+                                systemImage: "wand.and.stars",
+                                role: .secondary,
+                                theme: theme,
+                                zoomScale: zoomScale,
+                                action: bootstrapStarterWorkspace
+                            )
                         }
                     } else {
-                        Button(action: openFolder) {
-                            Label("Open Folder", systemImage: MonknotWorkspaceIcons.openFolder)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(theme.accentColor)
-                        .monknotPointerCursor()
+                        MonknotActionButton(
+                            title: "Open Folder",
+                            systemImage: MonknotWorkspaceIcons.openFolder,
+                            role: .primary,
+                            theme: theme,
+                            zoomScale: zoomScale,
+                            action: openFolder
+                        )
                     }
                 }
-            }
 
-            if !isLoadingWorkspace {
                 Text(hasWorkspace ? "⌘N for a new note" : "⌘O to open a folder")
                     .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
-                    .foregroundStyle(theme.mutedForegroundColor.opacity(0.6))
-                    .padding(.top, MonknotMetrics.Spacing.xxs)
-            }
-
-            if !isLoadingWorkspace, !hasWorkspace, UserDefaults.standard.data(forKey: "Monknot.workspaceBookmark") != nil {
-                Text("Your last workspace reopens automatically on launch.")
-                    .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
-                    .foregroundStyle(theme.mutedForegroundColor.opacity(0.55))
+                    .foregroundStyle(theme.foregroundColor.opacity(0.48))
                     .multilineTextAlignment(.center)
+
+                if !hasWorkspace, UserDefaults.standard.data(forKey: "Monknot.workspaceBookmark") != nil {
+                    Text("Your last workspace reopens automatically on launch.")
+                        .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
+                        .foregroundStyle(theme.foregroundColor.opacity(0.48))
+                        .multilineTextAlignment(.center)
+                }
             }
         }
-        .padding(MonknotMetrics.Spacing.windowMargin)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            accessibilityLabel
-        )
+    }
+
+    private var emptyStateSystemImage: String {
+        if isLoadingWorkspace || !hasWorkspace {
+            return MonknotWorkspaceIcons.openFolder
+        }
+        return WorkspaceDocumentKind.markdown.resolvedSystemImage
     }
 
     private var title: String {
@@ -891,17 +928,4 @@ private struct EmptyDetailView: View {
             : "Open a folder to browse Markdown, text, and PDF files."
     }
 
-    private var accessibilityLabel: String {
-        if isLoadingWorkspace {
-            return "Opening workspace. Scanning files."
-        }
-
-        if canBootstrapStarterWorkspace {
-            return "No documents yet. Create a note or generate starter files."
-        }
-
-        return hasWorkspace
-            ? "No document selected. Choose a file from the sidebar or create a new Markdown note."
-            : "No workspace open. Open a folder to browse Markdown, text, and PDF files."
-    }
 }

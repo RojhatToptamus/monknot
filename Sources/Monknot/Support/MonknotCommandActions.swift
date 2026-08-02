@@ -190,15 +190,15 @@ struct MonknotCommandMenu: Commands {
             .disabled(actions?.canExportAnnotatedPDFCopy != true)
         }
 
-        CommandMenu("View") {
+        CommandGroup(after: .toolbar) {
             Button("Toggle Split Editor") {
                 actions?.toggleSplitView()
             }
             .keyboardShortcut("\\", modifiers: [.command])
             .disabled(actions?.canToggleSplitView != true)
-        }
 
-        CommandGroup(after: .toolbar) {
+            Divider()
+
             Button("Back") {
                 actions?.navigateBack()
             }
@@ -246,21 +246,44 @@ struct MonknotCommandMenu: Commands {
             Divider()
 
             Button("Zoom In") {
-                actions?.zoomIn()
+                if !MonknotNativePDFZoomCommand.performIfFocused(.zoomIn) {
+                    actions?.zoomIn()
+                }
             }
             .keyboardShortcut("=", modifiers: [.command])
             .disabled(actions == nil)
 
             Button("Zoom Out") {
-                actions?.zoomOut()
+                if !MonknotNativePDFZoomCommand.performIfFocused(.zoomOut) {
+                    actions?.zoomOut()
+                }
             }
             .keyboardShortcut("-", modifiers: [.command])
             .disabled(actions == nil)
 
             Button("Actual Size") {
-                actions?.resetZoom()
+                if !MonknotNativePDFZoomCommand.performIfFocused(.actualSize) {
+                    actions?.resetZoom()
+                }
             }
             .keyboardShortcut("0", modifiers: [.command])
+            .disabled(actions == nil)
+
+            Menu("Interface Zoom") {
+                Button("Zoom In") {
+                    actions?.zoomIn()
+                }
+
+                Button("Zoom Out") {
+                    actions?.zoomOut()
+                }
+
+                Divider()
+
+                Button("Reset Zoom") {
+                    actions?.resetZoom()
+                }
+            }
             .disabled(actions == nil)
         }
     }

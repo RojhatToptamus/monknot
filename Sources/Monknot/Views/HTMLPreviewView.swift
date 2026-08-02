@@ -30,6 +30,7 @@ struct HTMLPreviewView: NSViewRepresentable {
         configuration.userContentController.addUserScript(MonknotScrollbarStyle.webUserScript())
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.identifier = .monknotDocumentFocusTarget
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         // Keep WebKit's normal page-derived background. Making this view
@@ -317,7 +318,7 @@ struct HTMLPreviewView: NSViewRepresentable {
         private(set) var isLoaded = false
 
         fileprivate func applyZoom(_ zoomScale: Double, in webView: WKWebView) {
-            let clampedZoom = min(3.0, max(0.7, zoomScale))
+            let clampedZoom = WorkspaceZoomPolicy.clamp(zoomScale)
             guard lastAppliedZoomScale != clampedZoom else { return }
             lastAppliedZoomScale = clampedZoom
             webView.pageZoom = CGFloat(clampedZoom)

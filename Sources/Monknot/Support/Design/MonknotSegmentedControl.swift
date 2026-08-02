@@ -49,11 +49,7 @@ struct MonknotSegmentButton: View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.system(
-                    size: MonknotMetrics.scale(
-                        MonknotMetrics.iconPointSizeBase,
-                        theme: theme,
-                        zoomScale: zoomScale
-                    ),
+                    size: MonknotMetrics.chromeGlyphSize(theme: theme, zoomScale: zoomScale),
                     weight: .medium
                 ))
                 .foregroundStyle(foreground)
@@ -70,6 +66,18 @@ struct MonknotSegmentButton: View {
                         )
                     )
                 )
+                .overlay {
+                    if isFocused {
+                        RoundedRectangle(
+                            cornerRadius: theme.chromeRadius(
+                                MonknotMetrics.iconCornerRadiusBase,
+                                zoomScale: zoomScale
+                            )
+                        )
+                        .strokeBorder(theme.accentColor.opacity(0.9), lineWidth: 1.5)
+                        .padding(1)
+                    }
+                }
                 .contentShape(
                     RoundedRectangle(
                         cornerRadius: theme.chromeRadius(

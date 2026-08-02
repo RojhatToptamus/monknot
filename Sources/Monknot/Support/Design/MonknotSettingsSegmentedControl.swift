@@ -55,6 +55,13 @@ private struct MonknotSettingsSegmentButton: View {
                 .padding(.vertical, 6)
                 .frame(minHeight: 28)
                 .background(background, in: RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius - 1))
+                .overlay {
+                    if isFocused {
+                        RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius - 1)
+                            .strokeBorder(theme.accentColor.opacity(0.9), lineWidth: 1.5)
+                            .padding(1)
+                    }
+                }
                 .contentShape(RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius - 1))
         }
         .buttonStyle(.plain)
@@ -69,14 +76,14 @@ private struct MonknotSettingsSegmentButton: View {
 
     private var labelColor: Color {
         if isSelected {
-            return theme.onAccentForegroundColor
+            return theme.foregroundColor
         }
         return theme.foregroundColor.opacity(isHovered ? 0.92 : 0.72)
     }
 
     private var background: Color {
         if isSelected {
-            return theme.accentColor
+            return theme.insetFillColor
         }
         if isHovered {
             return theme.foregroundColor.opacity(theme.isDark ? 0.06 : 0.04)

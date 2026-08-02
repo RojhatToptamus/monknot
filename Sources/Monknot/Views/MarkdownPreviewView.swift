@@ -33,6 +33,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         configuration.userContentController.addUserScript(Coordinator.scrollTrackingScript)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.identifier = .monknotDocumentFocusTarget
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         webView.setValue(false, forKey: "drawsBackground")

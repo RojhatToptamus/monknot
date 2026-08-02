@@ -29,7 +29,7 @@ struct SettingsRow<Control: View>: View {
             control()
         }
         .padding(.horizontal, MonknotMetrics.Spacing.settingsRowHorizontal)
-        .padding(.vertical, MonknotMetrics.Spacing.settingsRowVertical)
+        .padding(.vertical, 12)
         .overlay(alignment: .bottom) {
             if showsDivider {
                 Rectangle()
@@ -50,6 +50,7 @@ struct SettingsOutlineButton: View {
     let action: () -> Void
 
     @State private var isHovered = false
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         Button(action: action) {
@@ -68,11 +69,13 @@ struct SettingsOutlineButton: View {
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius)
-                        .strokeBorder(theme.borderColor, lineWidth: 1)
+                        .strokeBorder(isFocused ? theme.accentColor.opacity(0.9) : theme.borderColor, lineWidth: isFocused ? 1.5 : 1)
                 )
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
+        .focusable(!isDisabled)
+        .focused($isFocused)
         .opacity(isDisabled ? 0.55 : 1)
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovered)
@@ -90,10 +93,12 @@ struct SettingsToggleRow: View {
 
     var body: some View {
         SettingsRow(theme: theme, title: title, detail: detail, showsDivider: showsDivider) {
-            Toggle("", isOn: $isOn)
+            Toggle(title, isOn: $isOn)
                 .toggleStyle(.switch)
+                .controlSize(.small)
                 .tint(theme.accentColor)
                 .labelsHidden()
+                .accessibilityHint(detail)
                 .monknotPointerCursor()
         }
     }
@@ -126,11 +131,15 @@ struct SettingsStepperRow: View {
                         RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius)
                             .strokeBorder(theme.borderColor, lineWidth: 1)
                     )
+                    .accessibilityHidden(true)
                 Text(suffix)
                     .font(.system(size: 12))
                     .foregroundStyle(theme.mutedForegroundColor)
-                Stepper("", value: $value, in: range, step: step)
+                    .accessibilityHidden(true)
+                Stepper(title, value: $value, in: range, step: step)
                     .labelsHidden()
+                    .accessibilityValue("\(displayValue) \(suffix)")
+                    .accessibilityHint(detail)
                     .monknotPointerCursor()
             }
         }
@@ -157,11 +166,15 @@ struct SettingsSliderRow: View {
                 Slider(value: $value, in: range)
                     .tint(theme.accentColor)
                     .frame(width: 168)
+                    .accessibilityLabel(title)
+                    .accessibilityValue("\(Int(value.rounded()))\(suffix)")
+                    .accessibilityHint(detail ?? "")
                     .monknotPointerCursor()
                 Text("\(Int(value.rounded()))\(suffix)")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(theme.mutedForegroundColor)
                     .frame(width: suffix.isEmpty ? 30 : 44, alignment: .trailing)
+                    .accessibilityHidden(true)
             }
         }
     }
@@ -174,6 +187,7 @@ struct EditableThemeColorRow: View {
     let label: String
     var showsDivider: Bool = true
     @Binding var hex: String
+    @FocusState private var isHexFieldFocused: Bool
 
     var body: some View {
         SettingsRow(theme: theme, title: label, showsDivider: showsDivider) {
@@ -199,8 +213,9 @@ struct EditableThemeColorRow: View {
                     set: { hex = Self.normalizedInput($0) }
                 ))
                 .textFieldStyle(.plain)
+                .focused($isHexFieldFocused)
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(theme.foregroundColor)
+                .foregroundStyle(isHexValid ? theme.foregroundColor : validationColor)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .frame(width: 112, alignment: .leading)
@@ -210,10 +225,26 @@ struct EditableThemeColorRow: View {
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius)
-                        .strokeBorder(theme.borderColor, lineWidth: 1)
+                        .strokeBorder(
+                            isHexValid
+                                ? (isHexFieldFocused ? theme.accentColor.opacity(0.9) : theme.borderColor)
+                                : validationColor,
+                            lineWidth: isHexFieldFocused ? 1.5 : 1
+                        )
                 )
+                .accessibilityLabel("\(label) hexadecimal value")
+                .accessibilityValue(isHexValid ? hex : "\(hex), invalid")
+                .accessibilityHint("Enter a six-digit hexadecimal color such as #0169CC")
             }
         }
+    }
+
+    private var isHexValid: Bool {
+        RGBHex(hex) != nil
+    }
+
+    private var validationColor: Color {
+        Color(hex: theme.semanticColors.diffRemoved)
     }
 
     private static func normalizedInput(_ value: String) -> String {
@@ -286,11 +317,12 @@ struct SettingsSectionHeader: View {
 
     var body: some View {
         Text(title)
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(theme.foregroundColor)
-            .padding(.horizontal, 18)
-            .padding(.top, 20)
-            .padding(.bottom, 10)
+            .font(.system(size: 11, weight: .semibold))
+            .tracking(1.1)
+            .foregroundStyle(theme.mutedForegroundColor)
+            .textCase(.uppercase)
+            .padding(.horizontal, 2)
+            .padding(.bottom, 7)
     }
 }
 
