@@ -45,12 +45,16 @@ final class BuildScriptSyncTests: XCTestCase {
         }
     }
 
-    func testManualBuildScriptUsesTargetScopedAppIconAssets() throws {
+    func testManualBuildScriptCompilesTargetScopedAppIconAssetCatalog() throws {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
         let script = try String(contentsOf: root.appendingPathComponent("script/build_and_run.sh"), encoding: .utf8)
 
-        XCTAssertTrue(script.contains("Sources/Monknot/Resources/AppIcon.svg"))
-        XCTAssertTrue(script.contains("Sources/Monknot/Resources/AppIcon.iconset"))
+        XCTAssertTrue(script.contains("Sources/Monknot/Resources/Assets.xcassets"))
+        XCTAssertTrue(script.contains("xcrun actool"))
+        XCTAssertTrue(script.contains("--app-icon \"$APP_ICON_NAME\""))
+        XCTAssertTrue(script.contains("cp \"$APP_ICON_ASSETS_CAR\" \"$APP_RESOURCES/Assets.car\""))
+        XCTAssertTrue(script.contains("<key>CFBundleIconName</key>"))
+        XCTAssertFalse(script.contains("iconutil"))
     }
 
     func testManualBundleDeclaresOpenableFilesAndFolders() throws {

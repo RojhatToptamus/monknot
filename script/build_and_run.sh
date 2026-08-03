@@ -42,12 +42,11 @@ MODULE_CACHE_DIR="$BUILD_DIR/ModuleCache"
 OVERLAY_FILE="$BUILD_DIR/swift-vfs-overlay.yaml"
 EMPTY_MODULEMAP="$BUILD_DIR/empty.modulemap"
 APP_ICON_NAME="AppIcon"
-APP_ICON_SOURCE="$ROOT_DIR/Sources/Monknot/Resources/AppIcon.svg"
-APP_ICONSET_SOURCE="$ROOT_DIR/Sources/Monknot/Resources/AppIcon.iconset"
-APP_ICON_FLATTENED_SVG="$BUILD_DIR/$APP_ICON_NAME-full-background.svg"
-APP_ICON_BASE_PNG="$BUILD_DIR/$APP_ICON_NAME-base.png"
-APP_ICONSET_BUILD="$BUILD_DIR/$APP_ICON_NAME.iconset"
-APP_ICON_ICNS="$BUILD_DIR/$APP_ICON_NAME.icns"
+APP_ICON_ASSET_CATALOG="$ROOT_DIR/Sources/Monknot/Resources/Assets.xcassets"
+APP_ICON_BUILD_DIR="$BUILD_DIR/AppIconAssets"
+APP_ICON_INFO_PLIST="$BUILD_DIR/AppIcon-Info.plist"
+APP_ICON_ICNS="$APP_ICON_BUILD_DIR/$APP_ICON_NAME.icns"
+APP_ICON_ASSETS_CAR="$APP_ICON_BUILD_DIR/Assets.car"
 
 if [[ ! "$BUNDLE_ID" =~ ^[A-Za-z0-9.-]+$ ]]; then
   echo "invalid MONKNOT_BUNDLE_ID: $BUNDLE_ID" >&2
@@ -108,45 +107,35 @@ cat >"$OVERLAY_FILE" <<OVERLAY
 OVERLAY
 
 build_app_icon() {
-  if [[ -d "$APP_ICONSET_SOURCE" ]]; then
-    iconutil -c icns "$APP_ICONSET_SOURCE" -o "$APP_ICON_ICNS"
-    return
-  fi
-
-  if [[ ! -f "$APP_ICON_SOURCE" ]]; then
-    echo "missing app icon source: $APP_ICON_SOURCE" >&2
+  if [[ ! -d "$APP_ICON_ASSET_CATALOG" ]]; then
+    echo "missing app icon asset catalog: $APP_ICON_ASSET_CATALOG" >&2
     exit 1
   fi
 
-  rm -rf "$APP_ICONSET_BUILD"
-  mkdir -p "$APP_ICONSET_BUILD"
+  rm -rf "$APP_ICON_BUILD_DIR"
+  mkdir -p "$APP_ICON_BUILD_DIR"
 
-  if command -v rsvg-convert >/dev/null 2>&1; then
-    awk '
-      index($0, "<g clip-path=") && !inserted {
-        print "  <rect width=\"1024\" height=\"1024\" fill=\"url(#bg)\"/>"
-        inserted = 1
-      }
-      { print }
-    ' "$APP_ICON_SOURCE" >"$APP_ICON_FLATTENED_SVG"
-    rsvg-convert -w 1024 -h 1024 "$APP_ICON_FLATTENED_SVG" -o "$APP_ICON_BASE_PNG"
-  else
-    echo "rsvg-convert is required to preserve the SVG app icon background." >&2
+  xcrun actool \
+    --compile "$APP_ICON_BUILD_DIR" \
+    --platform macosx \
+    --minimum-deployment-target "$MIN_SYSTEM_VERSION" \
+    --target-device mac \
+    --app-icon "$APP_ICON_NAME" \
+    --standalone-icon-behavior all \
+    --output-partial-info-plist "$APP_ICON_INFO_PLIST" \
+    --warnings \
+    --errors \
+    --output-format human-readable-text \
+    "$APP_ICON_ASSET_CATALOG"
+
+  if [[ ! -f "$APP_ICON_ICNS" ]]; then
+    echo "actool did not produce the expected app icon: $APP_ICON_ICNS" >&2
     exit 1
   fi
-
-  sips -z 16 16 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_16x16.png" >/dev/null
-  sips -z 32 32 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_16x16@2x.png" >/dev/null
-  sips -z 32 32 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_32x32.png" >/dev/null
-  sips -z 64 64 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_32x32@2x.png" >/dev/null
-  sips -z 128 128 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_128x128.png" >/dev/null
-  sips -z 256 256 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_128x128@2x.png" >/dev/null
-  sips -z 256 256 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_256x256.png" >/dev/null
-  sips -z 512 512 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_256x256@2x.png" >/dev/null
-  sips -z 512 512 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_512x512.png" >/dev/null
-  sips -z 1024 1024 "$APP_ICON_BASE_PNG" --out "$APP_ICONSET_BUILD/icon_512x512@2x.png" >/dev/null
-
-  iconutil -c icns "$APP_ICONSET_BUILD" -o "$APP_ICON_ICNS"
+  if [[ ! -f "$APP_ICON_ASSETS_CAR" ]]; then
+    echo "actool did not produce the expected asset archive: $APP_ICON_ASSETS_CAR" >&2
+    exit 1
+  fi
 }
 
 CORE_SOURCES=(
@@ -314,6 +303,7 @@ cp "$BUILD_DIR/$APP_NAME" "$APP_BINARY"
 cp "$BUILD_DIR/libMonknotCore.dylib" "$APP_FRAMEWORKS/libMonknotCore.dylib"
 chmod +x "$APP_BINARY"
 cp "$APP_ICON_ICNS" "$APP_RESOURCES/$APP_ICON_NAME.icns"
+cp "$APP_ICON_ASSETS_CAR" "$APP_RESOURCES/Assets.car"
 cp "$ROOT_DIR/Sources/MonknotCore/Resources/preview.css" "$APP_RESOURCES/preview.css"
 cp "$ROOT_DIR/Sources/MonknotCore/Resources/renderer.js" "$APP_RESOURCES/renderer.js"
 cp "$ROOT_DIR/Sources/Monknot/Resources/xterm.css" "$APP_RESOURCES/xterm.css"
@@ -337,6 +327,8 @@ cat >"$INFO_PLIST" <<PLIST
   <string>$BUNDLE_ID</string>
   <key>CFBundleIconFile</key>
   <string>$APP_ICON_NAME.icns</string>
+  <key>CFBundleIconName</key>
+  <string>$APP_ICON_NAME</string>
   <key>CFBundleName</key>
   <string>$APP_NAME</string>
   <key>CFBundleDisplayName</key>
