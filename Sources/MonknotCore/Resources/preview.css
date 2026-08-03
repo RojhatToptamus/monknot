@@ -88,7 +88,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font: var(--base-font-size, 15px)/1.68 var(--ui-font);
+  font: var(--base-font-size, 13px)/1.62 var(--ui-font);
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: var(--font-smoothing);
   -webkit-print-color-adjust: exact;
@@ -106,6 +106,8 @@ body {
   max-width: none;
   margin: 0 auto;
   padding: 34px clamp(18px, 2.2vw, 38px) 56px;
+  color: var(--muted);
+  line-height: 1.55;
 }
 
 .markdown-body > :first-child {
@@ -122,23 +124,24 @@ h3,
 h4,
 h5,
 h6 {
-  margin: 1.45em 0 0.62em;
+  margin: 1.15em 0 0.58em;
   line-height: 1.18;
   font-weight: 620;
   letter-spacing: 0;
   border: 0;
+  color: var(--fg);
 }
 
 h1 {
-  font-size: 2.1rem;
+  font-size: 1.7rem;
 }
 
 h2 {
-  font-size: 1.55rem;
+  font-size: 1.16rem;
 }
 
 h3 {
-  font-size: 1.22rem;
+  font-size: 1.08rem;
 }
 
 h4,
@@ -177,6 +180,7 @@ input[type="checkbox"],
 
 strong {
   font-weight: 680;
+  color: var(--fg);
 }
 
 hr {
@@ -188,11 +192,19 @@ hr {
 
 blockquote {
   margin-left: 0;
-  padding: 0.85rem 1rem;
-  border-left: 3px solid var(--blockquote-border);
-  border-radius: 8px;
+  padding: 0.55rem 0.75rem;
+  border-left: 2px solid var(--blockquote-border);
+  border-radius: 0 8px 8px 0;
   background: var(--blockquote-bg);
-  color: var(--fg);
+  color: var(--muted);
+}
+
+blockquote > :first-child {
+  margin-top: 0;
+}
+
+blockquote > :last-child {
+  margin-bottom: 0;
 }
 
 ul,
@@ -216,8 +228,37 @@ li + li {
 }
 
 .task-list-item input {
-  margin-top: 0.34rem;
-  accent-color: var(--accent);
+  appearance: none;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin: 0.29rem 0 0;
+  border: 1.4px solid color-mix(in srgb, var(--fg) 28%, transparent);
+  border-radius: 3px;
+  background: transparent;
+}
+
+.task-list-item input:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.task-list-item input:checked + span {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.wikilink {
+  color: var(--link);
+}
+
+ul:has(> li > .wikilink:only-child) {
+  padding-left: 0;
+  list-style: none;
+}
+
+li:has(> .wikilink:only-child) {
+  list-style: none;
 }
 
 code {
@@ -401,7 +442,7 @@ img {
 
 @media (max-width: 720px) {
   .markdown-body {
-    padding: 24px 22px 48px;
+    padding: 22px 22px 48px;
   }
 }
 

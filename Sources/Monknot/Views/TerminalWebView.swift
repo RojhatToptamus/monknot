@@ -88,7 +88,7 @@ struct TerminalWebView: NSViewRepresentable {
             -webkit-font-smoothing: var(--terminal-font-smoothing);
           }
           .xterm {
-            padding: 12px 20px;
+            padding: 10px 12px;
             box-sizing: border-box;
             background: var(--terminal-bg) !important;
           }
@@ -207,6 +207,10 @@ struct TerminalWebView: NSViewRepresentable {
           });
 
           window.addEventListener('resize', () => postResize({ preserveScroll: true }));
+          const resizeObserver = new ResizeObserver(() => {
+            requestAnimationFrame(() => postResize({ preserveScroll: true }));
+          });
+          resizeObserver.observe(document.getElementById('terminal'));
           requestAnimationFrame(() => {
             postResize();
             term.focus();

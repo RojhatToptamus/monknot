@@ -105,8 +105,9 @@ struct ContentView: View {
     @ObservedObject var themeStore: ThemeSettingsStore
     @AppStorage("Monknot.editorMode") private var editorModeRawValue = EditorMode.source.rawValue
     @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.system.rawValue
-    @AppStorage("Monknot.zoomScale") private var zoomScale = 1.0
+    @AppStorage("Monknot.zoomScale") private var persistedZoomScale = WorkspaceZoomPolicy.defaultValue
     @AppStorage("Monknot.previewWidthPercent") private var previewWidthPercent = 88.0
+    @AppStorage("Monknot.showDocumentOutline") private var showDocumentOutline = true
     @State private var isMarkdownSplitViewEnabled = false
     @AppStorage("Monknot.usePointerCursors") private var usePointerCursors = false
     @AppStorage("Monknot.fontSmoothing") private var fontSmoothing = true
@@ -141,6 +142,11 @@ struct ContentView: View {
     @Environment(\.colorScheme) private var systemColorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let tabStatePersistence = WorkspaceTabStatePersistence()
+
+    private var zoomScale: Double {
+        get { WorkspaceZoomPolicy.clamp(persistedZoomScale) }
+        nonmutating set { persistedZoomScale = WorkspaceZoomPolicy.clamp(newValue) }
+    }
 
     private var editorMode: EditorMode {
         get { EditorMode(rawValue: editorModeRawValue) ?? .source }
@@ -295,37 +301,26 @@ struct ContentView: View {
     private var rootContent: some View {
         rootContentStack
             .onAppear {
+                persistedZoomScale = WorkspaceZoomPolicy.clamp(persistedZoomScale)
                 setSidebarPresented(sidebarPreferredVisible, animated: false)
             }
     }
 
     private var rootContentStack: some View {
         ZStack {
-            WorkspaceSplitView(isSidebarPresented: isSidebarVisible) {
-                sidebarContent
-            } detail: {
-                detailContent
+            VStack(spacing: 0) {
+                MonknotChromePanel(theme: activeTheme) {
+                    primaryTitlebar
+                }
+
+                WorkspaceSplitView(isSidebarPresented: isSidebarVisible) {
+                    sidebarContent
+                } detail: {
+                    detailContent
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .overlay(alignment: .topLeading) {
-                WindowNavigationControls(
-                    navigateBack: navigateBack,
-                    navigateForward: navigateForward,
-                    canNavigateBack: canNavigateBack,
-                    canNavigateForward: canNavigateForward,
-                    theme: activeTheme,
-                    zoomScale: zoomScale,
-                    uiFontSize: activeTheme.uiFontSize
-                )
-                .padding(
-                    .leading,
-                    MonknotMetrics.trafficLightReserveBase
-                        + MonknotMetrics.windowNavigationLeadingGap(
-                            theme: activeTheme,
-                            zoomScale: zoomScale
-                        )
-                )
-            }
 
             if let exportNotice {
                 ExportSuccessToast(
@@ -393,6 +388,41 @@ struct ContentView: View {
         }
     }
 
+    private var primaryTitlebar: some View {
+        TopNavigationBar(
+            editorMode: Binding(
+                get: { editorMode },
+                set: { editorMode = $0 }
+            ),
+            isSplitViewEnabled: $isMarkdownSplitViewEnabled,
+            emptyStateTitle: store.workspaceURL?.lastPathComponent ?? "Monknot",
+            selectedDocument: store.selectedDocument,
+            isBusy: store.isBusy,
+            isDocumentLoading: store.isDocumentLoading,
+            isSaving: store.isSaving,
+            theme: activeTheme,
+            zoomScale: zoomScale,
+            isTerminalPresented: isTerminalDrawerOpen,
+            isSidebarVisible: isSidebarVisible,
+            toggleTerminal: { toggleTerminalDrawer(animated: true) },
+            toggleSidebar: { toggleSidebar(animated: true) },
+            toggleSplitView: toggleMarkdownSplitView,
+            documentSearch: $documentSearch,
+            tabs: tabState.tabs,
+            activeTabID: tabState.selectedDocumentID,
+            missingTabIDs: store.removedDirtyOpenDocumentIDs,
+            saveState: { store.saveState(for: $0) },
+            selectTab: activateTab(id:),
+            closeTab: closeTab(id:),
+            togglePinTab: togglePinTab(id:),
+            reorderTab: reorderTab(draggedID:targetID:),
+            navigateBack: navigateBack,
+            navigateForward: navigateForward,
+            canNavigateBack: canNavigateBack,
+            canNavigateForward: canNavigateForward
+        )
+    }
+
     private var themeScrim: some View {
         activeTheme.scrimColor
             .ignoresSafeArea()
@@ -413,7 +443,6 @@ struct ContentView: View {
             openWorkspaceSearchResult: openWorkspaceSearchResult(_:)
         )
         .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
-        .ignoresSafeArea(.container, edges: .top)
     }
 
     private var detailContent: some View {
@@ -428,16 +457,10 @@ struct ContentView: View {
             zoomScale: zoomScale,
             codeFontSize: CGFloat(activeTheme.codeFontSize),
             previewWidthPercent: previewWidthPercent,
+            showsDocumentOutline: showDocumentOutline,
             usePointerCursors: usePointerCursors,
             fontSmoothing: fontSmoothing,
-            tabs: tabState.tabs,
-            activeTabID: tabState.selectedDocumentID,
             activeViewportState: activeDocumentViewportState,
-            missingTabIDs: store.removedDirtyOpenDocumentIDs,
-            selectTab: activateTab(id:),
-            closeTab: closeTab(id:),
-            togglePinTab: togglePinTab(id:),
-            reorderTab: reorderTab(draggedID:targetID:),
             updateViewportState: updateDocumentViewportState(documentID:change:),
             pdfUndoCommandSerial: pdfUndoCommandSerial,
             pdfRedoCommandSerial: pdfRedoCommandSerial,
@@ -447,21 +470,15 @@ struct ContentView: View {
             previewLocation: $pendingPreviewLocation,
             pdfSearchTarget: $pendingPDFSearchTarget,
             documentSearch: $documentSearch,
-            isSidebarVisible: isSidebarVisible,
             newMarkdown: { store.createMarkdownFile() },
             bootstrapStarterWorkspace: { store.bootstrapStarterWorkspace() },
             openFolder: openFolderPanel,
-            toggleTerminal: { toggleTerminalDrawer(animated: true) },
             closeTerminal: { setTerminalDrawerPresented(false, animated: true) },
-            toggleSidebar: { toggleSidebar(animated: true) },
             outlineItems: outlineStore.items,
             selectOutlineItem: openOutlineItem(_:),
-            toggleSplitView: toggleMarkdownSplitView,
-            canToggleSplitView: canToggleMarkdownSplitView,
             onPreviewSourceJump: openSourceFromPreview(location:)
         )
         .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
-        .ignoresSafeArea(.container, edges: .top)
     }
 
     private func openFolderPanel() {
@@ -984,9 +1001,9 @@ struct ContentView: View {
             canCloseTab: tabState.selectedDocumentID != nil && !store.isBusy,
             togglePinTab: { toggleActiveTabPin() },
             canTogglePinTab: tabState.selectedDocumentID != nil && !store.isBusy,
-            zoomIn: { adjustZoom(by: 0.1) },
-            zoomOut: { adjustZoom(by: -0.1) },
-            resetZoom: { zoomScale = 1.0 },
+            zoomIn: { adjustZoom(by: WorkspaceZoomPolicy.step) },
+            zoomOut: { adjustZoom(by: -WorkspaceZoomPolicy.step) },
+            resetZoom: { zoomScale = WorkspaceZoomPolicy.defaultValue },
             showFind: { showDocumentSearch() },
             canShowFind: canShowDocumentSearch,
             showWorkspaceSearch: { showWorkspaceSearch() },
@@ -1175,11 +1192,11 @@ struct ContentView: View {
                 documentSearch.findPrevious()
             }
         case .zoomIn:
-            adjustZoom(by: 0.1)
+            adjustZoom(by: WorkspaceZoomPolicy.step)
         case .zoomOut:
-            adjustZoom(by: -0.1)
+            adjustZoom(by: -WorkspaceZoomPolicy.step)
         case .resetZoom:
-            zoomScale = 1.0
+            zoomScale = WorkspaceZoomPolicy.defaultValue
         case .importPasteboard:
             _ = pasteFromCommand()
         case .toggleTerminal:
@@ -1370,13 +1387,13 @@ struct WindowNavigationControls: View {
     let uiFontSize: Double
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
         HStack(spacing: scaled(2)) {
             ChromeBarButton(
-                systemImage: "arrow.left",
+                systemImage: "chevron.left",
                 label: "Back",
                 theme: theme,
                 zoomScale: zoomScale,
@@ -1387,7 +1404,7 @@ struct WindowNavigationControls: View {
             )
 
             ChromeBarButton(
-                systemImage: "arrow.right",
+                systemImage: "chevron.right",
                 label: "Forward",
                 theme: theme,
                 zoomScale: zoomScale,
@@ -1397,6 +1414,11 @@ struct WindowNavigationControls: View {
                 action: navigateForward
             )
         }
+        .padding(scaled(2))
+        .overlay(
+            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+                .strokeBorder(theme.borderColor, lineWidth: 1)
+        )
         .frame(height: MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale))
         .fixedSize(horizontal: true, vertical: false)
     }

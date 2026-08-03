@@ -24,13 +24,13 @@ struct PreferencesView: View {
 
     @ObservedObject var themeStore: ThemeSettingsStore
     @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.system.rawValue
-    @AppStorage("Monknot.settingsSection") private var selectedSectionRawValue = Section.appearance.rawValue
+    @AppStorage("Monknot.settingsSection") private var selectedSectionRawValue = Section.general.rawValue
     @Environment(\.colorScheme) private var colorScheme
     @State private var hoveredSection: Section?
     @FocusState private var focusedSection: Section?
 
     private var selectedSection: Section {
-        get { Section(rawValue: selectedSectionRawValue) ?? .appearance }
+        get { Section(rawValue: selectedSectionRawValue) ?? .general }
         nonmutating set { selectedSectionRawValue = newValue.rawValue }
     }
 
@@ -57,23 +57,22 @@ struct PreferencesView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(panelTheme.contentSurfaceColor)
         }
-        .frame(width: 900, height: 680)
-        .background(panelTheme.contentSurfaceColor)
+        .frame(
+            minWidth: 780,
+            idealWidth: 780,
+            minHeight: 720,
+            idealHeight: 720
+        )
+        .background(panelTheme.sidebarSurfaceColor.ignoresSafeArea())
         .background(
             WindowBackgroundDragEnabler(
                 surfaceColor: panelTheme.sidebarSurfaceColor,
                 suppressToolbarButton: true,
-                usesDarkAppearance: panelTheme.isDark
+                usesDarkAppearance: panelTheme.isDark,
+                windowTitle: selectedSection.rawValue,
+                enablesStandardWindowControls: true
             )
         )
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Text(selectedSection.rawValue)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(panelTheme.foregroundColor)
-                    .frame(height: 50)
-            }
-        }
         .preferredColorScheme(themePreference.preferredColorScheme)
     }
 
@@ -83,17 +82,27 @@ struct PreferencesView: View {
                 Button {
                     selectedSection = section
                 } label: {
-                    Label(section.rawValue, systemImage: section.systemImage)
-                        .font(.system(size: 13, weight: selectedSection == section ? .medium : .regular))
-                        .symbolRenderingMode(.monochrome)
-                        .foregroundStyle(
-                            selectedSection == section
-                                ? panelTheme.foregroundColor
-                                : panelTheme.mutedForegroundColor
-                        )
+                    HStack(spacing: 10) {
+                        Image(systemName: section.systemImage)
+                            .font(.system(size: 16, weight: .regular))
+                            .foregroundStyle(
+                                selectedSection == section
+                                    ? panelTheme.accentColor
+                                    : panelTheme.tertiaryForegroundColor
+                            )
+                            .frame(width: 18)
+
+                        Text(section.rawValue)
+                            .font(.system(size: 14, weight: selectedSection == section ? .medium : .regular))
+                            .foregroundStyle(
+                                selectedSection == section
+                                    ? panelTheme.foregroundColor
+                                    : panelTheme.mutedForegroundColor
+                            )
+                    }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 10)
-                        .frame(height: 34)
+                        .padding(.horizontal, 14)
+                        .frame(height: 36)
                         .background(
                             sidebarRowBackground(for: section),
                             in: RoundedRectangle(cornerRadius: 7)
@@ -109,6 +118,7 @@ struct PreferencesView: View {
                 .buttonStyle(.plain)
                 .focusable()
                 .focused($focusedSection, equals: section)
+                .focusEffectDisabled()
                 .onHover { isHovered in
                     hoveredSection = isHovered ? section : nil
                 }
@@ -120,13 +130,13 @@ struct PreferencesView: View {
         }
         .padding(.horizontal, 12)
         .padding(.top, 18)
-        .frame(width: 196)
+        .frame(width: 240)
         .background(panelTheme.sidebarSurfaceColor)
     }
 
     private func sidebarRowBackground(for section: Section) -> Color {
         if selectedSection == section {
-            return panelTheme.insetFillColor
+            return panelTheme.selectedRowColor
         }
         if hoveredSection == section || focusedSection == section {
             return panelTheme.foregroundColor.opacity(panelTheme.isDark ? 0.055 : 0.04)
@@ -153,33 +163,41 @@ struct PreferencesView: View {
 
 private struct EditorSettingsView: View {
     let uiTheme: AppTheme
-    @AppStorage("Monknot.zoomScale") private var zoomScale = 1.0
-    @AppStorage("Monknot.previewWidthPercent") private var previewWidthPercent = 88.0
+    @AppStorage("Monknot.zoomScale") private var persistedZoomScale = WorkspaceZoomPolicy.defaultValue
+    @AppStorage("Monknot.showDocumentOutline") private var showContentMapper = true
+
+    private var zoomScale: Binding<Double> {
+        Binding(
+            get: { WorkspaceZoomPolicy.clamp(persistedZoomScale) },
+            set: { persistedZoomScale = WorkspaceZoomPolicy.clamp($0) }
+        )
+    }
 
     var body: some View {
         SettingsPage(theme: uiTheme) {
             SettingsSectionHeader(theme: uiTheme, title: "Editor")
             SettingsGroupCard(theme: uiTheme, showsBorder: false) {
+                SettingsToggleRow(
+                    theme: uiTheme,
+                    title: "Content mapper",
+                    detail: "Show heading markers in Markdown",
+                    isOn: $showContentMapper
+                )
+
                 SettingsStepperRow(
                     theme: uiTheme,
                     title: "Workspace zoom",
-                    detail: "Scale document content and workspace text while keeping chrome compact",
-                    value: $zoomScale,
+                    detail: "Scale document content with restrained, bounded interface scaling",
+                    showsDivider: false,
+                    value: zoomScale,
                     range: WorkspaceZoomPolicy.minimum...WorkspaceZoomPolicy.maximum,
                     step: WorkspaceZoomPolicy.step,
                     suffix: "x"
                 )
-
-                SettingsSliderRow(
-                    theme: uiTheme,
-                    title: "Preview width",
-                    detail: "Maximum Markdown preview width in the editor pane",
-                    showsDivider: false,
-                    value: $previewWidthPercent,
-                    range: 55...100,
-                    suffix: "%"
-                )
             }
+        }
+        .onAppear {
+            persistedZoomScale = WorkspaceZoomPolicy.clamp(persistedZoomScale)
         }
     }
 }
@@ -315,8 +333,8 @@ struct SettingsPage<Content: View>: View {
             VStack(alignment: .leading, spacing: 0) {
                 content()
             }
-            .padding(.horizontal, 30)
-            .padding(.vertical, 26)
+            .padding(.horizontal, 28)
+            .padding(.vertical, 28)
             .padding(.bottom, 10)
             .frame(maxWidth: 680)
             .frame(maxWidth: .infinity)

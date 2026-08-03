@@ -92,7 +92,7 @@ final class MarkdownRenderServiceTests: XCTestCase {
         XCTAssertTrue(html.contains("--blockquote-border: #445566;"))
         XCTAssertTrue(html.contains("--table-border: color-mix(in srgb, #FDFCFB 16.0%, transparent);"))
         XCTAssertTrue(html.contains("--selection-bg: #102030;"))
-        XCTAssertTrue(html.contains("--base-font-size: 18.8px;"))
+        XCTAssertTrue(html.contains("--base-font-size: 16.2px;"))
         XCTAssertTrue(html.contains("--preview-max-width: 88%;"))
     }
 
@@ -125,13 +125,13 @@ final class MarkdownRenderServiceTests: XCTestCase {
         ))
         let enlargedValues = Dictionary(uniqueKeysWithValues: service.themeVariableValues(
             for: .codexDark,
-            zoomScale: 5,
+            zoomScale: 8,
             baseFontSize: 16,
             previewWidthPercent: 88
         ))
 
         XCTAssertEqual(compactValues["--base-font-size"], "11.2px")
-        XCTAssertEqual(enlargedValues["--base-font-size"], "80.0px")
+        XCTAssertEqual(enlargedValues["--base-font-size"], "120.0px")
     }
 
     func testBundledStylesheetPreservesThemeColorsForPDFExport() throws {
@@ -153,5 +153,24 @@ final class MarkdownRenderServiceTests: XCTestCase {
         XCTAssertTrue(html.contains("--preview-max-width: 82%;"))
         XCTAssertTrue(html.contains("html.monknot-pdf-export"))
         XCTAssertTrue(html.contains(":root.monknot-pdf-export .markdown-body"))
+    }
+
+    func testPreviewWidthUsesTheAvailablePaneInsteadOfALegacyPixelCap() throws {
+        let html = try MarkdownRenderService().htmlDocument(
+            markdown: "# Full width",
+            appTheme: .codexLight,
+            zoomScale: 1,
+            baseFontSize: AppTheme.codexLight.codeFontSize,
+            previewWidthPercent: 100,
+            baseURL: nil
+        )
+
+        XCTAssertTrue(html.contains(
+            "width: min(var(--preview-max-width, 88%), calc(100% - 28px));"
+        ))
+        XCTAssertFalse(html.contains(
+            "width: min(var(--preview-max-width, 88%), 700px, calc(100% - 28px));"
+        ))
+        XCTAssertFalse(html.contains("@media (max-width: 720px) {\n  .markdown-body {\n    width: 100%;"))
     }
 }

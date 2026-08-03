@@ -14,11 +14,14 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
     var suppressToolbarButton: Bool = true
     var trafficLightRowHeight: CGFloat?
     var usesDarkAppearance: Bool?
+    var windowTitle: String?
+    var enablesStandardWindowControls = false
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
             suppressToolbarButton: suppressToolbarButton,
-            trafficLightRowHeight: trafficLightRowHeight
+            trafficLightRowHeight: trafficLightRowHeight,
+            enablesStandardWindowControls: enablesStandardWindowControls
         )
     }
 
@@ -41,7 +44,12 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             // gaps accidentally move the window.
             window.isMovableByWindowBackground = false
             window.titlebarAppearsTransparent = true
-            window.titleVisibility = .hidden
+            if let windowTitle {
+                window.title = windowTitle
+                window.titleVisibility = .visible
+            } else {
+                window.titleVisibility = .hidden
+            }
             window.styleMask.insert(.fullSizeContentView)
             window.backgroundColor = NSColor(surfaceColor)
             window.isOpaque = true
@@ -69,15 +77,18 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
     final class Coordinator {
         let suppressToolbarButton: Bool
         var trafficLightRowHeight: CGFloat?
+        let enablesStandardWindowControls: Bool
         private weak var observedWindow: NSWindow?
         private var observers: [NSObjectProtocol] = []
 
         init(
             suppressToolbarButton: Bool,
-            trafficLightRowHeight: CGFloat? = nil
+            trafficLightRowHeight: CGFloat? = nil,
+            enablesStandardWindowControls: Bool = false
         ) {
             self.suppressToolbarButton = suppressToolbarButton
             self.trafficLightRowHeight = trafficLightRowHeight
+            self.enablesStandardWindowControls = enablesStandardWindowControls
         }
 
         deinit {
@@ -110,10 +121,24 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
         }
 
         func configureWindowChrome(in window: NSWindow) {
+            if enablesStandardWindowControls {
+                enableStandardWindowControls(in: window)
+            }
             if suppressToolbarButton {
                 WindowBackgroundDragEnabler.suppressSystemToolbarButton(in: window)
             }
             alignTrafficLights(in: window)
+        }
+
+        private func enableStandardWindowControls(in window: NSWindow) {
+            window.styleMask.formUnion([.closable, .miniaturizable, .resizable])
+            [
+                NSWindow.ButtonType.closeButton,
+                .miniaturizeButton,
+                .zoomButton,
+            ].forEach { buttonType in
+                window.standardWindowButton(buttonType)?.isEnabled = true
+            }
         }
 
         /// Keeps AppKit's real window buttons on the same optical centerline as

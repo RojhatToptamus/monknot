@@ -16,31 +16,19 @@ struct MarkdownSymbolQuickOpenView: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                Color.black.opacity(0.28)
-                    .ignoresSafeArea()
-                    .onTapGesture(perform: close)
+        MonknotCommandOverlay(
+            theme: theme,
+            zoomScale: zoomScale,
+            panelHeight: panelHeight,
+            close: close
+        ) {
+            VStack(spacing: 0) {
+                searchField
 
-                VStack(spacing: 0) {
-                    searchField
+                Divider()
+                    .overlay(theme.separatorColor)
 
-                    Divider()
-                        .overlay(theme.borderColor)
-
-                    resultBody
-                }
-                .frame(width: max(1, min(scaled(520), geometry.size.width - scaled(32))))
-                .frame(height: max(1, min(panelHeight, geometry.size.height - scaled(32))))
-                .background(
-                    RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
-                        .fill(theme.surfaceColor)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
-                        .strokeBorder(theme.borderColor, lineWidth: 1)
-                }
-                .shadow(color: .black.opacity(0.18), radius: scaled(18), y: scaled(8))
+                resultBody
             }
         }
         .onAppear { focusSearchField() }
@@ -80,13 +68,9 @@ struct MarkdownSymbolQuickOpenView: View {
                 }
             }
 
-            MonknotIconButton(
-                systemImage: "xmark",
-                label: "Close Go to Symbol",
+            MonknotCommandOverlayEscapeButton(
                 theme: theme,
-                zoomScale: zoomScale,
-                size: .compact,
-                action: close
+                close: close
             )
         }
         .padding(.horizontal, scaled(14))
@@ -96,12 +80,16 @@ struct MarkdownSymbolQuickOpenView: View {
     private var resultBody: some View {
         MonknotScrollView {
             if state.matches.isEmpty {
-                Text(state.query.isEmpty ? "No headings in this document" : "No matching headings")
-                    .font(.system(size: scaled(12), weight: .medium))
-                    .foregroundStyle(theme.mutedForegroundColor)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, scaled(14))
-                    .padding(.vertical, scaled(16))
+                MonknotCommandOverlayEmptyState(
+                    title: state.query.isEmpty
+                        ? "No headings in this document"
+                        : "No headings match “\(state.query)”",
+                    message: state.query.isEmpty
+                        ? "Add a Markdown heading, then try again."
+                        : "Try a shorter part of the heading name.",
+                    theme: theme,
+                    zoomScale: zoomScale
+                )
             } else {
                 LazyVStack(alignment: .leading, spacing: scaled(2)) {
                     ForEach(state.matches) { item in

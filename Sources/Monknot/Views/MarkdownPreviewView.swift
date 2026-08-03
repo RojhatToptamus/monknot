@@ -666,7 +666,6 @@ struct MarkdownPreviewView: NSViewRepresentable {
             lastPublishedScrollPosition = position
             onScrollPositionChange(position)
 
-            guard syncScrollEnabled, !isApplyingSyncScroll else { return }
             let sourceLine = Self.sourceLine(from: body)
             guard sourceLine > 0, sourceLine != lastPublishedSourceLine else { return }
             lastPublishedSourceLine = sourceLine

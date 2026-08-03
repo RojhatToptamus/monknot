@@ -66,11 +66,11 @@ final class PDFTabInteractionTests: XCTestCase {
 
         await settleLayout()
 
-        // Click near the trailing edge of the selection slot, not on its
-        // label. This protects the full allocated tab hit target at normal
-        // and maximum interface scale while staying clear of the close slot.
+        // Click in the selection slot while staying clear of the trailing
+        // close control. Title-measured tabs can be substantially narrower
+        // than the former fixed-width tabs.
         let clickPoint = NSPoint(
-            x: MonknotMetrics.interfaceDensity(75, theme: theme, zoomScale: zoomScale),
+            x: MonknotMetrics.interfaceDensity(42, theme: theme, zoomScale: zoomScale),
             y: chromeHeight / 2
         )
         let windowPoint = host.convert(clickPoint, to: nil)

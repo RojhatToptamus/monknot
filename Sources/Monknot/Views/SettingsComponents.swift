@@ -29,13 +29,13 @@ struct SettingsRow<Control: View>: View {
             control()
         }
         .padding(.horizontal, MonknotMetrics.Spacing.settingsRowHorizontal)
-        .padding(.vertical, 12)
+        .padding(.vertical, MonknotMetrics.Spacing.settingsRowVertical)
         .overlay(alignment: .bottom) {
             if showsDivider {
                 Rectangle()
                     .fill(theme.borderColor)
                     .frame(height: 1)
-                    .padding(.leading, 18)
+                    .padding(.leading, MonknotMetrics.Spacing.settingsRowHorizontal)
             }
         }
     }
@@ -76,6 +76,7 @@ struct SettingsOutlineButton: View {
         .disabled(isDisabled)
         .focusable(!isDisabled)
         .focused($isFocused)
+        .focusEffectDisabled()
         .opacity(isDisabled ? 0.55 : 1)
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovered)
@@ -87,18 +88,16 @@ struct SettingsOutlineButton: View {
 struct SettingsToggleRow: View {
     let theme: AppTheme
     let title: String
-    let detail: String
+    var detail: String? = nil
     var showsDivider: Bool = true
     @Binding var isOn: Bool
 
     var body: some View {
         SettingsRow(theme: theme, title: title, detail: detail, showsDivider: showsDivider) {
             Toggle(title, isOn: $isOn)
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .tint(theme.accentColor)
+                .toggleStyle(MonknotSettingsSwitchStyle(theme: theme))
                 .labelsHidden()
-                .accessibilityHint(detail)
+                .accessibilityHint(detail ?? "")
                 .monknotPointerCursor()
         }
     }
@@ -163,13 +162,15 @@ struct SettingsSliderRow: View {
     var body: some View {
         SettingsRow(theme: theme, title: title, detail: detail, showsDivider: showsDivider) {
             HStack(spacing: 10) {
-                Slider(value: $value, in: range)
-                    .tint(theme.accentColor)
-                    .frame(width: 168)
-                    .accessibilityLabel(title)
-                    .accessibilityValue("\(Int(value.rounded()))\(suffix)")
-                    .accessibilityHint(detail ?? "")
-                    .monknotPointerCursor()
+                MonknotSettingsSlider(
+                    title: title,
+                    detail: detail,
+                    value: $value,
+                    range: range,
+                    suffix: suffix,
+                    theme: theme
+                )
+                    .frame(width: 100)
                 Text("\(Int(value.rounded()))\(suffix)")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(theme.mutedForegroundColor)
@@ -177,6 +178,90 @@ struct SettingsSliderRow: View {
                     .accessibilityHidden(true)
             }
         }
+    }
+}
+
+private struct MonknotSettingsSwitchStyle: ToggleStyle {
+    let theme: AppTheme
+
+    func makeBody(configuration: Configuration) -> some View {
+        Button {
+            configuration.isOn.toggle()
+        } label: {
+            ZStack {
+                Capsule()
+                    .fill(
+                        configuration.isOn
+                            ? theme.accentColor
+                            : theme.foregroundColor.opacity(theme.isDark ? 0.16 : 0.12)
+                    )
+
+                Circle()
+                    .fill(Color.white.opacity(configuration.isOn ? 1 : 0.78))
+                    .frame(width: 16, height: 16)
+                    .shadow(color: .black.opacity(0.18), radius: 1, y: 0.5)
+                    .offset(x: configuration.isOn ? 7 : -7)
+            }
+            .frame(width: 34, height: 20)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .animation(.easeOut(duration: 0.12), value: configuration.isOn)
+    }
+}
+
+private struct MonknotSettingsSlider: View {
+    let title: String
+    let detail: String?
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let suffix: String
+    let theme: AppTheme
+
+    var body: some View {
+        GeometryReader { geometry in
+            let fraction = normalizedFraction
+            let knobDiameter: CGFloat = 16
+            let travel = max(0, geometry.size.width - knobDiameter)
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(theme.foregroundColor.opacity(theme.isDark ? 0.15 : 0.12))
+                    .frame(height: 4)
+
+                Capsule()
+                    .fill(theme.accentColor)
+                    .frame(width: knobDiameter / 2 + travel * fraction, height: 4)
+
+                Circle()
+                    .fill(theme.isDark ? Color.white : theme.foregroundColor)
+                    .frame(width: knobDiameter, height: knobDiameter)
+                    .shadow(color: .black.opacity(0.18), radius: 1.5, y: 0.5)
+                    .offset(x: travel * fraction)
+            }
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { gesture in
+                        let fraction = min(1, max(0, gesture.location.x / max(1, geometry.size.width)))
+                        value = range.lowerBound + fraction * (range.upperBound - range.lowerBound)
+                    }
+            )
+        }
+        .frame(height: 20)
+        .accessibilityRepresentation {
+            Slider(value: $value, in: range)
+                .accessibilityLabel(title)
+                .accessibilityValue("\(Int(value.rounded()))\(suffix)")
+                .accessibilityHint(detail ?? "")
+        }
+        .monknotPointerCursor()
+    }
+
+    private var normalizedFraction: CGFloat {
+        guard range.upperBound > range.lowerBound else { return 0 }
+        return CGFloat((value - range.lowerBound) / (range.upperBound - range.lowerBound))
     }
 }
 
@@ -304,7 +389,7 @@ struct ThemeValueRow: View {
             Rectangle()
                 .fill(theme.borderColor)
                 .frame(height: 1)
-                .padding(.leading, 18)
+                .padding(.leading, MonknotMetrics.Spacing.settingsRowHorizontal)
         }
     }
 }

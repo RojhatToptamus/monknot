@@ -114,6 +114,26 @@ final class WorkspaceSplitViewTests: XCTestCase {
         )
     }
 
+    func testFreshNativeSplitStartsAtReferenceSidebarWidth() {
+        let autosaveName = "Monknot.WorkspaceSplitTests.\(UUID().uuidString)"
+        let autosaveKey = "NSSplitView Subview Frames \(autosaveName)"
+        UserDefaults.standard.removeObject(forKey: autosaveKey)
+        defer { UserDefaults.standard.removeObject(forKey: autosaveKey) }
+
+        let controller = makeController(
+            isSidebarPresented: true,
+            autosaveName: autosaveName
+        )
+        let window = mount(controller)
+
+        XCTAssertEqual(
+            controller.sidebarItem.viewController.view.frame.width,
+            WorkspaceSplitMetrics.sidebarMinimumWidth,
+            accuracy: 1
+        )
+        _ = window
+    }
+
     func testMountedNativeSplitPreservesAbsoluteSidebarWidthWhenWindowResizes() {
         let controller = makeController(isSidebarPresented: true)
         let window = NSWindow(
@@ -140,6 +160,32 @@ final class WorkspaceSplitViewTests: XCTestCase {
             accuracy: 1,
             "AppKit should preserve the user's absolute sidebar width when preferredThicknessFraction is unspecified"
         )
+    }
+
+    func testSidebarDividerUsesWideDetailSideHitAreaWithoutCoveringSidebarContent() {
+        let controller = makeController(isSidebarPresented: true)
+        let window = mount(controller)
+        let sidebarFrame = controller.sidebarItem.viewController.view.frame
+
+        let additionalRect = controller.splitView(
+            controller.splitView,
+            additionalEffectiveRectOfDividerAt: 0
+        )
+
+        XCTAssertEqual(
+            additionalRect.minX,
+            sidebarFrame.maxX + controller.splitView.dividerThickness,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            additionalRect.width,
+            WorkspaceSplitMetrics.sidebarResizeHitWidth - controller.splitView.dividerThickness,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(additionalRect.minY, controller.splitView.bounds.minY, accuracy: 0.001)
+        XCTAssertEqual(additionalRect.height, controller.splitView.bounds.height, accuracy: 0.001)
+        XCTAssertGreaterThan(additionalRect.minX, sidebarFrame.maxX)
+        _ = window
     }
 
     private func makeController(

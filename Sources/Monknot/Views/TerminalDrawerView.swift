@@ -58,7 +58,7 @@ struct TerminalDrawerView: View {
             TerminalWebView(
                 session: session,
                 theme: theme,
-                fontSize: CGFloat(13.5 * WorkspaceZoomPolicy.terminalContentScale(zoomScale)),
+                fontSize: 13.5,
                 usePointerCursors: usePointerCursors,
                 fontSmoothing: fontSmoothing
             )
@@ -72,55 +72,6 @@ struct TerminalDrawerView: View {
                 }
             )
         }
-    }
-}
-
-/// Terminal controls embedded in the editor's primary chrome while the
-/// terminal takes over a constrained detail column. The tab lane is bounded
-/// and scrolls horizontally only when its contents exceed the available row.
-struct TerminalDrawerTakeoverSegment: View {
-    @ObservedObject var sessions: TerminalSessionCollectionStore
-    let workingDirectory: URL?
-    let theme: AppTheme
-    let zoomScale: Double
-    let uiFontSize: Double
-    let close: () -> Void
-
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    var body: some View {
-        HStack(spacing: scaled(4)) {
-            TerminalDrawerTabGroup(
-                sessions: sessions,
-                workingDirectory: workingDirectory,
-                theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: uiFontSize
-            )
-            .frame(minWidth: scaled(60), maxWidth: scaled(160))
-
-            ChromeBarButton(
-                systemImage: "xmark",
-                label: "Hide Terminal Panel",
-                theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: uiFontSize,
-                action: close
-            )
-            .keyboardShortcut(.cancelAction)
-        }
-        .padding(.leading, scaled(4))
-        .padding(.trailing, MonknotMetrics.chromeHorizontalPadding(theme: theme, zoomScale: zoomScale))
-        .frame(height: MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale))
-        .frame(
-            minWidth: scaled(MonknotMetrics.takeoverTerminalChromeMinWidthBase),
-            maxWidth: scaled(MonknotMetrics.takeoverTerminalChromeMaxWidthBase),
-            alignment: .trailing
-        )
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Terminal controls")
     }
 }
 
@@ -145,11 +96,8 @@ struct TerminalDrawerChromeRow: View {
                 zoomScale: zoomScale,
                 uiFontSize: uiFontSize
             )
-            .frame(minWidth: scaled(60), maxWidth: scaled(320))
-
-            WindowTitleBarDragArea()
-                .frame(minWidth: scaled(28), maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityHidden(true)
+            .frame(minWidth: scaled(60), maxWidth: .infinity)
+            .layoutPriority(1)
 
             ChromeBarButton(
                 systemImage: "xmark",
@@ -327,7 +275,7 @@ private struct TerminalTabChip: View {
                 HStack(spacing: scaled(5)) {
                     Image(systemName: "terminal")
                         .font(.system(
-                            size: MonknotMetrics.chromeGlyphSize(theme: theme, zoomScale: zoomScale),
+                            size: glyphScaled(13),
                             weight: .regular
                         ))
                         .foregroundStyle(iconColor)
@@ -352,26 +300,16 @@ private struct TerminalTabChip: View {
             .accessibilityLabel(accessibilityLabel)
             .accessibilityAddTraits(isSelected ? .isSelected : [])
 
-            Button(action: kill) {
-                Image(systemName: "xmark")
-                    .font(.system(size: glyphScaled(8), weight: .bold))
-                    .foregroundStyle(theme.mutedForegroundColor.opacity(isHovered ? 0.92 : 0.72))
-                    .frame(
-                        width: max(22, MonknotMetrics.interfaceControl(18, theme: theme, zoomScale: zoomScale)),
-                        height: max(22, MonknotMetrics.interfaceControl(18, theme: theme, zoomScale: zoomScale))
-                    )
-                    .contentShape(RoundedRectangle(cornerRadius: theme.chromeRadius(4, zoomScale: zoomScale)))
-            }
-            .buttonStyle(.plain)
-            .help("Kill Terminal")
-            .accessibilityLabel("Kill terminal \(index)")
-            .accessibilityHidden(!showsCloseButton)
-            .disabled(!showsCloseButton)
-            .opacity(showsCloseButton ? 1 : 0)
-            .monknotPointerCursor(enabled: showsCloseButton)
-            .padding(.trailing, scaled(3))
+            MonknotTabCloseButton(
+                label: "Kill terminal \(index)",
+                theme: theme,
+                zoomScale: zoomScale,
+                isVisible: showsCloseButton,
+                action: kill
+            )
+            .padding(.trailing, scaled(8))
         }
-        .frame(minWidth: scaled(54), maxWidth: scaled(82), alignment: .leading)
+        .frame(minWidth: scaled(58), maxWidth: scaled(92), alignment: .leading)
         .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale)))
         .overlay {
             RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale))

@@ -16,6 +16,7 @@ struct MonknotPanelCard<Content: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             content()
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: cornerRadius)
                 .fill(theme.elevatedSurfaceColor)

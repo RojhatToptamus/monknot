@@ -15,10 +15,7 @@ struct TopNavigationBar: View {
     let isSidebarVisible: Bool
     let toggleTerminal: () -> Void
     let toggleSidebar: () -> Void
-    let outlineItems: [MarkdownOutlineItem]
-    let selectOutlineItem: (MarkdownOutlineItem) -> Void
     let toggleSplitView: () -> Void
-    let canToggleSplitView: Bool
     @Binding var documentSearch: DocumentSearchState
     let tabs: [WorkspaceTabItem]
     let activeTabID: String?
@@ -28,27 +25,18 @@ struct TopNavigationBar: View {
     let closeTab: (String) -> Void
     let togglePinTab: (String) -> Void
     let reorderTab: (String, String?) -> Void
+    var navigateBack: () -> Void = {}
+    var navigateForward: () -> Void = {}
+    var canNavigateBack = false
+    var canNavigateForward = false
     @FocusState private var isSearchFocused: Bool
-    @State private var isOutlinePresented = false
     @State private var isOverflowMenuHovered = false
 
-    private var isMarkdownSelected: Bool {
+    private var showsMarkdownViewControls: Bool {
         selectedDocument?.kind == .markdown
     }
 
-    private var supportsSourcePreviewToggle: Bool {
-        guard let document = selectedDocument else { return false }
-        return (document.kind == .markdown || document.capabilities.canPreviewHTML) && !isSplitViewEnabled
-    }
-
-    private var supportsSplitView: Bool {
-        guard let document = selectedDocument else { return false }
-        return document.kind == .markdown || document.capabilities.canPreviewHTML
-    }
-
     private var uiFontSize: Double { theme.uiFontSize }
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
@@ -63,34 +51,50 @@ struct TopNavigationBar: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            let layoutMode = MonknotMetrics.topBarLayoutMode(
-                availableWidth: proxy.size.width,
+        HStack(spacing: scaled(MonknotMetrics.Spacing.m)) {
+            Color.clear
+                .frame(width: scaled(64))
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+
+            sidebarToggleButton
+
+            WindowNavigationControls(
+                navigateBack: navigateBack,
+                navigateForward: navigateForward,
+                canNavigateBack: canNavigateBack,
+                canNavigateForward: canNavigateForward,
                 theme: theme,
-                zoomScale: zoomScale
+                zoomScale: zoomScale,
+                uiFontSize: uiFontSize
             )
 
-            HStack(spacing: scaled(MonknotMetrics.Spacing.xxs)) {
-                leadingSidebarControl
+            Rectangle()
+                .fill(theme.separatorColor)
+                .frame(width: 1, height: scaled(20))
+                .padding(.horizontal, scaled(2))
 
-                tabsOrEmptyTitle
+            tabsOrEmptyTitle
+                .layoutPriority(1)
 
-                if isBusy || isDocumentLoading || isSaving {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(theme.interfaceControlScale(zoomScale: zoomScale))
-                        .frame(width: scaled(18), height: scaled(18))
-                        .padding(.horizontal, scaled(2))
-                        .accessibilityLabel("Working")
-                }
-
-                if documentSearch.isPresented {
-                    documentSearchBar(layoutMode: layoutMode)
-                } else {
-                    adaptiveTrailingActions(layoutMode: layoutMode)
-                }
+            if isBusy || isDocumentLoading || isSaving {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(theme.interfaceControlScale(zoomScale: zoomScale))
+                    .frame(width: scaled(18), height: scaled(18))
+                    .accessibilityLabel("Working")
             }
-            .frame(width: proxy.size.width, height: proxy.size.height)
+
+            if documentSearch.isPresented {
+                documentSearchBar(layoutMode: .regular)
+            } else {
+                if showsMarkdownViewControls {
+                    viewModeControl
+                        .disabled(isDocumentLoading)
+                }
+
+                drawerToggleButton
+            }
         }
         .monknotChromeRowLayout(theme: theme, zoomScale: zoomScale)
         .onChange(of: documentSearch.focusSerial) { _, _ in
@@ -100,31 +104,6 @@ struct TopNavigationBar: View {
             guard isPresented else { return }
             isSearchFocused = true
         }
-    }
-
-    /// The leading toggle always belongs to the middle toolbar. A persistent
-    /// clearance view grows with the same transition as the split column when
-    /// the sidebar is hidden, keeping the control clear of the traffic lights
-    /// without inserting or reparenting it during the animation.
-    private var leadingSidebarControl: some View {
-        HStack(spacing: 0) {
-            Color.clear
-                .frame(width: hiddenSidebarLeadingClearance)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-
-            sidebarToggleButton
-        }
-        .animation(MonknotMotion.sidebarTransition(reduceMotion: reduceMotion), value: isSidebarVisible)
-    }
-
-    private var hiddenSidebarLeadingClearance: CGFloat {
-        guard !isSidebarVisible else { return 0 }
-        return max(
-            0,
-            MonknotMetrics.windowChromeLeadingReservedWidth(theme: theme, zoomScale: zoomScale)
-                - MonknotMetrics.chromeHorizontalPadding(theme: theme, zoomScale: zoomScale)
-        )
     }
 
     private var sidebarToggleButton: some View {
@@ -143,7 +122,7 @@ struct TopNavigationBar: View {
     private var drawerToggleButton: some View {
         ChromeBarButton(
             systemImage: MonknotWorkspaceIcons.sidebarRight,
-            label: isTerminalPresented ? "Hide Right Drawer" : "Show Right Drawer",
+            label: isTerminalPresented ? "Hide Terminal Panel" : "Show Terminal Panel",
             theme: theme,
             zoomScale: zoomScale,
             uiFontSize: uiFontSize,
@@ -151,6 +130,55 @@ struct TopNavigationBar: View {
             action: toggleTerminal
         )
         .accessibilityValue(isTerminalPresented ? "Open" : "Closed")
+    }
+
+    private var viewModeControl: some View {
+        MonknotSegmentedControl(
+            options: [
+                MonknotSegmentOption(
+                    id: EditorMode.source.rawValue,
+                    systemImage: EditorMode.source.resolvedSystemImage,
+                    accessibilityLabel: "Source"
+                ),
+                MonknotSegmentOption(
+                    id: "split",
+                    systemImage: "rectangle.split.2x1",
+                    accessibilityLabel: "Split"
+                ),
+                MonknotSegmentOption(
+                    id: EditorMode.preview.rawValue,
+                    systemImage: EditorMode.preview.resolvedSystemImage,
+                    accessibilityLabel: "Preview"
+                )
+            ],
+            selection: Binding(
+                get: {
+                    isSplitViewEnabled ? "split" : editorMode.rawValue
+                },
+                set: { selection in
+                    switch selection {
+                    case "split":
+                        if !isSplitViewEnabled {
+                            toggleSplitView()
+                        }
+                    case EditorMode.preview.rawValue:
+                        if isSplitViewEnabled {
+                            toggleSplitView()
+                        }
+                        editorMode = .preview
+                    default:
+                        if isSplitViewEnabled {
+                            toggleSplitView()
+                        }
+                        editorMode = .source
+                    }
+                }
+            ),
+            theme: theme,
+            zoomScale: zoomScale
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("View mode")
     }
 
     @ViewBuilder
@@ -189,146 +217,6 @@ struct TopNavigationBar: View {
             )
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-
-    @ViewBuilder
-    private var trailingActions: some View {
-        HStack(spacing: scaled(4)) {
-            if isSplitViewEnabled && supportsSplitView {
-                splitViewIndicator
-            }
-            if isMarkdownSelected {
-                outlineButton
-            }
-            if supportsSourcePreviewToggle {
-                sourcePreviewSwitch
-                    .disabled(isDocumentLoading)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func adaptiveTrailingActions(layoutMode: MonknotTopBarLayoutMode) -> some View {
-        switch layoutMode {
-        case .regular:
-            trailingActions
-
-            drawerToggleButton
-                .padding(.leading, scaled(MonknotMetrics.Spacing.xxs))
-        case .compact:
-            if hasOverflowActions(includeDrawer: false) {
-                overflowMenu(includeDrawer: false)
-            }
-
-            drawerToggleButton
-                .padding(.leading, scaled(MonknotMetrics.Spacing.xxs))
-        case .minimal:
-            overflowMenu(includeDrawer: true)
-        }
-    }
-
-    private func hasOverflowActions(includeDrawer: Bool) -> Bool {
-        includeDrawer || isMarkdownSelected || supportsSourcePreviewToggle || (isSplitViewEnabled && supportsSplitView)
-    }
-
-    private func overflowMenu(includeDrawer: Bool) -> some View {
-        Menu {
-            if isSplitViewEnabled && supportsSplitView {
-                Button("Turn Off Split View", systemImage: "rectangle.split.2x1") {
-                    toggleSplitView()
-                }
-                .disabled(!canToggleSplitView || isDocumentLoading)
-            }
-
-            if isMarkdownSelected {
-                Button("Document Outline", systemImage: MonknotWorkspaceIcons.outline) {
-                    isOutlinePresented = true
-                }
-                .disabled(isDocumentLoading)
-            }
-
-            if supportsSourcePreviewToggle {
-                Picker("Editor Mode", selection: Binding(
-                    get: { editorMode },
-                    set: { editorMode = $0 }
-                )) {
-                    ForEach(EditorMode.allCases) { mode in
-                        Label(mode.title, systemImage: mode.resolvedSystemImage)
-                            .tag(mode)
-                    }
-                }
-                .disabled(isDocumentLoading)
-            }
-
-            if includeDrawer {
-                if isMarkdownSelected || supportsSourcePreviewToggle || (isSplitViewEnabled && supportsSplitView) {
-                    Divider()
-                }
-                Button(
-                    isTerminalPresented ? "Hide Right Drawer" : "Show Right Drawer",
-                    systemImage: MonknotWorkspaceIcons.sidebarRight,
-                    action: toggleTerminal
-                )
-            }
-        } label: {
-            TopBarOverflowLabel(
-                theme: theme,
-                zoomScale: zoomScale,
-                isActive: isOutlinePresented || isSplitViewEnabled || (includeDrawer && isTerminalPresented),
-                isHovered: isOverflowMenuHovered
-            )
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .onHover { isOverflowMenuHovered = $0 }
-        .animation(MonknotMotion.hoverAnimation, value: isOverflowMenuHovered)
-        .help("More document actions")
-        .accessibilityLabel("More document actions")
-        .popover(isPresented: $isOutlinePresented, arrowEdge: .bottom) {
-            MarkdownOutlinePanel(
-                items: outlineItems,
-                theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: uiFontSize,
-                select: { item in
-                    isOutlinePresented = false
-                    selectOutlineItem(item)
-                }
-            )
-        }
-    }
-
-    private var splitViewIndicator: some View {
-        ChromeBarButton(
-            systemImage: "rectangle.split.2x1",
-            label: isSplitViewEnabled ? "Turn Off Split View" : "Split View",
-            theme: theme,
-            zoomScale: zoomScale,
-            uiFontSize: uiFontSize,
-            isActive: isSplitViewEnabled,
-            isDisabled: !canToggleSplitView || isDocumentLoading,
-            action: toggleSplitView
-        )
-        .help("Split view is on (⌘\\). Click to turn off.")
-        .accessibilityValue(isSplitViewEnabled ? "On" : "Off")
-    }
-
-    private var sourcePreviewSwitch: some View {
-        MonknotSegmentedControl(
-            options: [
-                MonknotSegmentOption(id: EditorMode.source.rawValue, systemImage: EditorMode.source.resolvedSystemImage, accessibilityLabel: EditorMode.source.title),
-                MonknotSegmentOption(id: EditorMode.preview.rawValue, systemImage: EditorMode.preview.resolvedSystemImage, accessibilityLabel: EditorMode.preview.title)
-            ],
-            selection: Binding(
-                get: { editorMode.rawValue },
-                set: { editorMode = EditorMode(rawValue: $0) ?? .preview }
-            ),
-            theme: theme,
-            zoomScale: zoomScale
-        )
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Editor mode")
     }
 
     private func documentSearchBar(layoutMode: MonknotTopBarLayoutMode) -> some View {
@@ -466,31 +354,6 @@ struct TopNavigationBar: View {
             size: .findBar,
             action: action
         )
-    }
-
-    private var outlineButton: some View {
-        ChromeBarButton(
-            systemImage: MonknotWorkspaceIcons.outline,
-            label: isOutlinePresented ? "Close Outline" : "Open Outline",
-            theme: theme,
-            zoomScale: zoomScale,
-            uiFontSize: uiFontSize,
-            isActive: isOutlinePresented,
-            isDisabled: isDocumentLoading,
-            action: { isOutlinePresented.toggle() }
-        )
-        .popover(isPresented: $isOutlinePresented, arrowEdge: .bottom) {
-            MarkdownOutlinePanel(
-                items: outlineItems,
-                theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: uiFontSize,
-                select: { item in
-                    isOutlinePresented = false
-                    selectOutlineItem(item)
-                }
-            )
-        }
     }
 
 }

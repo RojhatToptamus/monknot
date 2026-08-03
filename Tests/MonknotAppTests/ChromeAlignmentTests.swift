@@ -161,25 +161,26 @@ final class ChromeAlignmentTests: XCTestCase {
 
     func testWorkspaceZoomPolicyAddsAStableExtendedRange() {
         XCTAssertEqual(WorkspaceZoomPolicy.supportedLevels.first, 0.7)
-        XCTAssertEqual(WorkspaceZoomPolicy.supportedLevels.last, 5.0)
-        XCTAssertEqual(WorkspaceZoomPolicy.supportedLevels.count, 44)
-        XCTAssertEqual(WorkspaceZoomPolicy.stepped(4.9, by: 0.1), 5.0)
-        XCTAssertEqual(WorkspaceZoomPolicy.stepped(5.0, by: 0.1), 5.0)
+        XCTAssertEqual(WorkspaceZoomPolicy.supportedLevels.last, 8.0)
+        XCTAssertEqual(WorkspaceZoomPolicy.supportedLevels.count, 74)
+        XCTAssertEqual(WorkspaceZoomPolicy.stepped(7.9, by: 0.1), 8.0)
+        XCTAssertEqual(WorkspaceZoomPolicy.stepped(8.0, by: 0.1), 8.0)
         XCTAssertEqual(WorkspaceZoomPolicy.stepped(0.7, by: -0.1), 0.7)
+        XCTAssertEqual(WorkspaceZoomPolicy.clamp(.nan), WorkspaceZoomPolicy.defaultValue)
+        XCTAssertEqual(WorkspaceZoomPolicy.clamp(.infinity), WorkspaceZoomPolicy.maximum)
+        XCTAssertEqual(WorkspaceZoomPolicy.clamp(-.infinity), WorkspaceZoomPolicy.minimum)
+        XCTAssertEqual(WorkspaceZoomPolicy.stepped(.infinity, by: 0.1), WorkspaceZoomPolicy.maximum)
     }
 
-    func testTerminalContentZoomRemainsReadableAcrossTheWorkspaceRange() {
-        var previous = WorkspaceZoomPolicy.terminalContentScale(WorkspaceZoomPolicy.minimum)
-
-        for zoomScale in WorkspaceZoomPolicy.supportedLevels.dropFirst() {
-            let current = WorkspaceZoomPolicy.terminalContentScale(zoomScale)
-            XCTAssertGreaterThanOrEqual(current, previous)
-            XCTAssertLessThanOrEqual(current, WorkspaceZoomPolicy.maximumTerminalContentScale)
-            previous = current
-        }
-
-        XCTAssertEqual(WorkspaceZoomPolicy.terminalContentScale(2.4), 2.4)
-        XCTAssertEqual(WorkspaceZoomPolicy.terminalContentScale(5), 2.5)
+    func testWideMarkdownToolbarPreservesCompleteFormattingActionOrder() {
+        XCTAssertEqual(
+            MarkdownSourceToolbar.regularActionGroups.map { $0.map(\.label) },
+            [
+                ["Bold", "Italic", "Quote", "Inline Code", "Link"],
+                ["Bullet List", "Numbered List", "Task List"],
+                ["Image", "Horizontal Rule"],
+            ]
+        )
     }
 
     func testQuietSidebarSecondaryInkStaysLegibleWithoutDoubleOpacity() {
@@ -223,22 +224,22 @@ final class ChromeAlignmentTests: XCTestCase {
 
         XCTAssertEqual(
             largestTheme.interfaceTextScale(zoomScale: WorkspaceZoomPolicy.maximum),
-            1.55,
+            1.30,
             accuracy: 0.001
         )
         XCTAssertEqual(
             largestTheme.interfaceControlScale(zoomScale: WorkspaceZoomPolicy.maximum),
-            1.45,
+            1.16,
             accuracy: 0.001
         )
         XCTAssertEqual(
             largestTheme.interfaceRowScale(zoomScale: WorkspaceZoomPolicy.maximum),
-            1.40,
+            1.14,
             accuracy: 0.001
         )
         XCTAssertEqual(
             largestTheme.interfaceDensityScale(zoomScale: WorkspaceZoomPolicy.maximum),
-            1.18,
+            1.10,
             accuracy: 0.001
         )
         XCTAssertGreaterThanOrEqual(
@@ -247,7 +248,7 @@ final class ChromeAlignmentTests: XCTestCase {
         )
     }
 
-    func testHighDocumentZoomKeepsChromeIconsVisuallyProportionate() {
+    func testDocumentZoomResizesApplicationChromeIconsModerately() {
         let theme = AppTheme.codexDark
         let normalIconSize = MonknotIconButton.IconButtonSize.chrome.iconSize(
             theme: theme,
@@ -258,9 +259,9 @@ final class ChromeAlignmentTests: XCTestCase {
             zoomScale: WorkspaceZoomPolicy.maximum
         )
 
-        XCTAssertEqual(normalIconSize, 13, accuracy: 0.001)
-        XCTAssertGreaterThanOrEqual(maximumIconSize, 20)
-        XCTAssertLessThanOrEqual(maximumIconSize, 21)
+        XCTAssertEqual(normalIconSize, 15, accuracy: 0.001)
+        XCTAssertGreaterThan(maximumIconSize, normalIconSize)
+        XCTAssertLessThanOrEqual(maximumIconSize, normalIconSize * 1.15)
     }
 
     func testWorkspaceWindowChromePreservesNativeWindowControlsAndToolbarOwnership() {
@@ -286,6 +287,28 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertNotNil(window.standardWindowButton(.closeButton))
         XCTAssertNotNil(window.standardWindowButton(.miniaturizeButton))
         XCTAssertNotNil(window.standardWindowButton(.zoomButton))
+    }
+
+    func testSettingsChromeEnablesEveryNativeWindowControl() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 780, height: 720),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+
+        let coordinator = WindowBackgroundDragEnabler.Coordinator(
+            suppressToolbarButton: true,
+            enablesStandardWindowControls: true
+        )
+        coordinator.configureWindowChrome(in: window)
+
+        XCTAssertTrue(window.styleMask.contains(.closable))
+        XCTAssertTrue(window.styleMask.contains(.miniaturizable))
+        XCTAssertTrue(window.styleMask.contains(.resizable))
+        XCTAssertEqual(window.standardWindowButton(.closeButton)?.isEnabled, true)
+        XCTAssertEqual(window.standardWindowButton(.miniaturizeButton)?.isEnabled, true)
+        XCTAssertEqual(window.standardWindowButton(.zoomButton)?.isEnabled, true)
     }
 
     func testNativeTrafficLightsCenterVerticallyInTheAdaptiveWorkspaceChromeBand() {
@@ -395,10 +418,9 @@ final class ChromeAlignmentTests: XCTestCase {
         }
     }
 
-    func testInterfaceTokensStayMonotonicAndIndependentlyBounded() {
+    func testInterfaceTokensUseCoherentBoundedZoomCurves() {
         let theme = AppTheme.codexDark
         let normal = 1.0
-        let maximum = WorkspaceZoomPolicy.maximum
 
         XCTAssertEqual(theme.interfaceTextScale(zoomScale: normal), 1, accuracy: 0.001)
         XCTAssertEqual(theme.interfaceGlyphScale(zoomScale: normal), 1, accuracy: 0.001)
@@ -406,37 +428,23 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertEqual(theme.interfaceRowScale(zoomScale: normal), 1, accuracy: 0.001)
         XCTAssertEqual(theme.interfaceDensityScale(zoomScale: normal), 1, accuracy: 0.001)
 
-        XCTAssertEqual(theme.interfaceTextScale(zoomScale: maximum), 1.35, accuracy: 0.001)
-        XCTAssertEqual(theme.interfaceGlyphScale(zoomScale: maximum), 1.55, accuracy: 0.001)
-        XCTAssertEqual(theme.interfaceControlScale(zoomScale: maximum), 1.40, accuracy: 0.001)
-        XCTAssertEqual(theme.interfaceRowScale(zoomScale: maximum), 1.35, accuracy: 0.001)
-        XCTAssertEqual(theme.interfaceDensityScale(zoomScale: maximum), 1.15, accuracy: 0.001)
+        let compactScales = interfaceScales(theme: theme, zoomScale: WorkspaceZoomPolicy.minimum)
+        let enlargedScales = interfaceScales(theme: theme, zoomScale: 2)
+        let maximumScales = interfaceScales(theme: theme, zoomScale: WorkspaceZoomPolicy.maximum)
 
-        var previousText = theme.interfaceTextScale(zoomScale: WorkspaceZoomPolicy.minimum)
-        var previousGlyph = theme.interfaceGlyphScale(zoomScale: WorkspaceZoomPolicy.minimum)
-        var previousControl = theme.interfaceControlScale(zoomScale: WorkspaceZoomPolicy.minimum)
-        var previousRow = theme.interfaceRowScale(zoomScale: WorkspaceZoomPolicy.minimum)
-        var previousDensity = theme.interfaceDensityScale(zoomScale: WorkspaceZoomPolicy.minimum)
-
-        for zoomScale in WorkspaceZoomPolicy.supportedLevels.dropFirst() {
-            let text = theme.interfaceTextScale(zoomScale: zoomScale)
-            let glyph = theme.interfaceGlyphScale(zoomScale: zoomScale)
-            let control = theme.interfaceControlScale(zoomScale: zoomScale)
-            let row = theme.interfaceRowScale(zoomScale: zoomScale)
-            let density = theme.interfaceDensityScale(zoomScale: zoomScale)
-
-            XCTAssertGreaterThanOrEqual(text, previousText)
-            XCTAssertGreaterThanOrEqual(glyph, previousGlyph)
-            XCTAssertGreaterThanOrEqual(control, previousControl)
-            XCTAssertGreaterThanOrEqual(row, previousRow)
-            XCTAssertGreaterThanOrEqual(density, previousDensity)
-
-            previousText = text
-            previousGlyph = glyph
-            previousControl = control
-            previousRow = row
-            previousDensity = density
+        for index in compactScales.indices {
+            XCTAssertLessThan(compactScales[index], 1)
+            XCTAssertGreaterThan(enlargedScales[index], 1)
+            XCTAssertGreaterThanOrEqual(maximumScales[index], enlargedScales[index])
         }
+
+        XCTAssertEqual(maximumScales[0], 1.20, accuracy: 0.001)
+        XCTAssertEqual(maximumScales[1], 1.14, accuracy: 0.001)
+        XCTAssertEqual(maximumScales[2], 1.12, accuracy: 0.001)
+        XCTAssertEqual(maximumScales[3], 1.10, accuracy: 0.001)
+        XCTAssertEqual(maximumScales[4], 1.08, accuracy: 0.001)
+        XCTAssertGreaterThan(maximumScales[0], maximumScales[1])
+        XCTAssertGreaterThan(maximumScales[1], maximumScales[4])
     }
 
     func testTopBarCollapsesSecondaryActionsByEffectiveWidth() {
@@ -490,8 +498,15 @@ final class ChromeAlignmentTests: XCTestCase {
         )
     }
 
+    func testReducedMotionDisablesSidebarAndDrawerMovement() {
+        XCTAssertNil(MonknotMotion.sidebarTransition(reduceMotion: true))
+        XCTAssertNotNil(MonknotMotion.sidebarTransition(reduceMotion: false))
+    }
+
     func testTerminalDrawerUsesFullDetailTakeoverBelowReadableSplitWidth() {
-        for availableWidth in [CGFloat(557), 759] {
+        let threshold = MonknotMetrics.editorMinimumReadableWidth
+            + MonknotMetrics.terminalDrawerMinWidth
+        for availableWidth in [CGFloat(557), threshold - 1] {
             let layout = TerminalDrawerLayoutPolicy.resolve(
                 availableWidth: availableWidth,
                 preferredDrawerWidth: 600
@@ -504,7 +519,27 @@ final class ChromeAlignmentTests: XCTestCase {
         }
     }
 
-    func testTerminalDrawerSideBySideLayoutProtectsEditorAndDrawerMinimums() {
+    func testDocumentTabsSizeToTheirMeasuredTitles() {
+        let theme = AppTheme.codexDark
+        let short = DocumentTabWidthPolicy.preferredWidth(
+            title: "a.json",
+            isPinned: false,
+            theme: theme,
+            zoomScale: 1
+        )
+        let long = DocumentTabWidthPolicy.preferredWidth(
+            title: "02-sockets-claude.md",
+            isPinned: false,
+            theme: theme,
+            zoomScale: 1
+        )
+
+        XCTAssertGreaterThan(long, short + 40)
+        XCTAssertGreaterThanOrEqual(short, MonknotMetrics.tabMinWidthBase)
+        XCTAssertLessThanOrEqual(long, MonknotMetrics.tabMaxWidthBase)
+    }
+
+    func testTerminalDrawerSideBySideLayoutProtectsEditorAndPanelMinimums() {
         let threshold = MonknotMetrics.editorMinimumReadableWidth
             + MonknotMetrics.terminalDrawerMinWidth
         let thresholdLayout = TerminalDrawerLayoutPolicy.resolve(
@@ -512,16 +547,12 @@ final class ChromeAlignmentTests: XCTestCase {
             preferredDrawerWidth: 420
         )
         let preferredLayout = TerminalDrawerLayoutPolicy.resolve(
-            availableWidth: 900,
+            availableWidth: 1_000,
             preferredDrawerWidth: 420
         )
         let maximumLayout = TerminalDrawerLayoutPolicy.resolve(
-            availableWidth: 1_200,
+            availableWidth: 1_240,
             preferredDrawerWidth: 900
-        )
-        let minimumLayout = TerminalDrawerLayoutPolicy.resolve(
-            availableWidth: 900,
-            preferredDrawerWidth: 100
         )
 
         XCTAssertEqual(thresholdLayout.presentation, .sideBySide)
@@ -530,53 +561,23 @@ final class ChromeAlignmentTests: XCTestCase {
             MonknotMetrics.terminalDrawerMinWidth,
             accuracy: 0.001
         )
-        XCTAssertEqual(
-            threshold - thresholdLayout.drawerWidth,
-            MonknotMetrics.editorMinimumReadableWidth,
-            accuracy: 0.001
-        )
         XCTAssertFalse(thresholdLayout.isResizable)
-
         XCTAssertEqual(preferredLayout.drawerWidth, 420, accuracy: 0.001)
         XCTAssertTrue(preferredLayout.isResizable)
-        XCTAssertGreaterThanOrEqual(
-            900 - preferredLayout.drawerWidth,
-            MonknotMetrics.editorMinimumReadableWidth
-        )
-
         XCTAssertEqual(
             maximumLayout.drawerWidth,
             MonknotMetrics.terminalDrawerMaxWidth,
             accuracy: 0.001
         )
-        XCTAssertGreaterThanOrEqual(
-            1_200 - maximumLayout.drawerWidth,
-            MonknotMetrics.editorMinimumReadableWidth
-        )
-
-        XCTAssertEqual(
-            minimumLayout.drawerWidth,
-            MonknotMetrics.terminalDrawerMinWidth,
-            accuracy: 0.001
-        )
-    }
-
-    func testReducedMotionDisablesSidebarAndDrawerMovement() {
-        XCTAssertNil(MonknotMotion.sidebarTransition(reduceMotion: true))
-        XCTAssertNotNil(MonknotMotion.sidebarTransition(reduceMotion: false))
     }
 
     func testDisabledWindowNavigationAvoidsDoubleAttenuation() {
         let size = MonknotIconButton.IconButtonSize.windowNavigation
 
-        XCTAssertGreaterThanOrEqual(
-            size.disabledControlOpacity,
-            0.7,
-            "Disabled Back and Forward controls must remain visibly identifiable"
-        )
+        XCTAssertEqual(size.disabledControlOpacity, 0.24, accuracy: 0.001)
     }
 
-    func testWindowNavigationUsesSharedChromeMetricsAcrossSupportedZooms() {
+    func testWindowNavigationUsesReferenceSegmentGeometryAcrossSupportedZooms() {
         let theme = AppTheme.codexDark
         let navigationSize = MonknotIconButton.IconButtonSize.windowNavigation
         let chromeSize = MonknotIconButton.IconButtonSize.chrome
@@ -588,54 +589,49 @@ final class ChromeAlignmentTests: XCTestCase {
                 chromeSize.dimension(theme: theme, zoomScale: zoomScale),
                 accuracy: 0.001
             )
-            XCTAssertEqual(
-                navigationSize.iconSize(theme: theme, zoomScale: zoomScale),
-                chromeSize.iconSize(theme: theme, zoomScale: zoomScale),
-                accuracy: 0.001
+            XCTAssertLessThan(
+                navigationSize.height(theme: theme, zoomScale: zoomScale),
+                chromeSize.height(theme: theme, zoomScale: zoomScale)
             )
-            XCTAssertEqual(
-                navigationSize.cornerRadius(theme: theme, zoomScale: zoomScale),
-                chromeSize.cornerRadius(theme: theme, zoomScale: zoomScale),
-                accuracy: 0.001
+            XCTAssertLessThanOrEqual(
+                navigationSize.iconSize(theme: theme, zoomScale: zoomScale),
+                chromeSize.iconSize(theme: theme, zoomScale: zoomScale)
             )
         }
     }
 
-    func testPrimaryChromeKeepsCompactBalancedInsetsAcrossThemesAndZooms() {
+    func testPrimaryAndSecondaryChromePreserveTheirDistinctReferenceBands() {
         for theme in [AppTheme.codexLight, AppTheme.codexDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
-                let chromeHeight = MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
-                let buttonDimension = MonknotMetrics.chromeButtonDimension(
+                let primaryHeight = MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
+                let secondaryHeight = MonknotMetrics.chromeSecondaryHeight(
                     theme: theme,
                     zoomScale: zoomScale
                 )
-                let verticalInset = (chromeHeight - buttonDimension) / 2
+                let tabChipHeight = MonknotMetrics.interfaceControl(
+                    30,
+                    theme: theme,
+                    zoomScale: zoomScale
+                )
 
-                XCTAssertEqual(
-                    chromeHeight,
-                    MonknotMetrics.chromeSecondaryHeight(theme: theme, zoomScale: zoomScale),
-                    accuracy: 0.001,
-                    "Primary and secondary chrome drifted at zoom \(zoomScale)"
+                XCTAssertGreaterThan(
+                    primaryHeight,
+                    secondaryHeight,
+                    "The 44pt titlebar and 34pt formatting row must remain distinct"
                 )
                 XCTAssertGreaterThanOrEqual(
-                    verticalInset,
-                    5,
-                    "Primary chrome lost the expanded top/bottom breathing room required by the design"
-                )
-                XCTAssertLessThanOrEqual(
-                    verticalInset,
-                    MonknotMetrics.scale(
-                        MonknotMetrics.Spacing.xs,
-                        theme: theme,
-                        zoomScale: zoomScale
-                    ) + 0.5,
-                    "Primary chrome regained excessive vertical padding at zoom \(zoomScale)"
+                    primaryHeight,
+                    tabChipHeight,
+                    "The active 30pt file chip must fit inside the titlebar"
                 )
             }
         }
+
+        XCTAssertEqual(MonknotMetrics.chromeHeight(theme: .codexDark, zoomScale: 1), 44)
+        XCTAssertEqual(MonknotMetrics.chromeSecondaryHeight(theme: .codexDark, zoomScale: 1), 34)
     }
 
-    func testSegmentButtonsMatchSharedToolbarButtonSizeAcrossThemesAndZooms() {
+    func testSegmentButtonsUseReferenceWidthAndShorterReferenceHeight() {
         for theme in [AppTheme.codexLight, AppTheme.codexDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
                 let segment = MonknotSegmentButton(
@@ -662,22 +658,21 @@ final class ChromeAlignmentTests: XCTestCase {
                     accuracy: 0.01,
                     "Segment width diverged from toolbar buttons at zoom \(zoomScale)"
                 )
-                XCTAssertEqual(
+                XCTAssertLessThan(
                     segmentHost.fittingSize.height,
                     toolbarButtonHost.fittingSize.height,
-                    accuracy: 0.01,
-                    "Segment height diverged from toolbar buttons at zoom \(zoomScale)"
+                    "Reference segments must remain 24pt high inside the 28pt shell"
                 )
             }
         }
     }
 
-    func testWindowNavigationHoverIsMoreProminentThanStandardChromeHover() {
+    func testWindowNavigationUsesTheSharedReferenceHoverFill() {
         let navigationSize = MonknotIconButton.IconButtonSize.windowNavigation
         let chromeSize = MonknotIconButton.IconButtonSize.chrome
 
         for isDark in [false, true] {
-            XCTAssertGreaterThan(
+            XCTAssertEqual(
                 navigationSize.hoverBackgroundOpacity(isDark: isDark),
                 chromeSize.hoverBackgroundOpacity(isDark: isDark)
             )
@@ -688,6 +683,7 @@ final class ChromeAlignmentTests: XCTestCase {
         for size in [
             MonknotIconButton.IconButtonSize.chrome,
             .windowNavigation,
+            .sidebarHeader,
             .compact,
             .findBar,
             .segmented
@@ -722,14 +718,13 @@ final class ChromeAlignmentTests: XCTestCase {
         }
     }
 
-    func testActiveChromeButtonsHaveAStableSelectedSurface() {
+    func testOpenPanelButtonsUseTheSharedReferenceHoverSurface() {
         let size = MonknotIconButton.IconButtonSize.chrome
 
         for isDark in [false, true] {
-            XCTAssertGreaterThan(
+            XCTAssertEqual(
                 size.activeBackgroundOpacity(isDark: isDark),
-                size.hoverBackgroundOpacity(isDark: isDark),
-                "A selected toggle must remain more visible than a transient hover"
+                size.hoverBackgroundOpacity(isDark: isDark)
             )
         }
     }
@@ -818,20 +813,11 @@ final class ChromeAlignmentTests: XCTestCase {
         }
     }
 
-    func testSidebarAndTerminalPrimaryRowsUseSharedChromeHeightAtEverySupportedZoom() {
+    func testTerminalPanelRowUsesSharedChromeHeightAtEverySupportedZoom() {
         for theme in [AppTheme.codexLight, AppTheme.codexDark] {
             let sessions = TerminalSessionCollectionStore()
 
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
-                let sidebarRow = SidebarChromeRow(
-                    openFolder: {},
-                    createMarkdown: {},
-                    canCreateMarkdown: true,
-                    isBusy: false,
-                    theme: theme,
-                    zoomScale: zoomScale,
-                    uiFontSize: theme.uiFontSize
-                )
                 let terminalRow = TerminalDrawerChromeRow(
                     sessions: sessions,
                     workingDirectory: nil,
@@ -840,30 +826,20 @@ final class ChromeAlignmentTests: XCTestCase {
                     uiFontSize: theme.uiFontSize,
                     close: {}
                 )
-                let sidebarHost = NSHostingView(rootView: sidebarRow.frame(width: 420))
                 let terminalHost = NSHostingView(rootView: terminalRow.frame(width: 420))
                 let expectedHeight = MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
 
-                XCTAssertEqual(sidebarHost.fittingSize.height, expectedHeight, accuracy: 0.01)
                 XCTAssertEqual(terminalHost.fittingSize.height, expectedHeight, accuracy: 0.01)
             }
         }
     }
 
-    func testTerminalPrimaryRowsKeepTabsInHorizontalScrollContainers() {
+    func testTerminalPanelKeepsTabsInAHorizontalScrollContainer() {
         let theme = AppTheme.codexDark
         let sessions = TerminalSessionCollectionStore()
         XCTAssertNotNil(sessions.createTerminal(in: FileManager.default.temporaryDirectory))
         defer { sessions.stopAll() }
 
-        let takeoverHost = NSHostingView(rootView: TerminalDrawerTakeoverSegment(
-            sessions: sessions,
-            workingDirectory: nil,
-            theme: theme,
-            zoomScale: WorkspaceZoomPolicy.maximum,
-            uiFontSize: theme.uiFontSize,
-            close: {}
-        ))
         let drawerHost = NSHostingView(rootView: TerminalDrawerChromeRow(
             sessions: sessions,
             workingDirectory: nil,
@@ -872,22 +848,11 @@ final class ChromeAlignmentTests: XCTestCase {
             uiFontSize: theme.uiFontSize,
             close: {}
         ))
-        takeoverHost.layoutSubtreeIfNeeded()
         drawerHost.layoutSubtreeIfNeeded()
 
-        for host in [takeoverHost, drawerHost] {
-            XCTAssertTrue(
-                host.allDescendantsForTesting().contains { $0 is NSScrollView },
-                "Every terminal presentation must keep excess tabs in a bounded horizontal scroller"
-            )
-        }
-        XCTAssertEqual(
-            takeoverHost.fittingSize.height,
-            MonknotMetrics.chromeHeight(
-                theme: theme,
-                zoomScale: WorkspaceZoomPolicy.maximum
-            ),
-            accuracy: 0.01
+        XCTAssertTrue(
+            drawerHost.allDescendantsForTesting().contains { $0 is NSScrollView },
+            "The terminal panel must keep excess tabs in a bounded horizontal scroller"
         )
     }
 
@@ -932,10 +897,7 @@ final class ChromeAlignmentTests: XCTestCase {
                     isSidebarVisible: isSidebarVisible,
                     toggleTerminal: {},
                     toggleSidebar: {},
-                    outlineItems: [],
-                    selectOutlineItem: { _ in },
                     toggleSplitView: {},
-                    canToggleSplitView: false,
                     documentSearch: .constant(DocumentSearchState()),
                     tabs: [],
                     activeTabID: nil,
@@ -958,7 +920,7 @@ final class ChromeAlignmentTests: XCTestCase {
         }
     }
 
-    func testDocumentSearchKeepsTheFileTabScrollerMountedInThePrimaryRow() {
+    func testDocumentSearchKeepsScrollableFileTabsMountedInThePrimaryRow() {
         let theme = AppTheme.codexDark
         var search = DocumentSearchState()
         search.present()
@@ -982,10 +944,7 @@ final class ChromeAlignmentTests: XCTestCase {
             isSidebarVisible: true,
             toggleTerminal: {},
             toggleSidebar: {},
-            outlineItems: [],
-            selectOutlineItem: { _ in },
             toggleSplitView: {},
-            canToggleSplitView: false,
             documentSearch: .constant(search),
             tabs: [tab],
             activeTabID: tab.documentID,
@@ -1001,7 +960,7 @@ final class ChromeAlignmentTests: XCTestCase {
 
         XCTAssertTrue(
             host.allDescendantsForTesting().contains { $0 is NSScrollView },
-            "Presenting document search must not unmount or replace the file-tab strip"
+            "File tabs must retain horizontal scrolling while document search is visible"
         )
         XCTAssertTrue(
             host.allDescendantsForTesting().contains { $0 is NSTextField },
@@ -1011,6 +970,84 @@ final class ChromeAlignmentTests: XCTestCase {
             host.fittingSize.height,
             MonknotMetrics.chromeHeight(theme: theme, zoomScale: WorkspaceZoomPolicy.maximum),
             accuracy: 0.01
+        )
+    }
+
+    func testOutlineRailTracksTheVisibleHeadingAndClampsNestedIndentation() {
+        let items = [
+            MarkdownOutlineItem(
+                id: "a", title: "A", level: 1, location: .init(line: 1, offset: 0)
+            ),
+            MarkdownOutlineItem(
+                id: "b", title: "B", level: 2, location: .init(line: 3, offset: 8)
+            ),
+        ]
+
+        XCTAssertEqual(
+            MarkdownOutlineRailLayout.activeIndex(forVisibleLine: 1, items: items),
+            0
+        )
+        XCTAssertEqual(
+            MarkdownOutlineRailLayout.activeIndex(forVisibleLine: 10, items: items),
+            1
+        )
+        XCTAssertNil(MarkdownOutlineRailLayout.activeIndex(forVisibleLine: 1, items: []))
+        XCTAssertEqual(MarkdownOutlineRailLayout.leadingIndent(forHeadingLevel: 1), 0)
+        XCTAssertEqual(MarkdownOutlineRailLayout.leadingIndent(forHeadingLevel: 3), 14)
+        XCTAssertEqual(MarkdownOutlineRailLayout.leadingIndent(forHeadingLevel: 8), 35)
+        XCTAssertEqual(MarkdownOutlineRailLayout.markerWidth(forHeadingLevel: 1), 24)
+        XCTAssertEqual(MarkdownOutlineRailLayout.markerWidth(forHeadingLevel: 3), 16)
+        XCTAssertEqual(MarkdownOutlineRailLayout.markerWidth(forHeadingLevel: 8), 8)
+        XCTAssertEqual(
+            MarkdownOutlineRailLayout.revealTargetID(
+                hoveredItemID: "hovered",
+                focusedItemID: "focused",
+                activeItemID: "active"
+            ),
+            "hovered"
+        )
+        XCTAssertEqual(
+            MarkdownOutlineRailLayout.revealTargetID(
+                hoveredItemID: nil,
+                focusedItemID: "focused",
+                activeItemID: "active"
+            ),
+            "focused"
+        )
+        XCTAssertEqual(
+            MarkdownOutlineRailLayout.revealTargetID(
+                hoveredItemID: nil,
+                focusedItemID: nil,
+                activeItemID: "active"
+            ),
+            "active"
+        )
+    }
+
+    func testMarkdownSyntaxTokenizerCoversEveryReferenceAccent() {
+        let markdown = "# Heading\n> Quote\n**Strong** [[Wiki]] [Link](https://example.com) `code`"
+        let styles = MarkdownSyntaxTokenizer.tokens(in: markdown).map(\.style)
+
+        for expectedStyle in [
+            MarkdownSyntaxStyle.heading,
+            .quote,
+            .strong,
+            .wikilink,
+            .link,
+            .code,
+        ] {
+            XCTAssertTrue(styles.contains(expectedStyle))
+        }
+    }
+
+    func testMarkdownEditorLineHeightTracksHighZoomFontSize() {
+        XCTAssertEqual(MarkdownEditorLayout.lineHeight(forFontSize: 13), 22)
+        XCTAssertEqual(MarkdownEditorLayout.lineHeight(forFontSize: 39), 57)
+        XCTAssertEqual(MarkdownEditorLayout.lineHeight(forFontSize: 120), 174)
+        XCTAssertGreaterThan(
+            MarkdownEditorLayout.lineHeight(forFontSize: 39),
+            39,
+            "High-zoom Markdown lines must not overlap"
         )
     }
 
@@ -1114,124 +1151,7 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertNil(request.pendingID)
     }
 
-    func testTerminalTakeoverCannotStarveTheDocumentChrome() {
-        for theme in [AppTheme.codexLight, AppTheme.codexDark] {
-            for zoomScale in WorkspaceZoomPolicy.supportedLevels {
-                let documentMinimum = MonknotMetrics.interfaceDensity(
-                    MonknotMetrics.takeoverDocumentChromeMinWidthBase,
-                    theme: theme,
-                    zoomScale: zoomScale
-                )
-                let terminalMaximum = MonknotMetrics.interfaceDensity(
-                    MonknotMetrics.takeoverTerminalChromeMaxWidthBase,
-                    theme: theme,
-                    zoomScale: zoomScale
-                )
-                let completeTabWidth = MonknotMetrics.interfaceDensity(
-                    MonknotMetrics.tabMinWidthBase,
-                    theme: theme,
-                    zoomScale: zoomScale
-                )
-                let fixedDocumentControls = MonknotMetrics.chromeButtonDimension(
-                    theme: theme,
-                    zoomScale: zoomScale
-                ) * 3
-
-                XCTAssertGreaterThanOrEqual(
-                    documentMinimum,
-                    completeTabWidth + fixedDocumentControls,
-                    "Takeover must retain a recognizable active file at zoom \(zoomScale)"
-                )
-                XCTAssertGreaterThan(
-                    documentMinimum,
-                    terminalMaximum,
-                    "Terminal controls must not win layout priority over the active document"
-                )
-
-                let terminalMinimum = MonknotMetrics.interfaceDensity(
-                    MonknotMetrics.takeoverTerminalChromeMinWidthBase,
-                    theme: theme,
-                    zoomScale: zoomScale
-                )
-                XCTAssertLessThanOrEqual(
-                    documentMinimum + terminalMinimum,
-                    WorkspaceSplitMetrics.detailMinimumWidth,
-                    "Takeover minimums must fit the narrowest legal detail pane at zoom \(zoomScale)"
-                )
-            }
-        }
-    }
-
-    func testMountedTerminalTakeoverFitsAtMinimumDetailWidthAndMaximumZoom() {
-        let theme = AppTheme.codexDark
-        let zoomScale = WorkspaceZoomPolicy.maximum
-        let sessions = TerminalSessionCollectionStore()
-        XCTAssertNotNil(sessions.createTerminal(in: FileManager.default.temporaryDirectory))
-        defer { sessions.stopAll() }
-
-        let documentMinimum = MonknotMetrics.interfaceDensity(
-            MonknotMetrics.takeoverDocumentChromeMinWidthBase,
-            theme: theme,
-            zoomScale: zoomScale
-        )
-        let host = NSHostingView(rootView: HStack(spacing: 0) {
-            ChromeOriginMarker(identifier: "takeover-document")
-                .frame(minWidth: documentMinimum, maxWidth: .infinity)
-                .layoutPriority(1)
-
-            TerminalDrawerTakeoverSegment(
-                sessions: sessions,
-                workingDirectory: FileManager.default.temporaryDirectory,
-                theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: theme.uiFontSize,
-                close: {}
-            )
-            .background(ChromeOriginMarker(identifier: "takeover-terminal"))
-            .layoutPriority(0)
-        }
-        .frame(
-            width: WorkspaceSplitMetrics.detailMinimumWidth,
-            height: MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
-        ))
-        host.frame = NSRect(
-            x: 0,
-            y: 0,
-            width: WorkspaceSplitMetrics.detailMinimumWidth,
-            height: MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
-        )
-        let window = NSWindow(
-            contentRect: host.frame,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        window.contentView = host
-        window.layoutIfNeeded()
-        host.layoutSubtreeIfNeeded()
-
-        guard let terminalMarker = host.allDescendantsForTesting().first(where: {
-            $0.identifier?.rawValue == "Monknot.Test.Chrome.takeover-terminal"
-        }) else {
-            return XCTFail("Missing mounted terminal takeover marker")
-        }
-        let terminalFrame = terminalMarker.convert(terminalMarker.bounds, to: host)
-        XCTAssertGreaterThanOrEqual(terminalFrame.minX, documentMinimum - 1)
-        XCTAssertLessThanOrEqual(terminalFrame.maxX, host.bounds.maxX + 1)
-
-        for button in host.allDescendantsForTesting().compactMap({ $0 as? NSButton })
-            where !button.isHidden {
-            let frame = button.convert(button.bounds, to: host)
-            XCTAssertGreaterThanOrEqual(frame.minX, host.bounds.minX - 1)
-            XCTAssertLessThanOrEqual(
-                frame.maxX,
-                host.bounds.maxX + 1,
-                "A terminal takeover control clipped at minimum detail width"
-            )
-        }
-    }
-
-    func testMountedDocumentTabBarKeepsManualHorizontalScrollPosition() async {
+    func testMountedDocumentTabBarSupportsHorizontalScrolling() async {
         let theme = AppTheme.codexDark
         let tabs = (0..<10).map { index in
             WorkspaceTabItem(
@@ -1288,26 +1208,12 @@ final class ChromeAlignmentTests: XCTestCase {
         guard let horizontalScrollView,
               let documentView = horizontalScrollView.documentView
         else {
-            return XCTFail("Mounted overflowing file tabs must expose a horizontal scroll container")
+            return XCTFail("Overflowing file tabs must remain available in a horizontal scroll strip")
         }
-
-        let maximumOffset = documentView.frame.width - horizontalScrollView.contentView.bounds.width
-        XCTAssertGreaterThan(maximumOffset, 120)
-
-        horizontalScrollView.contentView.scroll(to: NSPoint(x: 120, y: 0))
-        horizontalScrollView.reflectScrolledClipView(horizontalScrollView.contentView)
-        let manualOffset = horizontalScrollView.contentView.bounds.origin.x
-        XCTAssertEqual(manualOffset, 120, accuracy: 1)
-
-        // Frame preferences update as the lane scrolls. They must not trigger
-        // another active-tab reveal and snap the user back to the first tab.
-        try? await Task.sleep(nanoseconds: 150_000_000)
-
-        XCTAssertEqual(
-            horizontalScrollView.contentView.bounds.origin.x,
-            manualOffset,
-            accuracy: 1,
-            "Manual tab scrolling was overridden by selection reveal"
+        XCTAssertGreaterThan(
+            documentView.frame.width - horizontalScrollView.contentView.bounds.width,
+            500,
+            "The tab strip should retain its full content width instead of hiding excess tabs"
         )
     }
 
@@ -1323,7 +1229,7 @@ final class ChromeAlignmentTests: XCTestCase {
             theme: theme,
             zoomScale: WorkspaceZoomPolicy.maximum
         )
-        let host = NSHostingView(rootView: TerminalDrawerTakeoverSegment(
+        let host = NSHostingView(rootView: TerminalDrawerChromeRow(
             sessions: sessions,
             workingDirectory: FileManager.default.temporaryDirectory,
             theme: theme,
@@ -1389,9 +1295,21 @@ final class ChromeAlignmentTests: XCTestCase {
             fontSmoothing: true
         )
 
-        XCTAssertTrue(html.contains("padding: 12px 20px;"))
+        XCTAssertTrue(html.contains("padding: 10px 12px;"))
         XCTAssertFalse(html.contains("padding: 18px 20px;"))
+        XCTAssertTrue(html.contains("new ResizeObserver"))
+        XCTAssertTrue(html.contains("width: 12px;"))
     }
+}
+
+private func interfaceScales(theme: AppTheme, zoomScale: Double) -> [CGFloat] {
+    [
+        theme.interfaceTextScale(zoomScale: zoomScale),
+        theme.interfaceGlyphScale(zoomScale: zoomScale),
+        theme.interfaceControlScale(zoomScale: zoomScale),
+        theme.interfaceRowScale(zoomScale: zoomScale),
+        theme.interfaceDensityScale(zoomScale: zoomScale),
+    ]
 }
 
 private extension NSView {

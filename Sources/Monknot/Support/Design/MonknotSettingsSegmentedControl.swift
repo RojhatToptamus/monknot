@@ -67,6 +67,7 @@ private struct MonknotSettingsSegmentButton: View {
         .buttonStyle(.plain)
         .focusable(true)
         .focused($isFocused)
+        .focusEffectDisabled()
         .onHover { isHovered = $0 }
         .animation(MonknotMotion.hoverAnimation, value: isHovered)
         .animation(MonknotMotion.hoverAnimation, value: isSelected)

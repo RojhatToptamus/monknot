@@ -533,6 +533,8 @@
     value = escapeHTML(value);
     value = value.replace(/(?: {2,}|\\)\n/g, "<br>");
 
+    value = value.replace(/\[\[([^\]\n]+)\]\]/g, '<span class="wikilink">$1</span>');
+
     value = value.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]+)")?\)/g, (_, alt, url, title) => {
       const safe = sanitizeURL(url, true);
       if (!safe) return "";

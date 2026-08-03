@@ -51,10 +51,38 @@ struct NativeMarkdownEditorView: View {
     }
 }
 
+struct MarkdownToolbarActionDescriptor: Identifiable {
+    let systemImage: String
+    let label: String
+    let command: MarkdownTextEditorCommand
+
+    var id: String { label }
+}
+
 struct MarkdownSourceToolbar: View {
     let theme: AppTheme
     let zoomScale: Double
+    let text: String
     let sendCommand: (MarkdownTextEditorCommand) -> Void
+
+    static let regularActionGroups = [
+        [
+            MarkdownToolbarActionDescriptor(systemImage: "bold", label: "Bold", command: .bold),
+            MarkdownToolbarActionDescriptor(systemImage: "italic", label: "Italic", command: .italic),
+            MarkdownToolbarActionDescriptor(systemImage: "quote.opening", label: "Quote", command: .quote),
+            MarkdownToolbarActionDescriptor(systemImage: "curlybraces", label: "Inline Code", command: .code),
+            MarkdownToolbarActionDescriptor(systemImage: "link", label: "Link", command: .link),
+        ],
+        [
+            MarkdownToolbarActionDescriptor(systemImage: "list.bullet", label: "Bullet List", command: .bulletList),
+            MarkdownToolbarActionDescriptor(systemImage: "list.number", label: "Numbered List", command: .numberedList),
+            MarkdownToolbarActionDescriptor(systemImage: "checklist", label: "Task List", command: .taskList),
+        ],
+        [
+            MarkdownToolbarActionDescriptor(systemImage: "photo", label: "Image", command: .image),
+            MarkdownToolbarActionDescriptor(systemImage: "minus", label: "Horizontal Rule", command: .horizontalRule),
+        ],
+    ]
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
@@ -77,6 +105,12 @@ struct MarkdownSourceToolbar: View {
             }
 
             Spacer(minLength: 0)
+
+            Text("\(lineCount) lines · \(wordCount.formatted()) words")
+                .font(.system(size: textScaled(11), weight: .regular, design: .monospaced))
+                .foregroundStyle(theme.tertiaryForegroundColor)
+                .lineLimit(1)
+                .fixedSize()
         }
         .monknotChromeSubrowLayout(theme: theme, zoomScale: zoomScale)
     }
@@ -84,19 +118,13 @@ struct MarkdownSourceToolbar: View {
     private var regularToolbar: some View {
         HStack(spacing: scaled(6)) {
             expandedHeadingMenu
-            divider
-            toolbarButton("bold", "Bold", .bold)
-            toolbarButton("italic", "Italic", .italic)
-            toolbarButton("quote.opening", "Quote", .quote)
-            toolbarButton("curlybraces", "Code", .code)
-            toolbarButton("link", "Link", .link)
-            divider
-            toolbarButton("list.bullet", "Bullet List", .bulletList)
-            toolbarButton("list.number", "Numbered List", .numberedList)
-            toolbarButton("checklist", "Task List", .taskList)
-            divider
-            toolbarButton("photo", "Image", .image)
-            toolbarButton("minus", "Horizontal Rule", .horizontalRule)
+
+            ForEach(Self.regularActionGroups.indices, id: \.self) { groupIndex in
+                divider
+                ForEach(Self.regularActionGroups[groupIndex]) { action in
+                    toolbarButton(action.systemImage, action.label, action.command)
+                }
+            }
         }
         .fixedSize(horizontal: true, vertical: false)
     }
@@ -125,7 +153,7 @@ struct MarkdownSourceToolbar: View {
     }
 
     private var expandedHeadingMenu: some View {
-        headingMenu(width: scaled(148))
+        headingMenu(width: scaled(92))
     }
 
     private var compactHeadingMenu: some View {
@@ -201,11 +229,11 @@ struct MarkdownSourceToolbar: View {
 
     private func overflowMenu(includesLink: Bool, includesLists: Bool) -> some View {
         Menu {
+            Button("Quote", systemImage: "quote.opening") { sendCommand(.quote) }
+            Button("Inline Code", systemImage: "curlybraces") { sendCommand(.code) }
             if includesLink {
                 Button("Link", systemImage: "link") { sendCommand(.link) }
             }
-            Button("Quote", systemImage: "quote.opening") { sendCommand(.quote) }
-            Button("Inline Code", systemImage: "curlybraces") { sendCommand(.code) }
 
             Divider()
 
@@ -273,5 +301,15 @@ struct MarkdownSourceToolbar: View {
             size: .compact,
             action: { sendCommand(command) }
         )
+    }
+
+    private var lineCount: Int {
+        max(1, text.reduce(into: 1) { count, character in
+            if character == "\n" { count += 1 }
+        })
+    }
+
+    private var wordCount: Int {
+        text.split { $0.isWhitespace || $0.isPunctuation }.count
     }
 }

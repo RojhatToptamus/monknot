@@ -16,31 +16,19 @@ struct WorkspaceQuickOpenView: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                Color.black.opacity(0.28)
-                    .ignoresSafeArea()
-                    .onTapGesture(perform: close)
+        MonknotCommandOverlay(
+            theme: theme,
+            zoomScale: zoomScale,
+            panelHeight: panelHeight,
+            close: close
+        ) {
+            VStack(spacing: 0) {
+                searchField
 
-                VStack(spacing: 0) {
-                    searchField
+                Divider()
+                    .overlay(theme.separatorColor)
 
-                    Divider()
-                        .overlay(theme.borderColor)
-
-                    resultBody
-                }
-                .frame(width: max(1, min(scaled(560), geometry.size.width - scaled(32))))
-                .frame(maxHeight: max(1, min(scaled(420), geometry.size.height - scaled(32))))
-                .background(
-                    RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
-                        .fill(theme.surfaceColor)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
-                        .strokeBorder(theme.borderColor, lineWidth: 1)
-                }
-                .shadow(color: .black.opacity(0.18), radius: scaled(18), y: scaled(8))
+                resultBody
             }
         }
         .onAppear { focusSearchField() }
@@ -49,9 +37,15 @@ struct WorkspaceQuickOpenView: View {
         }
     }
 
+    private var panelHeight: CGFloat {
+        let visibleRows = min(max(state.matches.count, 1), 8)
+        let resultHeight = state.matches.isEmpty ? CGFloat(78) : CGFloat(visibleRows) * 48 + 12
+        return scaled(52 + resultHeight)
+    }
+
     private var searchField: some View {
         HStack(spacing: scaled(8)) {
-            Image(systemName: "doc.text.magnifyingglass")
+            Image(systemName: "magnifyingglass")
                 .font(.system(size: scaled(14), weight: .medium))
                 .foregroundStyle(theme.mutedForegroundColor)
 
@@ -72,13 +66,9 @@ struct WorkspaceQuickOpenView: View {
                 }
             }
 
-            MonknotIconButton(
-                systemImage: "xmark",
-                label: "Close Quick Open",
+            MonknotCommandOverlayEscapeButton(
                 theme: theme,
-                zoomScale: zoomScale,
-                size: .compact,
-                action: close
+                close: close
             )
         }
         .padding(.horizontal, scaled(14))
@@ -88,21 +78,25 @@ struct WorkspaceQuickOpenView: View {
     private var resultBody: some View {
         MonknotScrollView {
             if state.matches.isEmpty {
-                Text(state.query.isEmpty ? "Type to filter workspace files" : "No matching files")
-                    .font(.system(size: scaled(12), weight: .medium))
-                    .foregroundStyle(theme.mutedForegroundColor)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, scaled(14))
-                    .padding(.vertical, scaled(16))
+                MonknotCommandOverlayEmptyState(
+                    title: state.query.isEmpty
+                        ? "Open a file by name…"
+                        : "No files match “\(state.query)”",
+                    message: state.query.isEmpty
+                        ? "Start typing to filter workspace files."
+                        : "Try part of a name, or ⇧⌘F to search contents.",
+                    theme: theme,
+                    zoomScale: zoomScale
+                )
             } else {
                 LazyVStack(alignment: .leading, spacing: scaled(2)) {
-                    ForEach(state.matches) { document in
+                    ForEach(Array(state.matches.enumerated()), id: \.element.id) { index, document in
                         Button {
                             openDocument(document.id)
                         } label: {
                             HStack(spacing: scaled(8)) {
                                 Image(systemName: document.kind.resolvedSystemImage)
-                                    .font(.system(size: scaled(12)))
+                                    .font(.system(size: scaled(14), weight: .regular))
                                     .foregroundStyle(theme.mutedForegroundColor)
 
                                 VStack(alignment: .leading, spacing: scaled(2)) {
@@ -124,7 +118,7 @@ struct WorkspaceQuickOpenView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(
                                 RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                                    .fill(theme.insetFillColor.opacity(0.55))
+                                    .fill(index == 0 ? theme.selectedRowColor : .clear)
                             )
                         }
                         .buttonStyle(.plain)

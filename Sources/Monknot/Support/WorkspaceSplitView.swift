@@ -27,15 +27,19 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View>: NSViewControllerRepresen
         controller.update(
             sidebar: sidebar(),
             detail: detail(),
-            isSidebarPresented: isSidebarPresented
+            isSidebarPresented: isSidebarPresented,
+            animated: context.transaction.animation != nil && !context.transaction.disablesAnimations
         )
     }
 }
 
 enum WorkspaceSplitMetrics {
-    static let sidebarMinimumWidth: CGFloat = 260
+    static let sidebarMinimumWidth: CGFloat = 248
     static let sidebarMaximumWidth: CGFloat = 440
     static let detailMinimumWidth: CGFloat = 480
+    /// The visible divider stays one point wide. Its drag target extends into
+    /// the detail pane so it does not compete with the sidebar scrollbar.
+    static let sidebarResizeHitWidth: CGFloat = 16
     static let autosaveName = "Monknot.WorkspaceSplit"
 }
 
@@ -46,6 +50,8 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View>: NSSplitVi
     let sidebarItem: NSSplitViewItem
     let detailItem: NSSplitViewItem
     private var isSidebarPresented: Bool
+    private var shouldApplyReferenceSidebarWidth: Bool
+    private var isAnimatingSidebarPresentation = false
 
     init(
         sidebar: Sidebar,
@@ -58,6 +64,8 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View>: NSSplitVi
         sidebarItem = NSSplitViewItem(viewController: sidebarHostingController)
         detailItem = NSSplitViewItem(viewController: detailHostingController)
         self.isSidebarPresented = isSidebarPresented
+        let autosaveKey = "NSSplitView Subview Frames \(autosaveName)"
+        shouldApplyReferenceSidebarWidth = UserDefaults.standard.object(forKey: autosaveKey) == nil
 
         super.init(nibName: nil, bundle: nil)
 
@@ -96,20 +104,82 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View>: NSSplitVi
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        reconcileSidebarPresentation()
+        reconcileSidebarPresentation(animated: false)
+        applyReferenceSidebarWidthIfNeeded()
     }
 
-    func update(sidebar: Sidebar, detail: Detail, isSidebarPresented: Bool) {
+    override func splitView(
+        _ splitView: NSSplitView,
+        additionalEffectiveRectOfDividerAt dividerIndex: Int
+    ) -> NSRect {
+        let systemRect = super.splitView(
+            splitView,
+            additionalEffectiveRectOfDividerAt: dividerIndex
+        )
+        guard dividerIndex == 0,
+              splitView.isVertical,
+              let sidebarView = splitView.arrangedSubviews.first else {
+            return systemRect
+        }
+
+        let extraWidth = max(
+            0,
+            WorkspaceSplitMetrics.sidebarResizeHitWidth - splitView.dividerThickness
+        )
+        let detailSideRect = NSRect(
+            x: sidebarView.frame.maxX + splitView.dividerThickness,
+            y: splitView.bounds.minY,
+            width: extraWidth,
+            height: splitView.bounds.height
+        )
+        return systemRect.isEmpty ? detailSideRect : systemRect.union(detailSideRect)
+    }
+
+    func update(
+        sidebar: Sidebar,
+        detail: Detail,
+        isSidebarPresented: Bool,
+        animated: Bool = false
+    ) {
         sidebarHostingController.rootView = sidebar
         detailHostingController.rootView = detail
         self.isSidebarPresented = isSidebarPresented
-        reconcileSidebarPresentation()
+        reconcileSidebarPresentation(animated: animated)
     }
 
-    private func reconcileSidebarPresentation() {
+    private func reconcileSidebarPresentation(animated: Bool) {
         let shouldCollapse = !isSidebarPresented
-        if sidebarItem.isCollapsed != shouldCollapse {
-            sidebarItem.isCollapsed = shouldCollapse
+        guard sidebarItem.isCollapsed != shouldCollapse,
+              !isAnimatingSidebarPresentation else {
+            return
         }
+
+        guard animated, view.window != nil else {
+            sidebarItem.isCollapsed = shouldCollapse
+            return
+        }
+
+        isAnimatingSidebarPresentation = true
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = MonknotMotion.sidebarTransitionDuration
+            sidebarItem.animator().isCollapsed = shouldCollapse
+        } completionHandler: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                isAnimatingSidebarPresentation = false
+                reconcileSidebarPresentation(animated: false)
+            }
+        }
+    }
+
+    private func applyReferenceSidebarWidthIfNeeded() {
+        guard shouldApplyReferenceSidebarWidth,
+              isSidebarPresented,
+              splitView.bounds.width > WorkspaceSplitMetrics.sidebarMinimumWidth else {
+            return
+        }
+
+        shouldApplyReferenceSidebarWidth = false
+        splitView.setPosition(WorkspaceSplitMetrics.sidebarMinimumWidth, ofDividerAt: 0)
     }
 }

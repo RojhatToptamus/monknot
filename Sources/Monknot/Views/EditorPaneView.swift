@@ -64,20 +64,15 @@ struct EditorPaneView: View {
     @State private var splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
     @State private var previewSyncLine: Int?
     @State private var sourceSyncLine: Int?
+    @State private var currentVisibleSourceLine = 1
     let theme: AppTheme
     let zoomScale: Double
     let codeFontSize: CGFloat
     let previewWidthPercent: Double
+    let showsDocumentOutline: Bool
     let usePointerCursors: Bool
     let fontSmoothing: Bool
-    let tabs: [WorkspaceTabItem]
-    let activeTabID: String?
     let activeViewportState: DocumentViewportState?
-    let missingTabIDs: Set<String>
-    let selectTab: (String) -> Void
-    let closeTab: (String) -> Void
-    let togglePinTab: (String) -> Void
-    let reorderTab: (String, String?) -> Void
     let updateViewportState: (String, DocumentViewportStateChange) -> Void
     let pdfUndoCommandSerial: Int
     let pdfRedoCommandSerial: Int
@@ -87,17 +82,12 @@ struct EditorPaneView: View {
     @Binding var previewLocation: MarkdownSourceLocation?
     @Binding var pdfSearchTarget: WorkspaceSearchPDFTarget?
     @Binding var documentSearch: DocumentSearchState
-    let isSidebarVisible: Bool
     let newMarkdown: () -> Void
     let bootstrapStarterWorkspace: () -> Void
     let openFolder: () -> Void
-    let toggleTerminal: () -> Void
     let closeTerminal: () -> Void
-    let toggleSidebar: () -> Void
     let outlineItems: [MarkdownOutlineItem]
     let selectOutlineItem: (MarkdownOutlineItem) -> Void
-    let toggleSplitView: () -> Void
-    let canToggleSplitView: Bool
     let onPreviewSourceJump: (MarkdownSourceLocation) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -125,6 +115,7 @@ struct EditorPaneView: View {
             terminalSessions.setDefaultDirectory(activeTerminalDirectory)
         }
         .onChange(of: store.selectedDocument?.id) { oldDocumentID, newDocumentID in
+            currentVisibleSourceLine = 1
             if let oldDocumentID,
                supportsSplitViewRatioPersistence(forDocumentID: oldDocumentID) {
                 DocumentSplitViewPersistence.setSourcePaneRatio(
@@ -142,6 +133,21 @@ struct EditorPaneView: View {
         }
     }
 
+    private var showsMarkdownSourceSubchrome: Bool {
+        guard let document = store.selectedDocument,
+              document.kind == .markdown,
+              document.capabilities.canEditText
+        else {
+            return false
+        }
+        return editorMode == .source || isSplitViewEnabled
+    }
+
+    private func supportsSplitViewRatioPersistence(forDocumentID documentID: String) -> Bool {
+        guard let document = store.document(id: documentID) else { return false }
+        return document.kind == .markdown || document.capabilities.canPreviewHTML
+    }
+
     @ViewBuilder
     private func editorAndDrawer(in size: CGSize) -> some View {
         let layout = TerminalDrawerLayoutPolicy.resolve(
@@ -151,155 +157,52 @@ struct EditorPaneView: View {
         let editorWidth = isTerminalPresented && layout.presentation == .sideBySide
             ? max(0, size.width - layout.drawerWidth)
             : size.width
-        let sharesPrimaryChrome = isTerminalPresented && layout.presentation == .takeover
-        let primaryChromeHeight = MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
-        let terminalHeight = sharesPrimaryChrome
-            ? max(0, size.height - primaryChromeHeight)
-            : size.height
+        let terminalTakesOver = isTerminalPresented && layout.presentation == .takeover
 
-        ZStack(alignment: .topTrailing) {
-            editorColumn(sharesPrimaryChromeWithTerminal: sharesPrimaryChrome)
+        ZStack(alignment: .trailing) {
+            editorColumn
                 .frame(width: editorWidth)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .allowsHitTesting(!terminalTakesOver)
+                .accessibilityHidden(terminalTakesOver)
 
             if isTerminalPresented {
-                terminalDrawer(
-                    layout: layout,
-                    showsChrome: !sharesPrimaryChrome,
-                    close: closeTerminal
-                )
-                    .frame(width: layout.drawerWidth, height: terminalHeight)
-                    .frame(
-                        maxWidth: .infinity,
-                        maxHeight: .infinity,
-                        alignment: sharesPrimaryChrome ? .bottomTrailing : .topTrailing
-                    )
+                terminalDrawer(layout: layout)
+                    .frame(width: layout.drawerWidth)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
                     .transition(.move(edge: .trailing))
-                    .zIndex(1)
+                    .zIndex(2)
             }
         }
         .animation(drawerAnimation, value: isTerminalPresented)
     }
 
-    private var showsMarkdownSourceSubchrome: Bool {
-        guard store.selectedDocument?.kind == .markdown else { return false }
-        return editorMode == .source || isSplitViewEnabled
-    }
-
-    private func supportsSplitViewRatioPersistence(forDocumentID documentID: String) -> Bool {
-        guard let document = store.document(id: documentID) else { return false }
-        return document.kind == .markdown || document.capabilities.canPreviewHTML
-    }
-
-    private func editorColumn(sharesPrimaryChromeWithTerminal: Bool) -> some View {
+    private var editorColumn: some View {
         VStack(spacing: 0) {
-            editorChromePanel(sharesPrimaryChromeWithTerminal: sharesPrimaryChromeWithTerminal)
-
-            editorContentPanel(sharesPrimaryChromeWithTerminal: sharesPrimaryChromeWithTerminal)
-        }
-    }
-
-    private func editorContentPanel(sharesPrimaryChromeWithTerminal: Bool) -> some View {
-        editorContent
-            .frame(
-                minWidth: 0,
-                maxWidth: .infinity,
-                minHeight: 0,
-                maxHeight: .infinity,
-                alignment: .top
-            )
-            .clipped()
-            .allowsHitTesting(!sharesPrimaryChromeWithTerminal)
-            .accessibilityHidden(sharesPrimaryChromeWithTerminal)
-    }
-
-    private func editorChromePanel(sharesPrimaryChromeWithTerminal: Bool) -> some View {
-        MonknotChromePanel(theme: theme) {
-            VStack(spacing: 0) {
-                if sharesPrimaryChromeWithTerminal {
-                    HStack(spacing: 0) {
-                        editorPrimaryChrome
-                            .frame(
-                                minWidth: MonknotMetrics.interfaceDensity(
-                                    MonknotMetrics.takeoverDocumentChromeMinWidthBase,
-                                    theme: theme,
-                                    zoomScale: zoomScale
-                                ),
-                                maxWidth: .infinity
-                            )
-                            .layoutPriority(1)
-
-                        TerminalDrawerTakeoverSegment(
-                            sessions: terminalSessions,
-                            workingDirectory: activeTerminalDirectory,
-                            theme: theme,
-                            zoomScale: zoomScale,
-                            uiFontSize: theme.uiFontSize,
-                            close: closeTerminal
-                        )
-                        .layoutPriority(0)
-                    }
-                    .frame(height: MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale))
-                } else {
-                    editorPrimaryChrome
-                }
-
-                if showsMarkdownSourceSubchrome && !sharesPrimaryChromeWithTerminal {
-                    MonknotChromeDivider(theme: theme)
+            if showsMarkdownSourceSubchrome {
+                MonknotChromePanel(theme: theme) {
                     MarkdownSourceToolbar(
                         theme: theme,
                         zoomScale: zoomScale,
+                        text: store.documentText,
                         sendCommand: sendMarkdownCommand
                     )
                 }
             }
+
+            editorContent
+                .frame(
+                    minWidth: 0,
+                    maxWidth: .infinity,
+                    minHeight: 0,
+                    maxHeight: .infinity,
+                    alignment: .top
+                )
+                .clipped()
         }
     }
 
-    private var editorPrimaryChrome: some View {
-        TopNavigationBar(
-            editorMode: $editorMode,
-            isSplitViewEnabled: $isSplitViewEnabled,
-            emptyStateTitle: store.workspaceURL?.lastPathComponent ?? "Monknot",
-            selectedDocument: store.selectedDocument,
-            isBusy: store.isBusy,
-            isDocumentLoading: store.isDocumentLoading,
-            isSaving: store.isSaving,
-            theme: theme,
-            zoomScale: zoomScale,
-            isTerminalPresented: isTerminalPresented,
-            isSidebarVisible: isSidebarVisible,
-            toggleTerminal: toggleTerminal,
-            toggleSidebar: toggleSidebar,
-            outlineItems: outlineItems,
-            selectOutlineItem: selectOutlineItem,
-            toggleSplitView: toggleSplitView,
-            canToggleSplitView: canToggleSplitView,
-            documentSearch: $documentSearch,
-            tabs: tabs,
-            activeTabID: activeTabID,
-            missingTabIDs: missingTabIDs,
-            saveState: { store.saveState(for: $0) },
-            selectTab: selectTab,
-            closeTab: closeTab,
-            togglePinTab: togglePinTab,
-            reorderTab: reorderTab
-        )
-    }
-
-    private func sendMarkdownCommand(_ command: MarkdownTextEditorCommand) {
-        markdownCommandSerial += 1
-        markdownCommandRequest = MarkdownTextEditorCommandRequest(
-            serial: markdownCommandSerial,
-            command: command
-        )
-    }
-
-    private func terminalDrawer(
-        layout: TerminalDrawerLayout,
-        showsChrome: Bool,
-        close: @escaping () -> Void
-    ) -> some View {
+    private func terminalDrawer(layout: TerminalDrawerLayout) -> some View {
         TerminalDrawerView(
             sessions: terminalSessions,
             workingDirectory: activeTerminalDirectory,
@@ -307,14 +210,17 @@ struct EditorPaneView: View {
             zoomScale: zoomScale,
             usePointerCursors: usePointerCursors,
             fontSmoothing: fontSmoothing,
-            showsChrome: showsChrome,
-            close: close
+            showsChrome: true,
+            close: closeTerminal
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.contentSurfaceColor)
         .overlay(alignment: .leading) {
             if layout.presentation == .sideBySide {
-                middleContentTrailingDivider
+                Rectangle()
+                    .fill(theme.separatorColor)
+                    .frame(width: 1)
+                    .frame(maxHeight: .infinity)
             }
         }
         .overlay(alignment: .leading) {
@@ -324,29 +230,27 @@ struct EditorPaneView: View {
                     minWidth: MonknotMetrics.terminalDrawerMinWidth,
                     maxWidth: layout.maximumDrawerWidth
                 )
-                .frame(width: terminalResizeHitWidth)
-                .offset(x: -terminalResizeHitWidth / 2)
+                // Keep the visible divider at one point while providing a
+                // forgiving target on both sides of it.
+                .frame(width: MonknotMetrics.terminalResizeHitWidth)
+                .offset(x: -MonknotMetrics.terminalResizeHitWidth / 2)
+                .zIndex(3)
             }
         }
-    }
-
-    private var terminalResizeHitWidth: CGFloat {
-        20
-    }
-
-    /// The editor owns the single boundary line between the middle content
-    /// and the trailing drawer. The drawer itself does not draw an edge.
-    private var middleContentTrailingDivider: some View {
-        Rectangle()
-            .fill(theme.separatorColor)
-            .frame(width: 1)
-            .frame(maxHeight: .infinity)
     }
 
     private var activeTerminalDirectory: URL? {
         TerminalWorkingDirectoryPolicy.directory(
             workspaceURL: store.workspaceURL,
             selectedDocumentURL: store.selectedDocument?.url
+        )
+    }
+
+    private func sendMarkdownCommand(_ command: MarkdownTextEditorCommand) {
+        markdownCommandSerial += 1
+        markdownCommandRequest = MarkdownTextEditorCommandRequest(
+            serial: markdownCommandSerial,
+            command: command
         )
     }
 
@@ -532,22 +436,39 @@ struct EditorPaneView: View {
 
     @ViewBuilder
     private func markdownEditor(for selectedDocument: WorkspaceDocument) -> some View {
-        if isSplitViewEnabled {
-            HSplitView {
-                markdownSourceEditor(for: selectedDocument)
-                    .frame(minWidth: 240)
-                    .background(
-                        splitViewRatioAccessor(for: selectedDocument)
-                    )
-                markdownPreviewPane(for: selectedDocument)
-                    .frame(minWidth: 240)
+        ZStack(alignment: .trailing) {
+            if isSplitViewEnabled {
+                HSplitView {
+                    markdownSourceEditor(for: selectedDocument)
+                        .frame(minWidth: 240)
+                        .background(
+                            splitViewRatioAccessor(for: selectedDocument)
+                        )
+                    markdownPreviewPane(for: selectedDocument)
+                        .frame(minWidth: 240)
+                }
+            } else {
+                switch editorMode {
+                case .source:
+                    markdownSourceEditor(for: selectedDocument)
+                case .preview:
+                    markdownPreviewPane(for: selectedDocument)
+                }
             }
-        } else {
-            switch editorMode {
-            case .source:
-                markdownSourceEditor(for: selectedDocument)
-            case .preview:
-                markdownPreviewPane(for: selectedDocument)
+
+            if showsDocumentOutline, outlineItems.count >= 2 {
+                MarkdownOutlineRail(
+                    items: outlineItems,
+                    visibleLine: currentVisibleSourceLine,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    select: { item in
+                        currentVisibleSourceLine = item.location.line
+                        selectOutlineItem(item)
+                    }
+                )
+                .frame(maxHeight: .infinity)
+                .zIndex(5)
             }
         }
     }
@@ -573,6 +494,7 @@ struct EditorPaneView: View {
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
             },
             onVisibleTopLineChange: { line in
+                currentVisibleSourceLine = line
                 syncPreviewScroll(to: line)
             }
         )
@@ -600,6 +522,7 @@ struct EditorPaneView: View {
                 updateViewportState(selectedDocument.id, .markdownPreviewScrollPosition(position))
             },
             onVisibleSourceLineChange: { line in
+                currentVisibleSourceLine = line
                 syncSourceScroll(to: line)
             }
         )
@@ -709,8 +632,8 @@ struct TerminalResizeHandle: NSViewRepresentable {
         let view = ResizeHandleView()
         view.coordinator = context.coordinator
         view.setAccessibilityElement(true)
-        view.setAccessibilityLabel("Resize terminal sidebar")
-        view.setAccessibilityHelp("Drag left or right to resize the terminal sidebar.")
+        view.setAccessibilityLabel("Resize terminal panel")
+        view.setAccessibilityHelp("Drag left or right to resize the terminal panel.")
         return view
     }
 

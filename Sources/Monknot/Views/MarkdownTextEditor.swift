@@ -103,7 +103,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
-        textView.textContainerInset = NSSize(width: 24, height: 24)
+        textView.textContainerInset = NSSize(width: 16, height: 18)
         let resolvedFont = font(for: theme, size: fontSize)
         textView.font = resolvedFont
         textView.textContainer?.widthTracksTextView = true
@@ -121,6 +121,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.markThemeApplied(theme)
         context.coordinator.markFontSmoothingApplied(fontSmoothing)
         context.coordinator.markMarkdownShortcutsApplied(markdownShortcutsEnabled)
+        context.coordinator.applySyntaxHighlighting(
+            enabled: markdownShortcutsEnabled,
+            theme: theme,
+            font: resolvedFont,
+            in: textView
+        )
 
         return scrollView
     }
@@ -163,6 +169,13 @@ struct MarkdownTextEditor: NSViewRepresentable {
         if let commandRequest {
             context.coordinator.apply(commandRequest)
         }
+
+        context.coordinator.applySyntaxHighlighting(
+            enabled: markdownShortcutsEnabled,
+            theme: theme,
+            font: resolvedFont,
+            in: textView
+        )
 
         if didChangeDocument {
             context.coordinator.restoreScrollPosition(scrollPosition?.point ?? .zero, in: scrollView)
@@ -238,6 +251,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private var lastAppliedTheme: AppTheme?
         private var lastAppliedFontSmoothing: Bool?
         private var lastAppliedMarkdownShortcuts: Bool?
+        private var lastSyntaxText: String?
+        private var lastSyntaxTheme: AppTheme?
+        private var lastSyntaxFontName: String?
+        private var lastSyntaxFontSize: CGFloat?
+        private var lastSyntaxEnabled: Bool?
 
         init(text: Binding<String>) {
             self._text = text
@@ -309,7 +327,36 @@ struct MarkdownTextEditor: NSViewRepresentable {
             publishCurrentScrollPosition()
             documentID = nextDocumentID
             lastPublishedScrollPosition = nil
+            lastSyntaxText = nil
             return true
+        }
+
+        func applySyntaxHighlighting(
+            enabled: Bool,
+            theme: AppTheme,
+            font: NSFont,
+            in textView: NSTextView
+        ) {
+            let source = textView.string
+            guard lastSyntaxText != source ||
+                    lastSyntaxTheme != theme ||
+                    lastSyntaxFontName != font.fontName ||
+                    abs((lastSyntaxFontSize ?? -1) - font.pointSize) > 0.001 ||
+                    lastSyntaxEnabled != enabled
+            else { return }
+
+            MarkdownSyntaxHighlighter.apply(
+                source,
+                enabled: enabled,
+                theme: theme,
+                font: font,
+                to: textView
+            )
+            lastSyntaxText = source
+            lastSyntaxTheme = theme
+            lastSyntaxFontName = font.fontName
+            lastSyntaxFontSize = font.pointSize
+            lastSyntaxEnabled = enabled
         }
 
         func applySyncScrollTargetLine(_ line: Int?, in textView: NSTextView, scrollView: NSScrollView) {
@@ -360,7 +407,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         }
 
         private func publishVisibleTopLineIfNeeded(in textView: NSTextView, scrollView: NSScrollView) {
-            guard syncScrollEnabled, !isRestoringScrollPosition else { return }
+            guard !isRestoringScrollPosition else { return }
             let line = visibleTopLine(in: textView, scrollView: scrollView)
             guard line > 0, line != lastPublishedTopLine else { return }
             lastPublishedTopLine = line
@@ -371,7 +418,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             guard documentID != nil,
                   position.isMeaningfullyDifferent(from: lastPublishedScrollPosition)
             else {
-                if syncScrollEnabled, let textView, let scrollView {
+                if let textView, let scrollView {
                     publishVisibleTopLineIfNeeded(in: textView, scrollView: scrollView)
                 }
                 return
@@ -652,6 +699,129 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 self.isDark = theme.isDark
             }
         }
+    }
+}
+
+enum MarkdownSyntaxStyle: Equatable {
+    case heading
+    case quote
+    case strong
+    case wikilink
+    case link
+    case code
+}
+
+struct MarkdownSyntaxToken: Equatable {
+    let range: NSRange
+    let style: MarkdownSyntaxStyle
+}
+
+enum MarkdownSyntaxTokenizer {
+    private struct Pattern {
+        let expression: NSRegularExpression
+        let style: MarkdownSyntaxStyle
+    }
+
+    private static let patterns: [Pattern] = [
+        Pattern(
+            expression: try! NSRegularExpression(pattern: #"(?m)^ {0,3}>.*$"#),
+            style: .quote
+        ),
+        Pattern(
+            expression: try! NSRegularExpression(pattern: #"(?m)^ {0,3}#{1,6}[\t ]+.*$"#),
+            style: .heading
+        ),
+        Pattern(
+            expression: try! NSRegularExpression(pattern: #"(?:\*\*[^*\n]+\*\*|__[^_\n]+__)"#),
+            style: .strong
+        ),
+        Pattern(
+            expression: try! NSRegularExpression(pattern: #"\[\[[^\]\n]+\]\]"#),
+            style: .wikilink
+        ),
+        Pattern(
+            expression: try! NSRegularExpression(pattern: #"\[[^\]\n]+\]\([^\)\n]+\)"#),
+            style: .link
+        ),
+        Pattern(
+            expression: try! NSRegularExpression(pattern: #"`[^`\n]+`"#),
+            style: .code
+        )
+    ]
+
+    static func tokens(in source: String) -> [MarkdownSyntaxToken] {
+        let range = NSRange(location: 0, length: (source as NSString).length)
+        return patterns.flatMap { pattern in
+            pattern.expression.matches(in: source, range: range).map {
+                MarkdownSyntaxToken(range: $0.range, style: pattern.style)
+            }
+        }
+    }
+}
+
+enum MarkdownEditorLayout {
+    static func lineHeight(forFontSize fontSize: CGFloat) -> CGFloat {
+        max(22, ceil(fontSize * 1.45))
+    }
+}
+
+private enum MarkdownSyntaxHighlighter {
+    static func apply(
+        _ source: String,
+        enabled: Bool,
+        theme: AppTheme,
+        font: NSFont,
+        to textView: NSTextView
+    ) {
+        guard let storage = textView.textStorage else { return }
+        let fullRange = NSRange(location: 0, length: (source as NSString).length)
+        let paragraphStyle = NSMutableParagraphStyle()
+        if enabled {
+            let lineHeight = MarkdownEditorLayout.lineHeight(forFontSize: font.pointSize)
+            paragraphStyle.minimumLineHeight = lineHeight
+            paragraphStyle.maximumLineHeight = lineHeight
+        }
+
+        let primary = NSColor(hex: theme.foreground)
+        let baseColor = enabled ? primary.withAlphaComponent(0.62) : primary
+        let baseAttributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: baseColor,
+            .paragraphStyle: paragraphStyle
+        ]
+
+        storage.beginEditing()
+        storage.setAttributes(baseAttributes, range: fullRange)
+
+        if enabled {
+            let boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+            for token in MarkdownSyntaxTokenizer.tokens(in: source) {
+                let attributes: [NSAttributedString.Key: Any]
+                switch token.style {
+                case .heading:
+                    attributes = [
+                        .font: boldFont,
+                        .foregroundColor: NSColor(hex: theme.accent)
+                    ]
+                case .quote:
+                    attributes = [.foregroundColor: primary.withAlphaComponent(0.40)]
+                case .strong:
+                    attributes = [
+                        .font: boldFont,
+                        .foregroundColor: primary
+                    ]
+                case .wikilink:
+                    attributes = [.foregroundColor: NSColor(hex: theme.semanticColors.skill)]
+                case .link:
+                    attributes = [.foregroundColor: NSColor(hex: theme.accent)]
+                case .code:
+                    attributes = [.foregroundColor: NSColor(hex: theme.accent).withAlphaComponent(0.88)]
+                }
+                storage.addAttributes(attributes, range: token.range)
+            }
+        }
+        storage.endEditing()
+        textView.typingAttributes = baseAttributes
     }
 }
 

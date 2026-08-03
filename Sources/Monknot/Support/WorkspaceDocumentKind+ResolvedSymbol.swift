@@ -5,9 +5,9 @@ extension WorkspaceDocumentKind {
     var resolvedSystemImage: String {
         switch self {
         case .markdown:
-            return MonknotSFSymbol.resolve("doc.richtext", fallback: systemImage)
+            return MonknotSFSymbol.resolve("doc.text", fallback: systemImage)
         case .pdf:
-            return MonknotSFSymbol.resolve("doc.fill", fallback: systemImage)
+            return MonknotSFSymbol.resolve("doc.richtext", fallback: systemImage)
         case .text:
             return MonknotSFSymbol.resolve("doc.text", fallback: systemImage)
         case .media:

@@ -3,9 +3,9 @@ import SwiftUI
 import WebKit
 
 enum MonknotScrollbarStyle {
-    static let trackWidth: CGFloat = 11
-    static let restingThumbWidth: CGFloat = 5
-    static let hoveredThumbWidth: CGFloat = 6
+    static let trackWidth: CGFloat = 12
+    static let restingThumbWidth: CGFloat = 6
+    static let hoveredThumbWidth: CGFloat = 8
     static let restingOpacity: CGFloat = 0.18
     static let hoveredOpacity: CGFloat = 0.55
 

@@ -36,6 +36,8 @@ struct MonknotApp: App {
         Settings {
             PreferencesView(themeStore: themeStore)
         }
+        .windowStyle(.titleBar)
+        .windowResizability(.contentMinSize)
     }
 }
 
@@ -45,6 +47,7 @@ private struct MonknotWindowRootView: View {
     @ObservedObject var themeStore: ThemeSettingsStore
     @ObservedObject var workspaceRestoration: InitialWorkspaceRestorationCoordinator
     let workspaceWindowRequests: WorkspaceWindowRequestCenter
+    @AppStorage("Monknot.reopenLastWorkspace") private var reopenLastWorkspace = true
     @State private var didHandleInitialRequest = false
     @State private var reusableWindowHandlerID = UUID()
 
@@ -80,7 +83,7 @@ private struct MonknotWindowRootView: View {
                           let workspaceURL = pendingRequest.workspaceURL {
                     workspaceStore.openWorkspace(workspaceURL, selecting: pendingRequest.selectedDocumentURL)
                     await importCaptureIfNeeded(from: pendingRequest)
-                } else if workspaceRestoration.claimInitialRestore() {
+                } else if reopenLastWorkspace, workspaceRestoration.claimInitialRestore() {
                     workspaceStore.restoreWorkspace()
                 }
 

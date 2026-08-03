@@ -49,7 +49,7 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         codeFontName: String? = nil,
         quietSidebar: Bool = false,
         uiFontSize: Double = 16,
-        codeFontSize: Double = 15,
+        codeFontSize: Double = 13,
         contrast: Double = 50
     ) {
         self.id = id
@@ -152,7 +152,7 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         codeFontName = try container.decodeIfPresent(String.self, forKey: .codeFontName)
         quietSidebar = try container.decodeIfPresent(Bool.self, forKey: .quietSidebar) ?? false
         uiFontSize = try container.decodeIfPresent(Double.self, forKey: .uiFontSize) ?? 16
-        codeFontSize = try container.decodeIfPresent(Double.self, forKey: .codeFontSize) ?? 15
+        codeFontSize = try container.decodeIfPresent(Double.self, forKey: .codeFontSize) ?? 13
         contrast = try container.decodeIfPresent(Double.self, forKey: .contrast) ?? 50
     }
 
@@ -335,7 +335,7 @@ public extension AppTheme {
     /// the reference design, where the sidebar offset is small in light and a
     /// touch stronger in dark so it remains perceptible against a dark canvas.
     var sidebarSurfaceHex: String {
-        recessedSurfaceHex(amount: isDark ? 0.075 : 0.018)
+        recessedSurfaceHex(amount: isDark ? 0.075 : 0.028)
     }
 
     /// The terminal shares the content canvas in the two-tier model, so its

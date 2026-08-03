@@ -86,22 +86,6 @@ struct AppearanceSettingsView: View {
                 }
             }
 
-            Menu {
-                Button("Reset to Preset") {
-                    reset(activeSlot)
-                }
-                .disabled(!canReset(activeSlot))
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 14))
-                    .foregroundStyle(uiTheme.mutedForegroundColor)
-                    .frame(width: 24, height: 24)
-                    .contentShape(Rectangle())
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Theme actions")
         }
     }
 
@@ -152,20 +136,6 @@ struct AppearanceSettingsView: View {
         return themeStore.selectedThemeID(for: slot) != baseline.themeID
             || draft(for: slot).sanitized(for: preset)
                 != baseline.configuration.sanitized(for: preset)
-    }
-
-    private func canReset(_ slot: ThemeSlot) -> Bool {
-        let preset = themeStore.presetTheme(for: slot)
-        return draft(for: slot).sanitized(for: preset)
-            != ThemeConfiguration(theme: preset).sanitized(for: preset)
-    }
-
-    private func reset(_ slot: ThemeSlot) {
-        themeStore.reset(slot)
-        switch slot {
-        case .light: lightDraft = themeStore.configuration(for: slot)
-        case .dark: darkDraft = themeStore.configuration(for: slot)
-        }
     }
 
     private func revert(_ slot: ThemeSlot) {

@@ -60,27 +60,35 @@ extension AppTheme {
     /// Hairline borders on controls and cards. Surface tone carries region
     /// separation, so borders stay subtle.
     var borderColor: Color {
-        foregroundColor.opacity((isDark ? 0.05 : 0.045) + normalizedContrast * 0.04)
+        foregroundColor.opacity(isDark ? 0.075 : 0.10)
     }
 
     /// Structural separators (region edges, chrome rules). Derived from the
     /// theme ink rather than pure white/black so it stays stable when the
     /// window is inactive.
     var separatorColor: Color {
-        foregroundColor.opacity((isDark ? 0.07 : 0.06) + normalizedContrast * 0.04)
+        foregroundColor.opacity(isDark ? 0.045 : 0.055)
     }
 
     var elevatedSurfaceColor: Color {
-        foregroundColor.opacity((isDark ? 0.035 : 0.025) + normalizedContrast * 0.055)
+        Color(hex: recessedSurfaceHex(amount: isDark ? 0.11 : 0.05))
     }
 
     /// Slightly stronger than `elevatedSurfaceColor` for inset fields and wells.
     var insetFillColor: Color {
-        foregroundColor.opacity((isDark ? 0.055 : 0.04) + normalizedContrast * 0.065)
+        Color(hex: recessedSurfaceHex(amount: isDark ? 0.17 : 0.09))
     }
 
     var mutedForegroundColor: Color {
-        foregroundColor.opacity((isDark ? 0.52 : 0.45) + normalizedContrast * 0.18)
+        foregroundColor.opacity(0.62)
+    }
+
+    var tertiaryForegroundColor: Color {
+        foregroundColor.opacity(0.40)
+    }
+
+    var disabledForegroundColor: Color {
+        foregroundColor.opacity(0.24)
     }
 
     /// Secondary sidebar ink is derived directly from the theme foreground.
@@ -100,12 +108,12 @@ extension AppTheme {
     }
 
     var selectedRowColor: Color {
-        accentColor.opacity(0.08 + normalizedContrast * 0.10)
+        Color(hex: selectionBackground)
     }
 
     /// Background for compact controls (segmented tracks, terminal tab chips).
     var controlTrackFillColor: Color {
-        foregroundColor.opacity((isDark ? 0.035 : 0.028) + normalizedContrast * 0.028)
+        foregroundColor.opacity(isDark ? 0.06 : 0.055)
     }
 
     /// Dimming layer over the editor when a drawer overlays constrained content.
@@ -140,79 +148,77 @@ extension AppTheme {
         return min(1.35, max(zoomFactor * layoutFontFactor, 0.875))
     }
 
-    /// Text, symbols, hit targets, row heights, and horizontal density have
-    /// separate bounded curves. This is the key to keeping the interface
-    /// visually balanced at 5× document zoom without recreating top-bar
-    /// overlap or making the sidebar unusably wide.
+    /// Workspace zoom primarily changes document content. Application chrome
+    /// follows a much gentler curve that reaches its ceiling at 3x, keeping
+    /// text, glyphs, controls, rows, and spacing visually proportionate without
+    /// allowing the titlebar or sidebars to consume the window at extreme zoom.
     func interfaceTextScale(zoomScale: Double) -> CGFloat {
-        boundedInterfaceScale(
+        interfaceScale(
             zoomScale: zoomScale,
-            maximumZoomContribution: 0.35,
-            minimumZoomScale: 0.90,
             fontInfluence: 1,
-            maximum: 1.55
+            zoomInfluence: 0.20,
+            minimum: 0.84,
+            maximum: 1.30
         )
     }
 
     func interfaceGlyphScale(zoomScale: Double) -> CGFloat {
-        boundedInterfaceScale(
+        interfaceScale(
             zoomScale: zoomScale,
-            maximumZoomContribution: 0.55,
-            minimumZoomScale: 0.90,
             fontInfluence: 0.30,
-            maximum: 1.65
-        )
-    }
-
-    func interfaceControlScale(zoomScale: Double) -> CGFloat {
-        boundedInterfaceScale(
-            zoomScale: zoomScale,
-            maximumZoomContribution: 0.40,
-            minimumZoomScale: 0.93,
-            fontInfluence: 0.20,
-            maximum: 1.45
-        )
-    }
-
-    func interfaceRowScale(zoomScale: Double) -> CGFloat {
-        boundedInterfaceScale(
-            zoomScale: zoomScale,
-            maximumZoomContribution: 0.35,
-            minimumZoomScale: 0.93,
-            fontInfluence: 0.20,
-            maximum: 1.40
-        )
-    }
-
-    func interfaceDensityScale(zoomScale: Double) -> CGFloat {
-        boundedInterfaceScale(
-            zoomScale: zoomScale,
-            maximumZoomContribution: 0.15,
-            minimumZoomScale: 0.95,
-            fontInfluence: 0.12,
+            zoomInfluence: 0.14,
+            minimum: 0.92,
             maximum: 1.18
         )
     }
 
-    private func boundedInterfaceScale(
+    func interfaceControlScale(zoomScale: Double) -> CGFloat {
+        interfaceScale(
+            zoomScale: zoomScale,
+            fontInfluence: 0.20,
+            zoomInfluence: 0.12,
+            minimum: 0.94,
+            maximum: 1.16
+        )
+    }
+
+    func interfaceRowScale(zoomScale: Double) -> CGFloat {
+        interfaceScale(
+            zoomScale: zoomScale,
+            fontInfluence: 0.20,
+            zoomInfluence: 0.10,
+            minimum: 0.95,
+            maximum: 1.14
+        )
+    }
+
+    func interfaceDensityScale(zoomScale: Double) -> CGFloat {
+        interfaceScale(
+            zoomScale: zoomScale,
+            fontInfluence: 0.12,
+            zoomInfluence: 0.08,
+            minimum: 0.97,
+            maximum: 1.10
+        )
+    }
+
+    private func interfaceScale(
         zoomScale: Double,
-        maximumZoomContribution: CGFloat,
-        minimumZoomScale: CGFloat,
         fontInfluence: CGFloat,
+        zoomInfluence: CGFloat,
+        minimum: CGFloat,
         maximum: CGFloat
     ) -> CGFloat {
-        let zoom = CGFloat(WorkspaceZoomPolicy.clamp(zoomScale))
-        let zoomComponent: CGFloat
-        if zoom >= 1 {
-            let progress = CGFloat(log(Double(zoom)) / log(WorkspaceZoomPolicy.maximum))
-            zoomComponent = 1 + maximumZoomContribution * progress
-        } else {
-            let compactProgress = (1 - zoom) / CGFloat(1 - WorkspaceZoomPolicy.minimum)
-            zoomComponent = 1 - (1 - minimumZoomScale) * compactProgress
-        }
-
         let fontAdjustment = (layoutFontFactor - 1) * fontInfluence
-        return min(maximum, max(0.84, zoomComponent + fontAdjustment))
+        let clampedZoom = CGFloat(WorkspaceZoomPolicy.clamp(zoomScale))
+        let normalizedZoom: CGFloat
+        if clampedZoom >= 1 {
+            normalizedZoom = min(clampedZoom - 1, 2) / 2
+        } else {
+            normalizedZoom = clampedZoom - 1
+        }
+        let zoomAdjustment = normalizedZoom * zoomInfluence
+        return min(maximum, max(minimum, 1 + fontAdjustment + zoomAdjustment))
     }
 
     func chromeRadius(_ basePoints: CGFloat, zoomScale: Double) -> CGFloat {

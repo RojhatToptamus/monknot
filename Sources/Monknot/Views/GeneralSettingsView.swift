@@ -1,128 +1,78 @@
-import AppKit
 import MonknotCore
 import SwiftUI
 
 struct GeneralSettingsView: View {
     let uiTheme: AppTheme
     @AppStorage("Monknot.usePointerCursors") private var usePointerCursors = false
+    @AppStorage("Monknot.reopenLastWorkspace") private var reopenLastWorkspace = true
     @AppStorage("Monknot.fontSmoothing") private var fontSmoothing = true
-    @State private var betaFeedback = ""
-    @State private var betaFeedbackNotice: String?
-    @State private var betaFeedbackNoticeIsError = false
-    @FocusState private var isFeedbackFocused: Bool
+    @AppStorage("Monknot.previewWidthPercent") private var previewWidthPercent = 88.0
 
     var body: some View {
         SettingsPage(theme: uiTheme) {
             SettingsSectionHeader(theme: uiTheme, title: "Behavior")
             SettingsGroupCard(theme: uiTheme, showsBorder: false) {
-                    SettingsToggleRow(
-                        theme: uiTheme,
-                        title: "Use pointer cursors",
-                        detail: "Non-standard on macOS; off by default",
-                        isOn: $usePointerCursors
-                    )
+                SettingsToggleRow(
+                    theme: uiTheme,
+                    title: "Pointer cursor on controls",
+                    detail: "Non-standard on macOS; off by default",
+                    isOn: $usePointerCursors
+                )
 
-                    SettingsToggleRow(
-                        theme: uiTheme,
-                        title: "Font smoothing",
-                        detail: "Use native macOS anti-aliasing",
-                        showsDivider: false,
-                        isOn: $fontSmoothing
-                    )
+                SettingsToggleRow(
+                    theme: uiTheme,
+                    title: "Reopen last workspace on launch",
+                    isOn: $reopenLastWorkspace
+                )
+
+                SettingsToggleRow(
+                    theme: uiTheme,
+                    title: "Font smoothing",
+                    detail: "Use native macOS anti-aliasing",
+                    showsDivider: false,
+                    isOn: $fontSmoothing
+                )
             }
 
-            SettingsSectionHeader(theme: uiTheme, title: "Beta")
+            SettingsSectionHeader(theme: uiTheme, title: "Reading")
                 .padding(.top, 22)
             SettingsGroupCard(theme: uiTheme, showsBorder: false) {
-                feedbackSection
-            }
-        }
-    }
-
-    private func saveBetaFeedback() {
-        do {
-            _ = try BetaFeedbackRecorder().append(message: betaFeedback)
-            betaFeedback = ""
-            betaFeedbackNoticeIsError = false
-            betaFeedbackNotice = "Saved locally."
-            announce("Feedback saved locally")
-        } catch {
-            betaFeedbackNoticeIsError = true
-            betaFeedbackNotice = error.localizedDescription
-            announce("Could not save feedback: \(error.localizedDescription)")
-        }
-    }
-
-    private func announce(_ message: String) {
-        NSAccessibility.post(
-            element: NSApp as Any,
-            notification: .announcementRequested,
-            userInfo: [
-                .announcement: message,
-                .priority: NSAccessibilityPriorityLevel.medium.rawValue
-            ]
-        )
-    }
-
-    private var feedbackSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Beta feedback")
-                    .font(MonknotTypography.settingsRowTitle(theme: uiTheme))
-                    .foregroundStyle(uiTheme.foregroundColor)
-
-                Text("Saved locally on this Mac only. No network calls.")
-                    .font(MonknotTypography.settingsRowDetail(theme: uiTheme))
-                    .foregroundStyle(uiTheme.mutedForegroundColor)
-            }
-
-            TextField("What should improve?", text: $betaFeedback, axis: .vertical)
-                .textFieldStyle(.plain)
-                .focused($isFeedbackFocused)
-                .accessibilityLabel("Beta feedback")
-                .accessibilityHint("Saved locally on this Mac only")
-                .lineLimit(3...6)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .frame(minHeight: 72, alignment: .topLeading)
-                .background(
-                    uiTheme.insetFillColor,
-                    in: RoundedRectangle(cornerRadius: uiTheme.settingsControlCornerRadius)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: uiTheme.settingsControlCornerRadius)
-                        .strokeBorder(
-                            isFeedbackFocused ? uiTheme.accentColor.opacity(0.9) : uiTheme.borderColor,
-                            lineWidth: isFeedbackFocused ? 1.5 : 1
-                        )
-                }
-
-            HStack(spacing: 12) {
-                MonknotAccentButton(
-                    title: "Save feedback",
+                SettingsSliderRow(
                     theme: uiTheme,
-                    isDisabled: betaFeedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ) {
-                    saveBetaFeedback()
-                }
+                    title: "Preview width",
+                    detail: "Share of the editor pane",
+                    value: $previewWidthPercent,
+                    range: 55...100,
+                    suffix: "%"
+                )
 
-                if let betaFeedbackNotice {
-                    Text(betaFeedbackNotice)
-                        .font(MonknotTypography.settingsRowDetail(theme: uiTheme))
-                        .foregroundStyle(
-                            betaFeedbackNoticeIsError
-                                ? Color(hex: uiTheme.semanticColors.diffRemoved)
-                                : uiTheme.mutedForegroundColor
-                        )
-                        .accessibilityLabel(
-                            betaFeedbackNoticeIsError
-                                ? "Could not save feedback: \(betaFeedbackNotice)"
-                                : betaFeedbackNotice
-                        )
+                SettingsRow(
+                    theme: uiTheme,
+                    title: "Terminal working directory",
+                    showsDivider: false
+                ) {
+                    HStack(spacing: 8) {
+                        Text("Workspace root")
+                            .font(.system(size: 12))
+                            .foregroundStyle(uiTheme.foregroundColor)
+
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(uiTheme.tertiaryForegroundColor)
+                    }
+                    .padding(.horizontal, 9)
+                    .frame(height: 24)
+                    .background(
+                        uiTheme.insetFillColor,
+                        in: RoundedRectangle(cornerRadius: uiTheme.settingsControlCornerRadius)
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: uiTheme.settingsControlCornerRadius)
+                            .strokeBorder(uiTheme.borderColor, lineWidth: 1)
+                    }
+                    .accessibilityElement(children: .combine)
                 }
             }
         }
-        .padding(.horizontal, MonknotMetrics.Spacing.settingsRowHorizontal)
-        .padding(.vertical, MonknotMetrics.Spacing.settingsRowVertical)
     }
 }

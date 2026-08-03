@@ -85,6 +85,7 @@ struct MonknotActionButton: View {
         .disabled(isDisabled)
         .focusable(!isDisabled)
         .focused($isFocused)
+        .focusEffectDisabled()
         .onHover { isHovered = $0 }
         .animation(MonknotMotion.hoverAnimation, value: isHovered)
         .monknotPointerCursor(enabled: !isDisabled)

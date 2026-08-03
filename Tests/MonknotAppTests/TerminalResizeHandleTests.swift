@@ -4,6 +4,10 @@ import XCTest
 
 @MainActor
 final class TerminalResizeHandleTests: XCTestCase {
+    func testResizeHandleUsesAForgivingInvisibleHitTarget() {
+        XCTAssertGreaterThanOrEqual(MonknotMetrics.terminalResizeHitWidth, 28)
+    }
+
     func testDragStartsFromDisplayedWidthWhenSavedWidthExceedsCurrentMaximum() {
         var width = 720.0
         let binding = Binding(

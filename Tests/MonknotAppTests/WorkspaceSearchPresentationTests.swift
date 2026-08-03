@@ -15,7 +15,7 @@ final class WorkspaceSearchPresentationTests: XCTestCase {
         )
     }
 
-    func testSearchFieldStopsGrowingAfterUtilityZoomCeiling() {
+    func testSearchFieldUsesTheBoundedUtilityZoomCurve() {
         let maximumHeight = WorkspaceSearchLayoutPolicy.fieldHeight(
             theme: .codexDark,
             zoomScale: WorkspaceZoomPolicy.maximum

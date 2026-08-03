@@ -2,10 +2,9 @@ import MonknotCore
 import AppKit
 import SwiftUI
 
-/// Workspace search is a narrow utility surface, so it follows interface zoom
-/// without inheriting the full document-scale ceiling used by the editor.
-/// This preserves legibility while keeping the field, buttons, and result list
-/// proportionate inside the sidebar at extreme zoom levels.
+/// Workspace search is a narrow utility surface. Its layout density is capped
+/// independently while control and glyph sizing remains fixed with the rest of
+/// the application chrome.
 enum WorkspaceSearchLayoutPolicy {
     static let maximumUtilityZoomScale = 2.0
 
@@ -87,8 +86,7 @@ struct WorkspaceSearchView: View {
             copyFeedbackTask = nil
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .confirmationDialog(
-            "Replace in workspace?",
+        .sheet(
             isPresented: Binding(
                 get: { replaceConfirmation != nil },
                 set: { isPresented in
@@ -96,19 +94,18 @@ struct WorkspaceSearchView: View {
                         replaceConfirmation = nil
                     }
                 }
-            ),
-            titleVisibility: .visible
+            )
         ) {
-            Button("Replace All", role: .destructive) {
-                replaceConfirmation = nil
-                replaceAll()
-            }
-            Button("Cancel", role: .cancel) {
-                replaceConfirmation = nil
-            }
-        } message: {
             if let preview = replaceConfirmation {
-                Text(WorkspaceReplacePreview.summaryMessage(for: preview))
+                WorkspaceReplaceConfirmationSheet(
+                    preview: preview,
+                    theme: theme,
+                    cancel: { replaceConfirmation = nil },
+                    confirm: {
+                        replaceConfirmation = nil
+                        replaceAll()
+                    }
+                )
             }
         }
     }
@@ -364,8 +361,8 @@ struct WorkspaceSearchView: View {
 
     private var reviewReplaceButton: some View {
         MonknotActionButton(
-            title: "Review Replace…",
-            role: .secondary,
+            title: "Replace All",
+            role: .primary,
             theme: theme,
             zoomScale: panelZoomScale,
             isDisabled: !canReviewReplace
@@ -671,6 +668,104 @@ struct WorkspaceSearchView: View {
             didCopyResults = false
             copyFeedbackTask = nil
         }
+    }
+}
+
+private struct WorkspaceReplaceConfirmationSheet: View {
+    let preview: WorkspaceReplacePreview
+    let theme: AppTheme
+    let cancel: () -> Void
+    let confirm: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Replace \(preview.totalReplacements) match\(preview.totalReplacements == 1 ? "" : "es") in \(preview.affectedFileCount) file\(preview.affectedFileCount == 1 ? "" : "s")?")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(theme.foregroundColor)
+
+                Text("The scope was chosen in Find in Workspace. This action changes the files listed below and can be undone with ⌘Z while Monknot stays open.")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(theme.mutedForegroundColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            MonknotScrollView {
+                VStack(spacing: 0) {
+                    ForEach(Array(preview.fileResults.enumerated()), id: \.element.documentID) { index, result in
+                        HStack(spacing: 12) {
+                            Image(systemName: "doc.text")
+                                .font(.system(size: 14))
+                                .foregroundStyle(theme.tertiaryForegroundColor)
+
+                            Text(result.relativePath)
+                                .font(.system(size: 13))
+                                .foregroundStyle(theme.foregroundColor)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+
+                            Spacer(minLength: 12)
+
+                            Text("\(result.replacementCount)")
+                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .foregroundStyle(theme.mutedForegroundColor)
+                        }
+                        .padding(.horizontal, 14)
+                        .frame(height: 34)
+                        .overlay(alignment: .bottom) {
+                            if index < preview.fileResults.count - 1 {
+                                Rectangle()
+                                    .fill(theme.separatorColor)
+                                    .frame(height: 1)
+                                    .padding(.leading, 40)
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 220)
+            .background(theme.elevatedSurfaceColor, in: RoundedRectangle(cornerRadius: 10))
+
+            if preview.skippedDirtyCount > 0 || preview.skippedLargeFileCount > 0 {
+                Text(skippedMessage)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(theme.tertiaryForegroundColor)
+            }
+
+            HStack(spacing: 10) {
+                Spacer()
+
+                MonknotActionButton(
+                    title: "Cancel",
+                    role: .secondary,
+                    theme: theme,
+                    action: cancel
+                )
+                .keyboardShortcut(.cancelAction)
+
+                MonknotActionButton(
+                    title: "Replace All",
+                    role: .primary,
+                    theme: theme,
+                    action: confirm
+                )
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 520)
+        .background(theme.contentSurfaceColor)
+    }
+
+    private var skippedMessage: String {
+        var parts: [String] = []
+        if preview.skippedDirtyCount > 0 {
+            parts.append("\(preview.skippedDirtyCount) unsaved file\(preview.skippedDirtyCount == 1 ? "" : "s")")
+        }
+        if preview.skippedLargeFileCount > 0 {
+            parts.append("\(preview.skippedLargeFileCount) large file\(preview.skippedLargeFileCount == 1 ? "" : "s")")
+        }
+        return parts.joined(separator: " and ") + " will be skipped."
     }
 }
 
