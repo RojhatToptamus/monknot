@@ -17,15 +17,11 @@ enum MonknotMetrics {
     static let iconCornerRadiusBase: CGFloat = 7
     static let trafficLightReserveBase: CGFloat = 72
     static let windowNavigationLeadingGapBase: CGFloat = 8
-    static let compactTopBarEffectiveWidth: CGFloat = 600
-    static let minimalTopBarEffectiveWidth: CGFloat = 480
     // File tabs follow their measured title width. The bounds only protect the
     // icon/close affordances and prevent one unusually long path from owning
     // the entire titlebar.
     static let tabMinWidthBase: CGFloat = 84
     static let tabMaxWidthBase: CGFloat = 244
-    static let pinnedTabMinWidthBase: CGFloat = 38
-    static let pinnedTabMaxWidthBase: CGFloat = 38
     /// Below this width, the editor can no longer keep useful content beside
     /// the trailing terminal panel, so the terminal takes over the detail area.
     static let editorMinimumReadableWidth: CGFloat = 360
@@ -108,26 +104,6 @@ enum MonknotMetrics {
             + interfaceDensity(10, theme: theme, zoomScale: zoomScale)
     }
 
-    static func topBarLayoutMode(
-        availableWidth: CGFloat,
-        theme: AppTheme,
-        zoomScale: Double
-    ) -> MonknotTopBarLayoutMode {
-        let effectiveWidth = availableWidth / theme.interfaceDensityScale(zoomScale: zoomScale)
-        if effectiveWidth < minimalTopBarEffectiveWidth {
-            return .minimal
-        }
-        if effectiveWidth < compactTopBarEffectiveWidth {
-            return .compact
-        }
-        return .regular
-    }
-}
-
-enum MonknotTopBarLayoutMode: Equatable {
-    case regular
-    case compact
-    case minimal
 }
 
 enum WorkspaceZoomPolicy {
@@ -179,7 +155,7 @@ enum WorkspaceZoomPolicy {
         return defaultValue - (defaultValue - minimumDocumentScale) * progress
     }
 
-    private static func rawZoom(forDocumentScale scale: Double) -> Double {
+    static func rawZoom(forDocumentScale scale: Double) -> Double {
         let boundedScale = min(maximumDocumentScale, max(minimumDocumentScale, scale))
         if boundedScale == minimumDocumentScale { return minimum }
         if boundedScale == defaultValue { return defaultValue }

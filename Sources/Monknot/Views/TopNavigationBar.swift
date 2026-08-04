@@ -43,13 +43,10 @@ struct TopNavigationBar: View {
     var canNavigateBack = false
     var canNavigateForward = false
     @FocusState private var isSearchFocused: Bool
-    @State private var isOverflowMenuHovered = false
 
     private var showsMarkdownViewControls: Bool {
         selectedDocument?.kind == .markdown
     }
-
-    private var uiFontSize: Double { theme.uiFontSize }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
@@ -78,8 +75,7 @@ struct TopNavigationBar: View {
                 canNavigateBack: canNavigateBack,
                 canNavigateForward: canNavigateForward,
                 theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: uiFontSize
+                zoomScale: zoomScale
             )
 
             Rectangle()
@@ -99,7 +95,7 @@ struct TopNavigationBar: View {
             }
 
             if documentSearch.isPresented {
-                documentSearchBar(layoutMode: .regular)
+                documentSearchBar
             } else {
                 if showsMarkdownViewControls {
                     viewModeControl
@@ -120,12 +116,11 @@ struct TopNavigationBar: View {
     }
 
     private var sidebarToggleButton: some View {
-        ChromeBarButton(
+        MonknotIconButton(
             systemImage: MonknotWorkspaceIcons.sidebarLeft,
             label: isSidebarVisible ? "Hide Sidebar" : "Show Sidebar",
             theme: theme,
             zoomScale: zoomScale,
-            uiFontSize: uiFontSize,
             isActive: isSidebarVisible,
             action: toggleSidebar
         )
@@ -133,12 +128,11 @@ struct TopNavigationBar: View {
     }
 
     private var drawerToggleButton: some View {
-        ChromeBarButton(
+        MonknotIconButton(
             systemImage: MonknotWorkspaceIcons.sidebarRight,
             label: isTerminalPresented ? "Hide Terminal Panel" : "Show Terminal Panel",
             theme: theme,
             zoomScale: zoomScale,
-            uiFontSize: uiFontSize,
             isActive: isTerminalPresented,
             action: toggleTerminal
         )
@@ -196,7 +190,6 @@ struct TopNavigationBar: View {
                 missingDocumentIDs: missingTabIDs,
                 theme: theme,
                 zoomScale: zoomScale,
-                uiFontSize: uiFontSize,
                 isDisabled: isBusy,
                 saveState: saveState,
                 selectTab: selectTab,
@@ -208,7 +201,7 @@ struct TopNavigationBar: View {
         }
     }
 
-    private func documentSearchBar(layoutMode: MonknotTopBarLayoutMode) -> some View {
+    private var documentSearchBar: some View {
         HStack(spacing: scaled(8)) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: glyphScaled(14), weight: .medium))
@@ -230,43 +223,37 @@ struct TopNavigationBar: View {
             .focused($isSearchFocused)
             .font(.system(size: textScaled(13), weight: .regular))
             .foregroundStyle(theme.foregroundColor)
-            .frame(width: searchFieldWidth(layoutMode: layoutMode))
+            .frame(width: scaled(190))
             .onSubmit {
                 documentSearch.findNext()
             }
             .accessibilityLabel("Search in document")
 
-            if layoutMode != .minimal {
-                Text(documentSearch.countText)
-                    .font(.system(size: textScaled(11), weight: .medium, design: .rounded))
-                    .foregroundStyle(theme.mutedForegroundColor)
-                    .monospacedDigit()
-                    .frame(minWidth: scaled(42), alignment: .trailing)
-                    .accessibilityLabel("Search result \(documentSearch.countText)")
-            }
+            Text(documentSearch.countText)
+                .font(.system(size: textScaled(11), weight: .medium, design: .rounded))
+                .foregroundStyle(theme.mutedForegroundColor)
+                .monospacedDigit()
+                .frame(minWidth: scaled(42), alignment: .trailing)
+                .accessibilityLabel("Search result \(documentSearch.countText)")
 
             Rectangle()
                 .fill(theme.borderColor)
                 .frame(width: 1, height: scaled(20))
 
-            if layoutMode == .regular {
-                findBarButton(
-                    systemImage: "chevron.up",
-                    label: "Previous Match",
-                    isDisabled: documentSearch.totalCount == 0
-                ) {
-                    documentSearch.findPrevious()
-                }
+            findBarButton(
+                systemImage: "chevron.up",
+                label: "Previous Match",
+                isDisabled: documentSearch.totalCount == 0
+            ) {
+                documentSearch.findPrevious()
+            }
 
-                findBarButton(
-                    systemImage: "chevron.down",
-                    label: "Next Match",
-                    isDisabled: documentSearch.totalCount == 0
-                ) {
-                    documentSearch.findNext()
-                }
-            } else {
-                searchNavigationMenu
+            findBarButton(
+                systemImage: "chevron.down",
+                label: "Next Match",
+                isDisabled: documentSearch.totalCount == 0
+            ) {
+                documentSearch.findNext()
             }
 
             findBarButton(systemImage: "xmark", label: "Close Search") {
@@ -289,45 +276,6 @@ struct TopNavigationBar: View {
         }
     }
 
-    private func searchFieldWidth(layoutMode: MonknotTopBarLayoutMode) -> CGFloat {
-        switch layoutMode {
-        case .regular:
-            return scaled(190)
-        case .compact:
-            return scaled(112)
-        case .minimal:
-            return scaled(64)
-        }
-    }
-
-    private var searchNavigationMenu: some View {
-        Menu {
-            Button("Previous Match", systemImage: "chevron.up") {
-                documentSearch.findPrevious()
-            }
-            .disabled(documentSearch.totalCount == 0)
-
-            Button("Next Match", systemImage: "chevron.down") {
-                documentSearch.findNext()
-            }
-            .disabled(documentSearch.totalCount == 0)
-        } label: {
-            TopBarOverflowLabel(
-                theme: theme,
-                zoomScale: zoomScale,
-                isActive: false,
-                isHovered: isOverflowMenuHovered
-            )
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .onHover { isOverflowMenuHovered = $0 }
-        .animation(MonknotMotion.hoverAnimation, value: isOverflowMenuHovered)
-        .help("Search navigation")
-        .accessibilityLabel("Search navigation")
-    }
-
     private func findBarButton(
         systemImage: String,
         label: String,
@@ -345,43 +293,4 @@ struct TopNavigationBar: View {
         )
     }
 
-}
-
-private struct TopBarOverflowLabel: View {
-    let theme: AppTheme
-    let zoomScale: Double
-    let isActive: Bool
-    var isHovered = false
-
-    var body: some View {
-        let dimension = MonknotMetrics.chromeButtonDimension(theme: theme, zoomScale: zoomScale)
-        let cornerRadius = theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
-
-        Image(systemName: "ellipsis")
-            .font(.system(
-                size: MonknotMetrics.chromeGlyphSize(theme: theme, zoomScale: zoomScale),
-                weight: .medium
-            ))
-            .foregroundStyle(isActive || isHovered ? theme.foregroundColor : theme.mutedForegroundColor)
-            .frame(width: dimension, height: dimension)
-            .background {
-                if isActive || isHovered {
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(theme.foregroundColor.opacity(
-                            isActive
-                                ? (theme.isDark ? 0.12 : 0.08)
-                                : MonknotIconButton.IconButtonSize.chrome.hoverBackgroundOpacity(
-                                    isDark: theme.isDark
-                                )
-                        ))
-                }
-            }
-            .overlay {
-                if isActive {
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .strokeBorder(theme.borderColor, lineWidth: 1)
-                }
-            }
-            .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
-    }
 }

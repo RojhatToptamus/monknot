@@ -195,6 +195,15 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertEqual(WorkspaceZoomPolicy.documentScale(1), 1, accuracy: 0.001)
         XCTAssertEqual(WorkspaceZoomPolicy.documentScale(2), 4.0 / 3.0, accuracy: 0.001)
         XCTAssertEqual(WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.maximum), 2, accuracy: 0.001)
+        for documentScale in WorkspaceZoomPolicy.shortcutDocumentScales {
+            XCTAssertEqual(
+                WorkspaceZoomPolicy.documentScale(
+                    WorkspaceZoomPolicy.rawZoom(forDocumentScale: documentScale)
+                ),
+                documentScale,
+                accuracy: 0.001
+            )
+        }
     }
 
     func testWideMarkdownToolbarPreservesCompleteFormattingActionOrder() {
@@ -537,14 +546,6 @@ final class ChromeAlignmentTests: XCTestCase {
         }
     }
 
-    func testSidebarFileSelectionDoesNotChangeLabelWeight() {
-        XCTAssertEqual(
-            SidebarFileLabelStyle.weight(isSelected: true),
-            SidebarFileLabelStyle.weight(isSelected: false)
-        )
-        XCTAssertEqual(SidebarFileLabelStyle.weight(isSelected: true), .regular)
-    }
-
     func testTopNavigationOnlyShowsSourceAndPreviewModeButtons() {
         XCTAssertEqual(
             TopNavigationBar.markdownViewModeOptions.map(\.id),
@@ -555,60 +556,61 @@ final class ChromeAlignmentTests: XCTestCase {
         )
     }
 
-    func testTopBarCollapsesSecondaryActionsByEffectiveWidth() {
-        let theme = AppTheme.codexDark
-
-        XCTAssertEqual(
-            MonknotMetrics.topBarLayoutMode(availableWidth: 700, theme: theme, zoomScale: 1),
-            .regular
-        )
-        XCTAssertEqual(
-            MonknotMetrics.topBarLayoutMode(availableWidth: 500, theme: theme, zoomScale: 1),
-            .compact
-        )
-        XCTAssertEqual(
-            MonknotMetrics.topBarLayoutMode(availableWidth: 320, theme: theme, zoomScale: 1),
-            .minimal
-        )
-
-        XCTAssertEqual(
-            MonknotMetrics.topBarLayoutMode(
-                availableWidth: 800,
-                theme: theme,
-                zoomScale: WorkspaceZoomPolicy.maximum
-            ),
-            .regular
-        )
-        XCTAssertEqual(
-            MonknotMetrics.topBarLayoutMode(
-                availableWidth: 700,
-                theme: theme,
-                zoomScale: WorkspaceZoomPolicy.maximum
-            ),
-            .compact
-        )
-        XCTAssertEqual(
-            MonknotMetrics.topBarLayoutMode(
-                availableWidth: 400,
-                theme: theme,
-                zoomScale: WorkspaceZoomPolicy.maximum
-            ),
-            .minimal
-        )
-        XCTAssertEqual(
-            MonknotMetrics.topBarLayoutMode(
-                availableWidth: 480,
-                theme: theme.replacing(uiFontSize: 24),
-                zoomScale: WorkspaceZoomPolicy.maximum
-            ),
-            .minimal,
-            "The narrowest high-zoom detail width must preserve useful space for the active tab"
-        )
-    }
-
     func testReducedMotionDisablesSidebarAndDrawerMovement() {
         XCTAssertNil(MonknotMotion.sidebarTransition(reduceMotion: true))
         XCTAssertNotNil(MonknotMotion.sidebarTransition(reduceMotion: false))
+    }
+
+    func testTabTitleRevealUsesADelayedSlowLinearMotionAndHonorsReduceMotion() {
+        XCTAssertEqual(MonknotMotion.tabTitleRevealDelay, 2.5)
+        XCTAssertEqual(MonknotMotion.tabTitleRevealDuration(for: 24), 1.5)
+        XCTAssertGreaterThan(
+            MonknotMotion.tabTitleRevealDuration(for: 240),
+            MonknotMotion.tabTitleRevealDuration(for: 24)
+        )
+        XCTAssertNil(MonknotMotion.tabTitleRevealAnimation(distance: 120, reduceMotion: true))
+        XCTAssertNotNil(MonknotMotion.tabTitleRevealAnimation(distance: 120, reduceMotion: false))
+    }
+
+    func testMountedOverflowingTabTitleMovesAfterTheHoverDelay() async throws {
+        let size = NSSize(width: 100, height: 24)
+        let host = NSHostingView(rootView: ClippedTabTitle(
+            title: "Remote_Objects_Self_Evaluation.pdf",
+            fontSize: 13,
+            color: .black,
+            isHovered: true
+        )
+        .frame(width: size.width, height: size.height))
+        host.frame = NSRect(origin: .zero, size: size)
+
+        let window = NSWindow(
+            contentRect: host.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer {
+            window.orderOut(nil)
+            window.contentView = nil
+        }
+
+        try await Task.sleep(nanoseconds: 150_000_000)
+        window.layoutIfNeeded()
+        host.layoutSubtreeIfNeeded()
+        let beforeReveal = try renderedTIFF(of: host)
+
+        try await Task.sleep(nanoseconds: 3_500_000_000)
+        window.layoutIfNeeded()
+        host.layoutSubtreeIfNeeded()
+        let duringReveal = try renderedTIFF(of: host)
+
+        XCTAssertNotEqual(
+            beforeReveal,
+            duringReveal,
+            "An overflowing title should move inside its fixed viewport after the hover delay"
+        )
     }
 
     func testTerminalDrawerUsesFullDetailTakeoverBelowReadableSplitWidth() {
@@ -647,12 +649,34 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertLessThanOrEqual(long, MonknotMetrics.tabMaxWidthBase)
     }
 
-    func testDocumentTabSelectionDoesNotChangeTitleWeight() {
-        XCTAssertEqual(
-            DocumentTabTitleStyle.weight(isSelected: true),
-            DocumentTabTitleStyle.weight(isSelected: false)
+    func testPinnedTabsRetainTheirTitleAndPinAffordanceWidth() {
+        let theme = AppTheme.codexDark
+        let short = DocumentTabWidthPolicy.preferredWidth(
+            title: "a.md",
+            isPinned: true,
+            theme: theme,
+            zoomScale: 1
         )
-        XCTAssertEqual(DocumentTabTitleStyle.weight(isSelected: true), .regular)
+        let readme = DocumentTabWidthPolicy.preferredWidth(
+            title: "README.md",
+            isPinned: true,
+            theme: theme,
+            zoomScale: 1
+        )
+
+        XCTAssertGreaterThan(readme, short)
+        XCTAssertGreaterThanOrEqual(short, MonknotMetrics.tabMinWidthBase)
+        XCTAssertLessThanOrEqual(readme, MonknotMetrics.tabMaxWidthBase)
+    }
+
+    func testTabCloseButtonsKeepAForgivingMinimumTarget() {
+        let theme = AppTheme.codexDark
+        for zoomScale in WorkspaceZoomPolicy.supportedLevels {
+            XCTAssertGreaterThanOrEqual(
+                MonknotTabCloseButton.dimension(theme: theme, zoomScale: zoomScale),
+                24
+            )
+        }
     }
 
     func testTerminalDrawerSideBySideLayoutProtectsEditorAndPanelMinimums() {
@@ -917,8 +941,7 @@ final class ChromeAlignmentTests: XCTestCase {
                 canNavigateBack: true,
                 canNavigateForward: true,
                 theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: theme.uiFontSize
+                zoomScale: zoomScale
             )
             let host = NSHostingView(rootView: controls)
 
@@ -941,7 +964,6 @@ final class ChromeAlignmentTests: XCTestCase {
                     workingDirectory: nil,
                     theme: theme,
                     zoomScale: zoomScale,
-                    uiFontSize: theme.uiFontSize,
                     close: {}
                 )
                 let terminalHost = NSHostingView(rootView: terminalRow.frame(width: 420))
@@ -963,7 +985,6 @@ final class ChromeAlignmentTests: XCTestCase {
             workingDirectory: nil,
             theme: theme,
             zoomScale: WorkspaceZoomPolicy.maximum,
-            uiFontSize: theme.uiFontSize,
             close: {}
         ))
         drawerHost.layoutSubtreeIfNeeded()
@@ -1192,7 +1213,6 @@ final class ChromeAlignmentTests: XCTestCase {
                 missingDocumentIDs: [],
                 theme: theme,
                 zoomScale: zoomScale,
-                uiFontSize: theme.uiFontSize,
                 isDisabled: false,
                 saveState: { _ in .clean },
                 selectTab: { _ in },
@@ -1295,7 +1315,6 @@ final class ChromeAlignmentTests: XCTestCase {
             missingDocumentIDs: [],
             theme: theme,
             zoomScale: WorkspaceZoomPolicy.maximum,
-            uiFontSize: theme.uiFontSize,
             isDisabled: false,
             saveState: { _ in .clean },
             selectTab: { _ in },
@@ -1358,7 +1377,6 @@ final class ChromeAlignmentTests: XCTestCase {
             workingDirectory: FileManager.default.temporaryDirectory,
             theme: theme,
             zoomScale: WorkspaceZoomPolicy.maximum,
-            uiFontSize: theme.uiFontSize,
             close: {}
         ).frame(width: 180, height: chromeHeight))
         host.frame = NSRect(x: 0, y: 0, width: 180, height: chromeHeight)
@@ -1455,6 +1473,24 @@ private func interfaceScales(theme: AppTheme, zoomScale: Double) -> [CGFloat] {
         theme.interfaceRowScale(zoomScale: zoomScale),
         theme.interfaceDensityScale(zoomScale: zoomScale),
     ]
+}
+
+private enum TestViewRenderingError: Error {
+    case missingBitmap
+    case missingTIFFData
+}
+
+@MainActor
+private func renderedTIFF(of view: NSView) throws -> Data {
+    view.displayIfNeeded()
+    guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+        throw TestViewRenderingError.missingBitmap
+    }
+    view.cacheDisplay(in: view.bounds, to: bitmap)
+    guard let data = bitmap.tiffRepresentation else {
+        throw TestViewRenderingError.missingTIFFData
+    }
+    return data
 }
 
 private extension NSView {

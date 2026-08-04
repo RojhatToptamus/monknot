@@ -169,16 +169,15 @@ struct MonknotIconButton: View {
 }
 
 struct MonknotControlPressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .opacity(configuration.isPressed ? 0.72 : 1)
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .animation(MonknotMotion.hoverAnimation, value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
+            .animation(reduceMotion ? nil : MonknotMotion.hoverAnimation, value: configuration.isPressed)
     }
 }
-
-/// Backward-compatible alias used across existing views during migration.
-typealias ChromeBarButton = MonknotIconButton
 
 /// Shared trailing close affordance for document and terminal tabs.
 struct MonknotTabCloseButton: View {
@@ -191,8 +190,12 @@ struct MonknotTabCloseButton: View {
 
     @State private var isHovered = false
 
+    static func dimension(theme: AppTheme, zoomScale: Double) -> CGFloat {
+        max(24, MonknotMetrics.interfaceControl(16, theme: theme, zoomScale: zoomScale))
+    }
+
     private var dimension: CGFloat {
-        max(16, MonknotMetrics.interfaceControl(16, theme: theme, zoomScale: zoomScale))
+        Self.dimension(theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -225,30 +228,5 @@ struct MonknotTabCloseButton: View {
         .accessibilityLabel(label)
         .accessibilityHidden(!isVisible)
         .monknotPointerCursor(enabled: isVisible && !isDisabled)
-    }
-}
-
-extension MonknotIconButton {
-    init(
-        systemImage: String,
-        label: String,
-        theme: AppTheme,
-        zoomScale: Double,
-        uiFontSize: Double,
-        isActive: Bool = false,
-        isDisabled: Bool = false,
-        size: IconButtonSize = .chrome,
-        action: @escaping () -> Void
-    ) {
-        self.init(
-            systemImage: systemImage,
-            label: label,
-            theme: theme,
-            zoomScale: zoomScale,
-            isActive: isActive,
-            isDisabled: isDisabled,
-            size: size,
-            action: action
-        )
     }
 }

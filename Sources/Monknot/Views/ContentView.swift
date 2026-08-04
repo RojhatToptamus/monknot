@@ -434,7 +434,6 @@ struct ContentView: View {
             workspaceSearch: workspaceSearch,
             theme: activeTheme,
             zoomScale: zoomScale,
-            uiFontSize: activeTheme.uiFontSize,
             openFolder: openFolderPanel,
             openRecentWorkspace: { url in store.openWorkspace(url) },
             newMarkdown: { store.createMarkdownFile() },
@@ -1384,7 +1383,6 @@ struct WindowNavigationControls: View {
     let canNavigateForward: Bool
     let theme: AppTheme
     let zoomScale: Double
-    let uiFontSize: Double
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
@@ -1392,23 +1390,21 @@ struct WindowNavigationControls: View {
 
     var body: some View {
         HStack(spacing: scaled(2)) {
-            ChromeBarButton(
+            MonknotIconButton(
                 systemImage: "chevron.left",
                 label: "Back",
                 theme: theme,
                 zoomScale: zoomScale,
-                uiFontSize: uiFontSize,
                 isDisabled: !canNavigateBack,
                 size: .windowNavigation,
                 action: navigateBack
             )
 
-            ChromeBarButton(
+            MonknotIconButton(
                 systemImage: "chevron.right",
                 label: "Forward",
                 theme: theme,
                 zoomScale: zoomScale,
-                uiFontSize: uiFontSize,
                 isDisabled: !canNavigateForward,
                 size: .windowNavigation,
                 action: navigateForward

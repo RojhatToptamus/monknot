@@ -9,12 +9,8 @@ enum DocumentTabWidthPolicy {
         theme: AppTheme,
         zoomScale: Double
     ) -> CGFloat {
-        if isPinned {
-            return MonknotMetrics.interfaceDensity(38, theme: theme, zoomScale: zoomScale)
-        }
-
         let fontSize = MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale)
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
         let labelWidth = ceil((title as NSString).size(withAttributes: [.font: font]).width)
         let minimum = MonknotMetrics.interfaceDensity(
             MonknotMetrics.tabMinWidthBase,
@@ -26,7 +22,18 @@ enum DocumentTabWidthPolicy {
             theme: theme,
             zoomScale: zoomScale
         )
-        let fixedControls = MonknotMetrics.interfaceDensity(58, theme: theme, zoomScale: zoomScale)
+        let documentGlyph = MonknotMetrics.chromeGlyphSize(theme: theme, zoomScale: zoomScale)
+        let fixedControls: CGFloat
+        if isPinned {
+            fixedControls = documentGlyph
+                + MonknotMetrics.interfaceGlyph(9, theme: theme, zoomScale: zoomScale)
+                + MonknotMetrics.interfaceDensity(32, theme: theme, zoomScale: zoomScale)
+        } else {
+            fixedControls = documentGlyph
+                + MonknotMetrics.interfaceDensity(21, theme: theme, zoomScale: zoomScale)
+                + MonknotTabCloseButton.dimension(theme: theme, zoomScale: zoomScale)
+                + MonknotMetrics.interfaceDensity(8, theme: theme, zoomScale: zoomScale)
+        }
         return min(maximum, max(minimum, labelWidth + fixedControls))
     }
 }
@@ -37,7 +44,6 @@ struct DocumentTabBar: View {
     let missingDocumentIDs: Set<String>
     let theme: AppTheme
     let zoomScale: Double
-    let uiFontSize: Double
     let isDisabled: Bool
     let saveState: (String) -> DocumentSaveState
     let selectTab: (String) -> Void
@@ -70,7 +76,6 @@ struct DocumentTabBar: View {
                                 missingDocumentIDs: missingDocumentIDs,
                                 theme: theme,
                                 zoomScale: zoomScale,
-                                uiFontSize: uiFontSize,
                                 isDisabled: isDisabled,
                                 saveState: saveState,
                                 selectTab: selectTab,
@@ -137,7 +142,6 @@ private struct DocumentTabStripContent: View {
     let missingDocumentIDs: Set<String>
     let theme: AppTheme
     let zoomScale: Double
-    let uiFontSize: Double
     let isDisabled: Bool
     let saveState: (String) -> DocumentSaveState
     let selectTab: (String) -> Void
@@ -167,7 +171,6 @@ private struct DocumentTabStripContent: View {
                     saveState: saveState(tab.documentID),
                     theme: theme,
                     zoomScale: zoomScale,
-                    uiFontSize: uiFontSize,
                     isDisabled: isDisabled,
                     isDragging: draggedDocumentID == tab.documentID,
                     select: { selectTab(tab.documentID) },
@@ -239,13 +242,13 @@ private struct DocumentTabItemView: View {
     let saveState: DocumentSaveState
     let theme: AppTheme
     let zoomScale: Double
-    let uiFontSize: Double
     let isDisabled: Bool
     let isDragging: Bool
     let select: () -> Void
     let close: () -> Void
     let togglePin: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -290,15 +293,20 @@ private struct DocumentTabItemView: View {
                         }
                         .accessibilityHidden(true)
 
-                    if !tab.isPinned {
-                        ClippedTabTitle(
-                            title: tab.displayName,
-                            fontSize: textScaled(13),
-                            weight: DocumentTabTitleStyle.weight(isSelected: isSelected),
-                            color: textColor
-                        )
-                        .layoutPriority(0)
+                    if tab.isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: glyphScaled(9), weight: .medium))
+                            .foregroundStyle(theme.mutedForegroundColor)
+                            .accessibilityHidden(true)
                     }
+
+                    ClippedTabTitle(
+                        title: tab.displayName,
+                        fontSize: textScaled(13),
+                        color: textColor,
+                        isHovered: isHovered && !isDisabled
+                    )
+                    .layoutPriority(0)
 
                     if isMissing {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -329,14 +337,15 @@ private struct DocumentTabItemView: View {
         }
         .frame(width: preferredTabWidth, alignment: .leading)
         .frame(height: chromeRowHeight, alignment: .center)
+        .clipped()
         .background {
             tabBackground
                 .padding(.vertical, scaled(7))
         }
         .opacity(opacity)
         .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.12), value: isHovered)
-        .animation(.easeOut(duration: 0.12), value: isSelected)
+        .animation(reduceMotion ? nil : MonknotMotion.hoverAnimation, value: isHovered)
+        .animation(reduceMotion ? nil : MonknotMotion.hoverAnimation, value: isSelected)
         .contextMenu {
             Button {
                 togglePin()
@@ -398,7 +407,10 @@ private struct DocumentTabItemView: View {
                 zoomScale: zoomScale,
                 size: glyphScaled(10)
             )
-            .frame(width: 16, height: 16)
+            .frame(
+                width: MonknotTabCloseButton.dimension(theme: theme, zoomScale: zoomScale),
+                height: MonknotTabCloseButton.dimension(theme: theme, zoomScale: zoomScale)
+            )
         }
     }
 
@@ -464,29 +476,51 @@ private struct DocumentTabItemView: View {
     }
 }
 
-private struct ClippedTabTitle: View {
+struct ClippedTabTitle: View {
     let title: String
     let fontSize: CGFloat
-    let weight: Font.Weight
     let color: Color
+    let isHovered: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var revealsTitleEnd = false
+
+    private var measuredTitleWidth: CGFloat {
+        ceil((title as NSString).size(withAttributes: [
+            .font: NSFont.systemFont(ofSize: fontSize, weight: .regular)
+        ]).width)
+    }
 
     var body: some View {
-        GeometryReader { _ in
+        GeometryReader { proxy in
+            let overflow = max(0, measuredTitleWidth - proxy.size.width)
+
             Text(title)
-                .font(.system(size: fontSize, weight: weight))
+                .font(.system(size: fontSize, weight: .regular))
                 .foregroundStyle(color)
                 .fixedSize(horizontal: true, vertical: false)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .offset(x: revealsTitleEnd ? -overflow : 0)
+                .task(id: isHovered) {
+                    revealsTitleEnd = false
+                    guard isHovered, !reduceMotion, overflow > 0 else { return }
+
+                    try? await Task.sleep(nanoseconds: UInt64(
+                        MonknotMotion.tabTitleRevealDelay * 1_000_000_000
+                    ))
+                    guard !Task.isCancelled else { return }
+
+                    withAnimation(MonknotMotion.tabTitleRevealAnimation(
+                        distance: overflow,
+                        reduceMotion: reduceMotion
+                    )) {
+                        revealsTitleEnd = true
+                    }
+                }
         }
         .frame(maxWidth: .infinity, minHeight: fontSize * 1.25, maxHeight: fontSize * 1.25)
         .clipped()
         .accessibilityLabel(title)
-    }
-}
-
-enum DocumentTabTitleStyle {
-    static func weight(isSelected: Bool) -> Font.Weight {
-        .regular
     }
 }
 

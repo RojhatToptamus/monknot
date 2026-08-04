@@ -145,7 +145,9 @@ struct SettingsStepperRow: View {
     }
 
     private var displayValue: String {
-        suffix == "x" ? String(format: "%.1f", value) : "\(Int(value.rounded()))"
+        guard suffix == "x" else { return "\(Int(value.rounded()))" }
+        let usesHundredths = abs((value * 10).rounded() - value * 10) > 0.001
+        return String(format: usesHundredths ? "%.2f" : "%.1f", value)
     }
 }
 
@@ -183,6 +185,7 @@ struct SettingsSliderRow: View {
 
 private struct MonknotSettingsSwitchStyle: ToggleStyle {
     let theme: AppTheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         Button {
@@ -206,7 +209,7 @@ private struct MonknotSettingsSwitchStyle: ToggleStyle {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .animation(.easeOut(duration: 0.12), value: configuration.isOn)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isOn)
     }
 }
 

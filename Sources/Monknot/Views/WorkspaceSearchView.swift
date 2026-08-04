@@ -2,14 +2,13 @@ import MonknotCore
 import AppKit
 import SwiftUI
 
-/// Workspace search is a narrow utility surface. Its layout density is capped
-/// independently while control and glyph sizing remains fixed with the rest of
-/// the application chrome.
+/// Workspace search is a narrow utility surface. Only its spacing density is
+/// capped; text, glyphs, and controls follow the workspace accessibility scale.
 enum WorkspaceSearchLayoutPolicy {
-    static let maximumUtilityZoomScale = 1.6
+    static let maximumUtilityDensityZoomScale = 1.6
 
-    static func effectiveZoomScale(_ zoomScale: Double) -> Double {
-        min(maximumUtilityZoomScale, WorkspaceZoomPolicy.clamp(zoomScale))
+    static func densityZoomScale(_ zoomScale: Double) -> Double {
+        min(maximumUtilityDensityZoomScale, WorkspaceZoomPolicy.clamp(zoomScale))
     }
 
     static func fieldHeight(theme: AppTheme, zoomScale: Double) -> CGFloat {
@@ -18,7 +17,7 @@ enum WorkspaceSearchLayoutPolicy {
             MonknotMetrics.interfaceControl(
                 34,
                 theme: theme,
-                zoomScale: effectiveZoomScale(zoomScale)
+                zoomScale: zoomScale
             )
         )
     }
@@ -43,20 +42,20 @@ struct WorkspaceSearchView: View {
     @State private var copyFeedbackTask: Task<Void, Never>?
     @FocusState private var isSearchFocused: Bool
 
-    private var panelZoomScale: Double {
-        WorkspaceSearchLayoutPolicy.effectiveZoomScale(zoomScale)
+    private var densityZoomScale: Double {
+        WorkspaceSearchLayoutPolicy.densityZoomScale(zoomScale)
     }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: panelZoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: densityZoomScale)
     }
 
     private func textScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: panelZoomScale)
+        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
     }
 
     private func glyphScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: panelZoomScale)
+        MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
     }
 
     private var groupedResults: [WorkspaceSearchResultGroup] {
@@ -141,7 +140,7 @@ struct WorkspaceSearchView: View {
                 systemImage: "xmark",
                 label: "Close Workspace Search",
                 theme: theme,
-                zoomScale: panelZoomScale,
+                zoomScale: zoomScale,
                 size: .compact,
                 action: close
             )
@@ -186,7 +185,7 @@ struct WorkspaceSearchView: View {
                 systemImage: "xmark.circle.fill",
                 label: "Clear Search",
                 theme: theme,
-                zoomScale: panelZoomScale,
+                zoomScale: zoomScale,
                 isDisabled: state.query.isEmpty,
                 size: .compact
             ) {
@@ -207,10 +206,10 @@ struct WorkspaceSearchView: View {
         )
         .background(
             theme.insetFillColor,
-            in: RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: panelZoomScale))
+            in: RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
         )
         .overlay {
-            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: panelZoomScale))
+            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
                 .strokeBorder(
                     isSearchFocused ? theme.accentColor.opacity(0.86) : theme.borderColor,
                     lineWidth: isSearchFocused ? 1.5 : 1
@@ -226,7 +225,7 @@ struct WorkspaceSearchView: View {
                 systemImage: isReplaceExpanded ? "chevron.down" : "chevron.right",
                 role: .quiet,
                 theme: theme,
-                zoomScale: panelZoomScale
+                zoomScale: zoomScale
             ) {
                 isReplaceExpanded.toggle()
             }
@@ -270,7 +269,7 @@ struct WorkspaceSearchView: View {
                 systemImage: "xmark.circle.fill",
                 label: "Clear Replacement",
                 theme: theme,
-                zoomScale: panelZoomScale,
+                zoomScale: zoomScale,
                 isDisabled: !canConfigureReplace || state.replaceText.isEmpty,
                 size: .compact
             ) {
@@ -290,10 +289,10 @@ struct WorkspaceSearchView: View {
         )
         .background(
             theme.insetFillColor,
-            in: RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: panelZoomScale))
+            in: RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
         )
         .overlay {
-            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: panelZoomScale))
+            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
                 .strokeBorder(theme.borderColor, lineWidth: 1)
         }
         .opacity(canConfigureReplace ? 1 : 0.52)
@@ -342,13 +341,13 @@ struct WorkspaceSearchView: View {
             .font(.system(size: textScaled(12), weight: .medium))
             .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.82))
             .padding(.horizontal, scaled(MonknotMetrics.Spacing.m))
-            .frame(minHeight: max(28, MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: panelZoomScale)))
+            .frame(minHeight: max(28, MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)))
             .background(
                 theme.insetFillColor,
-                in: RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: panelZoomScale))
+                in: RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale))
             )
             .overlay {
-                RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: panelZoomScale))
+                RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale))
                     .strokeBorder(theme.borderColor, lineWidth: 1)
             }
         }
@@ -364,7 +363,7 @@ struct WorkspaceSearchView: View {
             title: "Replace All",
             role: .primary,
             theme: theme,
-            zoomScale: panelZoomScale,
+            zoomScale: zoomScale,
             isDisabled: !canReviewReplace
         ) {
             guard let preview = makeReplacePreview() else { return }
@@ -383,7 +382,7 @@ struct WorkspaceSearchView: View {
                 if state.isSearching {
                     ProgressView()
                         .controlSize(.mini)
-                        .scaleEffect(max(0.8, theme.layoutScale(zoomScale: panelZoomScale) * 0.78))
+                        .scaleEffect(max(0.8, theme.layoutScale(zoomScale: zoomScale) * 0.78))
                         .accessibilityHidden(true)
                 }
 
@@ -403,7 +402,7 @@ struct WorkspaceSearchView: View {
                         systemImage: didCopyResults ? "checkmark" : "doc.on.doc",
                         label: didCopyResults ? "Results Copied" : "Copy Search Results",
                         theme: theme,
-                        zoomScale: panelZoomScale,
+                        zoomScale: zoomScale,
                         size: .compact,
                         action: copySearchResults
                     )
@@ -522,7 +521,7 @@ struct WorkspaceSearchView: View {
         }
         .buttonStyle(SidebarSearchResultButtonStyle(
             theme: theme,
-            cornerRadius: theme.chromeRadius(8, zoomScale: panelZoomScale),
+            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale),
             isSelected: match.index == state.selectedResultIndex
         ))
         .id(match.index)
@@ -616,7 +615,7 @@ struct WorkspaceSearchView: View {
                 systemImage: "arrow.clockwise",
                 role: .quiet,
                 theme: theme,
-                zoomScale: panelZoomScale
+                zoomScale: zoomScale
             ) {
                 state.refresh(documents: documents)
             }

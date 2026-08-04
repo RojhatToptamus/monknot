@@ -166,10 +166,14 @@ private struct EditorSettingsView: View {
     @AppStorage("Monknot.zoomScale") private var persistedZoomScale = WorkspaceZoomPolicy.defaultValue
     @AppStorage("Monknot.showDocumentOutline") private var showContentMapper = true
 
-    private var zoomScale: Binding<Double> {
+    private var documentZoomScale: Binding<Double> {
         Binding(
-            get: { WorkspaceZoomPolicy.clamp(persistedZoomScale) },
-            set: { persistedZoomScale = WorkspaceZoomPolicy.clamp($0) }
+            get: {
+                WorkspaceZoomPolicy.documentScale(persistedZoomScale)
+            },
+            set: { documentScale in
+                persistedZoomScale = WorkspaceZoomPolicy.rawZoom(forDocumentScale: documentScale)
+            }
         )
     }
 
@@ -187,17 +191,14 @@ private struct EditorSettingsView: View {
                 SettingsStepperRow(
                     theme: uiTheme,
                     title: "Workspace zoom",
-                    detail: "Scale document content with restrained, bounded interface scaling",
+                    detail: "Scale document content from 75% to 200%; interface spacing follows a restrained curve",
                     showsDivider: false,
-                    value: zoomScale,
-                    range: WorkspaceZoomPolicy.minimum...WorkspaceZoomPolicy.maximum,
-                    step: WorkspaceZoomPolicy.step,
+                    value: documentZoomScale,
+                    range: WorkspaceZoomPolicy.minimumDocumentScale...WorkspaceZoomPolicy.maximumDocumentScale,
+                    step: 0.05,
                     suffix: "x"
                 )
             }
-        }
-        .onAppear {
-            persistedZoomScale = WorkspaceZoomPolicy.clamp(persistedZoomScale)
         }
     }
 }

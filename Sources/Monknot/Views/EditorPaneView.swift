@@ -631,9 +631,6 @@ struct TerminalResizeHandle: NSViewRepresentable {
     func makeNSView(context: Context) -> ResizeHandleView {
         let view = ResizeHandleView()
         view.coordinator = context.coordinator
-        view.setAccessibilityElement(true)
-        view.setAccessibilityLabel("Resize terminal panel")
-        view.setAccessibilityHelp("Drag left or right to resize the terminal panel.")
         return view
     }
 
@@ -673,7 +670,16 @@ struct TerminalResizeHandle: NSViewRepresentable {
             dragStartX = nil
         }
 
-        private func clamped(_ value: Double) -> Double {
+        @discardableResult
+        func adjustWidth(by delta: Double) -> Bool {
+            let currentWidth = clamped(width.wrappedValue)
+            let adjustedWidth = clamped(currentWidth + delta)
+            guard adjustedWidth != currentWidth else { return false }
+            width.wrappedValue = adjustedWidth
+            return true
+        }
+
+        func clamped(_ value: Double) -> Double {
             min(Double(maxWidth), max(Double(minWidth), value))
         }
     }
@@ -681,6 +687,20 @@ struct TerminalResizeHandle: NSViewRepresentable {
     final class ResizeHandleView: NSView {
         weak var coordinator: Coordinator?
         private var isCursorPushed = false
+
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+            setAccessibilityElement(true)
+            setAccessibilityRole(.splitter)
+            setAccessibilityOrientation(.vertical)
+            setAccessibilityLabel("Resize terminal panel")
+            setAccessibilityHelp("Drag left or right, or adjust the value, to resize the terminal panel.")
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
 
         override var mouseDownCanMoveWindow: Bool {
             false
@@ -721,6 +741,28 @@ struct TerminalResizeHandle: NSViewRepresentable {
 
         override func mouseUp(with event: NSEvent) {
             coordinator?.endDrag()
+            postAccessibilityValueChanged()
+        }
+
+        override func accessibilityValue() -> Any? {
+            guard let coordinator else { return nil }
+            return coordinator.clamped(coordinator.width.wrappedValue) as NSNumber
+        }
+
+        override func accessibilityMinValue() -> Any? {
+            coordinator.map { NSNumber(value: Double($0.minWidth)) }
+        }
+
+        override func accessibilityMaxValue() -> Any? {
+            coordinator.map { NSNumber(value: Double($0.maxWidth)) }
+        }
+
+        override func accessibilityPerformIncrement() -> Bool {
+            adjustAccessibilityWidth(by: 20)
+        }
+
+        override func accessibilityPerformDecrement() -> Bool {
+            adjustAccessibilityWidth(by: -20)
         }
 
         override func viewWillMove(toWindow newWindow: NSWindow?) {
@@ -740,6 +782,16 @@ struct TerminalResizeHandle: NSViewRepresentable {
             guard isCursorPushed else { return }
             NSCursor.pop()
             isCursorPushed = false
+        }
+
+        private func adjustAccessibilityWidth(by delta: Double) -> Bool {
+            guard coordinator?.adjustWidth(by: delta) == true else { return false }
+            postAccessibilityValueChanged()
+            return true
+        }
+
+        private func postAccessibilityValueChanged() {
+            NSAccessibility.post(element: self, notification: .valueChanged)
         }
     }
 }

@@ -4,34 +4,42 @@ import XCTest
 @testable import MonknotApp
 
 final class WorkspaceSearchPresentationTests: XCTestCase {
-    func testUtilityPanelCapsExtremeDocumentZoom() {
+    func testUtilityPanelCapsOnlySpacingDensity() {
         XCTAssertEqual(
-            WorkspaceSearchLayoutPolicy.effectiveZoomScale(WorkspaceZoomPolicy.maximum),
-            WorkspaceSearchLayoutPolicy.maximumUtilityZoomScale
+            WorkspaceSearchLayoutPolicy.densityZoomScale(WorkspaceZoomPolicy.maximum),
+            WorkspaceSearchLayoutPolicy.maximumUtilityDensityZoomScale
         )
         XCTAssertEqual(
-            WorkspaceSearchLayoutPolicy.effectiveZoomScale(WorkspaceZoomPolicy.minimum),
+            WorkspaceSearchLayoutPolicy.densityZoomScale(WorkspaceZoomPolicy.minimum),
             WorkspaceZoomPolicy.minimum
         )
     }
 
-    func testSearchFieldUsesTheBoundedUtilityZoomCurve() {
+    func testSearchFieldFollowsWorkspaceControlZoom() {
         let maximumHeight = WorkspaceSearchLayoutPolicy.fieldHeight(
             theme: .codexDark,
             zoomScale: WorkspaceZoomPolicy.maximum
         )
         let ceilingHeight = WorkspaceSearchLayoutPolicy.fieldHeight(
             theme: .codexDark,
-            zoomScale: WorkspaceSearchLayoutPolicy.maximumUtilityZoomScale
+            zoomScale: WorkspaceSearchLayoutPolicy.maximumUtilityDensityZoomScale
         )
         let normalHeight = WorkspaceSearchLayoutPolicy.fieldHeight(
             theme: .codexDark,
             zoomScale: 1
         )
 
-        XCTAssertEqual(maximumHeight, ceilingHeight, accuracy: 0.001)
+        XCTAssertGreaterThan(maximumHeight, ceilingHeight)
         XCTAssertGreaterThan(maximumHeight, normalHeight)
-        XCTAssertLessThanOrEqual(maximumHeight, 40)
+        XCTAssertEqual(
+            maximumHeight,
+            MonknotMetrics.interfaceControl(
+                34,
+                theme: .codexDark,
+                zoomScale: WorkspaceZoomPolicy.maximum
+            ),
+            accuracy: 0.001
+        )
     }
 
     func testGroupingPreservesFirstFileOrderAndGlobalSelectionIndices() {

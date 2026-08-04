@@ -137,14 +137,15 @@ private struct MonknotActionButtonStyle: ButtonStyle {
     let shape: RoundedRectangle
     let isHovered: Bool
     let isDisabled: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .background {
                 shape.fill(backgroundColor(isPressed: configuration.isPressed))
             }
-            .scaleEffect(configuration.isPressed && !isDisabled ? 0.985 : 1)
-            .animation(MonknotMotion.hoverAnimation, value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !isDisabled && !reduceMotion ? 0.985 : 1)
+            .animation(reduceMotion ? nil : MonknotMotion.hoverAnimation, value: configuration.isPressed)
     }
 
     private func backgroundColor(isPressed: Bool) -> Color {

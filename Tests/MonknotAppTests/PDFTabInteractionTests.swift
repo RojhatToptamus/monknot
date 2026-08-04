@@ -38,7 +38,6 @@ final class PDFTabInteractionTests: XCTestCase {
             missingDocumentIDs: [],
             theme: theme,
             zoomScale: zoomScale,
-            uiFontSize: theme.uiFontSize,
             isDisabled: false,
             saveState: { _ in .clean },
             selectTab: { selection.selectedDocumentID = $0 },

@@ -14,8 +14,6 @@ struct TerminalDrawerView: View {
     var showsChrome = true
     let close: () -> Void
 
-    private var uiFontSize: Double { theme.uiFontSize }
-
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
@@ -37,7 +35,6 @@ struct TerminalDrawerView: View {
                         workingDirectory: workingDirectory,
                         theme: theme,
                         zoomScale: zoomScale,
-                        uiFontSize: uiFontSize,
                         close: close
                     )
                 }
@@ -86,7 +83,6 @@ struct TerminalDrawerChromeRow: View {
     let workingDirectory: URL?
     let theme: AppTheme
     let zoomScale: Double
-    let uiFontSize: Double
     let close: () -> Void
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -99,18 +95,16 @@ struct TerminalDrawerChromeRow: View {
                 sessions: sessions,
                 workingDirectory: workingDirectory,
                 theme: theme,
-                zoomScale: zoomScale,
-                uiFontSize: uiFontSize
+                zoomScale: zoomScale
             )
             .frame(minWidth: scaled(60), maxWidth: .infinity)
             .layoutPriority(1)
 
-            ChromeBarButton(
+            MonknotIconButton(
                 systemImage: "xmark",
                 label: "Hide Terminal Panel",
                 theme: theme,
                 zoomScale: zoomScale,
-                uiFontSize: uiFontSize,
                 action: close
             )
             .keyboardShortcut(.cancelAction)
@@ -127,7 +121,6 @@ private struct TerminalDrawerTabGroup: View {
     let workingDirectory: URL?
     let theme: AppTheme
     let zoomScale: Double
-    let uiFontSize: Double
 
     @State private var viewportTabFrames: [String: CGRect] = [:]
     @State private var revealRequest = HorizontalTabRevealRequest()
@@ -158,7 +151,6 @@ private struct TerminalDrawerTabGroup: View {
                                             isSelected: tab.id == sessions.activeTerminalID,
                                             theme: theme,
                                             zoomScale: zoomScale,
-                                            uiFontSize: uiFontSize,
                                             select: {
                                                 sessions.selectTerminal(id: tab.id)
                                             },
@@ -213,12 +205,11 @@ private struct TerminalDrawerTabGroup: View {
                 }
                 .frame(width: viewportWidth)
 
-                ChromeBarButton(
+                MonknotIconButton(
                     systemImage: "plus",
                     label: "New Terminal",
                     theme: theme,
                     zoomScale: zoomScale,
-                    uiFontSize: uiFontSize,
                     action: {
                         sessions.createTerminal(in: workingDirectory)
                     }
@@ -256,7 +247,6 @@ private struct TerminalTabChip: View {
     let isSelected: Bool
     let theme: AppTheme
     let zoomScale: Double
-    let uiFontSize: Double
     let select: () -> Void
     let restart: () -> Void
     let kill: () -> Void

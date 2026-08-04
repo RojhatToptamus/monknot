@@ -995,6 +995,7 @@ private struct PDFColorSwatchButton: View {
 
     @State private var isHovered = false
     @FocusState private var isFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
@@ -1016,7 +1017,7 @@ private struct PDFColorSwatchButton: View {
                         Circle()
                             .strokeBorder(theme.surfaceColor.opacity(0.85), lineWidth: scaled(1))
                     }
-                    .scaleEffect(isHovered ? 1.06 : 1)
+                    .scaleEffect(isHovered && !reduceMotion ? 1.06 : 1)
             }
             .frame(
                 width: max(28, MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)),
@@ -1038,7 +1039,7 @@ private struct PDFColorSwatchButton: View {
         .focusable()
         .focused($isFocused)
         .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: isHovered)
         .animation(.easeOut(duration: 0.12), value: isSelected)
         .help(color.name)
         .accessibilityLabel(color.name)

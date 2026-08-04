@@ -7,7 +7,6 @@ struct SidebarView: View {
     @ObservedObject var workspaceSearch: WorkspaceSearchState
     let theme: AppTheme
     let zoomScale: Double
-    let uiFontSize: Double
     let openFolder: () -> Void
     let openRecentWorkspace: (URL) -> Void
     let newMarkdown: () -> Void
@@ -73,7 +72,7 @@ struct SidebarView: View {
                 .fill(theme.separatorColor)
                 .frame(height: 1)
 
-            SidebarSettingsButton(theme: theme, zoomScale: zoomScale, uiFontSize: uiFontSize)
+            SidebarSettingsButton(theme: theme, zoomScale: zoomScale)
                 .layoutPriority(2)
         }
         .background {
@@ -120,7 +119,6 @@ struct SidebarView: View {
             SidebarNameInputSheet(
                 theme: theme,
                 zoomScale: zoomScale,
-                uiFontSize: uiFontSize,
                 title: prompt.title,
                 message: prompt.message,
                 placeholder: prompt.placeholder,
@@ -189,7 +187,6 @@ struct SidebarView: View {
                                         tracksMoveFrame: tracksSidebarMoveFrames,
                                         theme: theme,
                                         zoomScale: zoomScale,
-                                        uiFontSize: uiFontSize,
                                         toggleFolder: toggleFolder(_:),
                                         selectDocument: openDocument,
                                         createFileInFolder: beginCreateFile(in:),
@@ -773,7 +770,6 @@ private struct SidebarNodeRow: View {
     let tracksMoveFrame: Bool
     let theme: AppTheme
     let zoomScale: Double
-    let uiFontSize: Double
     let toggleFolder: (VisibleSidebarNode) -> Void
     let selectDocument: (String) -> Void
     let createFileInFolder: (URL) -> Void
@@ -792,6 +788,8 @@ private struct SidebarNodeRow: View {
     let copyDocument: (WorkspaceDocument) -> Void
     let cutDocument: (WorkspaceDocument) -> Void
     let deleteDocument: (WorkspaceDocument) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     private var node: SidebarNode {
         visibleNode.node
     }
@@ -822,41 +820,45 @@ private struct SidebarNodeRow: View {
 
     /// Folder row with a disclosure chevron.
     private var folderRow: some View {
-        HStack(spacing: scaled(8)) {
-            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                .font(.system(size: glyphScaled(10), weight: .semibold))
-                .foregroundStyle(theme.sidebarMutedColor())
-                .frame(width: glyphScaled(12))
+        Button {
+            withAnimation(MonknotMotion.outlineAnimation(reduceMotion: reduceMotion)) {
+                toggleFolder(visibleNode)
+            }
+        } label: {
+            HStack(spacing: scaled(8)) {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: glyphScaled(10), weight: .semibold))
+                    .foregroundStyle(theme.sidebarMutedColor())
+                    .frame(width: glyphScaled(12))
+                    .accessibilityHidden(true)
 
-            Image(systemName: "folder")
-                .font(.system(
-                    size: glyphScaled(MonknotMetrics.sidebarIconPointSizeBase),
-                    weight: MonknotMetrics.sidebarIconWeight
-                ))
-                .foregroundStyle(theme.sidebarMutedColor(prominence: 0.72))
+                Image(systemName: "folder")
+                    .font(.system(
+                        size: glyphScaled(MonknotMetrics.sidebarIconPointSizeBase),
+                        weight: MonknotMetrics.sidebarIconWeight
+                    ))
+                    .foregroundStyle(theme.sidebarMutedColor(prominence: 0.72))
+                    .accessibilityHidden(true)
 
-            Text(visibleNode.displayName)
-                .font(.system(size: textScaled(13), weight: .regular))
-                .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.88))
-                .lineLimit(1)
-                .truncationMode(.middle)
+                Text(visibleNode.displayName)
+                    .font(.system(size: textScaled(13), weight: .regular))
+                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.88))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
 
-            Spacer(minLength: 0)
+                Spacer(minLength: 0)
+            }
+            .padding(.leading, CGFloat(visibleNode.depth) * scaled(16))
+            .padding(.horizontal, scaled(5))
+            .frame(height: scaled(30))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .padding(.leading, CGFloat(visibleNode.depth) * scaled(16))
-        .padding(.horizontal, scaled(5))
-        .frame(height: scaled(30))
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
+        .buttonStyle(.plain)
         .sidebarHoverRow(theme: theme, isSelected: false, cornerRadius: theme.chromeRadius(9, zoomScale: zoomScale))
         .background {
             if tracksMoveFrame {
                 SidebarNodeFrameReader(id: node.id)
-            }
-        }
-        .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                toggleFolder(visibleNode)
             }
         }
         .overlay {
@@ -869,79 +871,77 @@ private struct SidebarNodeRow: View {
         .simultaneousGesture(sidebarMoveGesture)
         .help(visibleNode.displayRelativePath)
         .accessibilityLabel(folderAccessibilityLabel)
-        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
         .contextMenu {
             folderContextMenu()
         }
     }
 
     private var folderAccessibilityLabel: String {
-        let state = isExpanded ? "expanded" : "collapsed"
         if visibleNode.folderNodes.count > 1 {
-            return "\(visibleNode.displayName), compact folder path, \(state)"
+            return "\(visibleNode.displayName), compact folder path"
         }
-        return "\(node.name), folder, \(state)"
+        return "\(node.name), folder"
     }
 
     /// File row — larger text, generous padding, Codex-style selection highlight.
     private var fileRow: some View {
-        HStack(spacing: scaled(7)) {
-            Image(systemName: documentIconName)
-                .font(.system(
-                    size: glyphScaled(MonknotMetrics.sidebarIconPointSizeBase),
-                    weight: MonknotMetrics.sidebarIconWeight
-                ))
-                .foregroundStyle(
-                    isSelected
-                        ? theme.sidebarColor(theme.accentColor, opacity: 0.95)
-                        : theme.sidebarMutedColor(prominence: 0.7)
-                )
-                .frame(width: glyphScaled(MonknotMetrics.sidebarIconPointSizeBase))
-
-            Text(node.name)
-                .font(.system(
-                    size: textScaled(13),
-                    weight: SidebarFileLabelStyle.weight(isSelected: isSelected)
-                ))
-                .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: isSelected ? 0.98 : 0.88))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            if let gitStatus {
-                GitStatusBadge(status: gitStatus, theme: theme, zoomScale: zoomScale)
+        Button {
+            if let document = node.document {
+                selectDocument(document.id)
             }
+        } label: {
+            HStack(spacing: scaled(7)) {
+                Image(systemName: documentIconName)
+                    .font(.system(
+                        size: glyphScaled(MonknotMetrics.sidebarIconPointSizeBase),
+                        weight: MonknotMetrics.sidebarIconWeight
+                    ))
+                    .foregroundStyle(
+                        isSelected
+                            ? theme.sidebarColor(theme.accentColor, opacity: 0.95)
+                            : theme.sidebarMutedColor(prominence: 0.7)
+                    )
+                    .frame(width: glyphScaled(MonknotMetrics.sidebarIconPointSizeBase))
+                    .accessibilityHidden(true)
 
-            if !saveState.isClean {
-                SaveStateIndicator(
-                    state: saveState,
-                    theme: theme,
-                    zoomScale: zoomScale,
-                    size: glyphScaled(12)
-                )
+                Text(node.name)
+                    .font(.system(size: textScaled(13), weight: .regular))
+                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: isSelected ? 0.98 : 0.88))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let gitStatus {
+                    GitStatusBadge(status: gitStatus, theme: theme, zoomScale: zoomScale)
+                }
+
+                if !saveState.isClean {
+                    SaveStateIndicator(
+                        state: saveState,
+                        theme: theme,
+                        zoomScale: zoomScale,
+                        size: glyphScaled(12)
+                    )
+                }
             }
+            .padding(.leading, CGFloat(visibleNode.depth) * scaled(16) + scaled(8))
+            .padding(.trailing, scaled(10))
+            .frame(height: scaled(30))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .padding(.leading, CGFloat(visibleNode.depth) * scaled(16) + scaled(8))
-        .padding(.trailing, scaled(10))
-        .frame(height: scaled(30))
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
+        .buttonStyle(.plain)
         .sidebarHoverRow(theme: theme, isSelected: isSelected, cornerRadius: theme.chromeRadius(9, zoomScale: zoomScale))
         .background {
             if tracksMoveFrame {
                 SidebarNodeFrameReader(id: node.id)
             }
         }
-        .onTapGesture {
-            if let document = node.document {
-                selectDocument(document.id)
-            }
-        }
         .opacity(isMoveSource ? 0.45 : 1)
         .simultaneousGesture(sidebarMoveGesture)
         .help(node.relativePath.isEmpty ? node.name : node.relativePath)
         .accessibilityLabel(fileAccessibilityLabel)
-        .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .contextMenu {
             if let document = node.document {
@@ -1064,12 +1064,6 @@ private struct SidebarNodeRow: View {
             .onEnded { value in
                 dragEnded(node.id, value.location)
             }
-    }
-}
-
-enum SidebarFileLabelStyle {
-    static func weight(isSelected: Bool) -> Font.Weight {
-        .regular
     }
 }
 
@@ -1289,7 +1283,6 @@ private struct SaveStateIndicator: View {
 private struct SidebarSettingsButton: View {
     let theme: AppTheme
     let zoomScale: Double
-    let uiFontSize: Double
     @Environment(\.openSettings) private var openSettings
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -1400,6 +1393,7 @@ private struct SidebarRecentDocumentsSection: View {
     let availableSidebarHeight: CGFloat
     let openDocument: (String) -> Void
     @State private var isExpanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
@@ -1428,7 +1422,7 @@ private struct SidebarRecentDocumentsSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
+                withAnimation(MonknotMotion.outlineAnimation(reduceMotion: reduceMotion)) {
                     isExpanded.toggle()
                 }
             } label: {
@@ -1646,7 +1640,6 @@ private struct EmptySidebarView: View {
 private struct SidebarNameInputSheet: View {
     let theme: AppTheme
     let zoomScale: Double
-    let uiFontSize: Double
     let title: String
     let message: String
     let placeholder: String
@@ -1659,7 +1652,6 @@ private struct SidebarNameInputSheet: View {
     init(
         theme: AppTheme,
         zoomScale: Double,
-        uiFontSize: Double,
         title: String,
         message: String,
         placeholder: String,
@@ -1670,7 +1662,6 @@ private struct SidebarNameInputSheet: View {
     ) {
         self.theme = theme
         self.zoomScale = zoomScale
-        self.uiFontSize = uiFontSize
         self.title = title
         self.message = message
         self.placeholder = placeholder
