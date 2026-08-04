@@ -2,6 +2,7 @@ import SwiftUI
 
 enum MonknotMotion {
     static let hoverDuration: Double = 0.12
+    static let outlineDuration: Double = 0.16
     static let sidebarTransitionDuration: Double = 0.22
 
     static var hoverAnimation: Animation {
@@ -22,6 +23,12 @@ enum MonknotMotion {
         reduceMotion
             ? nil
             : sidebarTransition
+    }
+
+    static func outlineAnimation(reduceMotion: Bool) -> Animation? {
+        reduceMotion
+            ? nil
+            : .easeOut(duration: outlineDuration)
     }
 
     static func toastAnimation(reduceMotion: Bool) -> Animation {

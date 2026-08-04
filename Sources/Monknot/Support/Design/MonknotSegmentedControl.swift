@@ -49,7 +49,7 @@ struct MonknotSegmentButton: View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.system(
-                    size: MonknotMetrics.interfaceGlyph(14, theme: theme, zoomScale: zoomScale),
+                    size: MonknotMetrics.chromeGlyphSize(theme: theme, zoomScale: zoomScale),
                     weight: .medium
                 ))
                 .foregroundStyle(foreground)

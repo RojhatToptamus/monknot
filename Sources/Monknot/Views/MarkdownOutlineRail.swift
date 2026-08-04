@@ -2,6 +2,9 @@ import MonknotCore
 import SwiftUI
 
 enum MarkdownOutlineRailLayout {
+    /// A nil anchor asks SwiftUI to move only enough to reveal the target.
+    static let revealAnchor: UnitPoint? = nil
+
     static func activeIndex(
         forVisibleLine visibleLine: Int,
         items: [MarkdownOutlineItem]
@@ -41,6 +44,7 @@ struct MarkdownOutlineRail: View {
     let zoomScale: Double
     let select: (MarkdownOutlineItem) -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
     @State private var hoveredMarkerID: String?
     @FocusState private var focusedMarkerID: String?
@@ -92,6 +96,7 @@ struct MarkdownOutlineRail: View {
                         maximumHeight: max(0, proxy.size.height - scaled(24)),
                         select: select
                     )
+                    .transition(.opacity)
                 }
 
                 markerRail
@@ -106,6 +111,10 @@ struct MarkdownOutlineRail: View {
             .onHover { isHovered = $0 }
         }
         .frame(width: totalWidth)
+        .animation(
+            MonknotMotion.outlineAnimation(reduceMotion: reduceMotion),
+            value: isExpanded
+        )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Document outline")
     }
@@ -127,10 +136,10 @@ struct MarkdownOutlineRail: View {
                     .frame(minHeight: proxy.size.height, alignment: .center)
                 }
                 .onAppear {
-                    scrollToActiveMarker(using: scrollProxy)
+                    scrollToActiveMarker(using: scrollProxy, animated: false)
                 }
                 .onChange(of: activeItemID) { _, _ in
-                    scrollToActiveMarker(using: scrollProxy)
+                    scrollToActiveMarker(using: scrollProxy, animated: true)
                 }
             }
         }
@@ -176,9 +185,23 @@ struct MarkdownOutlineRail: View {
         .monknotPointerCursor()
     }
 
-    private func scrollToActiveMarker(using proxy: ScrollViewProxy) {
+    private func scrollToActiveMarker(using proxy: ScrollViewProxy, animated: Bool) {
         guard let activeItemID else { return }
-        proxy.scrollTo(activeItemID, anchor: .center)
+        scroll(
+            to: activeItemID,
+            using: proxy,
+            animated: animated
+        )
+    }
+
+    private func scroll(to itemID: String, using proxy: ScrollViewProxy, animated: Bool) {
+        if animated, let animation = MonknotMotion.outlineAnimation(reduceMotion: reduceMotion) {
+            withAnimation(animation) {
+                proxy.scrollTo(itemID, anchor: MarkdownOutlineRailLayout.revealAnchor)
+            }
+        } else {
+            proxy.scrollTo(itemID, anchor: MarkdownOutlineRailLayout.revealAnchor)
+        }
     }
 
     private func markerColor(isActive: Bool, isHighlighted: Bool) -> Color {
@@ -201,6 +224,8 @@ private struct MarkdownOutlineHoverPanel: View {
     let width: CGFloat
     let maximumHeight: CGFloat
     let select: (MarkdownOutlineItem) -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
@@ -238,10 +263,10 @@ private struct MarkdownOutlineHoverPanel: View {
                     .padding(scaled(6))
                 }
                 .onAppear {
-                    scrollToRevealedItem(using: scrollProxy)
+                    scrollToRevealedItem(using: scrollProxy, animated: false)
                 }
                 .onChange(of: revealedItemID) { _, _ in
-                    scrollToRevealedItem(using: scrollProxy)
+                    scrollToRevealedItem(using: scrollProxy, animated: true)
                 }
             }
         }
@@ -326,10 +351,23 @@ private struct MarkdownOutlineHoverPanel: View {
         .accessibilityAddTraits(item.id == activeItemID ? .isSelected : [])
     }
 
-    private func scrollToRevealedItem(using proxy: ScrollViewProxy) {
+    private func scrollToRevealedItem(using proxy: ScrollViewProxy, animated: Bool) {
         guard let revealedItemID else { return }
         DispatchQueue.main.async {
-            proxy.scrollTo(revealedItemID, anchor: .center)
+            if animated,
+               let animation = MonknotMotion.outlineAnimation(reduceMotion: reduceMotion) {
+                withAnimation(animation) {
+                    proxy.scrollTo(
+                        revealedItemID,
+                        anchor: MarkdownOutlineRailLayout.revealAnchor
+                    )
+                }
+            } else {
+                proxy.scrollTo(
+                    revealedItemID,
+                    anchor: MarkdownOutlineRailLayout.revealAnchor
+                )
+            }
         }
     }
 }

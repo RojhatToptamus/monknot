@@ -76,7 +76,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         )
         let appearanceRequest = PreviewAppearanceRequest(
             theme: theme,
-            zoomScale: zoomScale,
+            zoomScale: WorkspaceZoomPolicy.documentScale(zoomScale),
             codeFontSize: codeFontSize,
             previewWidthPercent: previewWidthPercent,
             usePointerCursors: usePointerCursors,

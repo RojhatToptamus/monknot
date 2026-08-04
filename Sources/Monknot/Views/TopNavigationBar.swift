@@ -2,6 +2,19 @@ import MonknotCore
 import SwiftUI
 
 struct TopNavigationBar: View {
+    static let markdownViewModeOptions = [
+        MonknotSegmentOption(
+            id: EditorMode.source.rawValue,
+            systemImage: EditorMode.source.resolvedSystemImage,
+            accessibilityLabel: "Source"
+        ),
+        MonknotSegmentOption(
+            id: EditorMode.preview.rawValue,
+            systemImage: EditorMode.preview.resolvedSystemImage,
+            accessibilityLabel: "Preview"
+        )
+    ]
+
     @Binding var editorMode: EditorMode
     @Binding var isSplitViewEnabled: Bool
     let emptyStateTitle: String
@@ -134,42 +147,18 @@ struct TopNavigationBar: View {
 
     private var viewModeControl: some View {
         MonknotSegmentedControl(
-            options: [
-                MonknotSegmentOption(
-                    id: EditorMode.source.rawValue,
-                    systemImage: EditorMode.source.resolvedSystemImage,
-                    accessibilityLabel: "Source"
-                ),
-                MonknotSegmentOption(
-                    id: "split",
-                    systemImage: "rectangle.split.2x1",
-                    accessibilityLabel: "Split"
-                ),
-                MonknotSegmentOption(
-                    id: EditorMode.preview.rawValue,
-                    systemImage: EditorMode.preview.resolvedSystemImage,
-                    accessibilityLabel: "Preview"
-                )
-            ],
+            options: Self.markdownViewModeOptions,
             selection: Binding(
                 get: {
-                    isSplitViewEnabled ? "split" : editorMode.rawValue
+                    editorMode.rawValue
                 },
                 set: { selection in
-                    switch selection {
-                    case "split":
-                        if !isSplitViewEnabled {
-                            toggleSplitView()
-                        }
-                    case EditorMode.preview.rawValue:
-                        if isSplitViewEnabled {
-                            toggleSplitView()
-                        }
+                    if isSplitViewEnabled {
+                        toggleSplitView()
+                    }
+                    if selection == EditorMode.preview.rawValue {
                         editorMode = .preview
-                    default:
-                        if isSplitViewEnabled {
-                            toggleSplitView()
-                        }
+                    } else {
                         editorMode = .source
                     }
                 }

@@ -260,6 +260,10 @@ private struct DocumentTabItemView: View {
         MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
     }
 
+    private var titlebarGlyphSize: CGFloat {
+        MonknotMetrics.chromeGlyphSize(theme: theme, zoomScale: zoomScale)
+    }
+
     private var chromeRowHeight: CGFloat {
         MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
     }
@@ -270,11 +274,11 @@ private struct DocumentTabItemView: View {
                 HStack(spacing: scaled(7)) {
                     Image(systemName: documentIconName)
                         .font(.system(
-                            size: glyphScaled(13),
+                            size: titlebarGlyphSize,
                             weight: .regular
                         ))
                         .foregroundStyle(iconColor)
-                        .frame(width: glyphScaled(13))
+                        .frame(width: titlebarGlyphSize)
                         .overlay(alignment: .bottomTrailing) {
                             if tab.isPinned, !saveState.isClean {
                                 Circle()
@@ -290,7 +294,7 @@ private struct DocumentTabItemView: View {
                         ClippedTabTitle(
                             title: tab.displayName,
                             fontSize: textScaled(13),
-                            weight: isSelected ? .medium : .regular,
+                            weight: DocumentTabTitleStyle.weight(isSelected: isSelected),
                             color: textColor
                         )
                         .layoutPriority(0)
@@ -477,6 +481,12 @@ private struct ClippedTabTitle: View {
         .frame(maxWidth: .infinity, minHeight: fontSize * 1.25, maxHeight: fontSize * 1.25)
         .clipped()
         .accessibilityLabel(title)
+    }
+}
+
+enum DocumentTabTitleStyle {
+    static func weight(isSelected: Bool) -> Font.Weight {
+        .regular
     }
 }
 

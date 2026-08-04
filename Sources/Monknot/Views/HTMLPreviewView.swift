@@ -318,7 +318,7 @@ struct HTMLPreviewView: NSViewRepresentable {
         private(set) var isLoaded = false
 
         fileprivate func applyZoom(_ zoomScale: Double, in webView: WKWebView) {
-            let clampedZoom = WorkspaceZoomPolicy.clamp(zoomScale)
+            let clampedZoom = WorkspaceZoomPolicy.documentScale(zoomScale)
             guard lastAppliedZoomScale != clampedZoom else { return }
             lastAppliedZoomScale = clampedZoom
             webView.pageZoom = CGFloat(clampedZoom)

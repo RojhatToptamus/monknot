@@ -140,85 +140,88 @@ extension AppTheme {
         let clampedZoom = CGFloat(WorkspaceZoomPolicy.clamp(zoomScale))
         let zoomFactor: CGFloat
         if clampedZoom >= 1 {
-            zoomFactor = 1 + min(clampedZoom - 1, 2) * 0.10
+            let progress = CGFloat(log(Double(clampedZoom)) / log(WorkspaceZoomPolicy.maximum))
+            zoomFactor = 1 + progress * 0.30
         } else {
             zoomFactor = 1 + (clampedZoom - 1) * 0.35
         }
 
-        return min(1.35, max(zoomFactor * layoutFontFactor, 0.875))
+        return min(1.50, max(zoomFactor * layoutFontFactor, 0.875))
     }
 
-    /// Workspace zoom primarily changes document content. Application chrome
-    /// follows a much gentler curve that reaches its ceiling at 3x, keeping
-    /// text, glyphs, controls, rows, and spacing visually proportionate without
-    /// allowing the titlebar or sidebars to consume the window at extreme zoom.
+    /// Text, symbols, hit targets, row heights, and horizontal density have
+    /// separate bounded curves. Logarithmic progress keeps application chrome
+    /// responsive across the full document zoom range without letting gaps and
+    /// tabs grow as aggressively as glyphs and controls.
     func interfaceTextScale(zoomScale: Double) -> CGFloat {
-        interfaceScale(
+        boundedInterfaceScale(
             zoomScale: zoomScale,
+            maximumZoomContribution: 0.80,
+            minimumZoomScale: 0.90,
             fontInfluence: 1,
-            zoomInfluence: 0.20,
-            minimum: 0.84,
-            maximum: 1.30
+            maximum: 2.0
         )
     }
 
     func interfaceGlyphScale(zoomScale: Double) -> CGFloat {
-        interfaceScale(
+        boundedInterfaceScale(
             zoomScale: zoomScale,
+            maximumZoomContribution: 0.80,
+            minimumZoomScale: 0.90,
             fontInfluence: 0.30,
-            zoomInfluence: 0.14,
-            minimum: 0.92,
-            maximum: 1.18
+            maximum: 1.90
         )
     }
 
     func interfaceControlScale(zoomScale: Double) -> CGFloat {
-        interfaceScale(
+        boundedInterfaceScale(
             zoomScale: zoomScale,
+            maximumZoomContribution: 0.72,
+            minimumZoomScale: 0.93,
             fontInfluence: 0.20,
-            zoomInfluence: 0.12,
-            minimum: 0.94,
-            maximum: 1.16
+            maximum: 1.80
         )
     }
 
     func interfaceRowScale(zoomScale: Double) -> CGFloat {
-        interfaceScale(
+        boundedInterfaceScale(
             zoomScale: zoomScale,
+            maximumZoomContribution: 0.65,
+            minimumZoomScale: 0.93,
             fontInfluence: 0.20,
-            zoomInfluence: 0.10,
-            minimum: 0.95,
-            maximum: 1.14
+            maximum: 1.72
         )
     }
 
     func interfaceDensityScale(zoomScale: Double) -> CGFloat {
-        interfaceScale(
+        boundedInterfaceScale(
             zoomScale: zoomScale,
+            maximumZoomContribution: 0.32,
+            minimumZoomScale: 0.95,
             fontInfluence: 0.12,
-            zoomInfluence: 0.08,
-            minimum: 0.97,
-            maximum: 1.10
+            maximum: 1.35
         )
     }
 
-    private func interfaceScale(
+    private func boundedInterfaceScale(
         zoomScale: Double,
+        maximumZoomContribution: CGFloat,
+        minimumZoomScale: CGFloat,
         fontInfluence: CGFloat,
-        zoomInfluence: CGFloat,
-        minimum: CGFloat,
         maximum: CGFloat
     ) -> CGFloat {
-        let fontAdjustment = (layoutFontFactor - 1) * fontInfluence
-        let clampedZoom = CGFloat(WorkspaceZoomPolicy.clamp(zoomScale))
-        let normalizedZoom: CGFloat
-        if clampedZoom >= 1 {
-            normalizedZoom = min(clampedZoom - 1, 2) / 2
+        let zoom = CGFloat(WorkspaceZoomPolicy.clamp(zoomScale))
+        let zoomComponent: CGFloat
+        if zoom >= 1 {
+            let progress = CGFloat(log(Double(zoom)) / log(WorkspaceZoomPolicy.maximum))
+            zoomComponent = 1 + maximumZoomContribution * progress
         } else {
-            normalizedZoom = clampedZoom - 1
+            let compactProgress = (1 - zoom) / CGFloat(1 - WorkspaceZoomPolicy.minimum)
+            zoomComponent = 1 - (1 - minimumZoomScale) * compactProgress
         }
-        let zoomAdjustment = normalizedZoom * zoomInfluence
-        return min(maximum, max(minimum, 1 + fontAdjustment + zoomAdjustment))
+
+        let fontAdjustment = (layoutFontFactor - 1) * fontInfluence
+        return min(maximum, max(0.84, zoomComponent + fontAdjustment))
     }
 
     func chromeRadius(_ basePoints: CGFloat, zoomScale: Double) -> CGFloat {

@@ -162,29 +162,66 @@ final class WorkspaceSplitViewTests: XCTestCase {
         )
     }
 
-    func testSidebarDividerUsesWideDetailSideHitAreaWithoutCoveringSidebarContent() {
+    func testSidebarResizeHandleDrivesNativeItemAcrossSupportedRange() {
+        let controller = makeController(isSidebarPresented: true)
+        let window = mount(controller, width: 1_500)
+
+        for width in [
+            WorkspaceSplitMetrics.sidebarMaximumWidth,
+            WorkspaceSplitMetrics.sidebarMinimumWidth,
+            340,
+        ] {
+            controller.setSidebarWidth(width)
+            XCTAssertEqual(controller.sidebarItem.minimumThickness, width, accuracy: 1)
+            XCTAssertEqual(controller.sidebarItem.maximumThickness, width, accuracy: 1)
+            window.layoutIfNeeded()
+            controller.view.layoutSubtreeIfNeeded()
+            XCTAssertEqual(
+                controller.splitView.arrangedSubviews[0].frame.width,
+                width,
+                accuracy: 1
+            )
+        }
+    }
+
+    func testSidebarDividerUsesWideDetailSideHandleWithThinNativeRendering() {
         let controller = makeController(isSidebarPresented: true)
         let window = mount(controller)
-        let sidebarFrame = controller.sidebarItem.viewController.view.frame
-
-        let additionalRect = controller.splitView(
-            controller.splitView,
-            additionalEffectiveRectOfDividerAt: 0
+        XCTAssertTrue(controller.splitView.delegate === controller)
+        let splitView = controller.splitView
+        let sidebarFrame = splitView.arrangedSubviews[0].frame
+        let detailFrame = splitView.arrangedSubviews[1].frame
+        let dividerRect = NSRect(
+            x: sidebarFrame.maxX,
+            y: controller.splitView.bounds.minY,
+            width: controller.splitView.dividerThickness,
+            height: controller.splitView.bounds.height
         )
+        let hitRect = controller.sidebarResizeHitRect
 
         XCTAssertEqual(
-            additionalRect.minX,
-            sidebarFrame.maxX + controller.splitView.dividerThickness,
+            dividerRect.minX,
+            sidebarFrame.maxX,
             accuracy: 0.001
         )
         XCTAssertEqual(
-            additionalRect.width,
-            WorkspaceSplitMetrics.sidebarResizeHitWidth - controller.splitView.dividerThickness,
+            controller.splitView.dividerThickness,
+            WorkspaceSplitMetrics.visibleDividerWidth,
             accuracy: 0.001
         )
-        XCTAssertEqual(additionalRect.minY, controller.splitView.bounds.minY, accuracy: 0.001)
-        XCTAssertEqual(additionalRect.height, controller.splitView.bounds.height, accuracy: 0.001)
-        XCTAssertGreaterThan(additionalRect.minX, sidebarFrame.maxX)
+        XCTAssertEqual(
+            detailFrame.minX,
+            dividerRect.maxX,
+            accuracy: 0.001,
+            "The native divider must remain outside the detail pane"
+        )
+        XCTAssertEqual(hitRect.minX, detailFrame.minX, accuracy: 0.001)
+        XCTAssertEqual(hitRect.width, WorkspaceSplitMetrics.sidebarResizeHitWidth, accuracy: 0.001)
+        XCTAssertEqual(hitRect.height, splitView.bounds.height, accuracy: 0.001)
+        XCTAssertEqual(hitRect.minX, dividerRect.maxX, accuracy: 0.001)
+        XCTAssertGreaterThan(hitRect.maxX, dividerRect.maxX)
+        let resizeHandle = try! XCTUnwrap(controller.sidebarResizeProxy.handleView)
+        XCTAssertTrue(resizeHandle.isDescendant(of: controller.detailHostingController.view))
         _ = window
     }
 
@@ -201,10 +238,11 @@ final class WorkspaceSplitViewTests: XCTestCase {
     }
 
     private func mount(
-        _ controller: WorkspaceSplitViewController<Color, Color>
+        _ controller: WorkspaceSplitViewController<Color, Color>,
+        width: CGFloat = 920
     ) -> NSWindow {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 920, height: 620),
+            contentRect: NSRect(x: 0, y: 0, width: width, height: 620),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
@@ -214,4 +252,5 @@ final class WorkspaceSplitViewTests: XCTestCase {
         controller.view.layoutSubtreeIfNeeded()
         return window
     }
+
 }

@@ -3,6 +3,8 @@ import MonknotCore
 import SwiftUI
 
 struct TerminalDrawerView: View {
+    static let fontSizeBase: CGFloat = 13.5
+
     @ObservedObject var sessions: TerminalSessionCollectionStore
     let workingDirectory: URL?
     let theme: AppTheme
@@ -16,6 +18,10 @@ struct TerminalDrawerView: View {
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    static func terminalFontSize(theme: AppTheme, zoomScale: Double) -> CGFloat {
+        MonknotMetrics.interfaceText(fontSizeBase, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -58,7 +64,7 @@ struct TerminalDrawerView: View {
             TerminalWebView(
                 session: session,
                 theme: theme,
-                fontSize: 13.5,
+                fontSize: Self.terminalFontSize(theme: theme, zoomScale: zoomScale),
                 usePointerCursors: usePointerCursors,
                 fontSmoothing: fontSmoothing
             )

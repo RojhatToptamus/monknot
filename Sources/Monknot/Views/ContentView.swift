@@ -1414,11 +1414,6 @@ struct WindowNavigationControls: View {
                 action: navigateForward
             )
         }
-        .padding(scaled(2))
-        .overlay(
-            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                .strokeBorder(theme.borderColor, lineWidth: 1)
-        )
         .frame(height: MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale))
         .fixedSize(horizontal: true, vertical: false)
     }

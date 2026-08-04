@@ -48,18 +48,29 @@ struct MonknotIconButton: View {
 
         func iconSize(theme: AppTheme, zoomScale: Double) -> CGFloat {
             switch self {
-            case .chrome:
+            case .chrome, .windowNavigation:
+                return MonknotMetrics.chromeGlyphSize(theme: theme, zoomScale: zoomScale)
+            case .sidebarHeader:
                 return MonknotMetrics.interfaceGlyph(
-                    MonknotMetrics.iconPointSizeBase,
+                    MonknotMetrics.sidebarIconPointSizeBase,
                     theme: theme,
                     zoomScale: zoomScale
                 )
-            case .windowNavigation, .sidebarHeader:
-                return MonknotMetrics.interfaceGlyph(14, theme: theme, zoomScale: zoomScale)
             case .compact, .findBar:
                 return MonknotMetrics.interfaceGlyph(12, theme: theme, zoomScale: zoomScale)
             case .segmented:
                 return MonknotMetrics.interfaceGlyph(11, theme: theme, zoomScale: zoomScale)
+            }
+        }
+
+        var iconWeight: Font.Weight {
+            switch self {
+            case .sidebarHeader:
+                return MonknotMetrics.sidebarIconWeight
+            case .findBar:
+                return .semibold
+            case .chrome, .windowNavigation, .compact, .segmented:
+                return .medium
             }
         }
 
@@ -106,7 +117,10 @@ struct MonknotIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: size.iconSize(theme: theme, zoomScale: zoomScale), weight: size == .findBar ? .semibold : .medium))
+                .font(.system(
+                    size: size.iconSize(theme: theme, zoomScale: zoomScale),
+                    weight: size.iconWeight
+                ))
                 .symbolRenderingMode(.monochrome)
                 .foregroundStyle(iconColor)
                 .frame(

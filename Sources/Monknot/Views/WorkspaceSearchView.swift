@@ -6,7 +6,7 @@ import SwiftUI
 /// independently while control and glyph sizing remains fixed with the rest of
 /// the application chrome.
 enum WorkspaceSearchLayoutPolicy {
-    static let maximumUtilityZoomScale = 2.0
+    static let maximumUtilityZoomScale = 1.6
 
     static func effectiveZoomScale(_ zoomScale: Double) -> Double {
         min(maximumUtilityZoomScale, WorkspaceZoomPolicy.clamp(zoomScale))

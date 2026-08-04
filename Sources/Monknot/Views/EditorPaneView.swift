@@ -375,7 +375,7 @@ struct EditorPaneView: View {
                 set: { store.setDocumentText($0) }
             ),
             theme: theme,
-            fontSize: codeFontSize * zoomScale,
+            fontSize: codeFontSize * WorkspaceZoomPolicy.documentScale(zoomScale),
             fontSmoothing: fontSmoothing,
             scrollPosition: activeViewportState?.textScrollPosition,
             sourceLocation: $sourceLocation,
@@ -422,7 +422,7 @@ struct EditorPaneView: View {
                 set: { store.setDocumentText($0) }
             ),
             theme: theme,
-            fontSize: codeFontSize * zoomScale,
+            fontSize: codeFontSize * WorkspaceZoomPolicy.documentScale(zoomScale),
             fontSmoothing: fontSmoothing,
             scrollPosition: activeViewportState?.textScrollPosition,
             sourceLocation: $sourceLocation,
@@ -481,7 +481,7 @@ struct EditorPaneView: View {
                 set: { store.setDocumentText($0) }
             ),
             theme: theme,
-            fontSize: codeFontSize * zoomScale,
+            fontSize: codeFontSize * WorkspaceZoomPolicy.documentScale(zoomScale),
             fontSmoothing: fontSmoothing,
             scrollPosition: activeViewportState?.textScrollPosition,
             syncScrollEnabled: isSplitViewEnabled,

@@ -829,7 +829,10 @@ private struct SidebarNodeRow: View {
                 .frame(width: glyphScaled(12))
 
             Image(systemName: "folder")
-                .font(.system(size: glyphScaled(17)))
+                .font(.system(
+                    size: glyphScaled(MonknotMetrics.sidebarIconPointSizeBase),
+                    weight: MonknotMetrics.sidebarIconWeight
+                ))
                 .foregroundStyle(theme.sidebarMutedColor(prominence: 0.72))
 
             Text(visibleNode.displayName)
@@ -884,16 +887,22 @@ private struct SidebarNodeRow: View {
     private var fileRow: some View {
         HStack(spacing: scaled(7)) {
             Image(systemName: documentIconName)
-                .font(.system(size: glyphScaled(17)))
+                .font(.system(
+                    size: glyphScaled(MonknotMetrics.sidebarIconPointSizeBase),
+                    weight: MonknotMetrics.sidebarIconWeight
+                ))
                 .foregroundStyle(
                     isSelected
                         ? theme.sidebarColor(theme.accentColor, opacity: 0.95)
                         : theme.sidebarMutedColor(prominence: 0.7)
                 )
-                .frame(width: glyphScaled(17))
+                .frame(width: glyphScaled(MonknotMetrics.sidebarIconPointSizeBase))
 
             Text(node.name)
-                .font(.system(size: textScaled(13), weight: isSelected ? .medium : .regular))
+                .font(.system(
+                    size: textScaled(13),
+                    weight: SidebarFileLabelStyle.weight(isSelected: isSelected)
+                ))
                 .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: isSelected ? 0.98 : 0.88))
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -1055,6 +1064,12 @@ private struct SidebarNodeRow: View {
             .onEnded { value in
                 dragEnded(node.id, value.location)
             }
+    }
+}
+
+enum SidebarFileLabelStyle {
+    static func weight(isSelected: Bool) -> Font.Weight {
+        .regular
     }
 }
 

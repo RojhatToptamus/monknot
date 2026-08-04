@@ -7,9 +7,13 @@ enum MonknotMetrics {
     static let chromeSecondaryHeightBase: CGFloat = 34
     static let chromeHorizontalPaddingBase: CGFloat = 8
     static let iconButtonSizeBase: CGFloat = 28
-    // SF Symbols occupy more of their typographic em than the reference's
-    // 17px stroked SVGs. A 15pt symbol matches the reference's visible bounds.
-    static let iconPointSizeBase: CGFloat = 15
+    // Codex keeps titlebar symbols slightly smaller than adjacent labels. Use
+    // one optical size for navigation, tabs, view modes, and drawer controls.
+    static let iconPointSizeBase: CGFloat = 12
+    // Header actions, folders, and documents share one optical symbol size.
+    // It stays below the 13pt labels without shrinking any control or row.
+    static let sidebarIconPointSizeBase: CGFloat = 12
+    static let sidebarIconWeight: Font.Weight = .regular
     static let iconCornerRadiusBase: CGFloat = 7
     static let trafficLightReserveBase: CGFloat = 72
     static let windowNavigationLeadingGapBase: CGFloat = 8
@@ -131,11 +135,19 @@ enum WorkspaceZoomPolicy {
     static let maximum = 8.0
     static let step = 0.1
     static let defaultValue = 1.0
+    static let minimumDocumentScale = 0.75
+    static let maximumDocumentScale = 2.0
+
+    /// Keyboard zoom uses a short perceptual ladder instead of walking every
+    /// raw persistence increment. Growth above actual size is deliberately
+    /// quicker; reductions below actual size stay gentler for readability.
+    static let shortcutDocumentScales = [
+        0.75, 0.80, 0.85, 0.90, 0.95,
+        1.00, 1.20, 1.40, 1.60, 1.80, 2.00,
+    ]
 
     static var supportedLevels: [Double] {
-        let minimumStep = Int((minimum * 10).rounded())
-        let maximumStep = Int((maximum * 10).rounded())
-        return (minimumStep...maximumStep).map { Double($0) / 10 }
+        shortcutDocumentScales.map(rawZoom(forDocumentScale:))
     }
 
     static func clamp(_ value: Double) -> Double {
@@ -145,9 +157,40 @@ enum WorkspaceZoomPolicy {
 
     static func stepped(_ value: Double, by delta: Double) -> Double {
         let current = clamp(value)
-        guard delta.isFinite else { return current }
-        let next = ((current + delta) / step).rounded() * step
-        return clamp(next)
+        guard delta.isFinite, delta != 0 else { return current }
+
+        let epsilon = 0.000_001
+        if delta > 0 {
+            return supportedLevels.first(where: { $0 > current + epsilon }) ?? maximum
+        }
+        return supportedLevels.last(where: { $0 < current - epsilon }) ?? minimum
     }
 
+    /// Maps the extended workspace zoom control onto a readable non-PDF
+    /// document scale. PDFKit retains its own focused zoom behavior.
+    static func documentScale(_ value: Double) -> Double {
+        let zoom = clamp(value)
+        if zoom >= defaultValue {
+            let progress = log(zoom) / log(maximum)
+            return defaultValue + (maximumDocumentScale - defaultValue) * progress
+        }
+
+        let progress = (defaultValue - zoom) / (defaultValue - minimum)
+        return defaultValue - (defaultValue - minimumDocumentScale) * progress
+    }
+
+    private static func rawZoom(forDocumentScale scale: Double) -> Double {
+        let boundedScale = min(maximumDocumentScale, max(minimumDocumentScale, scale))
+        if boundedScale == minimumDocumentScale { return minimum }
+        if boundedScale == defaultValue { return defaultValue }
+        if boundedScale == maximumDocumentScale { return maximum }
+
+        if boundedScale >= defaultValue {
+            let progress = (boundedScale - defaultValue) / (maximumDocumentScale - defaultValue)
+            return exp(log(maximum) * progress)
+        }
+
+        let progress = (defaultValue - boundedScale) / (defaultValue - minimumDocumentScale)
+        return defaultValue - (defaultValue - minimum) * progress
+    }
 }
