@@ -9,8 +9,8 @@ import XCTest
 final class ChromeAlignmentTests: XCTestCase {
     func testComposedWorkspaceSplitKeepsEveryPrimaryChromeColumnOnOneCenterline() {
         for chromeHeight in [
-            MonknotMetrics.chromeHeight(theme: .monknotDark, zoomScale: 1),
-            MonknotMetrics.chromeHeight(theme: .monknotDark, zoomScale: WorkspaceZoomPolicy.maximum),
+            MonknotMetrics.chromeHeight(theme: .defaultDark, zoomScale: 1),
+            MonknotMetrics.chromeHeight(theme: .defaultDark, zoomScale: WorkspaceZoomPolicy.maximum),
         ] {
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 1_200, height: 760),
@@ -132,48 +132,254 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testThemeEditComparisonIgnoresHexLetterCase() {
-        var lowercase = ThemeConfiguration(theme: AppTheme.monknotLight)
+        var lowercase = ThemeConfiguration(theme: AppTheme.defaultLight)
         lowercase.accent = lowercase.accent.lowercased()
         var uppercase = lowercase
         uppercase.accent = uppercase.accent.uppercased()
 
         XCTAssertEqual(
-            lowercase.sanitized(for: AppTheme.monknotLight),
-            uppercase.sanitized(for: AppTheme.monknotLight),
+            lowercase.sanitized(for: AppTheme.defaultLight),
+            uppercase.sanitized(for: AppTheme.defaultLight),
             "Focusing a hex field must not create a false edited state solely from case normalization"
         )
     }
 
-    func testThemeSettingsMigratesLegacyDefaultThemeIdentifiers() throws {
+    func testThemeSettingsUsesCodexDefaultsAndMigratesFormerAliases() throws {
         let suiteName = "MonknotTests.ThemeMigration.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        defaults.set("codex-light", forKey: "Monknot.lightThemeID")
-        defaults.set("codex-dark", forKey: "Monknot.darkThemeID")
-        var customizedDarkTheme = ThemeConfiguration(theme: .monknotDark)
-        customizedDarkTheme.accent = "#AABBCC"
+        defaults.set("monknot-light", forKey: "Monknot.lightThemeID")
+        defaults.set("monknot-dark", forKey: "Monknot.darkThemeID")
+        var customizedLightTheme = ThemeConfiguration(theme: AppTheme.lightTheme(id: "codex-light"))
+        customizedLightTheme.accent = "#AABBCC"
         defaults.set(
-            try JSONEncoder().encode(["codex-dark": customizedDarkTheme]),
+            try JSONEncoder().encode(["monknot-light": customizedLightTheme]),
             forKey: "Monknot.themeCustomizations"
         )
 
         let store = ThemeSettingsStore(defaults: defaults)
 
-        XCTAssertEqual(store.lightThemeID, AppTheme.monknotLight.id)
-        XCTAssertEqual(store.darkThemeID, AppTheme.monknotDark.id)
-        XCTAssertEqual(store.configuration(for: .dark).accent, "#AABBCC")
-        XCTAssertEqual(defaults.string(forKey: "Monknot.lightThemeID"), "monknot-light")
-        XCTAssertEqual(defaults.string(forKey: "Monknot.darkThemeID"), "monknot-dark")
+        XCTAssertEqual(store.lightThemeID, "codex-light")
+        XCTAssertEqual(store.darkThemeID, "codex-dark")
+        XCTAssertEqual(store.configuration(for: .light).accent, "#AABBCC")
+        XCTAssertEqual(defaults.string(forKey: "Monknot.lightThemeID"), "codex-light")
+        XCTAssertEqual(defaults.string(forKey: "Monknot.darkThemeID"), "codex-dark")
 
         let data = try XCTUnwrap(defaults.data(forKey: "Monknot.themeCustomizations"))
         let customizations = try JSONDecoder().decode([String: ThemeConfiguration].self, from: data)
-        XCTAssertNil(customizations["codex-dark"])
-        XCTAssertEqual(customizations["monknot-dark"]?.accent, "#AABBCC")
+        XCTAssertNil(customizations["monknot-light"])
+        XCTAssertEqual(customizations["codex-light"]?.accent, "#AABBCC")
+    }
+
+    func testThemeSettingsUsesCodexForFreshDefaults() throws {
+        let suiteName = "MonknotTests.ThemeDefaults.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = ThemeSettingsStore(defaults: defaults)
+
+        XCTAssertEqual(store.lightThemeID, "codex-light")
+        XCTAssertEqual(store.darkThemeID, "codex-dark")
+        XCTAssertFalse(ThemeSlot.light.themes.contains { $0.name == "Monknot" })
+        XCTAssertFalse(ThemeSlot.dark.themes.contains { $0.name == "Monknot" })
+    }
+
+    func testThemePreviewDoesNotPersistAndCancelRestoresCommittedTheme() throws {
+        let suiteName = "MonknotTests.ThemePreview.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = ThemeSettingsStore(defaults: defaults)
+        store.previewThemeID("vercel-light", for: .light)
+
+        XCTAssertEqual(store.selectedThemeID(for: .light), "codex-light")
+        XCTAssertEqual(store.effectiveTheme(for: .light).id, "vercel-light")
+        XCTAssertNil(defaults.string(forKey: "Monknot.lightThemeID"))
+
+        store.cancelThemePreview(for: .light)
+
+        XCTAssertEqual(store.effectiveTheme(for: .light).id, "codex-light")
+        XCTAssertNil(defaults.string(forKey: "Monknot.lightThemeID"))
+
+        store.previewThemeID("vercel-light", for: .light)
+        store.setSelectedThemeID("vercel-light", for: .light)
+        XCTAssertEqual(store.effectiveTheme(for: .light).id, "vercel-light")
+        XCTAssertEqual(defaults.string(forKey: "Monknot.lightThemeID"), "vercel-light")
+    }
+
+    func testRemovedLightPresetTokensNormalizeToCodexAndMigrateGlobalQuietSidebar() throws {
+        let suiteName = "MonknotTests.RemovedThemeTokens.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("monknot-light", forKey: "Monknot.lightThemeID")
+        var removedPreset = ThemeConfiguration(theme: AppTheme.defaultLight)
+        removedPreset.accent = "#339CFF"
+        removedPreset.background = "#FFFFFF"
+        removedPreset.foreground = "#1A1C1F"
+        let encoded = try JSONEncoder().encode(["monknot-light": removedPreset])
+        var legacyJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: [String: Any]]
+        )
+        legacyJSON["monknot-light"]?["quietSidebar"] = true
+        defaults.set(try JSONSerialization.data(withJSONObject: legacyJSON), forKey: "Monknot.themeCustomizations")
+
+        let store = ThemeSettingsStore(defaults: defaults)
+        let configuration = store.configuration(for: .light)
+
+        XCTAssertEqual(configuration.accent, "#0169cc")
+        XCTAssertEqual(configuration.background, "#ffffff")
+        XCTAssertEqual(configuration.foreground, "#0d0d0d")
+        XCTAssertTrue(store.quietSidebar)
+        XCTAssertTrue(store.effectiveTheme(for: .light).quietSidebar)
+        XCTAssertTrue(store.effectiveTheme(for: .dark).quietSidebar)
+        XCTAssertTrue(defaults.bool(forKey: "Monknot.quietSidebar"))
+
+        let persistedData = try XCTUnwrap(defaults.data(forKey: "Monknot.themeCustomizations"))
+        let persistedJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: persistedData) as? [String: [String: Any]]
+        )
+        XCTAssertNil(persistedJSON["codex-light"]?["quietSidebar"])
+    }
+
+    func testQuietSidebarIsGlobalAcrossThemeSelectionAndPreview() throws {
+        let suiteName = "MonknotTests.GlobalQuietSidebar.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = ThemeSettingsStore(defaults: defaults)
+        store.setQuietSidebar(true)
+        store.setSelectedThemeID("grease-monkey-light", for: .light)
+        store.setSelectedThemeID("brass-monkey-dark", for: .dark)
+
+        XCTAssertTrue(store.effectiveTheme(for: .light).quietSidebar)
+        XCTAssertTrue(store.effectiveTheme(for: .dark).quietSidebar)
+        XCTAssertTrue(defaults.bool(forKey: "Monknot.quietSidebar"))
+
+        store.previewThemeID("sock-monkey-light", for: .light)
+        XCTAssertTrue(store.effectiveTheme(for: .light).quietSidebar)
+        store.cancelThemePreview(for: .light)
+        XCTAssertTrue(store.effectiveTheme(for: .light).quietSidebar)
+
+        store.setQuietSidebar(false)
+        XCTAssertFalse(store.effectiveTheme(for: .light).quietSidebar)
+        XCTAssertFalse(store.effectiveTheme(for: .dark).quietSidebar)
+    }
+
+    func testLegacyQuietSidebarFieldIsRemovedFromRetainedColorCustomization() throws {
+        let suiteName = "MonknotTests.QuietSidebarCleanup.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var configuration = ThemeConfiguration(theme: AppTheme.defaultLight)
+        configuration.accent = "#AABBCC"
+        let encoded = try JSONEncoder().encode(["codex-light": configuration])
+        var legacyJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: [String: Any]]
+        )
+        legacyJSON["codex-light"]?["quietSidebar"] = true
+        defaults.set(try JSONSerialization.data(withJSONObject: legacyJSON), forKey: "Monknot.themeCustomizations")
+
+        let store = ThemeSettingsStore(defaults: defaults)
+
+        XCTAssertTrue(store.quietSidebar)
+        XCTAssertEqual(store.configuration(for: .light).accent, "#AABBCC")
+        let persistedData = try XCTUnwrap(defaults.data(forKey: "Monknot.themeCustomizations"))
+        let persistedJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: persistedData) as? [String: [String: Any]]
+        )
+        XCTAssertNil(persistedJSON["codex-light"]?["quietSidebar"])
+    }
+
+    func testSettingsMenuSelectionTransactionPreviewsThenCancelsOrCommits() {
+        var cancelled = SettingsMenuSelectionTransaction(initialSelection: "codex-light")
+        cancelled.preview("github-light")
+        XCTAssertEqual(cancelled.previewedSelection, "github-light")
+        XCTAssertEqual(cancelled.selectionAfterClose, "codex-light")
+
+        var committed = SettingsMenuSelectionTransaction(initialSelection: "codex-light")
+        committed.preview("github-light")
+        committed.commit("vercel-light")
+        XCTAssertEqual(committed.previewedSelection, "vercel-light")
+        XCTAssertEqual(committed.selectionAfterClose, "vercel-light")
+    }
+
+    func testThemeSelectionKeepsOneGlobalTypographyAtEveryAppearance() throws {
+        let suiteName = "MonknotTests.GlobalTypography.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = ThemeSettingsStore(defaults: defaults)
+        var typography = store.configuration(for: .light)
+        typography.uiFontSize = 22
+        typography.codeFontSize = 18
+        store.save(typography, for: .light)
+
+        store.setSelectedThemeID("vercel-light", for: .light)
+        store.setSelectedThemeID("matrix-dark", for: .dark)
+
+        let lightTheme = store.activeTheme(themePreference: .system, systemAppearance: .light)
+        let darkTheme = store.activeTheme(themePreference: .system, systemAppearance: .dark)
+        XCTAssertEqual(lightTheme.uiFontSize, 22)
+        XCTAssertEqual(lightTheme.codeFontSize, 18)
+        XCTAssertEqual(darkTheme.uiFontSize, 22)
+        XCTAssertEqual(darkTheme.codeFontSize, 18)
+        XCTAssertEqual(defaults.double(forKey: "Monknot.uiFontSize"), 22)
+        XCTAssertEqual(defaults.double(forKey: "Monknot.codeFontSize"), 18)
+    }
+
+    func testThemeColorSaveCannotRestoreStalePerThemeTypography() throws {
+        let suiteName = "MonknotTests.ColorSaveTypography.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = ThemeSettingsStore(defaults: defaults)
+        store.setSelectedThemeID("matrix-dark", for: .dark)
+        store.setTypography(uiFontSize: 20, codeFontSize: 17)
+
+        var staleDraft = ThemeConfiguration(theme: AppTheme.darkTheme(id: "matrix-dark"))
+        staleDraft.accent = "#22FF66"
+        staleDraft.uiFontSize = 12
+        staleDraft.codeFontSize = 11
+        store.saveThemeCustomization(staleDraft, for: .dark)
+
+        XCTAssertEqual(store.uiFontSize, 20)
+        XCTAssertEqual(store.codeFontSize, 17)
+        XCTAssertEqual(store.effectiveTheme(for: .light).uiFontSize, 20)
+        XCTAssertEqual(store.effectiveTheme(for: .dark).codeFontSize, 17)
+        XCTAssertEqual(store.configuration(for: .dark).accent, "#22FF66")
+    }
+
+    func testLegacyPerThemeTypographyMigratesToTheGlobalOwner() throws {
+        let suiteName = "MonknotTests.TypographyMigration.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("matrix-dark", forKey: "Monknot.darkThemeID")
+        defaults.set(ThemePreference.dark.rawValue, forKey: "Monknot.themePreference")
+        var legacyConfiguration = ThemeConfiguration(theme: AppTheme.darkTheme(id: "matrix-dark"))
+        legacyConfiguration.uiFontSize = 21
+        legacyConfiguration.codeFontSize = 17
+        defaults.set(
+            try JSONEncoder().encode(["matrix-dark": legacyConfiguration]),
+            forKey: "Monknot.themeCustomizations"
+        )
+
+        let store = ThemeSettingsStore(defaults: defaults)
+
+        XCTAssertEqual(store.effectiveTheme(for: .light).uiFontSize, 21)
+        XCTAssertEqual(store.effectiveTheme(for: .dark).uiFontSize, 21)
+        XCTAssertEqual(store.effectiveTheme(for: .light).codeFontSize, 17)
+        XCTAssertEqual(store.effectiveTheme(for: .dark).codeFontSize, 17)
+
+        let data = try XCTUnwrap(defaults.data(forKey: "Monknot.themeCustomizations"))
+        let customizations = try JSONDecoder().decode([String: ThemeConfiguration].self, from: data)
+        XCTAssertNil(customizations["matrix-dark"])
     }
 
     func testWorkspaceChromeZoomUsesTheExactDiscreteFactor() {
-        let theme = AppTheme.monknotDark
+        let theme = AppTheme.defaultDark
         let compact = theme.layoutScale(zoomScale: WorkspaceZoomPolicy.minimum)
         let normal = theme.layoutScale(zoomScale: 1)
         let enlarged = theme.layoutScale(zoomScale: 1.7)
@@ -247,11 +453,9 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testQuietSidebarSecondaryInkStaysLegibleWithoutDoubleOpacity() {
-        for baseTheme in [AppTheme.monknotLight, AppTheme.monknotDark] {
-            var configuration = ThemeConfiguration(theme: baseTheme)
+        for baseTheme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             let standard = baseTheme.sidebarMutedOpacity(prominence: 0.68)
-            configuration.quietSidebar = true
-            let quietTheme = configuration.applied(to: baseTheme)
+            let quietTheme = baseTheme.replacing(quietSidebar: true)
             let quiet = quietTheme.sidebarMutedOpacity(prominence: 0.68)
 
             XCTAssertLessThan(quiet, standard)
@@ -260,12 +464,12 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testCombinedFontAndZoomExtremesKeepOneWorkspaceFactor() {
-        var largestConfiguration = ThemeConfiguration(theme: .monknotDark)
+        var largestConfiguration = ThemeConfiguration(theme: .defaultDark)
         largestConfiguration.uiFontSize = 24
-        let largestTheme = largestConfiguration.applied(to: .monknotDark)
-        var smallestConfiguration = ThemeConfiguration(theme: .monknotDark)
+        let largestTheme = largestConfiguration.applied(to: .defaultDark)
+        var smallestConfiguration = ThemeConfiguration(theme: .defaultDark)
         smallestConfiguration.uiFontSize = 12
-        let smallestTheme = smallestConfiguration.applied(to: .monknotDark)
+        let smallestTheme = smallestConfiguration.applied(to: .defaultDark)
 
         XCTAssertEqual(
             largestTheme.layoutScale(zoomScale: WorkspaceZoomPolicy.maximum),
@@ -312,7 +516,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testHighDocumentZoomKeepsChromeIconsProportionalToAdjacentText() {
-        let theme = AppTheme.monknotDark
+        let theme = AppTheme.defaultDark
         let normalIconSize = MonknotIconButton.IconButtonSize.chrome.iconSize(
             theme: theme,
             zoomScale: 1
@@ -381,7 +585,7 @@ final class ChromeAlignmentTests: XCTestCase {
     func testSettingsRowsScaleTheirCompleteLayoutWithInterfaceZoom() {
         func fittingHeight(zoomScale: Double) -> CGFloat {
             let row = SettingsRow(
-                theme: .monknotDark,
+                theme: .defaultDark,
                 title: "Workspace zoom",
                 detail: "Scale typography, controls, padding, and spacing together",
                 showsDivider: false
@@ -402,9 +606,9 @@ final class ChromeAlignmentTests: XCTestCase {
 
     func testNativeTrafficLightsCenterVerticallyInTheAdaptiveWorkspaceChromeBand() {
         for chromeHeight in [
-            MonknotMetrics.chromeHeight(theme: .monknotLight, zoomScale: WorkspaceZoomPolicy.minimum),
-            MonknotMetrics.chromeHeight(theme: .monknotLight, zoomScale: 1),
-            MonknotMetrics.chromeHeight(theme: .monknotLight, zoomScale: WorkspaceZoomPolicy.maximum),
+            MonknotMetrics.chromeHeight(theme: .defaultLight, zoomScale: WorkspaceZoomPolicy.minimum),
+            MonknotMetrics.chromeHeight(theme: .defaultLight, zoomScale: 1),
+            MonknotMetrics.chromeHeight(theme: .defaultLight, zoomScale: WorkspaceZoomPolicy.maximum),
         ] {
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 900, height: 620),
@@ -468,7 +672,7 @@ final class ChromeAlignmentTests: XCTestCase {
         window.titlebarAppearsTransparent = true
 
         let chromeHeight = MonknotMetrics.chromeHeight(
-            theme: .monknotLight,
+            theme: .defaultLight,
             zoomScale: 1
         )
         let coordinator = WindowBackgroundDragEnabler.Coordinator(
@@ -496,7 +700,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testPrimaryChromeHeightPreservesTheProvenAdaptiveSpacingCurve() {
-        for theme in [AppTheme.monknotLight, AppTheme.monknotDark] {
+        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
                 let height = MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
                 XCTAssertEqual(
@@ -508,7 +712,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testInterfaceTokensUseOneCoherentZoomFactor() {
-        let theme = AppTheme.monknotDark
+        let theme = AppTheme.defaultDark
         let normal = 1.0
 
         XCTAssertEqual(theme.interfaceTextScale(zoomScale: normal), 1, accuracy: 0.001)
@@ -533,7 +737,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testInterfaceGlyphsNeverOutgrowTextAcrossSupportedZoomsAndThemes() {
-        for theme in [AppTheme.monknotLight, AppTheme.monknotDark] {
+        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
                 XCTAssertLessThanOrEqual(
                     theme.interfaceGlyphScale(zoomScale: zoomScale),
@@ -548,7 +752,7 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertEqual(MonknotMetrics.sidebarIconPointSizeBase, 15)
         XCTAssertEqual(MonknotMetrics.sidebarIconWeight, .regular)
 
-        for theme in [AppTheme.monknotLight, AppTheme.monknotDark] {
+        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
                 let iconSize = MonknotMetrics.interfaceGlyph(
                     MonknotMetrics.sidebarIconPointSizeBase,
@@ -575,7 +779,7 @@ final class ChromeAlignmentTests: XCTestCase {
         let size = MonknotIconButton.IconButtonSize.sidebarHeader
 
         XCTAssertEqual(size.iconWeight, MonknotMetrics.sidebarIconWeight)
-        for theme in [AppTheme.monknotLight, AppTheme.monknotDark] {
+        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
                 XCTAssertEqual(
                     size.iconSize(theme: theme, zoomScale: zoomScale),
@@ -607,7 +811,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testLongTabTitlesUseAStableCappedWidth() {
-        let theme = AppTheme.monknotDark
+        let theme = AppTheme.defaultDark
         let shortWidth = DocumentTabWidthPolicy.preferredWidth(
             title: "README.md",
             isPinned: false,
@@ -642,7 +846,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testDocumentTabsSizeToTheirMeasuredTitles() {
-        let theme = AppTheme.monknotDark
+        let theme = AppTheme.defaultDark
         let short = DocumentTabWidthPolicy.preferredWidth(
             title: "a.json",
             isPinned: false,
@@ -662,7 +866,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testPinnedTabsRetainTheirTitleAndPinAffordanceWidth() {
-        let theme = AppTheme.monknotDark
+        let theme = AppTheme.defaultDark
         let short = DocumentTabWidthPolicy.preferredWidth(
             title: "a.md",
             isPinned: true,
@@ -682,7 +886,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testTabCloseButtonsScaleWithTheSixteenPointTrailingSlot() {
-        let theme = AppTheme.monknotDark
+        let theme = AppTheme.defaultDark
         for zoomScale in WorkspaceZoomPolicy.supportedLevels {
             XCTAssertEqual(
                 MonknotTabCloseButton.dimension(theme: theme, zoomScale: zoomScale),
@@ -731,7 +935,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testWindowNavigationUsesReferenceSegmentGeometryAcrossSupportedZooms() {
-        let theme = AppTheme.monknotDark
+        let theme = AppTheme.defaultDark
         let navigationSize = MonknotIconButton.IconButtonSize.windowNavigation
         let chromeSize = MonknotIconButton.IconButtonSize.chrome
 
@@ -756,7 +960,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testPrimaryAndSecondaryChromePreserveTheirDistinctReferenceBands() {
-        for theme in [AppTheme.monknotLight, AppTheme.monknotDark] {
+        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
                 let primaryHeight = MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
                 let secondaryHeight = MonknotMetrics.chromeSecondaryHeight(
@@ -782,12 +986,12 @@ final class ChromeAlignmentTests: XCTestCase {
             }
         }
 
-        XCTAssertEqual(MonknotMetrics.chromeHeight(theme: .monknotDark, zoomScale: 1), 44)
-        XCTAssertEqual(MonknotMetrics.chromeSecondaryHeight(theme: .monknotDark, zoomScale: 1), 34)
+        XCTAssertEqual(MonknotMetrics.chromeHeight(theme: .defaultDark, zoomScale: 1), 44)
+        XCTAssertEqual(MonknotMetrics.chromeSecondaryHeight(theme: .defaultDark, zoomScale: 1), 34)
     }
 
     func testSegmentButtonsUseReferenceWidthAndShorterReferenceHeight() {
-        for theme in [AppTheme.monknotLight, AppTheme.monknotDark] {
+        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
                 let segment = MonknotSegmentButton(
                     systemImage: "text.alignleft",
@@ -864,7 +1068,7 @@ final class ChromeAlignmentTests: XCTestCase {
     func testSegmentedIconButtonsScaleFromTheThirtyPointEditorReferenceBox() {
         let size = MonknotIconButton.IconButtonSize.segmented
 
-        for theme in [AppTheme.monknotLight, AppTheme.monknotDark] {
+        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
                 XCTAssertEqual(
                     size.dimension(theme: theme, zoomScale: zoomScale),
@@ -944,7 +1148,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testWindowNavigationControlsUseSharedChromeHeightAtEverySupportedZoom() {
-        let theme = AppTheme.monknotDark
+        let theme = AppTheme.defaultDark
 
         for zoomScale in WorkspaceZoomPolicy.supportedLevels {
             let controls = WindowNavigationControls(
@@ -967,7 +1171,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testTerminalPanelRowUsesItsSubordinateThirtySixPointHeader() {
-        for theme in [AppTheme.monknotLight, AppTheme.monknotDark] {
+        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             let sessions = TerminalSessionCollectionStore()
 
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
@@ -987,7 +1191,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testTerminalPanelKeepsTabsInAHorizontalScrollContainer() {
-        let theme = AppTheme.monknotDark
+        let theme = AppTheme.defaultDark
         let sessions = TerminalSessionCollectionStore()
         XCTAssertNotNil(sessions.createTerminal(in: FileManager.default.temporaryDirectory))
         defer { sessions.stopAll() }
@@ -1008,7 +1212,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testWindowNavigationReserveContainsControlsAtEverySupportedZoom() {
-        let theme = AppTheme.monknotDark
+        let theme = AppTheme.defaultDark
 
         for zoomScale in WorkspaceZoomPolicy.supportedLevels {
             let buttonWidth = MonknotMetrics.windowNavigationButtonDimension(
@@ -1029,7 +1233,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testTopNavigationControlsUseSharedChromeHeightAcrossSidebarStatesAndZooms() {
-        let theme = AppTheme.monknotDark
+        let theme = AppTheme.defaultDark
 
         for zoomScale in WorkspaceZoomPolicy.supportedLevels {
 
@@ -1072,7 +1276,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testDocumentSearchKeepsScrollableFileTabsMountedInThePrimaryRow() {
-        let theme = AppTheme.monknotDark
+        let theme = AppTheme.defaultDark
         var search = DocumentSearchState()
         search.present()
         let tab = WorkspaceTabItem(
@@ -1209,7 +1413,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testDocumentTabsUseSharedChromeHeightAtEverySupportedZoom() {
-        let theme = AppTheme.monknotDark
+        let theme = AppTheme.defaultDark
 
         for zoomScale in WorkspaceZoomPolicy.supportedLevels {
             let tabBar = DocumentTabBar(
@@ -1308,7 +1512,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testMountedDocumentTabBarSupportsHorizontalScrolling() async {
-        let theme = AppTheme.monknotDark
+        let theme = AppTheme.defaultDark
         let tabs = (0..<10).map { index in
             WorkspaceTabItem(
                 documentID: "tab-\(index)",
@@ -1373,7 +1577,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testMountedTerminalTabsKeepManualHorizontalScrollPosition() async {
-        let theme = AppTheme.monknotDark
+        let theme = AppTheme.defaultDark
         let sessions = TerminalSessionCollectionStore()
         for _ in 0..<10 {
             XCTAssertNotNil(sessions.createTerminal(in: FileManager.default.temporaryDirectory))
@@ -1442,7 +1646,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testTerminalUsesCompactTopPaddingBelowItsChrome() {
-        let theme = AppTheme.monknotDark
+        let theme = AppTheme.defaultDark
         let html = TerminalWebView.html(
             theme: theme,
             fontSize: 13.5,
@@ -1460,7 +1664,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testTerminalFontUsesTheSameWorkspaceZoomAsDocumentContent() {
-        let theme = AppTheme.monknotDark
+        let theme = AppTheme.defaultDark
         let minimum = TerminalDrawerView.terminalFontSize(
             theme: theme,
             zoomScale: WorkspaceZoomPolicy.minimum

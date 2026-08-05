@@ -17,11 +17,11 @@ final class WorkspaceSearchPresentationTests: XCTestCase {
 
     func testSearchFieldFollowsWorkspaceControlZoom() {
         let maximumHeight = WorkspaceSearchLayoutPolicy.fieldHeight(
-            theme: .monknotDark,
+            theme: .defaultDark,
             zoomScale: WorkspaceZoomPolicy.maximum
         )
         let normalHeight = WorkspaceSearchLayoutPolicy.fieldHeight(
-            theme: .monknotDark,
+            theme: .defaultDark,
             zoomScale: 1
         )
 
@@ -30,7 +30,7 @@ final class WorkspaceSearchPresentationTests: XCTestCase {
             maximumHeight,
             MonknotMetrics.interfaceControl(
                 28,
-                theme: .monknotDark,
+                theme: .defaultDark,
                 zoomScale: WorkspaceZoomPolicy.maximum
             ),
             accuracy: 0.001

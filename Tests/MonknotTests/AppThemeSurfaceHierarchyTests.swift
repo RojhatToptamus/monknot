@@ -19,26 +19,26 @@ final class AppThemeSurfaceHierarchyTests: XCTestCase {
     }
 
     func testTerminalMirrorsSidebarSurfaceInBothModes() {
-        XCTAssertEqual(AppTheme.monknotDark.terminalSurfaceHex, AppTheme.monknotDark.sidebarSurfaceHex)
-        XCTAssertEqual(AppTheme.monknotLight.terminalSurfaceHex, AppTheme.monknotLight.sidebarSurfaceHex)
+        XCTAssertEqual(AppTheme.defaultDark.terminalSurfaceHex, AppTheme.defaultDark.sidebarSurfaceHex)
+        XCTAssertEqual(AppTheme.defaultLight.terminalSurfaceHex, AppTheme.defaultLight.sidebarSurfaceHex)
     }
 
     func testDockedToolPanelsShareTheDistinctSidebarTier() {
-        for theme in [AppTheme.monknotDark, AppTheme.monknotLight] {
+        for theme in [AppTheme.defaultDark, AppTheme.defaultLight] {
             XCTAssertNotEqual(theme.sidebarSurfaceHex, theme.background)
             XCTAssertEqual(theme.sidebarSurfaceHex, theme.terminalSurfaceHex)
         }
     }
 
     func testDarkSidebarRaisesSubtlyTowardInk() {
-        let theme = AppTheme.monknotDark // background #111111, foreground #fcfcfc
+        let theme = AppTheme.defaultDark // background #111111, foreground #fcfcfc
         // Lighter than the dark canvas, but a subtle offset (not a heavy panel).
         XCTAssertGreaterThan(luminance(theme.sidebarSurfaceHex), luminance(theme.background))
         XCTAssertLessThan(channelDelta(theme.sidebarSurfaceHex, theme.background), 0.16)
     }
 
     func testLightSidebarRecessesSubtlyTowardInk() {
-        let theme = AppTheme.monknotLight // background #ffffff, foreground #1a1c1f
+        let theme = AppTheme.defaultLight // background #ffffff, foreground #1a1c1f
         // A hair darker than the white canvas, and very subtle in light themes.
         XCTAssertLessThan(luminance(theme.sidebarSurfaceHex), luminance(theme.background))
         XCTAssertLessThan(channelDelta(theme.sidebarSurfaceHex, theme.background), 0.06)

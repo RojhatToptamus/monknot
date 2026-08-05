@@ -7,10 +7,10 @@ struct AppearanceSettingsView: View {
     @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.system.rawValue
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
-    @State private var lightDraft = ThemeConfiguration(theme: AppTheme.monknotLight)
-    @State private var darkDraft = ThemeConfiguration(theme: AppTheme.monknotDark)
-    @State private var lightBaseline = ThemeEditBaseline(themeID: AppTheme.monknotLight.id, configuration: ThemeConfiguration(theme: AppTheme.monknotLight))
-    @State private var darkBaseline = ThemeEditBaseline(themeID: AppTheme.monknotDark.id, configuration: ThemeConfiguration(theme: AppTheme.monknotDark))
+    @State private var lightDraft = ThemeConfiguration(theme: AppTheme.defaultLight)
+    @State private var darkDraft = ThemeConfiguration(theme: AppTheme.defaultDark)
+    @State private var lightBaseline = ThemeEditBaseline(themeID: AppTheme.defaultLight.id, configuration: ThemeConfiguration(theme: AppTheme.defaultLight))
+    @State private var darkBaseline = ThemeEditBaseline(themeID: AppTheme.defaultDark.id, configuration: ThemeConfiguration(theme: AppTheme.defaultDark))
 
     private var themePreference: ThemePreference {
         get { ThemePreference(rawValue: themePreferenceRawValue) ?? .system }
@@ -56,7 +56,13 @@ struct AppearanceSettingsView: View {
             selectedThemeEditor
 
             ThemeLivePreview(
-                theme: draft(for: activeSlot).applied(to: themeStore.presetTheme(for: activeSlot)),
+                theme: draft(for: activeSlot)
+                    .applied(to: themeStore.presetTheme(for: activeSlot))
+                    .replacing(
+                        quietSidebar: themeStore.quietSidebar,
+                        uiFontSize: themeStore.uiFontSize,
+                        codeFontSize: themeStore.codeFontSize
+                    ),
                 chromeTheme: uiTheme
             )
             .padding(.top, scaled(22))
@@ -75,12 +81,21 @@ struct AppearanceSettingsView: View {
     }
 
     private var themeEditorHeader: some View {
-        HStack(spacing: scaled(10)) {
-            SettingsSectionHeader(theme: uiTheme, title: activeSlot.title)
+        let isEdited = hasEdits(for: activeSlot)
+
+        return HStack(alignment: .center, spacing: scaled(10)) {
+            Text(activeSlot.title)
+                .font(.system(
+                    size: MonknotMetrics.interfaceText(11, theme: uiTheme, zoomScale: settingsZoomScale),
+                    weight: .semibold
+                ))
+                .tracking(scaled(1.1))
+                .foregroundStyle(uiTheme.mutedForegroundColor)
+                .textCase(.uppercase)
 
             Spacer()
 
-            if hasEdits(for: activeSlot) {
+            HStack(alignment: .center, spacing: scaled(10)) {
                 Text("Edited")
                     .font(.system(size: MonknotMetrics.interfaceText(11, theme: uiTheme, zoomScale: settingsZoomScale)))
                     .foregroundStyle(uiTheme.mutedForegroundColor)
@@ -89,8 +104,12 @@ struct AppearanceSettingsView: View {
                     revert(activeSlot)
                 }
             }
-
+            .opacity(isEdited ? 1 : 0)
+            .allowsHitTesting(isEdited)
+            .accessibilityHidden(!isEdited)
         }
+        .padding(.horizontal, scaled(2))
+        .padding(.bottom, scaled(9))
     }
 
     @ViewBuilder
@@ -107,9 +126,9 @@ struct AppearanceSettingsView: View {
     private var typographyControls: some View {
         switch activeSlot {
         case .light:
-            ThemeTypographySettings(draft: $lightDraft, uiTheme: uiTheme)
+            ThemeTypographySettings(themeStore: themeStore, draft: $lightDraft, uiTheme: uiTheme)
         case .dark:
-            ThemeTypographySettings(draft: $darkDraft, uiTheme: uiTheme)
+            ThemeTypographySettings(themeStore: themeStore, draft: $darkDraft, uiTheme: uiTheme)
         }
     }
 
@@ -140,6 +159,8 @@ struct AppearanceSettingsView: View {
         return themeStore.selectedThemeID(for: slot) != baseline.themeID
             || draft(for: slot).sanitized(for: preset)
                 != baseline.configuration.sanitized(for: preset)
+            || themeStore.uiFontSize != baseline.configuration.uiFontSize
+            || themeStore.codeFontSize != baseline.configuration.codeFontSize
     }
 
     private func revert(_ slot: ThemeSlot) {
@@ -158,7 +179,7 @@ struct AppearanceSettingsView: View {
               RGBHex(configuration.foreground) != nil else {
             return
         }
-        themeStore.save(configuration, for: slot)
+        themeStore.saveThemeCustomization(configuration, for: slot)
     }
 }
 
@@ -184,6 +205,13 @@ private struct ThemeEditorSection: View {
         )
     }
 
+    private var quietSidebar: Binding<Bool> {
+        Binding(
+            get: { themeStore.quietSidebar },
+            set: { themeStore.setQuietSidebar($0) }
+        )
+    }
+
     var body: some View {
         SettingsGroupCard(theme: uiTheme) {
             SettingsRow(theme: uiTheme, title: "Theme preset") {
@@ -191,7 +219,16 @@ private struct ThemeEditorSection: View {
                     title: "Theme preset",
                     selection: selectedThemeID,
                     options: slot.themes.map { ($0.id, $0.name) },
-                    theme: uiTheme
+                    theme: uiTheme,
+                    previewsSelection: true,
+                    onPreviewSelection: { id in
+                        themeStore.previewThemeID(id, for: slot)
+                        draft = themeStore.configuration(for: slot)
+                    },
+                    onCancelPreview: {
+                        themeStore.cancelThemePreview(for: slot)
+                        draft = themeStore.configuration(for: slot)
+                    }
                 )
                 .frame(minWidth: MonknotMetrics.interfaceDensity(160, theme: uiTheme, zoomScale: settingsZoomScale))
             }
@@ -205,15 +242,30 @@ private struct ThemeEditorSection: View {
                 title: "Quiet sidebar",
                 detail: "Subdue sidebar text and icons by 20%",
                 showsDivider: false,
-                isOn: $draft.quietSidebar
+                isOn: quietSidebar
             )
         }
     }
 }
 
 private struct ThemeTypographySettings: View {
+    @ObservedObject var themeStore: ThemeSettingsStore
     @Binding var draft: ThemeConfiguration
     let uiTheme: AppTheme
+
+    private var uiFontSize: Binding<Double> {
+        Binding(
+            get: { themeStore.uiFontSize },
+            set: { themeStore.setTypography(uiFontSize: $0, codeFontSize: themeStore.codeFontSize) }
+        )
+    }
+
+    private var codeFontSize: Binding<Double> {
+        Binding(
+            get: { themeStore.codeFontSize },
+            set: { themeStore.setTypography(uiFontSize: themeStore.uiFontSize, codeFontSize: $0) }
+        )
+    }
 
     var body: some View {
         SettingsGroupCard(theme: uiTheme) {
@@ -221,7 +273,7 @@ private struct ThemeTypographySettings: View {
                 theme: uiTheme,
                 title: "UI font size",
                 detail: "Base text size for Monknot controls",
-                value: $draft.uiFontSize,
+                value: uiFontSize,
                 range: 12...24
             )
 
@@ -229,7 +281,7 @@ private struct ThemeTypographySettings: View {
                 theme: uiTheme,
                 title: "Code font size",
                 detail: "Base text size for source and preview code",
-                value: $draft.codeFontSize,
+                value: codeFontSize,
                 range: 11...28
             )
 

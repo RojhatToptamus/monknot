@@ -927,7 +927,7 @@ private struct PDFAnnotationToolbar: View {
     }
 }
 
-private struct PDFZoomToolbarGroup: View {
+struct PDFZoomToolbarGroup: View {
     let status: PDFZoomStatus
     let theme: AppTheme
     let zoomScale: Double
@@ -937,7 +937,7 @@ private struct PDFZoomToolbarGroup: View {
     @FocusState private var isMenuFocused: Bool
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
     private func textScaled(_ base: CGFloat) -> CGFloat {
@@ -963,7 +963,7 @@ private struct PDFZoomToolbarGroup: View {
                 }
             }
         } label: {
-            HStack(spacing: scaled(8)) {
+            HStack(spacing: scaled(6)) {
                 Text(status.displayLabel)
                     .font(.system(size: textScaled(13), weight: .regular))
                     .monospacedDigit()
@@ -979,44 +979,55 @@ private struct PDFZoomToolbarGroup: View {
                     )
                     .frame(width: glyphScaled(9), height: glyphScaled(5))
             }
-            .foregroundStyle(isMenuHovered ? theme.foregroundColor : theme.mutedForegroundColor)
-            .frame(
-                width: scaled(86),
-                height: MonknotMetrics.interfaceControl(30, theme: theme, zoomScale: zoomScale)
-            )
-            .background {
-                if isMenuHovered, status.isAvailable {
-                    RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                        .fill(theme.foregroundColor.opacity(theme.isDark ? 0.065 : 0.048))
-                }
+            .foregroundStyle(zoomControlForegroundColor)
+            .padding(.leading, scaled(10))
+            .padding(.trailing, scaled(9))
+            .frame(height: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale))
+            .background(zoomControlBackgroundColor, in: zoomControlShape)
+            .overlay {
+                zoomControlShape
+                    .strokeBorder(theme.borderColor, lineWidth: 1)
             }
             .overlay {
                 if isMenuFocused, status.isAvailable {
-                    RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                        .strokeBorder(theme.accentColor.opacity(0.9), lineWidth: 1.5)
-                        .padding(1)
+                    zoomControlShape
+                        .stroke(theme.accentColor.opacity(0.35), lineWidth: 3)
+                        .padding(-2)
                 }
             }
-            .contentShape(Rectangle())
+            .contentShape(zoomControlShape)
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .disabled(!status.isAvailable)
         .focusable(status.isAvailable)
         .focused($isMenuFocused)
+        .focusEffectDisabled()
         .opacity(status.isAvailable ? 1 : 0.42)
         .onHover { isMenuHovered = $0 }
         .help("PDF Zoom")
         .accessibilityLabel("PDF Zoom")
         .accessibilityValue(status.displayLabel)
-        .background(theme.controlTrackFillColor.opacity(theme.isDark ? 0.74 : 0.62))
-        .clipShape(RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)))
-        .overlay {
-            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                .strokeBorder(theme.borderColor, lineWidth: 1)
-        }
         .fixedSize(horizontal: true, vertical: false)
         .animation(.easeOut(duration: 0.12), value: isMenuHovered)
+    }
+
+    private var zoomControlShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+    }
+
+    private var zoomControlForegroundColor: Color {
+        guard status.isAvailable else { return theme.disabledForegroundColor }
+        return isMenuHovered ? theme.foregroundColor : theme.mutedForegroundColor
+    }
+
+    private var zoomControlBackgroundColor: Color {
+        guard status.isAvailable else { return theme.controlTrackFillColor }
+        if isMenuHovered {
+            return theme.foregroundColor.opacity(theme.isDark ? 0.085 : 0.06)
+        }
+        return theme.controlTrackFillColor
     }
 }
 

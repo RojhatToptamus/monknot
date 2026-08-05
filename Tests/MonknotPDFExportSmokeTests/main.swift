@@ -67,7 +67,7 @@ struct MonknotPDFExportSmokeTests {
                 Final Export Sentinel
                 """,
                 baseURL: root,
-                theme: AppTheme.monknotLight,
+                theme: AppTheme.defaultLight,
                 usePointerCursors: false,
                 fontSmoothing: true,
                 options: MarkdownPDFExportOptions(

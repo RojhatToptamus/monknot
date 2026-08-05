@@ -1,5 +1,6 @@
 import AppKit
 import PDFKit
+import SwiftUI
 import XCTest
 @testable import MonknotApp
 
@@ -60,6 +61,24 @@ final class PDFZoomStateTests: XCTestCase {
 
     func testPresetMenuUsesTheRequestedSixZoomLevels() {
         XCTAssertEqual(PDFZoomStatus.presetPercentages, [100, 120, 140, 160, 180, 200])
+    }
+
+    func testPercentageMenuHugsItsContentAtTheReferenceControlHeight() {
+        let menu = PDFZoomToolbarGroup(
+            status: PDFZoomStatus(
+                mode: .fixed(scaleFactor: 1.2),
+                scaleFactor: 1.2,
+                isAvailable: true
+            ),
+            theme: .defaultLight,
+            zoomScale: 1,
+            runZoom: { _ in }
+        )
+        let fittingSize = NSHostingView(rootView: menu).fittingSize
+
+        XCTAssertEqual(fittingSize.height, 28, accuracy: 0.5)
+        XCTAssertGreaterThan(fittingSize.width, 56)
+        XCTAssertLessThan(fittingSize.width, 86)
     }
 
     func testPresetZoomUsesAnAbsoluteFixedScale() throws {

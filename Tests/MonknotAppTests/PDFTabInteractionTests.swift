@@ -13,7 +13,7 @@ final class PDFTabInteractionTests: XCTestCase {
     }
 
     private func assertInactiveMarkdownTabReceivesPointerClick(zoomScale: Double) async {
-        let theme = AppTheme.monknotDark
+        let theme = AppTheme.defaultDark
         let chromeHeight = MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
         let markdownID = "/Notes.md"
         let pdfID = "/Active.pdf"

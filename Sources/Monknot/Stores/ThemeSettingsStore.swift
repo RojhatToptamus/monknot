@@ -34,9 +34,9 @@ enum ThemeSlot: String, CaseIterable, Identifiable {
     var defaultThemeID: String {
         switch self {
         case .light:
-            return AppTheme.monknotLight.id
+            return AppTheme.defaultLight.id
         case .dark:
-            return AppTheme.monknotDark.id
+            return AppTheme.defaultDark.id
         }
     }
 
@@ -54,7 +54,6 @@ struct ThemeConfiguration: Codable, Equatable, Sendable {
     var accent: String
     var background: String
     var foreground: String
-    var quietSidebar: Bool
     var uiFontSize: Double
     var codeFontSize: Double
     var contrast: Double
@@ -63,7 +62,6 @@ struct ThemeConfiguration: Codable, Equatable, Sendable {
         case accent
         case background
         case foreground
-        case quietSidebar
         case uiFontSize
         case codeFontSize
         case contrast
@@ -73,7 +71,6 @@ struct ThemeConfiguration: Codable, Equatable, Sendable {
         self.accent = theme.accent
         self.background = theme.background
         self.foreground = theme.foreground
-        self.quietSidebar = theme.quietSidebar
         self.uiFontSize = theme.uiFontSize
         self.codeFontSize = theme.codeFontSize
         self.contrast = theme.contrast
@@ -84,7 +81,6 @@ struct ThemeConfiguration: Codable, Equatable, Sendable {
         accent = try container.decode(String.self, forKey: .accent)
         background = try container.decode(String.self, forKey: .background)
         foreground = try container.decode(String.self, forKey: .foreground)
-        quietSidebar = try container.decodeIfPresent(Bool.self, forKey: .quietSidebar) ?? false
         uiFontSize = try container.decode(Double.self, forKey: .uiFontSize)
         codeFontSize = try container.decode(Double.self, forKey: .codeFontSize)
         contrast = try container.decode(Double.self, forKey: .contrast)
@@ -95,7 +91,6 @@ struct ThemeConfiguration: Codable, Equatable, Sendable {
         try container.encode(accent, forKey: .accent)
         try container.encode(background, forKey: .background)
         try container.encode(foreground, forKey: .foreground)
-        try container.encode(quietSidebar, forKey: .quietSidebar)
         try container.encode(uiFontSize, forKey: .uiFontSize)
         try container.encode(codeFontSize, forKey: .codeFontSize)
         try container.encode(contrast, forKey: .contrast)
@@ -107,7 +102,6 @@ struct ThemeConfiguration: Codable, Equatable, Sendable {
             background: sanitized.background,
             foreground: sanitized.foreground,
             accent: sanitized.accent,
-            quietSidebar: sanitized.quietSidebar,
             uiFontSize: sanitized.uiFontSize,
             codeFontSize: sanitized.codeFontSize,
             contrast: sanitized.contrast
@@ -119,7 +113,6 @@ struct ThemeConfiguration: Codable, Equatable, Sendable {
             accent: Self.normalizedHex(accent, fallback: theme.accent),
             background: Self.normalizedHex(background, fallback: theme.background),
             foreground: Self.normalizedHex(foreground, fallback: theme.foreground),
-            quietSidebar: quietSidebar,
             uiFontSize: Self.clamped(uiFontSize, range: 12...24),
             codeFontSize: Self.clamped(codeFontSize, range: 11...28),
             contrast: Self.clamped(contrast, range: 0...100)
@@ -130,7 +123,6 @@ struct ThemeConfiguration: Codable, Equatable, Sendable {
         accent: String,
         background: String,
         foreground: String,
-        quietSidebar: Bool,
         uiFontSize: Double,
         codeFontSize: Double,
         contrast: Double
@@ -138,7 +130,6 @@ struct ThemeConfiguration: Codable, Equatable, Sendable {
         self.accent = accent
         self.background = background
         self.foreground = foreground
-        self.quietSidebar = quietSidebar
         self.uiFontSize = uiFontSize
         self.codeFontSize = codeFontSize
         self.contrast = contrast
@@ -178,7 +169,11 @@ final class ThemeSettingsStore: ObservableObject {
         }
     }
 
+    @Published private(set) var quietSidebar: Bool
+    @Published private(set) var uiFontSize: Double
+    @Published private(set) var codeFontSize: Double
     @Published private(set) var customizations: [String: ThemeConfiguration]
+    @Published private var previewThemeIDs: [ThemeSlot: String] = [:]
 
     private let defaults: UserDefaults
 
@@ -186,14 +181,25 @@ final class ThemeSettingsStore: ObservableObject {
         let storedLightThemeID = defaults.string(forKey: Keys.lightThemeID)
         let storedDarkThemeID = defaults.string(forKey: Keys.darkThemeID)
         let storedCustomizations = Self.loadCustomizations(from: defaults)
-        let migratedLightThemeID = Self.migratedThemeID(storedLightThemeID) ?? AppTheme.monknotLight.id
-        let migratedDarkThemeID = Self.migratedThemeID(storedDarkThemeID) ?? AppTheme.monknotDark.id
+        let migratedLightThemeID = Self.migratedThemeID(storedLightThemeID) ?? AppTheme.defaultLight.id
+        let migratedDarkThemeID = Self.migratedThemeID(storedDarkThemeID) ?? AppTheme.defaultDark.id
         let migratedCustomizations = Self.migratedCustomizations(storedCustomizations)
+        let quietSidebarState = Self.loadQuietSidebar(from: defaults)
+        let typography = Self.loadTypography(
+            from: defaults,
+            lightThemeID: migratedLightThemeID,
+            darkThemeID: migratedDarkThemeID,
+            customizations: migratedCustomizations
+        )
+        let normalizedCustomizations = Self.removingPerThemeTypography(from: migratedCustomizations)
 
         self.defaults = defaults
         self.lightThemeID = migratedLightThemeID
         self.darkThemeID = migratedDarkThemeID
-        self.customizations = migratedCustomizations
+        self.quietSidebar = quietSidebarState.value
+        self.uiFontSize = typography.uiFontSize
+        self.codeFontSize = typography.codeFontSize
+        self.customizations = normalizedCustomizations
 
         if storedLightThemeID != nil, storedLightThemeID != migratedLightThemeID {
             defaults.set(migratedLightThemeID, forKey: Keys.lightThemeID)
@@ -201,9 +207,12 @@ final class ThemeSettingsStore: ObservableObject {
         if storedDarkThemeID != nil, storedDarkThemeID != migratedDarkThemeID {
             defaults.set(migratedDarkThemeID, forKey: Keys.darkThemeID)
         }
-        if storedCustomizations != migratedCustomizations {
-            Self.persistCustomizations(migratedCustomizations, to: defaults)
+        if storedCustomizations != normalizedCustomizations || quietSidebarState.hadLegacyValue {
+            Self.persistCustomizations(normalizedCustomizations, to: defaults)
         }
+        defaults.set(quietSidebarState.value, forKey: Keys.quietSidebar)
+        defaults.set(typography.uiFontSize, forKey: Keys.uiFontSize)
+        defaults.set(typography.codeFontSize, forKey: Keys.codeFontSize)
     }
 
     func selectedThemeID(for slot: ThemeSlot) -> String {
@@ -216,6 +225,7 @@ final class ThemeSettingsStore: ObservableObject {
     }
 
     func setSelectedThemeID(_ id: String, for slot: ThemeSlot) {
+        previewThemeIDs.removeValue(forKey: slot)
         switch slot {
         case .light:
             lightThemeID = id
@@ -224,22 +234,39 @@ final class ThemeSettingsStore: ObservableObject {
         }
     }
 
+    func previewThemeID(_ id: String, for slot: ThemeSlot) {
+        guard slot.themes.contains(where: { $0.id == id }) else { return }
+        previewThemeIDs[slot] = id
+    }
+
+    func cancelThemePreview(for slot: ThemeSlot) {
+        previewThemeIDs.removeValue(forKey: slot)
+    }
+
+    private func displayedThemeID(for slot: ThemeSlot) -> String {
+        previewThemeIDs[slot] ?? selectedThemeID(for: slot)
+    }
+
     func presetTheme(for slot: ThemeSlot) -> AppTheme {
-        slot.preset(id: selectedThemeID(for: slot))
+        slot.preset(id: displayedThemeID(for: slot))
     }
 
     func effectiveTheme(for slot: ThemeSlot) -> AppTheme {
         let preset = presetTheme(for: slot)
-        guard let customization = customizations[preset.id] else {
-            return preset
-        }
-
-        return customization.applied(to: preset)
+        let colorTheme = customizations[preset.id]?.applied(to: preset) ?? preset
+        return colorTheme.replacing(
+            quietSidebar: quietSidebar,
+            uiFontSize: uiFontSize,
+            codeFontSize: codeFontSize
+        )
     }
 
     func configuration(for slot: ThemeSlot) -> ThemeConfiguration {
         let preset = presetTheme(for: slot)
-        return customizations[preset.id] ?? ThemeConfiguration(theme: preset)
+        var configuration = customizations[preset.id] ?? ThemeConfiguration(theme: preset)
+        configuration.uiFontSize = uiFontSize
+        configuration.codeFontSize = codeFontSize
+        return configuration
     }
 
     func hasCustomization(for slot: ThemeSlot) -> Bool {
@@ -249,15 +276,43 @@ final class ThemeSettingsStore: ObservableObject {
     func save(_ configuration: ThemeConfiguration, for slot: ThemeSlot) {
         let preset = presetTheme(for: slot)
         let sanitized = configuration.sanitized(for: preset)
+        setTypography(uiFontSize: sanitized.uiFontSize, codeFontSize: sanitized.codeFontSize)
+        saveThemeCustomization(sanitized, for: slot)
+    }
+
+    func saveThemeCustomization(_ configuration: ThemeConfiguration, for slot: ThemeSlot) {
+        let preset = presetTheme(for: slot)
+        let sanitized = configuration.sanitized(for: preset)
         let presetConfiguration = ThemeConfiguration(theme: preset).sanitized(for: preset)
 
-        if sanitized == presetConfiguration {
+        var themeCustomization = sanitized
+        themeCustomization.uiFontSize = presetConfiguration.uiFontSize
+        themeCustomization.codeFontSize = presetConfiguration.codeFontSize
+
+        if themeCustomization == presetConfiguration {
             customizations.removeValue(forKey: preset.id)
         } else {
-            customizations[preset.id] = sanitized
+            customizations[preset.id] = themeCustomization
         }
 
         persistCustomizations()
+    }
+
+    func setTypography(uiFontSize: Double, codeFontSize: Double) {
+        let sanitizedUI = min(24, max(12, uiFontSize))
+        let sanitizedCode = min(28, max(11, codeFontSize))
+        guard self.uiFontSize != sanitizedUI || self.codeFontSize != sanitizedCode else { return }
+
+        self.uiFontSize = sanitizedUI
+        self.codeFontSize = sanitizedCode
+        defaults.set(sanitizedUI, forKey: Keys.uiFontSize)
+        defaults.set(sanitizedCode, forKey: Keys.codeFontSize)
+    }
+
+    func setQuietSidebar(_ isEnabled: Bool) {
+        guard quietSidebar != isEnabled else { return }
+        quietSidebar = isEnabled
+        defaults.set(isEnabled, forKey: Keys.quietSidebar)
     }
 
     func reset(_ slot: ThemeSlot) {
@@ -303,6 +358,97 @@ final class ThemeSettingsStore: ObservableObject {
         return customizations
     }
 
+    private struct LegacyThemeConfiguration: Decodable {
+        let quietSidebar: Bool?
+    }
+
+    private static func loadQuietSidebar(
+        from defaults: UserDefaults
+    ) -> (value: Bool, hadLegacyValue: Bool) {
+        let legacyCustomizations: [String: LegacyThemeConfiguration]
+        if let data = defaults.data(forKey: Keys.customizations),
+           let decoded = try? JSONDecoder().decode(
+               [String: LegacyThemeConfiguration].self,
+               from: data
+           ) {
+            legacyCustomizations = decoded
+        } else {
+            legacyCustomizations = [:]
+        }
+
+        let hadLegacyValue = legacyCustomizations.values.contains { $0.quietSidebar != nil }
+        if defaults.object(forKey: Keys.quietSidebar) != nil {
+            return (defaults.bool(forKey: Keys.quietSidebar), hadLegacyValue)
+        }
+
+        return (
+            legacyCustomizations.values.contains { $0.quietSidebar == true },
+            hadLegacyValue
+        )
+    }
+
+    private static func loadTypography(
+        from defaults: UserDefaults,
+        lightThemeID: String,
+        darkThemeID: String,
+        customizations: [String: ThemeConfiguration]
+    ) -> (uiFontSize: Double, codeFontSize: Double) {
+        if defaults.object(forKey: Keys.uiFontSize) != nil,
+           defaults.object(forKey: Keys.codeFontSize) != nil {
+            return (
+                min(24, max(12, defaults.double(forKey: Keys.uiFontSize))),
+                min(28, max(11, defaults.double(forKey: Keys.codeFontSize)))
+            )
+        }
+
+        let lightTheme = AppTheme.lightTheme(id: lightThemeID)
+        let darkTheme = AppTheme.darkTheme(id: darkThemeID)
+        let lightConfiguration = (customizations[lightTheme.id] ?? ThemeConfiguration(theme: lightTheme))
+            .sanitized(for: lightTheme)
+        let darkConfiguration = (customizations[darkTheme.id] ?? ThemeConfiguration(theme: darkTheme))
+            .sanitized(for: darkTheme)
+        let defaultUI = AppTheme.defaultLight.uiFontSize
+        let defaultCode = AppTheme.defaultLight.codeFontSize
+        let lightIsCustomized = lightConfiguration.uiFontSize != defaultUI
+            || lightConfiguration.codeFontSize != defaultCode
+        let darkIsCustomized = darkConfiguration.uiFontSize != defaultUI
+            || darkConfiguration.codeFontSize != defaultCode
+
+        if darkIsCustomized && !lightIsCustomized {
+            return (darkConfiguration.uiFontSize, darkConfiguration.codeFontSize)
+        }
+        if defaults.string(forKey: Keys.themePreference) == ThemePreference.dark.rawValue {
+            return (darkConfiguration.uiFontSize, darkConfiguration.codeFontSize)
+        }
+        return (lightConfiguration.uiFontSize, lightConfiguration.codeFontSize)
+    }
+
+    private static func removingPerThemeTypography(
+        from customizations: [String: ThemeConfiguration]
+    ) -> [String: ThemeConfiguration] {
+        let presetsByID = Dictionary(
+            uniqueKeysWithValues: (AppTheme.lightThemes + AppTheme.darkThemes).map { ($0.id, $0) }
+        )
+        var normalized: [String: ThemeConfiguration] = [:]
+
+        for (id, configuration) in customizations {
+            guard let preset = presetsByID[id] else {
+                normalized[id] = configuration
+                continue
+            }
+
+            let presetConfiguration = ThemeConfiguration(theme: preset).sanitized(for: preset)
+            var themeCustomization = configuration.sanitized(for: preset)
+            themeCustomization.uiFontSize = presetConfiguration.uiFontSize
+            themeCustomization.codeFontSize = presetConfiguration.codeFontSize
+            if themeCustomization != presetConfiguration {
+                normalized[id] = themeCustomization
+            }
+        }
+
+        return normalized
+    }
+
     private static func migratedThemeID(_ id: String?) -> String? {
         guard let id else { return nil }
         return legacyThemeIDMap[id] ?? id
@@ -318,18 +464,40 @@ final class ThemeSettingsStore: ObservableObject {
                 migrated[currentID] = configuration
             }
         }
+        normalizeRemovedLightPresetTokens(in: &migrated)
         return migrated
     }
 
+    private static func normalizeRemovedLightPresetTokens(
+        in customizations: inout [String: ThemeConfiguration]
+    ) {
+        guard var configuration = customizations["codex-light"],
+              configuration.accent.caseInsensitiveCompare("#339CFF") == .orderedSame,
+              configuration.background.caseInsensitiveCompare("#FFFFFF") == .orderedSame,
+              configuration.foreground.caseInsensitiveCompare("#1A1C1F") == .orderedSame else {
+            return
+        }
+
+        configuration.accent = AppTheme.defaultLight.accent
+        configuration.background = AppTheme.defaultLight.background
+        configuration.foreground = AppTheme.defaultLight.foreground
+        customizations["codex-light"] = configuration
+    }
+
     private static let legacyThemeIDMap = [
-        "codex-light": "monknot-light",
-        "codex-blue-light": "monknot-blue-light",
-        "codex-dark": "monknot-dark",
+        "codex-blue-light": "codex-light",
+        "monknot-blue-light": "codex-light",
+        "monknot-light": "codex-light",
+        "monknot-dark": "codex-dark",
     ]
 
     private enum Keys {
         static let lightThemeID = "Monknot.lightThemeID"
         static let darkThemeID = "Monknot.darkThemeID"
         static let customizations = "Monknot.themeCustomizations"
+        static let quietSidebar = "Monknot.quietSidebar"
+        static let uiFontSize = "Monknot.uiFontSize"
+        static let codeFontSize = "Monknot.codeFontSize"
+        static let themePreference = "Monknot.themePreference"
     }
 }
