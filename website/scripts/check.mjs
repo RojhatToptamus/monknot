@@ -7,10 +7,6 @@ const requiredFiles = [
   "styles.css",
   "main.js",
   "assets/monknot-icon.png",
-  "assets/monknot-light.jpg",
-  "assets/monknot-light-1200.webp",
-  "assets/monknot-light-2400.webp",
-  "assets/monknot-light.webp",
   "assets/monknot-dark.jpg",
   "assets/monknot-dark-1200.webp",
   "assets/monknot-dark-2400.webp",
@@ -25,23 +21,31 @@ const requiredMarkup = [
   '<main id="main-content" tabindex="-1">',
   'class="skip-link"',
   'id="theme-explorer" hidden',
-  'id="appearance-proof"',
   'class="site-appearance" hidden',
-  'name="site-appearance" value="system"',
-  'name="site-appearance" value="light"',
-  'name="site-appearance" value="dark"',
+  'class="header-download"',
+  'href="https://github.com/RojhatToptamus/monknot/releases"',
+  'class="traffic-light traffic-light--close"',
+  'class="traffic-light traffic-light--minimize"',
+  'class="traffic-light traffic-light--zoom"',
   'name="theme-variant"',
   'id="terminal-palette"',
   'id="theme-details"',
   'aria-labelledby="terminal-palette-label"',
-  '20 light presets.',
-  '31 dark.',
+  '20 light presets. 31 dark.',
   'width="3600"',
   'height="2250"',
 ];
 
 for (const marker of requiredMarkup) {
   if (!html.includes(marker)) throw new Error(`Missing required markup: ${marker}`);
+}
+
+for (const value of ["light", "dark"]) {
+  const appearanceInput = new RegExp(
+    `<input[^>]*name="site-appearance"[^>]*value="${value}"|<input[^>]*value="${value}"[^>]*name="site-appearance"`,
+    "s",
+  );
+  if (!appearanceInput.test(html)) throw new Error(`Missing ${value} appearance control.`);
 }
 
 const ids = new Set(Array.from(html.matchAll(/\sid="([^"]+)"/g), (match) => match[1]));
@@ -53,6 +57,16 @@ for (const anchor of localAnchors) {
 
 if (/\b(lorem ipsum|placeholder|coming soon)\b/i.test(html)) {
   throw new Error("Placeholder copy remains in index.html");
+}
+
+for (const forbidden of ['id="appearance-proof"', "Real app", "working tree clean"]) {
+  if (html.includes(forbidden)) throw new Error(`Removed website content remains: ${forbidden}`);
+}
+
+const systemAppearanceInput =
+  /<input[^>]*name="site-appearance"[^>]*value="system"|<input[^>]*value="system"[^>]*name="site-appearance"/s;
+if (systemAppearanceInput.test(html)) {
+  throw new Error("System appearance control remains in index.html");
 }
 
 if ((html.match(/<h1\b/g) ?? []).length !== 1) {

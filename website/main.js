@@ -29,34 +29,22 @@ const selectedThemeIDs = {
 let catalog;
 let activeVariant = "dark";
 
-const systemAppearance = window.matchMedia("(prefers-color-scheme: dark)");
-
 function savedSiteAppearance() {
   try {
     const value = localStorage.getItem("Monknot.siteAppearance");
-    return ["light", "dark"].includes(value) ? value : "system";
+    return ["light", "dark"].includes(value) ? value : "dark";
   } catch {
-    return "system";
+    return "dark";
   }
 }
 
 function applySiteAppearance(preference, persist = true) {
-  if (preference === "system") {
-    delete document.documentElement.dataset.siteTheme;
-  } else {
-    document.documentElement.dataset.siteTheme = preference;
-  }
-
-  const resolved = preference === "system" ? (systemAppearance.matches ? "dark" : "light") : preference;
-  siteThemeColor?.setAttribute("content", resolved === "dark" ? "#12110f" : "#f9f9f7");
+  document.documentElement.dataset.siteTheme = preference;
+  siteThemeColor?.setAttribute("content", preference === "dark" ? "#12110f" : "#f9f9f7");
 
   if (!persist) return;
   try {
-    if (preference === "system") {
-      localStorage.removeItem("Monknot.siteAppearance");
-    } else {
-      localStorage.setItem("Monknot.siteAppearance", preference);
-    }
+    localStorage.setItem("Monknot.siteAppearance", preference);
   } catch {}
 }
 
@@ -66,9 +54,6 @@ siteAppearanceInputs.forEach((input) => {
   input.addEventListener("change", () => {
     if (input.checked) applySiteAppearance(input.value);
   });
-});
-systemAppearance.addEventListener("change", () => {
-  if (savedSiteAppearance() === "system") applySiteAppearance("system", false);
 });
 applySiteAppearance(initialSiteAppearance, false);
 siteAppearance.hidden = false;

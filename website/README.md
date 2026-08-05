@@ -1,7 +1,7 @@
 # Monknot product site
 
 A dependency-free, single-page product site for Monknot. The page uses verified product behavior,
-screenshots captured from a local demo workspace, and a live palette explorer generated from
+a screenshot captured from a local demo workspace, and a live palette explorer generated from
 `MonknotThemeCatalog` during the production build.
 
 ```sh
