@@ -210,6 +210,8 @@ The script also manually copies these runtime resources into the app bundle:
 - `THIRD_PARTY_NOTICES.md`
 - `ThirdPartyLicenses/xterm-MIT.txt`
 - `ThirdPartyLicenses/xterm-addon-fit-MIT.txt`
+- Verified theme MIT texts listed by `THEME_LICENSE_FILES` in
+  `script/build_and_run.sh`
 
 When adding a Swift source file to the app or core target, update `script/build_and_run.sh`. The declared XCTest suite includes a build-script sync check, but the local SwiftPM command may be blocked until the current CommandLineTools issue is fixed.
 

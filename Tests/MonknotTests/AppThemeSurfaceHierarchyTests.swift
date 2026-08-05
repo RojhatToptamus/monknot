@@ -31,14 +31,14 @@ final class AppThemeSurfaceHierarchyTests: XCTestCase {
     }
 
     func testDarkSidebarRaisesSubtlyTowardInk() {
-        let theme = AppTheme.defaultDark // background #111111, foreground #fcfcfc
+        let theme = AppTheme.defaultDark // background #121212, foreground #ebebeb
         // Lighter than the dark canvas, but a subtle offset (not a heavy panel).
         XCTAssertGreaterThan(luminance(theme.sidebarSurfaceHex), luminance(theme.background))
         XCTAssertLessThan(channelDelta(theme.sidebarSurfaceHex, theme.background), 0.16)
     }
 
     func testLightSidebarRecessesSubtlyTowardInk() {
-        let theme = AppTheme.defaultLight // background #ffffff, foreground #1a1c1f
+        let theme = AppTheme.defaultLight // background #fdfdfe, foreground #1c1e22
         // A hair darker than the white canvas, and very subtle in light themes.
         XCTAssertLessThan(luminance(theme.sidebarSurfaceHex), luminance(theme.background))
         XCTAssertLessThan(channelDelta(theme.sidebarSurfaceHex, theme.background), 0.06)

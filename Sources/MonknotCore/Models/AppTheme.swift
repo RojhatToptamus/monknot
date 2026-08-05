@@ -184,6 +184,18 @@ public struct AppTheme: Identifiable, Codable, Equatable, Sendable {
         return rgb.relativeLuminance < 0.45
     }
 
+    public var onAccentForegroundHex: String {
+        guard let accent = RGBHex(accent),
+              let light = RGBHex("#FFFFFF"),
+              let dark = RGBHex("#101010") else {
+            return "#FFFFFF"
+        }
+
+        return light.contrastRatio(with: accent) >= dark.contrastRatio(with: accent)
+            ? "#FFFFFF"
+            : "#101010"
+    }
+
     public func replacing(
         background: String? = nil,
         foreground: String? = nil,
@@ -280,6 +292,12 @@ public struct RGBHex: Sendable {
 
     public var relativeLuminance: Double {
         0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue)
+    }
+
+    public func contrastRatio(with other: RGBHex) -> Double {
+        let lighter = max(relativeLuminance, other.relativeLuminance)
+        let darker = min(relativeLuminance, other.relativeLuminance)
+        return (lighter + 0.05) / (darker + 0.05)
     }
 
     private func linear(_ component: Double) -> Double {

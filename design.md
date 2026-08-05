@@ -68,13 +68,17 @@ hover     = ink @ (dark ? 6%  : 5.5%)
 press     = ink @ (dark ? 11% : 10%)
 
 accent    = accent
-onaccent  = relativeLuminance(accent) > 0.5 ? #101010 : #ffffff
+onaccent  = contrast(#ffffff, accent) >= contrast(#101010, accent) ? #ffffff : #101010
 sel       = mix(surface → accent, dark ? 0.28 : 0.20)
 accsoft   = accent @ (dark ? 18% : 14%)
 
 dangersoft = danger @ (dark ? 12% : 10%)
 dangerline = danger @ (dark ? 22% : 20%)
 ```
+
+`onaccent` is selected by measured contrast, not a luminance threshold. Compare
+both candidates and use the higher-contrast foreground; every accent-button
+label must clear 4.5:1.
 
 **Note the inversion on `line`.** Dark runs *lighter* (9%) than light (12%). Dark already has a
 large luminance step between canvas and sidebar doing the separation, so the line only hints.
@@ -411,7 +415,7 @@ makes an icon set look sourced from different libraries.
 
 ⌘+ / ⌘− / ⌘0 change `workspaceZoom`. **Every** metric in the window is a function of it:
 titlebar, tabs, sidebar rows, glyph point sizes, gaps, paddings, radii, outline rail width and
-dash lengths, and all document text. Chrome and content move together, the way VS Code and Xcode
+dash lengths, and all document text. Chrome and content move together, the way native desktop editors
 do it.
 
 Zooming only the body text is the usual mistake — 125% prose under an unchanged 44px titlebar
@@ -478,7 +482,7 @@ independent values; the status bar shows whichever the focused view owns.
 Left to right: traffic lights + sidebar toggle + back/forward │ **tab strip** │ flexible gap │
 view mode │ terminal toggle.
 
-Navigation leading, document actions trailing — the split Finder, Safari and Xcode use. **Exactly
+Navigation leading, document actions trailing — the split native document apps use. **Exactly
 two affordances right of the gap.** There is no ⋯ overflow: anything that would land in one belongs
 in the menu bar, where macOS already indexes it for Help search.
 
@@ -644,18 +648,18 @@ page, not just the editor.
 
 ---
 
-## 14. Applying a `monknot-theme-v1` string
+## 14. Applying a `monknot-theme-v3` string
 
-Themes arrive as `monknot-theme-v1:` followed by JSON. Parse it, map it onto the six inputs, then run
+Themes arrive as `monknot-theme-v3:` followed by JSON. Parse it, map it onto the six inputs, then run
 the §1.2 derivation. Nothing else in the app changes.
 
 ```json
-monknot-theme-v1:{"codeThemeId":"absolutely","theme":{
-  "accent":"#cc7d5e","contrast":40,
+monknot-theme-v3:{"codeThemeId":"parchment","theme":{
+  "accent":"#876a26","contrast":40,
   "fonts":{"code":"\"SFMono-Regular\"","ui":"Geist, Inter"},
-  "ink":"#2d2d2b","opaqueWindows":true,
-  "semanticColors":{"diffAdded":"#00c853","diffRemoved":"#ff5f38","skill":"#cc7d5e"},
-  "surface":"#f9f9f7"},"variant":"light"}
+  "ink":"#241b12","opaqueWindows":true,
+  "semanticColors":{"diffAdded":"#277c4c","diffRemoved":"#a52f27","skill":"#9b36ab"},
+  "surface":"#f7f4ed"},"variant":"light"}
 ```
 
 **Mapping**
@@ -695,29 +699,29 @@ missing.
 Computed, not chosen — check any implementation against these:
 
 ```
-bg        #f9f9f7        line      rgba(45,45,43,.12)
-sidebar   #f3f3f1        line2     rgba(45,45,43,.08)
-surf2     #efefed        frame     rgba(45,45,43,.09)
-surf3     #e7e7e5        hover     rgba(45,45,43,.055)
-ink       #2d2d2b        press     rgba(45,45,43,.10)
-ink2      rgba(45,45,43,.62)
-ink3      rgba(45,45,43,.40)      accent    #cc7d5e
-ink4      rgba(45,45,43,.24)      onaccent  #ffffff   (accent lum 0.283 ≤ 0.5)
-                                  sel       #f0e0d8
-ok        #00c853                 accsoft   rgba(204,125,94,.14)
-danger    #ff5f38
-skill     #cc7d5e
+bg        #f7f4ed        line      rgba(36,27,18,.12)
+sidebar   #f1eee7        line2     rgba(36,27,18,.08)
+surf2     #ece9e2        frame     rgba(36,27,18,.09)
+surf3     #e4e0d9        hover     rgba(36,27,18,.055)
+ink       #241b12        press     rgba(36,27,18,.10)
+ink2      rgba(36,27,18,.62)
+ink3      rgba(36,27,18,.40)      accent    #876a26
+ink4      rgba(36,27,18,.24)      onaccent  #ffffff
+                                  sel       #e1d8c5
+ok        #277c4c                 accsoft   rgba(135,106,38,.14)
+danger    #a52f27
+skill     #9b36ab
 
-shadowHue #3d3530      = mix(ink → accent, 10%)
+shadowHue #2e2314      = mix(ink → accent, 10%)
 
-e1     inset 0 0 0 1px rgba(45,45,43,.12)
-e2     inset 0 0 0 1px rgba(61,53,48,.08), 0 4px 12px rgba(61,53,48,.08), 0 1px 3px rgba(61,53,48,.05)
-e3     inset 0 0 0 1px rgba(61,53,48,.08), 0 16px 40px rgba(61,53,48,.14), 0 4px 10px rgba(61,53,48,.06)
-win    0 16px 40px rgba(61,53,48,.14), 0 4px 10px rgba(61,53,48,.06), 0 0 0 1px rgba(45,45,43,.09)
-bezel  0 1px 1px rgba(61,53,48,.05)
+e1     inset 0 0 0 1px rgba(36,27,18,.12)
+e2     inset 0 0 0 1px rgba(46,35,20,.08), 0 4px 12px rgba(46,35,20,.08), 0 1px 3px rgba(46,35,20,.05)
+e3     inset 0 0 0 1px rgba(46,35,20,.08), 0 16px 40px rgba(46,35,20,.14), 0 4px 10px rgba(46,35,20,.06)
+win    0 16px 40px rgba(46,35,20,.14), 0 4px 10px rgba(46,35,20,.06), 0 0 0 1px rgba(36,27,18,.09)
+bezel  0 1px 1px rgba(46,35,20,.05)
 ```
 
-Note the warm terracotta accent lands `sel` at `#f0e0d8` — a tinted surface, not a grey. That is
+Note the muted ochre accent lands `sel` at `#e1d8c5` — a tinted surface, not a grey. That is
 correct and intended: selection carries the theme's hue. And because this is a **light** theme,
 `bezel` is live and `e1` is a ring with no shadow.
 
