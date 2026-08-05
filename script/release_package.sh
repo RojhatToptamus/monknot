@@ -116,6 +116,9 @@ if [[ ! "$TARGET_ARCH" =~ ^(arm64|x86_64)$ ]]; then
   exit 64
 fi
 
+echo "RELEASE_COMPLIANCE_BLOCKER: custom-theme authorship confirmation, complete Gruvbox license evidence, and app icon ownership review are still pending" >&2
+exit 78
+
 if [[ -z "$DMG_PATH" ]]; then
   DMG_PATH="$ROOT_DIR/dist/Monknot-$RELEASE_VERSION-macos-$TARGET_ARCH.dmg"
 fi
@@ -222,6 +225,7 @@ fi
 echo
 
 run env \
+  "MONKNOT_SIGNING_MODE=adhoc" \
   "MONKNOT_VERSION=$BUNDLE_VERSION" \
   "MONKNOT_BUILD_NUMBER=$BUILD_NUMBER" \
   "MONKNOT_TARGET_ARCH=$TARGET_ARCH" \

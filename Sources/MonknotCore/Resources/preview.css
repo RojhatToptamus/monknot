@@ -1,31 +1,31 @@
-/* Fallback tokens mirror MonknotCore MonknotThemeCatalog.sourceVersion = monknot-theme-v1. */
+/* Fallback tokens mirror MonknotCore MonknotThemeCatalog.sourceVersion = monknot-theme-v3. */
 :root {
   color-scheme: light dark;
-  --accent: #339cff;
+  --accent: #0a52a3;
   --link: var(--accent);
-  --bg: #ffffff;
-  --fg: #1a1c1f;
-  --muted: #60646c;
-  --border: rgba(26, 28, 31, 0.14);
-  --soft: rgba(26, 28, 31, 0.055);
-  --soft-strong: rgba(26, 28, 31, 0.09);
-  --code-bg: #f6f8fa;
-  --code-fg: #24292f;
-  --quote-bg: rgba(51, 156, 255, 0.08);
-  --quote-border: rgba(51, 156, 255, 0.7);
+  --bg: #fdfdfe;
+  --fg: #1c1e22;
+  --muted: #1c1e22;
+  --border: rgba(28, 30, 34, 0.14);
+  --soft: rgba(28, 30, 34, 0.055);
+  --soft-strong: rgba(28, 30, 34, 0.09);
+  --code-bg: #e2e2e4;
+  --code-fg: #1c1e22;
+  --quote-bg: rgba(10, 82, 163, 0.112);
+  --quote-border: rgba(10, 82, 163, 0.7);
   --blockquote-bg: var(--quote-bg);
   --blockquote-border: var(--quote-border);
   --table-border: var(--border);
   --table-header-bg: var(--soft-strong);
   --table-row-alt-bg: var(--soft);
   --shadow: rgba(0, 0, 0, 0.08);
-  --selection-bg: #d6ebff;
-  --selection-fg: #111315;
-  --tok-keyword: #924ff7;
-  --tok-string: #00a240;
-  --tok-number: #339cff;
-  --tok-comment: #60646c;
-  --tok-builtin: #339cff;
+  --selection-bg: #ccdbec;
+  --selection-fg: #1c1e22;
+  --tok-keyword: #7436ab;
+  --tok-string: #277c4c;
+  --tok-number: #0a52a3;
+  --tok-comment: #1c1e22;
+  --tok-builtin: #0a52a3;
   --font-smoothing: antialiased;
   --interactive-cursor: default;
   --ui-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
@@ -33,26 +33,26 @@
 }
 
 :root[data-theme="dark"] {
-  --accent: #0169cc;
+  --accent: #5399ea;
   --link: var(--accent);
-  --bg: #111111;
-  --fg: #fcfcfc;
-  --muted: #aaaeb7;
+  --bg: #121212;
+  --fg: #ebebeb;
+  --muted: #ebebeb;
   --border: rgba(255, 255, 255, 0.13);
   --soft: rgba(255, 255, 255, 0.055);
   --soft-strong: rgba(255, 255, 255, 0.09);
-  --code-bg: #2e2e2e;
-  --code-fg: #fcfcfc;
-  --quote-bg: rgba(1, 105, 204, 0.13);
-  --quote-border: rgba(1, 105, 204, 0.82);
+  --code-bg: #2c2c2c;
+  --code-fg: #ebebeb;
+  --quote-bg: rgba(83, 153, 234, 0.112);
+  --quote-border: rgba(83, 153, 234, 0.82);
   --shadow: rgba(0, 0, 0, 0.32);
-  --selection-bg: #0d2a45;
-  --selection-fg: #fcfcfc;
-  --tok-keyword: #b06dff;
-  --tok-string: #00a240;
-  --tok-number: #0169cc;
-  --tok-comment: #aaaeb7;
-  --tok-builtin: #0169cc;
+  --selection-bg: #24384e;
+  --selection-fg: #ebebeb;
+  --tok-keyword: #c092e7;
+  --tok-string: #65c387;
+  --tok-number: #5399ea;
+  --tok-comment: #ebebeb;
+  --tok-builtin: #5399ea;
 }
 
 *::-webkit-scrollbar {

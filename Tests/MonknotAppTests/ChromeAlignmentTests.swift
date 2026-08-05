@@ -144,45 +144,134 @@ final class ChromeAlignmentTests: XCTestCase {
         )
     }
 
-    func testThemeSettingsUsesCodexDefaultsAndMigratesFormerAliases() throws {
+    func testThemeSettingsUsesHarborDefaultsAndMigratesFormerAliases() throws {
         let suiteName = "MonknotTests.ThemeMigration.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        defaults.set("monknot-light", forKey: "Monknot.lightThemeID")
-        defaults.set("monknot-dark", forKey: "Monknot.darkThemeID")
-        var customizedLightTheme = ThemeConfiguration(theme: AppTheme.lightTheme(id: "codex-light"))
+        defaults.set("codex-light", forKey: "Monknot.lightThemeID")
+        defaults.set("codex-dark", forKey: "Monknot.darkThemeID")
+        var customizedLightTheme = ThemeConfiguration(theme: AppTheme.lightTheme(id: "harbor-light"))
         customizedLightTheme.accent = "#AABBCC"
         defaults.set(
-            try JSONEncoder().encode(["monknot-light": customizedLightTheme]),
+            try JSONEncoder().encode(["codex-light": customizedLightTheme]),
             forKey: "Monknot.themeCustomizations"
         )
 
         let store = ThemeSettingsStore(defaults: defaults)
 
-        XCTAssertEqual(store.lightThemeID, "codex-light")
-        XCTAssertEqual(store.darkThemeID, "codex-dark")
+        XCTAssertEqual(store.lightThemeID, "harbor-light")
+        XCTAssertEqual(store.darkThemeID, "harbor-dark")
         XCTAssertEqual(store.configuration(for: .light).accent, "#AABBCC")
-        XCTAssertEqual(defaults.string(forKey: "Monknot.lightThemeID"), "codex-light")
-        XCTAssertEqual(defaults.string(forKey: "Monknot.darkThemeID"), "codex-dark")
+        XCTAssertEqual(defaults.string(forKey: "Monknot.lightThemeID"), "harbor-light")
+        XCTAssertEqual(defaults.string(forKey: "Monknot.darkThemeID"), "harbor-dark")
 
         let data = try XCTUnwrap(defaults.data(forKey: "Monknot.themeCustomizations"))
         let customizations = try JSONDecoder().decode([String: ThemeConfiguration].self, from: data)
-        XCTAssertNil(customizations["monknot-light"])
-        XCTAssertEqual(customizations["codex-light"]?.accent, "#AABBCC")
+        XCTAssertNil(customizations["codex-light"])
+        XCTAssertEqual(customizations["harbor-light"]?.accent, "#AABBCC")
     }
 
-    func testThemeSettingsUsesCodexForFreshDefaults() throws {
+    func testEveryLegacyThemeIDMigratesSelectionAndCustomizationIdempotently() throws {
+        let mappings: [(legacy: String, current: String, slot: ThemeSlot)] = [
+            ("monknot-light", "harbor-light", .light),
+            ("monknot-dark", "harbor-dark", .dark),
+            ("codex-light", "harbor-light", .light),
+            ("codex-dark", "harbor-dark", .dark),
+            ("codex-blue-light", "harbor-light", .light),
+            ("monknot-blue-light", "harbor-light", .light),
+            ("absolutely-light", "parchment-light", .light),
+            ("absolutely-dark", "parchment-dark", .dark),
+            ("brass-monkey-light", "brasspants-light", .light),
+            ("brass-monkey-dark", "brasspants-dark", .dark),
+            ("catppuccin-light", "catppuccin-latte", .light),
+            ("catppuccin-dark", "catppuccin-mocha", .dark),
+            ("code-monkey-light", "codechimp-light", .light),
+            ("code-monkey-dark", "codechimp-dark", .dark),
+            ("github-light", "forge-light", .light),
+            ("github-dark", "forge-dark", .dark),
+            ("grease-monkey-light", "greaseball-light", .light),
+            ("grease-monkey-dark", "greaseball-dark", .dark),
+            ("linear-light", "axis-light", .light),
+            ("linear-dark", "axis-dark", .dark),
+            ("material-dark", "lagoon-dark", .dark),
+            ("matrix-dark", "phosphor-dark", .dark),
+            ("monokai-dark", "citrus-dark", .dark),
+            ("notion-light", "paper-light", .light),
+            ("notion-dark", "paper-dark", .dark),
+            ("oscurange-dark", "oscura-dark", .dark),
+            ("raycast-light", "signal-light", .light),
+            ("raycast-dark", "signal-dark", .dark),
+            ("rose-pine-light", "rose-pine-dawn", .light),
+            ("rose-pine-dark", "rose-pine-moon", .dark),
+            ("sentry-dark", "watchtower-dark", .dark),
+            ("sock-monkey-light", "sockpuppet-light", .light),
+            ("sock-monkey-dark", "sockpuppet-dark", .dark),
+            ("vercel-light", "monolith-light", .light),
+            ("vercel-dark", "monolith-dark", .dark),
+            ("vscode-plus-light", "workbench-light", .light),
+            ("vscode-plus-dark", "workbench-dark", .dark),
+            ("xcode-light", "blueprint-light", .light),
+            ("xcode-dark", "blueprint-dark", .dark),
+        ]
+
+        for mapping in mappings {
+            let suiteName = "MonknotTests.ThemeIDMigration.\(mapping.legacy).\(UUID().uuidString)"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+
+            let preset = mapping.slot.preset(id: mapping.current)
+            var customization = ThemeConfiguration(theme: preset)
+            customization.accent = "#AABBCC"
+            customization.background = "#102030"
+            customization.foreground = "#F0E0D0"
+            customization.uiFontSize = 22
+            customization.codeFontSize = 18
+            customization.contrast = 37
+            defaults.set(
+                try JSONEncoder().encode([mapping.legacy: customization]),
+                forKey: "Monknot.themeCustomizations"
+            )
+            switch mapping.slot {
+            case .light:
+                defaults.set(mapping.legacy, forKey: "Monknot.lightThemeID")
+            case .dark:
+                defaults.set(mapping.legacy, forKey: "Monknot.darkThemeID")
+            }
+            defaults.set(true, forKey: "Monknot.quietSidebar")
+
+            let store = ThemeSettingsStore(defaults: defaults)
+            XCTAssertEqual(store.selectedThemeID(for: mapping.slot), mapping.current, mapping.legacy)
+            XCTAssertEqual(store.configuration(for: mapping.slot).accent, "#AABBCC", mapping.legacy)
+            XCTAssertEqual(store.configuration(for: mapping.slot).background, "#102030", mapping.legacy)
+            XCTAssertEqual(store.configuration(for: mapping.slot).foreground, "#F0E0D0", mapping.legacy)
+            XCTAssertEqual(store.configuration(for: mapping.slot).contrast, 37, mapping.legacy)
+            XCTAssertEqual(store.uiFontSize, 22, mapping.legacy)
+            XCTAssertEqual(store.codeFontSize, 18, mapping.legacy)
+            XCTAssertTrue(store.quietSidebar, mapping.legacy)
+
+            let data = try XCTUnwrap(defaults.data(forKey: "Monknot.themeCustomizations"))
+            let persisted = try JSONDecoder().decode([String: ThemeConfiguration].self, from: data)
+            XCTAssertNil(persisted[mapping.legacy], mapping.legacy)
+            XCTAssertEqual(persisted[mapping.current]?.accent, "#AABBCC", mapping.legacy)
+
+            let reloaded = ThemeSettingsStore(defaults: defaults)
+            XCTAssertEqual(reloaded.selectedThemeID(for: mapping.slot), mapping.current, mapping.legacy)
+            XCTAssertEqual(reloaded.configuration(for: mapping.slot).accent, "#AABBCC", mapping.legacy)
+        }
+    }
+
+    func testThemeSettingsUsesHarborForFreshDefaults() throws {
         let suiteName = "MonknotTests.ThemeDefaults.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         let store = ThemeSettingsStore(defaults: defaults)
 
-        XCTAssertEqual(store.lightThemeID, "codex-light")
-        XCTAssertEqual(store.darkThemeID, "codex-dark")
-        XCTAssertFalse(ThemeSlot.light.themes.contains { $0.name == "Monknot" })
-        XCTAssertFalse(ThemeSlot.dark.themes.contains { $0.name == "Monknot" })
+        XCTAssertEqual(store.lightThemeID, "harbor-light")
+        XCTAssertEqual(store.darkThemeID, "harbor-dark")
+        XCTAssertTrue(ThemeSlot.light.themes.contains { $0.name == "Harbor" })
+        XCTAssertTrue(ThemeSlot.dark.themes.contains { $0.name == "Harbor" })
     }
 
     func testThemePreviewDoesNotPersistAndCancelRestoresCommittedTheme() throws {
@@ -191,24 +280,24 @@ final class ChromeAlignmentTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         let store = ThemeSettingsStore(defaults: defaults)
-        store.previewThemeID("vercel-light", for: .light)
+        store.previewThemeID("monolith-light", for: .light)
 
-        XCTAssertEqual(store.selectedThemeID(for: .light), "codex-light")
-        XCTAssertEqual(store.effectiveTheme(for: .light).id, "vercel-light")
+        XCTAssertEqual(store.selectedThemeID(for: .light), "harbor-light")
+        XCTAssertEqual(store.effectiveTheme(for: .light).id, "monolith-light")
         XCTAssertNil(defaults.string(forKey: "Monknot.lightThemeID"))
 
         store.cancelThemePreview(for: .light)
 
-        XCTAssertEqual(store.effectiveTheme(for: .light).id, "codex-light")
+        XCTAssertEqual(store.effectiveTheme(for: .light).id, "harbor-light")
         XCTAssertNil(defaults.string(forKey: "Monknot.lightThemeID"))
 
-        store.previewThemeID("vercel-light", for: .light)
-        store.setSelectedThemeID("vercel-light", for: .light)
-        XCTAssertEqual(store.effectiveTheme(for: .light).id, "vercel-light")
-        XCTAssertEqual(defaults.string(forKey: "Monknot.lightThemeID"), "vercel-light")
+        store.previewThemeID("monolith-light", for: .light)
+        store.setSelectedThemeID("monolith-light", for: .light)
+        XCTAssertEqual(store.effectiveTheme(for: .light).id, "monolith-light")
+        XCTAssertEqual(defaults.string(forKey: "Monknot.lightThemeID"), "monolith-light")
     }
 
-    func testRemovedLightPresetTokensNormalizeToCodexAndMigrateGlobalQuietSidebar() throws {
+    func testRemovedLightPresetTokensNormalizeToHarborAndMigrateGlobalQuietSidebar() throws {
         let suiteName = "MonknotTests.RemovedThemeTokens.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -228,9 +317,10 @@ final class ChromeAlignmentTests: XCTestCase {
         let store = ThemeSettingsStore(defaults: defaults)
         let configuration = store.configuration(for: .light)
 
-        XCTAssertEqual(configuration.accent, "#0169cc")
-        XCTAssertEqual(configuration.background, "#ffffff")
-        XCTAssertEqual(configuration.foreground, "#0d0d0d")
+        XCTAssertEqual(configuration.accent, "#0a52a3")
+        XCTAssertEqual(configuration.background, "#fdfdfe")
+        XCTAssertEqual(configuration.foreground, "#1c1e22")
+        XCTAssertEqual(configuration.contrast, 40)
         XCTAssertTrue(store.quietSidebar)
         XCTAssertTrue(store.effectiveTheme(for: .light).quietSidebar)
         XCTAssertTrue(store.effectiveTheme(for: .dark).quietSidebar)
@@ -240,7 +330,30 @@ final class ChromeAlignmentTests: XCTestCase {
         let persistedJSON = try XCTUnwrap(
             JSONSerialization.jsonObject(with: persistedData) as? [String: [String: Any]]
         )
-        XCTAssertNil(persistedJSON["codex-light"]?["quietSidebar"])
+        XCTAssertNil(persistedJSON["harbor-light"]?["quietSidebar"])
+    }
+
+    func testPreviousHarborBaseCustomizationMovesToReplacementPalette() throws {
+        let suiteName = "MonknotTests.PreviousHarborPalette.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var previous = ThemeConfiguration(theme: AppTheme.defaultLight)
+        previous.accent = "#0169CC"
+        previous.background = "#FFFFFF"
+        previous.foreground = "#0D0D0D"
+        previous.contrast = 45
+        defaults.set(
+            try JSONEncoder().encode(["harbor-light": previous]),
+            forKey: "Monknot.themeCustomizations"
+        )
+
+        let configuration = ThemeSettingsStore(defaults: defaults).configuration(for: .light)
+
+        XCTAssertEqual(configuration.accent, "#0a52a3")
+        XCTAssertEqual(configuration.background, "#fdfdfe")
+        XCTAssertEqual(configuration.foreground, "#1c1e22")
+        XCTAssertEqual(configuration.contrast, 40)
     }
 
     func testQuietSidebarIsGlobalAcrossThemeSelectionAndPreview() throws {
@@ -250,14 +363,14 @@ final class ChromeAlignmentTests: XCTestCase {
 
         let store = ThemeSettingsStore(defaults: defaults)
         store.setQuietSidebar(true)
-        store.setSelectedThemeID("grease-monkey-light", for: .light)
-        store.setSelectedThemeID("brass-monkey-dark", for: .dark)
+        store.setSelectedThemeID("greaseball-light", for: .light)
+        store.setSelectedThemeID("brasspants-dark", for: .dark)
 
         XCTAssertTrue(store.effectiveTheme(for: .light).quietSidebar)
         XCTAssertTrue(store.effectiveTheme(for: .dark).quietSidebar)
         XCTAssertTrue(defaults.bool(forKey: "Monknot.quietSidebar"))
 
-        store.previewThemeID("sock-monkey-light", for: .light)
+        store.previewThemeID("sockpuppet-light", for: .light)
         XCTAssertTrue(store.effectiveTheme(for: .light).quietSidebar)
         store.cancelThemePreview(for: .light)
         XCTAssertTrue(store.effectiveTheme(for: .light).quietSidebar)
@@ -274,11 +387,11 @@ final class ChromeAlignmentTests: XCTestCase {
 
         var configuration = ThemeConfiguration(theme: AppTheme.defaultLight)
         configuration.accent = "#AABBCC"
-        let encoded = try JSONEncoder().encode(["codex-light": configuration])
+        let encoded = try JSONEncoder().encode(["harbor-light": configuration])
         var legacyJSON = try XCTUnwrap(
             JSONSerialization.jsonObject(with: encoded) as? [String: [String: Any]]
         )
-        legacyJSON["codex-light"]?["quietSidebar"] = true
+        legacyJSON["harbor-light"]?["quietSidebar"] = true
         defaults.set(try JSONSerialization.data(withJSONObject: legacyJSON), forKey: "Monknot.themeCustomizations")
 
         let store = ThemeSettingsStore(defaults: defaults)
@@ -289,20 +402,20 @@ final class ChromeAlignmentTests: XCTestCase {
         let persistedJSON = try XCTUnwrap(
             JSONSerialization.jsonObject(with: persistedData) as? [String: [String: Any]]
         )
-        XCTAssertNil(persistedJSON["codex-light"]?["quietSidebar"])
+        XCTAssertNil(persistedJSON["harbor-light"]?["quietSidebar"])
     }
 
     func testSettingsMenuSelectionTransactionPreviewsThenCancelsOrCommits() {
-        var cancelled = SettingsMenuSelectionTransaction(initialSelection: "codex-light")
-        cancelled.preview("github-light")
-        XCTAssertEqual(cancelled.previewedSelection, "github-light")
-        XCTAssertEqual(cancelled.selectionAfterClose, "codex-light")
+        var cancelled = SettingsMenuSelectionTransaction(initialSelection: "harbor-light")
+        cancelled.preview("forge-light")
+        XCTAssertEqual(cancelled.previewedSelection, "forge-light")
+        XCTAssertEqual(cancelled.selectionAfterClose, "harbor-light")
 
-        var committed = SettingsMenuSelectionTransaction(initialSelection: "codex-light")
-        committed.preview("github-light")
-        committed.commit("vercel-light")
-        XCTAssertEqual(committed.previewedSelection, "vercel-light")
-        XCTAssertEqual(committed.selectionAfterClose, "vercel-light")
+        var committed = SettingsMenuSelectionTransaction(initialSelection: "harbor-light")
+        committed.preview("forge-light")
+        committed.commit("monolith-light")
+        XCTAssertEqual(committed.previewedSelection, "monolith-light")
+        XCTAssertEqual(committed.selectionAfterClose, "monolith-light")
     }
 
     func testThemeSelectionKeepsOneGlobalTypographyAtEveryAppearance() throws {
@@ -316,8 +429,8 @@ final class ChromeAlignmentTests: XCTestCase {
         typography.codeFontSize = 18
         store.save(typography, for: .light)
 
-        store.setSelectedThemeID("vercel-light", for: .light)
-        store.setSelectedThemeID("matrix-dark", for: .dark)
+        store.setSelectedThemeID("monolith-light", for: .light)
+        store.setSelectedThemeID("phosphor-dark", for: .dark)
 
         let lightTheme = store.activeTheme(themePreference: .system, systemAppearance: .light)
         let darkTheme = store.activeTheme(themePreference: .system, systemAppearance: .dark)
@@ -335,10 +448,10 @@ final class ChromeAlignmentTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         let store = ThemeSettingsStore(defaults: defaults)
-        store.setSelectedThemeID("matrix-dark", for: .dark)
+        store.setSelectedThemeID("phosphor-dark", for: .dark)
         store.setTypography(uiFontSize: 20, codeFontSize: 17)
 
-        var staleDraft = ThemeConfiguration(theme: AppTheme.darkTheme(id: "matrix-dark"))
+        var staleDraft = ThemeConfiguration(theme: AppTheme.darkTheme(id: "phosphor-dark"))
         staleDraft.accent = "#22FF66"
         staleDraft.uiFontSize = 12
         staleDraft.codeFontSize = 11
@@ -358,7 +471,7 @@ final class ChromeAlignmentTests: XCTestCase {
 
         defaults.set("matrix-dark", forKey: "Monknot.darkThemeID")
         defaults.set(ThemePreference.dark.rawValue, forKey: "Monknot.themePreference")
-        var legacyConfiguration = ThemeConfiguration(theme: AppTheme.darkTheme(id: "matrix-dark"))
+        var legacyConfiguration = ThemeConfiguration(theme: AppTheme.darkTheme(id: "phosphor-dark"))
         legacyConfiguration.uiFontSize = 21
         legacyConfiguration.codeFontSize = 17
         defaults.set(
@@ -376,6 +489,7 @@ final class ChromeAlignmentTests: XCTestCase {
         let data = try XCTUnwrap(defaults.data(forKey: "Monknot.themeCustomizations"))
         let customizations = try JSONDecoder().decode([String: ThemeConfiguration].self, from: data)
         XCTAssertNil(customizations["matrix-dark"])
+        XCTAssertNil(customizations["phosphor-dark"])
     }
 
     func testWorkspaceChromeZoomUsesTheExactDiscreteFactor() {

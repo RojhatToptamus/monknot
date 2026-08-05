@@ -3,10 +3,7 @@ import SwiftUI
 
 extension AppTheme {
     var onAccentForegroundColor: Color {
-        guard let rgb = RGBHex(accent) else {
-            return foregroundColor
-        }
-        return rgb.relativeLuminance > 0.55 ? Color(hex: "#1a1c1f") : Color(hex: "#fcfcfc")
+        Color(hex: onAccentForegroundHex)
     }
 }
 

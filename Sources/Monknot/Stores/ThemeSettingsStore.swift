@@ -451,44 +451,88 @@ final class ThemeSettingsStore: ObservableObject {
 
     private static func migratedThemeID(_ id: String?) -> String? {
         guard let id else { return nil }
-        return legacyThemeIDMap[id] ?? id
+        return legacyThemeIDPairs.first { $0.legacy == id }?.current ?? id
     }
 
     private static func migratedCustomizations(
         _ customizations: [String: ThemeConfiguration]
     ) -> [String: ThemeConfiguration] {
         var migrated = customizations
-        for (legacyID, currentID) in legacyThemeIDMap {
+        for (legacyID, currentID) in legacyThemeIDPairs {
             guard let configuration = migrated.removeValue(forKey: legacyID) else { continue }
             if migrated[currentID] == nil {
                 migrated[currentID] = configuration
             }
         }
-        normalizeRemovedLightPresetTokens(in: &migrated)
+        normalizeSupersededHarborLightTokens(in: &migrated)
         return migrated
     }
 
-    private static func normalizeRemovedLightPresetTokens(
+    private static func normalizeSupersededHarborLightTokens(
         in customizations: inout [String: ThemeConfiguration]
     ) {
-        guard var configuration = customizations["codex-light"],
-              configuration.accent.caseInsensitiveCompare("#339CFF") == .orderedSame,
-              configuration.background.caseInsensitiveCompare("#FFFFFF") == .orderedSame,
-              configuration.foreground.caseInsensitiveCompare("#1A1C1F") == .orderedSame else {
+        guard var configuration = customizations["harbor-light"] else {
             return
         }
+        let matchesRemovedPreset =
+            configuration.accent.caseInsensitiveCompare("#339CFF") == .orderedSame
+            && configuration.background.caseInsensitiveCompare("#FFFFFF") == .orderedSame
+            && configuration.foreground.caseInsensitiveCompare("#1A1C1F") == .orderedSame
+        let matchesPreviousHousePalette =
+            configuration.accent.caseInsensitiveCompare("#0169CC") == .orderedSame
+            && configuration.background.caseInsensitiveCompare("#FFFFFF") == .orderedSame
+            && configuration.foreground.caseInsensitiveCompare("#0D0D0D") == .orderedSame
+        guard matchesRemovedPreset || matchesPreviousHousePalette else { return }
 
         configuration.accent = AppTheme.defaultLight.accent
         configuration.background = AppTheme.defaultLight.background
         configuration.foreground = AppTheme.defaultLight.foreground
-        customizations["codex-light"] = configuration
+        configuration.contrast = AppTheme.defaultLight.contrast
+        customizations["harbor-light"] = configuration
     }
 
-    private static let legacyThemeIDMap = [
-        "codex-blue-light": "codex-light",
-        "monknot-blue-light": "codex-light",
-        "monknot-light": "codex-light",
-        "monknot-dark": "codex-dark",
+    // Ordered so that the most recent prior canonical ID wins deterministically
+    // if several aliases are present in one old preferences payload.
+    private static let legacyThemeIDPairs: [(legacy: String, current: String)] = [
+        ("monknot-light", "harbor-light"),
+        ("monknot-dark", "harbor-dark"),
+        ("codex-light", "harbor-light"),
+        ("codex-dark", "harbor-dark"),
+        ("codex-blue-light", "harbor-light"),
+        ("monknot-blue-light", "harbor-light"),
+        ("absolutely-light", "parchment-light"),
+        ("absolutely-dark", "parchment-dark"),
+        ("brass-monkey-light", "brasspants-light"),
+        ("brass-monkey-dark", "brasspants-dark"),
+        ("catppuccin-light", "catppuccin-latte"),
+        ("catppuccin-dark", "catppuccin-mocha"),
+        ("code-monkey-light", "codechimp-light"),
+        ("code-monkey-dark", "codechimp-dark"),
+        ("github-light", "forge-light"),
+        ("github-dark", "forge-dark"),
+        ("grease-monkey-light", "greaseball-light"),
+        ("grease-monkey-dark", "greaseball-dark"),
+        ("linear-light", "axis-light"),
+        ("linear-dark", "axis-dark"),
+        ("material-dark", "lagoon-dark"),
+        ("matrix-dark", "phosphor-dark"),
+        ("monokai-dark", "citrus-dark"),
+        ("notion-light", "paper-light"),
+        ("notion-dark", "paper-dark"),
+        ("oscurange-dark", "oscura-dark"),
+        ("raycast-light", "signal-light"),
+        ("raycast-dark", "signal-dark"),
+        ("rose-pine-light", "rose-pine-dawn"),
+        ("rose-pine-dark", "rose-pine-moon"),
+        ("sentry-dark", "watchtower-dark"),
+        ("sock-monkey-light", "sockpuppet-light"),
+        ("sock-monkey-dark", "sockpuppet-dark"),
+        ("vercel-light", "monolith-light"),
+        ("vercel-dark", "monolith-dark"),
+        ("vscode-plus-light", "workbench-light"),
+        ("vscode-plus-dark", "workbench-dark"),
+        ("xcode-light", "blueprint-light"),
+        ("xcode-dark", "blueprint-dark"),
     ]
 
     private enum Keys {

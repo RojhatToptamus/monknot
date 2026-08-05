@@ -31,7 +31,7 @@ final class TerminalPTYSession {
     private var childPID: pid_t = -1
     private var processGroupID: pid_t = -1
     private var readSource: DispatchSourceRead?
-    private let ioQueue = DispatchQueue(label: "io.github.rojhattoptamus.monknot.terminal-pty.\(UUID().uuidString)")
+    private let ioQueue = DispatchQueue(label: "com.monknot.app.terminal-pty.\(UUID().uuidString)")
     private let queueKey = DispatchSpecificKey<Void>()
     private var didFinish = false
 

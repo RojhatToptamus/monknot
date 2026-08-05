@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION_FILE="$ROOT_DIR/VERSION"
+BUNDLE_ID="com.monknot.app"
+APP_COPYRIGHT="Copyright © 2026 Rojhat Toptamuş. All rights reserved."
 DMG_PATH=""
 EXPECTED_RELEASE_VERSION=""
 EXPECTED_BUILD_NUMBER=""
@@ -13,6 +15,20 @@ MOUNT_POINT=""
 SMOKE_DIRECTORY=""
 SMOKE_PID=""
 ATTACHED=0
+THEME_LICENSE_FILES=(
+  theme-ayu-MIT.txt
+  theme-catppuccin-MIT.txt
+  theme-dracula-MIT.txt
+  theme-everforest-MIT.txt
+  theme-night-owl-MIT.txt
+  theme-nord-MIT.txt
+  theme-one-dark-MIT.txt
+  theme-one-light-MIT.txt
+  theme-oscura-MIT.txt
+  theme-rose-pine-MIT.txt
+  theme-solarized-MIT.txt
+  theme-tokyo-night-MIT.txt
+)
 
 usage() {
   cat <<USAGE
@@ -92,6 +108,9 @@ if [[ ! "$EXPECTED_ARCH" =~ ^(arm64|x86_64)$ ]]; then
   echo "unsupported expected architecture: $EXPECTED_ARCH" >&2
   exit 64
 fi
+
+echo "RELEASE_COMPLIANCE_BLOCKER: custom-theme authorship confirmation, complete Gruvbox license evidence, and app icon ownership review are still pending" >&2
+exit 78
 
 EXPECTED_BUNDLE_VERSION="${EXPECTED_RELEASE_VERSION%%[-+]*}"
 DMG_PATH="$(cd "$(dirname "$DMG_PATH")" && pwd)/$(basename "$DMG_PATH")"
@@ -212,7 +231,7 @@ if [[ ! "$ACTUAL_BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
   echo "bundle build number is not numeric: $ACTUAL_BUILD_NUMBER" >&2
   exit 1
 fi
-if [[ "$ACTUAL_BUNDLE_ID" != "io.github.rojhattoptamus.monknot" ]]; then
+if [[ "$ACTUAL_BUNDLE_ID" != "$BUNDLE_ID" ]]; then
   echo "unexpected bundle identifier: $ACTUAL_BUNDLE_ID" >&2
   exit 1
 fi
@@ -221,12 +240,31 @@ if [[ "$ACTUAL_MINIMUM_SYSTEM" != "$MIN_SYSTEM_VERSION" ]]; then
   exit 1
 fi
 
+verify_plist_value() {
+  local key="$1"
+  local expected="$2"
+  local actual
+  actual="$(/usr/libexec/PlistBuddy -c "Print :$key" "$INFO_PLIST" 2>/dev/null || true)"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "$key is missing or unexpected: ${actual:-<missing>}" >&2
+    exit 1
+  fi
+}
+verify_plist_value CFBundleName Monknot
+verify_plist_value CFBundleDisplayName Monknot
+verify_plist_value CFBundleExecutable Monknot
+verify_plist_value CFBundlePackageType APPL
+verify_plist_value NSHumanReadableCopyright "$APP_COPYRIGHT"
+
 REQUIRED_LEGAL_FILES=(
   "Legal/LICENSE"
   "Legal/THIRD_PARTY_NOTICES.md"
   "Legal/ThirdParty/xterm-MIT.txt"
   "Legal/ThirdParty/xterm-addon-fit-MIT.txt"
 )
+for LICENSE_FILE in "${THEME_LICENSE_FILES[@]}"; do
+  REQUIRED_LEGAL_FILES+=("Legal/ThirdParty/$LICENSE_FILE")
+done
 for RELATIVE_PATH in "${REQUIRED_LEGAL_FILES[@]}"; do
   if [[ ! -s "$RESOURCES/$RELATIVE_PATH" ]]; then
     echo "required packaged legal file is missing or empty: $RELATIVE_PATH" >&2
@@ -238,6 +276,9 @@ cmp "$ROOT_DIR/LICENSE" "$RESOURCES/Legal/LICENSE"
 cmp "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$RESOURCES/Legal/THIRD_PARTY_NOTICES.md"
 cmp "$ROOT_DIR/ThirdPartyLicenses/xterm-MIT.txt" "$RESOURCES/Legal/ThirdParty/xterm-MIT.txt"
 cmp "$ROOT_DIR/ThirdPartyLicenses/xterm-addon-fit-MIT.txt" "$RESOURCES/Legal/ThirdParty/xterm-addon-fit-MIT.txt"
+for LICENSE_FILE in "${THEME_LICENSE_FILES[@]}"; do
+  cmp "$ROOT_DIR/ThirdPartyLicenses/$LICENSE_FILE" "$RESOURCES/Legal/ThirdParty/$LICENSE_FILE"
+done
 
 verify_resource_hash() {
   local resource_path="$1"

@@ -10,8 +10,6 @@
 
 <p align="center">
   <a href="https://github.com/RojhatToptamus/monknot/releases">Download Monknot</a>
-  ·
-  <a href="LICENSE">MIT License</a>
 </p>
 
 <p align="center">
@@ -88,4 +86,8 @@ This removes the quarantine flag from Monknot only.
 
 ## License
 
-Monknot is available under the [MIT License](LICENSE).
+Monknot is proprietary software.
+
+Copyright © 2026 Rojhat Toptamuş. All rights reserved.
+
+Third-party components remain subject to their respective license terms.

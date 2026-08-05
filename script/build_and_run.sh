@@ -1,18 +1,79 @@
 #!/usr/bin/env bash
-# Build and run the ad-hoc-signed Monknot app bundle.
+# Build and run the Monknot app bundle.
 # Usage:
 #   script/build_and_run.sh            # build and open dist/Monknot.app
 #   script/build_and_run.sh --build    # build dist/Monknot.app without opening it
 #   script/build_and_run.sh --verify   # build and confirm launch
 #   script/build_and_run.sh --logs     # build and stream app logs
 #   script/build_and_run.sh --debug    # build and run under lldb
+# Add --development-sign to use one Apple Development identity from Keychain.
 set -euo pipefail
 
-MODE="${1:-run}"
+MODE="run"
+MODE_WAS_SET=0
+SIGNING_MODE="${MONKNOT_SIGNING_MODE:-adhoc}"
+DEVELOPMENT_IDENTITY_QUERY="${MONKNOT_DEVELOPMENT_IDENTITY:-Apple Development}"
+DEVELOPMENT_TEAM_ID="${MONKNOT_DEVELOPMENT_TEAM_ID:-ZD35XP4V7D}"
+
+usage() {
+  cat <<USAGE
+Usage: script/build_and_run.sh [mode] [--development-sign]
+
+Modes:
+  --build, build        Build without opening the app.
+  --verify, verify      Build and confirm launch.
+  --logs, logs          Build, open, and stream application logs.
+  --telemetry, telemetry
+                        Build, open, and stream subsystem logs.
+  --debug, debug        Build and run under lldb.
+  run                   Build and open the app (default).
+
+Signing:
+  --development-sign    Sign nested code and the app with a unique Apple
+                        Development identity from the login Keychain.
+
+Environment:
+  MONKNOT_SIGNING_MODE          adhoc (default) or development.
+  MONKNOT_DEVELOPMENT_IDENTITY  Identity name or SHA-1 query. Defaults to
+                                "Apple Development" and must match exactly one
+                                valid code-signing identity.
+  MONKNOT_DEVELOPMENT_TEAM_ID   Expected signing TeamIdentifier. Defaults to
+                                ZD35XP4V7D.
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --build|build|--verify|verify|--logs|logs|--telemetry|telemetry|--debug|debug|run)
+      if [[ "$MODE_WAS_SET" == "1" ]]; then
+        echo "only one build mode may be supplied" >&2
+        exit 64
+      fi
+      MODE="$1"
+      MODE_WAS_SET=1
+      shift
+      ;;
+    --development-sign)
+      SIGNING_MODE="development"
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "unknown option: $1" >&2
+      usage >&2
+      exit 64
+      ;;
+  esac
+done
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION_FILE="$ROOT_DIR/VERSION"
 APP_NAME="Monknot"
-BUNDLE_ID="${MONKNOT_BUNDLE_ID:-io.github.rojhattoptamus.monknot}"
+APP_COPYRIGHT="Copyright © 2026 Rojhat Toptamuş. All rights reserved."
+BUNDLE_ID="${MONKNOT_BUNDLE_ID:-com.monknot.app}"
 BUILD_NUMBER="${MONKNOT_BUILD_NUMBER:-1}"
 MIN_SYSTEM_VERSION="14.0"
 TARGET_ARCH="${MONKNOT_TARGET_ARCH:-$(uname -m)}"
@@ -47,6 +108,20 @@ APP_ICON_BUILD_DIR="$BUILD_DIR/AppIconAssets"
 APP_ICON_INFO_PLIST="$BUILD_DIR/AppIcon-Info.plist"
 APP_ICON_ICNS="$APP_ICON_BUILD_DIR/$APP_ICON_NAME.icns"
 APP_ICON_ASSETS_CAR="$APP_ICON_BUILD_DIR/Assets.car"
+THEME_LICENSE_FILES=(
+  theme-ayu-MIT.txt
+  theme-catppuccin-MIT.txt
+  theme-dracula-MIT.txt
+  theme-everforest-MIT.txt
+  theme-night-owl-MIT.txt
+  theme-nord-MIT.txt
+  theme-one-dark-MIT.txt
+  theme-one-light-MIT.txt
+  theme-oscura-MIT.txt
+  theme-rose-pine-MIT.txt
+  theme-solarized-MIT.txt
+  theme-tokyo-night-MIT.txt
+)
 
 if [[ ! "$BUNDLE_ID" =~ ^[A-Za-z0-9.-]+$ ]]; then
   echo "invalid MONKNOT_BUNDLE_ID: $BUNDLE_ID" >&2
@@ -68,17 +143,66 @@ if [[ ! "$TARGET_ARCH" =~ ^(arm64|x86_64)$ ]]; then
   echo "unsupported MONKNOT_TARGET_ARCH: $TARGET_ARCH" >&2
   exit 64
 fi
+if [[ ! "$SIGNING_MODE" =~ ^(adhoc|development)$ ]]; then
+  echo "invalid MONKNOT_SIGNING_MODE: $SIGNING_MODE (expected adhoc or development)" >&2
+  exit 64
+fi
+if [[ "$SIGNING_MODE" == "development" && -z "$DEVELOPMENT_IDENTITY_QUERY" ]]; then
+  echo "MONKNOT_DEVELOPMENT_IDENTITY must not be empty for development signing" >&2
+  exit 64
+fi
+if [[ "$SIGNING_MODE" == "development" && ! "$DEVELOPMENT_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]; then
+  echo "invalid MONKNOT_DEVELOPMENT_TEAM_ID: $DEVELOPMENT_TEAM_ID" >&2
+  exit 64
+fi
 if [[ "$TARGET_TRIPLE" != "$TARGET_ARCH-apple-macosx$MIN_SYSTEM_VERSION" ]]; then
   echo "invalid MONKNOT_TARGET_TRIPLE (expected $TARGET_ARCH-apple-macosx$MIN_SYSTEM_VERSION): $TARGET_TRIPLE" >&2
   exit 64
 fi
 if ! command -v codesign >/dev/null 2>&1; then
-  echo "codesign is required to create the ad-hoc bundle signature" >&2
+  echo "codesign is required to create the bundle signature" >&2
   exit 69
 fi
 if ! command -v xcrun >/dev/null 2>&1; then
   echo "xcrun is required to select the Xcode Swift toolchain" >&2
   exit 69
+fi
+
+SIGN_IDENTITY="-"
+SIGN_IDENTITY_NAME="ad-hoc"
+if [[ "$SIGNING_MODE" == "development" ]]; then
+  if ! command -v security >/dev/null 2>&1; then
+    echo "security is required to find an Apple Development identity" >&2
+    exit 69
+  fi
+
+  IDENTITY_MATCHES="$(
+    security find-identity -v -p codesigning 2>/dev/null \
+      | awk -v query="$DEVELOPMENT_IDENTITY_QUERY" '
+          index($0, query) {
+            hash = $2
+            if (match($0, /"[^"]+"/)) {
+              name = substr($0, RSTART + 1, RLENGTH - 2)
+              print hash "\t" name
+            }
+          }
+        '
+  )"
+  IDENTITY_COUNT="$(printf '%s\n' "$IDENTITY_MATCHES" | sed '/^$/d' | wc -l | tr -d ' ')"
+  if [[ "$IDENTITY_COUNT" == "0" ]]; then
+    echo "no valid code-signing identity matched: $DEVELOPMENT_IDENTITY_QUERY" >&2
+    echo "inspect available identities with: security find-identity -v -p codesigning" >&2
+    exit 65
+  fi
+  if [[ "$IDENTITY_COUNT" != "1" ]]; then
+    echo "development identity query matched $IDENTITY_COUNT identities; use a full name or SHA-1 hash" >&2
+    printf '%s\n' "$IDENTITY_MATCHES" >&2
+    exit 65
+  fi
+
+  SIGN_IDENTITY="${IDENTITY_MATCHES%%$'\t'*}"
+  SIGN_IDENTITY_NAME="${IDENTITY_MATCHES#*$'\t'}"
+  echo "Development signing identity: $SIGN_IDENTITY_NAME ($SIGN_IDENTITY)"
 fi
 
 # A build-only invocation must not interrupt someone using an existing bundle.
@@ -313,6 +437,9 @@ cp "$ROOT_DIR/LICENSE" "$APP_LEGAL_RESOURCES/LICENSE"
 cp "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$APP_LEGAL_RESOURCES/THIRD_PARTY_NOTICES.md"
 cp "$ROOT_DIR/ThirdPartyLicenses/xterm-MIT.txt" "$APP_THIRD_PARTY_RESOURCES/xterm-MIT.txt"
 cp "$ROOT_DIR/ThirdPartyLicenses/xterm-addon-fit-MIT.txt" "$APP_THIRD_PARTY_RESOURCES/xterm-addon-fit-MIT.txt"
+for LICENSE_FILE in "${THEME_LICENSE_FILES[@]}"; do
+  cp "$ROOT_DIR/ThirdPartyLicenses/$LICENSE_FILE" "$APP_THIRD_PARTY_RESOURCES/$LICENSE_FILE"
+done
 
 cat >"$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -386,18 +513,54 @@ cat >"$INFO_PLIST" <<PLIST
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSHumanReadableCopyright</key>
-  <string>Copyright © 2026 Monknot contributors.</string>
+  <string>$APP_COPYRIGHT</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>
 </plist>
 PLIST
 
-# Ad-hoc signing detects bundle changes locally but provides no developer
-# identity and is not accepted by Gatekeeper as trusted distribution signing.
-codesign --force --sign - "$APP_FRAMEWORKS/libMonknotCore.dylib"
-codesign --force --sign - "$APP_BUNDLE"
+plutil -lint "$INFO_PLIST" >/dev/null
+verify_plist_value() {
+  local key="$1"
+  local expected="$2"
+  local actual
+  actual="$(/usr/libexec/PlistBuddy -c "Print :$key" "$INFO_PLIST")"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "unexpected $key in generated Info.plist: $actual" >&2
+    exit 1
+  fi
+}
+verify_plist_value CFBundleIdentifier "$BUNDLE_ID"
+verify_plist_value CFBundleName "$APP_NAME"
+verify_plist_value CFBundleDisplayName "$APP_NAME"
+verify_plist_value CFBundleExecutable "$APP_NAME"
+verify_plist_value CFBundlePackageType APPL
+verify_plist_value CFBundleShortVersionString "$BUNDLE_VERSION"
+verify_plist_value CFBundleVersion "$BUILD_NUMBER"
+verify_plist_value LSMinimumSystemVersion "$MIN_SYSTEM_VERSION"
+verify_plist_value NSHumanReadableCopyright "$APP_COPYRIGHT"
+
+# A provisioning profile belongs only to the Store flow and must not leak into
+# a normal local build. Sign nested code before the main application bundle.
+rm -f "$APP_CONTENTS/embedded.provisionprofile"
+codesign --force --sign "$SIGN_IDENTITY" "$APP_FRAMEWORKS/libMonknotCore.dylib"
+codesign --force --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
 codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+
+if [[ "$SIGNING_MODE" == "development" ]]; then
+  SIGNATURE_DETAILS="$(codesign -dvvv "$APP_BUNDLE" 2>&1)"
+  if ! grep -F "Authority=$SIGN_IDENTITY_NAME" <<<"$SIGNATURE_DETAILS" >/dev/null; then
+    echo "application was not signed by the selected Apple Development identity" >&2
+    exit 1
+  fi
+  TEAM_IDENTIFIER="$(awk -F= '$1 == "TeamIdentifier" { print $2; exit }' <<<"$SIGNATURE_DETAILS")"
+  if [[ "$TEAM_IDENTIFIER" != "$DEVELOPMENT_TEAM_ID" ]]; then
+    echo "development signature TeamIdentifier is ${TEAM_IDENTIFIER:-<missing>}; expected $DEVELOPMENT_TEAM_ID" >&2
+    exit 1
+  fi
+  echo "Development signature verified (TeamIdentifier=$TEAM_IDENTIFIER)"
+fi
 
 verify_macho_release_metadata() {
   local binary_path="$1"

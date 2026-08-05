@@ -9,7 +9,7 @@ final class WorkspaceFileWatcher {
     }
 
     private var stream: FSEventStreamRef?
-    private let queue = DispatchQueue(label: "io.github.rojhattoptamus.monknot.workspace-file-watcher", qos: .utility)
+    private let queue = DispatchQueue(label: "com.monknot.app.workspace-file-watcher", qos: .utility)
     private var callback: (@Sendable (Event) -> Void)?
     private var rootPath: String?
 

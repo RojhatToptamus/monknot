@@ -36,12 +36,102 @@ final class BuildScriptSyncTests: XCTestCase {
             "ThirdPartyLicenses/xterm-MIT.txt",
             "ThirdPartyLicenses/xterm-addon-fit-MIT.txt"
         ]
+        let themeLicenseFiles = [
+            "theme-ayu-MIT.txt", "theme-catppuccin-MIT.txt", "theme-dracula-MIT.txt",
+            "theme-everforest-MIT.txt", "theme-night-owl-MIT.txt", "theme-nord-MIT.txt",
+            "theme-one-dark-MIT.txt", "theme-one-light-MIT.txt", "theme-oscura-MIT.txt",
+            "theme-rose-pine-MIT.txt", "theme-solarized-MIT.txt", "theme-tokyo-night-MIT.txt",
+        ]
 
         for resource in requiredResources {
             XCTAssertTrue(
                 script.contains(resource),
                 "script/build_and_run.sh must copy \(resource)"
             )
+        }
+        for licenseFile in themeLicenseFiles {
+            XCTAssertTrue(script.contains(licenseFile), "manual build must list \(licenseFile)")
+            XCTAssertTrue(
+                FileManager.default.fileExists(
+                    atPath: root.appendingPathComponent("ThirdPartyLicenses/\(licenseFile)").path
+                ),
+                "missing theme license \(licenseFile)"
+            )
+        }
+    }
+
+    func testProjectLicenseIsProprietaryAndThirdPartyMITNoticesRemainSeparate() throws {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let projectLicense = try String(contentsOf: root.appendingPathComponent("LICENSE"), encoding: .utf8)
+        let readme = try String(contentsOf: root.appendingPathComponent("README.md"), encoding: .utf8)
+        let notices = try String(contentsOf: root.appendingPathComponent("THIRD_PARTY_NOTICES.md"), encoding: .utf8)
+        let audit = try String(contentsOf: root.appendingPathComponent("LICENSE_AUDIT.md"), encoding: .utf8)
+        let xtermLicense = try String(
+            contentsOf: root.appendingPathComponent("ThirdPartyLicenses/xterm-MIT.txt"),
+            encoding: .utf8
+        )
+        let addonLicense = try String(
+            contentsOf: root.appendingPathComponent("ThirdPartyLicenses/xterm-addon-fit-MIT.txt"),
+            encoding: .utf8
+        )
+        let buildScript = try String(
+            contentsOf: root.appendingPathComponent("script/build_and_run.sh"),
+            encoding: .utf8
+        )
+        let themeCatalog = try String(
+            contentsOf: root.appendingPathComponent("Sources/MonknotCore/Models/MonknotThemeCatalog.swift"),
+            encoding: .utf8
+        )
+
+        let expectedProjectLicense = """
+        Copyright © 2026 Rojhat Toptamuş. All rights reserved.
+
+        The source code and associated documentation contained in this repository are proprietary and confidential.
+
+        No part of this software may be copied, modified, distributed, published, sublicensed, sold, or used to create derivative works without the prior written permission of the copyright holder, except where permitted under a separate written agreement or required by applicable law.
+
+        Third-party software included in or used by this project remains subject to its respective license terms.
+        """
+
+        XCTAssertEqual(projectLicense.trimmingCharacters(in: .whitespacesAndNewlines), expectedProjectLicense)
+        XCTAssertFalse(projectLicense.contains("MIT License"))
+        XCTAssertTrue(readme.contains("Monknot is proprietary software."))
+        XCTAssertFalse(readme.contains("Monknot is available under"))
+        XCTAssertTrue(
+            readme.contains(
+                """
+                ## License
+
+                Monknot is proprietary software.
+
+                Copyright © 2026 Rojhat Toptamuş. All rights reserved.
+
+                Third-party components remain subject to their respective license terms.
+                """
+            )
+        )
+        XCTAssertTrue(notices.contains("@xterm/xterm` 5.5.0"))
+        XCTAssertTrue(notices.contains("@xterm/addon-fit` 0.10.0"))
+        XCTAssertTrue(notices.contains("9ba6c00a195c95fcf8292a2b9084d91450e5daae"))
+        XCTAssertTrue(xtermLicense.contains("Permission is hereby granted, free of charge"))
+        XCTAssertTrue(addonLicense.contains("Permission is hereby granted, free of charge"))
+        XCTAssertTrue(audit.contains("Not cleared for production or Mac App Store release."))
+        XCTAssertTrue(audit.contains("Owner-provided replacement palettes"))
+        XCTAssertTrue(audit.contains("Cleared by project-owner representation"))
+        XCTAssertTrue(audit.contains("Original authorship confirmation pending"))
+        XCTAssertTrue(audit.contains("App icon PNG set"))
+        XCTAssertTrue(buildScript.contains("Copyright © 2026 Rojhat Toptamuş. All rights reserved."))
+        XCTAssertTrue(buildScript.contains("verify_plist_value NSHumanReadableCopyright"))
+
+        let presetNamePattern = try NSRegularExpression(pattern: #"name: "([^"]+)""#)
+        let themeRange = NSRange(themeCatalog.startIndex..<themeCatalog.endIndex, in: themeCatalog)
+        let presetNames = Set<String>(presetNamePattern.matches(in: themeCatalog, range: themeRange).compactMap { match in
+            guard let range = Range(match.range(at: 1), in: themeCatalog) else { return nil }
+            return String(themeCatalog[range])
+        })
+        XCTAssertFalse(presetNames.isEmpty)
+        for presetName in presetNames {
+            XCTAssertTrue(audit.contains(presetName), "LICENSE_AUDIT.md must classify the \(presetName) theme")
         }
     }
 
@@ -69,20 +159,67 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(script.contains("<key>LSSupportsOpeningDocumentsInPlace</key>"))
     }
 
-    func testManualBundleHasReleaseMetadataAndAdHocSignature() throws {
+    func testManualBundleHasReleaseMetadataAndConfigurableDevelopmentSignature() throws {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
         let script = try String(contentsOf: root.appendingPathComponent("script/build_and_run.sh"), encoding: .utf8)
 
-        XCTAssertTrue(script.contains("io.github.rojhattoptamus.monknot"))
+        XCTAssertTrue(script.contains("com.monknot.app"))
         XCTAssertTrue(script.contains("<key>CFBundleShortVersionString</key>"))
         XCTAssertTrue(script.contains("<key>CFBundleVersion</key>"))
+        XCTAssertTrue(script.contains("<key>CFBundleName</key>"))
+        XCTAssertTrue(script.contains("<key>CFBundleDisplayName</key>"))
+        XCTAssertTrue(script.contains("<key>CFBundleExecutable</key>"))
+        XCTAssertTrue(script.contains("<key>CFBundlePackageType</key>"))
+        XCTAssertTrue(script.contains("<key>LSMinimumSystemVersion</key>"))
         XCTAssertTrue(script.contains("<key>LSApplicationCategoryType</key>"))
         XCTAssertTrue(script.contains("-target \"$TARGET_TRIPLE\""))
         XCTAssertTrue(script.contains("-O"))
         XCTAssertTrue(script.contains("xcrun vtool -show-build"))
-        XCTAssertTrue(script.contains("codesign --force --sign -"))
+        XCTAssertTrue(script.contains("MONKNOT_SIGNING_MODE"))
+        XCTAssertTrue(script.contains("MONKNOT_DEVELOPMENT_IDENTITY"))
+        XCTAssertTrue(script.contains("MONKNOT_DEVELOPMENT_TEAM_ID"))
+        XCTAssertTrue(script.contains("ZD35XP4V7D"))
+        XCTAssertTrue(script.contains("security find-identity -v -p codesigning"))
+        XCTAssertTrue(script.contains("codesign --force --sign \"$SIGN_IDENTITY\""))
+        XCTAssertTrue(script.contains("rm -f \"$APP_CONTENTS/embedded.provisionprofile\""))
         XCTAssertTrue(script.contains("codesign --verify --deep --strict"))
         XCTAssertTrue(script.contains("APP_LEGAL_RESOURCES"))
+    }
+
+    func testAppStorePackagingUsesDedicatedSandboxedSigningFlow() throws {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let script = try String(
+            contentsOf: root.appendingPathComponent("script/app_store_package.sh"),
+            encoding: .utf8
+        )
+        let entitlements = try String(
+            contentsOf: root.appendingPathComponent("config/MonknotAppStore.entitlements"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(script.hasPrefix("#!/usr/bin/env bash"))
+        XCTAssertTrue(script.contains("MONKNOT_APP_STORE_APP_IDENTITY"))
+        XCTAssertTrue(script.contains("MONKNOT_APP_STORE_INSTALLER_IDENTITY"))
+        XCTAssertTrue(script.contains("MONKNOT_APP_STORE_PROVISIONING_PROFILE"))
+        XCTAssertTrue(script.contains("MONKNOT_SIGNING_MODE=adhoc"))
+        XCTAssertTrue(script.contains("codesign --force --sign \"$APP_IDENTITY\" \"$FRAMEWORK\""))
+        XCTAssertTrue(script.contains("--entitlements \"$ENTITLEMENTS\""))
+        XCTAssertTrue(script.contains("productbuild"))
+        XCTAssertTrue(script.contains("pkgutil --check-signature"))
+        XCTAssertTrue(script.contains("pkgutil --payload-files"))
+        XCTAssertTrue(script.contains("codesign --verify --deep --strict"))
+        XCTAssertTrue(script.contains("TEAM_ID=\"ZD35XP4V7D\""))
+        XCTAssertTrue(script.contains("BUNDLE_ID=\"com.monknot.app\""))
+        XCTAssertTrue(script.contains("APPLICATION_IDENTIFIER=\"$TEAM_ID.$BUNDLE_ID\""))
+        XCTAssertTrue(script.contains("RELEASE_COMPLIANCE_BLOCKER"))
+
+        XCTAssertTrue(entitlements.contains("com.apple.application-identifier"))
+        XCTAssertTrue(entitlements.contains("ZD35XP4V7D.com.monknot.app"))
+        XCTAssertTrue(entitlements.contains("com.apple.developer.team-identifier"))
+        XCTAssertTrue(entitlements.contains("com.apple.security.app-sandbox"))
+        XCTAssertTrue(entitlements.contains("com.apple.security.files.user-selected.read-write"))
+        XCTAssertTrue(entitlements.contains("com.apple.security.files.bookmarks.app-scope"))
+        XCTAssertFalse(entitlements.contains("com.apple.security.network.client"))
     }
 
     func testHTMLPreviewDisablesWorkspaceAuthoredJavaScript() throws {
@@ -127,6 +264,8 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(script.contains("Legal/THIRD_PARTY_NOTICES.md"))
         XCTAssertTrue(script.contains("xcrun vtool -show-build"))
         XCTAssertTrue(script.contains("third-party resource hash"))
+        XCTAssertTrue(script.contains("RELEASE_COMPLIANCE_BLOCKER"))
+        XCTAssertTrue(script.contains("theme-tokyo-night-MIT.txt"))
     }
 
     func testReleasePackageSupportsAdHocAndNotarizedDMGs() throws {
@@ -136,6 +275,7 @@ final class BuildScriptSyncTests: XCTestCase {
 
         XCTAssertTrue(script.hasPrefix("#!/usr/bin/env bash"))
         XCTAssertTrue(script.contains("script/build_and_run.sh\" --build"))
+        XCTAssertTrue(script.contains("MONKNOT_SIGNING_MODE=adhoc"))
         XCTAssertTrue(script.contains("Developer ID Application"))
         XCTAssertTrue(script.contains("codesign --force --options runtime --timestamp --sign"))
         XCTAssertTrue(script.contains("hdiutil create -volname Monknot"))
@@ -149,6 +289,7 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(script.contains("shasum -a 256"))
         XCTAssertTrue(script.contains("MONKNOT_TARGET_TRIPLE"))
         XCTAssertTrue(script.contains("VERSION"))
+        XCTAssertTrue(script.contains("RELEASE_COMPLIANCE_BLOCKER"))
     }
 
     func testReleaseArtifactVerifierChecksMountedDistribution() throws {
@@ -163,6 +304,9 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(script.contains("Contents/Resources"))
         XCTAssertTrue(script.contains("Legal/ThirdParty/xterm-MIT.txt"))
         XCTAssertTrue(script.contains("Legal/ThirdParty/xterm-addon-fit-MIT.txt"))
+        XCTAssertTrue(script.contains("theme-ayu-MIT.txt"))
+        XCTAssertTrue(script.contains("theme-tokyo-night-MIT.txt"))
+        XCTAssertTrue(script.contains("RELEASE_COMPLIANCE_BLOCKER"))
         XCTAssertTrue(script.contains("xcrun vtool -show-build"))
         XCTAssertTrue(script.contains("codesign --verify --deep --strict"))
         XCTAssertTrue(script.contains("CFFIXED_USER_HOME"))

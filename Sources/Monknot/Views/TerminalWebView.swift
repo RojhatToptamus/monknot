@@ -33,7 +33,7 @@ struct TerminalWebView: NSViewRepresentable {
                 usePointerCursors: usePointerCursors,
                 fontSmoothing: fontSmoothing
             ),
-            baseURL: Bundle.main.resourceURL
+            baseURL: nil
         )
         return webView
     }

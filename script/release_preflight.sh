@@ -2,11 +2,27 @@
 set -euo pipefail
 
 APP_BUNDLE="dist/Monknot.app"
+BUNDLE_ID="com.monknot.app"
+APP_COPYRIGHT="Copyright © 2026 Rojhat Toptamuş. All rights reserved."
 ADHOC=0
 ALLOW_MISSING_IDENTITY=0
 REQUIRED_IDENTITY="${MONKNOT_DEVELOPER_ID_IDENTITY:-Developer ID Application}"
 MIN_SYSTEM_VERSION="14.0"
 VERSION_FILE="VERSION"
+THEME_LICENSE_FILES=(
+  theme-ayu-MIT.txt
+  theme-catppuccin-MIT.txt
+  theme-dracula-MIT.txt
+  theme-everforest-MIT.txt
+  theme-night-owl-MIT.txt
+  theme-nord-MIT.txt
+  theme-one-dark-MIT.txt
+  theme-one-light-MIT.txt
+  theme-oscura-MIT.txt
+  theme-rose-pine-MIT.txt
+  theme-solarized-MIT.txt
+  theme-tokyo-night-MIT.txt
+)
 
 usage() {
   cat <<USAGE
@@ -85,7 +101,10 @@ else
 fi
 echo
 
+fail "RELEASE_COMPLIANCE_BLOCKER: custom-theme authorship confirmation, complete Gruvbox license evidence, and app icon ownership review are still pending"
+
 require_tool codesign
+require_tool cmp
 require_tool hdiutil
 require_tool lipo
 require_tool shasum
@@ -199,7 +218,7 @@ else
     fi
 
     BUNDLE_IDENTIFIER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO_PLIST" 2>/dev/null || true)"
-    if [[ "$BUNDLE_IDENTIFIER" == "io.github.rojhattoptamus.monknot" ]]; then
+    if [[ "$BUNDLE_IDENTIFIER" == "$BUNDLE_ID" ]]; then
       pass "public bundle identifier is set: $BUNDLE_IDENTIFIER"
     elif [[ -n "$BUNDLE_IDENTIFIER" && "$BUNDLE_IDENTIFIER" != "com.local.monknot" ]]; then
       warn "non-default bundle identifier is set: $BUNDLE_IDENTIFIER"
@@ -214,6 +233,24 @@ else
     else
       fail "bundle version metadata is missing or malformed"
     fi
+
+    check_plist_value() {
+      local key="$1"
+      local expected="$2"
+      local actual
+      actual="$(/usr/libexec/PlistBuddy -c "Print :$key" "$INFO_PLIST" 2>/dev/null || true)"
+      if [[ "$actual" == "$expected" ]]; then
+        pass "$key is set: $actual"
+      else
+        fail "$key is missing or unexpected: ${actual:-<missing>}"
+      fi
+    }
+    check_plist_value CFBundleName Monknot
+    check_plist_value CFBundleDisplayName Monknot
+    check_plist_value CFBundleExecutable Monknot
+    check_plist_value CFBundlePackageType APPL
+    check_plist_value LSMinimumSystemVersion "$MIN_SYSTEM_VERSION"
+    check_plist_value NSHumanReadableCopyright "$APP_COPYRIGHT"
 
     if [[ -f "$VERSION_FILE" ]]; then
       RELEASE_VERSION="$(tr -d '\r\n' <"$VERSION_FILE")"
@@ -241,6 +278,19 @@ else
       pass "packaged legal file exists: ${LEGAL_FILE#"$APP_BUNDLE/"}"
     else
       fail "packaged legal file is missing or empty: ${LEGAL_FILE#"$APP_BUNDLE/"}"
+    fi
+  done
+  for LICENSE_FILE in "${THEME_LICENSE_FILES[@]}"; do
+    SOURCE_LICENSE="ThirdPartyLicenses/$LICENSE_FILE"
+    BUNDLED_LICENSE="$APP_RESOURCES/Legal/ThirdParty/$LICENSE_FILE"
+    if [[ ! -s "$SOURCE_LICENSE" ]]; then
+      fail "source theme license is missing or empty: $SOURCE_LICENSE"
+    elif [[ ! -s "$BUNDLED_LICENSE" ]]; then
+      fail "packaged theme license is missing or empty: ${BUNDLED_LICENSE#"$APP_BUNDLE/"}"
+    elif cmp -s "$SOURCE_LICENSE" "$BUNDLED_LICENSE"; then
+      pass "packaged theme license matches: ${BUNDLED_LICENSE#"$APP_BUNDLE/"}"
+    else
+      fail "packaged theme license differs from source: ${BUNDLED_LICENSE#"$APP_BUNDLE/"}"
     fi
   done
 
