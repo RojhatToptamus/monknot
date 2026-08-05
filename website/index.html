@@ -103,39 +103,82 @@
         </div>
 
         <figure class="product-figure site-shell hero-entrance hero-entrance--media">
-          <div class="media-bar" aria-hidden="true">
-            <div class="window-chrome">
-              <span class="traffic-lights">
-                <i class="traffic-light traffic-light--close"></i>
-                <i class="traffic-light traffic-light--minimize"></i>
-                <i class="traffic-light traffic-light--zoom"></i>
-              </span>
-              <span>Monknot</span>
-            </div>
-            <span>Editor + preview</span>
-            <span>Absolutely Dark</span>
+          <div class="feature-tabs" role="tablist" aria-label="Product views">
+            <button
+              type="button"
+              id="feature-tab-default"
+              role="tab"
+              aria-selected="true"
+              aria-controls="product-shot-panel"
+              data-feature="default"
+            >
+              Default
+            </button>
+            <button
+              type="button"
+              id="feature-tab-split"
+              role="tab"
+              aria-selected="false"
+              aria-controls="product-shot-panel"
+              data-feature="split"
+              tabindex="-1"
+            >
+              Split
+            </button>
+            <button
+              type="button"
+              id="feature-tab-terminal"
+              role="tab"
+              aria-selected="false"
+              aria-controls="product-shot-panel"
+              data-feature="terminal"
+              tabindex="-1"
+            >
+              Terminal
+            </button>
+            <button
+              type="button"
+              id="feature-tab-pdf"
+              role="tab"
+              aria-selected="false"
+              aria-controls="product-shot-panel"
+              data-feature="pdf"
+              tabindex="-1"
+            >
+              PDF
+            </button>
           </div>
-          <div class="product-shot">
+
+          <div
+            class="product-shot"
+            id="product-shot-panel"
+            role="tabpanel"
+            aria-labelledby="feature-tab-default"
+            aria-describedby="product-caption"
+            tabindex="0"
+          >
             <picture>
               <source
+                id="product-source"
                 srcset="
-                  assets/monknot-dark-1200.webp 1200w,
-                  assets/monknot-dark-2400.webp 2400w,
-                  assets/monknot-dark.webp      3600w
+                  assets/monknot-default-1200.webp 1200w,
+                  assets/monknot-default-2400.webp 2400w,
+                  assets/monknot-default.webp      3600w
                 "
                 sizes="(max-width: 36rem) calc(100vw - 2.5rem), (max-width: 70rem) calc(100vw - 6rem), 64rem"
                 type="image/webp"
               />
               <img
-                src="assets/monknot-dark.jpg"
+                id="product-image"
+                src="assets/monknot-default.jpg"
                 width="3600"
                 height="2250"
                 decoding="async"
-                alt="Monknot showing a folder tree with Markdown source and its rendered preview side by side."
+                alt="Monknot with the Project Borealis workspace open in its Markdown source editor."
               />
             </picture>
           </div>
-          <figcaption>Project Borealis · Markdown source and live preview.</figcaption>
+          <figcaption id="product-caption">Project Borealis · Browse and edit workspace files.</figcaption>
         </figure>
 
         <ul class="feature-proof site-shell" aria-label="Key features">
@@ -154,10 +197,10 @@
         <div class="section-intro site-shell reveal">
           <p class="eyebrow">Appearance</p>
           <div>
-            <h2 id="themes-title">20 light presets. 31 dark.</h2>
+            <h2 id="themes-title">50+ themes.</h2>
             <p>
-              Choose a preset for each appearance. Adjust the accent, background, foreground,
-              contrast, and UI and code type sizes.
+              Pick a light or dark preset, then tune the accent, background, foreground,
+              contrast, and type sizes.
             </p>
           </div>
         </div>
@@ -171,11 +214,11 @@
                 <legend class="visually-hidden">Theme appearance</legend>
                 <label>
                   <input type="radio" name="theme-variant" value="light" />
-                  <span>Light <small>20</small></span>
+                  <span>Light</span>
                 </label>
                 <label>
                   <input type="radio" name="theme-variant" value="dark" checked />
-                  <span>Dark <small>31</small></span>
+                  <span>Dark</span>
                 </label>
               </fieldset>
 
@@ -208,20 +251,40 @@
               </div>
 
               <div class="palette-preview" id="palette-preview" aria-hidden="true">
-                <div class="palette-field">
-                  <p class="palette-letters">Aa</p>
-                </div>
+                <div class="preview-editor">
+                  <div class="preview-editor__bar">
+                    <span>README.md</span>
+                    <strong data-preview-theme-name>Absolutely</strong>
+                  </div>
 
-                <div class="palette-accent-field">
-                  <i></i>
-                </div>
+                  <div class="preview-editor__panes">
+                    <div class="preview-source">
+                      <p class="preview-pane-label">Source</p>
+                      <pre><code><span class="source-heading"># Project Borealis</span>
 
-                <div class="palette-selection-field"></div>
+<span class="source-copy">An offline field guide for a small team.</span>
 
-                <div class="palette-semantic-fields">
-                  <span class="palette-added"></span>
-                  <span class="palette-removed"></span>
-                  <span class="palette-skill"></span>
+<span class="source-quote">&gt; **Current focus:** shape the route brief.</span>
+
+<span class="source-heading">## This week</span>
+
+<span class="source-copy">- [x] Compare the harbor routes</span>
+<span class="source-copy">- [ ] Review the weather window</span>
+<span class="source-code">`swift let route = "north-ridge"`</span></code></pre>
+                    </div>
+
+                    <article class="preview-document">
+                      <p class="preview-pane-label">Preview</p>
+                      <h4>Project Borealis</h4>
+                      <p>An offline field guide for a small team.</p>
+                      <blockquote><strong>Current focus:</strong> shape the route brief.</blockquote>
+                      <h5>This week</h5>
+                      <ul>
+                        <li class="is-done">Compare the harbor routes</li>
+                        <li>Review the weather window</li>
+                      </ul>
+                    </article>
+                  </div>
                 </div>
 
                 <div class="terminal-palette-field">

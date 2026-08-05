@@ -5,6 +5,11 @@ const siteAppearance = document.querySelector(".site-appearance");
 const siteAppearanceInputs = Array.from(
   document.querySelectorAll('input[name="site-appearance"]'),
 );
+const featureTabs = Array.from(document.querySelectorAll('[role="tab"][data-feature]'));
+const productShotPanel = document.querySelector("#product-shot-panel");
+const productSource = document.querySelector("#product-source");
+const productImage = document.querySelector("#product-image");
+const productCaption = document.querySelector("#product-caption");
 const themeExplorer = document.querySelector("#theme-explorer");
 const variantInputs = Array.from(document.querySelectorAll('input[name="theme-variant"]'));
 const featuredThemes = document.querySelector("#featured-themes");
@@ -19,6 +24,30 @@ const themeDetails = document.querySelector("#theme-details");
 const themeAnnouncement = document.querySelector("#theme-announcement");
 const palettePreview = document.querySelector("#palette-preview");
 const terminalPalette = document.querySelector("#terminal-palette");
+const previewThemeNames = Array.from(document.querySelectorAll("[data-preview-theme-name]"));
+
+const productFeatures = {
+  default: {
+    image: "monknot-default",
+    alt: "Monknot with the Project Borealis workspace open in its Markdown source editor.",
+    caption: "Project Borealis · Browse and edit workspace files.",
+  },
+  split: {
+    image: "monknot-split",
+    alt: "Monknot showing Project Borealis Markdown source and its rendered preview side by side.",
+    caption: "Project Borealis · Markdown source and live preview.",
+  },
+  terminal: {
+    image: "monknot-terminal",
+    alt: "Monknot with a shell session open beside the Project Borealis Markdown editor.",
+    caption: "Project Borealis · Run a shell beside the active document.",
+  },
+  pdf: {
+    image: "monknot-pdf",
+    alt: "Monknot displaying the exported Project Borealis PDF with its annotation toolbar.",
+    caption: "Project Borealis · Read and annotate PDFs.",
+  },
+};
 
 const featuredNames = ["Absolutely", "Codex", "Catppuccin", "Everforest", "Rose Pine"];
 const selectedThemeIDs = {
@@ -28,6 +57,115 @@ const selectedThemeIDs = {
 
 let catalog;
 let activeVariant = "dark";
+let activeProductFeature = "default";
+let productFeatureRequest = 0;
+const productFeaturePreloads = new Map();
+
+function featureSrcset(feature) {
+  return [
+    `assets/${feature.image}-1200.webp 1200w`,
+    `assets/${feature.image}-2400.webp 2400w`,
+    `assets/${feature.image}.webp 3600w`,
+  ].join(", ");
+}
+
+function preloadProductFeature(id) {
+  if (productFeaturePreloads.has(id)) return productFeaturePreloads.get(id);
+
+  const feature = productFeatures[id];
+  const preload = new Promise((resolve) => {
+    const image = new Image();
+    let settled = false;
+    const finish = async (success) => {
+      if (settled) return;
+      settled = true;
+      if (success) {
+        try {
+          await image.decode();
+        } catch {}
+      }
+      resolve(success);
+    };
+
+    image.addEventListener("load", () => finish(true), { once: true });
+    image.addEventListener("error", () => finish(false), { once: true });
+    image.decoding = "async";
+    image.sizes = productSource?.sizes || "100vw";
+    image.srcset = featureSrcset(feature);
+    image.src = `assets/${feature.image}.jpg`;
+    if (image.complete) finish(image.naturalWidth > 0);
+  });
+
+  productFeaturePreloads.set(id, preload);
+  preload.then((success) => {
+    if (!success && productFeaturePreloads.get(id) === preload) {
+      productFeaturePreloads.delete(id);
+    }
+  });
+  return preload;
+}
+
+function setSelectedProductTab(id, moveFocus = false) {
+  const activeTab = featureTabs.find((tab) => tab.dataset.feature === id);
+  featureTabs.forEach((tab) => {
+    const selected = tab === activeTab;
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  });
+  if (activeTab) productShotPanel?.setAttribute("aria-labelledby", activeTab.id);
+  if (moveFocus) activeTab?.focus();
+  return activeTab;
+}
+
+async function selectProductFeature(id, moveFocus = false) {
+  const feature = productFeatures[id];
+  if (!feature || !productSource || !productImage || !productCaption || !productShotPanel) return;
+  if (id === activeProductFeature && !productShotPanel.hasAttribute("aria-busy")) {
+    setSelectedProductTab(id, moveFocus);
+    return;
+  }
+
+  const activeTab = setSelectedProductTab(id, moveFocus);
+
+  const request = ++productFeatureRequest;
+  productShotPanel.classList.add("is-changing");
+  productShotPanel.setAttribute("aria-busy", "true");
+  const loaded = await preloadProductFeature(id);
+  if (request !== productFeatureRequest) return;
+  if (!loaded) {
+    const restoreFocus = moveFocus || document.activeElement === activeTab;
+    setSelectedProductTab(activeProductFeature, restoreFocus);
+    productShotPanel.removeAttribute("aria-busy");
+    productShotPanel.classList.remove("is-changing");
+    return;
+  }
+
+  activeProductFeature = id;
+
+  productSource.srcset = featureSrcset(feature);
+  productImage.src = `assets/${feature.image}.jpg`;
+  productImage.alt = feature.alt;
+  productCaption.textContent = feature.caption;
+  productShotPanel.removeAttribute("aria-busy");
+  productShotPanel.classList.remove("is-changing");
+}
+
+function setupProductShowcase() {
+  featureTabs.forEach((tab, index) => {
+    tab.addEventListener("click", () => selectProductFeature(tab.dataset.feature));
+    tab.addEventListener("keydown", (event) => {
+      let nextIndex;
+      if (event.key === "ArrowRight") nextIndex = (index + 1) % featureTabs.length;
+      if (event.key === "ArrowLeft") nextIndex = (index - 1 + featureTabs.length) % featureTabs.length;
+      if (event.key === "Home") nextIndex = 0;
+      if (event.key === "End") nextIndex = featureTabs.length - 1;
+      if (nextIndex === undefined) return;
+
+      event.preventDefault();
+      selectProductFeature(featureTabs[nextIndex].dataset.feature, true);
+    });
+  });
+}
 
 function savedSiteAppearance() {
   try {
@@ -222,6 +360,9 @@ function selectTheme(id) {
   themePosition.textContent = `${index + 1} / ${themes.length}`;
   themeDetails.textContent = `Colors 1 through 16: ${theme.palette.join(", ")}.`;
   themeAnnouncement.textContent = `${theme.name}, ${activeVariant} theme, ${index + 1} of ${themes.length}.`;
+  previewThemeNames.forEach((element) => {
+    element.textContent = theme.name;
+  });
 
   for (const button of featuredThemes.querySelectorAll("button[data-theme-id]")) {
     button.setAttribute("aria-pressed", String(button.dataset.themeId === theme.id));
@@ -303,3 +444,4 @@ const year = document.querySelector("#current-year");
 if (year) year.textContent = String(new Date().getFullYear());
 
 setupThemeExplorer();
+setupProductShowcase();
