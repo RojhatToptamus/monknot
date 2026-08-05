@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Monknot is a native macOS workspace for Markdown, text and source files, searchable PDFs, and a real terminal."
+    />
+    <meta name="theme-color" content="#12110f" id="site-theme-color" />
+    <script>
+      try {
+        const savedAppearance = localStorage.getItem("Monknot.siteAppearance");
+        if (savedAppearance === "light" || savedAppearance === "dark") {
+          document.documentElement.dataset.siteTheme = savedAppearance;
+        }
+      } catch {}
+    </script>
+    <title>Monknot — Markdown, PDFs, and a terminal</title>
+    <link rel="icon" type="image/png" href="assets/monknot-icon.png" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+
+    <header class="site-header">
+      <div class="site-header__inner site-shell">
+        <a class="brand" href="#product" aria-label="Monknot home">
+          <img src="assets/monknot-icon.png" width="64" height="64" alt="" />
+          <span>Monknot</span>
+        </a>
+
+        <nav class="primary-nav" aria-label="Primary navigation">
+          <a href="#product">Product</a>
+          <a href="#themes">Themes</a>
+        </nav>
+
+        <div class="header-actions">
+          <p class="header-status">No public build yet</p>
+          <fieldset class="site-appearance" hidden>
+            <legend class="visually-hidden">Site appearance</legend>
+            <label>
+              <input type="radio" name="site-appearance" value="system" checked />
+              <span>System</span>
+            </label>
+            <label>
+              <input type="radio" name="site-appearance" value="light" />
+              <span>Light</span>
+            </label>
+            <label>
+              <input type="radio" name="site-appearance" value="dark" />
+              <span>Dark</span>
+            </label>
+          </fieldset>
+        </div>
+      </div>
+    </header>
+
+    <main id="main-content" tabindex="-1">
+      <section class="hero" id="product" aria-labelledby="hero-title">
+        <div class="site-shell hero__copy">
+          <div class="hero-entrance">
+            <p class="eyebrow">Native workspace for macOS</p>
+            <h1 id="hero-title">
+              Markdown, PDFs, and a terminal.
+              <span>One window.</span>
+            </h1>
+          </div>
+
+          <div class="hero__support hero-entrance hero-entrance--delay">
+            <p>
+              Open a folder. Write, search, mark up PDFs, and run shell sessions beside the work.
+            </p>
+            <div class="hero__action-row">
+              <a class="button button--primary" href="#themes">Preview the themes</a>
+              <span>macOS 14+ · Apple silicon and Intel</span>
+            </div>
+          </div>
+        </div>
+
+        <figure class="product-figure site-shell hero-entrance hero-entrance--media">
+          <div class="media-bar" aria-hidden="true">
+            <span>Monknot</span>
+            <span>Split view · Absolutely Dark</span>
+          </div>
+          <div class="product-shot">
+            <picture>
+              <source
+                srcset="
+                  assets/monknot-dark-1200.webp 1200w,
+                  assets/monknot-dark-2400.webp 2400w,
+                  assets/monknot-dark.webp      3600w
+                "
+                sizes="(max-width: 36rem) calc(100vw - 2.5rem), (max-width: 70rem) calc(100vw - 6rem), 64rem"
+                type="image/webp"
+              />
+              <img
+                src="assets/monknot-dark.jpg"
+                width="3600"
+                height="2250"
+                decoding="async"
+                alt="Monknot showing a folder tree, Markdown source and rendered preview side by side, and a terminal in the same window."
+              />
+            </picture>
+          </div>
+          <figcaption>Project Borealis, a local demo workspace.</figcaption>
+        </figure>
+
+        <ul class="feature-proof site-shell" aria-label="Key features">
+          <li>Synced Markdown and HTML split views</li>
+          <li>Search text files and searchable PDFs</li>
+          <li>Scoped Markdown/text replace with batch undo</li>
+          <li>PDF highlights, underlines, and drawing</li>
+          <li>Markdown export to PDF</li>
+          <li>Quick Open, tabs, and outlines</li>
+          <li>Daily notes and wikilinks</li>
+          <li>Multiple terminal sessions</li>
+        </ul>
+      </section>
+
+      <section class="themes-section" id="themes" aria-labelledby="themes-title">
+        <div class="section-intro site-shell reveal">
+          <p class="eyebrow">Appearance</p>
+          <div>
+            <h2 id="themes-title">20 light presets.<br />31 dark.</h2>
+            <p>
+              Choose one preset for each appearance, or let macOS switch between them. Adjust the
+              accent, background, foreground, contrast, and UI and code type sizes.
+            </p>
+          </div>
+        </div>
+
+        <div class="site-shell theme-area reveal">
+          <div class="appearance-proof" id="appearance-proof">
+            <figure>
+              <picture>
+                <source
+                  srcset="
+                    assets/monknot-light-1200.webp 1200w,
+                    assets/monknot-light-2400.webp 2400w,
+                    assets/monknot-light.webp      3600w
+                  "
+                  sizes="(max-width: 46rem) calc(100vw - 2.5rem), (max-width: 70rem) calc((100vw - 7rem) / 2), 31.5rem"
+                  type="image/webp"
+                />
+                <img
+                  src="assets/monknot-light.jpg"
+                  width="3600"
+                  height="2250"
+                  loading="lazy"
+                  decoding="async"
+                  alt="The Monknot workspace in light appearance."
+                />
+              </picture>
+              <figcaption>Absolutely Light</figcaption>
+            </figure>
+            <figure>
+              <picture>
+                <source
+                  srcset="
+                    assets/monknot-dark-1200.webp 1200w,
+                    assets/monknot-dark-2400.webp 2400w,
+                    assets/monknot-dark.webp      3600w
+                  "
+                  sizes="(max-width: 46rem) calc(100vw - 2.5rem), (max-width: 70rem) calc((100vw - 7rem) / 2), 31.5rem"
+                  type="image/webp"
+                />
+                <img
+                  src="assets/monknot-dark.jpg"
+                  width="3600"
+                  height="2250"
+                  loading="lazy"
+                  decoding="async"
+                  alt="The Monknot workspace in dark appearance."
+                />
+              </picture>
+              <figcaption>Absolutely Dark</figcaption>
+            </figure>
+          </div>
+
+          <div class="theme-explorer" id="theme-explorer" hidden>
+            <div class="theme-picker">
+              <p class="control-label">Preview a preset</p>
+
+              <fieldset class="variant-options">
+                <legend class="visually-hidden">Theme appearance</legend>
+                <label>
+                  <input type="radio" name="theme-variant" value="light" />
+                  <span>Light <small>20</small></span>
+                </label>
+                <label>
+                  <input type="radio" name="theme-variant" value="dark" checked />
+                  <span>Dark <small>31</small></span>
+                </label>
+              </fieldset>
+
+              <div class="picker-group">
+                <p class="control-label">Featured</p>
+                <div class="featured-themes" id="featured-themes"></div>
+              </div>
+
+              <label class="select-label" for="theme-select" id="theme-select-label">
+                All dark presets
+              </label>
+              <div class="select-wrap">
+                <select id="theme-select" aria-describedby="theme-caption"></select>
+              </div>
+
+              <div class="theme-stepper">
+                <button type="button" id="previous-theme">Previous</button>
+                <output id="theme-position" aria-label="Theme position">1 / 31</output>
+                <button type="button" id="next-theme">Next</button>
+              </div>
+            </div>
+
+            <div class="theme-output">
+              <div class="theme-output__heading">
+                <div>
+                  <p class="control-label">Palette preview</p>
+                  <h3 id="theme-name">Absolutely</h3>
+                </div>
+                <p id="theme-caption">Absolutely · Dark palette</p>
+              </div>
+
+              <div class="palette-preview" id="palette-preview" aria-hidden="true">
+                <div class="palette-field">
+                  <p class="palette-letters">Aa</p>
+                </div>
+
+                <div class="palette-accent-field">
+                  <i></i>
+                </div>
+
+                <div class="palette-selection-field"></div>
+
+                <div class="palette-semantic-fields">
+                  <span class="palette-added"></span>
+                  <span class="palette-removed"></span>
+                  <span class="palette-skill"></span>
+                </div>
+
+                <div class="terminal-palette-field">
+                  <div class="terminal-palette" id="terminal-palette"></div>
+                </div>
+              </div>
+
+              <dl class="theme-tokens">
+                <div>
+                  <dt><i data-token-swatch="surface"></i>Surface</dt>
+                  <dd data-token-value="surface">#2D2D2B</dd>
+                </div>
+                <div>
+                  <dt><i data-token-swatch="ink"></i>Text</dt>
+                  <dd data-token-value="ink">#F9F9F7</dd>
+                </div>
+                <div>
+                  <dt><i data-token-swatch="accent"></i>Accent</dt>
+                  <dd data-token-value="accent">#CC7D5E</dd>
+                </div>
+                <div>
+                  <dt><i data-token-swatch="selection"></i>Selection</dt>
+                  <dd data-token-value="selection">#59433A</dd>
+                </div>
+                <div>
+                  <dt><i data-token-swatch="added"></i>Added</dt>
+                  <dd data-token-value="added">#00C853</dd>
+                </div>
+                <div>
+                  <dt><i data-token-swatch="removed"></i>Removed</dt>
+                  <dd data-token-value="removed">#FF5F38</dd>
+                </div>
+                <div>
+                  <dt><i data-token-swatch="skill"></i>Skill</dt>
+                  <dd data-token-value="skill">#CC7D5E</dd>
+                </div>
+              </dl>
+
+              <div class="visually-hidden" role="group" aria-labelledby="terminal-palette-label">
+                <h4 id="terminal-palette-label">Terminal palette</h4>
+                <p id="theme-details"></p>
+              </div>
+              <p class="visually-hidden" id="theme-announcement" aria-live="polite" aria-atomic="true"></p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-shell site-footer__inner">
+        <p>© <span id="current-year">2026</span> Monknot</p>
+        <p>0.2.0-alpha.1 · macOS 14+ · MIT licensed</p>
+      </div>
+    </footer>
+
+    <script src="main.js" defer></script>
+  </body>
+</html>

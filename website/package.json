@@ -1,0 +1,11 @@
+{
+  "name": "monknot-product-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build && python3 -m http.server 4174 --directory dist",
+    "check": "node --check main.js && node --check scripts/build.mjs && node --check scripts/theme-catalog.mjs && node scripts/check.mjs",
+    "build": "npm run check && node scripts/build.mjs",
+    "preview": "python3 -m http.server 4174 --directory dist"
+  }
+}

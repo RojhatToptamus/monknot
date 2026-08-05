@@ -65,6 +65,11 @@ let package = Package(
             path: "Sources/MonknotCapture"
         ),
         .executableTarget(
+            name: "MonknotThemeCatalogExport",
+            dependencies: ["MonknotCore"],
+            path: "Sources/MonknotThemeCatalogExport"
+        ),
+        .executableTarget(
             name: "MonknotWorkspaceExport",
             dependencies: ["MonknotCore"],
             path: "Tests/MonknotWorkspaceExport"
