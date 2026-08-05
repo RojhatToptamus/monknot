@@ -69,7 +69,7 @@ struct MonknotKeyboardShortcutsHelpView: View {
                 RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
                     .strokeBorder(theme.borderColor, lineWidth: 1)
             }
-            .shadow(color: .black.opacity(0.18), radius: scaled(18), y: scaled(8))
+            .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
         }
     }
 }

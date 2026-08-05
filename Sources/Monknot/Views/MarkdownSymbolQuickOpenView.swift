@@ -41,8 +41,8 @@ struct MarkdownSymbolQuickOpenView: View {
         let visibleRows = min(max(state.matches.count, 1), 8)
         let resultHeight = state.matches.isEmpty
             ? CGFloat(54)
-            : CGFloat(visibleRows) * 38 + 12
-        return min(scaled(380), scaled(52 + resultHeight))
+            : CGFloat(visibleRows) * 30 + 10
+        return min(scaled(380), scaled(44 + resultHeight))
     }
 
     private var searchField: some View {
@@ -74,7 +74,7 @@ struct MarkdownSymbolQuickOpenView: View {
             )
         }
         .padding(.horizontal, scaled(14))
-        .padding(.vertical, scaled(12))
+        .frame(height: scaled(44))
     }
 
     private var resultBody: some View {
@@ -97,13 +97,13 @@ struct MarkdownSymbolQuickOpenView: View {
                             selectItem(item)
                         } label: {
                             HStack(spacing: scaled(8)) {
-                                Text(String(repeating: "·", count: max(1, item.level - 1)))
-                                    .font(.system(size: scaled(11), weight: .bold, design: .monospaced))
+                                Text("H\(item.level)")
+                                    .font(.system(size: scaled(10), weight: .regular, design: .monospaced))
                                     .foregroundStyle(theme.mutedForegroundColor)
                                     .frame(width: scaled(18), alignment: .leading)
 
                                 Text(item.title)
-                                    .font(.system(size: scaled(13), weight: .medium))
+                                    .font(.system(size: scaled(13), weight: .regular))
                                     .foregroundStyle(theme.foregroundColor)
                                     .lineLimit(1)
 
@@ -113,9 +113,8 @@ struct MarkdownSymbolQuickOpenView: View {
                                     .font(.system(size: scaled(10), weight: .medium, design: .monospaced))
                                     .foregroundStyle(theme.mutedForegroundColor)
                             }
-                            .padding(.horizontal, scaled(12))
-                            .padding(.vertical, scaled(8))
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, scaled(10))
+                            .frame(maxWidth: .infinity, minHeight: scaled(30), maxHeight: scaled(30), alignment: .leading)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)

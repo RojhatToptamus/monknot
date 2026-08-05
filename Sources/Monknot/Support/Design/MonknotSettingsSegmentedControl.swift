@@ -6,9 +6,18 @@ struct MonknotSettingsSegmentedControl: View {
     let options: [MonknotSettingsSegment]
     @Binding var selection: String
     let theme: AppTheme
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+    }
+
+    private var cornerRadius: CGFloat {
+        theme.chromeRadius(theme.settingsControlCornerRadius, zoomScale: settingsZoomScale)
+    }
 
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: scaled(2)) {
             ForEach(options) { option in
                 MonknotSettingsSegmentButton(
                     title: option.title,
@@ -18,13 +27,13 @@ struct MonknotSettingsSegmentedControl: View {
                 )
             }
         }
-        .padding(2)
+        .padding(scaled(2))
         .background(
-            RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius)
+            RoundedRectangle(cornerRadius: cornerRadius)
                 .fill(theme.controlTrackFillColor)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius)
+            RoundedRectangle(cornerRadius: cornerRadius)
                 .strokeBorder(theme.borderColor, lineWidth: 1)
         )
     }
@@ -43,26 +52,28 @@ private struct MonknotSettingsSegmentButton: View {
 
     @State private var isHovered = false
     @FocusState private var isFocused: Bool
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+    }
+
+    private var cornerRadius: CGFloat {
+        theme.chromeRadius(theme.settingsControlCornerRadius, zoomScale: settingsZoomScale)
+    }
 
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(MonknotTypography.settingsButton(theme: theme))
+                .font(MonknotTypography.settingsButton(theme: theme, zoomScale: settingsZoomScale))
                 .foregroundStyle(labelColor)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .frame(minHeight: 28)
-                .background(background, in: RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius - 1))
-                .overlay {
-                    if isFocused {
-                        RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius - 1)
-                            .strokeBorder(theme.accentColor.opacity(0.9), lineWidth: 1.5)
-                            .padding(1)
-                    }
-                }
-                .contentShape(RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius - 1))
+                .padding(.horizontal, scaled(12))
+                .padding(.vertical, scaled(6))
+                .frame(minHeight: scaled(28))
+                .background(background, in: RoundedRectangle(cornerRadius: max(0, cornerRadius - 1)))
+                .contentShape(RoundedRectangle(cornerRadius: max(0, cornerRadius - 1)))
         }
         .buttonStyle(.plain)
         .focusable(true)
@@ -86,7 +97,7 @@ private struct MonknotSettingsSegmentButton: View {
         if isSelected {
             return theme.insetFillColor
         }
-        if isHovered {
+        if isHovered || isFocused {
             return theme.foregroundColor.opacity(theme.isDark ? 0.06 : 0.04)
         }
         return .clear
@@ -99,6 +110,15 @@ struct MonknotSettingsMenuPicker: View {
     @Binding var selection: String
     let options: [(id: String, title: String)]
     let theme: AppTheme
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+    }
+
+    private var cornerRadius: CGFloat {
+        theme.chromeRadius(theme.settingsControlCornerRadius, zoomScale: settingsZoomScale)
+    }
 
     var body: some View {
         Menu {
@@ -108,20 +128,20 @@ struct MonknotSettingsMenuPicker: View {
                 }
             }
         } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: scaled(6)) {
                 Text(selectedTitle)
-                    .font(MonknotTypography.settingsButton(theme: theme))
+                    .font(MonknotTypography.settingsButton(theme: theme, zoomScale: settingsZoomScale))
                     .foregroundStyle(theme.foregroundColor)
                     .lineLimit(1)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.horizontal, scaled(12))
+            .padding(.vertical, scaled(6))
             .background(
-                RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius)
+                RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(theme.insetFillColor)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius)
+                RoundedRectangle(cornerRadius: cornerRadius)
                     .strokeBorder(theme.borderColor, lineWidth: 1)
             )
         }

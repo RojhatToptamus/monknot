@@ -18,31 +18,27 @@ final class AppThemeSurfaceHierarchyTests: XCTestCase {
         XCTAssertEqual(AppTheme.blendHex("not-a-color", toward: "#FFFFFF", amount: 0.5), "not-a-color")
     }
 
-    func testTerminalSharesContentCanvasInBothModes() {
-        // In the two-tier model the terminal is the content canvas, not a
-        // separate surface tier, so its surface is exactly the theme background.
-        XCTAssertEqual(AppTheme.codexDark.terminalSurfaceHex, AppTheme.codexDark.background)
-        XCTAssertEqual(AppTheme.codexLight.terminalSurfaceHex, AppTheme.codexLight.background)
+    func testTerminalMirrorsSidebarSurfaceInBothModes() {
+        XCTAssertEqual(AppTheme.monknotDark.terminalSurfaceHex, AppTheme.monknotDark.sidebarSurfaceHex)
+        XCTAssertEqual(AppTheme.monknotLight.terminalSurfaceHex, AppTheme.monknotLight.sidebarSurfaceHex)
     }
 
-    func testSidebarIsTheOnlyDistinctTier() {
-        // The sidebar is the single tool-panel tier and must differ from the
-        // canvas, while the terminal must match it.
-        for theme in [AppTheme.codexDark, AppTheme.codexLight] {
+    func testDockedToolPanelsShareTheDistinctSidebarTier() {
+        for theme in [AppTheme.monknotDark, AppTheme.monknotLight] {
             XCTAssertNotEqual(theme.sidebarSurfaceHex, theme.background)
-            XCTAssertNotEqual(theme.sidebarSurfaceHex, theme.terminalSurfaceHex)
+            XCTAssertEqual(theme.sidebarSurfaceHex, theme.terminalSurfaceHex)
         }
     }
 
     func testDarkSidebarRaisesSubtlyTowardInk() {
-        let theme = AppTheme.codexDark // background #111111, foreground #fcfcfc
+        let theme = AppTheme.monknotDark // background #111111, foreground #fcfcfc
         // Lighter than the dark canvas, but a subtle offset (not a heavy panel).
         XCTAssertGreaterThan(luminance(theme.sidebarSurfaceHex), luminance(theme.background))
         XCTAssertLessThan(channelDelta(theme.sidebarSurfaceHex, theme.background), 0.16)
     }
 
     func testLightSidebarRecessesSubtlyTowardInk() {
-        let theme = AppTheme.codexLight // background #ffffff, foreground #1a1c1f
+        let theme = AppTheme.monknotLight // background #ffffff, foreground #1a1c1f
         // A hair darker than the white canvas, and very subtle in light themes.
         XCTAssertLessThan(luminance(theme.sidebarSurfaceHex), luminance(theme.background))
         XCTAssertLessThan(channelDelta(theme.sidebarSurfaceHex, theme.background), 0.06)

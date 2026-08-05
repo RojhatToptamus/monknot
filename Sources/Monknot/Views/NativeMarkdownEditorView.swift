@@ -106,11 +106,12 @@ struct MarkdownSourceToolbar: View {
 
             Spacer(minLength: 0)
 
-            Text("\(lineCount) lines · \(wordCount.formatted()) words")
-                .font(.system(size: textScaled(11), weight: .regular, design: .monospaced))
+            Text("\(lineCount)/\(wordCount)")
+                .font(.system(size: textScaled(12), weight: .regular, design: .monospaced))
                 .foregroundStyle(theme.tertiaryForegroundColor)
                 .lineLimit(1)
                 .fixedSize()
+                .accessibilityLabel("\(lineCount) lines, \(wordCount) words")
         }
         .monknotChromeSubrowLayout(theme: theme, zoomScale: zoomScale)
     }
@@ -157,7 +158,7 @@ struct MarkdownSourceToolbar: View {
     }
 
     private var compactHeadingMenu: some View {
-        headingMenu(width: scaled(118))
+        headingMenu(width: scaled(104))
     }
 
     private func headingMenu(width: CGFloat) -> some View {
@@ -180,7 +181,7 @@ struct MarkdownSourceToolbar: View {
             .padding(.horizontal, scaled(10))
             .frame(
                 width: width,
-                height: MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale)
+                height: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)
             )
             .background(shape.fill(theme.controlTrackFillColor))
             .contentShape(shape)
@@ -265,14 +266,11 @@ struct MarkdownSourceToolbar: View {
     }
 
     private func toolbarMenuLabel(systemImage: String) -> some View {
-        let dimension = max(
-            24,
-            MonknotMetrics.interfaceControl(24, theme: theme, zoomScale: zoomScale)
-        )
+        let dimension = MonknotMetrics.interfaceControl(30, theme: theme, zoomScale: zoomScale)
         let shape = RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale))
 
         return Image(systemName: systemImage)
-            .font(.system(size: glyphScaled(12), weight: .medium))
+            .font(.system(size: glyphScaled(18), weight: .regular))
             .foregroundStyle(theme.mutedForegroundColor)
             .frame(width: dimension, height: dimension)
             .contentShape(shape)
@@ -298,7 +296,7 @@ struct MarkdownSourceToolbar: View {
             label: label,
             theme: theme,
             zoomScale: zoomScale,
-            size: .compact,
+            size: .editorToolbar,
             action: { sendCommand(command) }
         )
     }

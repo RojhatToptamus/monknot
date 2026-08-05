@@ -58,6 +58,23 @@ final class PDFZoomStateTests: XCTestCase {
         XCTAssertEqual(after.point.y, before.point.y, accuracy: 0.5)
     }
 
+    func testPresetMenuUsesTheRequestedSixZoomLevels() {
+        XCTAssertEqual(PDFZoomStatus.presetPercentages, [100, 120, 140, 160, 180, 200])
+    }
+
+    func testPresetZoomUsesAnAbsoluteFixedScale() throws {
+        let pdfView = try makePDFView()
+
+        applyPDFZoomCommand(.preset(scaleFactor: 1.4), to: pdfView)
+
+        let status = PDFZoomStatus(pdfView: pdfView)
+        XCTAssertFalse(pdfView.autoScales)
+        XCTAssertEqual(pdfView.scaleFactor, 1.4, accuracy: 0.001)
+        XCTAssertEqual(status.displayLabel, "140%")
+        XCTAssertTrue(status.matchesPreset(140))
+        XCTAssertFalse(status.matchesPreset(120))
+    }
+
     func testFixedPDFZoomDoesNotFollowInterfaceOrViewSizeChanges() throws {
         let pdfView = try makePDFView()
         applyPDFZoomMode(.fixed(scaleFactor: 1.4), to: pdfView)
@@ -74,36 +91,50 @@ final class PDFZoomStateTests: XCTestCase {
         XCTAssertEqual(scaleFactor, 1.4, accuracy: 0.001)
     }
 
-    func testFitToViewRemainsAResponsiveModeInsteadOfAStoredScale() throws {
+    func testLegacyFitToViewModeNormalizesToActualSize() throws {
         let pdfView = try makePDFView()
         applyPDFZoomMode(.fixed(scaleFactor: 1.4), to: pdfView)
 
         applyPDFZoomCommand(.fitToView, to: pdfView)
 
-        XCTAssertTrue(pdfView.autoScales)
-        XCTAssertEqual(PDFZoomStatus(pdfView: pdfView).displayLabel, "Fit")
-        XCTAssertEqual(PDFDocumentViewportState(pdfView: pdfView)?.zoomMode, .fitToView)
+        XCTAssertFalse(pdfView.autoScales)
+        let status = PDFZoomStatus(pdfView: pdfView)
+        XCTAssertEqual(status.displayLabel, "100%")
+        XCTAssertEqual(PDFDocumentViewportState(pdfView: pdfView)?.zoomMode, .fixed(scaleFactor: 1))
     }
 
-    func testFitZoomStatusDoesNotChangeWhenTheResponsiveScaleChanges() throws {
+    func testLegacyFitToViewModeDoesNotRemainResponsive() throws {
         let pdfView = try makePDFView()
         applyPDFZoomMode(.fitToView, to: pdfView)
-        let before = PDFZoomStatus(pdfView: pdfView)
 
         pdfView.frame = CGRect(x: 0, y: 0, width: 420, height: 320)
         pdfView.layoutSubtreeIfNeeded()
         pdfView.layoutDocumentView()
 
-        XCTAssertEqual(PDFZoomStatus(pdfView: pdfView), before)
+        let status = PDFZoomStatus(pdfView: pdfView)
+        XCTAssertEqual(status.mode, .fixed(scaleFactor: 1))
+        XCTAssertEqual(status.scaleFactor, 1, accuracy: 0.001)
+        XCTAssertEqual(status.displayLabel, "100%")
     }
 
-    func testInvalidFixedScaleFallsBackToFitToView() throws {
+    func testPageStatusUsesCompactCurrentAndTotalPageFormat() throws {
+        let pdfView = try makePDFView()
+
+        let status = PDFPageStatus(pdfView: pdfView)
+
+        XCTAssertEqual(status.currentPage, 1)
+        XCTAssertEqual(status.pageCount, 1)
+        XCTAssertEqual(status.displayLabel, "1/1")
+    }
+
+    func testInvalidFixedScaleFallsBackToActualSize() throws {
         let pdfView = try makePDFView()
 
         applyPDFZoomMode(.fixed(scaleFactor: .nan), to: pdfView)
 
-        XCTAssertTrue(pdfView.autoScales)
-        XCTAssertEqual(PDFDocumentViewportState(pdfView: pdfView)?.zoomMode, .fitToView)
+        XCTAssertFalse(pdfView.autoScales)
+        XCTAssertEqual(pdfView.scaleFactor, 1, accuracy: 0.001)
+        XCTAssertEqual(PDFDocumentViewportState(pdfView: pdfView)?.zoomMode, .fixed(scaleFactor: 1))
     }
 
     private func makePDFView() throws -> PDFView {

@@ -11,31 +11,36 @@ struct SettingsRow<Control: View>: View {
     var detail: String? = nil
     var showsDivider: Bool = true
     @ViewBuilder let control: () -> Control
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+    }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: scaled(4)) {
                 Text(title)
-                    .font(MonknotTypography.settingsRowTitle(theme: theme))
+                    .font(MonknotTypography.settingsRowTitle(theme: theme, zoomScale: settingsZoomScale))
                     .foregroundStyle(theme.foregroundColor)
                 if let detail {
                     Text(detail)
-                        .font(MonknotTypography.settingsRowDetail(theme: theme))
+                        .font(MonknotTypography.settingsRowDetail(theme: theme, zoomScale: settingsZoomScale))
                         .foregroundStyle(theme.mutedForegroundColor)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Spacer(minLength: 20)
+            Spacer(minLength: scaled(20))
             control()
         }
-        .padding(.horizontal, MonknotMetrics.Spacing.settingsRowHorizontal)
-        .padding(.vertical, MonknotMetrics.Spacing.settingsRowVertical)
+        .padding(.horizontal, scaled(MonknotMetrics.Spacing.settingsRowHorizontal))
+        .padding(.vertical, scaled(MonknotMetrics.Spacing.settingsRowVertical))
         .overlay(alignment: .bottom) {
             if showsDivider {
                 Rectangle()
                     .fill(theme.borderColor)
                     .frame(height: 1)
-                    .padding(.leading, MonknotMetrics.Spacing.settingsRowHorizontal)
+                    .padding(.leading, scaled(MonknotMetrics.Spacing.settingsRowHorizontal))
             }
         }
     }
@@ -51,24 +56,33 @@ struct SettingsOutlineButton: View {
 
     @State private var isHovered = false
     @FocusState private var isFocused: Bool
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+    }
+
+    private var cornerRadius: CGFloat {
+        theme.chromeRadius(theme.settingsControlCornerRadius, zoomScale: settingsZoomScale)
+    }
 
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(MonknotTypography.settingsButton(theme: theme))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 6)
+                .font(MonknotTypography.settingsButton(theme: theme, zoomScale: settingsZoomScale))
+                .padding(.horizontal, scaled(14))
+                .padding(.vertical, scaled(6))
                 .foregroundStyle(theme.foregroundColor.opacity(isDisabled ? 0.38 : 0.92))
                 .background(
-                    RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius)
+                    RoundedRectangle(cornerRadius: cornerRadius)
                         .fill(theme.insetFillColor)
                         .overlay {
-                            RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius)
+                            RoundedRectangle(cornerRadius: cornerRadius)
                                 .fill(theme.foregroundColor.opacity(isHovered && !isDisabled ? 0.045 : 0))
                         }
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius)
+                    RoundedRectangle(cornerRadius: cornerRadius)
                         .strokeBorder(isFocused ? theme.accentColor.opacity(0.9) : theme.borderColor, lineWidth: isFocused ? 1.5 : 1)
                 )
         }
@@ -113,26 +127,39 @@ struct SettingsStepperRow: View {
     let range: ClosedRange<Double>
     var step = 1.0
     var suffix = "px"
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+    }
+
+    private var cornerRadius: CGFloat {
+        theme.chromeRadius(theme.settingsControlCornerRadius, zoomScale: settingsZoomScale)
+    }
 
     var body: some View {
         SettingsRow(theme: theme, title: title, detail: detail, showsDivider: showsDivider) {
-            HStack(spacing: 8) {
+            HStack(spacing: scaled(8)) {
                 Text(displayValue)
-                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .font(.system(
+                        size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: settingsZoomScale),
+                        weight: .medium,
+                        design: .monospaced
+                    ))
                     .foregroundStyle(theme.foregroundColor)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, scaled(10))
+                    .padding(.vertical, scaled(5))
                     .background(
                         theme.insetFillColor,
-                        in: RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius)
+                        in: RoundedRectangle(cornerRadius: cornerRadius)
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius)
+                        RoundedRectangle(cornerRadius: cornerRadius)
                             .strokeBorder(theme.borderColor, lineWidth: 1)
                     )
                     .accessibilityHidden(true)
                 Text(suffix)
-                    .font(.system(size: 12))
+                    .font(.system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: settingsZoomScale)))
                     .foregroundStyle(theme.mutedForegroundColor)
                     .accessibilityHidden(true)
                 Stepper(title, value: $value, in: range, step: step)
@@ -160,10 +187,15 @@ struct SettingsSliderRow: View {
     @Binding var value: Double
     let range: ClosedRange<Double>
     var suffix = ""
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+    }
 
     var body: some View {
         SettingsRow(theme: theme, title: title, detail: detail, showsDivider: showsDivider) {
-            HStack(spacing: 10) {
+            HStack(spacing: scaled(10)) {
                 MonknotSettingsSlider(
                     title: title,
                     detail: detail,
@@ -172,11 +204,15 @@ struct SettingsSliderRow: View {
                     suffix: suffix,
                     theme: theme
                 )
-                    .frame(width: 100)
+                    .frame(width: scaled(100))
                 Text("\(Int(value.rounded()))\(suffix)")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .font(.system(
+                        size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: settingsZoomScale),
+                        weight: .medium,
+                        design: .monospaced
+                    ))
                     .foregroundStyle(theme.mutedForegroundColor)
-                    .frame(width: suffix.isEmpty ? 30 : 44, alignment: .trailing)
+                    .frame(width: scaled(suffix.isEmpty ? 30 : 44), alignment: .trailing)
                     .accessibilityHidden(true)
             }
         }
@@ -186,6 +222,11 @@ struct SettingsSliderRow: View {
 private struct MonknotSettingsSwitchStyle: ToggleStyle {
     let theme: AppTheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+    }
 
     func makeBody(configuration: Configuration) -> some View {
         Button {
@@ -201,11 +242,11 @@ private struct MonknotSettingsSwitchStyle: ToggleStyle {
 
                 Circle()
                     .fill(Color.white.opacity(configuration.isOn ? 1 : 0.78))
-                    .frame(width: 16, height: 16)
+                    .frame(width: scaled(16), height: scaled(16))
                     .shadow(color: .black.opacity(0.18), radius: 1, y: 0.5)
-                    .offset(x: configuration.isOn ? 7 : -7)
+                    .offset(x: configuration.isOn ? scaled(7) : -scaled(7))
             }
-            .frame(width: 34, height: 20)
+            .frame(width: scaled(34), height: scaled(20))
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -220,21 +261,26 @@ private struct MonknotSettingsSlider: View {
     let range: ClosedRange<Double>
     let suffix: String
     let theme: AppTheme
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+    }
 
     var body: some View {
         GeometryReader { geometry in
             let fraction = normalizedFraction
-            let knobDiameter: CGFloat = 16
+            let knobDiameter = scaled(16)
             let travel = max(0, geometry.size.width - knobDiameter)
 
             ZStack(alignment: .leading) {
                 Capsule()
                     .fill(theme.foregroundColor.opacity(theme.isDark ? 0.15 : 0.12))
-                    .frame(height: 4)
+                    .frame(height: scaled(4))
 
                 Capsule()
                     .fill(theme.accentColor)
-                    .frame(width: knobDiameter / 2 + travel * fraction, height: 4)
+                    .frame(width: knobDiameter / 2 + travel * fraction, height: scaled(4))
 
                 Circle()
                     .fill(theme.isDark ? Color.white : theme.foregroundColor)
@@ -252,7 +298,7 @@ private struct MonknotSettingsSlider: View {
                     }
             )
         }
-        .frame(height: 20)
+        .frame(height: scaled(20))
         .accessibilityRepresentation {
             Slider(value: $value, in: range)
                 .accessibilityLabel(title)
@@ -276,10 +322,19 @@ struct EditableThemeColorRow: View {
     var showsDivider: Bool = true
     @Binding var hex: String
     @FocusState private var isHexFieldFocused: Bool
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+    }
+
+    private var cornerRadius: CGFloat {
+        theme.chromeRadius(theme.settingsControlCornerRadius, zoomScale: settingsZoomScale)
+    }
 
     var body: some View {
         SettingsRow(theme: theme, title: label, showsDivider: showsDivider) {
-            HStack(spacing: 10) {
+            HStack(spacing: scaled(10)) {
                 ColorPicker(
                     label,
                     selection: Binding(
@@ -293,7 +348,7 @@ struct EditableThemeColorRow: View {
                     supportsOpacity: false
                 )
                 .labelsHidden()
-                .frame(width: 28, height: 22)
+                .frame(width: scaled(28), height: scaled(22))
                 .monknotPointerCursor()
 
                 TextField("#000000", text: Binding(
@@ -302,17 +357,21 @@ struct EditableThemeColorRow: View {
                 ))
                 .textFieldStyle(.plain)
                 .focused($isHexFieldFocused)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .font(.system(
+                    size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: settingsZoomScale),
+                    weight: .medium,
+                    design: .monospaced
+                ))
                 .foregroundStyle(isHexValid ? theme.foregroundColor : validationColor)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .frame(width: 112, alignment: .leading)
+                .padding(.horizontal, scaled(10))
+                .padding(.vertical, scaled(6))
+                .frame(width: scaled(112), alignment: .leading)
                 .background(
                     theme.insetFillColor,
-                    in: RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius)
+                    in: RoundedRectangle(cornerRadius: cornerRadius)
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius)
+                    RoundedRectangle(cornerRadius: cornerRadius)
                         .strokeBorder(
                             isHexValid
                                 ? (isHexFieldFocused ? theme.accentColor.opacity(0.9) : theme.borderColor)
@@ -361,38 +420,51 @@ struct ThemeValueRow: View {
     let label: String
     let value: String
     var chipColor: Color? = nil
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+    }
 
     var body: some View {
         HStack {
             Text(label)
-                .font(.system(size: 13))
+                .font(.system(size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: settingsZoomScale)))
                 .foregroundStyle(theme.mutedForegroundColor)
             Spacer()
             if let chipColor {
-                HStack(spacing: 8) {
+                HStack(spacing: scaled(8)) {
                     Circle()
                         .fill(chipColor)
-                        .frame(width: 14, height: 14)
+                        .frame(width: scaled(14), height: scaled(14))
                         .overlay {
                             Circle().stroke(theme.borderColor, lineWidth: 1)
                         }
                     Text(value)
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .font(.system(
+                            size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: settingsZoomScale),
+                            weight: .medium,
+                            design: .monospaced
+                        ))
                         .foregroundStyle(theme.foregroundColor)
                 }
             } else {
                 Text(value)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .font(.system(
+                        size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: settingsZoomScale),
+                        weight: .medium,
+                        design: .monospaced
+                    ))
                     .foregroundStyle(theme.mutedForegroundColor)
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 10)
+        .padding(.horizontal, scaled(18))
+        .padding(.vertical, scaled(10))
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(theme.borderColor)
                 .frame(height: 1)
-                .padding(.leading, MonknotMetrics.Spacing.settingsRowHorizontal)
+                .padding(.leading, scaled(MonknotMetrics.Spacing.settingsRowHorizontal))
         }
     }
 }
@@ -402,15 +474,23 @@ struct ThemeValueRow: View {
 struct SettingsSectionHeader: View {
     let theme: AppTheme
     let title: String
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+    }
 
     var body: some View {
         Text(title)
-            .font(.system(size: 11, weight: .semibold))
-            .tracking(1.1)
+            .font(.system(
+                size: MonknotMetrics.interfaceText(11, theme: theme, zoomScale: settingsZoomScale),
+                weight: .semibold
+            ))
+            .tracking(scaled(1.1))
             .foregroundStyle(theme.mutedForegroundColor)
             .textCase(.uppercase)
-            .padding(.horizontal, 2)
-            .padding(.bottom, 7)
+            .padding(.horizontal, scaled(2))
+            .padding(.bottom, scaled(7))
     }
 }
 

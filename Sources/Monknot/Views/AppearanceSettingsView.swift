@@ -6,10 +6,11 @@ struct AppearanceSettingsView: View {
     let uiTheme: AppTheme
     @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.system.rawValue
     @Environment(\.colorScheme) private var colorScheme
-    @State private var lightDraft = ThemeConfiguration(theme: AppTheme.codexLight)
-    @State private var darkDraft = ThemeConfiguration(theme: AppTheme.codexDark)
-    @State private var lightBaseline = ThemeEditBaseline(themeID: AppTheme.codexLight.id, configuration: ThemeConfiguration(theme: AppTheme.codexLight))
-    @State private var darkBaseline = ThemeEditBaseline(themeID: AppTheme.codexDark.id, configuration: ThemeConfiguration(theme: AppTheme.codexDark))
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+    @State private var lightDraft = ThemeConfiguration(theme: AppTheme.monknotLight)
+    @State private var darkDraft = ThemeConfiguration(theme: AppTheme.monknotDark)
+    @State private var lightBaseline = ThemeEditBaseline(themeID: AppTheme.monknotLight.id, configuration: ThemeConfiguration(theme: AppTheme.monknotLight))
+    @State private var darkBaseline = ThemeEditBaseline(themeID: AppTheme.monknotDark.id, configuration: ThemeConfiguration(theme: AppTheme.monknotDark))
 
     private var themePreference: ThemePreference {
         get { ThemePreference(rawValue: themePreferenceRawValue) ?? .system }
@@ -23,13 +24,16 @@ struct AppearanceSettingsView: View {
         )
     }
 
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: uiTheme, zoomScale: settingsZoomScale)
+    }
+
     var body: some View {
         SettingsPage(theme: uiTheme) {
-            SettingsGroupCard(theme: uiTheme, showsBorder: false) {
+            SettingsGroupCard(theme: uiTheme) {
                 SettingsRow(
                     theme: uiTheme,
                     title: "Appearance",
-                    detail: "Light, dark, or match the system",
                     showsDivider: false
                 ) {
                     MonknotSettingsSegmentedControl(
@@ -42,12 +46,12 @@ struct AppearanceSettingsView: View {
                         ),
                         theme: uiTheme
                     )
-                    .frame(width: 246)
+                    .frame(width: scaled(246))
                 }
             }
 
             themeEditorHeader
-                .padding(.top, 24)
+                .padding(.top, scaled(24))
 
             selectedThemeEditor
 
@@ -55,10 +59,10 @@ struct AppearanceSettingsView: View {
                 theme: draft(for: activeSlot).applied(to: themeStore.presetTheme(for: activeSlot)),
                 chromeTheme: uiTheme
             )
-            .padding(.top, 22)
+            .padding(.top, scaled(22))
 
             SettingsSectionHeader(theme: uiTheme, title: "Typography")
-                .padding(.top, 24)
+                .padding(.top, scaled(24))
             typographyControls
         }
         .onAppear(perform: reloadDraftsAndBaselines)
@@ -71,14 +75,14 @@ struct AppearanceSettingsView: View {
     }
 
     private var themeEditorHeader: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: scaled(10)) {
             SettingsSectionHeader(theme: uiTheme, title: activeSlot.title)
 
             Spacer()
 
             if hasEdits(for: activeSlot) {
                 Text("Edited")
-                    .font(.system(size: 11))
+                    .font(.system(size: MonknotMetrics.interfaceText(11, theme: uiTheme, zoomScale: settingsZoomScale)))
                     .foregroundStyle(uiTheme.mutedForegroundColor)
 
                 SettingsOutlineButton(title: "Revert", theme: uiTheme) {
@@ -168,6 +172,7 @@ private struct ThemeEditorSection: View {
     @ObservedObject var themeStore: ThemeSettingsStore
     @Binding var draft: ThemeConfiguration
     let uiTheme: AppTheme
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
 
     private var selectedThemeID: Binding<String> {
         Binding(
@@ -180,7 +185,7 @@ private struct ThemeEditorSection: View {
     }
 
     var body: some View {
-        SettingsGroupCard(theme: uiTheme, showsBorder: false) {
+        SettingsGroupCard(theme: uiTheme) {
             SettingsRow(theme: uiTheme, title: "Theme preset") {
                 MonknotSettingsMenuPicker(
                     title: "Theme preset",
@@ -188,7 +193,7 @@ private struct ThemeEditorSection: View {
                     options: slot.themes.map { ($0.id, $0.name) },
                     theme: uiTheme
                 )
-                .frame(minWidth: 160)
+                .frame(minWidth: MonknotMetrics.interfaceDensity(160, theme: uiTheme, zoomScale: settingsZoomScale))
             }
 
             EditableThemeColorRow(theme: uiTheme, label: "Accent", hex: $draft.accent)
@@ -211,7 +216,7 @@ private struct ThemeTypographySettings: View {
     let uiTheme: AppTheme
 
     var body: some View {
-        SettingsGroupCard(theme: uiTheme, showsBorder: false) {
+        SettingsGroupCard(theme: uiTheme) {
             SettingsStepperRow(
                 theme: uiTheme,
                 title: "UI font size",
@@ -242,50 +247,61 @@ private struct ThemeTypographySettings: View {
 private struct ThemeLivePreview: View {
     let theme: AppTheme
     let chromeTheme: AppTheme
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: chromeTheme, zoomScale: settingsZoomScale)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("LIVE PREVIEW")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(1.1)
+                .font(.system(
+                    size: MonknotMetrics.interfaceText(10, theme: chromeTheme, zoomScale: settingsZoomScale),
+                    weight: .semibold
+                ))
+                .tracking(scaled(1.1))
                 .foregroundStyle(chromeTheme.mutedForegroundColor)
-                .padding(.horizontal, 14)
-                .frame(height: 28)
+                .padding(.horizontal, scaled(14))
+                .frame(height: scaled(28))
 
             HStack(spacing: 0) {
-                VStack(spacing: 8) {
-                    RoundedRectangle(cornerRadius: 4)
+                VStack(spacing: scaled(8)) {
+                    RoundedRectangle(cornerRadius: scaled(4))
                         .fill(theme.accentColor.opacity(0.34))
-                        .frame(height: 14)
-                    RoundedRectangle(cornerRadius: 4)
+                        .frame(height: scaled(14))
+                    RoundedRectangle(cornerRadius: scaled(4))
                         .fill(theme.mutedForegroundColor.opacity(0.22))
-                        .frame(height: 14)
+                        .frame(height: scaled(14))
                 }
-                .padding(10)
-                .frame(width: 132)
+                .padding(scaled(10))
+                .frame(width: scaled(132))
                 .background(theme.sidebarSurfaceColor)
 
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: scaled(5)) {
                     Text("Aurora Project")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(
+                            size: MonknotMetrics.interfaceText(13, theme: chromeTheme, zoomScale: settingsZoomScale),
+                            weight: .semibold
+                        ))
                         .foregroundStyle(theme.foregroundColor)
                     Text("Calm writing environment.")
-                        .font(.system(size: 11))
+                        .font(.system(size: MonknotMetrics.interfaceText(11, theme: chromeTheme, zoomScale: settingsZoomScale)))
                         .foregroundStyle(theme.mutedForegroundColor)
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, scaled(14))
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                 .background(theme.contentSurfaceColor)
             }
-            .frame(height: 70)
+            .frame(height: scaled(70))
             .overlay(alignment: .top) {
                 Rectangle().fill(chromeTheme.separatorColor).frame(height: 1)
             }
         }
         .background(chromeTheme.elevatedSurfaceColor)
-        .clipShape(RoundedRectangle(cornerRadius: chromeTheme.settingsCardCornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: chromeTheme.chromeRadius(chromeTheme.settingsCardCornerRadius, zoomScale: settingsZoomScale)))
         .overlay {
-            RoundedRectangle(cornerRadius: chromeTheme.settingsCardCornerRadius)
+            RoundedRectangle(cornerRadius: chromeTheme.chromeRadius(chromeTheme.settingsCardCornerRadius, zoomScale: settingsZoomScale))
                 .strokeBorder(chromeTheme.borderColor, lineWidth: 1)
         }
     }

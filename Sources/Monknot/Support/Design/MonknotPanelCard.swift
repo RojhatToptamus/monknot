@@ -8,8 +8,12 @@ struct MonknotPanelCard<Content: View>: View {
     var showsBorder: Bool = true
     @ViewBuilder let content: () -> Content
 
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
     private var cornerRadius: CGFloat {
-        usesSettingsRadii ? theme.settingsCardCornerRadius : theme.chromeRadius(10, zoomScale: 1)
+        usesSettingsRadii
+            ? theme.chromeRadius(theme.settingsCardCornerRadius, zoomScale: settingsZoomScale)
+            : theme.chromeRadius(10, zoomScale: 1)
     }
 
     var body: some View {

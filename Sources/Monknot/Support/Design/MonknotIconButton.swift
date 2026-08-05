@@ -1,6 +1,19 @@
 import MonknotCore
 import SwiftUI
 
+extension View {
+    /// Installs help only when a meaningful inactive-control hint exists.
+    /// Passing `nil` avoids creating an empty tooltip surface.
+    @ViewBuilder
+    func monknotHelp(_ text: String?) -> some View {
+        if let text, !text.isEmpty {
+            help(text)
+        } else {
+            self
+        }
+    }
+}
+
 /// Shared chrome/toolbar icon button used across sidebar, top bar, PDF, and find UI.
 struct MonknotIconButton: View {
     let systemImage: String
@@ -10,75 +23,77 @@ struct MonknotIconButton: View {
     var isActive: Bool = false
     var isDisabled: Bool = false
     var size: IconButtonSize = .chrome
+    var drawsBorder = false
     let action: () -> Void
 
     @State private var isHovered = false
+    @FocusState private var isFocused: Bool
 
     enum IconButtonSize {
         case chrome
         case windowNavigation
         case sidebarHeader
         case compact
+        case editorToolbar
         case findBar
         case segmented
 
         func dimension(theme: AppTheme, zoomScale: Double) -> CGFloat {
             switch self {
-            case .chrome, .windowNavigation:
+            case .chrome:
                 return MonknotMetrics.chromeButtonDimension(theme: theme, zoomScale: zoomScale)
-            case .sidebarHeader:
-                return max(22, MonknotMetrics.interfaceControl(22, theme: theme, zoomScale: zoomScale))
+            case .windowNavigation:
+                return MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)
             case .compact:
-                return max(26, MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale))
+                return MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale)
+            case .editorToolbar:
+                return MonknotMetrics.interfaceControl(30, theme: theme, zoomScale: zoomScale)
+            case .sidebarHeader:
+                return MonknotMetrics.interfaceControl(22, theme: theme, zoomScale: zoomScale)
             case .findBar:
-                return max(24, MonknotMetrics.interfaceControl(24, theme: theme, zoomScale: zoomScale))
+                return MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)
             case .segmented:
-                return max(28, MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale))
+                return MonknotMetrics.interfaceControl(30, theme: theme, zoomScale: zoomScale)
             }
         }
 
         func height(theme: AppTheme, zoomScale: Double) -> CGFloat {
             switch self {
             case .windowNavigation:
-                return max(22, MonknotMetrics.interfaceControl(24, theme: theme, zoomScale: zoomScale))
-            case .chrome, .sidebarHeader, .compact, .findBar, .segmented:
+                return MonknotMetrics.interfaceControl(22, theme: theme, zoomScale: zoomScale)
+            case .chrome, .sidebarHeader, .compact, .editorToolbar, .findBar, .segmented:
                 return dimension(theme: theme, zoomScale: zoomScale)
             }
         }
 
         func iconSize(theme: AppTheme, zoomScale: Double) -> CGFloat {
             switch self {
-            case .chrome, .windowNavigation:
+            case .chrome:
                 return MonknotMetrics.chromeGlyphSize(theme: theme, zoomScale: zoomScale)
+            case .windowNavigation:
+                return MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale)
             case .sidebarHeader:
-                return MonknotMetrics.interfaceGlyph(
-                    MonknotMetrics.sidebarIconPointSizeBase,
-                    theme: theme,
-                    zoomScale: zoomScale
-                )
+                return MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale)
             case .compact, .findBar:
-                return MonknotMetrics.interfaceGlyph(12, theme: theme, zoomScale: zoomScale)
+                return MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale)
+            case .editorToolbar:
+                return MonknotMetrics.interfaceGlyph(18, theme: theme, zoomScale: zoomScale)
             case .segmented:
-                return MonknotMetrics.interfaceGlyph(11, theme: theme, zoomScale: zoomScale)
+                return MonknotMetrics.interfaceGlyph(18, theme: theme, zoomScale: zoomScale)
             }
         }
 
         var iconWeight: Font.Weight {
-            switch self {
-            case .sidebarHeader:
-                return MonknotMetrics.sidebarIconWeight
-            case .findBar:
-                return .semibold
-            case .chrome, .windowNavigation, .compact, .segmented:
-                return .medium
-            }
+            .regular
         }
 
         func cornerRadius(theme: AppTheme, zoomScale: Double) -> CGFloat {
             switch self {
             case .chrome:
                 return theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
-            case .windowNavigation, .sidebarHeader, .compact, .findBar:
+            case .sidebarHeader, .compact, .editorToolbar, .findBar:
+                return theme.chromeRadius(8, zoomScale: zoomScale)
+            case .windowNavigation:
                 return theme.chromeRadius(6, zoomScale: zoomScale)
             case .segmented:
                 return theme.chromeRadius(5, zoomScale: zoomScale)
@@ -89,13 +104,13 @@ struct MonknotIconButton: View {
             switch self {
             case .windowNavigation:
                 return isDark ? 0.06 : 0.055
-            case .chrome, .sidebarHeader, .compact, .findBar, .segmented:
+            case .chrome, .sidebarHeader, .compact, .editorToolbar, .findBar, .segmented:
                 return isDark ? 0.06 : 0.055
             }
         }
 
         func activeBackgroundOpacity(isDark: Bool) -> Double {
-            isDark ? 0.06 : 0.055
+            isDark ? 0.18 : 0.14
         }
 
         func backgroundOpacity(isHovered: Bool, isDisabled: Bool, isDark: Bool) -> Double? {
@@ -107,7 +122,7 @@ struct MonknotIconButton: View {
             switch self {
             case .windowNavigation:
                 return 0.24
-            case .chrome, .sidebarHeader, .compact, .findBar, .segmented:
+            case .chrome, .sidebarHeader, .compact, .editorToolbar, .findBar, .segmented:
                 return 0.24
             }
         }
@@ -132,7 +147,7 @@ struct MonknotIconButton: View {
                         RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
                             .fill(theme.foregroundColor.opacity(size.activeBackgroundOpacity(isDark: theme.isDark)))
                     } else if let opacity = size.backgroundOpacity(
-                        isHovered: isHovered,
+                        isHovered: isHovered || isFocused,
                         isDisabled: isDisabled,
                         isDark: theme.isDark
                     ) {
@@ -142,10 +157,28 @@ struct MonknotIconButton: View {
                 }
                 .contentShape(RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale)))
         }
-        .buttonStyle(MonknotControlPressStyle())
+        .buttonStyle(MonknotIconButtonPressStyle(
+            theme: theme,
+            cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale),
+            isDisabled: isDisabled
+        ))
+        .focusable(!isDisabled)
+        .focused($isFocused)
         .focusEffectDisabled()
         .disabled(isDisabled)
         .opacity(isDisabled ? size.disabledControlOpacity : 1)
+        .overlay {
+            if drawsBorder {
+                RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
+                    .strokeBorder(
+                        isActive
+                            ? theme.accentColor.opacity(theme.isDark ? 0.38 : 0.30)
+                            : theme.borderColor,
+                        lineWidth: 1
+                    )
+                    .allowsHitTesting(false)
+            }
+        }
         .onHover { isHovered = $0 }
         .animation(MonknotMotion.hoverAnimation, value: isHovered)
         .animation(MonknotMotion.hoverAnimation, value: isActive)
@@ -156,10 +189,10 @@ struct MonknotIconButton: View {
 
     private var iconColor: Color {
         if isDisabled {
-            return theme.foregroundColor
+            return theme.disabledForegroundColor
         }
         if isActive {
-            return theme.foregroundColor
+            return theme.accentColor
         }
         if isHovered {
             return theme.foregroundColor.opacity(0.92)
@@ -168,14 +201,29 @@ struct MonknotIconButton: View {
     }
 }
 
-struct MonknotControlPressStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+private struct MonknotIconButtonPressStyle: ButtonStyle {
+    let theme: AppTheme
+    let cornerRadius: CGFloat
+    let isDisabled: Bool
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .opacity(configuration.isPressed ? 0.72 : 1)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(reduceMotion ? nil : MonknotMotion.hoverAnimation, value: configuration.isPressed)
+            .background {
+                if configuration.isPressed, !isDisabled {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(theme.foregroundColor.opacity(theme.isDark ? 0.12 : 0.10))
+                }
+            }
+            .opacity(configuration.isPressed && !isDisabled ? 0.88 : 1)
+            .animation(MonknotMotion.hoverAnimation, value: configuration.isPressed)
+    }
+}
+
+struct MonknotControlPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.78 : 1)
+            .animation(MonknotMotion.hoverAnimation, value: configuration.isPressed)
     }
 }
 
@@ -191,7 +239,7 @@ struct MonknotTabCloseButton: View {
     @State private var isHovered = false
 
     static func dimension(theme: AppTheme, zoomScale: Double) -> CGFloat {
-        max(24, MonknotMetrics.interfaceControl(16, theme: theme, zoomScale: zoomScale))
+        MonknotMetrics.interfaceControl(16, theme: theme, zoomScale: zoomScale)
     }
 
     private var dimension: CGFloat {
@@ -202,8 +250,8 @@ struct MonknotTabCloseButton: View {
         Button(action: action) {
             Image(systemName: "xmark")
                 .font(.system(
-                    size: MonknotMetrics.interfaceGlyph(10.5, theme: theme, zoomScale: zoomScale),
-                    weight: .medium
+                    size: MonknotMetrics.interfaceGlyph(11, theme: theme, zoomScale: zoomScale),
+                    weight: .regular
                 ))
                 .foregroundStyle(
                     isHovered

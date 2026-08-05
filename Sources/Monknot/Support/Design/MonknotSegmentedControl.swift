@@ -12,6 +12,7 @@ struct MonknotSegmentedControl: View {
     @Binding var selection: String
     let theme: AppTheme
     let zoomScale: Double
+    var isDisabled = false
 
     var body: some View {
         HStack(spacing: MonknotMetrics.scale(2, theme: theme, zoomScale: zoomScale)) {
@@ -22,6 +23,7 @@ struct MonknotSegmentedControl: View {
                     isSelected: selection == option.id,
                     theme: theme,
                     zoomScale: zoomScale,
+                    isDisabled: isDisabled,
                     action: { selection = option.id }
                 )
             }
@@ -31,6 +33,7 @@ struct MonknotSegmentedControl: View {
             RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
                 .strokeBorder(theme.borderColor, lineWidth: 1)
         )
+        .opacity(isDisabled ? 0.40 : 1)
     }
 }
 
@@ -40,6 +43,7 @@ struct MonknotSegmentButton: View {
     let isSelected: Bool
     let theme: AppTheme
     let zoomScale: Double
+    var isDisabled = false
     let action: () -> Void
 
     @State private var isHovered = false
@@ -49,13 +53,13 @@ struct MonknotSegmentButton: View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.system(
-                    size: MonknotMetrics.chromeGlyphSize(theme: theme, zoomScale: zoomScale),
-                    weight: .medium
+                    size: MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale),
+                    weight: .regular
                 ))
                 .foregroundStyle(foreground)
                 .frame(
-                    width: MonknotMetrics.chromeButtonDimension(theme: theme, zoomScale: zoomScale),
-                    height: max(22, MonknotMetrics.interfaceControl(24, theme: theme, zoomScale: zoomScale))
+                    width: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale),
+                    height: MonknotMetrics.interfaceControl(22, theme: theme, zoomScale: zoomScale)
                 )
                 .background(
                     background,
@@ -66,18 +70,6 @@ struct MonknotSegmentButton: View {
                         )
                     )
                 )
-                .overlay {
-                    if isFocused {
-                        RoundedRectangle(
-                            cornerRadius: theme.chromeRadius(
-                                6,
-                                zoomScale: zoomScale
-                            )
-                        )
-                        .strokeBorder(theme.accentColor.opacity(0.9), lineWidth: 1.5)
-                        .padding(1)
-                    }
-                }
                 .contentShape(
                     RoundedRectangle(
                         cornerRadius: theme.chromeRadius(
@@ -91,6 +83,7 @@ struct MonknotSegmentButton: View {
         .focusable(true)
         .focused($isFocused)
         .focusEffectDisabled()
+        .disabled(isDisabled)
         .onHover { isHovered = $0 }
         .animation(MonknotMotion.hoverAnimation, value: isHovered)
         .animation(MonknotMotion.hoverAnimation, value: isSelected)
@@ -108,6 +101,9 @@ struct MonknotSegmentButton: View {
     }
 
     private var background: Color {
+        if isSelected {
+            return theme.selectedRowColor
+        }
         if isHovered {
             return theme.foregroundColor.opacity(theme.isDark ? 0.06 : 0.055)
         }

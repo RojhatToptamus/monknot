@@ -25,6 +25,7 @@ struct PreferencesView: View {
     @ObservedObject var themeStore: ThemeSettingsStore
     @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.system.rawValue
     @AppStorage("Monknot.settingsSection") private var selectedSectionRawValue = Section.general.rawValue
+    @AppStorage("Monknot.zoomScale") private var persistedZoomScale = WorkspaceZoomPolicy.defaultValue
     @Environment(\.colorScheme) private var colorScheme
     @State private var hoveredSection: Section?
     @FocusState private var focusedSection: Section?
@@ -45,6 +46,22 @@ struct PreferencesView: View {
         )
     }
 
+    private var settingsZoomScale: Double {
+        WorkspaceZoomPolicy.clamp(persistedZoomScale)
+    }
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: panelTheme, zoomScale: settingsZoomScale)
+    }
+
+    private func textScaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceText(base, theme: panelTheme, zoomScale: settingsZoomScale)
+    }
+
+    private func glyphScaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceGlyph(base, theme: panelTheme, zoomScale: settingsZoomScale)
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             settingsSidebar
@@ -58,10 +75,8 @@ struct PreferencesView: View {
                 .background(panelTheme.contentSurfaceColor)
         }
         .frame(
-            minWidth: 780,
-            idealWidth: 780,
-            minHeight: 720,
-            idealHeight: 720
+            width: scaled(MonknotMetrics.settingsWindowWidth),
+            height: scaled(MonknotMetrics.settingsWindowContentHeight)
         )
         .background(panelTheme.sidebarSurfaceColor.ignoresSafeArea())
         .background(
@@ -73,27 +88,28 @@ struct PreferencesView: View {
                 enablesStandardWindowControls: true
             )
         )
+        .environment(\.monknotSettingsZoomScale, settingsZoomScale)
         .preferredColorScheme(themePreference.preferredColorScheme)
     }
 
     private var settingsSidebar: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: scaled(4)) {
             ForEach(Section.allCases) { section in
                 Button {
                     selectedSection = section
                 } label: {
-                    HStack(spacing: 10) {
+                    HStack(spacing: scaled(8)) {
                         Image(systemName: section.systemImage)
-                            .font(.system(size: 16, weight: .regular))
+                            .font(.system(size: glyphScaled(15), weight: .regular))
                             .foregroundStyle(
                                 selectedSection == section
                                     ? panelTheme.accentColor
                                     : panelTheme.tertiaryForegroundColor
                             )
-                            .frame(width: 18)
+                            .frame(width: glyphScaled(16))
 
                         Text(section.rawValue)
-                            .font(.system(size: 14, weight: selectedSection == section ? .medium : .regular))
+                            .font(.system(size: textScaled(13), weight: .regular))
                             .foregroundStyle(
                                 selectedSection == section
                                     ? panelTheme.foregroundColor
@@ -101,19 +117,12 @@ struct PreferencesView: View {
                             )
                     }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 14)
-                        .frame(height: 36)
+                        .padding(.horizontal, scaled(10))
+                        .frame(height: scaled(28))
                         .background(
                             sidebarRowBackground(for: section),
-                            in: RoundedRectangle(cornerRadius: 7)
+                            in: RoundedRectangle(cornerRadius: scaled(8))
                         )
-                        .overlay {
-                            if focusedSection == section {
-                                RoundedRectangle(cornerRadius: 7)
-                                    .strokeBorder(panelTheme.accentColor.opacity(0.9), lineWidth: 1.5)
-                                    .padding(1)
-                            }
-                        }
                 }
                 .buttonStyle(.plain)
                 .focusable()
@@ -128,9 +137,9 @@ struct PreferencesView: View {
 
             Spacer()
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 18)
-        .frame(width: 240)
+        .padding(.horizontal, scaled(8))
+        .padding(.top, scaled(18))
+        .frame(width: scaled(168))
         .background(panelTheme.sidebarSurfaceColor)
     }
 
@@ -166,21 +175,10 @@ private struct EditorSettingsView: View {
     @AppStorage("Monknot.zoomScale") private var persistedZoomScale = WorkspaceZoomPolicy.defaultValue
     @AppStorage("Monknot.showDocumentOutline") private var showContentMapper = true
 
-    private var documentZoomScale: Binding<Double> {
-        Binding(
-            get: {
-                WorkspaceZoomPolicy.documentScale(persistedZoomScale)
-            },
-            set: { documentScale in
-                persistedZoomScale = WorkspaceZoomPolicy.rawZoom(forDocumentScale: documentScale)
-            }
-        )
-    }
-
     var body: some View {
         SettingsPage(theme: uiTheme) {
             SettingsSectionHeader(theme: uiTheme, title: "Editor")
-            SettingsGroupCard(theme: uiTheme, showsBorder: false) {
+            SettingsGroupCard(theme: uiTheme) {
                 SettingsToggleRow(
                     theme: uiTheme,
                     title: "Content mapper",
@@ -188,15 +186,12 @@ private struct EditorSettingsView: View {
                     isOn: $showContentMapper
                 )
 
-                SettingsStepperRow(
+                SettingsWorkspaceZoomRow(
                     theme: uiTheme,
                     title: "Workspace zoom",
-                    detail: "Scale document content from 75% to 200%; interface spacing follows a restrained curve",
+                    detail: "Scale the complete workspace from 80% to 200% in verified steps",
                     showsDivider: false,
-                    value: documentZoomScale,
-                    range: WorkspaceZoomPolicy.minimumDocumentScale...WorkspaceZoomPolicy.maximumDocumentScale,
-                    step: 0.05,
-                    suffix: "x"
+                    value: $persistedZoomScale
                 )
             }
         }
@@ -206,11 +201,16 @@ private struct EditorSettingsView: View {
 private struct ExportSettingsView: View {
     let uiTheme: AppTheme
     @State private var options = MarkdownPDFExportOptions.loadLastUsed()
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: uiTheme, zoomScale: settingsZoomScale)
+    }
 
     var body: some View {
         SettingsPage(theme: uiTheme) {
             SettingsSectionHeader(theme: uiTheme, title: "PDF defaults")
-            SettingsGroupCard(theme: uiTheme, showsBorder: false) {
+            SettingsGroupCard(theme: uiTheme) {
                 menuRow(
                     title: "Page size",
                     detail: "Paper size for Markdown PDF exports",
@@ -244,8 +244,8 @@ private struct ExportSettingsView: View {
             }
 
             SettingsSectionHeader(theme: uiTheme, title: "Layout")
-                .padding(.top, 6)
-            SettingsGroupCard(theme: uiTheme, showsBorder: false) {
+                .padding(.top, scaled(6))
+            SettingsGroupCard(theme: uiTheme) {
                 SettingsSliderRow(
                     theme: uiTheme,
                     title: "Scale",
@@ -294,18 +294,23 @@ private struct ExportSettingsView: View {
                 options: options,
                 theme: uiTheme
             )
-            .frame(minWidth: 132)
+            .frame(minWidth: scaled(132))
         }
     }
 }
 
 private struct ShortcutSettingsView: View {
     let uiTheme: AppTheme
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: uiTheme, zoomScale: settingsZoomScale)
+    }
 
     var body: some View {
         SettingsPage(theme: uiTheme) {
             SettingsSectionHeader(theme: uiTheme, title: "Keyboard shortcuts")
-            SettingsGroupCard(theme: uiTheme, showsBorder: false) {
+            SettingsGroupCard(theme: uiTheme) {
                 ForEach(Array(MonknotKeyboardShortcutCatalog.entries.enumerated()), id: \.offset) { index, entry in
                     SettingsRow(
                         theme: uiTheme,
@@ -313,11 +318,15 @@ private struct ShortcutSettingsView: View {
                         showsDivider: index < MonknotKeyboardShortcutCatalog.entries.count - 1
                     ) {
                         Text(entry.shortcut)
-                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .font(.system(
+                                size: MonknotMetrics.interfaceText(12, theme: uiTheme, zoomScale: settingsZoomScale),
+                                weight: .medium,
+                                design: .rounded
+                            ))
                             .foregroundStyle(uiTheme.mutedForegroundColor)
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 4)
-                            .background(uiTheme.insetFillColor, in: RoundedRectangle(cornerRadius: 6))
+                            .padding(.horizontal, scaled(9))
+                            .padding(.vertical, scaled(4))
+                            .background(uiTheme.insetFillColor, in: RoundedRectangle(cornerRadius: scaled(6)))
                     }
                 }
             }
@@ -328,19 +337,91 @@ private struct ShortcutSettingsView: View {
 struct SettingsPage<Content: View>: View {
     let theme: AppTheme
     @ViewBuilder let content: () -> Content
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+    }
 
     var body: some View {
         MonknotScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 content()
             }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 28)
-            .padding(.bottom, 10)
-            .frame(maxWidth: 680)
+            .padding(.horizontal, scaled(20))
+            .padding(.vertical, scaled(18))
+            .padding(.bottom, scaled(10))
+            .frame(maxWidth: scaled(680))
             .frame(maxWidth: .infinity)
         }
         .scrollContentBackground(.hidden)
         .background(theme.contentSurfaceColor)
+    }
+}
+
+private struct SettingsWorkspaceZoomRow: View {
+    let theme: AppTheme
+    let title: String
+    let detail: String
+    var showsDivider = true
+    @Binding var value: Double
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+    }
+
+    var body: some View {
+        SettingsRow(
+            theme: theme,
+            title: title,
+            detail: detail,
+            showsDivider: showsDivider
+        ) {
+            HStack(spacing: scaled(8)) {
+                zoomButton(systemImage: "minus", label: "Zoom out") {
+                    value = WorkspaceZoomPolicy.stepped(value, by: -1)
+                }
+
+                Text("\(Int((WorkspaceZoomPolicy.clamp(value) * 100).rounded()))%")
+                    .font(.system(
+                        size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: settingsZoomScale),
+                        weight: .regular,
+                        design: .monospaced
+                    ))
+                    .foregroundStyle(theme.foregroundColor)
+                    .frame(width: scaled(48))
+
+                zoomButton(systemImage: "plus", label: "Zoom in") {
+                    value = WorkspaceZoomPolicy.stepped(value, by: 1)
+                }
+            }
+        }
+    }
+
+    private func zoomButton(
+        systemImage: String,
+        label: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(
+                    size: MonknotMetrics.interfaceGlyph(13, theme: theme, zoomScale: settingsZoomScale),
+                    weight: .regular
+                ))
+                .foregroundStyle(theme.mutedForegroundColor)
+                .frame(width: scaled(26), height: scaled(26))
+                .background(theme.insetFillColor, in: RoundedRectangle(cornerRadius: scaled(8)))
+                .overlay {
+                    RoundedRectangle(cornerRadius: scaled(8))
+                        .strokeBorder(theme.borderColor, lineWidth: 1)
+                }
+        }
+        .buttonStyle(MonknotControlPressStyle())
+        .focusEffectDisabled()
+        .help(label)
+        .accessibilityLabel(label)
+        .monknotPointerCursor()
     }
 }

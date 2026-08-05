@@ -34,9 +34,9 @@ enum ThemeSlot: String, CaseIterable, Identifiable {
     var defaultThemeID: String {
         switch self {
         case .light:
-            return AppTheme.codexLight.id
+            return AppTheme.monknotLight.id
         case .dark:
-            return AppTheme.codexDark.id
+            return AppTheme.monknotDark.id
         }
     }
 
@@ -183,10 +183,27 @@ final class ThemeSettingsStore: ObservableObject {
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
+        let storedLightThemeID = defaults.string(forKey: Keys.lightThemeID)
+        let storedDarkThemeID = defaults.string(forKey: Keys.darkThemeID)
+        let storedCustomizations = Self.loadCustomizations(from: defaults)
+        let migratedLightThemeID = Self.migratedThemeID(storedLightThemeID) ?? AppTheme.monknotLight.id
+        let migratedDarkThemeID = Self.migratedThemeID(storedDarkThemeID) ?? AppTheme.monknotDark.id
+        let migratedCustomizations = Self.migratedCustomizations(storedCustomizations)
+
         self.defaults = defaults
-        self.lightThemeID = defaults.string(forKey: Keys.lightThemeID) ?? AppTheme.codexLight.id
-        self.darkThemeID = defaults.string(forKey: Keys.darkThemeID) ?? AppTheme.codexDark.id
-        self.customizations = Self.loadCustomizations(from: defaults)
+        self.lightThemeID = migratedLightThemeID
+        self.darkThemeID = migratedDarkThemeID
+        self.customizations = migratedCustomizations
+
+        if storedLightThemeID != nil, storedLightThemeID != migratedLightThemeID {
+            defaults.set(migratedLightThemeID, forKey: Keys.lightThemeID)
+        }
+        if storedDarkThemeID != nil, storedDarkThemeID != migratedDarkThemeID {
+            defaults.set(migratedDarkThemeID, forKey: Keys.darkThemeID)
+        }
+        if storedCustomizations != migratedCustomizations {
+            Self.persistCustomizations(migratedCustomizations, to: defaults)
+        }
     }
 
     func selectedThemeID(for slot: ThemeSlot) -> String {
@@ -264,6 +281,13 @@ final class ThemeSettingsStore: ObservableObject {
     }
 
     private func persistCustomizations() {
+        Self.persistCustomizations(customizations, to: defaults)
+    }
+
+    private static func persistCustomizations(
+        _ customizations: [String: ThemeConfiguration],
+        to defaults: UserDefaults
+    ) {
         guard let data = try? JSONEncoder().encode(customizations) else { return }
         defaults.set(data, forKey: Keys.customizations)
     }
@@ -278,6 +302,30 @@ final class ThemeSettingsStore: ObservableObject {
 
         return customizations
     }
+
+    private static func migratedThemeID(_ id: String?) -> String? {
+        guard let id else { return nil }
+        return legacyThemeIDMap[id] ?? id
+    }
+
+    private static func migratedCustomizations(
+        _ customizations: [String: ThemeConfiguration]
+    ) -> [String: ThemeConfiguration] {
+        var migrated = customizations
+        for (legacyID, currentID) in legacyThemeIDMap {
+            guard let configuration = migrated.removeValue(forKey: legacyID) else { continue }
+            if migrated[currentID] == nil {
+                migrated[currentID] = configuration
+            }
+        }
+        return migrated
+    }
+
+    private static let legacyThemeIDMap = [
+        "codex-light": "monknot-light",
+        "codex-blue-light": "monknot-blue-light",
+        "codex-dark": "monknot-dark",
+    ]
 
     private enum Keys {
         static let lightThemeID = "Monknot.lightThemeID"

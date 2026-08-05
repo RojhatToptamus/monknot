@@ -1,19 +1,19 @@
 import Foundation
 
-public enum CodexThemeVariant: String, Codable, Sendable {
+public enum MonknotThemeVariant: String, Codable, Sendable {
     case light
     case dark
 }
 
-public struct CodexThemePreset: Identifiable, Codable, Equatable, Sendable {
-    public static let sourceVersion = "codex-theme-v1"
+public struct MonknotThemePreset: Identifiable, Codable, Equatable, Sendable {
+    public static let sourceVersion = "monknot-theme-v1"
 
     public let id: String
     public let codeThemeID: String
-    public let variant: CodexThemeVariant
+    public let variant: MonknotThemeVariant
     public let theme: AppTheme
 
-    public init(id: String, codeThemeID: String, variant: CodexThemeVariant, theme: AppTheme) {
+    public init(id: String, codeThemeID: String, variant: MonknotThemeVariant, theme: AppTheme) {
         self.id = id
         self.codeThemeID = codeThemeID
         self.variant = variant
@@ -21,13 +21,13 @@ public struct CodexThemePreset: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
-public enum CodexThemeCatalog {
-    public static let sourceVersion = CodexThemePreset.sourceVersion
+public enum MonknotThemeCatalog {
+    public static let sourceVersion = MonknotThemePreset.sourceVersion
 
-    public static let lightPresets: [CodexThemePreset] = [
-        preset(id: "codex-light", name: "Codex", codeThemeID: "codex", variant: .light, accent: "#339cff", contrast: 45, ink: "#1a1c1f", surface: "#ffffff", diffAdded: "#00a240", diffRemoved: "#ba2623", skill: "#924ff7"),
+    public static let lightPresets: [MonknotThemePreset] = [
+        preset(id: "monknot-light", name: "Monknot", codeThemeID: "monknot", variant: .light, accent: "#339cff", contrast: 45, ink: "#1a1c1f", surface: "#ffffff", diffAdded: "#00a240", diffRemoved: "#ba2623", skill: "#924ff7"),
         preset(id: "absolutely-light", name: "Absolutely", codeThemeID: "absolutely", variant: .light, accent: "#cc7d5e", contrast: 45, ink: "#2d2d2b", surface: "#f9f9f7", diffAdded: "#00c853", diffRemoved: "#ff5f38", skill: "#cc7d5e"),
-        preset(id: "codex-blue-light", name: "Codex Blue", codeThemeID: "codex", variant: .light, accent: "#0169cc", contrast: 45, ink: "#0d0d0d", surface: "#ffffff", diffAdded: "#00a240", diffRemoved: "#e02e2a", skill: "#751ed9"),
+        preset(id: "monknot-blue-light", name: "Monknot Blue", codeThemeID: "monknot", variant: .light, accent: "#0169cc", contrast: 45, ink: "#0d0d0d", surface: "#ffffff", diffAdded: "#00a240", diffRemoved: "#e02e2a", skill: "#751ed9"),
         preset(id: "everforest-light", name: "Everforest", codeThemeID: "everforest", variant: .light, accent: "#93b259", contrast: 45, ink: "#5c6a72", surface: "#fdf6e3", diffAdded: "#8da101", diffRemoved: "#f85552", skill: "#df69ba"),
         preset(id: "github-light", name: "GitHub", codeThemeID: "github", variant: .light, accent: "#0969da", contrast: 45, ink: "#1f2328", surface: "#ffffff", diffAdded: "#1a7f37", diffRemoved: "#cf222e", skill: "#8250df"),
         preset(id: "gruvbox-light", name: "Gruvbox", codeThemeID: "gruvbox", variant: .light, accent: "#458588", contrast: 45, ink: "#3c3836", surface: "#fbf1c7", diffAdded: "#3c3836", diffRemoved: "#cc241d", skill: "#b16286"),
@@ -39,8 +39,8 @@ public enum CodexThemeCatalog {
         preset(id: "rose-pine-light", name: "Rose Pine", codeThemeID: "rose-pine", variant: .light, accent: "#d7827e", contrast: 45, ink: "#575279", surface: "#faf4ed", diffAdded: "#56949f", diffRemoved: "#797593", skill: "#907aa9", uiFontName: "Inter", codeFontName: "Jetbrains Mono")
     ]
 
-    public static let darkPresets: [CodexThemePreset] = [
-        preset(id: "codex-dark", name: "Codex", codeThemeID: "codex", variant: .dark, accent: "#0169cc", contrast: 60, ink: "#fcfcfc", surface: "#111111", diffAdded: "#00a240", diffRemoved: "#e02e2a", skill: "#b06dff"),
+    public static let darkPresets: [MonknotThemePreset] = [
+        preset(id: "monknot-dark", name: "Monknot", codeThemeID: "monknot", variant: .dark, accent: "#0169cc", contrast: 60, ink: "#fcfcfc", surface: "#111111", diffAdded: "#00a240", diffRemoved: "#e02e2a", skill: "#b06dff"),
         preset(id: "absolutely-dark", name: "Absolutely", codeThemeID: "absolutely", variant: .dark, accent: "#cc7d5e", contrast: 60, ink: "#f9f9f7", surface: "#2d2d2b", diffAdded: "#00c853", diffRemoved: "#ff5f38", skill: "#cc7d5e"),
         preset(id: "ayu-dark", name: "Ayu", codeThemeID: "ayu", variant: .dark, accent: "#e6b450", contrast: 60, ink: "#bfbdb6", surface: "#0b0e14", diffAdded: "#7fd962", diffRemoved: "#ea6c73", skill: "#cda1fa"),
         preset(id: "catppuccin-dark", name: "Catppuccin", codeThemeID: "catppuccin", variant: .dark, accent: "#cba6f7", contrast: 60, ink: "#cdd6f4", surface: "#1e1e2e", diffAdded: "#a6e3a1", diffRemoved: "#f38ba8", skill: "#cba6f7"),
@@ -59,7 +59,7 @@ public enum CodexThemeCatalog {
         id: String,
         name: String,
         codeThemeID: String,
-        variant: CodexThemeVariant,
+        variant: MonknotThemeVariant,
         accent: String,
         contrast: Double,
         ink: String,
@@ -69,8 +69,8 @@ public enum CodexThemeCatalog {
         skill: String,
         uiFontName: String? = nil,
         codeFontName: String? = nil
-    ) -> CodexThemePreset {
-        CodexThemePreset(
+    ) -> MonknotThemePreset {
+        MonknotThemePreset(
             id: id,
             codeThemeID: codeThemeID,
             variant: variant,
@@ -108,7 +108,7 @@ public enum CodexThemeCatalog {
         ]
     }
 
-    private static func selectionBackground(accent: String, surface: String, variant: CodexThemeVariant) -> String {
+    private static func selectionBackground(accent: String, surface: String, variant: MonknotThemeVariant) -> String {
         mix(hex: accent, with: surface, amount: variant == .dark ? 0.28 : 0.20)
     }
 
@@ -132,27 +132,27 @@ public enum CodexThemeCatalog {
 }
 
 public extension AppTheme {
-    static var codexLight: AppTheme {
-        CodexThemeCatalog.lightPresets.first { $0.id == "codex-light" }!.theme
+    static var monknotLight: AppTheme {
+        MonknotThemeCatalog.lightPresets.first { $0.id == "monknot-light" }!.theme
     }
 
-    static var codexDark: AppTheme {
-        CodexThemeCatalog.darkPresets.first { $0.id == "codex-dark" }!.theme
+    static var monknotDark: AppTheme {
+        MonknotThemeCatalog.darkPresets.first { $0.id == "monknot-dark" }!.theme
     }
 
     static var lightThemes: [AppTheme] {
-        CodexThemeCatalog.lightPresets.map(\.theme)
+        MonknotThemeCatalog.lightPresets.map(\.theme)
     }
 
     static var darkThemes: [AppTheme] {
-        CodexThemeCatalog.darkPresets.map(\.theme)
+        MonknotThemeCatalog.darkPresets.map(\.theme)
     }
 
     static func lightTheme(id: String) -> AppTheme {
-        lightThemes.first { $0.id == id } ?? codexLight
+        lightThemes.first { $0.id == id } ?? monknotLight
     }
 
     static func darkTheme(id: String) -> AppTheme {
-        darkThemes.first { $0.id == id } ?? codexDark
+        darkThemes.first { $0.id == id } ?? monknotDark
     }
 }

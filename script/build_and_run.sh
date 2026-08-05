@@ -140,7 +140,7 @@ build_app_icon() {
 
 CORE_SOURCES=(
   "Sources/MonknotCore/Models/AppTheme.swift"
-  "Sources/MonknotCore/Models/CodexThemeCatalog.swift"
+  "Sources/MonknotCore/Models/MonknotThemeCatalog.swift"
   "Sources/MonknotCore/Models/EditorMode.swift"
   "Sources/MonknotCore/Models/MarkdownOutlineItem.swift"
   "Sources/MonknotCore/Models/MarkdownPDFExportOptions.swift"

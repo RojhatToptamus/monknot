@@ -4,10 +4,10 @@ import XCTest
 @testable import MonknotApp
 
 final class WorkspaceSearchPresentationTests: XCTestCase {
-    func testUtilityPanelCapsOnlySpacingDensity() {
+    func testUtilityPanelUsesTheCompleteWorkspaceZoom() {
         XCTAssertEqual(
             WorkspaceSearchLayoutPolicy.densityZoomScale(WorkspaceZoomPolicy.maximum),
-            WorkspaceSearchLayoutPolicy.maximumUtilityDensityZoomScale
+            WorkspaceZoomPolicy.maximum
         )
         XCTAssertEqual(
             WorkspaceSearchLayoutPolicy.densityZoomScale(WorkspaceZoomPolicy.minimum),
@@ -17,25 +17,20 @@ final class WorkspaceSearchPresentationTests: XCTestCase {
 
     func testSearchFieldFollowsWorkspaceControlZoom() {
         let maximumHeight = WorkspaceSearchLayoutPolicy.fieldHeight(
-            theme: .codexDark,
+            theme: .monknotDark,
             zoomScale: WorkspaceZoomPolicy.maximum
         )
-        let ceilingHeight = WorkspaceSearchLayoutPolicy.fieldHeight(
-            theme: .codexDark,
-            zoomScale: WorkspaceSearchLayoutPolicy.maximumUtilityDensityZoomScale
-        )
         let normalHeight = WorkspaceSearchLayoutPolicy.fieldHeight(
-            theme: .codexDark,
+            theme: .monknotDark,
             zoomScale: 1
         )
 
-        XCTAssertGreaterThan(maximumHeight, ceilingHeight)
         XCTAssertGreaterThan(maximumHeight, normalHeight)
         XCTAssertEqual(
             maximumHeight,
             MonknotMetrics.interfaceControl(
-                34,
-                theme: .codexDark,
+                28,
+                theme: .monknotDark,
                 zoomScale: WorkspaceZoomPolicy.maximum
             ),
             accuracy: 0.001

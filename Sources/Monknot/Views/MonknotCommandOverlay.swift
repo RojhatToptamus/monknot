@@ -26,15 +26,15 @@ struct MonknotCommandOverlay<Content: View>: View {
                         alignment: .top
                     )
                     .background(
-                        RoundedRectangle(cornerRadius: theme.chromeRadius(10, zoomScale: zoomScale))
+                        RoundedRectangle(cornerRadius: theme.chromeRadius(16, zoomScale: zoomScale))
                             .fill(theme.elevatedSurfaceColor)
                             .shadow(
                                 color: .black.opacity(theme.isDark ? 0.44 : 0.12),
-                                radius: scaled(16),
-                                y: scaled(6)
+                                radius: 16,
+                                y: 6
                             )
                     )
-                    .clipShape(RoundedRectangle(cornerRadius: theme.chromeRadius(10, zoomScale: zoomScale)))
+                    .clipShape(RoundedRectangle(cornerRadius: theme.chromeRadius(16, zoomScale: zoomScale)))
                     .padding(.top, scaled(74))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)

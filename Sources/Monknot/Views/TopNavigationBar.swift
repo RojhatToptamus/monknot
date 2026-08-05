@@ -61,9 +61,9 @@ struct TopNavigationBar: View {
     }
 
     var body: some View {
-        HStack(spacing: scaled(MonknotMetrics.Spacing.m)) {
+        HStack(spacing: scaled(MonknotMetrics.Spacing.s)) {
             Color.clear
-                .frame(width: scaled(64))
+                .frame(width: 64)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
 
@@ -80,16 +80,17 @@ struct TopNavigationBar: View {
 
             Rectangle()
                 .fill(theme.separatorColor)
-                .frame(width: 1, height: scaled(20))
+                .frame(width: 1, height: scaled(16))
                 .padding(.horizontal, scaled(2))
 
             tabsOrEmptyTitle
                 .layoutPriority(1)
 
             if isBusy || isDocumentLoading || isSaving {
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(theme.interfaceControlScale(zoomScale: zoomScale))
+                MonknotProgressIndicator(
+                    size: MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale),
+                    theme: theme
+                )
                     .frame(width: scaled(18), height: scaled(18))
                     .accessibilityLabel("Working")
             }
@@ -97,10 +98,12 @@ struct TopNavigationBar: View {
             if documentSearch.isPresented {
                 documentSearchBar
             } else {
-                if showsMarkdownViewControls {
-                    viewModeControl
-                        .disabled(isDocumentLoading)
-                }
+                viewModeControl
+
+                Rectangle()
+                    .fill(theme.separatorColor)
+                    .frame(width: 1, height: scaled(16))
+                    .padding(.horizontal, scaled(4))
 
                 drawerToggleButton
             }
@@ -121,7 +124,7 @@ struct TopNavigationBar: View {
             label: isSidebarVisible ? "Hide Sidebar" : "Show Sidebar",
             theme: theme,
             zoomScale: zoomScale,
-            isActive: isSidebarVisible,
+            drawsBorder: true,
             action: toggleSidebar
         )
         .accessibilityValue(isSidebarVisible ? "Open" : "Closed")
@@ -134,6 +137,7 @@ struct TopNavigationBar: View {
             theme: theme,
             zoomScale: zoomScale,
             isActive: isTerminalPresented,
+            drawsBorder: true,
             action: toggleTerminal
         )
         .accessibilityValue(isTerminalPresented ? "Open" : "Closed")
@@ -158,10 +162,12 @@ struct TopNavigationBar: View {
                 }
             ),
             theme: theme,
-            zoomScale: zoomScale
+            zoomScale: zoomScale,
+            isDisabled: !showsMarkdownViewControls || isDocumentLoading
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("View mode")
+        .accessibilityValue(showsMarkdownViewControls ? editorMode.rawValue : "Unavailable")
     }
 
     @ViewBuilder

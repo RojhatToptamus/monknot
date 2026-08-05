@@ -96,7 +96,7 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(source.contains("addUserScript(Coordinator.previewBehaviorScript)"))
     }
 
-    func testCodexRunActionUsesManualBuildScript() throws {
+    func testRunActionUsesManualBuildScript() throws {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
         let environment = try String(
             contentsOf: root.appendingPathComponent(".codex/environments/environment.toml"),

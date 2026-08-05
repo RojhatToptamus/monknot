@@ -7,11 +7,16 @@ struct GeneralSettingsView: View {
     @AppStorage("Monknot.reopenLastWorkspace") private var reopenLastWorkspace = true
     @AppStorage("Monknot.fontSmoothing") private var fontSmoothing = true
     @AppStorage("Monknot.previewWidthPercent") private var previewWidthPercent = 88.0
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: uiTheme, zoomScale: settingsZoomScale)
+    }
 
     var body: some View {
         SettingsPage(theme: uiTheme) {
             SettingsSectionHeader(theme: uiTheme, title: "Behavior")
-            SettingsGroupCard(theme: uiTheme, showsBorder: false) {
+            SettingsGroupCard(theme: uiTheme) {
                 SettingsToggleRow(
                     theme: uiTheme,
                     title: "Pointer cursor on controls",
@@ -35,8 +40,8 @@ struct GeneralSettingsView: View {
             }
 
             SettingsSectionHeader(theme: uiTheme, title: "Reading")
-                .padding(.top, 22)
-            SettingsGroupCard(theme: uiTheme, showsBorder: false) {
+                .padding(.top, scaled(22))
+            SettingsGroupCard(theme: uiTheme) {
                 SettingsSliderRow(
                     theme: uiTheme,
                     title: "Preview width",
@@ -51,23 +56,26 @@ struct GeneralSettingsView: View {
                     title: "Terminal working directory",
                     showsDivider: false
                 ) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: scaled(8)) {
                         Text("Workspace root")
-                            .font(.system(size: 12))
+                            .font(.system(size: MonknotMetrics.interfaceText(12, theme: uiTheme, zoomScale: settingsZoomScale)))
                             .foregroundStyle(uiTheme.foregroundColor)
 
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(
+                                size: MonknotMetrics.interfaceGlyph(9, theme: uiTheme, zoomScale: settingsZoomScale),
+                                weight: .semibold
+                            ))
                             .foregroundStyle(uiTheme.tertiaryForegroundColor)
                     }
-                    .padding(.horizontal, 9)
-                    .frame(height: 24)
+                    .padding(.horizontal, scaled(9))
+                    .frame(height: scaled(24))
                     .background(
                         uiTheme.insetFillColor,
-                        in: RoundedRectangle(cornerRadius: uiTheme.settingsControlCornerRadius)
+                        in: RoundedRectangle(cornerRadius: uiTheme.chromeRadius(uiTheme.settingsControlCornerRadius, zoomScale: settingsZoomScale))
                     )
                     .overlay {
-                        RoundedRectangle(cornerRadius: uiTheme.settingsControlCornerRadius)
+                        RoundedRectangle(cornerRadius: uiTheme.chromeRadius(uiTheme.settingsControlCornerRadius, zoomScale: settingsZoomScale))
                             .strokeBorder(uiTheme.borderColor, lineWidth: 1)
                     }
                     .accessibilityElement(children: .combine)

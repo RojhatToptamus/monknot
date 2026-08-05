@@ -29,6 +29,10 @@ struct WorkspaceQuickOpenView: View {
                     .overlay(theme.separatorColor)
 
                 resultBody
+
+                if !state.matches.isEmpty {
+                    resultFooter
+                }
             }
         }
         .onAppear { focusSearchField() }
@@ -39,8 +43,9 @@ struct WorkspaceQuickOpenView: View {
 
     private var panelHeight: CGFloat {
         let visibleRows = min(max(state.matches.count, 1), 8)
-        let resultHeight = state.matches.isEmpty ? CGFloat(78) : CGFloat(visibleRows) * 48 + 12
-        return scaled(52 + resultHeight)
+        let resultHeight = state.matches.isEmpty ? CGFloat(72) : CGFloat(visibleRows) * 34 + 12
+        let footerHeight = state.matches.isEmpty ? CGFloat(0) : CGFloat(28)
+        return scaled(44 + resultHeight + footerHeight)
     }
 
     private var searchField: some View {
@@ -72,7 +77,7 @@ struct WorkspaceQuickOpenView: View {
             )
         }
         .padding(.horizontal, scaled(14))
-        .padding(.vertical, scaled(12))
+        .frame(height: scaled(44))
     }
 
     private var resultBody: some View {
@@ -99,23 +104,22 @@ struct WorkspaceQuickOpenView: View {
                                     .font(.system(size: scaled(14), weight: .regular))
                                     .foregroundStyle(theme.mutedForegroundColor)
 
-                                VStack(alignment: .leading, spacing: scaled(2)) {
+                                VStack(alignment: .leading, spacing: scaled(1)) {
                                     Text(document.displayName)
-                                        .font(.system(size: scaled(13), weight: .medium))
+                                        .font(.system(size: scaled(13), weight: .regular))
                                         .foregroundStyle(theme.foregroundColor)
                                         .lineLimit(1)
 
                                     Text(document.relativePath)
-                                        .font(.system(size: scaled(11)))
-                                        .foregroundStyle(theme.mutedForegroundColor)
+                                        .font(.system(size: scaled(10.5)))
+                                        .foregroundStyle(theme.tertiaryForegroundColor)
                                         .lineLimit(1)
                                 }
 
                                 Spacer(minLength: 0)
                             }
                             .padding(.horizontal, scaled(12))
-                            .padding(.vertical, scaled(8))
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(maxWidth: .infinity, minHeight: scaled(34), maxHeight: scaled(34), alignment: .leading)
                             .background(
                                 RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
                                     .fill(index == 0 ? theme.selectedRowColor : .clear)
@@ -130,6 +134,23 @@ struct WorkspaceQuickOpenView: View {
             }
         }
         .scrollContentBackground(.hidden)
+    }
+
+    private var resultFooter: some View {
+        HStack(spacing: scaled(14)) {
+            Text("↑↓ navigate")
+            Text("↩ open")
+            Spacer(minLength: 0)
+            Text("\(state.matches.count) of \(documents.count) files")
+        }
+        .font(.system(size: scaled(10.5), weight: .regular))
+        .foregroundStyle(theme.tertiaryForegroundColor)
+        .padding(.horizontal, scaled(14))
+        .frame(height: scaled(28))
+        .background(theme.contentSurfaceColor)
+        .overlay(alignment: .top) {
+            Rectangle().fill(theme.separatorColor).frame(height: 1)
+        }
     }
 
     private func focusSearchField() {

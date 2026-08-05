@@ -37,7 +37,11 @@ struct MonknotApp: App {
             PreferencesView(themeStore: themeStore)
         }
         .windowStyle(.titleBar)
-        .windowResizability(.contentMinSize)
+        .defaultSize(
+            width: MonknotMetrics.settingsWindowWidth,
+            height: MonknotMetrics.settingsWindowContentHeight
+        )
+        .windowResizability(.contentSize)
     }
 }
 

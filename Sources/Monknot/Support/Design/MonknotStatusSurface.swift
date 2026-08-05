@@ -1,6 +1,30 @@
 import MonknotCore
 import SwiftUI
 
+struct MonknotProgressIndicator: View {
+    let size: CGFloat
+    let theme: AppTheme
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { context in
+            let turns = context.date.timeIntervalSinceReferenceDate
+                .truncatingRemainder(dividingBy: 0.9) / 0.9
+
+            Circle()
+                .trim(from: 0.08, to: 0.78)
+                .stroke(
+                    theme.mutedForegroundColor,
+                    style: StrokeStyle(lineWidth: 1.5, lineCap: .round)
+                )
+                .rotationEffect(.degrees(reduceMotion ? 0 : turns * 360))
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
 /// Shared quiet state for empty and unavailable workspace surfaces.
 /// Actions are supplied by the owning feature so this view does not duplicate
 /// product behavior or state.
@@ -10,6 +34,7 @@ struct MonknotEmptyState<Actions: View>: View {
     let detail: String?
     let theme: AppTheme
     let zoomScale: Double
+    var iconSize: CGFloat = 28
     @ViewBuilder let actions: () -> Actions
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -19,9 +44,9 @@ struct MonknotEmptyState<Actions: View>: View {
     var body: some View {
         VStack(spacing: scaled(14)) {
             Image(systemName: systemImage)
-                .font(.system(size: scaled(28), weight: .regular))
+                .font(.system(size: scaled(iconSize), weight: .regular))
                 .symbolRenderingMode(.monochrome)
-                .foregroundStyle(theme.mutedForegroundColor)
+                .foregroundStyle(theme.disabledForegroundColor)
                 .accessibilityHidden(true)
 
             VStack(spacing: scaled(5)) {

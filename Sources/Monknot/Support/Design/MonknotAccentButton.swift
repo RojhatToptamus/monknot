@@ -12,6 +12,7 @@ extension AppTheme {
 
 enum MonknotActionRole {
     case primary
+    case destructive
     case secondary
     case quiet
 }
@@ -39,7 +40,7 @@ struct MonknotActionButton: View {
     }
 
     private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale))
+        RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
     }
 
     var body: some View {
@@ -57,10 +58,13 @@ struct MonknotActionButton: View {
                 Text(title)
                     .lineLimit(1)
             }
-            .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale).weight(.medium))
+            .font(.system(
+                size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale),
+                weight: .regular
+            ))
             .foregroundStyle(foregroundColor)
-            .padding(.horizontal, max(10, scaled(MonknotMetrics.Spacing.l)))
-            .frame(minHeight: max(28, MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)))
+            .padding(.horizontal, scaled(MonknotMetrics.Spacing.l))
+            .frame(height: MonknotMetrics.interfaceControl(30, theme: theme, zoomScale: zoomScale))
             .overlay {
                 shape.strokeBorder(borderColor, lineWidth: borderWidth)
             }
@@ -98,7 +102,7 @@ struct MonknotActionButton: View {
         }
 
         switch role {
-        case .primary:
+        case .primary, .destructive:
             return theme.onAccentForegroundColor
         case .secondary:
             return theme.foregroundColor.opacity(0.88)
@@ -123,7 +127,7 @@ struct MonknotActionButton: View {
 
     private var focusColor: Color {
         switch role {
-        case .primary:
+        case .primary, .destructive:
             return theme.onAccentForegroundColor.opacity(0.92)
         case .secondary, .quiet:
             return theme.accentColor.opacity(0.92)
@@ -137,15 +141,13 @@ private struct MonknotActionButtonStyle: ButtonStyle {
     let shape: RoundedRectangle
     let isHovered: Bool
     let isDisabled: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .background {
                 shape.fill(backgroundColor(isPressed: configuration.isPressed))
             }
-            .scaleEffect(configuration.isPressed && !isDisabled && !reduceMotion ? 0.985 : 1)
-            .animation(reduceMotion ? nil : MonknotMotion.hoverAnimation, value: configuration.isPressed)
+            .opacity(configuration.isPressed && !isDisabled ? 0.88 : 1)
+            .animation(MonknotMotion.hoverAnimation, value: configuration.isPressed)
     }
 
     private func backgroundColor(isPressed: Bool) -> Color {
@@ -165,6 +167,8 @@ private struct MonknotActionButtonStyle: ButtonStyle {
         switch role {
         case .primary:
             return theme.accentColor.opacity(interactionStrength)
+        case .destructive:
+            return Color(hex: theme.semanticColors.diffRemoved).opacity(interactionStrength)
         case .secondary:
             if isPressed {
                 return theme.foregroundColor.opacity(theme.isDark ? 0.11 : 0.08)

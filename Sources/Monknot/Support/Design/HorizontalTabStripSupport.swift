@@ -74,6 +74,7 @@ struct HorizontalTabEdgeShadows: View {
     let showsTrailing: Bool
     let theme: AppTheme
     let zoomScale: Double
+    var surface: Color? = nil
 
     var body: some View {
         HStack(spacing: 0) {
@@ -92,22 +93,23 @@ struct HorizontalTabEdgeShadows: View {
     }
 
     private func edgeShadow(isLeading: Bool) -> some View {
-        LinearGradient(
+        let fill = surface ?? theme.contentSurfaceColor
+        return LinearGradient(
             stops: isLeading
                 ? [
-                    .init(color: theme.contentSurfaceColor, location: 0),
-                    .init(color: theme.contentSurfaceColor.opacity(0.92), location: 0.38),
-                    .init(color: theme.contentSurfaceColor.opacity(0), location: 1)
+                    .init(color: fill, location: 0),
+                    .init(color: fill.opacity(0.92), location: 0.38),
+                    .init(color: fill.opacity(0), location: 1)
                 ]
                 : [
-                    .init(color: theme.contentSurfaceColor.opacity(0), location: 0),
-                    .init(color: theme.contentSurfaceColor.opacity(0.92), location: 0.62),
-                    .init(color: theme.contentSurfaceColor, location: 1)
+                    .init(color: fill.opacity(0), location: 0),
+                    .init(color: fill.opacity(0.92), location: 0.62),
+                    .init(color: fill, location: 1)
                 ],
             startPoint: .leading,
             endPoint: .trailing
         )
-        .frame(width: MonknotMetrics.interfaceDensity(28, theme: theme, zoomScale: zoomScale))
+        .frame(width: MonknotMetrics.interfaceDensity(24, theme: theme, zoomScale: zoomScale))
     }
 }
 

@@ -208,7 +208,7 @@ struct SidebarView: View {
                                     )
                                 }
                             }
-                            .padding(.horizontal, scaled(5))
+                            .padding(.horizontal, scaled(8))
                             .padding(.vertical, scaled(6))
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -855,7 +855,7 @@ private struct SidebarNodeRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .sidebarHoverRow(theme: theme, isSelected: false, cornerRadius: theme.chromeRadius(9, zoomScale: zoomScale))
+        .sidebarHoverRow(theme: theme, isSelected: false, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
         .background {
             if tracksMoveFrame {
                 SidebarNodeFrameReader(id: node.id)
@@ -884,7 +884,7 @@ private struct SidebarNodeRow: View {
         return "\(node.name), folder"
     }
 
-    /// File row — larger text, generous padding, Codex-style selection highlight.
+    /// File row — larger text, generous padding, Monknot-style selection highlight.
     private var fileRow: some View {
         Button {
             if let document = node.document {
@@ -932,7 +932,7 @@ private struct SidebarNodeRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .sidebarHoverRow(theme: theme, isSelected: isSelected, cornerRadius: theme.chromeRadius(9, zoomScale: zoomScale))
+        .sidebarHoverRow(theme: theme, isSelected: isSelected, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
         .background {
             if tracksMoveFrame {
                 SidebarNodeFrameReader(id: node.id)
@@ -940,7 +940,7 @@ private struct SidebarNodeRow: View {
         }
         .opacity(isMoveSource ? 0.45 : 1)
         .simultaneousGesture(sidebarMoveGesture)
-        .help(node.relativePath.isEmpty ? node.name : node.relativePath)
+        .monknotHelp(isSelected ? nil : (node.relativePath.isEmpty ? node.name : node.relativePath))
         .accessibilityLabel(fileAccessibilityLabel)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .contextMenu {
@@ -1264,9 +1264,7 @@ private struct SaveStateIndicator: View {
                     .fill(theme.accentColor)
                     .frame(width: max(5, size * 0.48), height: max(5, size * 0.48))
             case .saving:
-                ProgressView()
-                    .controlSize(.mini)
-                    .scaleEffect(max(0.65, theme.layoutScale(zoomScale: zoomScale) * 0.78))
+                MonknotProgressIndicator(size: size * 0.82, theme: theme)
             case .failed:
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: max(9, size * 0.82), weight: .semibold))
@@ -1441,8 +1439,8 @@ private struct SidebarRecentDocumentsSection: View {
                         .foregroundStyle(theme.tertiaryForegroundColor)
                 }
                 .foregroundStyle(theme.sidebarMutedColor(prominence: 0.82))
-                .padding(.horizontal, scaled(5))
-                .padding(.vertical, scaled(8))
+                .padding(.horizontal, scaled(10))
+                .frame(height: scaled(30))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
@@ -1451,8 +1449,7 @@ private struct SidebarRecentDocumentsSection: View {
                 isSelected: false,
                 cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
             ))
-            .padding(.horizontal, scaled(5))
-            .padding(.vertical, scaled(4))
+            .padding(.horizontal, scaled(8))
             .help(isExpanded ? "Hide recent documents" : "Show recent documents")
             .accessibilityLabel("Recent documents")
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")

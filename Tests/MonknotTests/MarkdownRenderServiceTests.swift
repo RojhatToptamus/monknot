@@ -3,19 +3,19 @@ import Foundation
 import XCTest
 
 final class MarkdownRenderServiceTests: XCTestCase {
-    func testCodexThemeCatalogKeepsVersionedDefaultTokens() {
-        XCTAssertEqual(CodexThemeCatalog.sourceVersion, "codex-theme-v1")
-        XCTAssertEqual(AppTheme.codexLight.codeThemeID, "codex")
-        XCTAssertEqual(AppTheme.codexLight.accent, "#339cff")
-        XCTAssertEqual(AppTheme.codexLight.background, "#ffffff")
-        XCTAssertEqual(AppTheme.codexLight.foreground, "#1a1c1f")
-        XCTAssertEqual(AppTheme.codexLight.contrast, 45)
+    func testMonknotThemeCatalogKeepsVersionedDefaultTokens() {
+        XCTAssertEqual(MonknotThemeCatalog.sourceVersion, "monknot-theme-v1")
+        XCTAssertEqual(AppTheme.monknotLight.codeThemeID, "monknot")
+        XCTAssertEqual(AppTheme.monknotLight.accent, "#339cff")
+        XCTAssertEqual(AppTheme.monknotLight.background, "#ffffff")
+        XCTAssertEqual(AppTheme.monknotLight.foreground, "#1a1c1f")
+        XCTAssertEqual(AppTheme.monknotLight.contrast, 45)
 
-        XCTAssertEqual(AppTheme.codexDark.codeThemeID, "codex")
-        XCTAssertEqual(AppTheme.codexDark.accent, "#0169cc")
-        XCTAssertEqual(AppTheme.codexDark.background, "#111111")
-        XCTAssertEqual(AppTheme.codexDark.foreground, "#fcfcfc")
-        XCTAssertEqual(AppTheme.codexDark.contrast, 60)
+        XCTAssertEqual(AppTheme.monknotDark.codeThemeID, "monknot")
+        XCTAssertEqual(AppTheme.monknotDark.accent, "#0169cc")
+        XCTAssertEqual(AppTheme.monknotDark.background, "#111111")
+        XCTAssertEqual(AppTheme.monknotDark.foreground, "#fcfcfc")
+        XCTAssertEqual(AppTheme.monknotDark.contrast, 60)
 
         XCTAssertTrue(AppTheme.lightThemes.contains { $0.id == "rose-pine-light" })
         XCTAssertTrue(AppTheme.darkThemes.contains { $0.id == "night-owl-dark" })
@@ -98,7 +98,7 @@ final class MarkdownRenderServiceTests: XCTestCase {
 
     func testHTMLDocumentUsesThemeCodeFontSizeAndContrast() throws {
         let service = MarkdownRenderService(stylesheet: "", rendererJavaScript: "")
-        let theme = AppTheme.codexDark.replacing(codeFontSize: 20, contrast: 75)
+        let theme = AppTheme.monknotDark.replacing(codeFontSize: 20, contrast: 75)
 
         let html = try service.htmlDocument(
             markdown: "# Title",
@@ -118,13 +118,13 @@ final class MarkdownRenderServiceTests: XCTestCase {
         let service = MarkdownRenderService(stylesheet: "", rendererJavaScript: "")
 
         let compactValues = Dictionary(uniqueKeysWithValues: service.themeVariableValues(
-            for: .codexDark,
+            for: .monknotDark,
             zoomScale: 0.7,
             baseFontSize: 16,
             previewWidthPercent: 88
         ))
         let enlargedValues = Dictionary(uniqueKeysWithValues: service.themeVariableValues(
-            for: .codexDark,
+            for: .monknotDark,
             zoomScale: 8,
             baseFontSize: 16,
             previewWidthPercent: 88
@@ -137,9 +137,9 @@ final class MarkdownRenderServiceTests: XCTestCase {
     func testBundledStylesheetPreservesThemeColorsForPDFExport() throws {
         let html = try MarkdownRenderService().htmlDocument(
             markdown: "# Export",
-            appTheme: AppTheme.codexDark,
+            appTheme: AppTheme.monknotDark,
             zoomScale: 1,
-            baseFontSize: AppTheme.codexDark.codeFontSize,
+            baseFontSize: AppTheme.monknotDark.codeFontSize,
             previewWidthPercent: 82,
             usePointerCursors: false,
             fontSmoothing: true,
@@ -158,9 +158,9 @@ final class MarkdownRenderServiceTests: XCTestCase {
     func testPreviewWidthUsesTheAvailablePaneInsteadOfALegacyPixelCap() throws {
         let html = try MarkdownRenderService().htmlDocument(
             markdown: "# Full width",
-            appTheme: .codexLight,
+            appTheme: .monknotLight,
             zoomScale: 1,
-            baseFontSize: AppTheme.codexLight.codeFontSize,
+            baseFontSize: AppTheme.monknotLight.codeFontSize,
             previewWidthPercent: 100,
             baseURL: nil
         )

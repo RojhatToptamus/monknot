@@ -188,7 +188,7 @@ expect(html.contains("window.ready = true"), "render shell should embed local re
 
 let preferenceHTML = try renderService.htmlDocument(
     markdown: "# Preferences",
-    appTheme: AppTheme.codexDark,
+    appTheme: AppTheme.monknotDark,
     zoomScale: 1,
     baseFontSize: 16,
     previewWidthPercent: 88,

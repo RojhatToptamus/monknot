@@ -2,23 +2,17 @@ import MonknotCore
 import AppKit
 import SwiftUI
 
-/// Workspace search is a narrow utility surface. Only its spacing density is
-/// capped; text, glyphs, and controls follow the workspace accessibility scale.
+/// Workspace search uses the same zoom factor as the rest of the workspace.
 enum WorkspaceSearchLayoutPolicy {
-    static let maximumUtilityDensityZoomScale = 1.6
-
     static func densityZoomScale(_ zoomScale: Double) -> Double {
-        min(maximumUtilityDensityZoomScale, WorkspaceZoomPolicy.clamp(zoomScale))
+        WorkspaceZoomPolicy.clamp(zoomScale)
     }
 
     static func fieldHeight(theme: AppTheme, zoomScale: Double) -> CGFloat {
-        max(
-            34,
-            MonknotMetrics.interfaceControl(
-                34,
-                theme: theme,
-                zoomScale: zoomScale
-            )
+        MonknotMetrics.interfaceControl(
+            28,
+            theme: theme,
+            zoomScale: zoomScale
         )
     }
 }
@@ -223,7 +217,7 @@ struct WorkspaceSearchView: View {
             MonknotActionButton(
                 title: "Replace",
                 systemImage: isReplaceExpanded ? "chevron.down" : "chevron.right",
-                role: .quiet,
+                role: .secondary,
                 theme: theme,
                 zoomScale: zoomScale
             ) {
@@ -341,13 +335,13 @@ struct WorkspaceSearchView: View {
             .font(.system(size: textScaled(12), weight: .medium))
             .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.82))
             .padding(.horizontal, scaled(MonknotMetrics.Spacing.m))
-            .frame(minHeight: max(28, MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)))
+            .frame(height: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale))
             .background(
                 theme.insetFillColor,
-                in: RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale))
+                in: RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
             )
             .overlay {
-                RoundedRectangle(cornerRadius: theme.chromeRadius(7, zoomScale: zoomScale))
+                RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
                     .strokeBorder(theme.borderColor, lineWidth: 1)
             }
         }
@@ -380,10 +374,10 @@ struct WorkspaceSearchView: View {
         if !state.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             HStack(spacing: scaled(MonknotMetrics.Spacing.xs)) {
                 if state.isSearching {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .scaleEffect(max(0.8, theme.layoutScale(zoomScale: zoomScale) * 0.78))
-                        .accessibilityHidden(true)
+                    MonknotProgressIndicator(
+                        size: MonknotMetrics.interfaceGlyph(12, theme: theme, zoomScale: zoomScale),
+                        theme: theme
+                    )
                 }
 
                 Text(searchStatusText)
@@ -585,14 +579,19 @@ struct WorkspaceSearchView: View {
         .accessibilityLabel("Searching workspace")
     }
 
+    @ViewBuilder
     private var emptyState: some View {
-        searchStateView(
-            systemImage: "doc.text.magnifyingglass",
-            title: state.query.isEmpty ? "Search this workspace" : "No matches",
-            detail: state.query.isEmpty
-                ? "Type a word or phrase above to search text and PDFs."
-                : "Try a different word or phrase."
-        )
+        if state.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityHidden(true)
+        } else {
+            searchStateView(
+                systemImage: "magnifyingglass",
+                title: "No matches",
+                detail: "Try a different word or phrase."
+            )
+        }
     }
 
     private func errorState(_ message: String) -> some View {
@@ -744,15 +743,15 @@ private struct WorkspaceReplaceConfirmationSheet: View {
 
                 MonknotActionButton(
                     title: "Replace All",
-                    role: .primary,
+                    role: .destructive,
                     theme: theme,
                     action: confirm
                 )
                 .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(24)
-        .frame(width: 520)
+        .padding(20)
+        .frame(width: 440)
         .background(theme.contentSurfaceColor)
     }
 

@@ -214,7 +214,7 @@ struct EditorPaneView: View {
             close: closeTerminal
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.contentSurfaceColor)
+        .background(theme.terminalSurfaceColor)
         .overlay(alignment: .leading) {
             if layout.presentation == .sideBySide {
                 Rectangle()
@@ -341,7 +341,6 @@ struct EditorPaneView: View {
                 theme: theme,
                 zoomScale: zoomScale
             )
-            .help(selectedDocument.relativePath)
         }
     }
 
@@ -389,7 +388,6 @@ struct EditorPaneView: View {
                 syncHTMLPreviewScroll(to: line, in: store.documentText)
             }
         )
-        .help(selectedDocument.relativePath)
     }
 
     private func htmlPreviewPane(for selectedDocument: WorkspaceDocument) -> some View {
@@ -411,7 +409,6 @@ struct EditorPaneView: View {
                 syncSourceScroll(to: line)
             }
         )
-        .help(selectedDocument.relativePath)
     }
 
     private func textEditor(for selectedDocument: WorkspaceDocument) -> some View {
@@ -431,7 +428,6 @@ struct EditorPaneView: View {
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
             }
         )
-        .help(selectedDocument.relativePath)
     }
 
     @ViewBuilder
@@ -498,7 +494,6 @@ struct EditorPaneView: View {
                 syncPreviewScroll(to: line)
             }
         )
-        .help(selectedDocument.relativePath)
     }
 
     private func markdownPreviewPane(for selectedDocument: WorkspaceDocument) -> some View {
@@ -526,7 +521,6 @@ struct EditorPaneView: View {
                 syncSourceScroll(to: line)
             }
         )
-        .help(selectedDocument.relativePath)
     }
 
     private func syncPreviewScroll(to line: Int) {

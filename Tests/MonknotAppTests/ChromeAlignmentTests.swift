@@ -9,8 +9,8 @@ import XCTest
 final class ChromeAlignmentTests: XCTestCase {
     func testComposedWorkspaceSplitKeepsEveryPrimaryChromeColumnOnOneCenterline() {
         for chromeHeight in [
-            MonknotMetrics.chromeHeight(theme: .codexDark, zoomScale: 1),
-            MonknotMetrics.chromeHeight(theme: .codexDark, zoomScale: WorkspaceZoomPolicy.maximum),
+            MonknotMetrics.chromeHeight(theme: .monknotDark, zoomScale: 1),
+            MonknotMetrics.chromeHeight(theme: .monknotDark, zoomScale: WorkspaceZoomPolicy.maximum),
         ] {
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 1_200, height: 760),
@@ -132,21 +132,49 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testThemeEditComparisonIgnoresHexLetterCase() {
-        var lowercase = ThemeConfiguration(theme: AppTheme.codexLight)
+        var lowercase = ThemeConfiguration(theme: AppTheme.monknotLight)
         lowercase.accent = lowercase.accent.lowercased()
         var uppercase = lowercase
         uppercase.accent = uppercase.accent.uppercased()
 
         XCTAssertEqual(
-            lowercase.sanitized(for: AppTheme.codexLight),
-            uppercase.sanitized(for: AppTheme.codexLight),
+            lowercase.sanitized(for: AppTheme.monknotLight),
+            uppercase.sanitized(for: AppTheme.monknotLight),
             "Focusing a hex field must not create a false edited state solely from case normalization"
         )
     }
 
-    func testWorkspaceChromeZoomIsBoundedAndMonotonic() {
-        let theme = AppTheme.codexDark
-        let compact = theme.layoutScale(zoomScale: 0.7)
+    func testThemeSettingsMigratesLegacyDefaultThemeIdentifiers() throws {
+        let suiteName = "MonknotTests.ThemeMigration.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("codex-light", forKey: "Monknot.lightThemeID")
+        defaults.set("codex-dark", forKey: "Monknot.darkThemeID")
+        var customizedDarkTheme = ThemeConfiguration(theme: .monknotDark)
+        customizedDarkTheme.accent = "#AABBCC"
+        defaults.set(
+            try JSONEncoder().encode(["codex-dark": customizedDarkTheme]),
+            forKey: "Monknot.themeCustomizations"
+        )
+
+        let store = ThemeSettingsStore(defaults: defaults)
+
+        XCTAssertEqual(store.lightThemeID, AppTheme.monknotLight.id)
+        XCTAssertEqual(store.darkThemeID, AppTheme.monknotDark.id)
+        XCTAssertEqual(store.configuration(for: .dark).accent, "#AABBCC")
+        XCTAssertEqual(defaults.string(forKey: "Monknot.lightThemeID"), "monknot-light")
+        XCTAssertEqual(defaults.string(forKey: "Monknot.darkThemeID"), "monknot-dark")
+
+        let data = try XCTUnwrap(defaults.data(forKey: "Monknot.themeCustomizations"))
+        let customizations = try JSONDecoder().decode([String: ThemeConfiguration].self, from: data)
+        XCTAssertNil(customizations["codex-dark"])
+        XCTAssertEqual(customizations["monknot-dark"]?.accent, "#AABBCC")
+    }
+
+    func testWorkspaceChromeZoomUsesTheExactDiscreteFactor() {
+        let theme = AppTheme.monknotDark
+        let compact = theme.layoutScale(zoomScale: WorkspaceZoomPolicy.minimum)
         let normal = theme.layoutScale(zoomScale: 1)
         let enlarged = theme.layoutScale(zoomScale: 1.7)
         let maximum = theme.layoutScale(zoomScale: WorkspaceZoomPolicy.maximum)
@@ -154,15 +182,16 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertLessThan(compact, normal)
         XCTAssertGreaterThan(enlarged, normal)
         XCTAssertGreaterThan(maximum, enlarged)
-        XCTAssertGreaterThanOrEqual(compact, 0.85)
-        XCTAssertLessThanOrEqual(enlarged, 1.2)
-        XCTAssertEqual(maximum, 1.3, accuracy: 0.001)
+        XCTAssertEqual(compact, 0.8, accuracy: 0.001)
+        XCTAssertEqual(enlarged, 1.7, accuracy: 0.001)
+        XCTAssertEqual(maximum, 2.0, accuracy: 0.001)
     }
 
-    func testWorkspaceZoomPolicyUsesAShortPerceptualShortcutLadder() {
-        XCTAssertEqual(WorkspaceZoomPolicy.supportedLevels.first, 0.7)
-        XCTAssertEqual(WorkspaceZoomPolicy.supportedLevels.last, 8.0)
-        XCTAssertEqual(WorkspaceZoomPolicy.supportedLevels.count, 11)
+    func testWorkspaceZoomPolicyUsesTheSpecifiedDiscreteLadder() {
+        XCTAssertEqual(
+            WorkspaceZoomPolicy.supportedLevels,
+            [0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0]
+        )
         for (rawZoom, documentScale) in zip(
             WorkspaceZoomPolicy.supportedLevels,
             WorkspaceZoomPolicy.shortcutDocumentScales
@@ -175,25 +204,25 @@ final class ChromeAlignmentTests: XCTestCase {
         }
         XCTAssertEqual(
             WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.stepped(1, by: 0.1)),
-            1.2,
+            1.1,
             accuracy: 0.001
         )
         XCTAssertEqual(
             WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.stepped(1, by: -0.1)),
-            0.95,
+            0.9,
             accuracy: 0.001
         )
-        XCTAssertEqual(WorkspaceZoomPolicy.stepped(7.9, by: 0.1), 8.0)
-        XCTAssertEqual(WorkspaceZoomPolicy.stepped(8.0, by: 0.1), 8.0)
-        XCTAssertEqual(WorkspaceZoomPolicy.stepped(0.7, by: -0.1), 0.7)
+        XCTAssertEqual(WorkspaceZoomPolicy.stepped(1.9, by: 0.1), 2.0)
+        XCTAssertEqual(WorkspaceZoomPolicy.stepped(2.0, by: 0.1), 2.0)
+        XCTAssertEqual(WorkspaceZoomPolicy.stepped(0.8, by: -0.1), 0.8)
         XCTAssertEqual(WorkspaceZoomPolicy.stepped(1.3, by: 0), 1.3)
         XCTAssertEqual(WorkspaceZoomPolicy.clamp(.nan), WorkspaceZoomPolicy.defaultValue)
         XCTAssertEqual(WorkspaceZoomPolicy.clamp(.infinity), WorkspaceZoomPolicy.maximum)
         XCTAssertEqual(WorkspaceZoomPolicy.clamp(-.infinity), WorkspaceZoomPolicy.minimum)
         XCTAssertEqual(WorkspaceZoomPolicy.stepped(.infinity, by: 0.1), WorkspaceZoomPolicy.maximum)
-        XCTAssertEqual(WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.minimum), 0.75, accuracy: 0.001)
+        XCTAssertEqual(WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.minimum), 0.8, accuracy: 0.001)
         XCTAssertEqual(WorkspaceZoomPolicy.documentScale(1), 1, accuracy: 0.001)
-        XCTAssertEqual(WorkspaceZoomPolicy.documentScale(2), 4.0 / 3.0, accuracy: 0.001)
+        XCTAssertEqual(WorkspaceZoomPolicy.documentScale(2), 2, accuracy: 0.001)
         XCTAssertEqual(WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.maximum), 2, accuracy: 0.001)
         for documentScale in WorkspaceZoomPolicy.shortcutDocumentScales {
             XCTAssertEqual(
@@ -218,7 +247,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testQuietSidebarSecondaryInkStaysLegibleWithoutDoubleOpacity() {
-        for baseTheme in [AppTheme.codexLight, AppTheme.codexDark] {
+        for baseTheme in [AppTheme.monknotLight, AppTheme.monknotDark] {
             var configuration = ThemeConfiguration(theme: baseTheme)
             let standard = baseTheme.sidebarMutedOpacity(prominence: 0.68)
             configuration.quietSidebar = true
@@ -230,22 +259,22 @@ final class ChromeAlignmentTests: XCTestCase {
         }
     }
 
-    func testCombinedFontAndZoomExtremesKeepChromeWithinNativeBounds() {
-        var largestConfiguration = ThemeConfiguration(theme: .codexDark)
+    func testCombinedFontAndZoomExtremesKeepOneWorkspaceFactor() {
+        var largestConfiguration = ThemeConfiguration(theme: .monknotDark)
         largestConfiguration.uiFontSize = 24
-        let largestTheme = largestConfiguration.applied(to: .codexDark)
-        var smallestConfiguration = ThemeConfiguration(theme: .codexDark)
+        let largestTheme = largestConfiguration.applied(to: .monknotDark)
+        var smallestConfiguration = ThemeConfiguration(theme: .monknotDark)
         smallestConfiguration.uiFontSize = 12
-        let smallestTheme = smallestConfiguration.applied(to: .codexDark)
+        let smallestTheme = smallestConfiguration.applied(to: .monknotDark)
 
         XCTAssertEqual(
             largestTheme.layoutScale(zoomScale: WorkspaceZoomPolicy.maximum),
-            1.50,
+            2.0,
             accuracy: 0.001
         )
         XCTAssertEqual(
             smallestTheme.layoutScale(zoomScale: WorkspaceZoomPolicy.minimum),
-            0.875,
+            0.8,
             accuracy: 0.001
         )
         XCTAssertGreaterThanOrEqual(
@@ -253,37 +282,37 @@ final class ChromeAlignmentTests: XCTestCase {
                 theme: smallestTheme,
                 zoomScale: WorkspaceZoomPolicy.minimum
             ),
-            24
+            22
         )
 
         XCTAssertEqual(
             largestTheme.interfaceTextScale(zoomScale: WorkspaceZoomPolicy.maximum),
-            2.0,
+            2.5,
             accuracy: 0.001
         )
         XCTAssertEqual(
             largestTheme.interfaceControlScale(zoomScale: WorkspaceZoomPolicy.maximum),
-            1.77,
+            2.0,
             accuracy: 0.001
         )
         XCTAssertEqual(
             largestTheme.interfaceRowScale(zoomScale: WorkspaceZoomPolicy.maximum),
-            1.70,
+            2.0,
             accuracy: 0.001
         )
         XCTAssertEqual(
             largestTheme.interfaceDensityScale(zoomScale: WorkspaceZoomPolicy.maximum),
-            1.35,
+            2.0,
             accuracy: 0.001
         )
         XCTAssertGreaterThanOrEqual(
             smallestTheme.interfaceTextScale(zoomScale: WorkspaceZoomPolicy.minimum),
-            0.84
+            0.70
         )
     }
 
     func testHighDocumentZoomKeepsChromeIconsProportionalToAdjacentText() {
-        let theme = AppTheme.codexDark
+        let theme = AppTheme.monknotDark
         let normalIconSize = MonknotIconButton.IconButtonSize.chrome.iconSize(
             theme: theme,
             zoomScale: 1
@@ -293,8 +322,8 @@ final class ChromeAlignmentTests: XCTestCase {
             zoomScale: WorkspaceZoomPolicy.maximum
         )
 
-        XCTAssertEqual(normalIconSize, 12, accuracy: 0.001)
-        XCTAssertEqual(maximumIconSize, normalIconSize * 1.80, accuracy: 0.001)
+        XCTAssertEqual(normalIconSize, 17, accuracy: 0.001)
+        XCTAssertEqual(maximumIconSize, normalIconSize * 2, accuracy: 0.001)
         XCTAssertEqual(
             theme.interfaceGlyphScale(zoomScale: WorkspaceZoomPolicy.maximum),
             theme.interfaceTextScale(zoomScale: WorkspaceZoomPolicy.maximum),
@@ -349,11 +378,33 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertEqual(window.standardWindowButton(.zoomButton)?.isEnabled, true)
     }
 
+    func testSettingsRowsScaleTheirCompleteLayoutWithInterfaceZoom() {
+        func fittingHeight(zoomScale: Double) -> CGFloat {
+            let row = SettingsRow(
+                theme: .monknotDark,
+                title: "Workspace zoom",
+                detail: "Scale typography, controls, padding, and spacing together",
+                showsDivider: false
+            ) {
+                Text("100%")
+            }
+            .environment(\.monknotSettingsZoomScale, zoomScale)
+            .frame(width: 520)
+
+            return NSHostingView(rootView: row).fittingSize.height
+        }
+
+        let normalHeight = fittingHeight(zoomScale: 1)
+        let maximumHeight = fittingHeight(zoomScale: 2)
+
+        XCTAssertGreaterThan(maximumHeight, normalHeight * 1.75)
+    }
+
     func testNativeTrafficLightsCenterVerticallyInTheAdaptiveWorkspaceChromeBand() {
         for chromeHeight in [
-            MonknotMetrics.chromeHeight(theme: .codexLight, zoomScale: WorkspaceZoomPolicy.minimum),
-            MonknotMetrics.chromeHeight(theme: .codexLight, zoomScale: 1),
-            MonknotMetrics.chromeHeight(theme: .codexLight, zoomScale: WorkspaceZoomPolicy.maximum),
+            MonknotMetrics.chromeHeight(theme: .monknotLight, zoomScale: WorkspaceZoomPolicy.minimum),
+            MonknotMetrics.chromeHeight(theme: .monknotLight, zoomScale: 1),
+            MonknotMetrics.chromeHeight(theme: .monknotLight, zoomScale: WorkspaceZoomPolicy.maximum),
         ] {
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 900, height: 620),
@@ -417,7 +468,7 @@ final class ChromeAlignmentTests: XCTestCase {
         window.titlebarAppearsTransparent = true
 
         let chromeHeight = MonknotMetrics.chromeHeight(
-            theme: .codexLight,
+            theme: .monknotLight,
             zoomScale: 1
         )
         let coordinator = WindowBackgroundDragEnabler.Coordinator(
@@ -445,7 +496,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testPrimaryChromeHeightPreservesTheProvenAdaptiveSpacingCurve() {
-        for theme in [AppTheme.codexLight, AppTheme.codexDark] {
+        for theme in [AppTheme.monknotLight, AppTheme.monknotDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
                 let height = MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
                 XCTAssertEqual(
@@ -456,8 +507,8 @@ final class ChromeAlignmentTests: XCTestCase {
         }
     }
 
-    func testInterfaceTokensUseCoherentBoundedZoomCurves() {
-        let theme = AppTheme.codexDark
+    func testInterfaceTokensUseOneCoherentZoomFactor() {
+        let theme = AppTheme.monknotDark
         let normal = 1.0
 
         XCTAssertEqual(theme.interfaceTextScale(zoomScale: normal), 1, accuracy: 0.001)
@@ -476,17 +527,13 @@ final class ChromeAlignmentTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(maximumScales[index], enlargedScales[index])
         }
 
-        XCTAssertEqual(maximumScales[0], 1.80, accuracy: 0.001)
-        XCTAssertEqual(maximumScales[1], 1.80, accuracy: 0.001)
-        XCTAssertEqual(maximumScales[2], 1.72, accuracy: 0.001)
-        XCTAssertEqual(maximumScales[3], 1.65, accuracy: 0.001)
-        XCTAssertEqual(maximumScales[4], 1.32, accuracy: 0.001)
-        XCTAssertGreaterThan(maximumScales[1], maximumScales[2])
-        XCTAssertGreaterThan(maximumScales[2], maximumScales[4])
+        for scale in maximumScales {
+            XCTAssertEqual(scale, 2, accuracy: 0.001)
+        }
     }
 
     func testInterfaceGlyphsNeverOutgrowTextAcrossSupportedZoomsAndThemes() {
-        for theme in [AppTheme.codexLight, AppTheme.codexDark] {
+        for theme in [AppTheme.monknotLight, AppTheme.monknotDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
                 XCTAssertLessThanOrEqual(
                     theme.interfaceGlyphScale(zoomScale: zoomScale),
@@ -497,11 +544,11 @@ final class ChromeAlignmentTests: XCTestCase {
         }
     }
 
-    func testSidebarRowIconsStayBelowAdjacentLabelHeightAcrossSupportedZooms() {
-        XCTAssertEqual(MonknotMetrics.sidebarIconPointSizeBase, 12)
+    func testSidebarRowIconsStayTwoPointsLargerThanAdjacentLabels() {
+        XCTAssertEqual(MonknotMetrics.sidebarIconPointSizeBase, 15)
         XCTAssertEqual(MonknotMetrics.sidebarIconWeight, .regular)
 
-        for theme in [AppTheme.codexLight, AppTheme.codexDark] {
+        for theme in [AppTheme.monknotLight, AppTheme.monknotDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
                 let iconSize = MonknotMetrics.interfaceGlyph(
                     MonknotMetrics.sidebarIconPointSizeBase,
@@ -514,9 +561,10 @@ final class ChromeAlignmentTests: XCTestCase {
                     zoomScale: zoomScale
                 )
 
-                XCTAssertLessThan(
-                    iconSize,
-                    labelSize,
+                XCTAssertEqual(
+                    iconSize - labelSize,
+                    MonknotMetrics.interfaceGlyph(2, theme: theme, zoomScale: zoomScale),
+                    accuracy: 0.5,
                     "Sidebar symbols outgrew their labels at zoom \(zoomScale)"
                 )
             }
@@ -527,20 +575,17 @@ final class ChromeAlignmentTests: XCTestCase {
         let size = MonknotIconButton.IconButtonSize.sidebarHeader
 
         XCTAssertEqual(size.iconWeight, MonknotMetrics.sidebarIconWeight)
-        for theme in [AppTheme.codexLight, AppTheme.codexDark] {
+        for theme in [AppTheme.monknotLight, AppTheme.monknotDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
                 XCTAssertEqual(
                     size.iconSize(theme: theme, zoomScale: zoomScale),
-                    MonknotMetrics.interfaceGlyph(
-                        MonknotMetrics.sidebarIconPointSizeBase,
-                        theme: theme,
-                        zoomScale: zoomScale
-                    ),
+                    MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale),
                     accuracy: 0.001
                 )
-                XCTAssertGreaterThanOrEqual(
+                XCTAssertEqual(
                     size.dimension(theme: theme, zoomScale: zoomScale),
-                    22
+                    MonknotMetrics.interfaceControl(22, theme: theme, zoomScale: zoomScale),
+                    accuracy: 0.001
                 )
             }
         }
@@ -561,56 +606,23 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertNotNil(MonknotMotion.sidebarTransition(reduceMotion: false))
     }
 
-    func testTabTitleRevealUsesADelayedSlowLinearMotionAndHonorsReduceMotion() {
-        XCTAssertEqual(MonknotMotion.tabTitleRevealDelay, 2.5)
-        XCTAssertEqual(MonknotMotion.tabTitleRevealDuration(for: 24), 1.5)
-        XCTAssertGreaterThan(
-            MonknotMotion.tabTitleRevealDuration(for: 240),
-            MonknotMotion.tabTitleRevealDuration(for: 24)
+    func testLongTabTitlesUseAStableCappedWidth() {
+        let theme = AppTheme.monknotDark
+        let shortWidth = DocumentTabWidthPolicy.preferredWidth(
+            title: "README.md",
+            isPinned: false,
+            theme: theme,
+            zoomScale: 1
         )
-        XCTAssertNil(MonknotMotion.tabTitleRevealAnimation(distance: 120, reduceMotion: true))
-        XCTAssertNotNil(MonknotMotion.tabTitleRevealAnimation(distance: 120, reduceMotion: false))
-    }
-
-    func testMountedOverflowingTabTitleMovesAfterTheHoverDelay() async throws {
-        let size = NSSize(width: 100, height: 24)
-        let host = NSHostingView(rootView: ClippedTabTitle(
-            title: "Remote_Objects_Self_Evaluation.pdf",
-            fontSize: 13,
-            color: .black,
-            isHovered: true
+        let longWidth = DocumentTabWidthPolicy.preferredWidth(
+            title: String(repeating: "Remote_Objects_", count: 40) + ".pdf",
+            isPinned: false,
+            theme: theme,
+            zoomScale: 1
         )
-        .frame(width: size.width, height: size.height))
-        host.frame = NSRect(origin: .zero, size: size)
 
-        let window = NSWindow(
-            contentRect: host.frame,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        window.contentView = host
-        window.makeKeyAndOrderFront(nil)
-        defer {
-            window.orderOut(nil)
-            window.contentView = nil
-        }
-
-        try await Task.sleep(nanoseconds: 150_000_000)
-        window.layoutIfNeeded()
-        host.layoutSubtreeIfNeeded()
-        let beforeReveal = try renderedTIFF(of: host)
-
-        try await Task.sleep(nanoseconds: 3_500_000_000)
-        window.layoutIfNeeded()
-        host.layoutSubtreeIfNeeded()
-        let duringReveal = try renderedTIFF(of: host)
-
-        XCTAssertNotEqual(
-            beforeReveal,
-            duringReveal,
-            "An overflowing title should move inside its fixed viewport after the hover delay"
-        )
+        XCTAssertGreaterThan(longWidth, shortWidth)
+        XCTAssertLessThanOrEqual(longWidth - shortWidth, MonknotMetrics.tabMaxWidthBase)
     }
 
     func testTerminalDrawerUsesFullDetailTakeoverBelowReadableSplitWidth() {
@@ -630,7 +642,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testDocumentTabsSizeToTheirMeasuredTitles() {
-        let theme = AppTheme.codexDark
+        let theme = AppTheme.monknotDark
         let short = DocumentTabWidthPolicy.preferredWidth(
             title: "a.json",
             isPinned: false,
@@ -650,7 +662,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testPinnedTabsRetainTheirTitleAndPinAffordanceWidth() {
-        let theme = AppTheme.codexDark
+        let theme = AppTheme.monknotDark
         let short = DocumentTabWidthPolicy.preferredWidth(
             title: "a.md",
             isPinned: true,
@@ -669,12 +681,13 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertLessThanOrEqual(readme, MonknotMetrics.tabMaxWidthBase)
     }
 
-    func testTabCloseButtonsKeepAForgivingMinimumTarget() {
-        let theme = AppTheme.codexDark
+    func testTabCloseButtonsScaleWithTheSixteenPointTrailingSlot() {
+        let theme = AppTheme.monknotDark
         for zoomScale in WorkspaceZoomPolicy.supportedLevels {
-            XCTAssertGreaterThanOrEqual(
+            XCTAssertEqual(
                 MonknotTabCloseButton.dimension(theme: theme, zoomScale: zoomScale),
-                24
+                MonknotMetrics.interfaceControl(16, theme: theme, zoomScale: zoomScale),
+                accuracy: 0.001
             )
         }
     }
@@ -718,7 +731,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testWindowNavigationUsesReferenceSegmentGeometryAcrossSupportedZooms() {
-        let theme = AppTheme.codexDark
+        let theme = AppTheme.monknotDark
         let navigationSize = MonknotIconButton.IconButtonSize.windowNavigation
         let chromeSize = MonknotIconButton.IconButtonSize.chrome
 
@@ -735,15 +748,15 @@ final class ChromeAlignmentTests: XCTestCase {
             )
             XCTAssertEqual(
                 navigationSize.iconSize(theme: theme, zoomScale: zoomScale),
-                chromeSize.iconSize(theme: theme, zoomScale: zoomScale),
+                MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale),
                 accuracy: 0.001,
-                "Primary titlebar symbols must follow one shared optical size"
+                "Navigation chevrons use their specified optical size"
             )
         }
     }
 
     func testPrimaryAndSecondaryChromePreserveTheirDistinctReferenceBands() {
-        for theme in [AppTheme.codexLight, AppTheme.codexDark] {
+        for theme in [AppTheme.monknotLight, AppTheme.monknotDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
                 let primaryHeight = MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
                 let secondaryHeight = MonknotMetrics.chromeSecondaryHeight(
@@ -769,12 +782,12 @@ final class ChromeAlignmentTests: XCTestCase {
             }
         }
 
-        XCTAssertEqual(MonknotMetrics.chromeHeight(theme: .codexDark, zoomScale: 1), 44)
-        XCTAssertEqual(MonknotMetrics.chromeSecondaryHeight(theme: .codexDark, zoomScale: 1), 34)
+        XCTAssertEqual(MonknotMetrics.chromeHeight(theme: .monknotDark, zoomScale: 1), 44)
+        XCTAssertEqual(MonknotMetrics.chromeSecondaryHeight(theme: .monknotDark, zoomScale: 1), 34)
     }
 
     func testSegmentButtonsUseReferenceWidthAndShorterReferenceHeight() {
-        for theme in [AppTheme.codexLight, AppTheme.codexDark] {
+        for theme in [AppTheme.monknotLight, AppTheme.monknotDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
                 let segment = MonknotSegmentButton(
                     systemImage: "text.alignleft",
@@ -827,6 +840,7 @@ final class ChromeAlignmentTests: XCTestCase {
             .windowNavigation,
             .sidebarHeader,
             .compact,
+            .editorToolbar,
             .findBar,
             .segmented
         ] {
@@ -847,14 +861,15 @@ final class ChromeAlignmentTests: XCTestCase {
         }
     }
 
-    func testSegmentedIconButtonsKeepAKeyboardFriendlyMinimumTarget() {
+    func testSegmentedIconButtonsScaleFromTheThirtyPointEditorReferenceBox() {
         let size = MonknotIconButton.IconButtonSize.segmented
 
-        for theme in [AppTheme.codexLight, AppTheme.codexDark] {
+        for theme in [AppTheme.monknotLight, AppTheme.monknotDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
-                XCTAssertGreaterThanOrEqual(
+                XCTAssertEqual(
                     size.dimension(theme: theme, zoomScale: zoomScale),
-                    28
+                    MonknotMetrics.interfaceControl(30, theme: theme, zoomScale: zoomScale),
+                    accuracy: 0.001
                 )
             }
         }
@@ -864,10 +879,7 @@ final class ChromeAlignmentTests: XCTestCase {
         let size = MonknotIconButton.IconButtonSize.chrome
 
         for isDark in [false, true] {
-            XCTAssertEqual(
-                size.activeBackgroundOpacity(isDark: isDark),
-                size.hoverBackgroundOpacity(isDark: isDark)
-            )
+            XCTAssertEqual(size.activeBackgroundOpacity(isDark: isDark), isDark ? 0.18 : 0.14)
         }
     }
 
@@ -932,7 +944,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testWindowNavigationControlsUseSharedChromeHeightAtEverySupportedZoom() {
-        let theme = AppTheme.codexDark
+        let theme = AppTheme.monknotDark
 
         for zoomScale in WorkspaceZoomPolicy.supportedLevels {
             let controls = WindowNavigationControls(
@@ -954,8 +966,8 @@ final class ChromeAlignmentTests: XCTestCase {
         }
     }
 
-    func testTerminalPanelRowUsesSharedChromeHeightAtEverySupportedZoom() {
-        for theme in [AppTheme.codexLight, AppTheme.codexDark] {
+    func testTerminalPanelRowUsesItsSubordinateThirtySixPointHeader() {
+        for theme in [AppTheme.monknotLight, AppTheme.monknotDark] {
             let sessions = TerminalSessionCollectionStore()
 
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
@@ -967,7 +979,7 @@ final class ChromeAlignmentTests: XCTestCase {
                     close: {}
                 )
                 let terminalHost = NSHostingView(rootView: terminalRow.frame(width: 420))
-                let expectedHeight = MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
+                let expectedHeight = MonknotMetrics.interfaceControl(36, theme: theme, zoomScale: zoomScale)
 
                 XCTAssertEqual(terminalHost.fittingSize.height, expectedHeight, accuracy: 0.01)
             }
@@ -975,7 +987,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testTerminalPanelKeepsTabsInAHorizontalScrollContainer() {
-        let theme = AppTheme.codexDark
+        let theme = AppTheme.monknotDark
         let sessions = TerminalSessionCollectionStore()
         XCTAssertNotNil(sessions.createTerminal(in: FileManager.default.temporaryDirectory))
         defer { sessions.stopAll() }
@@ -996,7 +1008,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testWindowNavigationReserveContainsControlsAtEverySupportedZoom() {
-        let theme = AppTheme.codexDark
+        let theme = AppTheme.monknotDark
 
         for zoomScale in WorkspaceZoomPolicy.supportedLevels {
             let buttonWidth = MonknotMetrics.windowNavigationButtonDimension(
@@ -1017,7 +1029,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testTopNavigationControlsUseSharedChromeHeightAcrossSidebarStatesAndZooms() {
-        let theme = AppTheme.codexDark
+        let theme = AppTheme.monknotDark
 
         for zoomScale in WorkspaceZoomPolicy.supportedLevels {
 
@@ -1060,7 +1072,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testDocumentSearchKeepsScrollableFileTabsMountedInThePrimaryRow() {
-        let theme = AppTheme.codexDark
+        let theme = AppTheme.monknotDark
         var search = DocumentSearchState()
         search.present()
         let tab = WorkspaceTabItem(
@@ -1197,7 +1209,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testDocumentTabsUseSharedChromeHeightAtEverySupportedZoom() {
-        let theme = AppTheme.codexDark
+        let theme = AppTheme.monknotDark
 
         for zoomScale in WorkspaceZoomPolicy.supportedLevels {
             let tabBar = DocumentTabBar(
@@ -1296,7 +1308,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testMountedDocumentTabBarSupportsHorizontalScrolling() async {
-        let theme = AppTheme.codexDark
+        let theme = AppTheme.monknotDark
         let tabs = (0..<10).map { index in
             WorkspaceTabItem(
                 documentID: "tab-\(index)",
@@ -1361,7 +1373,7 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testMountedTerminalTabsKeepManualHorizontalScrollPosition() async {
-        let theme = AppTheme.codexDark
+        let theme = AppTheme.monknotDark
         let sessions = TerminalSessionCollectionStore()
         for _ in 0..<10 {
             XCTAssertNotNil(sessions.createTerminal(in: FileManager.default.temporaryDirectory))
@@ -1430,8 +1442,9 @@ final class ChromeAlignmentTests: XCTestCase {
     }
 
     func testTerminalUsesCompactTopPaddingBelowItsChrome() {
+        let theme = AppTheme.monknotDark
         let html = TerminalWebView.html(
-            theme: .codexDark,
+            theme: theme,
             fontSize: 13.5,
             usePointerCursors: true,
             fontSmoothing: true
@@ -1441,10 +1454,13 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertFalse(html.contains("padding: 18px 20px;"))
         XCTAssertTrue(html.contains("new ResizeObserver"))
         XCTAssertTrue(html.contains("width: 12px;"))
+        XCTAssertTrue(html.contains("--terminal-bg: \(theme.terminalSurfaceHex);"))
+        XCTAssertTrue(html.contains("background: '\(theme.terminalSurfaceHex)'"))
+        XCTAssertFalse(html.contains("background: '\(theme.background)'"))
     }
 
-    func testTerminalFontTracksWorkspaceZoomBelowDocumentContentScale() {
-        let theme = AppTheme.codexDark
+    func testTerminalFontUsesTheSameWorkspaceZoomAsDocumentContent() {
+        let theme = AppTheme.monknotDark
         let minimum = TerminalDrawerView.terminalFontSize(
             theme: theme,
             zoomScale: WorkspaceZoomPolicy.minimum
@@ -1459,9 +1475,9 @@ final class ChromeAlignmentTests: XCTestCase {
 
         XCTAssertLessThan(minimum, normal)
         XCTAssertEqual(normal, TerminalDrawerView.fontSizeBase, accuracy: 0.001)
-        XCTAssertEqual(maximum, 24.3, accuracy: 0.001)
+        XCTAssertEqual(maximum, 27, accuracy: 0.001)
         XCTAssertGreaterThan(maximum, normal)
-        XCTAssertLessThan(maximum, maximumDocumentFont)
+        XCTAssertEqual(maximum, maximumDocumentFont, accuracy: 0.001)
     }
 }
 

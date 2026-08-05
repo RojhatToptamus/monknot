@@ -338,9 +338,8 @@ public extension AppTheme {
         recessedSurfaceHex(amount: isDark ? 0.075 : 0.028)
     }
 
-    /// The terminal shares the content canvas in the two-tier model, so its
-    /// surface is exactly the theme background (not a separate tier).
+    /// The terminal mirrors the left sidebar as a right-edge tool panel.
     var terminalSurfaceHex: String {
-        background
+        sidebarSurfaceHex
     }
 }

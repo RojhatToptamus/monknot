@@ -15,7 +15,7 @@ public struct MarkdownRenderService: Sendable {
     }
 
     public func htmlDocument(markdown: String, theme: RenderTheme, baseURL: URL?) throws -> String {
-        let palette = theme == .dark ? AppTheme.codexDark : AppTheme.codexLight
+        let palette = theme == .dark ? AppTheme.monknotDark : AppTheme.monknotLight
         return try htmlDocument(markdown: markdown, appTheme: palette, zoomScale: 1, baseURL: baseURL)
     }
 

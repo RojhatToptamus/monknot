@@ -12,29 +12,27 @@ enum DocumentTabWidthPolicy {
         let fontSize = MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale)
         let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
         let labelWidth = ceil((title as NSString).size(withAttributes: [.font: font]).width)
-        let minimum = MonknotMetrics.interfaceDensity(
-            MonknotMetrics.tabMinWidthBase,
-            theme: theme,
-            zoomScale: zoomScale
-        )
-        let maximum = MonknotMetrics.interfaceDensity(
+        let maximumTabWidth = MonknotMetrics.interfaceDensity(
             MonknotMetrics.tabMaxWidthBase,
             theme: theme,
             zoomScale: zoomScale
         )
-        let documentGlyph = MonknotMetrics.chromeGlyphSize(theme: theme, zoomScale: zoomScale)
+        let documentGlyph = MonknotMetrics.interfaceGlyph(15, theme: theme, zoomScale: zoomScale)
+        let outerPadding = MonknotMetrics.interfaceDensity(20, theme: theme, zoomScale: zoomScale)
+        let labelGaps = MonknotMetrics.interfaceDensity(16, theme: theme, zoomScale: zoomScale)
         let fixedControls: CGFloat
         if isPinned {
-            fixedControls = documentGlyph
+            fixedControls = MonknotMetrics.interfaceDensity(18, theme: theme, zoomScale: zoomScale)
+                + labelGaps
+                + documentGlyph
                 + MonknotMetrics.interfaceGlyph(9, theme: theme, zoomScale: zoomScale)
-                + MonknotMetrics.interfaceDensity(32, theme: theme, zoomScale: zoomScale)
         } else {
-            fixedControls = documentGlyph
-                + MonknotMetrics.interfaceDensity(21, theme: theme, zoomScale: zoomScale)
+            fixedControls = outerPadding
+                + labelGaps
+                + documentGlyph
                 + MonknotTabCloseButton.dimension(theme: theme, zoomScale: zoomScale)
-                + MonknotMetrics.interfaceDensity(8, theme: theme, zoomScale: zoomScale)
         }
-        return min(maximum, max(minimum, labelWidth + fixedControls))
+        return min(maximumTabWidth, labelWidth + fixedControls)
     }
 }
 
@@ -108,7 +106,8 @@ struct DocumentTabBar: View {
                         showsLeading: overflow.hasLeadingOverflow,
                         showsTrailing: overflow.hasTrailingOverflow,
                         theme: theme,
-                        zoomScale: zoomScale
+                        zoomScale: zoomScale,
+                        surface: theme.sidebarSurfaceColor
                     )
                 }
                 .frame(width: viewportWidth, height: chromeRowHeight)
@@ -264,7 +263,7 @@ private struct DocumentTabItemView: View {
     }
 
     private var titlebarGlyphSize: CGFloat {
-        MonknotMetrics.chromeGlyphSize(theme: theme, zoomScale: zoomScale)
+        MonknotMetrics.interfaceGlyph(15, theme: theme, zoomScale: zoomScale)
     }
 
     private var chromeRowHeight: CGFloat {
@@ -274,7 +273,7 @@ private struct DocumentTabItemView: View {
     var body: some View {
         HStack(spacing: 0) {
             Button(action: select) {
-                HStack(spacing: scaled(7)) {
+                HStack(spacing: scaled(8)) {
                     Image(systemName: documentIconName)
                         .font(.system(
                             size: titlebarGlyphSize,
@@ -300,12 +299,16 @@ private struct DocumentTabItemView: View {
                             .accessibilityHidden(true)
                     }
 
-                    ClippedTabTitle(
-                        title: tab.displayName,
-                        fontSize: textScaled(13),
-                        color: textColor,
-                        isHovered: isHovered && !isDisabled
-                    )
+                    Text(tab.displayName)
+                        .font(.system(size: textScaled(13), weight: .regular))
+                        .foregroundStyle(textColor)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(
+                            maxWidth: scaled(MonknotMetrics.tabMaxWidthBase),
+                            alignment: .leading
+                        )
+                        .accessibilityLabel(tab.displayName)
                     .layoutPriority(0)
 
                     if isMissing {
@@ -316,8 +319,8 @@ private struct DocumentTabItemView: View {
                     }
 
                 }
-                .padding(.leading, scaled(8))
-                .padding(.trailing, scaled(tab.isPinned ? 8 : 6))
+                .padding(.leading, scaled(10))
+                .padding(.trailing, scaled(8))
                 .frame(
                     maxWidth: .infinity,
                     minHeight: MonknotMetrics.interfaceControl(30, theme: theme, zoomScale: zoomScale),
@@ -332,7 +335,7 @@ private struct DocumentTabItemView: View {
 
             if !tab.isPinned {
                 trailingSlot
-                    .padding(.trailing, scaled(8))
+                    .padding(.trailing, scaled(10))
             }
         }
         .frame(width: preferredTabWidth, alignment: .leading)
@@ -359,7 +362,7 @@ private struct DocumentTabItemView: View {
                 Label("Close Tab", systemImage: "xmark")
             }
         }
-        .help(helpText)
+        .monknotHelp(isSelected ? nil : helpText)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -370,20 +373,10 @@ private struct DocumentTabItemView: View {
         if isSelected {
             RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
                 .fill(theme.elevatedSurfaceColor)
-                .overlay(alignment: .top) {
-                    if theme.isDark {
-                        RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                            .strokeBorder(Color.white.opacity(0.055), lineWidth: 1)
-                            .mask(alignment: .top) {
-                                Rectangle().frame(height: 8)
-                            }
-                    }
+                .overlay {
+                    RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+                        .strokeBorder(theme.borderColor, lineWidth: 1)
                 }
-                .shadow(
-                    color: theme.isDark ? .clear : theme.foregroundColor.opacity(0.07),
-                    radius: 1.5,
-                    y: 1
-                )
         } else if isHovered && !isDisabled {
             RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
                 .fill(theme.foregroundColor.opacity(0.06))
@@ -476,54 +469,6 @@ private struct DocumentTabItemView: View {
     }
 }
 
-struct ClippedTabTitle: View {
-    let title: String
-    let fontSize: CGFloat
-    let color: Color
-    let isHovered: Bool
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var revealsTitleEnd = false
-
-    private var measuredTitleWidth: CGFloat {
-        ceil((title as NSString).size(withAttributes: [
-            .font: NSFont.systemFont(ofSize: fontSize, weight: .regular)
-        ]).width)
-    }
-
-    var body: some View {
-        GeometryReader { proxy in
-            let overflow = max(0, measuredTitleWidth - proxy.size.width)
-
-            Text(title)
-                .font(.system(size: fontSize, weight: .regular))
-                .foregroundStyle(color)
-                .fixedSize(horizontal: true, vertical: false)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .offset(x: revealsTitleEnd ? -overflow : 0)
-                .task(id: isHovered) {
-                    revealsTitleEnd = false
-                    guard isHovered, !reduceMotion, overflow > 0 else { return }
-
-                    try? await Task.sleep(nanoseconds: UInt64(
-                        MonknotMotion.tabTitleRevealDelay * 1_000_000_000
-                    ))
-                    guard !Task.isCancelled else { return }
-
-                    withAnimation(MonknotMotion.tabTitleRevealAnimation(
-                        distance: overflow,
-                        reduceMotion: reduceMotion
-                    )) {
-                        revealsTitleEnd = true
-                    }
-                }
-        }
-        .frame(maxWidth: .infinity, minHeight: fontSize * 1.25, maxHeight: fontSize * 1.25)
-        .clipped()
-        .accessibilityLabel(title)
-    }
-}
-
 private struct TabFramePreferenceKey: PreferenceKey {
     static let defaultValue: [String: CGRect] = [:]
 
@@ -558,11 +503,12 @@ private struct TabSaveStateIndicator: View {
             case .edited:
                 Circle()
                     .fill(theme.accentColor)
-                    .frame(width: max(5, size * 0.58), height: max(5, size * 0.58))
+                    .frame(
+                        width: MonknotMetrics.interfaceGlyph(6, theme: theme, zoomScale: zoomScale),
+                        height: MonknotMetrics.interfaceGlyph(6, theme: theme, zoomScale: zoomScale)
+                    )
             case .saving:
-                ProgressView()
-                    .controlSize(.mini)
-                    .scaleEffect(max(0.65, theme.layoutScale(zoomScale: zoomScale) * 0.78))
+                MonknotProgressIndicator(size: size * 0.82, theme: theme)
             case .failed:
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: max(9, size * 0.9), weight: .semibold))
