@@ -18,7 +18,7 @@ const expectedAssets = new Map([
   ["shots/terminal-light.jpg", "285be266ac7f12a9c2f0b345b0b0047df5e2d5763be1687cca43c5b47823503a"],
 ]);
 
-await Promise.all(["index.html", "styles.css", "main.js", "theme-catalog.json", "vercel.json", ...expectedAssets.keys()].map((file) => access(resolve(root, file))));
+await Promise.all(["index.html", "support.html", "privacy.html", "styles.css", "main.js", "page.js", "theme-catalog.json", "vercel.json", ...expectedAssets.keys()].map((file) => access(resolve(root, file))));
 
 for (const [file, expectedHash] of expectedAssets) {
   const data = await readFile(resolve(root, file));
@@ -27,13 +27,19 @@ for (const [file, expectedHash] of expectedAssets) {
 }
 
 const html = await readFile(resolve(root, "index.html"), "utf8");
+const supportHTML = await readFile(resolve(root, "support.html"), "utf8");
+const privacyHTML = await readFile(resolve(root, "privacy.html"), "utf8");
 const styles = await readFile(resolve(root, "styles.css"), "utf8");
 const script = await readFile(resolve(root, "main.js"), "utf8");
+const pageScript = await readFile(resolve(root, "page.js"), "utf8");
 const themeCatalog = JSON.parse(await readFile(resolve(root, "theme-catalog.json"), "utf8"));
 const vercel = JSON.parse(await readFile(resolve(root, "vercel.json"), "utf8"));
 
 if (vercel.buildCommand !== "npm run build" || vercel.outputDirectory !== "dist") {
   throw new Error("Website-level Vercel configuration must build and serve this directory.");
+}
+if (vercel.cleanUrls !== true || vercel.trailingSlash !== false) {
+  throw new Error("Vercel must expose support.html and privacy.html as /support and /privacy.");
 }
 
 const requiredMarkup = [
@@ -53,6 +59,49 @@ const requiredMarkup = [
 
 for (const marker of requiredMarkup) {
   if (!html.includes(marker)) throw new Error(`Missing supplied design element: ${marker}`);
+}
+
+for (const marker of ['href="/support">Support</a>', 'href="/privacy">Privacy</a>', "© 2026 Rojhat Toptamuş"]) {
+  if (!html.includes(marker)) throw new Error(`Missing homepage footer element: ${marker}`);
+}
+
+const requiredPages = [
+  {
+    name: "support",
+    html: supportHTML,
+    markers: [
+      "<title>Monknot Support</title>",
+      'content="Get help with Monknot, report problems, or send feedback."',
+      'rel="canonical" href="https://monknot.app/support"',
+      "Monknot Support",
+      'href="mailto:support@monknot.app"',
+      "Common Issues",
+      'href="/privacy"',
+    ],
+  },
+  {
+    name: "privacy",
+    html: privacyHTML,
+    markers: [
+      "<title>Monknot Privacy Policy</title>",
+      "Learn how Monknot handles files, local data, network requests, and support communications.",
+      'rel="canonical" href="https://monknot.app/privacy"',
+      "Last updated: August 6, 2026",
+      "Data Monknot Processes",
+      "Network Requests and Third-Party Services",
+      "Analytics and Crash Reports",
+      "Children’s Privacy",
+      'href="mailto:support@monknot.app"',
+    ],
+  },
+];
+
+for (const page of requiredPages) {
+  for (const marker of page.markers) {
+    if (!page.html.includes(marker)) throw new Error(`Missing ${page.name} page element: ${marker}`);
+  }
+  if (!page.html.includes('href="/" aria-label="Monknot home"')) throw new Error(`${page.name} page must link back to the homepage.`);
+  if (!page.html.includes('src="page.js"')) throw new Error(`${page.name} page must load appearance behavior.`);
 }
 
 for (const marker of [
@@ -87,7 +136,18 @@ for (const marker of ['let previewMode = "light";', 'event.key === "ArrowDown"',
   if (!script.includes(marker)) throw new Error(`Missing theme keyboard behavior: ${marker}`);
 }
 
-const localReferences = Array.from(html.matchAll(/(?:src|href)="((?!https?:|#)[^"]+)"/g), (match) => match[1]);
-await Promise.all(localReferences.map((file) => access(resolve(root, file))));
 
-console.log(`Checked ${expectedAssets.size} untouched source assets, 10 product views, 51 theme presets, and deployment files.`);
+for (const marker of ["dataset.siteTheme", 'aria-pressed', 'theme-color']) {
+  if (!pageScript.includes(marker)) throw new Error(`Missing legal-page appearance behavior: ${marker}`);
+}
+
+const localReferences = [html, supportHTML, privacyHTML].flatMap((pageHTML) =>
+  Array.from(pageHTML.matchAll(/(?:src|href)="((?!https?:|mailto:|#)[^"]+)"/g), (match) => match[1])
+);
+await Promise.all(
+  localReferences
+    .filter((file) => file !== "/" && file !== "/support" && file !== "/privacy")
+    .map((file) => access(resolve(root, file.replace(/^\//, ""))))
+);
+
+console.log(`Checked ${expectedAssets.size} untouched source assets, 10 product views, 51 theme presets, support and privacy routes, and deployment files.`);

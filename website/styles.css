@@ -20,19 +20,39 @@
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
 }
 
+:root[data-site-theme="light"] {
+  color-scheme: light;
+  --bg: #fdfdfe;
+  --sidebar: #f7f7f8;
+  --surf2: #f2f2f3;
+  --bar: rgba(253, 253, 254, 0.82);
+  --ink: #1c1e22;
+  --ink2: #6d6e71;
+  --ink3: #8b8c8e;
+  --line: rgba(28, 30, 34, 0.12);
+  --line2: rgba(28, 30, 34, 0.08);
+  --hover: rgba(28, 30, 34, 0.055);
+  --accent: #0a52a3;
+  --onaccent: #ffffff;
+  --accsoft: rgba(10, 82, 163, 0.14);
+  --sel: #ccdbec;
+  --link: #0a52a3;
+  --win: 0 24px 56px rgba(26, 33, 48, 0.16), 0 6px 14px rgba(26, 33, 48, 0.07);
+}
+
 * {
   box-sizing: border-box;
 }
 
 html {
   scroll-behavior: smooth;
-  background: #121212;
+  background: var(--bg);
 }
 
 body {
   margin: 0;
-  background: #121212;
-  color: #ebebeb;
+  background: var(--bg);
+  color: var(--ink);
   font-family: var(--ui);
   -webkit-font-smoothing: antialiased;
 }
@@ -645,6 +665,124 @@ main {
   color: var(--ink2);
 }
 
+.document-page {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding-top: clamp(52px, 9vw, 92px);
+}
+
+.document-heading {
+  margin-bottom: clamp(44px, 7vw, 64px);
+}
+
+.document-kicker,
+.document-updated {
+  margin: 0;
+  font: 400 12px/1.4 var(--mono);
+  color: var(--ink2);
+}
+
+.document-kicker {
+  margin-bottom: 16px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.document-heading h1 {
+  margin: 0;
+  font: 600 clamp(36px, 6vw, 54px)/1.06 var(--ui);
+  letter-spacing: -0.032em;
+  color: var(--ink);
+  text-wrap: balance;
+}
+
+.document-lede {
+  max-width: 42ch;
+  margin: 22px 0 0;
+  font: 400 clamp(17px, 2vw, 20px)/1.55 var(--ui);
+  color: var(--ink2);
+  text-wrap: pretty;
+}
+
+.document-updated {
+  margin-top: 18px;
+}
+
+.document-section + .document-section {
+  margin-top: clamp(34px, 5vw, 46px);
+}
+
+.document-section h2 {
+  margin: 0 0 15px;
+  font: 600 clamp(21px, 2.5vw, 25px)/1.2 var(--ui);
+  letter-spacing: -0.018em;
+  color: var(--ink);
+}
+
+.document-section h3 {
+  margin: 0 0 7px;
+  font: 600 16px/1.35 var(--ui);
+  color: var(--ink);
+}
+
+.document-section p,
+.document-section li {
+  font: 400 15.5px/1.68 var(--ui);
+  color: var(--ink2);
+}
+
+.document-section p {
+  margin: 0;
+}
+
+.document-section p + p,
+.document-section p + ul,
+.document-section ul + p {
+  margin-top: 15px;
+}
+
+.document-section ul {
+  margin-bottom: 0;
+  padding-left: 1.3em;
+}
+
+.document-section li + li {
+  margin-top: 4px;
+}
+
+.document-section a,
+.document-related a {
+  color: var(--link);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 44%, transparent);
+  text-underline-offset: 0.18em;
+  transition: text-decoration-color 120ms ease;
+}
+
+.document-section a:hover,
+.document-related a:hover {
+  text-decoration-color: currentColor;
+}
+
+.common-issues {
+  padding-top: clamp(32px, 5vw, 44px);
+  border-top: 1px solid var(--line);
+}
+
+.issue + .issue {
+  margin-top: 28px;
+}
+
+.document-related {
+  margin: clamp(42px, 6vw, 56px) 0 0;
+  font: 400 13px/1.5 var(--mono);
+}
+
+.document-related a::after {
+  content: " →";
+}
+
 footer {
   flex: none;
   margin-top: clamp(56px, 8vw, 88px);
@@ -660,21 +798,49 @@ footer {
   flex-wrap: wrap;
 }
 
-.footer-inner > span:first-child,
-.footer-inner a {
+.footer-brand,
+.footer-links {
   font: 400 12px/1 var(--mono);
 }
 
-.footer-inner > span:first-child {
+.footer-brand {
   color: var(--ink2);
 }
 
-.footer-inner > span:nth-child(2) {
+.footer-spacer {
   flex: 1;
 }
 
-.footer-inner a {
+.footer-links {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink3);
+  white-space: nowrap;
+}
+
+.footer-links a {
   color: var(--link);
+}
+
+.footer-links a:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+@media (max-width: 560px) {
+  .footer-inner {
+    gap: 10px 16px;
+  }
+
+  .footer-spacer {
+    display: none;
+  }
+
+  .footer-links {
+    width: 100%;
+    white-space: normal;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
