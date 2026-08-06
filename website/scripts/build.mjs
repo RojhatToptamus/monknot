@@ -14,7 +14,7 @@ const run = promisify(execFile);
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 
-for (const entry of ["index.html", "styles.css", "main.js", "assets"]) {
+for (const entry of ["index.html", "styles.css", "main.js", "assets", "app-store-screenshots"]) {
   await cp(resolve(root, entry), resolve(output, entry), { recursive: true });
 }
 

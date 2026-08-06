@@ -2,47 +2,66 @@ import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
-const productViews = ["default", "split", "terminal", "pdf"];
-const appStoreScreenshots = [
-  "01-markdown-editor-dark.png",
-  "02-markdown-split-dark.png",
-  "03-terminal-dark.png",
-  "04-pdf-dark.png",
-  "05-markdown-split-light.png",
-  "06-markdown-editor-light.png",
-].map((file) => `app-store-screenshots/${file}`);
+const productViews = ["default", "split", "terminal", "pdf", "themes"];
+const variants = ["dark", "light"];
+const geometry = JSON.parse(await readFile(resolve(root, "assets/product/campaign-geometry.json"), "utf8"));
+const appStoreScreenshots = geometry.files.map((file) => `app-store-screenshots/${file.appStoreName}`);
 const requiredFiles = [
   "index.html",
   "styles.css",
   "main.js",
   "assets/monknot-icon.png",
-  ...productViews.flatMap((view) => [
-    `assets/monknot-${view}.jpg`,
-    `assets/monknot-${view}-1200.webp`,
-    `assets/monknot-${view}-2400.webp`,
-    `assets/monknot-${view}.webp`,
-  ]),
+  "assets/product/campaign-geometry.json",
+  ...productViews.flatMap((view) =>
+    variants.flatMap((variant) =>
+      [960, 1920, 2880].map((width) => `assets/product/${view}-${variant}-${width}.webp`),
+    ),
+  ),
   ...appStoreScreenshots,
 ];
 
 await Promise.all(requiredFiles.map((file) => access(resolve(root, file))));
 
+if (geometry.canvas.width !== 2880 || geometry.canvas.height !== 1800) {
+  throw new Error("Campaign master canvas must be 2880 × 1800.");
+}
+
+const expectedFrame = {
+  x: 96,
+  y: 128,
+  width: 2688,
+  height: 1576,
+  titlebarHeight: 104,
+  sidebarWidth: 448,
+  toolbarHeight: 96,
+  contentX: 544,
+  contentY: 328,
+  contentWidth: 2240,
+  contentHeight: 1376,
+};
+for (const [key, value] of Object.entries(expectedFrame)) {
+  if (geometry.frame[key] !== value) {
+    throw new Error(`Campaign frame ${key} must remain ${value}; received ${geometry.frame[key]}.`);
+  }
+}
+
+if (geometry.files.length !== 10) throw new Error("Expected ten generated App Store masters.");
+
 for (const file of appStoreScreenshots) {
   const png = await readFile(resolve(root, file));
   const isPNG =
-    png.length >= 24 &&
+    png.length >= 26 &&
     png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   if (!isPNG) throw new Error(`App Store screenshot is not a PNG: ${file}`);
   const width = png.readUInt32BE(16);
   const height = png.readUInt32BE(20);
-  if (width !== 2560 || height !== 1600) {
-    throw new Error(`App Store screenshot must be 2560 × 1600: ${file} is ${width} × ${height}`);
-  }
+  const bitDepth = png[24];
   const colorType = png[25];
-  if (colorType !== 2) {
-    throw new Error(
-      `App Store screenshot must be an RGB PNG without alpha: ${file} uses PNG color type ${colorType}`,
-    );
+  if (width !== 2880 || height !== 1800) {
+    throw new Error(`App Store screenshot must be 2880 × 1800: ${file} is ${width} × ${height}`);
+  }
+  if (bitDepth !== 8 || colorType !== 2) {
+    throw new Error(`App Store screenshot must be an opaque 8-bit RGB PNG: ${file}`);
   }
 }
 
@@ -56,14 +75,9 @@ const requiredMarkup = [
   'class="header-download"',
   'href="https://github.com/RojhatToptamus/monknot/releases"',
   'class="feature-tabs" role="tablist"',
-  'id="feature-tab-default"',
-  'id="feature-tab-split"',
-  'id="feature-tab-terminal"',
-  'id="feature-tab-pdf"',
+  ...productViews.map((view) => `id="feature-tab-${view}"`),
   'id="product-shot-panel"',
   'id="product-image"',
-  'class="product-stage"',
-  'id="product-stage-view"',
   'role="tabpanel"',
   'tabindex="0"',
   'name="theme-variant"',
@@ -71,19 +85,24 @@ const requiredMarkup = [
   'class="preview-workspace"',
   'class="preview-sidebar"',
   'class="preview-editor"',
-  'class="preview-source"',
-  'class="preview-document"',
   'class="preview-window-controls"',
-  '50+ themes.',
-  'width="3600"',
-  'height="2250"',
+  "50+ themes",
+  'width="2880"',
+  'height="1800"',
+  "Brasspants",
+  "Codechimp",
+  "Greaseball",
+  "Sockpuppet",
+  "Forge",
+  "Parchment",
+  "Monolith",
 ];
 
 for (const marker of requiredMarkup) {
   if (!html.includes(marker)) throw new Error(`Missing required markup: ${marker}`);
 }
 
-for (const value of ["light", "dark"]) {
+for (const value of variants) {
   const appearanceInput = new RegExp(
     `<input[^>]*name="site-appearance"[^>]*value="${value}"|<input[^>]*value="${value}"[^>]*name="site-appearance"`,
     "s",
@@ -109,7 +128,6 @@ productViews.forEach((view, index) => {
   ]) {
     if (!tag.includes(marker)) throw new Error(`Product tab ${view} is missing ${marker}.`);
   }
-
   if (index > 0 && !tag.includes('tabindex="-1"')) {
     throw new Error(`Inactive product tab ${view} must use roving tabindex.`);
   }
@@ -124,7 +142,7 @@ if (/\b(lorem ipsum|placeholder|coming soon)\b/i.test(html)) {
 }
 
 for (const forbidden of [
-  'id="appearance-proof"',
+  'class="product-stage__bar"',
   'class="media-bar"',
   'class="traffic-light',
   "20 light presets. 31 dark.",
@@ -132,80 +150,63 @@ for (const forbidden of [
   "codex-dark",
   "Real app",
   "working tree clean",
+  "Project-Borealis",
   'class="theme-tokens"',
-  'id="terminal-palette"',
 ]) {
   if (html.includes(forbidden)) throw new Error(`Removed website content remains: ${forbidden}`);
 }
 
-const systemAppearanceInput =
-  /<input[^>]*name="site-appearance"[^>]*value="system"|<input[^>]*value="system"[^>]*name="site-appearance"/s;
-if (systemAppearanceInput.test(html)) {
-  throw new Error("System appearance control remains in index.html");
-}
-
-if ((html.match(/<h1\b/g) ?? []).length !== 1) {
-  throw new Error("Expected exactly one h1.");
-}
-
-if (html.includes('aria-describedby="theme-caption theme-details"')) {
-  throw new Error("Theme select should not announce the full terminal palette on focus.");
-}
+if ((html.match(/<h1\b/g) ?? []).length !== 1) throw new Error("Expected exactly one h1.");
 
 const mainJavaScript = await readFile(resolve(root, "main.js"), "utf8");
-if (!mainJavaScript.includes('fetch("assets/theme-catalog.json")')) {
-  throw new Error("Theme explorer is not connected to the generated catalog.");
-}
-
 for (const marker of [
+  'fetch("assets/theme-catalog.json")',
   'document.querySelectorAll(\'[role="tab"][data-feature]\')',
   'productShotPanel?.setAttribute("aria-labelledby"',
   'productShotPanel.setAttribute("aria-busy", "true")',
-  "await preloadProductFeature(id)",
+  "await preloadProductFeature(id, appearance)",
   "image.naturalWidth > 0",
   'value?.sourceVersion !== "monknot-theme-v3"',
-  'dark: "harbor-dark"',
-  "productFeatureRequest",
-  "setSelectedProductTab",
-  "setupProductShowcase()",
+  'default: "01"',
+  'default: "06"',
+  '"brasspants-dark"',
+  '"codechimp-dark"',
+  '"greaseball-dark"',
+  '"sockpuppet-dark"',
+  '"forge-dark"',
+  '"parchment-dark"',
+  '"monolith-dark"',
   '"--preview-sidebar"',
-  '"--preview-ink-2"',
-  '"--preview-ink-3"',
-  "theme.palette.length",
-  'document.querySelectorAll(\'input[name="site-appearance"]\')',
-  "siteAppearance.hidden = false",
+  '"--preview-selection"',
+  "setupProductShowcase()",
+  "setupThemeExplorer()",
 ]) {
   if (!mainJavaScript.includes(marker)) {
-    throw new Error(`Theme interactions are missing required behavior: ${marker}`);
+    throw new Error(`Website interactions are missing required behavior: ${marker}`);
   }
 }
 
 const styles = await readFile(resolve(root, "styles.css"), "utf8");
-if (/\.(?:preview-tools|preview-terminal|traffic-light|media-bar|window-chrome)\b/.test(styles)) {
-  throw new Error("Removed simulated product UI selectors remain in styles.css.");
-}
-
 for (const marker of [
   ".feature-tabs",
+  ".product-shot",
+  "aspect-ratio: 16 / 10",
   ".preview-titlebar",
   ".preview-workspace",
   ".preview-sidebar",
   ".preview-editor",
-  ".preview-source",
-  ".preview-document",
   ".preview-window-controls",
 ]) {
   if (!styles.includes(marker)) throw new Error(`Missing required interface styling: ${marker}`);
 }
 
-if (styles.includes("transform: scale(0.998)")) {
-  throw new Error("Product switching must not animate position or scale.");
+for (const forbidden of [
+  "aspect-ratio: 3600 / 2209",
+  "translateY(-1.822222%)",
+  "height: 101.856044%",
+  ".product-stage__bar",
+]) {
+  if (styles.includes(forbidden)) throw new Error(`Legacy screenshot patch remains: ${forbidden}`);
 }
 
-for (const cropMarker of ["aspect-ratio: 3600 / 2209", "transform: translateY(-1.822222%)"]) {
-  if (!styles.includes(cropMarker)) {
-    throw new Error(`Shared product-image crop is missing: ${cropMarker}`);
-  }
-}
-
-console.log(`Checked ${requiredFiles.length} files and ${localAnchors.length} local links.`);
+console.log(`Checked ${requiredFiles.length} files, ${appStoreScreenshots.length} App Store masters, ${productViews.length} product tabs, and ${localAnchors.length} local links.`);

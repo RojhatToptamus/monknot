@@ -2,14 +2,11 @@ const skipLink = document.querySelector(".skip-link");
 const mainContent = document.querySelector("#main-content");
 const siteThemeColor = document.querySelector("#site-theme-color");
 const siteAppearance = document.querySelector(".site-appearance");
-const siteAppearanceInputs = Array.from(
-  document.querySelectorAll('input[name="site-appearance"]'),
-);
+const siteAppearanceInputs = Array.from(document.querySelectorAll('input[name="site-appearance"]'));
 const featureTabs = Array.from(document.querySelectorAll('[role="tab"][data-feature]'));
 const productShotPanel = document.querySelector("#product-shot-panel");
 const productSource = document.querySelector("#product-source");
 const productImage = document.querySelector("#product-image");
-const productStageView = document.querySelector("#product-stage-view");
 const themeExplorer = document.querySelector("#theme-explorer");
 const variantInputs = Array.from(document.querySelectorAll('input[name="theme-variant"]'));
 const featuredThemes = document.querySelector("#featured-themes");
@@ -25,31 +22,55 @@ const palettePreview = document.querySelector("#palette-preview");
 
 const productFeatures = {
   default: {
-    image: "monknot-default",
-    label: "Markdown editor",
-    alt: "Monknot with the Project Borealis workspace open in its Markdown source editor.",
+    label: "Editor",
+    alt: "Monknot with the Atlas workspace open in its Markdown editor.",
   },
   split: {
-    image: "monknot-split",
-    label: "Editor + preview",
-    alt: "Monknot showing Project Borealis Markdown source and its rendered preview side by side.",
+    label: "Split",
+    alt: "Monknot showing Markdown source and its rendered preview side by side in the Atlas workspace.",
   },
   terminal: {
-    image: "monknot-terminal",
     label: "Terminal",
-    alt: "Monknot with a shell session open beside the Project Borealis Markdown editor.",
+    alt: "Monknot with a terminal session open beside the Atlas Markdown editor.",
   },
   pdf: {
-    image: "monknot-pdf",
-    label: "PDF reader",
-    alt: "Monknot displaying the exported Project Borealis PDF with its annotation toolbar.",
+    label: "PDF",
+    alt: "Monknot displaying a sharp field-note PDF with its annotation toolbar.",
+  },
+  themes: {
+    label: "Themes",
+    alt: "Monknot showing eight featured theme families and a simplified Monolith editor preview.",
   },
 };
 
-const featuredThemeIDs = {
-  light: ["harbor-light", "parchment-light", "brasspants-light", "everforest-light", "monolith-light"],
-  dark: ["harbor-dark", "parchment-dark", "brasspants-dark", "everforest-dark", "monolith-dark"],
+const appStoreScreenshotNumbers = {
+  dark: { default: "01", split: "02", terminal: "03", pdf: "04", themes: "05" },
+  light: { default: "06", split: "07", terminal: "08", pdf: "09", themes: "10" },
 };
+
+const featuredThemeIDs = {
+  light: [
+    "harbor-light",
+    "brasspants-light",
+    "codechimp-light",
+    "greaseball-light",
+    "sockpuppet-light",
+    "forge-light",
+    "parchment-light",
+    "monolith-light",
+  ],
+  dark: [
+    "harbor-dark",
+    "brasspants-dark",
+    "codechimp-dark",
+    "greaseball-dark",
+    "sockpuppet-dark",
+    "forge-dark",
+    "parchment-dark",
+    "monolith-dark",
+  ],
+};
+
 const selectedThemeIDs = {
   light: "harbor-light",
   dark: "harbor-dark",
@@ -58,21 +79,32 @@ const selectedThemeIDs = {
 let catalog;
 let activeVariant = "dark";
 let activeProductFeature = "default";
+let activeSiteAppearance = "dark";
 let productFeatureRequest = 0;
 const productFeaturePreloads = new Map();
 
-function featureSrcset(feature) {
+function featureStem(id, appearance = activeSiteAppearance) {
+  return `${id}-${appearance}`;
+}
+
+function featureSrcset(id, appearance = activeSiteAppearance) {
+  const stem = featureStem(id, appearance);
   return [
-    `assets/${feature.image}-1200.webp 1200w`,
-    `assets/${feature.image}-2400.webp 2400w`,
-    `assets/${feature.image}.webp 3600w`,
+    `assets/product/${stem}-960.webp 960w`,
+    `assets/product/${stem}-1920.webp 1920w`,
+    `assets/product/${stem}-2880.webp 2880w`,
   ].join(", ");
 }
 
-function preloadProductFeature(id) {
-  if (productFeaturePreloads.has(id)) return productFeaturePreloads.get(id);
+function featureFallback(id, appearance = activeSiteAppearance) {
+  const number = appStoreScreenshotNumbers[appearance][id];
+  return `app-store-screenshots/${number}-${id}-${appearance}.png`;
+}
 
-  const feature = productFeatures[id];
+function preloadProductFeature(id, appearance = activeSiteAppearance) {
+  const key = `${id}-${appearance}`;
+  if (productFeaturePreloads.has(key)) return productFeaturePreloads.get(key);
+
   const preload = new Promise((resolve) => {
     const image = new Image();
     let settled = false;
@@ -91,16 +123,14 @@ function preloadProductFeature(id) {
     image.addEventListener("error", () => finish(false), { once: true });
     image.decoding = "async";
     image.sizes = productSource?.sizes || "100vw";
-    image.srcset = featureSrcset(feature);
-    image.src = `assets/${feature.image}.jpg`;
+    image.srcset = featureSrcset(id, appearance);
+    image.src = featureFallback(id, appearance);
     if (image.complete) finish(image.naturalWidth > 0);
   });
 
-  productFeaturePreloads.set(id, preload);
+  productFeaturePreloads.set(key, preload);
   preload.then((success) => {
-    if (!success && productFeaturePreloads.get(id) === preload) {
-      productFeaturePreloads.delete(id);
-    }
+    if (!success && productFeaturePreloads.get(key) === preload) productFeaturePreloads.delete(key);
   });
   return preload;
 }
@@ -117,37 +147,50 @@ function setSelectedProductTab(id, moveFocus = false) {
   return activeTab;
 }
 
-async function selectProductFeature(id, moveFocus = false) {
+async function showProductImage(id, appearance, request) {
   const feature = productFeatures[id];
-  if (!feature || !productSource || !productImage || !productStageView || !productShotPanel) return;
-  if (id === activeProductFeature && !productShotPanel.hasAttribute("aria-busy")) {
-    setSelectedProductTab(id, moveFocus);
-    return;
-  }
+  const loaded = await preloadProductFeature(id, appearance);
+  if (request !== productFeatureRequest || !loaded) return false;
 
+  productSource.srcset = featureSrcset(id, appearance);
+  productImage.src = featureFallback(id, appearance);
+  productImage.alt = feature.alt;
+  productShotPanel.removeAttribute("aria-busy");
+  productShotPanel.classList.remove("is-changing");
+  return true;
+}
+
+async function selectProductFeature(id, moveFocus = false) {
+  if (!productFeatures[id] || !productSource || !productImage || !productShotPanel) return;
+  const previous = activeProductFeature;
+  activeProductFeature = id;
   const activeTab = setSelectedProductTab(id, moveFocus);
-
   const request = ++productFeatureRequest;
   productShotPanel.classList.add("is-changing");
   productShotPanel.setAttribute("aria-busy", "true");
-  const loaded = await preloadProductFeature(id);
-  if (request !== productFeatureRequest) return;
-  if (!loaded) {
+
+  const loaded = await showProductImage(id, activeSiteAppearance, request);
+  if (loaded) return;
+
+  if (request === productFeatureRequest) {
+    activeProductFeature = previous;
     const restoreFocus = moveFocus || document.activeElement === activeTab;
-    setSelectedProductTab(activeProductFeature, restoreFocus);
+    setSelectedProductTab(previous, restoreFocus);
     productShotPanel.removeAttribute("aria-busy");
     productShotPanel.classList.remove("is-changing");
-    return;
   }
+}
 
-  activeProductFeature = id;
-
-  productSource.srcset = featureSrcset(feature);
-  productImage.src = `assets/${feature.image}.jpg`;
-  productImage.alt = feature.alt;
-  productStageView.textContent = feature.label;
-  productShotPanel.removeAttribute("aria-busy");
-  productShotPanel.classList.remove("is-changing");
+async function refreshProductAppearance() {
+  if (!productShotPanel) return;
+  const request = ++productFeatureRequest;
+  productShotPanel.classList.add("is-changing");
+  productShotPanel.setAttribute("aria-busy", "true");
+  const loaded = await showProductImage(activeProductFeature, activeSiteAppearance, request);
+  if (!loaded && request === productFeatureRequest) {
+    productShotPanel.removeAttribute("aria-busy");
+    productShotPanel.classList.remove("is-changing");
+  }
 }
 
 function setupProductShowcase() {
@@ -160,7 +203,6 @@ function setupProductShowcase() {
       if (event.key === "Home") nextIndex = 0;
       if (event.key === "End") nextIndex = featureTabs.length - 1;
       if (nextIndex === undefined) return;
-
       event.preventDefault();
       selectProductFeature(featureTabs[nextIndex].dataset.feature, true);
     });
@@ -176,9 +218,21 @@ function savedSiteAppearance() {
   }
 }
 
+function syncThemeVariant(appearance) {
+  if (!catalog || activeVariant === appearance) return;
+  activeVariant = appearance;
+  variantInputs.forEach((input) => {
+    input.checked = input.value === activeVariant;
+  });
+  renderVariantOptions();
+}
+
 function applySiteAppearance(preference, persist = true) {
+  activeSiteAppearance = preference;
   document.documentElement.dataset.siteTheme = preference;
-  siteThemeColor?.setAttribute("content", preference === "dark" ? "#12110f" : "#f9f9f7");
+  siteThemeColor?.setAttribute("content", preference === "dark" ? "#191415" : "#faf6f0");
+  refreshProductAppearance();
+  syncThemeVariant(preference);
 
   if (!persist) return;
   try {
@@ -221,9 +275,9 @@ function mix(fromHex, targetHex, amount) {
   );
 }
 
-function rgba(hex, alpha) {
-  const color = parseHex(hex);
-  return `rgba(${color.red}, ${color.green}, ${color.blue}, ${alpha})`;
+function rgba(hex, opacity) {
+  const { red, green, blue } = parseHex(hex);
+  return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
 }
 
 function relativeLuminance(hex) {
@@ -238,23 +292,11 @@ function relativeLuminance(hex) {
 }
 
 function validateCatalog(value) {
-  const colorPattern = /^#[0-9a-f]{6}$/i;
   if (value?.sourceVersion !== "monknot-theme-v3") return false;
-  if (!value.light?.length || !value.dark?.length || value.light.length + value.dark.length < 50) return false;
-  if (!value.light.every((theme) => theme.variant === "light")) return false;
-  if (!value.dark.every((theme) => theme.variant === "dark")) return false;
-
-  const themes = [...value.light, ...value.dark];
-  const ids = new Set(themes.map((theme) => theme.id));
-  if (ids.size !== themes.length) return false;
-
-  return themes.every(
-    (theme) =>
-      [theme.surface, theme.ink, theme.accent, theme.selection, theme.added, theme.removed, theme.skill].every(
-        (color) => colorPattern.test(color),
-      ) &&
-      Array.isArray(theme.palette) &&
-      theme.palette.length === 16,
+  const themes = [...(value.light || []), ...(value.dark || [])];
+  const colorPattern = /^#[0-9a-f]{6}$/i;
+  return themes.length >= 50 && themes.every((theme) =>
+    [theme.surface, theme.ink, theme.accent, theme.selection, theme.added, theme.skill].every((color) => colorPattern.test(color)),
   );
 }
 
@@ -262,14 +304,8 @@ function currentThemes() {
   return catalog[activeVariant];
 }
 
-function selectedTheme() {
-  const themes = currentThemes();
-  return themes.find((theme) => theme.id === selectedThemeIDs[activeVariant]) ?? themes[0];
-}
-
 function createFeaturedButton(theme) {
   const button = document.createElement("button");
-
   button.type = "button";
   button.className = "featured-theme";
   button.dataset.themeId = theme.id;
@@ -281,16 +317,15 @@ function createFeaturedButton(theme) {
 
 function renderVariantOptions() {
   const themes = currentThemes();
-  const fragment = document.createDocumentFragment();
-
+  const options = document.createDocumentFragment();
   themeSelect.textContent = "";
   for (const theme of themes) {
     const option = document.createElement("option");
     option.value = theme.id;
     option.textContent = theme.name;
-    fragment.append(option);
+    options.append(option);
   }
-  themeSelect.append(fragment);
+  themeSelect.append(options);
 
   featuredThemes.textContent = "";
   for (const id of featuredThemeIDs[activeVariant]) {
@@ -304,25 +339,20 @@ function renderVariantOptions() {
 
 function applyPreview(theme) {
   const dark = relativeLuminance(theme.surface) < 0.45;
-  const previewTokens = {
+  const tokens = {
     "--preview-surface": theme.surface,
-    "--preview-ink": theme.ink,
-    "--preview-ink-2": rgba(theme.ink, 0.62),
-    "--preview-ink-3": rgba(theme.ink, 0.4),
     "--preview-sidebar": mix(theme.surface, theme.ink, dark ? 0.075 : 0.028),
     "--preview-surface-2": mix(theme.surface, theme.ink, dark ? 0.11 : 0.05),
-    "--preview-line": rgba(theme.ink, dark ? 0.09 : 0.12),
-    "--preview-line-2": rgba(theme.ink, dark ? 0.06 : 0.08),
-    "--preview-hover": rgba(theme.ink, dark ? 0.06 : 0.055),
+    "--preview-ink": theme.ink,
+    "--preview-ink-2": rgba(theme.ink, 0.64),
+    "--preview-ink-3": rgba(theme.ink, 0.42),
+    "--preview-line": rgba(theme.ink, dark ? 0.11 : 0.13),
     "--preview-accent": theme.accent,
     "--preview-selection": theme.selection,
     "--preview-added": theme.added,
     "--preview-skill": theme.skill,
   };
-
-  for (const [property, value] of Object.entries(previewTokens)) {
-    palettePreview.style.setProperty(property, value);
-  }
+  for (const [property, value] of Object.entries(tokens)) palettePreview.style.setProperty(property, value);
 }
 
 function selectTheme(id) {
@@ -340,36 +370,33 @@ function selectTheme(id) {
   for (const button of featuredThemes.querySelectorAll("button[data-theme-id]")) {
     button.setAttribute("aria-pressed", String(button.dataset.themeId === theme.id));
   }
-
   applyPreview(theme);
 }
 
 function stepTheme(direction) {
   const themes = currentThemes();
   const currentIndex = themes.findIndex((theme) => theme.id === selectedThemeIDs[activeVariant]);
-  const nextIndex = (currentIndex + direction + themes.length) % themes.length;
-  selectTheme(themes[nextIndex].id);
+  selectTheme(themes[(currentIndex + direction + themes.length) % themes.length].id);
 }
 
 async function setupThemeExplorer() {
   if (!themeExplorer) return;
-
   try {
     const response = await fetch("assets/theme-catalog.json");
     if (!response.ok) return;
-
     const value = await response.json();
     if (!validateCatalog(value)) return;
     catalog = value;
+    activeVariant = activeSiteAppearance;
 
     variantInputs.forEach((input) => {
+      input.checked = input.value === activeVariant;
       input.addEventListener("change", () => {
         if (!input.checked) return;
         activeVariant = input.value;
         renderVariantOptions();
       });
     });
-
     themeSelect.addEventListener("change", () => selectTheme(themeSelect.value));
     previousTheme.addEventListener("click", () => stepTheme(-1));
     nextTheme.addEventListener("click", () => stepTheme(1));
@@ -383,28 +410,8 @@ skipLink?.addEventListener("click", () => {
   window.requestAnimationFrame(() => mainContent?.focus({ preventScroll: true }));
 });
 
-const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-const revealItems = Array.from(document.querySelectorAll(".reveal"));
-
-if (reduceMotion || !("IntersectionObserver" in window)) {
-  revealItems.forEach((item) => item.classList.add("is-visible"));
-} else {
-  document.documentElement.classList.add("motion-ready");
-  const revealObserver = new IntersectionObserver(
-    (entries, observer) => {
-      entries.forEach((entry) => {
-        if (!entry.isIntersecting) return;
-        entry.target.classList.add("is-visible");
-        observer.unobserve(entry.target);
-      });
-    },
-    { rootMargin: "0px 0px -8%", threshold: 0.08 },
-  );
-  revealItems.forEach((item) => revealObserver.observe(item));
-}
-
 const year = document.querySelector("#current-year");
 if (year) year.textContent = String(new Date().getFullYear());
 
-setupThemeExplorer();
 setupProductShowcase();
+setupThemeExplorer();

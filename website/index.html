@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Monknot is a native macOS workspace for Markdown, text and source files, searchable PDFs, and an embedded terminal."
+      content="Monknot is a native macOS workspace for Markdown, searchable PDFs, and terminal sessions beside the files already on your disk."
     />
-    <meta name="theme-color" content="#12110f" id="site-theme-color" />
+    <meta name="theme-color" content="#191415" id="site-theme-color" />
     <script>
       try {
         const savedAppearance = localStorage.getItem("Monknot.siteAppearance");
@@ -28,27 +28,12 @@
           <span>Monknot</span>
         </a>
 
-        <nav class="primary-nav" aria-label="Primary navigation">
-          <a href="#product">Product</a>
-          <a href="#themes">Themes</a>
-        </nav>
-
         <div class="header-actions">
-          <a
-            class="header-download"
-            href="https://github.com/RojhatToptamus/monknot/releases"
-          >
-            Download
-          </a>
+          <a class="themes-link" href="#themes">Themes</a>
           <fieldset class="site-appearance" hidden>
             <legend class="visually-hidden">Site appearance</legend>
             <label>
-              <input
-                type="radio"
-                name="site-appearance"
-                value="light"
-                aria-label="Light appearance"
-              />
+              <input type="radio" name="site-appearance" value="light" aria-label="Light appearance" />
               <span aria-hidden="true">
                 <svg viewBox="0 0 20 20" focusable="false">
                   <circle cx="10" cy="10" r="3.25"></circle>
@@ -57,13 +42,7 @@
               </span>
             </label>
             <label>
-              <input
-                type="radio"
-                name="site-appearance"
-                value="dark"
-                aria-label="Dark appearance"
-                checked
-              />
+              <input type="radio" name="site-appearance" value="dark" aria-label="Dark appearance" checked />
               <span aria-hidden="true">
                 <svg viewBox="0 0 20 20" focusable="false">
                   <path d="M16.85 12.05A7.25 7.25 0 0 1 7.95 3.15a7.25 7.25 0 1 0 8.9 8.9Z"></path>
@@ -71,6 +50,9 @@
               </span>
             </label>
           </fieldset>
+          <a class="header-download" href="https://github.com/RojhatToptamus/monknot/releases">
+            Download
+          </a>
         </div>
       </div>
     </header>
@@ -78,87 +60,40 @@
     <main id="main-content" tabindex="-1">
       <section class="hero" id="product" aria-labelledby="hero-title">
         <div class="site-shell hero__copy">
-          <div class="hero-entrance">
-            <p class="eyebrow">Native workspace for macOS</p>
-            <h1 id="hero-title">
-              Markdown, PDFs, and a terminal.
-              <span>One window.</span>
-            </h1>
-          </div>
-
-          <div class="hero__support hero-entrance hero-entrance--delay">
-            <p>
-              Open a folder. Write, search, mark up PDFs, and run shell sessions beside the work.
-            </p>
-            <div class="hero__action-row">
-              <a
-                class="button button--primary"
-                href="https://github.com/RojhatToptamus/monknot/releases"
-              >
-                Download for macOS
-              </a>
-              <span>macOS 14+ · Apple silicon and Intel</span>
-            </div>
+          <p class="eyebrow">Native workspace for macOS</p>
+          <h1 id="hero-title">Markdown, PDFs, and a terminal. One window.</h1>
+          <p class="hero__description">
+            Open a folder and start. Monknot keeps writing, rendered previews, searchable PDFs,
+            and shell sessions beside the files already on your disk.
+          </p>
+          <div class="hero__action-row">
+            <a class="button button--primary" href="https://github.com/RojhatToptamus/monknot/releases">
+              Download for macOS
+            </a>
+            <span>macOS 14+ · Apple silicon and Intel</span>
           </div>
         </div>
 
-        <figure class="product-figure site-shell hero-entrance hero-entrance--media">
+        <figure class="product-figure site-shell">
           <div class="feature-tabs" role="tablist" aria-label="Product views">
-            <button
-              type="button"
-              id="feature-tab-default"
-              role="tab"
-              aria-selected="true"
-              aria-controls="product-shot-panel"
-              data-feature="default"
-            >
-              Default
+            <button type="button" id="feature-tab-default" role="tab" aria-selected="true" aria-controls="product-shot-panel" data-feature="default">
+              Editor
             </button>
-            <button
-              type="button"
-              id="feature-tab-split"
-              role="tab"
-              aria-selected="false"
-              aria-controls="product-shot-panel"
-              data-feature="split"
-              tabindex="-1"
-            >
+            <button type="button" id="feature-tab-split" role="tab" aria-selected="false" aria-controls="product-shot-panel" data-feature="split" tabindex="-1">
               Split
             </button>
-            <button
-              type="button"
-              id="feature-tab-terminal"
-              role="tab"
-              aria-selected="false"
-              aria-controls="product-shot-panel"
-              data-feature="terminal"
-              tabindex="-1"
-            >
+            <button type="button" id="feature-tab-terminal" role="tab" aria-selected="false" aria-controls="product-shot-panel" data-feature="terminal" tabindex="-1">
               Terminal
             </button>
-            <button
-              type="button"
-              id="feature-tab-pdf"
-              role="tab"
-              aria-selected="false"
-              aria-controls="product-shot-panel"
-              data-feature="pdf"
-              tabindex="-1"
-            >
+            <button type="button" id="feature-tab-pdf" role="tab" aria-selected="false" aria-controls="product-shot-panel" data-feature="pdf" tabindex="-1">
               PDF
+            </button>
+            <button type="button" id="feature-tab-themes" role="tab" aria-selected="false" aria-controls="product-shot-panel" data-feature="themes" tabindex="-1">
+              Themes
             </button>
           </div>
 
           <div class="product-stage">
-            <div class="product-stage__bar" aria-hidden="true">
-              <span class="product-stage__workspace">
-                <i></i>
-                <strong>Borealis</strong>
-                <em>Demo workspace</em>
-              </span>
-              <span class="product-stage__view" id="product-stage-view">Markdown editor</span>
-            </div>
-
             <div
               class="product-shot"
               id="product-shot-panel"
@@ -171,92 +106,101 @@
                 <source
                   id="product-source"
                   srcset="
-                    assets/monknot-default-1200.webp 1200w,
-                    assets/monknot-default-2400.webp 2400w,
-                    assets/monknot-default.webp      3600w
+                    assets/product/default-dark-960.webp 960w,
+                    assets/product/default-dark-1920.webp 1920w,
+                    assets/product/default-dark-2880.webp 2880w
                   "
-                  sizes="(max-width: 36rem) calc(100vw - 2.5rem), (max-width: 70rem) calc(100vw - 6rem), 64rem"
+                  sizes="(max-width: 42rem) calc(100vw - 2rem), (max-width: 94rem) calc(100vw - 6rem), 84rem"
                   type="image/webp"
                 />
                 <img
                   id="product-image"
-                  src="assets/monknot-default.jpg"
-                  width="3600"
-                  height="2250"
+                  src="app-store-screenshots/01-default-dark.png"
+                  width="2880"
+                  height="1800"
                   decoding="async"
-                  alt="Monknot with the Project Borealis workspace open in its Markdown source editor."
+                  alt="Monknot with the Atlas workspace open in its Markdown editor."
                 />
               </picture>
             </div>
           </div>
           <figcaption id="product-caption">
-            Borealis demo workspace · Captured at a consistent 150% interface scale.
+            One fixed app frame across every view · 2880 × 1800 masters
           </figcaption>
         </figure>
 
         <ul class="feature-proof site-shell" aria-label="Key features">
-          <li>Synced Markdown and HTML split views</li>
-          <li>Search text files and searchable PDFs</li>
-          <li>Scoped Markdown/text replace with batch undo</li>
-          <li>PDF highlights, underlines, and drawing</li>
-          <li>Markdown export to PDF</li>
-          <li>Quick Open, tabs, and outlines</li>
-          <li>Daily notes and wikilinks</li>
+          <li>Synced Markdown and HTML previews</li>
+          <li>Search text and searchable PDFs</li>
+          <li>Highlights, underlines, and drawing</li>
           <li>Multiple terminal sessions</li>
+          <li>Quick Open, tabs, and outlines</li>
+          <li>Markdown export to PDF</li>
+          <li>Daily notes and wikilinks</li>
+          <li>Scoped replace with batch undo</li>
         </ul>
       </section>
 
       <section class="themes-section" id="themes" aria-labelledby="themes-title">
-        <div class="section-intro site-shell reveal">
-          <p class="eyebrow">Appearance</p>
-          <div>
-            <h2 id="themes-title">50+ themes.</h2>
-            <p>
-              Choose a light or dark preset, then tune the palette and typography in Monknot.
-            </p>
-          </div>
+        <div class="site-shell section-intro">
+          <p class="eyebrow">Theme explorer</p>
+          <h2 id="themes-title">50+ themes, all the way through.</h2>
+          <p>
+            A preset changes the editor, sidebar, syntax, selection, and terminal together.
+            Start with a family below, then step through the full catalog.
+          </p>
         </div>
 
-        <div class="site-shell theme-area reveal">
+        <div class="site-shell theme-area">
           <div class="theme-explorer" id="theme-explorer" hidden>
             <div class="theme-picker">
-              <p class="control-label">Preview a preset</p>
+              <div class="theme-picker__topline">
+                <div>
+                  <p class="control-label">Featured families</p>
+                  <p class="theme-picker__note">Harbor, Brasspants, Codechimp, Greaseball, Sockpuppet, Forge, Parchment, and Monolith.</p>
+                </div>
 
-              <fieldset class="variant-options">
-                <legend class="visually-hidden">Theme appearance</legend>
-                <label>
-                  <input type="radio" name="theme-variant" value="light" />
-                  <span>Light</span>
-                </label>
-                <label>
-                  <input type="radio" name="theme-variant" value="dark" checked />
-                  <span>Dark</span>
-                </label>
-              </fieldset>
-
-              <div class="picker-group">
-                <p class="control-label">Featured</p>
-                <div class="featured-themes" id="featured-themes"></div>
+                <fieldset class="variant-options">
+                  <legend class="visually-hidden">Theme appearance</legend>
+                  <label>
+                    <input type="radio" name="theme-variant" value="light" aria-label="Light themes" />
+                    <span aria-hidden="true">
+                      <svg viewBox="0 0 20 20" focusable="false">
+                        <circle cx="10" cy="10" r="3.25"></circle>
+                        <path d="M10 1.5v2M10 16.5v2M1.5 10h2M16.5 10h2M4 4l1.45 1.45M14.55 14.55 16 16M16 4l-1.45 1.45M5.45 14.55 4 16"></path>
+                      </svg>
+                    </span>
+                  </label>
+                  <label>
+                    <input type="radio" name="theme-variant" value="dark" aria-label="Dark themes" checked />
+                    <span aria-hidden="true">
+                      <svg viewBox="0 0 20 20" focusable="false">
+                        <path d="M16.85 12.05A7.25 7.25 0 0 1 7.95 3.15a7.25 7.25 0 1 0 8.9 8.9Z"></path>
+                      </svg>
+                    </span>
+                  </label>
+                </fieldset>
               </div>
 
-              <label class="select-label" for="theme-select" id="theme-select-label">
-                All dark presets
-              </label>
-              <div class="select-wrap">
-                <select id="theme-select" aria-describedby="theme-caption"></select>
-              </div>
+              <div class="featured-themes" id="featured-themes"></div>
 
-              <div class="theme-stepper">
-                <button type="button" id="previous-theme">Previous</button>
-                <output id="theme-position" aria-label="Theme position">1 / 31</output>
-                <button type="button" id="next-theme">Next</button>
+              <div class="catalog-controls">
+                <label class="select-label" for="theme-select" id="theme-select-label">All dark presets</label>
+                <div class="select-wrap">
+                  <select id="theme-select" aria-describedby="theme-caption"></select>
+                </div>
+                <div class="theme-stepper">
+                  <button type="button" id="previous-theme" aria-label="Previous theme">←</button>
+                  <output id="theme-position" aria-label="Theme position">1 / 31</output>
+                  <button type="button" id="next-theme" aria-label="Next theme">→</button>
+                </div>
               </div>
             </div>
 
             <div class="theme-output">
               <div class="theme-output__heading">
                 <div>
-                  <p class="control-label">Theme preview</p>
+                  <p class="control-label">Selected preset</p>
                   <h3 id="theme-name">Harbor</h3>
                 </div>
                 <p id="theme-caption">Harbor · Dark</p>
@@ -265,109 +209,27 @@
               <div class="palette-preview" id="palette-preview" aria-hidden="true">
                 <div class="preview-window">
                   <div class="preview-titlebar">
-                    <span class="preview-window-controls">
-                      <i></i><i></i><i></i>
-                    </span>
-
-                    <span class="preview-icon-button preview-sidebar-toggle">
-                      <svg viewBox="0 0 18 18" aria-hidden="true">
-                        <rect x="2.5" y="3" width="13" height="12" rx="2"></rect>
-                        <path d="M7 3v12"></path>
-                      </svg>
-                    </span>
-
-                    <div class="preview-tab">
-                      <i class="preview-file-icon"></i>
-                      <span>README.md</span>
-                      <i class="preview-close-icon"></i>
-                    </div>
-
-                    <div class="preview-titlebar__actions">
-                      <span class="preview-segmented">
-                        <i class="preview-source-icon is-active"></i>
-                        <i class="preview-eye-icon"></i>
-                      </span>
-                      <span class="preview-icon-button preview-panel-toggle">
-                        <svg viewBox="0 0 18 18" aria-hidden="true">
-                          <rect x="2.5" y="3" width="13" height="12" rx="2"></rect>
-                          <path d="M11 3v12"></path>
-                        </svg>
-                      </span>
-                    </div>
+                    <span class="preview-window-controls"><i></i><i></i><i></i></span>
+                    <div class="preview-tab"><i></i><span>README.md</span></div>
                   </div>
-
                   <div class="preview-workspace">
                     <aside class="preview-sidebar">
-                      <div class="preview-sidebar__header">
-                        <span class="preview-sidebar__title">
-                          <i class="preview-folder-icon"></i><i class="preview-nav-line is-wide"></i>
-                        </span>
-                        <span class="preview-sidebar__actions"><i></i><i></i></span>
-                      </div>
-
-                      <div class="preview-tree">
-                        <div class="preview-tree-row">
-                          <i class="preview-disclosure"></i><i class="preview-folder-icon"></i><i class="preview-nav-line"></i>
-                        </div>
-                        <div class="preview-tree-row">
-                          <i class="preview-disclosure is-open"></i><i class="preview-folder-icon"></i><i class="preview-nav-line is-wide"></i>
-                        </div>
-                        <div class="preview-tree-row is-nested">
-                          <i class="preview-file-icon"></i><i class="preview-nav-line is-long"></i>
-                        </div>
-                        <div class="preview-tree-row is-selected">
-                          <i class="preview-file-icon"></i><i class="preview-nav-line is-medium"></i>
-                        </div>
-                      </div>
-
-                      <div class="preview-sidebar__footer">
-                        <i class="preview-settings-icon"></i><i class="preview-nav-line is-short"></i>
-                      </div>
+                      <span>notes</span>
+                      <span>research</span>
+                      <span class="is-selected">README.md</span>
                     </aside>
-
                     <div class="preview-editor">
-                      <div class="preview-editor__bar">
-                        <span class="preview-toolbar-line"></span>
-                        <i></i>
-                        <span class="preview-toolbar-dot"></span>
-                        <span class="preview-toolbar-dot"></span>
-                        <span class="preview-toolbar-line is-trailing"></span>
-                      </div>
-
-                      <div class="preview-editor__panes">
-                        <div class="preview-source">
-                          <div class="preview-code-lines">
-                            <i class="code-line is-heading w-48"></i>
-                            <i class="code-line w-76"></i>
-                            <i class="code-line w-58"></i>
-                            <i class="code-line is-quote w-82"></i>
-                            <i class="code-line is-heading w-36"></i>
-                            <i class="code-line w-74"></i>
-                            <i class="code-line is-code w-54"></i>
-                            <i class="code-line w-43"></i>
-                          </div>
-                          <span class="preview-outline-rail"><i></i><i></i><i></i><i></i></span>
-                        </div>
-
-                        <article class="preview-document">
-                          <i class="document-title-line"></i>
-                          <i class="document-copy-line w-82"></i>
-                          <i class="document-copy-line w-61"></i>
-                          <div class="document-callout">
-                            <i class="document-copy-line w-76"></i>
-                            <i class="document-copy-line w-48"></i>
-                          </div>
-                          <i class="document-subtitle-line"></i>
-                          <div class="document-task is-done"><i></i><span></span></div>
-                          <div class="document-task"><i></i><span class="w-76"></span></div>
-                          <div class="document-task"><i></i><span class="w-58"></span></div>
-                        </article>
-                      </div>
+                      <p class="syntax-heading"># Atlas field notes</p>
+                      <p class="syntax-body">An offline field guide.</p>
+                      <p class="syntax-quote">│ Focus: map the route</p>
+                      <p class="syntax-heading">## This week</p>
+                      <p class="syntax-added">- [x] Compare routes</p>
+                      <p class="syntax-muted">- [ ] Review weather</p>
+                      <p class="syntax-link">[[route-plan]]</p>
                     </div>
                   </div>
                 </div>
               </div>
-
               <p class="visually-hidden" id="theme-announcement" aria-live="polite" aria-atomic="true"></p>
             </div>
           </div>
