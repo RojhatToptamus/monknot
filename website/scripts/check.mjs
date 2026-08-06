@@ -202,7 +202,7 @@ const localReferences = [html, supportHTML, privacyHTML].flatMap((pageHTML) =>
 );
 await Promise.all(
   localReferences
-    .filter((file) => file !== "/" && file !== "/support" && file !== "/privacy")
+    .filter((file) => file !== "/" && file !== "/support" && file !== "/privacy" && !file.startsWith("/_vercel/"))
     .map((file) => access(resolve(root, file.replace(/^\//, ""))))
 );
 
