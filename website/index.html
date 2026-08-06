@@ -1,17 +1,49 @@
 <!doctype html>
-<html lang="en" data-site-theme="dark">
+<html lang="en" data-site-theme="dark" prefix="og: https://ogp.me/ns#">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="application-name" content="Monknot" />
     <meta
       name="description"
-      content="A native macOS workspace for Markdown, source files, searchable PDFs, and terminal sessions."
+      content="Open a folder and work with Markdown, text files, searchable PDFs, and terminal sessions in one native macOS workspace."
     />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
     <meta name="theme-color" content="#121212" id="theme-color" />
-    <title>Monknot — Markdown, PDFs, and a terminal. One window.</title>
-    <link rel="icon" href="shots/icon-graphite.png" />
-    <link rel="apple-touch-icon" href="shots/icon-graphite.png" />
+    <title>Monknot for macOS — Markdown Editor, PDFs &amp; Terminal</title>
+    <link rel="canonical" href="https://monknot.app/" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Monknot" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:title" content="Monknot — Markdown, PDFs, and a terminal. One window." />
+    <meta property="og:description" content="A native macOS workspace for the files already on your disk." />
+    <meta property="og:url" content="https://monknot.app/" />
+    <meta property="og:image" content="https://monknot.app/social/monknot-social.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Monknot showing Markdown source and its rendered preview side by side in a dark macOS workspace." />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Monknot — Markdown, PDFs, and a terminal. One window." />
+    <meta name="twitter:description" content="A native macOS workspace for the files already on your disk." />
+    <meta name="twitter:image" content="https://monknot.app/social/monknot-social.jpg" />
+    <meta name="twitter:image:alt" content="Monknot showing Markdown source and its rendered preview side by side in a dark macOS workspace." />
+
+    <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png" />
     <link rel="stylesheet" href="styles.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "Monknot",
+        "url": "https://monknot.app/",
+        "description": "A native macOS workspace for Markdown, text files, searchable PDFs, and terminal sessions.",
+        "inLanguage": "en"
+      }
+    </script>
   </head>
   <body>
     <div class="site-frame" id="site-frame">
@@ -20,7 +52,7 @@
       <header class="site-header">
         <div class="header-inner">
           <a class="brand" href="#top" aria-label="Monknot home">
-            <img src="shots/icon-graphite.png" alt="" width="512" height="512" />
+            <img src="icons/brand-icon.png" alt="" width="64" height="64" />
             <span>Monknot</span>
           </a>
 

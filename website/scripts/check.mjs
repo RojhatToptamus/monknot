@@ -3,7 +3,12 @@ import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
+const canonicalURL = "https://monknot.app/";
 const expectedAssets = new Map([
+  ["icons/apple-touch-icon.png", "1e95f8ecd2186e67e1c33dd37dee8ad8ebab2f480c8091c775bfa9f9b89bc55e"],
+  ["icons/brand-icon.png", "8a63a843862321a96613f0a619ae2687153e968daa467af432e6b0d47f69336d"],
+  ["icons/favicon-64.png", "8a63a843862321a96613f0a619ae2687153e968daa467af432e6b0d47f69336d"],
+  ["social/monknot-social.jpg", "b7947a5ca6ec211bc30bb76626af75ab1f4ed6f5d56d595647624a39dee5d234"],
   ["shots/icon-graphite.png", "caeea8d148e460babb768f9b99597cee91294b703c7e0c7bcdd567ac4b7c334a"],
   ["shots/macbook-pro.png", "42ab04218d7e3312a25dcc977fcdaa0787a91597c54337490ad5029b0aa8c129"],
   ["shots/editor-dark.jpg", "1aff6cf96c868f166cff17d2df4996087e146224953879d68af78b0227bc0319"],
@@ -18,7 +23,7 @@ const expectedAssets = new Map([
   ["shots/terminal-light.jpg", "285be266ac7f12a9c2f0b345b0b0047df5e2d5763be1687cca43c5b47823503a"],
 ]);
 
-await Promise.all(["index.html", "support.html", "privacy.html", "styles.css", "main.js", "page.js", "theme-catalog.json", "vercel.json", ...expectedAssets.keys()].map((file) => access(resolve(root, file))));
+await Promise.all(["index.html", "support.html", "privacy.html", "styles.css", "main.js", "page.js", "theme-catalog.json", "robots.txt", "sitemap.xml", "vercel.json", ...expectedAssets.keys()].map((file) => access(resolve(root, file))));
 
 for (const [file, expectedHash] of expectedAssets) {
   const data = await readFile(resolve(root, file));
@@ -33,6 +38,8 @@ const styles = await readFile(resolve(root, "styles.css"), "utf8");
 const script = await readFile(resolve(root, "main.js"), "utf8");
 const pageScript = await readFile(resolve(root, "page.js"), "utf8");
 const themeCatalog = JSON.parse(await readFile(resolve(root, "theme-catalog.json"), "utf8"));
+const robots = await readFile(resolve(root, "robots.txt"), "utf8");
+const sitemap = await readFile(resolve(root, "sitemap.xml"), "utf8");
 const vercel = JSON.parse(await readFile(resolve(root, "vercel.json"), "utf8"));
 
 if (vercel.buildCommand !== "npm run build" || vercel.outputDirectory !== "dist") {
@@ -45,6 +52,24 @@ if (vercel.cleanUrls !== true || vercel.trailingSlash !== false) {
 const requiredMarkup = [
   "Markdown, PDFs, and a terminal. One window.",
   "20 light presets. 31 dark.",
+  "<title>Monknot for macOS — Markdown Editor, PDFs &amp; Terminal</title>",
+  'name="description"',
+  'content="Open a folder and work with Markdown, text files, searchable PDFs, and terminal sessions in one native macOS workspace."',
+  'name="robots" content="index, follow, max-image-preview:large"',
+  `rel="canonical" href="${canonicalURL}"`,
+  'property="og:type" content="website"',
+  'property="og:site_name" content="Monknot"',
+  'property="og:locale" content="en_US"',
+  `property="og:url" content="${canonicalURL}"`,
+  'property="og:image" content="https://monknot.app/social/monknot-social.jpg"',
+  'property="og:image:width" content="1200"',
+  'property="og:image:height" content="630"',
+  'property="og:image:alt" content="Monknot showing Markdown source and its rendered preview side by side in a dark macOS workspace."',
+  'name="twitter:card" content="summary_large_image"',
+  'name="twitter:image" content="https://monknot.app/social/monknot-social.jpg"',
+  'name="twitter:image:alt" content="Monknot showing Markdown source and its rendered preview side by side in a dark macOS workspace."',
+  'rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png"',
+  'rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png"',
   'class="laptop-stage"',
   'class="laptop-screen"',
   'src="shots/macbook-pro.png"',
@@ -61,6 +86,26 @@ for (const marker of requiredMarkup) {
   if (!html.includes(marker)) throw new Error(`Missing supplied design element: ${marker}`);
 }
 
+if ((html.match(/rel="canonical"/g) ?? []).length !== 1) throw new Error("Expected one canonical URL.");
+if (/name=["']keywords["']/i.test(html)) throw new Error("Do not add obsolete keyword metadata.");
+
+const structuredDataMatch = html.match(/<script type="application\/ld\+json">\s*([\s\S]*?)\s*<\/script>/);
+if (!structuredDataMatch) throw new Error("Missing WebSite structured data.");
+const structuredData = JSON.parse(structuredDataMatch[1]);
+if (structuredData["@context"] !== "https://schema.org" || structuredData["@type"] !== "WebSite" || structuredData.name !== "Monknot" || structuredData.url !== canonicalURL) {
+  throw new Error("WebSite structured data must match the canonical Monknot identity.");
+}
+if ("aggregateRating" in structuredData || "review" in structuredData) throw new Error("Do not publish unverified ratings or reviews.");
+
+if (robots.trim() !== `User-agent: *\nAllow: /\n\nSitemap: ${canonicalURL}sitemap.xml`) {
+  throw new Error("robots.txt must allow crawling and reference the canonical sitemap.");
+}
+const sitemapLocations = Array.from(sitemap.matchAll(/<loc>([^<]+)<\/loc>/g), (match) => match[1]);
+const expectedSitemapLocations = [canonicalURL, `${canonicalURL}support`, `${canonicalURL}privacy`];
+if (sitemapLocations.length !== expectedSitemapLocations.length || expectedSitemapLocations.some((location) => !sitemapLocations.includes(location))) {
+  throw new Error("sitemap.xml must contain the canonical homepage, support, and privacy URLs.");
+}
+
 for (const marker of ['href="/support">Support</a>', 'href="/privacy">Privacy</a>', "© 2026 Rojhat Toptamuş"]) {
   if (!html.includes(marker)) throw new Error(`Missing homepage footer element: ${marker}`);
 }
@@ -72,7 +117,10 @@ const requiredPages = [
     markers: [
       "<title>Monknot Support</title>",
       'content="Get help with Monknot, report problems, or send feedback."',
+      'name="robots" content="index, follow, max-image-preview:large"',
       'rel="canonical" href="https://monknot.app/support"',
+      'property="og:url" content="https://monknot.app/support"',
+      'name="twitter:card" content="summary_large_image"',
       "Monknot Support",
       'href="mailto:support@monknot.app"',
       "The steps needed to reproduce the problem",
@@ -87,7 +135,10 @@ const requiredPages = [
     markers: [
       "<title>Monknot Privacy Policy</title>",
       "Learn how Monknot handles files, local data, network requests, and support communications.",
+      'name="robots" content="index, follow, max-image-preview:large"',
       'rel="canonical" href="https://monknot.app/privacy"',
+      'property="og:url" content="https://monknot.app/privacy"',
+      'name="twitter:card" content="summary_large_image"',
       "Last updated: August 6, 2026",
       "Files and Documents",
       "Local Application Data",
@@ -155,4 +206,4 @@ await Promise.all(
     .map((file) => access(resolve(root, file.replace(/^\//, ""))))
 );
 
-console.log(`Checked ${expectedAssets.size} untouched source assets, 10 product views, 51 theme presets, support and privacy routes, and deployment files.`);
+console.log(`Checked ${expectedAssets.size} assets, complete SEO metadata, 10 product views, 51 theme presets, support and privacy routes, and deployment files.`);
