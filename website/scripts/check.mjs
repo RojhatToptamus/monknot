@@ -202,4 +202,10 @@ if (styles.includes("transform: scale(0.998)")) {
   throw new Error("Product switching must not animate position or scale.");
 }
 
+for (const cropMarker of ["aspect-ratio: 3600 / 2209", "transform: translateY(-1.822222%)"]) {
+  if (!styles.includes(cropMarker)) {
+    throw new Error(`Shared product-image crop is missing: ${cropMarker}`);
+  }
+}
+
 console.log(`Checked ${requiredFiles.length} files and ${localAnchors.length} local links.`);

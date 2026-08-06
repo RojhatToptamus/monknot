@@ -457,7 +457,7 @@ h1 span {
 .product-shot {
   position: relative;
   overflow: hidden;
-  aspect-ratio: 8 / 5;
+  aspect-ratio: 3600 / 2209;
   background: #050504;
   isolation: isolate;
 }
@@ -490,7 +490,8 @@ h1 span {
 }
 
 .product-shot img {
-  object-fit: cover;
+  height: 101.856044%;
+  transform: translateY(-1.822222%);
 }
 
 .product-figure figcaption {
