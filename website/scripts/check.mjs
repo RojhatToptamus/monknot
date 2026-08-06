@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dirname, "..");
 const repository = resolve(root, "..");
 const expectedAssets = new Map([
-  ["shots/icon-graphite.png", "5782830cc7547778000122cf9b46bf2218e0576eb06bfc9419f963aacebd49c0"],
+  ["shots/icon-graphite.png", "caeea8d148e460babb768f9b99597cee91294b703c7e0c7bcdd567ac4b7c334a"],
   ["shots/macbook-pro.png", "42ab04218d7e3312a25dcc977fcdaa0787a91597c54337490ad5029b0aa8c129"],
   ["shots/editor-dark.jpg", "1aff6cf96c868f166cff17d2df4996087e146224953879d68af78b0227bc0319"],
   ["shots/split-dark.jpg", "67e104f82bca2df2b337f01b94c16ee8ddad348f3af1eae3fbd73a5e0fae2e1f"],
