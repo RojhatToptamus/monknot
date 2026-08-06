@@ -149,36 +149,49 @@
             </button>
           </div>
 
-          <div
-            class="product-shot"
-            id="product-shot-panel"
-            role="tabpanel"
-            aria-labelledby="feature-tab-default"
-            aria-describedby="product-caption"
-            tabindex="0"
-          >
-            <picture>
-              <source
-                id="product-source"
-                srcset="
-                  assets/monknot-default-1200.webp 1200w,
-                  assets/monknot-default-2400.webp 2400w,
-                  assets/monknot-default.webp      3600w
-                "
-                sizes="(max-width: 36rem) calc(100vw - 2.5rem), (max-width: 70rem) calc(100vw - 6rem), 64rem"
-                type="image/webp"
-              />
-              <img
-                id="product-image"
-                src="assets/monknot-default.jpg"
-                width="3600"
-                height="2250"
-                decoding="async"
-                alt="Monknot with the Project Borealis workspace open in its Markdown source editor."
-              />
-            </picture>
+          <div class="product-stage">
+            <div class="product-stage__bar" aria-hidden="true">
+              <span class="product-stage__workspace">
+                <i></i>
+                <strong>Borealis</strong>
+                <em>Demo workspace</em>
+              </span>
+              <span class="product-stage__view" id="product-stage-view">Markdown editor</span>
+            </div>
+
+            <div
+              class="product-shot"
+              id="product-shot-panel"
+              role="tabpanel"
+              aria-labelledby="feature-tab-default"
+              aria-describedby="product-caption"
+              tabindex="0"
+            >
+              <picture>
+                <source
+                  id="product-source"
+                  srcset="
+                    assets/monknot-default-1200.webp 1200w,
+                    assets/monknot-default-2400.webp 2400w,
+                    assets/monknot-default.webp      3600w
+                  "
+                  sizes="(max-width: 36rem) calc(100vw - 2.5rem), (max-width: 70rem) calc(100vw - 6rem), 64rem"
+                  type="image/webp"
+                />
+                <img
+                  id="product-image"
+                  src="assets/monknot-default.jpg"
+                  width="3600"
+                  height="2250"
+                  decoding="async"
+                  alt="Monknot with the Project Borealis workspace open in its Markdown source editor."
+                />
+              </picture>
+            </div>
           </div>
-          <figcaption id="product-caption">Project Borealis · Browse and edit workspace files.</figcaption>
+          <figcaption id="product-caption">
+            Borealis demo workspace · Captured at a consistent 150% interface scale.
+          </figcaption>
         </figure>
 
         <ul class="feature-proof site-shell" aria-label="Key features">

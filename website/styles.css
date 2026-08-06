@@ -397,24 +397,96 @@ h1 span {
   color: var(--ink);
 }
 
-.product-shot {
+.product-stage {
   overflow: hidden;
-  aspect-ratio: 8 / 5;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--surface);
+  background: #0c0b0a;
   box-shadow: var(--shot-shadow);
-  transition: opacity 120ms ease;
 }
 
-.product-shot.is-changing {
-  opacity: 0.72;
+.product-stage__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 2.6rem;
+  padding: 0 0.9rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  background: #171512;
+  color: rgba(249, 249, 247, 0.7);
+  font-size: 0.63rem;
+  letter-spacing: 0.015em;
+}
+
+.product-stage__workspace,
+.product-stage__view {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.product-stage__workspace {
+  gap: 0.45rem;
+}
+
+.product-stage__workspace i {
+  width: 0.42rem;
+  height: 0.42rem;
+  flex: 0 0 auto;
+  border-radius: 2px;
+  background: var(--accent-fill);
+}
+
+.product-stage__workspace strong {
+  color: #f9f9f7;
+  font-weight: 600;
+}
+
+.product-stage__workspace em {
+  color: rgba(249, 249, 247, 0.42);
+  font-style: normal;
+}
+
+.product-stage__view {
+  justify-content: flex-end;
+  width: 8.5rem;
+  color: rgba(249, 249, 247, 0.56);
+  text-align: right;
+}
+
+.product-shot {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 8 / 5;
+  background: #050504;
+  isolation: isolate;
+}
+
+.product-shot::after {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  content: "";
+  pointer-events: none;
 }
 
 .product-shot picture,
 .product-shot img {
+  display: block;
   width: 100%;
   height: 100%;
+}
+
+.product-shot picture {
+  position: absolute;
+  inset: 0;
+  background: #050504;
+  transition: opacity 120ms ease;
+}
+
+.product-shot.is-changing picture {
+  opacity: 0.72;
 }
 
 .product-shot img {
@@ -422,7 +494,8 @@ h1 span {
 }
 
 .product-figure figcaption {
-  padding-top: 0.72rem;
+  min-height: 2rem;
+  padding-top: 0.75rem;
   color: var(--ink-faint);
   font-size: 0.64rem;
 }
@@ -1583,6 +1656,19 @@ h2 {
     padding-inline: 0.4rem;
   }
 
+  .product-stage__bar {
+    height: 2.35rem;
+    padding-inline: 0.7rem;
+  }
+
+  .product-stage__workspace em {
+    display: none;
+  }
+
+  .product-stage__view {
+    width: auto;
+  }
+
   .feature-proof {
     grid-template-columns: 1fr;
   }
@@ -1701,8 +1787,8 @@ h2 {
 
   .motion-ready .reveal,
   .motion-ready .reveal.is-visible,
-  .product-shot,
-  .product-shot.is-changing,
+  .product-shot picture,
+  .product-shot.is-changing picture,
   .palette-preview,
   .palette-preview * {
     opacity: 1;

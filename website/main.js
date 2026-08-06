@@ -9,7 +9,7 @@ const featureTabs = Array.from(document.querySelectorAll('[role="tab"][data-feat
 const productShotPanel = document.querySelector("#product-shot-panel");
 const productSource = document.querySelector("#product-source");
 const productImage = document.querySelector("#product-image");
-const productCaption = document.querySelector("#product-caption");
+const productStageView = document.querySelector("#product-stage-view");
 const themeExplorer = document.querySelector("#theme-explorer");
 const variantInputs = Array.from(document.querySelectorAll('input[name="theme-variant"]'));
 const featuredThemes = document.querySelector("#featured-themes");
@@ -26,23 +26,23 @@ const palettePreview = document.querySelector("#palette-preview");
 const productFeatures = {
   default: {
     image: "monknot-default",
+    label: "Markdown editor",
     alt: "Monknot with the Project Borealis workspace open in its Markdown source editor.",
-    caption: "Project Borealis · Browse and edit workspace files.",
   },
   split: {
     image: "monknot-split",
+    label: "Editor + preview",
     alt: "Monknot showing Project Borealis Markdown source and its rendered preview side by side.",
-    caption: "Project Borealis · Markdown source and live preview.",
   },
   terminal: {
     image: "monknot-terminal",
+    label: "Terminal",
     alt: "Monknot with a shell session open beside the Project Borealis Markdown editor.",
-    caption: "Project Borealis · Run a shell beside the active document.",
   },
   pdf: {
     image: "monknot-pdf",
+    label: "PDF reader",
     alt: "Monknot displaying the exported Project Borealis PDF with its annotation toolbar.",
-    caption: "Project Borealis · Read and annotate PDFs.",
   },
 };
 
@@ -119,7 +119,7 @@ function setSelectedProductTab(id, moveFocus = false) {
 
 async function selectProductFeature(id, moveFocus = false) {
   const feature = productFeatures[id];
-  if (!feature || !productSource || !productImage || !productCaption || !productShotPanel) return;
+  if (!feature || !productSource || !productImage || !productStageView || !productShotPanel) return;
   if (id === activeProductFeature && !productShotPanel.hasAttribute("aria-busy")) {
     setSelectedProductTab(id, moveFocus);
     return;
@@ -145,7 +145,7 @@ async function selectProductFeature(id, moveFocus = false) {
   productSource.srcset = featureSrcset(feature);
   productImage.src = `assets/${feature.image}.jpg`;
   productImage.alt = feature.alt;
-  productCaption.textContent = feature.caption;
+  productStageView.textContent = feature.label;
   productShotPanel.removeAttribute("aria-busy");
   productShotPanel.classList.remove("is-changing");
 }
