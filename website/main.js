@@ -20,11 +20,8 @@ const nextTheme = document.querySelector("#next-theme");
 const themePosition = document.querySelector("#theme-position");
 const themeName = document.querySelector("#theme-name");
 const themeCaption = document.querySelector("#theme-caption");
-const themeDetails = document.querySelector("#theme-details");
 const themeAnnouncement = document.querySelector("#theme-announcement");
 const palettePreview = document.querySelector("#palette-preview");
-const terminalPalette = document.querySelector("#terminal-palette");
-const previewThemeNames = Array.from(document.querySelectorAll("[data-preview-theme-name]"));
 
 const productFeatures = {
   default: {
@@ -49,10 +46,13 @@ const productFeatures = {
   },
 };
 
-const featuredNames = ["Absolutely", "Codex", "Catppuccin", "Everforest", "Rose Pine"];
+const featuredThemeIDs = {
+  light: ["harbor-light", "parchment-light", "brasspants-light", "everforest-light", "monolith-light"],
+  dark: ["harbor-dark", "parchment-dark", "brasspants-dark", "everforest-dark", "monolith-dark"],
+};
 const selectedThemeIDs = {
-  light: "absolutely-light",
-  dark: "absolutely-dark",
+  light: "harbor-light",
+  dark: "harbor-dark",
 };
 
 let catalog;
@@ -239,8 +239,8 @@ function relativeLuminance(hex) {
 
 function validateCatalog(value) {
   const colorPattern = /^#[0-9a-f]{6}$/i;
-  if (value?.sourceVersion !== "monknot-theme-v1") return false;
-  if (value.light?.length !== 20 || value.dark?.length !== 31) return false;
+  if (value?.sourceVersion !== "monknot-theme-v3") return false;
+  if (!value.light?.length || !value.dark?.length || value.light.length + value.dark.length < 50) return false;
   if (!value.light.every((theme) => theme.variant === "light")) return false;
   if (!value.dark.every((theme) => theme.variant === "dark")) return false;
 
@@ -269,24 +269,12 @@ function selectedTheme() {
 
 function createFeaturedButton(theme) {
   const button = document.createElement("button");
-  const label = document.createElement("span");
-  const colors = document.createElement("span");
 
   button.type = "button";
   button.className = "featured-theme";
   button.dataset.themeId = theme.id;
   button.setAttribute("aria-pressed", "false");
-  label.textContent = theme.name;
-  colors.className = "featured-theme__colors";
-  colors.setAttribute("aria-hidden", "true");
-
-  for (const color of [theme.surface, theme.ink, theme.accent]) {
-    const swatch = document.createElement("i");
-    swatch.style.backgroundColor = color;
-    colors.append(swatch);
-  }
-
-  button.append(label, colors);
+  button.textContent = theme.name;
   button.addEventListener("click", () => selectTheme(theme.id));
   return button;
 }
@@ -305,8 +293,8 @@ function renderVariantOptions() {
   themeSelect.append(fragment);
 
   featuredThemes.textContent = "";
-  for (const name of featuredNames) {
-    const theme = themes.find((candidate) => candidate.name === name);
+  for (const id of featuredThemeIDs[activeVariant]) {
+    const theme = themes.find((candidate) => candidate.id === id);
     if (theme) featuredThemes.append(createFeaturedButton(theme));
   }
 
@@ -319,32 +307,21 @@ function applyPreview(theme) {
   const previewTokens = {
     "--preview-surface": theme.surface,
     "--preview-ink": theme.ink,
+    "--preview-ink-2": rgba(theme.ink, 0.62),
+    "--preview-ink-3": rgba(theme.ink, 0.4),
+    "--preview-sidebar": mix(theme.surface, theme.ink, dark ? 0.075 : 0.028),
     "--preview-surface-2": mix(theme.surface, theme.ink, dark ? 0.11 : 0.05),
-    "--preview-surface-3": mix(theme.surface, theme.ink, dark ? 0.17 : 0.09),
     "--preview-line": rgba(theme.ink, dark ? 0.09 : 0.12),
+    "--preview-line-2": rgba(theme.ink, dark ? 0.06 : 0.08),
+    "--preview-hover": rgba(theme.ink, dark ? 0.06 : 0.055),
     "--preview-accent": theme.accent,
     "--preview-selection": theme.selection,
     "--preview-added": theme.added,
-    "--preview-removed": theme.removed,
     "--preview-skill": theme.skill,
   };
 
   for (const [property, value] of Object.entries(previewTokens)) {
     palettePreview.style.setProperty(property, value);
-  }
-
-  if (terminalPalette.children.length !== theme.palette.length) {
-    const fragment = document.createDocumentFragment();
-    for (const color of theme.palette) {
-      const swatch = document.createElement("i");
-      swatch.style.backgroundColor = color;
-      fragment.append(swatch);
-    }
-    terminalPalette.replaceChildren(fragment);
-  } else {
-    Array.from(terminalPalette.children).forEach((swatch, index) => {
-      swatch.style.backgroundColor = theme.palette[index];
-    });
   }
 }
 
@@ -356,26 +333,12 @@ function selectTheme(id) {
 
   themeSelect.value = theme.id;
   themeName.textContent = theme.name;
-  themeCaption.textContent = `${theme.name} · ${activeVariant === "light" ? "Light" : "Dark"} palette`;
+  themeCaption.textContent = `${theme.name} · ${activeVariant === "light" ? "Light" : "Dark"}`;
   themePosition.textContent = `${index + 1} / ${themes.length}`;
-  themeDetails.textContent = `Colors 1 through 16: ${theme.palette.join(", ")}.`;
   themeAnnouncement.textContent = `${theme.name}, ${activeVariant} theme, ${index + 1} of ${themes.length}.`;
-  previewThemeNames.forEach((element) => {
-    element.textContent = theme.name;
-  });
 
   for (const button of featuredThemes.querySelectorAll("button[data-theme-id]")) {
     button.setAttribute("aria-pressed", String(button.dataset.themeId === theme.id));
-  }
-
-  for (const element of document.querySelectorAll("[data-token-swatch]")) {
-    const token = element.dataset.tokenSwatch;
-    element.style.backgroundColor = theme[token];
-  }
-
-  for (const element of document.querySelectorAll("[data-token-value]")) {
-    const token = element.dataset.tokenValue;
-    element.textContent = theme[token].toUpperCase();
   }
 
   applyPreview(theme);

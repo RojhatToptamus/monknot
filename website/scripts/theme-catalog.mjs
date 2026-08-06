@@ -2,12 +2,12 @@ const hexColor = /^#[0-9a-f]{6}$/i;
 const colorKeys = ["surface", "ink", "accent", "selection", "added", "removed", "skill"];
 
 export function validateThemeCatalog(catalog) {
-  if (catalog?.sourceVersion !== "monknot-theme-v1") {
+  if (catalog?.sourceVersion !== "monknot-theme-v3") {
     throw new Error("Unexpected Monknot theme catalog version.");
   }
 
-  if (catalog.light?.length !== 20 || catalog.dark?.length !== 31) {
-    throw new Error("Expected 20 light presets and 31 dark presets.");
+  if (!catalog.light?.length || !catalog.dark?.length || catalog.light.length + catalog.dark.length < 50) {
+    throw new Error("Expected at least 50 light and dark presets.");
   }
 
   for (const variant of ["light", "dark"]) {

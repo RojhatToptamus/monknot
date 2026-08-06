@@ -3,6 +3,14 @@ import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const productViews = ["default", "split", "terminal", "pdf"];
+const appStoreScreenshots = [
+  "01-markdown-editor-dark.png",
+  "02-markdown-split-dark.png",
+  "03-terminal-dark.png",
+  "04-pdf-dark.png",
+  "05-markdown-split-light.png",
+  "06-markdown-editor-light.png",
+].map((file) => `app-store-screenshots/${file}`);
 const requiredFiles = [
   "index.html",
   "styles.css",
@@ -14,9 +22,29 @@ const requiredFiles = [
     `assets/monknot-${view}-2400.webp`,
     `assets/monknot-${view}.webp`,
   ]),
+  ...appStoreScreenshots,
 ];
 
 await Promise.all(requiredFiles.map((file) => access(resolve(root, file))));
+
+for (const file of appStoreScreenshots) {
+  const png = await readFile(resolve(root, file));
+  const isPNG =
+    png.length >= 24 &&
+    png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  if (!isPNG) throw new Error(`App Store screenshot is not a PNG: ${file}`);
+  const width = png.readUInt32BE(16);
+  const height = png.readUInt32BE(20);
+  if (width !== 2560 || height !== 1600) {
+    throw new Error(`App Store screenshot must be 2560 × 1600: ${file} is ${width} × ${height}`);
+  }
+  const colorType = png[25];
+  if (colorType !== 2) {
+    throw new Error(
+      `App Store screenshot must be an RGB PNG without alpha: ${file} uses PNG color type ${colorType}`,
+    );
+  }
+}
 
 const html = await readFile(resolve(root, "index.html"), "utf8");
 const requiredMarkup = [
@@ -37,13 +65,13 @@ const requiredMarkup = [
   'role="tabpanel"',
   'tabindex="0"',
   'name="theme-variant"',
+  'class="preview-titlebar"',
+  'class="preview-workspace"',
+  'class="preview-sidebar"',
   'class="preview-editor"',
   'class="preview-source"',
   'class="preview-document"',
-  'data-preview-theme-name',
-  'id="terminal-palette"',
-  'id="theme-details"',
-  'aria-labelledby="terminal-palette-label"',
+  'class="preview-window-controls"',
   '50+ themes.',
   'width="3600"',
   'height="2250"',
@@ -98,8 +126,12 @@ for (const forbidden of [
   'class="media-bar"',
   'class="traffic-light',
   "20 light presets. 31 dark.",
+  "Absolutely",
+  "codex-dark",
   "Real app",
   "working tree clean",
+  'class="theme-tokens"',
+  'id="terminal-palette"',
 ]) {
   if (html.includes(forbidden)) throw new Error(`Removed website content remains: ${forbidden}`);
 }
@@ -129,13 +161,15 @@ for (const marker of [
   'productShotPanel.setAttribute("aria-busy", "true")',
   "await preloadProductFeature(id)",
   "image.naturalWidth > 0",
+  'value?.sourceVersion !== "monknot-theme-v3"',
+  'dark: "harbor-dark"',
   "productFeatureRequest",
   "setSelectedProductTab",
   "setupProductShowcase()",
-  'document.querySelector("#terminal-palette")',
-  'document.querySelectorAll("[data-preview-theme-name]")',
+  '"--preview-sidebar"',
+  '"--preview-ink-2"',
+  '"--preview-ink-3"',
   "theme.palette.length",
-  "terminalPalette.replaceChildren(fragment)",
   'document.querySelectorAll(\'input[name="site-appearance"]\')',
   "siteAppearance.hidden = false",
 ]) {
@@ -145,11 +179,20 @@ for (const marker of [
 }
 
 const styles = await readFile(resolve(root, "styles.css"), "utf8");
-if (/\.(?:preview-titlebar|preview-tools|preview-workspace|preview-sidebar|preview-terminal|traffic-light|media-bar|window-chrome)\b/.test(styles)) {
+if (/\.(?:preview-tools|preview-terminal|traffic-light|media-bar|window-chrome)\b/.test(styles)) {
   throw new Error("Removed simulated product UI selectors remain in styles.css.");
 }
 
-for (const marker of [".feature-tabs", ".preview-editor", ".preview-source", ".preview-document"]) {
+for (const marker of [
+  ".feature-tabs",
+  ".preview-titlebar",
+  ".preview-workspace",
+  ".preview-sidebar",
+  ".preview-editor",
+  ".preview-source",
+  ".preview-document",
+  ".preview-window-controls",
+]) {
   if (!styles.includes(marker)) throw new Error(`Missing required interface styling: ${marker}`);
 }
 
