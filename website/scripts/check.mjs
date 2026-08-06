@@ -3,7 +3,6 @@ import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
-const repository = resolve(root, "..");
 const expectedAssets = new Map([
   ["shots/icon-graphite.png", "caeea8d148e460babb768f9b99597cee91294b703c7e0c7bcdd567ac4b7c334a"],
   ["shots/macbook-pro.png", "42ab04218d7e3312a25dcc977fcdaa0787a91597c54337490ad5029b0aa8c129"],
@@ -19,8 +18,7 @@ const expectedAssets = new Map([
   ["shots/terminal-light.jpg", "285be266ac7f12a9c2f0b345b0b0047df5e2d5763be1687cca43c5b47823503a"],
 ]);
 
-await Promise.all(["index.html", "styles.css", "main.js", ...expectedAssets.keys()].map((file) => access(resolve(root, file))));
-await access(resolve(repository, "vercel.json"));
+await Promise.all(["index.html", "styles.css", "main.js", "vercel.json", ...expectedAssets.keys()].map((file) => access(resolve(root, file))));
 
 for (const [file, expectedHash] of expectedAssets) {
   const data = await readFile(resolve(root, file));
@@ -31,10 +29,10 @@ for (const [file, expectedHash] of expectedAssets) {
 const html = await readFile(resolve(root, "index.html"), "utf8");
 const styles = await readFile(resolve(root, "styles.css"), "utf8");
 const script = await readFile(resolve(root, "main.js"), "utf8");
-const vercel = JSON.parse(await readFile(resolve(repository, "vercel.json"), "utf8"));
+const vercel = JSON.parse(await readFile(resolve(root, "vercel.json"), "utf8"));
 
-if (vercel.buildCommand !== "npm --prefix website run build" || vercel.outputDirectory !== "website/dist") {
-  throw new Error("Repository-level Vercel configuration must build and serve the website directory.");
+if (vercel.buildCommand !== "npm run build" || vercel.outputDirectory !== "dist") {
+  throw new Error("Website-level Vercel configuration must build and serve this directory.");
 }
 
 const requiredMarkup = [
