@@ -18,7 +18,7 @@ const expectedAssets = new Map([
   ["shots/terminal-light.jpg", "285be266ac7f12a9c2f0b345b0b0047df5e2d5763be1687cca43c5b47823503a"],
 ]);
 
-await Promise.all(["index.html", "styles.css", "main.js", "vercel.json", ...expectedAssets.keys()].map((file) => access(resolve(root, file))));
+await Promise.all(["index.html", "styles.css", "main.js", "theme-catalog.json", "vercel.json", ...expectedAssets.keys()].map((file) => access(resolve(root, file))));
 
 for (const [file, expectedHash] of expectedAssets) {
   const data = await readFile(resolve(root, file));
@@ -29,6 +29,7 @@ for (const [file, expectedHash] of expectedAssets) {
 const html = await readFile(resolve(root, "index.html"), "utf8");
 const styles = await readFile(resolve(root, "styles.css"), "utf8");
 const script = await readFile(resolve(root, "main.js"), "utf8");
+const themeCatalog = JSON.parse(await readFile(resolve(root, "theme-catalog.json"), "utf8"));
 const vercel = JSON.parse(await readFile(resolve(root, "vercel.json"), "utf8"));
 
 if (vercel.buildCommand !== "npm run build" || vercel.outputDirectory !== "dist") {
@@ -37,7 +38,7 @@ if (vercel.buildCommand !== "npm run build" || vercel.outputDirectory !== "dist"
 
 const requiredMarkup = [
   "Markdown, PDFs, and a terminal. One window.",
-  "Thirteen themes, 22 variants.",
+  "20 light presets. 31 dark.",
   'class="laptop-stage"',
   'class="laptop-screen"',
   'src="shots/macbook-pro.png"',
@@ -68,12 +69,25 @@ for (const marker of [
 
 if ((html.match(/class="product-shot/g) ?? []).length !== 10) throw new Error("Expected ten supplied product screenshots.");
 if ((html.match(/role="tab"/g) ?? []).length !== 5) throw new Error("Expected five product tabs.");
-if ((script.match(/name: "/g) ?? []).length !== 13) throw new Error("Expected the supplied thirteen-theme catalog.");
-if (!script.includes('let activeTheme = 3;') || !script.includes('let previewMode = "light";')) {
-  throw new Error("The supplied Axis Light preview state changed.");
+
+if (themeCatalog.sourceVersion !== "monknot-theme-v3" || themeCatalog.light?.length !== 20 || themeCatalog.dark?.length !== 31) {
+  throw new Error("Expected the complete canonical catalog of 20 light and 31 dark presets.");
+}
+
+const themeIDs = new Set();
+for (const theme of [...themeCatalog.light, ...themeCatalog.dark]) {
+  if (themeIDs.has(theme.id)) throw new Error(`Duplicate theme preset: ${theme.id}`);
+  themeIDs.add(theme.id);
+  for (const key of ["surface", "ink", "accent", "added", "skill"]) {
+    if (!/^#[0-9a-f]{6}$/i.test(theme[key])) throw new Error(`Invalid ${key} color for ${theme.id}`);
+  }
+}
+
+for (const marker of ['let previewMode = "light";', 'event.key === "ArrowDown"', 'event.key === "ArrowUp"', "event.preventDefault();", "preventScroll: true"]) {
+  if (!script.includes(marker)) throw new Error(`Missing theme keyboard behavior: ${marker}`);
 }
 
 const localReferences = Array.from(html.matchAll(/(?:src|href)="((?!https?:|#)[^"]+)"/g), (match) => match[1]);
 await Promise.all(localReferences.map((file) => access(resolve(root, file))));
 
-console.log(`Checked ${expectedAssets.size} untouched source assets, 10 product views, 13 themes, and deployment files.`);
+console.log(`Checked ${expectedAssets.size} untouched source assets, 10 product views, 51 theme presets, and deployment files.`);

@@ -410,6 +410,11 @@ main {
 .theme-list {
   margin: 0;
   padding: 4px;
+  height: 454px;
+  overflow-y: auto;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   list-style: none;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -456,14 +461,6 @@ main {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.theme-tag {
-  flex: none;
-  font: 400 10px/1 var(--mono);
-  color: var(--ink2);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
 }
 
 .theme-preview-column {
