@@ -1,22 +1,15 @@
 # Monknot product site
 
-A dependency-free, single-page product site for Monknot. The page presents five coordinated
-product views and a live theme explorer generated from `MonknotThemeCatalog` during the
-production build.
+Dependency-free implementation of the approved Monknot website design. The product imagery in
+`shots/` is copied unchanged from the supplied design source.
 
 ```sh
 cd website
-npm run campaign
 npm run check
-npm run verify:campaign
 npm run build
 npm run preview
 ```
 
-The production output is written to `website/dist` and can be served by any static host. SwiftPM
-is used only at build time to export the canonical catalog of 50+ light and dark theme presets.
-
-`npm run campaign` creates ten opaque RGB App Store masters at 2880 × 1800 and thirty lossless
-website WebPs from one fixed SVG geometry. `npm run verify:campaign` checks every master and
-derivative, hashes stable frame regions across all modes, and writes dark/light alignment
-overlays to `.build/website-campaign-verify` for visual review.
+The production output is written to `website/dist`. The repository-level `vercel.json` runs the
+build and serves that directory, so the repository can be deployed without a custom root-directory
+or build setting.

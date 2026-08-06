@@ -2,11 +2,12 @@
   "name": "monknot-product-site",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "dev": "npm run build && python3 -m http.server 4174 --directory dist",
-    "campaign": "node scripts/generate-campaign.mjs",
-    "verify:campaign": "node scripts/verify-campaign.mjs",
-    "check": "node --check main.js && node --check scripts/build.mjs && node --check scripts/generate-campaign.mjs && node --check scripts/verify-campaign.mjs && node --check scripts/theme-catalog.mjs && node scripts/check.mjs",
+    "dev": "node scripts/build.mjs && python3 -m http.server 4174 --directory dist",
+    "check": "node --check main.js && node --check scripts/build.mjs && node --check scripts/check.mjs && node scripts/check.mjs",
     "build": "npm run check && node scripts/build.mjs",
     "preview": "python3 -m http.server 4174 --directory dist"
   }
