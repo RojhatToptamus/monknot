@@ -6,6 +6,7 @@ DerivedData/
 xcuserdata/
 *.xcuserstate
 .playwright-mcp/
+.vercel/
 chrome-debug-handoff.json
 .test-output.txt
 

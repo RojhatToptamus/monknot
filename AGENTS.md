@@ -12,6 +12,8 @@ The package is organized around these main SwiftPM targets and helper executable
 - `MonknotApp`: macOS application layer (SwiftUI, AppKit bridges, stores, views) including `@main`.
 - `MonknotExport`: stdio/CLI read-only workspace export (`monknot-export --workspace PATH --json`).
 - `MonknotCapture`: CLI helper for building and opening `monknot://capture` URLs (`monknot-capture`).
+- `MonknotThemeCatalogExport`: build-time JSON export of the canonical theme catalog for the
+  product website.
 - `MonknotWorkspaceExport`: executable smoke/export coverage target used by local verification.
 
 The package declares these test targets:
@@ -35,6 +37,10 @@ The package declares these test targets:
 - `Sources/Monknot/Services`: app-layer services that need platform APIs, including PDF export, FSEvents, and PTY management.
 - `Sources/Monknot/Support`: SwiftUI support types, command wiring, keyboard monitoring, color/theme bridging, and window chrome helpers.
 - `Sources/Monknot/Resources`: bundled terminal web assets.
+- `Sources/MonknotThemeCatalogExport`: canonical theme-catalog JSON exporter used by the website
+  build.
+- `website`: dependency-free single-page product site. `npm run build` produces `website/dist`
+  and derives its theme explorer data from `MonknotThemeCatalog`.
 - `Tests/MonknotTests`: XCTest unit tests for core services and models.
 - `Tests/MonknotAppTests`: XCTest integration tests for app-layer store behavior.
 - `Tests/MonknotSmokeTests`: executable smoke tests for core workflows.

@@ -757,21 +757,23 @@ final class ChromeAlignmentTests: XCTestCase {
                 window.standardWindowButton(.miniaturizeButton),
                 window.standardWindowButton(.zoomButton),
             ].compactMap { $0 }
-            let largestHalfHeight = (buttons.map(\.frame.height).max() ?? 0) / 2
-            let expectedCenterFromTop = min(
-                max(chromeHeight / 2, largestHalfHeight),
-                titlebarContainer.bounds.height - largestHalfHeight
-            )
 
             for button in buttons {
                 XCTAssertTrue(button.superview === titlebarContainer)
+                let centerFromTop = titlebarContainer.isFlipped
+                    ? button.frame.midY - titlebarContainer.bounds.minY
+                    : titlebarContainer.bounds.maxY - button.frame.midY
                 XCTAssertEqual(
-                    titlebarContainer.bounds.maxY - button.frame.midY,
-                    expectedCenterFromTop,
+                    centerFromTop,
+                    chromeHeight / 2,
                     accuracy: 0.001,
                     "Every native traffic light must share Monknot's primary chrome centerline"
                 )
             }
+            XCTAssertFalse(
+                titlebarContainer.clipsToBounds,
+                "The native controls must remain visible when adaptive chrome extends below AppKit's titlebar container"
+            )
         }
     }
 
@@ -787,7 +789,7 @@ final class ChromeAlignmentTests: XCTestCase {
 
         let chromeHeight = MonknotMetrics.chromeHeight(
             theme: .defaultLight,
-            zoomScale: 1
+            zoomScale: WorkspaceZoomPolicy.maximum
         )
         let coordinator = WindowBackgroundDragEnabler.Coordinator(
             suppressToolbarButton: true,
@@ -805,8 +807,11 @@ final class ChromeAlignmentTests: XCTestCase {
         closeButton.setFrameOrigin(NSPoint(x: closeButton.frame.minX, y: 9))
         NotificationCenter.default.post(name: NSWindow.didResizeNotification, object: window)
 
+        let centerFromTop = titlebarContainer.isFlipped
+            ? closeButton.frame.midY - titlebarContainer.bounds.minY
+            : titlebarContainer.bounds.maxY - closeButton.frame.midY
         XCTAssertEqual(
-            titlebarContainer.bounds.maxY - closeButton.frame.midY,
+            centerFromTop,
             chromeHeight / 2,
             accuracy: 0.001,
             "Resize and state transitions must restore the native controls to Monknot's centerline"

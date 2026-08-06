@@ -7,8 +7,8 @@ extension NSUserInterfaceItemIdentifier {
 
 /// Aligns the NSWindow's appearance with our SwiftUI surface and suppresses
 /// the AppKit-injected `.toolbarButton`, which duplicates our sidebar toggle.
-/// AppKit remains the sole owner of the traffic-light frames and all native
-/// move, resize, minimize, zoom, and full-screen behavior.
+/// AppKit remains the owner of the native traffic-light controls and their
+/// horizontal placement, targets, accessibility, and window behavior.
 struct WindowBackgroundDragEnabler: NSViewRepresentable {
     var surfaceColor: Color
     var suppressToolbarButton: Bool = true
@@ -146,34 +146,37 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
         /// accessibility, and native window behavior remain AppKit-owned.
         private func alignTrafficLights(in window: NSWindow) {
             guard let trafficLightRowHeight,
-                  trafficLightRowHeight > 0,
-                  let closeButton = window.standardWindowButton(.closeButton),
-                  let titlebarContainer = closeButton.superview
+                  trafficLightRowHeight > 0
             else {
                 return
             }
 
-            let buttons = [
-                window.standardWindowButton(.closeButton),
-                window.standardWindowButton(.miniaturizeButton),
-                window.standardWindowButton(.zoomButton),
-            ].compactMap { $0 }
+            let buttonTypes: [NSWindow.ButtonType] = [
+                .closeButton,
+                .miniaturizeButton,
+                .zoomButton,
+            ]
+            for buttonType in buttonTypes {
+                guard let button = window.standardWindowButton(buttonType),
+                      !button.isHidden,
+                      let titlebarContainer = button.superview
+                else {
+                    continue
+                }
 
-            let largestHalfHeight = (buttons.map(\.frame.height).max() ?? 0) / 2
-            let desiredCenterFromTop = trafficLightRowHeight / 2
-            let maximumVisibleCenterFromTop = max(
-                largestHalfHeight,
-                titlebarContainer.bounds.height - largestHalfHeight
-            )
-            let centerFromTop = min(
-                max(desiredCenterFromTop, largestHalfHeight),
-                maximumVisibleCenterFromTop
-            )
+                let titlebarTopY = titlebarContainer.isFlipped
+                    ? titlebarContainer.bounds.minY
+                    : titlebarContainer.bounds.maxY
+                let originY = NativeWindowChromeGeometry.centeredButtonOriginY(
+                    buttonHeight: button.frame.height,
+                    chromeHeight: trafficLightRowHeight,
+                    contentTopY: titlebarTopY,
+                    isFlipped: titlebarContainer.isFlipped
+                )
 
-            for button in buttons where button.superview === titlebarContainer {
-                let originY = titlebarContainer.bounds.maxY
-                    - centerFromTop
-                    - button.frame.height / 2
+                // Full-size content can make Monknot's chrome taller than
+                // AppKit's standard titlebar container at larger zoom levels.
+                titlebarContainer.clipsToBounds = false
                 guard abs(button.frame.minY - originY) > 0.25 else { continue }
                 button.setFrameOrigin(NSPoint(x: button.frame.minX, y: originY))
             }
@@ -184,6 +187,20 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             observers.forEach(center.removeObserver(_:))
             observers.removeAll()
         }
+    }
+}
+
+enum NativeWindowChromeGeometry {
+    static func centeredButtonOriginY(
+        buttonHeight: CGFloat,
+        chromeHeight: CGFloat,
+        contentTopY: CGFloat,
+        isFlipped: Bool
+    ) -> CGFloat {
+        if isFlipped {
+            return contentTopY + (chromeHeight - buttonHeight) / 2
+        }
+        return contentTopY - (chromeHeight + buttonHeight) / 2
     }
 }
 

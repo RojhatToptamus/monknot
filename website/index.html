@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en" data-site-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="A native macOS workspace for Markdown, source files, searchable PDFs, and terminal sessions."
+    />
+    <meta name="theme-color" content="#121212" id="theme-color" />
+    <title>Monknot — Markdown, PDFs, and a terminal. One window.</title>
+    <link rel="icon" href="shots/icon-graphite.png" />
+    <link rel="apple-touch-icon" href="shots/icon-graphite.png" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="site-frame" id="site-frame">
+      <a class="skip-link" href="#main">Skip to content</a>
+
+      <header class="site-header">
+        <div class="header-inner">
+          <a class="brand" href="#top" aria-label="Monknot home">
+            <img src="shots/icon-graphite.png" alt="" width="512" height="512" />
+            <span>Monknot</span>
+          </a>
+
+          <nav class="header-nav" aria-label="Primary navigation">
+            <div class="segmented-control site-appearance" role="group" aria-label="Site appearance">
+              <button type="button" data-site-mode="light" aria-pressed="false" aria-label="Light appearance" title="Light">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="8" cy="8" r="3.1"></circle>
+                  <path d="M8 1.6v1.5M8 12.9v1.5M1.6 8h1.5M12.9 8h1.5M3.5 3.5l1.1 1.1M11.4 11.4l1.1 1.1M12.5 3.5l-1.1 1.1M4.6 11.4l-1.1 1.1"></path>
+                </svg>
+              </button>
+              <button type="button" data-site-mode="dark" aria-pressed="true" aria-label="Dark appearance" title="Dark">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M13.4 9.6A5.9 5.9 0 0 1 6.4 2.6a5.9 5.9 0 1 0 7 7Z"></path>
+                </svg>
+              </button>
+            </div>
+            <a class="header-download" href="https://github.com/RojhatToptamus/monknot/releases">Download</a>
+          </nav>
+        </div>
+      </header>
+
+      <main id="main">
+        <section class="hero" id="top">
+          <h1>Markdown, PDFs, and a terminal. One window.</h1>
+          <p>A native macOS workspace for the files already on your disk. Open a folder and start.</p>
+          <div class="hero-actions">
+            <a id="download" class="primary-download" href="https://github.com/RojhatToptamus/monknot/releases">Download for macOS</a>
+            <span>Apple silicon &amp; Intel</span>
+          </div>
+        </section>
+
+        <section class="product-section" aria-label="Monknot product views">
+          <div class="laptop-stage">
+            <div class="laptop-screen" id="product-panel" role="tabpanel" aria-labelledby="tab-editor" aria-live="off">
+              <img class="product-shot is-visible" data-view="editor" data-mode="dark" src="shots/editor-dark.jpg" alt="Monknot editing README.md in the Borealis workspace: file sidebar, formatting bar, and Markdown source with headings, a task list, a table, wikilinks and a Swift code block." width="1600" height="1039" decoding="async" aria-hidden="false" />
+              <img class="product-shot" data-view="split" data-mode="dark" src="shots/split-dark.jpg" alt="Monknot in split view, Markdown source beside the rendered preview, scrolled together." width="1600" height="1039" loading="lazy" decoding="async" aria-hidden="true" />
+              <img class="product-shot" data-view="preview" data-mode="dark" src="shots/preview-dark.jpg" alt="Monknot showing the rendered Markdown preview full width, with the outline rail at the right edge." width="1600" height="1039" loading="lazy" decoding="async" aria-hidden="true" />
+              <img class="product-shot" data-view="pdf" data-mode="dark" src="shots/pdf-dark.jpg" alt="A PDF open in Monknot with the markup toolbar active: highlight, underline, strike-through, freehand draw, colour swatches and a thickness slider." width="1600" height="1039" loading="lazy" decoding="async" aria-hidden="true" />
+              <img class="product-shot" data-view="terminal" data-mode="dark" src="shots/terminal-dark.jpg" alt="Monknot with two terminal sessions docked beside the document, running a shell in the workspace folder." width="1600" height="1039" loading="lazy" decoding="async" aria-hidden="true" />
+              <img class="product-shot" data-view="editor" data-mode="light" src="shots/editor-light.jpg" alt="Monknot editing README.md in the light appearance." width="1600" height="1039" loading="lazy" decoding="async" aria-hidden="true" />
+              <img class="product-shot" data-view="split" data-mode="light" src="shots/split-light.jpg" alt="Monknot split view in the light appearance." width="1600" height="1039" loading="lazy" decoding="async" aria-hidden="true" />
+              <img class="product-shot" data-view="preview" data-mode="light" src="shots/preview-light.jpg" alt="Monknot rendered preview in the light appearance." width="1600" height="1039" loading="lazy" decoding="async" aria-hidden="true" />
+              <img class="product-shot" data-view="pdf" data-mode="light" src="shots/pdf-light.jpg" alt="A PDF with markup tools in the light appearance." width="1600" height="1039" loading="lazy" decoding="async" aria-hidden="true" />
+              <img class="product-shot" data-view="terminal" data-mode="light" src="shots/terminal-light.jpg" alt="Monknot terminal sessions in the light appearance." width="1600" height="1039" loading="lazy" decoding="async" aria-hidden="true" />
+            </div>
+            <img class="macbook-frame" src="shots/macbook-pro.png" alt="" width="1800" height="1184" />
+          </div>
+
+          <div class="product-tabs-wrap">
+            <div class="product-tabs" role="tablist" aria-label="View">
+              <button type="button" role="tab" id="tab-editor" data-view="editor" aria-controls="product-panel" aria-selected="true" tabindex="0">Editor</button>
+              <button type="button" role="tab" id="tab-split" data-view="split" aria-controls="product-panel" aria-selected="false" tabindex="-1">Split</button>
+              <button type="button" role="tab" id="tab-preview" data-view="preview" aria-controls="product-panel" aria-selected="false" tabindex="-1">Preview</button>
+              <button type="button" role="tab" id="tab-pdf" data-view="pdf" aria-controls="product-panel" aria-selected="false" tabindex="-1">PDF</button>
+              <button type="button" role="tab" id="tab-terminal" data-view="terminal" aria-controls="product-panel" aria-selected="false" tabindex="-1">Terminal</button>
+            </div>
+          </div>
+          <p class="product-caption" aria-live="polite">Markdown source, with a formatting bar when you want one.</p>
+        </section>
+
+        <section class="themes-section" id="themes">
+          <div class="themes-intro">
+            <h2>Thirteen themes, 22 variants.</h2>
+            <p>Each supplies six colours and the whole interface derives from them. Preview any of them here; the app also lets you set contrast and type size.</p>
+          </div>
+
+          <div class="theme-explorer">
+            <div class="theme-picker">
+              <div class="theme-picker-header">
+                <span>Presets</span>
+                <div class="segmented-control preview-appearance" role="group" aria-label="Preview appearance">
+                  <button type="button" data-preview-mode="light" aria-pressed="true" aria-label="Preview light variant" title="Light">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <circle cx="8" cy="8" r="3.1"></circle>
+                      <path d="M8 1.6v1.5M8 12.9v1.5M1.6 8h1.5M12.9 8h1.5M3.5 3.5l1.1 1.1M11.4 11.4l1.1 1.1M12.5 3.5l-1.1 1.1M4.6 11.4l-1.1 1.1"></path>
+                    </svg>
+                  </button>
+                  <button type="button" data-preview-mode="dark" aria-pressed="false" aria-label="Preview dark variant" title="Dark">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M13.4 9.6A5.9 5.9 0 0 1 6.4 2.6a5.9 5.9 0 1 0 7 7Z"></path>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <ul class="theme-list" id="theme-list"></ul>
+            </div>
+
+            <div class="theme-preview-column">
+              <div class="theme-preview-heading">
+                <h3 id="preview-theme-name">Axis</h3>
+                <span></span>
+                <p id="preview-theme-meta">Axis · Light</p>
+              </div>
+              <div class="theme-preview-window" id="theme-preview-window" aria-hidden="true">
+                <div class="theme-titlebar">
+                  <span class="theme-traffic-lights"><i></i><i></i><i></i></span>
+                  <span class="theme-document-tab"><i></i>README.md</span>
+                </div>
+                <div class="theme-workspace">
+                  <div class="theme-sidebar">
+                    <span>notes</span>
+                    <span>research</span>
+                    <span class="is-selected">README.md</span>
+                  </div>
+                  <div class="theme-editor">
+                    <span class="theme-accent"># Project Borealis</span>
+                    <span class="theme-ink">An offline field guide.</span>
+                    <span class="theme-quote">Focus: map the route</span>
+                    <span class="theme-accent">## This week</span>
+                    <span class="theme-ok">- [x] Compare routes</span>
+                    <span>- [ ] Review weather</span>
+                    <span class="theme-skill">[[route-plan]]</span>
+                  </div>
+                </div>
+              </div>
+              <p class="visually-hidden" id="theme-announcement" aria-live="polite">Axis, light variant, shown in the preview.</p>
+            </div>
+          </div>
+        </section>
+
+        <ul class="feature-list">
+          <li>Synced Markdown and HTML split views</li>
+          <li>Search text files and searchable PDFs</li>
+          <li>Scoped find and replace, batch undo</li>
+          <li>PDF highlights, underlines, freehand</li>
+          <li>Markdown export to PDF</li>
+          <li>Quick Open, tabs, document outlines</li>
+          <li>Daily notes and wikilinks</li>
+          <li>System, light, and dark appearances</li>
+        </ul>
+      </main>
+
+      <footer>
+        <div class="footer-inner">
+          <span>Monknot for macOS</span>
+          <span></span>
+          <a href="https://github.com/RojhatToptamus/monknot/releases">Download</a>
+        </div>
+      </footer>
+    </div>
+
+    <script src="main.js" type="module"></script>
+  </body>
+</html>
