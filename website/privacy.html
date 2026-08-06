@@ -49,63 +49,91 @@
           <header class="document-heading">
             <p class="document-kicker">Privacy</p>
             <h1>Privacy Policy</h1>
-            <p class="document-updated">Last updated: August 6, 2026</p>
+            <p class="document-updated"><strong>Last updated: August 6, 2026</strong></p>
           </header>
 
           <section class="document-section" aria-labelledby="overview">
             <h2 id="overview">Overview</h2>
-            <p>Monknot is a local-first macOS workspace. It does not require an account and does not include advertising, analytics, tracking, cloud storage, payment processing, or AI services. The app is designed to work with files you select on your Mac.</p>
+            <p>Monknot is a native macOS application for working with Markdown, text files, PDFs, folders, and terminal sessions.</p>
+            <p>Monknot is designed to work locally with files stored on your Mac. It does not require an account and does not use advertising or cross-app tracking.</p>
           </section>
 
-          <section class="document-section" aria-labelledby="data-processes">
-            <h2 id="data-processes">Data Monknot Processes</h2>
-            <p>To provide its features, Monknot processes the files and folders you choose to open, including document contents and metadata such as names and paths. It also processes searches, edits, previews, PDF annotations and exports, and terminal input and output while you use those features.</p>
-            <p>Monknot stores local preferences and application state such as your selected appearance, theme settings, recent workspaces and documents, open tabs, layout settings, export settings, and a security-scoped bookmark for a workspace you allow the app to reopen.</p>
+          <section class="document-section" aria-labelledby="files-documents">
+            <h2 id="files-documents">Files and Documents</h2>
+            <p>Monknot accesses only the files and folders you choose to open.</p>
+            <p>Your Markdown files, text files, source files, PDFs, annotations, and exported documents remain on your Mac. Monknot does not upload their contents to Monknot servers.</p>
+            <p>You are responsible for the storage, backup, and synchronization services you choose to use for these files, such as iCloud Drive or another folder-syncing service.</p>
           </section>
 
-          <section class="document-section" aria-labelledby="files-local-data">
-            <h2 id="files-local-data">Files and Local Data</h2>
-            <p>Your workspace files remain on your Mac or in the storage location you chose. Monknot reads and writes those files only as needed for actions you request, such as editing, replacing text, annotating a PDF, or exporting a document.</p>
-            <p>Preferences, workspace access information, recent-item history, and other application state are stored locally using macOS storage. Search indexes and similar working data are maintained locally and are not uploaded by Monknot.</p>
+          <section class="document-section" aria-labelledby="local-application-data">
+            <h2 id="local-application-data">Local Application Data</h2>
+            <p>Monknot may store information locally on your Mac to provide its features, including:</p>
+            <ul>
+              <li>Application preferences</li>
+              <li>Theme and appearance settings</li>
+              <li>Recently opened files or folders</li>
+              <li>Window and workspace state</li>
+              <li>File-access permissions</li>
+              <li>Security-scoped bookmarks</li>
+              <li>PDF annotations</li>
+              <li>Daily note and workspace settings</li>
+            </ul>
+            <p>This information is stored locally and is not used for advertising or user profiling.</p>
+            <p>You can remove Monknot’s locally stored data by uninstalling the application and deleting its related application data from macOS.</p>
           </section>
 
-          <section class="document-section" aria-labelledby="network-third-parties">
-            <h2 id="network-third-parties">Network Requests and Third-Party Services</h2>
-            <p>Monknot does not contain an external API client, perform automatic update checks, or include code that sends workspace files to Monknot. The Mac App Store build is sandboxed and does not request the macOS network-client entitlement.</p>
-            <p>HTML documents you choose to preview can contain links or references to remote resources. The Mac App Store build does not enable outbound network access. In another build with network permission, WebKit may request a resource named by the document; Monknot does not add those references.</p>
-            <p>Commands you choose to run in the embedded terminal may interact with services you direct them to, subject to the build’s macOS permissions. Those commands and services are under your control and are governed by the relevant service’s terms and privacy policy.</p>
-            <p>The Monknot website is hosted by <a href="https://vercel.com/legal/privacy-notice">Vercel</a> and links to <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub</a> for downloads. When you visit the website or follow a download link, those providers may process ordinary request information under their own privacy policies. Monknot does not add analytics, tracking pixels, or non-essential cookies to the website.</p>
+          <section class="document-section" aria-labelledby="terminal-sessions">
+            <h2 id="terminal-sessions">Terminal Sessions</h2>
+            <p>Terminal sessions run locally on your Mac.</p>
+            <p>Monknot does not receive or store your terminal commands, terminal output, shell history, environment variables, or credentials.</p>
+            <p>Commands and tools you run inside a terminal session may connect to external services. Those connections are controlled by the commands and third-party tools you choose to use and are subject to their own privacy policies.</p>
+          </section>
+
+          <section class="document-section" aria-labelledby="network-connections">
+            <h2 id="network-connections">Network Connections</h2>
+            <p>Monknot does not require an account or cloud service to open and edit your local files.</p>
+            <p>The application may make network connections when you open external links or use commands and third-party tools through its terminal. Monknot does not control how those external services process information.</p>
           </section>
 
           <section class="document-section" aria-labelledby="analytics-crash-reports">
-            <h2 id="analytics-crash-reports">Analytics and Crash Reports</h2>
-            <p>Monknot does not include analytics, telemetry, tracking, or a third-party crash-reporting service. The app does not automatically send usage data or crash reports to Monknot.</p>
+            <h2 id="analytics-crash-reports">Analytics and Crash Reporting</h2>
+            <p>Monknot does not use advertising SDKs, tracking SDKs, or cross-app tracking.</p>
+            <p>Monknot does not collect usage analytics or automatically send document contents, terminal contents, or activity history.</p>
           </section>
 
           <section class="document-section" aria-labelledby="support-communications">
             <h2 id="support-communications">Support Communications</h2>
-            <p>If you email support, the email address, message, and any technical details or attachments you choose to provide are processed to respond to your request and troubleshoot the issue. Email delivery and storage are also handled by the email providers used by you and Monknot. Please include only information needed for support.</p>
+            <p>When you contact support, you voluntarily provide information such as your email address, device details, screenshots, error messages, or other information included in your message.</p>
+            <p>This information is used only to respond to your request, investigate the reported issue, and improve Monknot. Do not include passwords, private keys, access tokens, or other sensitive information in support messages.</p>
+          </section>
+
+          <section class="document-section" aria-labelledby="data-sharing">
+            <h2 id="data-sharing">Data Sharing</h2>
+            <p>Monknot does not sell, rent, or trade personal information.</p>
+            <p>Information sent through a support request may be processed by the email services used to receive and respond to your message.</p>
           </section>
 
           <section class="document-section" aria-labelledby="data-retention">
             <h2 id="data-retention">Data Retention</h2>
-            <p>Files in your workspace remain under your control. Local preferences and application state remain on your Mac until you change them or remove the related app data. Monknot does not keep a server-side copy of that local data.</p>
-            <p>Support emails may be retained for as long as reasonably necessary to respond, troubleshoot, maintain support history, and meet legal or security obligations. No fixed support-email retention period is currently specified.</p>
+            <p>Local application data remains on your Mac until you remove it.</p>
+            <p>Support communications may be retained for as long as reasonably necessary to respond to your request, maintain support records, resolve recurring issues, and meet legal obligations.</p>
+            <p>You may request the deletion of information submitted through a support email by contacting <a href="mailto:support@monknot.app">support@monknot.app</a>.</p>
           </section>
 
           <section class="document-section" aria-labelledby="childrens-privacy">
             <h2 id="childrens-privacy">Children’s Privacy</h2>
-            <p>Monknot is not directed to children and does not include accounts, advertising, analytics, or features designed to collect personal information from children. If you believe a child has sent personal information through a support email, contact us so it can be reviewed and deleted where appropriate.</p>
+            <p>Monknot is not directed specifically at children and does not knowingly collect personal information from children.</p>
           </section>
 
           <section class="document-section" aria-labelledby="policy-changes">
             <h2 id="policy-changes">Changes to This Policy</h2>
-            <p>This policy may be updated when Monknot’s features or data practices change. The current version will be posted on this page with a revised “Last updated” date.</p>
+            <p>This policy may be updated when Monknot’s features or data practices change. The latest version will be published on this page with an updated revision date.</p>
           </section>
 
           <section class="document-section" aria-labelledby="privacy-contact">
             <h2 id="privacy-contact">Contact</h2>
-            <p>For privacy questions or requests, email <a href="mailto:support@monknot.app">support@monknot.app</a>.</p>
+            <p>For privacy questions or requests, contact:</p>
+            <p><a href="mailto:support@monknot.app">support@monknot.app</a></p>
           </section>
         </article>
       </main>

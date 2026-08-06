@@ -777,10 +777,7 @@ main {
 .document-related {
   margin: clamp(42px, 6vw, 56px) 0 0;
   font: 400 13px/1.5 var(--mono);
-}
-
-.document-related a::after {
-  content: " →";
+  color: var(--ink2);
 }
 
 footer {
