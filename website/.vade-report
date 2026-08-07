@@ -1,0 +1,51 @@
+Implemented Vercel Web Analytics for the Monknot landing page.
+
+## What was implemented:
+
+Successfully installed and configured Vercel Web Analytics following the latest official Vercel documentation (https://vercel.com/docs/analytics/quickstart).
+
+## Changes made:
+
+### 1. Package Installation
+- Installed `@vercel/analytics` package (version 2.0.1)
+- Updated `package.json` to include the new dependency
+- Updated `package-lock.json` with the new package and its dependencies
+
+### 2. Analytics Integration
+Added Vercel Analytics script tags to all three HTML pages:
+- **index.html**: Added analytics scripts before closing `</body>` tag
+- **support.html**: Added analytics scripts before closing `</body>` tag  
+- **privacy.html**: Added analytics scripts before closing `</body>` tag
+
+The integration follows the vanilla/static site pattern from the official docs:
+```html
+<script>
+  window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+</script>
+<script defer src="/_vercel/insights/script.js"></script>
+```
+
+### 3. Build Script Updates
+- **scripts/check.mjs**: Updated the local file validation logic to exclude Vercel-specific paths (/_vercel/*) from file existence checks, as these are provided by Vercel's platform at runtime.
+
+### 4. Git Configuration
+- **.gitignore**: Added `node_modules/` to ensure the dependency directory is not tracked in version control (standard practice for Node.js projects).
+
+## Framework Detection:
+
+This project is a vanilla JavaScript static website (not a framework like Next.js or React). The appropriate installation method for vanilla sites was used based on the official documentation.
+
+## Verification:
+
+✅ Build successful (`npm run build`)
+✅ All tests pass (`npm run check`)
+✅ Analytics scripts correctly included in all built HTML files in the `dist` folder
+✅ No linting errors introduced
+✅ Lock files properly updated
+
+## Notes:
+
+- The `/_vercel/insights/script.js` path is a special Vercel-provided resource that only exists in production on Vercel's platform
+- Analytics will start collecting data once the site is deployed to Vercel
+- To view analytics data, the project owner needs to enable Web Analytics in the Vercel dashboard for this project
+- The implementation preserves all existing code structure and only adds the minimal necessary changes
