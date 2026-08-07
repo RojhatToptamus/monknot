@@ -38,7 +38,7 @@ final class TerminalPTYSessionTests: XCTestCase {
             git --version | sed 's/^/__MONKNOT_GIT_VERSION__/'
             printf '__MONKNOT_%s__%s\\n' PATH \"$PATH\"
             for tool in claude codex node brew; do
-              tool_path=\"$(which \"$tool\" 2>/dev/null || true)\"
+              tool_path=\"$(command -v \"$tool\" 2>/dev/null || true)\"
               printf '__MONKNOT_%s__%s=%s\\n' TOOL \"$tool\" \"$tool_path\"
               if [[ -n \"$tool_path\" && \"$tool\" != brew ]]; then
                 \"$tool\" --version 2>&1 | head -n 1 | sed \"s/^/__MONKNOT_VERSION__${tool}=/\"
