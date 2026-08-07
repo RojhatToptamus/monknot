@@ -451,6 +451,8 @@ final class ThemeSettingsStore: ObservableObject {
 
     private static func migratedThemeID(_ id: String?) -> String? {
         guard let id else { return nil }
+        if id == "gruvbox-light" { return AppTheme.defaultLight.id }
+        if id == "gruvbox-dark" { return AppTheme.defaultDark.id }
         return legacyThemeIDPairs.first { $0.legacy == id }?.current ?? id
     }
 
@@ -458,6 +460,8 @@ final class ThemeSettingsStore: ObservableObject {
         _ customizations: [String: ThemeConfiguration]
     ) -> [String: ThemeConfiguration] {
         var migrated = customizations
+        migrated.removeValue(forKey: "gruvbox-light")
+        migrated.removeValue(forKey: "gruvbox-dark")
         for (legacyID, currentID) in legacyThemeIDPairs {
             guard let configuration = migrated.removeValue(forKey: legacyID) else { continue }
             if migrated[currentID] == nil {

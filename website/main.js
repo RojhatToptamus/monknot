@@ -2,7 +2,7 @@ const themeCatalogResponse = await fetch("theme-catalog.json");
 if (!themeCatalogResponse.ok) throw new Error("Unable to load the Monknot theme catalog.");
 
 const themeCatalog = await themeCatalogResponse.json();
-if (themeCatalog.sourceVersion !== "monknot-theme-v3") {
+if (themeCatalog.sourceVersion !== "monknot-theme-v4") {
   throw new Error("Unsupported Monknot theme catalog.");
 }
 

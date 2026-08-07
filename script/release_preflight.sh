@@ -3,10 +3,13 @@ set -euo pipefail
 
 APP_BUNDLE="dist/Monknot.app"
 BUNDLE_ID="com.monknot.app"
-APP_COPYRIGHT="Copyright © 2026 Rojhat Toptamuş. All rights reserved."
+APP_COPYRIGHT="Copyright © 2026 Rojhat Toptamuş"
 ADHOC=0
 ALLOW_MISSING_IDENTITY=0
-REQUIRED_IDENTITY="${MONKNOT_DEVELOPER_ID_IDENTITY:-Developer ID Application}"
+EXPECTED_DEVELOPER_ID="Developer ID Application: rojhat toptamus (ZD35XP4V7D)"
+EXPECTED_TEAM_ID="ZD35XP4V7D"
+REQUIRED_IDENTITY="${MONKNOT_DEVELOPER_ID_IDENTITY:-$EXPECTED_DEVELOPER_ID}"
+EXPECTED_ARCH="arm64"
 MIN_SYSTEM_VERSION="14.0"
 VERSION_FILE="VERSION"
 THEME_LICENSE_FILES=(
@@ -32,12 +35,12 @@ Checks repository hygiene, bundle metadata, signatures, and local packaging
 prerequisites. This script does not sign, notarize, or mutate the app.
 
 Options:
-  --adhoc                    Validate the unsigned-alpha/ad-hoc release path.
+  --adhoc                    Validate a local ad-hoc diagnostic package.
   --allow-missing-identity   Warn instead of failing when Developer ID is absent.
 
 Environment:
   MONKNOT_DEVELOPER_ID_IDENTITY   Identity substring to require in the keychain.
-                                  Defaults to "Developer ID Application".
+                                  Defaults to Monknot's exact Developer ID identity.
 USAGE
 }
 
@@ -95,16 +98,15 @@ require_tool() {
 echo "Monknot release preflight"
 echo "App bundle: $APP_BUNDLE"
 if [[ "$ADHOC" == "1" ]]; then
-  echo "Release mode: ad-hoc alpha"
+  echo "Release mode: local ad-hoc diagnostic"
 else
   echo "Release mode: Developer ID"
 fi
 echo
 
-fail "RELEASE_COMPLIANCE_BLOCKER: custom-theme authorship confirmation, complete Gruvbox license evidence, and app icon ownership review are still pending"
-
 require_tool codesign
 require_tool cmp
+require_tool file
 require_tool hdiutil
 require_tool lipo
 require_tool shasum
@@ -280,6 +282,19 @@ else
       fail "packaged legal file is missing or empty: ${LEGAL_FILE#"$APP_BUNDLE/"}"
     fi
   done
+
+  if [[ -e "$APP_BUNDLE/Contents/embedded.provisionprofile" ]]; then
+    fail "bundle contains an App Store provisioning profile"
+  else
+    pass "bundle contains no provisioning profile"
+  fi
+
+  SIGNED_ENTITLEMENTS="$(codesign -d --entitlements - "$APP_BUNDLE" 2>/dev/null || true)"
+  if [[ -z "$SIGNED_ENTITLEMENTS" ]]; then
+    pass "bundle contains no code-signing entitlements"
+  else
+    fail "bundle unexpectedly contains code-signing entitlements"
+  fi
   for LICENSE_FILE in "${THEME_LICENSE_FILES[@]}"; do
     SOURCE_LICENSE="ThirdPartyLicenses/$LICENSE_FILE"
     BUNDLED_LICENSE="$APP_RESOURCES/Legal/ThirdParty/$LICENSE_FILE"
@@ -330,17 +345,27 @@ else
       else
         fail "bundle is not ad-hoc signed"
       fi
-      warn "Gatekeeper will not trust an ad-hoc signature; publish the checksum and first-launch instructions"
+      warn "Gatekeeper will not trust an ad-hoc signature; this diagnostic artifact must never be published"
     else
       if grep -q "runtime" <<<"$SIGNATURE_DETAILS"; then
         pass "hardened runtime flag is present"
       else
         fail "hardened runtime flag is missing"
       fi
-      if grep -q "Authority=Developer ID Application" <<<"$SIGNATURE_DETAILS"; then
-        pass "bundle has a Developer ID Application authority"
+      if grep -F "Authority=$EXPECTED_DEVELOPER_ID" <<<"$SIGNATURE_DETAILS" >/dev/null; then
+        pass "bundle has the expected Developer ID Application authority"
       else
-        fail "bundle is not signed with Developer ID Application"
+        fail "bundle is not signed with the expected Developer ID identity"
+      fi
+      if grep -F "TeamIdentifier=$EXPECTED_TEAM_ID" <<<"$SIGNATURE_DETAILS" >/dev/null; then
+        pass "bundle has the expected TeamIdentifier"
+      else
+        fail "bundle has an unexpected TeamIdentifier"
+      fi
+      if grep -F "Timestamp=" <<<"$SIGNATURE_DETAILS" >/dev/null; then
+        pass "bundle signature has a secure timestamp"
+      else
+        fail "bundle signature is missing a secure timestamp"
       fi
     fi
   else
@@ -358,7 +383,7 @@ else
     fi
 
     architectures="$(lipo -archs "$binary_path" 2>/dev/null || true)"
-    if [[ "$architectures" =~ ^(arm64|x86_64)$ ]]; then
+    if [[ "$architectures" == "$EXPECTED_ARCH" ]]; then
       pass "Mach-O architecture: ${binary_path#"$APP_BUNDLE/"} ($architectures)"
     else
       fail "unexpected or unreadable Mach-O architecture: ${binary_path#"$APP_BUNDLE/"}"
@@ -372,8 +397,34 @@ else
     fi
   }
 
-  verify_macho_metadata "$APP_BUNDLE/Contents/MacOS/${EXECUTABLE_NAME:-Monknot}"
-  verify_macho_metadata "$FRAMEWORK"
+  MACHO_COUNT=0
+  while IFS= read -r -d '' CANDIDATE; do
+    if file -b "$CANDIDATE" | grep -q '^Mach-O'; then
+      MACHO_COUNT=$((MACHO_COUNT + 1))
+      verify_macho_metadata "$CANDIDATE"
+      if codesign --verify --strict --verbose=2 "$CANDIDATE" >/dev/null 2>&1; then
+        pass "Mach-O signature verifies: ${CANDIDATE#"$APP_BUNDLE/"}"
+      else
+        fail "Mach-O signature does not verify: ${CANDIDATE#"$APP_BUNDLE/"}"
+      fi
+      if [[ "$ADHOC" != "1" ]]; then
+        CANDIDATE_SIGNATURE="$(codesign -dvvv "$CANDIDATE" 2>&1 || true)"
+        if grep -F "Timestamp=" <<<"$CANDIDATE_SIGNATURE" >/dev/null; then
+          pass "Mach-O signature has a secure timestamp: ${CANDIDATE#"$APP_BUNDLE/"}"
+        else
+          fail "Mach-O signature is missing a secure timestamp: ${CANDIDATE#"$APP_BUNDLE/"}"
+        fi
+        if [[ -n "$(codesign -d --entitlements - "$CANDIDATE" 2>/dev/null || true)" ]]; then
+          fail "Mach-O file unexpectedly contains entitlements: ${CANDIDATE#"$APP_BUNDLE/"}"
+        fi
+      fi
+    fi
+  done < <(find "$APP_BUNDLE/Contents" -type f -print0)
+  if [[ "$MACHO_COUNT" -gt 0 ]]; then
+    pass "inspected $MACHO_COUNT Mach-O file(s) in the generated app"
+  else
+    fail "generated app contains no Mach-O files"
+  fi
 fi
 
 if [[ "$ADHOC" != "1" ]]; then

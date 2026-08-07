@@ -55,8 +55,7 @@ to keep.
 
 ## Install on macOS
 
-Monknot requires macOS 14 or later. Downloads are available for both Apple
-silicon and Intel Macs.
+Monknot requires macOS 14 or later and currently supports Apple silicon Macs.
 
 1. Download the DMG for your Mac from
    [GitHub Releases](https://github.com/RojhatToptamus/monknot/releases).
@@ -64,30 +63,11 @@ silicon and Intel Macs.
 3. Drag **Monknot** into **Applications**.
 4. Open Monknot and choose a folder.
 
-The current alpha may be blocked by macOS on its first launch. If that happens:
-
-1. Try to open Monknot once.
-2. Open **System Settings → Privacy & Security**.
-3. Scroll to the **Security** section.
-4. Click **Open Anyway** next to Monknot.
-5. Confirm with your password or Touch ID, then click **Open**.
-
-Only do this for a copy downloaded from the Monknot GitHub Releases page. See
-[Apple’s guide to opening an app from an unidentified developer](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unidentified-developer-mh40616/mac).
-
-If **Open Anyway** does not appear, quit Monknot and run:
-
-```sh
-xattr -dr com.apple.quarantine "/Applications/Monknot.app"
-open "/Applications/Monknot.app"
-```
-
-This removes the quarantine flag from Monknot only.
+Release downloads are signed with a Developer ID certificate and notarized by
+Apple. Do not bypass Gatekeeper for an artifact that macOS cannot verify.
 
 ## License
 
-Monknot is proprietary software.
-
-Copyright © 2026 Rojhat Toptamuş. All rights reserved.
+Monknot is available under the [MIT License](LICENSE).
 
 Third-party components remain subject to their respective license terms.

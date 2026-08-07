@@ -72,7 +72,7 @@ done
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION_FILE="$ROOT_DIR/VERSION"
 APP_NAME="Monknot"
-APP_COPYRIGHT="Copyright © 2026 Rojhat Toptamuş. All rights reserved."
+APP_COPYRIGHT="Copyright © 2026 Rojhat Toptamuş"
 BUNDLE_ID="${MONKNOT_BUNDLE_ID:-com.monknot.app}"
 BUILD_NUMBER="${MONKNOT_BUILD_NUMBER:-1}"
 MIN_SYSTEM_VERSION="14.0"
@@ -541,8 +541,8 @@ verify_plist_value CFBundleVersion "$BUILD_NUMBER"
 verify_plist_value LSMinimumSystemVersion "$MIN_SYSTEM_VERSION"
 verify_plist_value NSHumanReadableCopyright "$APP_COPYRIGHT"
 
-# A provisioning profile belongs only to the Store flow and must not leak into
-# a normal local build. Sign nested code before the main application bundle.
+# Direct-distribution and local builds do not embed a provisioning profile.
+# Sign nested code before the main application bundle.
 rm -f "$APP_CONTENTS/embedded.provisionprofile"
 codesign --force --sign "$SIGN_IDENTITY" "$APP_FRAMEWORKS/libMonknotCore.dylib"
 codesign --force --sign "$SIGN_IDENTITY" "$APP_BUNDLE"

@@ -4,11 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION_FILE="$ROOT_DIR/VERSION"
 BUNDLE_ID="com.monknot.app"
-APP_COPYRIGHT="Copyright © 2026 Rojhat Toptamuş. All rights reserved."
+EXPECTED_DEVELOPER_ID="Developer ID Application: rojhat toptamus (ZD35XP4V7D)"
+EXPECTED_TEAM_ID="ZD35XP4V7D"
+APP_COPYRIGHT="Copyright © 2026 Rojhat Toptamuş"
 DMG_PATH=""
 EXPECTED_RELEASE_VERSION=""
 EXPECTED_BUILD_NUMBER=""
-EXPECTED_ARCH="$(uname -m)"
+EXPECTED_ARCH="arm64"
 MIN_SYSTEM_VERSION="14.0"
 ADHOC=0
 MOUNT_POINT=""
@@ -39,10 +41,10 @@ metadata, deployment target, architecture, signatures, legal payload, and
 runtime launch.
 
 Options:
-  --adhoc                    Require ad-hoc app and DMG signatures.
+  --adhoc                    Require local diagnostic ad-hoc signatures.
   --expected-version VERSION Expected semantic release version. Defaults to VERSION.
   --expected-build NUMBER    Expected numeric CFBundleVersion.
-  --expected-arch ARCH       Expected arm64 or x86_64 architecture.
+  --expected-arch ARCH       Expected architecture. Direct releases require arm64.
   --help, -h                 Show this help.
 USAGE
 }
@@ -96,7 +98,7 @@ fi
 if [[ -z "$EXPECTED_RELEASE_VERSION" ]]; then
   EXPECTED_RELEASE_VERSION="$(tr -d '\r\n' <"$VERSION_FILE")"
 fi
-if [[ ! "$EXPECTED_RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+if [[ ! "$EXPECTED_RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
   echo "invalid expected release version: $EXPECTED_RELEASE_VERSION" >&2
   exit 64
 fi
@@ -104,13 +106,10 @@ if [[ -n "$EXPECTED_BUILD_NUMBER" && ! "$EXPECTED_BUILD_NUMBER" =~ ^[0-9]+$ ]]; 
   echo "invalid expected build number: $EXPECTED_BUILD_NUMBER" >&2
   exit 64
 fi
-if [[ ! "$EXPECTED_ARCH" =~ ^(arm64|x86_64)$ ]]; then
-  echo "unsupported expected architecture: $EXPECTED_ARCH" >&2
+if [[ "$EXPECTED_ARCH" != "arm64" ]]; then
+  echo "release artifacts currently support arm64 only: $EXPECTED_ARCH" >&2
   exit 64
 fi
-
-echo "RELEASE_COMPLIANCE_BLOCKER: custom-theme authorship confirmation, complete Gruvbox license evidence, and app icon ownership review are still pending" >&2
-exit 78
 
 EXPECTED_BUNDLE_VERSION="${EXPECTED_RELEASE_VERSION%%[-+]*}"
 DMG_PATH="$(cd "$(dirname "$DMG_PATH")" && pwd)/$(basename "$DMG_PATH")"
@@ -123,7 +122,7 @@ require_tool() {
   fi
 }
 
-for tool in codesign cmp hdiutil lipo shasum xcrun; do
+for tool in codesign cmp file hdiutil lipo shasum xcrun; do
   require_tool "$tool"
 done
 if [[ "$ADHOC" != "1" ]]; then
@@ -170,8 +169,16 @@ if [[ "$ADHOC" == "1" ]]; then
     exit 1
   fi
 else
-  if ! grep -q "Authority=Developer ID Application" <<<"$DMG_SIGNATURE"; then
-    echo "DMG is not signed with Developer ID Application" >&2
+  if ! grep -F "Authority=$EXPECTED_DEVELOPER_ID" <<<"$DMG_SIGNATURE" >/dev/null; then
+    echo "DMG is not signed with the expected Developer ID identity" >&2
+    exit 1
+  fi
+  if ! grep -F "TeamIdentifier=$EXPECTED_TEAM_ID" <<<"$DMG_SIGNATURE" >/dev/null; then
+    echo "DMG has an unexpected TeamIdentifier" >&2
+    exit 1
+  fi
+  if ! grep -F "Timestamp=" <<<"$DMG_SIGNATURE" >/dev/null; then
+    echo "DMG signature is missing a secure timestamp" >&2
     exit 1
   fi
   xcrun stapler validate "$DMG_PATH"
@@ -211,6 +218,14 @@ RESOURCES="$APP_BUNDLE/Contents/Resources"
 
 if [[ ! -f "$INFO_PLIST" || ! -x "$EXECUTABLE" || ! -f "$FRAMEWORK" ]]; then
   echo "packaged application structure is incomplete" >&2
+  exit 1
+fi
+if [[ -e "$APP_BUNDLE/Contents/embedded.provisionprofile" ]]; then
+  echo "Developer ID app unexpectedly contains an App Store provisioning profile" >&2
+  exit 1
+fi
+if [[ -n "$(codesign -d --entitlements - "$APP_BUNDLE" 2>/dev/null || true)" ]]; then
+  echo "Developer ID app unexpectedly contains code-signing entitlements" >&2
   exit 1
 fi
 
@@ -333,10 +348,48 @@ verify_macho() {
   fi
 }
 
-verify_macho "$EXECUTABLE"
-verify_macho "$FRAMEWORK"
-codesign --verify --strict --verbose=2 "$FRAMEWORK"
-codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+MACHO_COUNT=0
+NESTED_MACHO_COUNT=0
+while IFS= read -r -d '' CANDIDATE; do
+  if file -b "$CANDIDATE" | grep -q '^Mach-O'; then
+    MACHO_COUNT=$((MACHO_COUNT + 1))
+    [[ "$CANDIDATE" == "$EXECUTABLE" ]] || NESTED_MACHO_COUNT=$((NESTED_MACHO_COUNT + 1))
+    verify_macho "$CANDIDATE"
+    codesign --verify --strict --verbose=4 "$CANDIDATE"
+
+    if [[ "$ADHOC" != "1" ]]; then
+      CANDIDATE_SIGNATURE="$(codesign -dvvv "$CANDIDATE" 2>&1 || true)"
+      if ! grep -F "Authority=$EXPECTED_DEVELOPER_ID" <<<"$CANDIDATE_SIGNATURE" >/dev/null; then
+        echo "Mach-O file is not signed with the expected Developer ID identity: ${CANDIDATE#"$APP_BUNDLE/"}" >&2
+        exit 1
+      fi
+      if ! grep -F "TeamIdentifier=$EXPECTED_TEAM_ID" <<<"$CANDIDATE_SIGNATURE" >/dev/null; then
+        echo "Mach-O file has an unexpected TeamIdentifier: ${CANDIDATE#"$APP_BUNDLE/"}" >&2
+        exit 1
+      fi
+      if ! grep -F "runtime" <<<"$CANDIDATE_SIGNATURE" >/dev/null; then
+        echo "Mach-O file is missing Hardened Runtime: ${CANDIDATE#"$APP_BUNDLE/"}" >&2
+        exit 1
+      fi
+      if ! grep -F "Timestamp=" <<<"$CANDIDATE_SIGNATURE" >/dev/null; then
+        echo "Mach-O file is missing a secure timestamp: ${CANDIDATE#"$APP_BUNDLE/"}" >&2
+        exit 1
+      fi
+      if [[ -n "$(codesign -d --entitlements - "$CANDIDATE" 2>/dev/null || true)" ]]; then
+        echo "Mach-O file unexpectedly contains entitlements: ${CANDIDATE#"$APP_BUNDLE/"}" >&2
+        exit 1
+      fi
+    fi
+  fi
+done < <(find "$APP_BUNDLE/Contents" -type f -print0)
+
+if [[ "$MACHO_COUNT" == "0" || "$NESTED_MACHO_COUNT" == "0" ]]; then
+  echo "expected the app executable and at least one nested Mach-O file" >&2
+  exit 1
+fi
+echo "Verified $MACHO_COUNT Mach-O files, including $NESTED_MACHO_COUNT nested file(s)"
+
+codesign --verify --deep --strict --verbose=4 "$APP_BUNDLE"
 
 APP_SIGNATURE="$(codesign -dvvv "$APP_BUNDLE" 2>&1 || true)"
 if [[ "$ADHOC" == "1" ]]; then
@@ -345,14 +398,23 @@ if [[ "$ADHOC" == "1" ]]; then
     exit 1
   fi
 else
-  if ! grep -q "Authority=Developer ID Application" <<<"$APP_SIGNATURE"; then
-    echo "application is not signed with Developer ID Application" >&2
+  if ! grep -F "Authority=$EXPECTED_DEVELOPER_ID" <<<"$APP_SIGNATURE" >/dev/null; then
+    echo "application is not signed with the expected Developer ID identity" >&2
+    exit 1
+  fi
+  if ! grep -F "TeamIdentifier=$EXPECTED_TEAM_ID" <<<"$APP_SIGNATURE" >/dev/null; then
+    echo "application has an unexpected TeamIdentifier" >&2
     exit 1
   fi
   if ! grep -q "runtime" <<<"$APP_SIGNATURE"; then
     echo "application signature is missing hardened runtime" >&2
     exit 1
   fi
+  if ! grep -F "Timestamp=" <<<"$APP_SIGNATURE" >/dev/null; then
+    echo "application signature is missing a secure timestamp" >&2
+    exit 1
+  fi
+  spctl --assess --type execute -vv "$APP_BUNDLE"
 fi
 
 SMOKE_DIRECTORY="$(mktemp -d "${TMPDIR:-/tmp}/monknot-release-smoke.XXXXXX")"

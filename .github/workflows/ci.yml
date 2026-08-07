@@ -53,7 +53,6 @@ jobs:
           echo "macOS SDK $sdk_version"
           git diff --check
           bash -n script/*.sh
-          plutil -lint config/MonknotAppStore.entitlements
 
       - name: Build shipping SwiftPM products in release mode
         shell: bash

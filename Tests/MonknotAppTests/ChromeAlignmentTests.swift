@@ -274,6 +274,30 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertTrue(ThemeSlot.dark.themes.contains { $0.name == "Harbor" })
     }
 
+    func testRemovedThemeSelectionAndCustomizationFallBackToHarbor() throws {
+        let suiteName = "MonknotTests.RemovedTheme.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("gruvbox-light", forKey: "Monknot.lightThemeID")
+        defaults.set("gruvbox-dark", forKey: "Monknot.darkThemeID")
+        let removedConfiguration = ThemeConfiguration(theme: AppTheme.defaultLight)
+        defaults.set(
+            try JSONEncoder().encode(["gruvbox-light": removedConfiguration]),
+            forKey: "Monknot.themeCustomizations"
+        )
+
+        let store = ThemeSettingsStore(defaults: defaults)
+
+        XCTAssertEqual(store.lightThemeID, "harbor-light")
+        XCTAssertEqual(store.darkThemeID, "harbor-dark")
+        XCTAssertEqual(defaults.string(forKey: "Monknot.lightThemeID"), "harbor-light")
+        XCTAssertEqual(defaults.string(forKey: "Monknot.darkThemeID"), "harbor-dark")
+        let data = try XCTUnwrap(defaults.data(forKey: "Monknot.themeCustomizations"))
+        let customizations = try JSONDecoder().decode([String: ThemeConfiguration].self, from: data)
+        XCTAssertNil(customizations["gruvbox-light"])
+    }
+
     func testThemePreviewDoesNotPersistAndCancelRestoresCommittedTheme() throws {
         let suiteName = "MonknotTests.ThemePreview.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

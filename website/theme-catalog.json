@@ -301,36 +301,6 @@
       "variant" : "dark"
     },
     {
-      "accent" : "#458588",
-      "added" : "#98971a",
-      "id" : "gruvbox-dark",
-      "ink" : "#ebdbb2",
-      "name" : "Gruvbox",
-      "palette" : [
-        "#282828",
-        "#cc241d",
-        "#98971a",
-        "#458588",
-        "#458588",
-        "#b16286",
-        "#458588",
-        "#ebdbb2",
-        "#ebdbb2",
-        "#cc241d",
-        "#98971a",
-        "#458588",
-        "#458588",
-        "#b16286",
-        "#458588",
-        "#ebdbb2"
-      ],
-      "removed" : "#cc241d",
-      "selection" : "#304243",
-      "skill" : "#b16286",
-      "surface" : "#282828",
-      "variant" : "dark"
-    },
-    {
       "accent" : "#7e6dd0",
       "added" : "#65c387",
       "id" : "axis-dark",
@@ -1173,36 +1143,6 @@
       "variant" : "light"
     },
     {
-      "accent" : "#458588",
-      "added" : "#98971a",
-      "id" : "gruvbox-light",
-      "ink" : "#3c3836",
-      "name" : "Gruvbox",
-      "palette" : [
-        "#fbf1c7",
-        "#cc241d",
-        "#98971a",
-        "#458588",
-        "#458588",
-        "#b16286",
-        "#458588",
-        "#3c3836",
-        "#3c3836",
-        "#cc241d",
-        "#98971a",
-        "#458588",
-        "#458588",
-        "#b16286",
-        "#458588",
-        "#3c3836"
-      ],
-      "removed" : "#cc241d",
-      "selection" : "#D7DBBA",
-      "skill" : "#b16286",
-      "surface" : "#fbf1c7",
-      "variant" : "light"
-    },
-    {
       "accent" : "#321f8e",
       "added" : "#277c4c",
       "id" : "axis-light",
@@ -1533,5 +1473,5 @@
       "variant" : "light"
     }
   ],
-  "sourceVersion" : "monknot-theme-v3"
+  "sourceVersion" : "monknot-theme-v4"
 }

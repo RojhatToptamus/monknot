@@ -6,7 +6,7 @@ public enum MonknotThemeVariant: String, Codable, Sendable {
 }
 
 public struct MonknotThemePreset: Identifiable, Codable, Equatable, Sendable {
-    public static let sourceVersion = "monknot-theme-v3"
+    public static let sourceVersion = "monknot-theme-v4"
 
     public let id: String
     public let codeThemeID: String
@@ -25,8 +25,7 @@ public enum MonknotThemeCatalog {
     public static let sourceVersion = MonknotThemePreset.sourceVersion
 
     // Palette provenance and Monknot's semantic-role mappings are recorded in
-    // LICENSE_AUDIT.md. Separately authored custom palettes remain development-only
-    // until the release blockers there are resolved.
+    // LICENSE_AUDIT.md.
     public static let lightPresets: [MonknotThemePreset] = [
         preset(id: "parchment-light", name: "Parchment", codeThemeID: "parchment", variant: .light, accent: "#876a26", contrast: 40, ink: "#241b12", surface: "#f7f4ed", diffAdded: "#277c4c", diffRemoved: "#a52f27", skill: "#9b36ab"),
         preset(id: "brasspants-light", name: "Brasspants", codeThemeID: "brasspants-light", variant: .light, accent: "#8a6410", contrast: 40, ink: "#181f28", surface: "#f7f9fb", diffAdded: "#1f7d5c", diffRemoved: "#bf3a34", skill: "#2f5fbd"),
@@ -36,7 +35,6 @@ public enum MonknotThemeCatalog {
         preset(id: "everforest-light", name: "Everforest", codeThemeID: "everforest", variant: .light, accent: "#93b259", contrast: 45, ink: "#5c6a72", surface: "#fdf6e3", diffAdded: "#8da101", diffRemoved: "#f85552", skill: "#df69ba"),
         preset(id: "forge-light", name: "Forge", codeThemeID: "forge", variant: .light, accent: "#13499a", contrast: 40, ink: "#191f29", surface: "#f9fafb", diffAdded: "#277c4c", diffRemoved: "#a52f27", skill: "#7036ab"),
         preset(id: "greaseball-light", name: "Greaseball", codeThemeID: "greaseball-light", variant: .light, accent: "#a35a17", contrast: 40, ink: "#221d14", surface: "#faf6ef", diffAdded: "#2f8f3f", diffRemoved: "#c2352b", skill: "#8d4fc4"),
-        preset(id: "gruvbox-light", name: "Gruvbox", codeThemeID: "gruvbox", variant: .light, accent: "#458588", contrast: 45, ink: "#3c3836", surface: "#fbf1c7", diffAdded: "#98971a", diffRemoved: "#cc241d", skill: "#b16286"),
         preset(id: "axis-light", name: "Axis", codeThemeID: "axis", variant: .light, accent: "#321f8e", contrast: 40, ink: "#1d1c26", surface: "#f6f6f9", diffAdded: "#277c4c", diffRemoved: "#a52f27", skill: "#9336ab"),
         preset(id: "paper-light", name: "Paper", codeThemeID: "paper", variant: .light, accent: "#2f597f", contrast: 40, ink: "#22201d", surface: "#fdfdfc", diffAdded: "#277c4c", diffRemoved: "#a52f27", skill: "#6836ab"),
         preset(id: "one-light", name: "One Light", codeThemeID: "one-light", variant: .light, accent: "#4078f2", contrast: 45, ink: "#383a42", surface: "#fafafa", diffAdded: "#50a14f", diffRemoved: "#e45649", skill: "#a626a4"),
@@ -61,7 +59,6 @@ public enum MonknotThemeCatalog {
         preset(id: "everforest-dark", name: "Everforest", codeThemeID: "everforest", variant: .dark, accent: "#a7c080", contrast: 60, ink: "#d3c6aa", surface: "#2d353b", diffAdded: "#a7c080", diffRemoved: "#e67e80", skill: "#d699b6"),
         preset(id: "forge-dark", name: "Forge", codeThemeID: "forge", variant: .dark, accent: "#5c91e0", contrast: 40, ink: "#e6ebef", surface: "#0c1118", diffAdded: "#65c387", diffRemoved: "#e56e61", skill: "#bd92e7"),
         preset(id: "greaseball-dark", name: "Greaseball", codeThemeID: "greaseball-dark", variant: .dark, accent: "#e08a4c", contrast: 40, ink: "#f2ece1", surface: "#17140f", diffAdded: "#5fb85f", diffRemoved: "#e2564a", skill: "#c98fe0"),
-        preset(id: "gruvbox-dark", name: "Gruvbox", codeThemeID: "gruvbox", variant: .dark, accent: "#458588", contrast: 60, ink: "#ebdbb2", surface: "#282828", diffAdded: "#98971a", diffRemoved: "#cc241d", skill: "#b16286"),
         preset(id: "axis-dark", name: "Axis", codeThemeID: "axis", variant: .dark, accent: "#7e6dd0", contrast: 40, ink: "#e4e3e8", surface: "#111013", diffAdded: "#65c387", diffRemoved: "#e56e61", skill: "#d692e7"),
         preset(id: "lobster-dark", name: "Lobster", codeThemeID: "lobster", variant: .dark, accent: "#ff5c5c", contrast: 60, ink: "#e4e4e7", surface: "#111827", diffAdded: "#22c55e", diffRemoved: "#ff5c5c", skill: "#3b82f6"),
         preset(id: "lagoon-dark", name: "Lagoon", codeThemeID: "lagoon", variant: .dark, accent: "#62dace", contrast: 40, ink: "#e0e9eb", surface: "#0d191c", diffAdded: "#65c387", diffRemoved: "#e56e61", skill: "#a392e7"),

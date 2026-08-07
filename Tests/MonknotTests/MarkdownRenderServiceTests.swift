@@ -4,7 +4,7 @@ import XCTest
 
 final class MarkdownRenderServiceTests: XCTestCase {
     func testThemeCatalogKeepsVersionedHarborDefaultTokens() {
-        XCTAssertEqual(MonknotThemeCatalog.sourceVersion, "monknot-theme-v3")
+        XCTAssertEqual(MonknotThemeCatalog.sourceVersion, "monknot-theme-v4")
         XCTAssertEqual(AppTheme.defaultLight.id, "harbor-light")
         XCTAssertEqual(AppTheme.defaultLight.name, "Harbor")
         XCTAssertEqual(AppTheme.defaultLight.codeThemeID, "harbor")
@@ -28,12 +28,12 @@ final class MarkdownRenderServiceTests: XCTestCase {
     func testThemeCatalogIncludesEveryCurrentLightAndDarkPreset() {
         let expectedLightNames = [
             "Parchment", "Brasspants", "Catppuccin Latte", "Harbor", "Codechimp", "Everforest",
-            "Forge", "Greaseball", "Gruvbox", "Axis", "Paper", "One Light", "Proof",
+            "Forge", "Greaseball", "Axis", "Paper", "One Light", "Proof",
             "Signal", "Rosé Pine Dawn", "Solarized Light", "Sockpuppet", "Monolith", "Workbench", "Blueprint"
         ]
         let expectedDarkNames = [
             "Parchment", "Ayu Dark", "Brasspants", "Catppuccin Mocha", "Harbor", "Codechimp", "Dracula",
-            "Everforest", "Forge", "Greaseball", "Gruvbox", "Axis", "Lobster", "Lagoon",
+            "Everforest", "Forge", "Greaseball", "Axis", "Lobster", "Lagoon",
             "Phosphor", "Citrus", "Night Owl", "Nord", "Paper", "One Dark", "Oscura", "Signal",
             "Rosé Pine Moon", "Watchtower", "Solarized Dark", "Sockpuppet", "Temple", "Tokyo Night", "Monolith",
             "Workbench", "Blueprint"
@@ -46,6 +46,7 @@ final class MarkdownRenderServiceTests: XCTestCase {
         XCTAssertEqual(Set(allPresets.map(\.id)).count, allPresets.count)
         XCTAssertTrue(MonknotThemeCatalog.lightPresets.allSatisfy { !$0.theme.isDark })
         XCTAssertTrue(MonknotThemeCatalog.darkPresets.allSatisfy { $0.theme.isDark })
+        XCTAssertFalse(allPresets.contains { $0.id.contains("gruvbox") || $0.theme.name == "Gruvbox" })
 
         for preset in allPresets {
             let theme = preset.theme
@@ -83,8 +84,6 @@ final class MarkdownRenderServiceTests: XCTestCase {
             "dracula-dark": ("#ff79c6", "#f8f8f2", "#282a36", "#50fa7b", "#ff5555", "#ff79c6"),
             "everforest-light": ("#93b259", "#5c6a72", "#fdf6e3", "#8da101", "#f85552", "#df69ba"),
             "everforest-dark": ("#a7c080", "#d3c6aa", "#2d353b", "#a7c080", "#e67e80", "#d699b6"),
-            "gruvbox-light": ("#458588", "#3c3836", "#fbf1c7", "#98971a", "#cc241d", "#b16286"),
-            "gruvbox-dark": ("#458588", "#ebdbb2", "#282828", "#98971a", "#cc241d", "#b16286"),
             "night-owl-dark": ("#44596b", "#d6deeb", "#011627", "#c5e478", "#ef5350", "#c792ea"),
             "nord-dark": ("#88c0d0", "#d8dee9", "#2e3440", "#a3be8c", "#bf616a", "#b48ead"),
             "one-light": ("#4078f2", "#383a42", "#fafafa", "#50a14f", "#e45649", "#a626a4"),

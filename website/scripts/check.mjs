@@ -51,7 +51,7 @@ if (vercel.cleanUrls !== true || vercel.trailingSlash !== false) {
 
 const requiredMarkup = [
   "Markdown, PDFs, and a terminal. One window.",
-  "20 light presets. 31 dark.",
+  "19 light presets. 30 dark.",
   "<title>Monknot for macOS — Markdown Editor, PDFs &amp; Terminal</title>",
   'name="description"',
   'content="Open a folder and work with Markdown, text files, searchable PDFs, and terminal sessions in one native macOS workspace."',
@@ -175,8 +175,8 @@ for (const marker of [
 if ((html.match(/class="product-shot/g) ?? []).length !== 10) throw new Error("Expected ten supplied product screenshots.");
 if ((html.match(/role="tab"/g) ?? []).length !== 5) throw new Error("Expected five product tabs.");
 
-if (themeCatalog.sourceVersion !== "monknot-theme-v3" || themeCatalog.light?.length !== 20 || themeCatalog.dark?.length !== 31) {
-  throw new Error("Expected the complete canonical catalog of 20 light and 31 dark presets.");
+if (themeCatalog.sourceVersion !== "monknot-theme-v4" || themeCatalog.light?.length !== 19 || themeCatalog.dark?.length !== 30) {
+  throw new Error("Expected the complete canonical catalog of 19 light and 30 dark presets.");
 }
 
 const themeIDs = new Set();
@@ -206,4 +206,4 @@ await Promise.all(
     .map((file) => access(resolve(root, file.replace(/^\//, ""))))
 );
 
-console.log(`Checked ${expectedAssets.size} assets, complete SEO metadata, 10 product views, 51 theme presets, support and privacy routes, and deployment files.`);
+console.log(`Checked ${expectedAssets.size} assets, complete SEO metadata, 10 product views, 49 theme presets, support and privacy routes, and deployment files.`);

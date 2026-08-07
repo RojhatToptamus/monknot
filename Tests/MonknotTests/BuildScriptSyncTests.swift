@@ -60,7 +60,7 @@ final class BuildScriptSyncTests: XCTestCase {
         }
     }
 
-    func testProjectLicenseIsProprietaryAndThirdPartyMITNoticesRemainSeparate() throws {
+    func testProjectAndFirstPartyAssetsUseMITWhileThirdPartyNoticesRemainSeparate() throws {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
         let projectLicense = try String(contentsOf: root.appendingPathComponent("LICENSE"), encoding: .utf8)
         let readme = try String(contentsOf: root.appendingPathComponent("README.md"), encoding: .utf8)
@@ -83,28 +83,17 @@ final class BuildScriptSyncTests: XCTestCase {
             encoding: .utf8
         )
 
-        let expectedProjectLicense = """
-        Copyright © 2026 Rojhat Toptamuş. All rights reserved.
-
-        The source code and associated documentation contained in this repository are proprietary and confidential.
-
-        No part of this software may be copied, modified, distributed, published, sublicensed, sold, or used to create derivative works without the prior written permission of the copyright holder, except where permitted under a separate written agreement or required by applicable law.
-
-        Third-party software included in or used by this project remains subject to its respective license terms.
-        """
-
-        XCTAssertEqual(projectLicense.trimmingCharacters(in: .whitespacesAndNewlines), expectedProjectLicense)
-        XCTAssertFalse(projectLicense.contains("MIT License"))
-        XCTAssertTrue(readme.contains("Monknot is proprietary software."))
-        XCTAssertFalse(readme.contains("Monknot is available under"))
+        XCTAssertTrue(projectLicense.hasPrefix("MIT License\n\nCopyright (c) 2026 Rojhat Toptamuş"))
+        XCTAssertTrue(projectLicense.contains("Permission is hereby granted, free of charge"))
+        XCTAssertTrue(projectLicense.contains("THE SOFTWARE IS PROVIDED \"AS IS\""))
+        XCTAssertFalse(projectLicense.lowercased().contains("proprietary"))
+        XCTAssertTrue(readme.contains("Monknot is available under the [MIT License](LICENSE)."))
         XCTAssertTrue(
             readme.contains(
                 """
                 ## License
 
-                Monknot is proprietary software.
-
-                Copyright © 2026 Rojhat Toptamuş. All rights reserved.
+                Monknot is available under the [MIT License](LICENSE).
 
                 Third-party components remain subject to their respective license terms.
                 """
@@ -115,12 +104,15 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(notices.contains("9ba6c00a195c95fcf8292a2b9084d91450e5daae"))
         XCTAssertTrue(xtermLicense.contains("Permission is hereby granted, free of charge"))
         XCTAssertTrue(addonLicense.contains("Permission is hereby granted, free of charge"))
-        XCTAssertTrue(audit.contains("Not cleared for production or Mac App Store release."))
+        XCTAssertTrue(audit.contains("Cleared for the direct-distribution application bundle"))
         XCTAssertTrue(audit.contains("Owner-provided replacement palettes"))
         XCTAssertTrue(audit.contains("Cleared by project-owner representation"))
-        XCTAssertTrue(audit.contains("Original authorship confirmation pending"))
-        XCTAssertTrue(audit.contains("App icon PNG set"))
-        XCTAssertTrue(buildScript.contains("Copyright © 2026 Rojhat Toptamuş. All rights reserved."))
+        XCTAssertTrue(audit.contains("Owner-authored custom palettes"))
+        XCTAssertTrue(audit.contains("App icon/logo PNG set"))
+        XCTAssertTrue(audit.contains("Gruvbox Light and Gruvbox Dark were removed"))
+        XCTAssertFalse(themeCatalog.contains("Gruvbox"))
+        XCTAssertTrue(buildScript.contains("Copyright © 2026 Rojhat Toptamuş"))
+        XCTAssertFalse(buildScript.contains("All rights reserved"))
         XCTAssertTrue(buildScript.contains("verify_plist_value NSHumanReadableCopyright"))
 
         let presetNamePattern = try NSRegularExpression(pattern: #"name: "([^"]+)""#)
@@ -186,40 +178,17 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(script.contains("APP_LEGAL_RESOURCES"))
     }
 
-    func testAppStorePackagingUsesDedicatedSandboxedSigningFlow() throws {
+    func testAppStorePackagingAndSandboxEntitlementsAreRemoved() throws {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-        let script = try String(
-            contentsOf: root.appendingPathComponent("script/app_store_package.sh"),
-            encoding: .utf8
-        )
-        let entitlements = try String(
-            contentsOf: root.appendingPathComponent("config/MonknotAppStore.entitlements"),
-            encoding: .utf8
-        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("script/app_store_package.sh").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("config/MonknotAppStore.entitlements").path))
 
-        XCTAssertTrue(script.hasPrefix("#!/usr/bin/env bash"))
-        XCTAssertTrue(script.contains("MONKNOT_APP_STORE_APP_IDENTITY"))
-        XCTAssertTrue(script.contains("MONKNOT_APP_STORE_INSTALLER_IDENTITY"))
-        XCTAssertTrue(script.contains("MONKNOT_APP_STORE_PROVISIONING_PROFILE"))
-        XCTAssertTrue(script.contains("MONKNOT_SIGNING_MODE=adhoc"))
-        XCTAssertTrue(script.contains("codesign --force --sign \"$APP_IDENTITY\" \"$FRAMEWORK\""))
-        XCTAssertTrue(script.contains("--entitlements \"$ENTITLEMENTS\""))
-        XCTAssertTrue(script.contains("productbuild"))
-        XCTAssertTrue(script.contains("pkgutil --check-signature"))
-        XCTAssertTrue(script.contains("pkgutil --payload-files"))
-        XCTAssertTrue(script.contains("codesign --verify --deep --strict"))
-        XCTAssertTrue(script.contains("TEAM_ID=\"ZD35XP4V7D\""))
-        XCTAssertTrue(script.contains("BUNDLE_ID=\"com.monknot.app\""))
-        XCTAssertTrue(script.contains("APPLICATION_IDENTIFIER=\"$TEAM_ID.$BUNDLE_ID\""))
-        XCTAssertTrue(script.contains("RELEASE_COMPLIANCE_BLOCKER"))
-
-        XCTAssertTrue(entitlements.contains("com.apple.application-identifier"))
-        XCTAssertTrue(entitlements.contains("ZD35XP4V7D.com.monknot.app"))
-        XCTAssertTrue(entitlements.contains("com.apple.developer.team-identifier"))
-        XCTAssertTrue(entitlements.contains("com.apple.security.app-sandbox"))
-        XCTAssertTrue(entitlements.contains("com.apple.security.files.user-selected.read-write"))
-        XCTAssertTrue(entitlements.contains("com.apple.security.files.bookmarks.app-scope"))
-        XCTAssertFalse(entitlements.contains("com.apple.security.network.client"))
+        let workflow = try String(contentsOf: root.appendingPathComponent(".github/workflows/release.yml"), encoding: .utf8)
+        let releaseGuide = try String(contentsOf: root.appendingPathComponent("docs/RELEASE.md"), encoding: .utf8)
+        XCTAssertFalse(workflow.contains("app-sandbox"))
+        XCTAssertFalse(workflow.contains("productbuild"))
+        XCTAssertFalse(workflow.contains("Transporter"))
+        XCTAssertTrue(releaseGuide.contains("does not use App Sandbox"))
     }
 
     func testHTMLPreviewDisablesWorkspaceAuthoredJavaScript() throws {
@@ -255,7 +224,7 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(script.contains("--adhoc"))
         XCTAssertTrue(script.contains("--allow-missing-identity"))
         XCTAssertTrue(script.contains("Signature=adhoc"))
-        XCTAssertTrue(script.contains("Authority=Developer ID Application"))
+        XCTAssertTrue(script.contains("Developer ID Application: rojhat toptamus (ZD35XP4V7D)"))
         XCTAssertTrue(script.contains("CFBundleShortVersionString"))
         XCTAssertTrue(script.contains("SECRET_PATTERN"))
         XCTAssertTrue(script.contains("git ls-files --others --exclude-standard -z"))
@@ -264,7 +233,11 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(script.contains("Legal/THIRD_PARTY_NOTICES.md"))
         XCTAssertTrue(script.contains("xcrun vtool -show-build"))
         XCTAssertTrue(script.contains("third-party resource hash"))
-        XCTAssertTrue(script.contains("RELEASE_COMPLIANCE_BLOCKER"))
+        XCTAssertTrue(script.contains("bundle contains no code-signing entitlements"))
+        XCTAssertTrue(script.contains("bundle contains no provisioning profile"))
+        XCTAssertTrue(script.contains("bundle signature has a secure timestamp"))
+        XCTAssertTrue(script.contains("Mach-O signature has a secure timestamp"))
+        XCTAssertFalse(script.contains("RELEASE_COMPLIANCE_BLOCKER"))
         XCTAssertTrue(script.contains("theme-tokyo-night-MIT.txt"))
     }
 
@@ -278,6 +251,7 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(script.contains("MONKNOT_SIGNING_MODE=adhoc"))
         XCTAssertTrue(script.contains("Developer ID Application"))
         XCTAssertTrue(script.contains("codesign --force --options runtime --timestamp --sign"))
+        XCTAssertTrue(script.contains("application signature is missing a secure timestamp"))
         XCTAssertTrue(script.contains("hdiutil create -volname Monknot"))
         XCTAssertTrue(script.contains("xcrun notarytool submit"))
         XCTAssertTrue(script.contains("xcrun stapler staple"))
@@ -289,7 +263,10 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(script.contains("shasum -a 256"))
         XCTAssertTrue(script.contains("MONKNOT_TARGET_TRIPLE"))
         XCTAssertTrue(script.contains("VERSION"))
-        XCTAssertTrue(script.contains("RELEASE_COMPLIANCE_BLOCKER"))
+        XCTAssertTrue(script.contains("find \"$APP_BUNDLE/Contents\" -type f -print0"))
+        XCTAssertTrue(script.contains("no nested Mach-O code found to sign"))
+        XCTAssertTrue(script.contains("Monknot-$RELEASE_VERSION-$TARGET_ARCH.dmg"))
+        XCTAssertFalse(script.contains("RELEASE_COMPLIANCE_BLOCKER"))
     }
 
     func testReleaseArtifactVerifierChecksMountedDistribution() throws {
@@ -306,25 +283,34 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(script.contains("Legal/ThirdParty/xterm-addon-fit-MIT.txt"))
         XCTAssertTrue(script.contains("theme-ayu-MIT.txt"))
         XCTAssertTrue(script.contains("theme-tokyo-night-MIT.txt"))
-        XCTAssertTrue(script.contains("RELEASE_COMPLIANCE_BLOCKER"))
+        XCTAssertTrue(script.contains("Developer ID Application: rojhat toptamus (ZD35XP4V7D)"))
+        XCTAssertTrue(script.contains("spctl --assess --type execute -vv"))
+        XCTAssertTrue(script.contains("unexpectedly contains code-signing entitlements"))
+        XCTAssertTrue(script.contains("DMG signature is missing a secure timestamp"))
+        XCTAssertTrue(script.contains("Mach-O file is missing a secure timestamp"))
+        XCTAssertFalse(script.contains("RELEASE_COMPLIANCE_BLOCKER"))
         XCTAssertTrue(script.contains("xcrun vtool -show-build"))
         XCTAssertTrue(script.contains("codesign --verify --deep --strict"))
         XCTAssertTrue(script.contains("CFFIXED_USER_HOME"))
         XCTAssertTrue(script.contains("unexpected top-level DMG item"))
     }
 
-    func testTagReleaseWorkflowBuildsBothArchitecturesAndCreatesDraft() throws {
+    func testTagReleaseWorkflowPublishesOneSignedNotarizedArm64DMG() throws {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
         let workflowURL = root.appendingPathComponent(".github/workflows/release.yml")
         let workflow = try String(contentsOf: workflowURL, encoding: .utf8)
 
         XCTAssertTrue(workflow.contains("tags:"))
         XCTAssertTrue(workflow.contains("- \"v*\""))
+        XCTAssertTrue(workflow.contains("workflow_dispatch:"))
         XCTAssertTrue(workflow.contains("release tag must point to a commit reachable from origin/main"))
+        XCTAssertTrue(workflow.contains("manual release dry-runs must use the main branch"))
+        XCTAssertTrue(workflow.contains("manual release dry-run commit must equal the current origin/main tip"))
         XCTAssertTrue(workflow.contains("macos-15"))
-        XCTAssertTrue(workflow.contains("macos-15-intel"))
-        XCTAssertTrue(workflow.contains("arch: arm64"))
-        XCTAssertTrue(workflow.contains("arch: x86_64"))
+        XCTAssertFalse(workflow.contains("macos-15-intel"))
+        XCTAssertTrue(workflow.contains("test \"$(uname -m)\" = \"arm64\""))
+        XCTAssertFalse(workflow.contains("x86_64"))
+        XCTAssertTrue(workflow.contains("environment: release"))
         XCTAssertTrue(workflow.contains("Xcode_26.3.app"))
         XCTAssertTrue(workflow.contains("macOS 26 SDK or newer is required"))
         XCTAssertFalse(workflow.contains("Xcode_16.4.app"))
@@ -335,19 +321,37 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(workflow.contains("swift run monknot-capture --help"))
         XCTAssertTrue(workflow.contains("script/release_package.sh"))
         XCTAssertTrue(workflow.contains("script/verify_release_artifact.sh"))
-        XCTAssertTrue(workflow.contains("--draft"))
-        XCTAssertTrue(workflow.contains("SHA256SUMS-macOS.txt"))
-        XCTAssertTrue(workflow.contains("shasum -a 256 -c"))
-        XCTAssertNotNil(
-            workflow.range(
-                of: #"actions/attest@[0-9a-f]{40} # v4"#,
-                options: .regularExpression
-            )
-        )
+        XCTAssertTrue(workflow.contains("script/release_preflight.sh --allow-missing-identity"))
+        XCTAssertTrue(workflow.contains("MACOS_CERTIFICATE_P12"))
+        XCTAssertTrue(workflow.contains("MACOS_CERTIFICATE_PASSWORD"))
+        XCTAssertTrue(workflow.contains("APPLE_API_KEY_P8"))
+        XCTAssertTrue(workflow.contains("APPLE_API_KEY_ID"))
+        XCTAssertTrue(workflow.contains("APPLE_API_ISSUER_ID"))
+        XCTAssertTrue(workflow.contains("security create-keychain"))
+        XCTAssertTrue(workflow.contains("security delete-keychain"))
+        XCTAssertTrue(workflow.contains("security set-key-partition-list"))
+        XCTAssertTrue(workflow.contains("xcrun notarytool submit"))
+        XCTAssertTrue(workflow.contains("notary_status\" != \"Accepted"))
+        XCTAssertTrue(workflow.contains("plutil -extract id raw"))
+        XCTAssertTrue(workflow.contains("submission_id=$notary_id"))
+        XCTAssertTrue(workflow.contains("xcrun stapler staple"))
+        XCTAssertTrue(workflow.contains("xcrun stapler validate"))
+        XCTAssertTrue(workflow.contains("spctl --assess"))
+        XCTAssertTrue(workflow.contains("gh release create"))
+        XCTAssertTrue(workflow.contains("if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}"))
+        XCTAssertTrue(workflow.contains("if: ${{ github.event_name == 'workflow_dispatch' }}"))
+        XCTAssertTrue(workflow.contains("No tag or GitHub Release was created."))
+        XCTAssertTrue(workflow.contains("first public release for Apple silicon Macs"))
+        XCTAssertTrue(workflow.contains("Requires macOS 14 or later"))
+        XCTAssertTrue(workflow.contains("Developer ID signed and notarized by Apple"))
+        XCTAssertTrue(workflow.contains("--notes-file"))
+        XCTAssertFalse(workflow.contains("--generate-notes"))
+        XCTAssertTrue(workflow.contains("Monknot-${{ needs.metadata.outputs.release_version }}-arm64.dmg"))
+        XCTAssertFalse(workflow.contains("--draft"))
+        XCTAssertFalse(workflow.contains("--adhoc"))
+        XCTAssertFalse(workflow.contains("actions/upload-artifact"))
+        XCTAssertFalse(workflow.contains("actions/download-artifact"))
         XCTAssertFalse(workflow.contains("actions/checkout@v"))
-        XCTAssertFalse(workflow.contains("actions/upload-artifact@v"))
-        XCTAssertFalse(workflow.contains("actions/download-artifact@v"))
-        XCTAssertFalse(workflow.contains("actions/attest@v"))
     }
 
     func testContinuousIntegrationRunsFullSuiteOnBothArchitectures() throws {
