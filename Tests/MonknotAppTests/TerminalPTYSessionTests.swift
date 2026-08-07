@@ -38,10 +38,13 @@ final class TerminalPTYSessionTests: XCTestCase {
             git --version | sed 's/^/__MONKNOT_GIT_VERSION__/'
             printf '__MONKNOT_%s__%s\\n' PATH \"$PATH\"
             for tool in claude codex node brew; do
-              tool_path=\"$(command -v \"$tool\" 2>/dev/null || true)\"
-              printf '__MONKNOT_%s__%s=%s\\n' TOOL \"$tool\" \"$tool_path\"
-              if [[ -n \"$tool_path\" && \"$tool\" != brew ]]; then
-                \"$tool\" --version 2>&1 | head -n 1 | sed \"s/^/__MONKNOT_VERSION__${tool}=/\"
+              if command -v \"$tool\" >/dev/null 2>&1; then
+                printf '__MONKNOT_%s__%s=available\\n' TOOL \"$tool\"
+                if [[ \"$tool\" != brew ]]; then
+                  \"$tool\" --version 2>&1 | head -n 1 | sed \"s/^/__MONKNOT_VERSION__${tool}=/\"
+                fi
+              else
+                printf '__MONKNOT_%s__%s=unavailable\\n' TOOL \"$tool\"
               fi
             done
             printf '__MONKNOT_%s__' SIZE; stty size
@@ -80,18 +83,17 @@ final class TerminalPTYSessionTests: XCTestCase {
             XCTAssertTrue(path.split(separator: ":").contains("/usr/local/bin"), path)
         }
         for tool in ["claude", "codex", "node", "brew"] {
-            let prefix = "__MONKNOT_TOOL__\(tool)="
-            let toolLine = try XCTUnwrap(
-                outputLines.first { $0.contains(prefix) },
-                beforeInterrupt
+            let availableMarker = "__MONKNOT_TOOL__\(tool)=available"
+            let unavailableMarker = "__MONKNOT_TOOL__\(tool)=unavailable"
+            let isAvailable = beforeInterrupt.contains(availableMarker)
+            let isUnavailable = beforeInterrupt.contains(unavailableMarker)
+            XCTAssertNotEqual(
+                isAvailable,
+                isUnavailable,
+                "Expected exactly one availability marker for \(tool).\n\(beforeInterrupt)"
             )
-            let toolPath = toolLine.components(separatedBy: prefix).last?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !toolPath.isEmpty {
-                XCTAssertTrue(toolPath.hasPrefix("/"), toolLine)
-                if tool != "brew" {
-                    XCTAssertTrue(beforeInterrupt.contains("__MONKNOT_VERSION__\(tool)="), beforeInterrupt)
-                }
+            if isAvailable, tool != "brew" {
+                XCTAssertTrue(beforeInterrupt.contains("__MONKNOT_VERSION__\(tool)="), beforeInterrupt)
             }
         }
 
