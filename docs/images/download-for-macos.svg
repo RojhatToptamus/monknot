@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="224" height="48" viewBox="0 0 224 48" role="img" aria-labelledby="title description">
+  <title id="title">Download for macOS</title>
+  <desc id="description">Blue download button matching the Monknot website</desc>
+  <rect x="0.5" y="0.5" width="223" height="47" rx="9.5" fill="#0A52A3" stroke="#2871C4"/>
+  <path d="M24 13.5v13m0 0 5-5m-5 5-5-5M17 33h14" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="45" y="29" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15" font-weight="500">Download for macOS</text>
+</svg>
