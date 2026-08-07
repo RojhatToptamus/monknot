@@ -64,11 +64,12 @@ final class TerminalPTYSessionTests: XCTestCase {
         XCTAssertTrue(beforeInterrupt.contains("__MONKNOT_GIT_VERSION__git version"), beforeInterrupt)
         XCTAssertTrue(beforeInterrupt.contains("__MONKNOT_SIZE__40 120"), beforeInterrupt)
 
+        let outputLines = beforeInterrupt
+            .split(whereSeparator: { $0 == "\r" || $0 == "\n" })
+            .map(String.init)
         let path = try XCTUnwrap(
-            beforeInterrupt
-                .split(separator: "\n")
-                .first { $0.contains("__MONKNOT_PATH__") }
-                .map(String.init)?
+            outputLines
+                .first { $0.contains("__MONKNOT_PATH__") }?
                 .components(separatedBy: "__MONKNOT_PATH__")
                 .last
         )
@@ -81,7 +82,7 @@ final class TerminalPTYSessionTests: XCTestCase {
         for tool in ["claude", "codex", "node", "brew"] {
             let prefix = "__MONKNOT_TOOL__\(tool)="
             let toolLine = try XCTUnwrap(
-                beforeInterrupt.split(separator: "\n").first { $0.contains(prefix) }.map(String.init),
+                outputLines.first { $0.contains(prefix) },
                 beforeInterrupt
             )
             let toolPath = toolLine.components(separatedBy: prefix).last?
