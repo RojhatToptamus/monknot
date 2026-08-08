@@ -344,8 +344,24 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(workflow.contains("Monknot-${{ needs.metadata.outputs.release_version }}-arm64.dmg"))
         XCTAssertFalse(workflow.contains("--draft"))
         XCTAssertFalse(workflow.contains("--adhoc"))
-        XCTAssertFalse(workflow.contains("actions/upload-artifact"))
-        XCTAssertFalse(workflow.contains("actions/download-artifact"))
+        XCTAssertTrue(workflow.contains("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"))
+        XCTAssertTrue(workflow.contains("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"))
+        XCTAssertTrue(workflow.contains("persist-credentials: false"))
+
+        let publishMarker = "\n  publish:\n"
+        let publishRange = try XCTUnwrap(workflow.range(of: publishMarker))
+        let signingWorkflow = String(workflow[..<publishRange.lowerBound])
+        let publishWorkflow = String(workflow[publishRange.lowerBound...])
+        XCTAssertTrue(signingWorkflow.contains("contents: read"))
+        XCTAssertFalse(signingWorkflow.contains("contents: write"))
+        XCTAssertTrue(publishWorkflow.contains("contents: write"))
+        XCTAssertTrue(publishWorkflow.contains("sha256sum --check"))
+        XCTAssertFalse(publishWorkflow.contains("environment: release"))
+        XCTAssertFalse(publishWorkflow.contains("MACOS_CERTIFICATE_P12"))
+        XCTAssertFalse(publishWorkflow.contains("MACOS_CERTIFICATE_PASSWORD"))
+        XCTAssertFalse(publishWorkflow.contains("APPLE_API_KEY_P8"))
+        XCTAssertFalse(publishWorkflow.contains("APPLE_API_KEY_ID"))
+        XCTAssertFalse(publishWorkflow.contains("APPLE_API_ISSUER_ID"))
         XCTAssertFalse(workflow.contains("actions/checkout@v"))
     }
 
