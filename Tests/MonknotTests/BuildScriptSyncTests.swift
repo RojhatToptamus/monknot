@@ -88,17 +88,8 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(projectLicense.contains("THE SOFTWARE IS PROVIDED \"AS IS\""))
         XCTAssertFalse(projectLicense.lowercased().contains("proprietary"))
         XCTAssertTrue(readme.contains("Monknot is available under the [MIT License](LICENSE)."))
-        XCTAssertTrue(
-            readme.contains(
-                """
-                ## License
-
-                Monknot is available under the [MIT License](LICENSE).
-
-                Third-party components remain subject to their respective license terms.
-                """
-            )
-        )
+        XCTAssertTrue(readme.contains("Third-party components"))
+        XCTAssertTrue(readme.contains("[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)"))
         XCTAssertTrue(notices.contains("@xterm/xterm` 5.5.0"))
         XCTAssertTrue(notices.contains("@xterm/addon-fit` 0.10.0"))
         XCTAssertTrue(notices.contains("9ba6c00a195c95fcf8292a2b9084d91450e5daae"))
