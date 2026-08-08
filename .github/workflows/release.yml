@@ -25,6 +25,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Require a stable version and approved release ref
         id: version
@@ -69,7 +70,7 @@ jobs:
     timeout-minutes: 360
     environment: release
     permissions:
-      contents: write
+      contents: read
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       DEVELOPER_IDENTITY: "Developer ID Application: rojhat toptamus (ZD35XP4V7D)"
@@ -80,6 +81,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Record and validate the build environment
         shell: bash
@@ -316,8 +318,50 @@ jobs:
             echo "No tag or GitHub Release was created."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Publish GitHub Release with final DMG
+      - name: Stage the verified production artifact for publishing
         if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: monknot-production-${{ needs.metadata.outputs.release_version }}
+          path: |
+            ${{ env.RELEASE_DMG }}
+            ${{ env.RELEASE_DMG }}.sha256
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  publish:
+    name: Publish verified GitHub Release
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    needs:
+      - metadata
+      - release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      RELEASE_DMG: dist/Monknot-${{ needs.metadata.outputs.release_version }}-arm64.dmg
+
+    steps:
+      - name: Download the verified production artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: monknot-production-${{ needs.metadata.outputs.release_version }}
+          path: dist
+
+      - name: Verify the downloaded artifact checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$RELEASE_DMG"
+          test -s "$RELEASE_DMG.sha256"
+          (
+            cd "$(dirname "$RELEASE_DMG")"
+            sha256sum --check "$(basename "$RELEASE_DMG").sha256"
+          )
+
+      - name: Publish GitHub Release with final DMG
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
