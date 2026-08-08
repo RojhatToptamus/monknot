@@ -66,7 +66,7 @@ jobs:
     name: Build, sign, notarize, and verify arm64
     needs: metadata
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 360
     environment: release
     permissions:
       contents: write
@@ -191,7 +191,7 @@ jobs:
           rm -f "$RUNNER_TEMP/monknot-developer-id.p12"
           security delete-keychain "$RUNNER_TEMP/monknot-signing.keychain-db" >/dev/null 2>&1 || true
 
-      - name: Submit DMG for notarization and staple ticket
+      - name: Submit DMG for notarization
         id: notarize
         shell: bash
         env:
@@ -203,9 +203,9 @@ jobs:
           umask 077
 
           api_key_path="$RUNNER_TEMP/monknot-notary-api-key.p8"
-          result_path="$RUNNER_TEMP/monknot-notary-result.json"
+          submission_path="$RUNNER_TEMP/monknot-notary-submission.json"
           cleanup_notary() {
-            rm -f "$api_key_path" "$result_path"
+            rm -f "$api_key_path" "$submission_path"
           }
           trap cleanup_notary EXIT
 
@@ -214,17 +214,64 @@ jobs:
             --key "$api_key_path" \
             --key-id "$APPLE_API_KEY_ID" \
             --issuer "$APPLE_API_ISSUER_ID" \
-            --wait \
-            --output-format json > "$result_path"
+            --no-wait \
+            --output-format json > "$submission_path"
+
+          notary_id="$(plutil -extract id raw -o - "$submission_path")"
+          if [[ ! "$notary_id" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]; then
+            echo "notarytool did not return a valid submission ID" >&2
+            exit 1
+          fi
+
+          echo "Apple notarization submitted (submission: $notary_id)"
+          echo "submission_id=$notary_id" >> "$GITHUB_OUTPUT"
+          echo "Notarization submission: $notary_id" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Wait for Accepted notarization, staple, and assess
+        shell: bash
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          NOTARY_SUBMISSION_ID: ${{ steps.notarize.outputs.submission_id }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          api_key_path="$RUNNER_TEMP/monknot-notary-api-key.p8"
+          result_path="$RUNNER_TEMP/monknot-notary-result.json"
+          cleanup_notary() {
+            rm -f "$api_key_path" "$result_path"
+          }
+          trap cleanup_notary EXIT
+
+          if [[ ! "$NOTARY_SUBMISSION_ID" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]; then
+            echo "missing or invalid notarization submission ID" >&2
+            exit 1
+          fi
+
+          printf '%s' "$APPLE_API_KEY_P8" > "$api_key_path"
+          if ! xcrun notarytool wait "$NOTARY_SUBMISSION_ID" \
+            --key "$api_key_path" \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER_ID" \
+            --timeout 330m \
+            --output-format json > "$result_path"; then
+            echo "Apple notarization did not finish successfully within the wait window (submission: $NOTARY_SUBMISSION_ID)" >&2
+            exit 1
+          fi
 
           notary_status="$(plutil -extract status raw -o - "$result_path")"
-          notary_id="$(plutil -extract id raw -o - "$result_path")"
+          completed_notary_id="$(plutil -extract id raw -o - "$result_path")"
+          if [[ "$completed_notary_id" != "$NOTARY_SUBMISSION_ID" ]]; then
+            echo "notarytool returned a mismatched submission ID" >&2
+            exit 1
+          fi
           if [[ "$notary_status" != "Accepted" ]]; then
             echo "Apple notarization did not return Accepted (status: $notary_status)" >&2
             exit 1
           fi
-          echo "Apple notarization Accepted (submission: $notary_id)"
-          echo "submission_id=$notary_id" >> "$GITHUB_OUTPUT"
+          echo "Apple notarization Accepted (submission: $NOTARY_SUBMISSION_ID)"
           rm -f "$api_key_path"
 
           xcrun stapler staple "$RELEASE_DMG"
@@ -239,7 +286,7 @@ jobs:
       - name: Clean temporary notarization material
         if: ${{ always() }}
         shell: bash
-        run: rm -f "$RUNNER_TEMP/monknot-notary-api-key.p8" "$RUNNER_TEMP/monknot-notary-result.json"
+        run: rm -f "$RUNNER_TEMP/monknot-notary-api-key.p8" "$RUNNER_TEMP/monknot-notary-submission.json" "$RUNNER_TEMP/monknot-notary-result.json"
 
       - name: Verify final signed and notarized artifact
         shell: bash

@@ -57,10 +57,12 @@ runner’s keychain list, deletes the certificate file, and deletes the temporar
 keychain even when packaging fails.
 
 The Apple API key is written with owner-only permissions only during the
-notarization step. `notarytool` submits the DMG with `--wait`; the workflow
-independently requires the returned status to be `Accepted`, then deletes the
-temporary key, staples and validates the ticket, and runs Gatekeeper checks.
-Never print, commit, cache, or upload any secret value or decoded credential.
+notarization steps. `notarytool` first submits without waiting so the workflow
+can validate and record the submission ID immediately. A separate bounded wait
+then independently requires the returned status to be `Accepted`. The workflow
+deletes the temporary key after each step, staples and validates the ticket,
+and runs Gatekeeper checks. Never print, commit, cache, or upload any secret
+value or decoded credential.
 
 ## Automated flow
 
@@ -75,7 +77,8 @@ Pushing a matching tag runs `.github/workflows/release.yml`:
    with `--options runtime --timestamp` and no entitlements.
 7. Create `Monknot-<version>-arm64.dmg` containing `Monknot.app` and an
    Applications shortcut.
-8. Submit that DMG to Apple with `notarytool --wait` and require `Accepted`.
+8. Submit that DMG to Apple, record its submission ID, wait for completion, and
+   require `Accepted`.
 9. Staple and validate the ticket, then assess the DMG and mounted app with
    Gatekeeper.
 10. Verify bundle metadata, arm64 architecture, macOS 14 deployment target,
