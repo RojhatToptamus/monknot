@@ -106,7 +106,11 @@ if (sitemapLocations.length !== expectedSitemapLocations.length || expectedSitem
   throw new Error("sitemap.xml must contain the canonical homepage, support, and privacy URLs.");
 }
 
-for (const marker of ['href="/support">Support</a>', 'href="/privacy">Privacy</a>', "© 2026 Rojhat Toptamuş"]) {
+for (const marker of [
+  'href="/support">Support</a>',
+  'href="/privacy">Privacy</a>',
+  '© 2026 <a href="https://rojhat.com">Rojhat Toptamuş</a>',
+]) {
   if (!html.includes(marker)) throw new Error(`Missing homepage footer element: ${marker}`);
 }
 
