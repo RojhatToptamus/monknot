@@ -286,6 +286,20 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(script.contains("unexpected top-level DMG item"))
     }
 
+    func testCodeOwnersRequiresRepositoryOwnerReviewForEveryChange() throws {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let codeOwners = try String(
+            contentsOf: root.appendingPathComponent(".github/CODEOWNERS"),
+            encoding: .utf8
+        )
+        let rules = codeOwners
+            .split(separator: "\n")
+            .map(String.init)
+            .filter { !$0.hasPrefix("#") }
+
+        XCTAssertEqual(rules, ["* @RojhatToptamus"])
+    }
+
     func testTagReleaseWorkflowPublishesOneSignedNotarizedArm64DMG() throws {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
         let workflowURL = root.appendingPathComponent(".github/workflows/release.yml")
@@ -352,6 +366,13 @@ final class BuildScriptSyncTests: XCTestCase {
         let publishRange = try XCTUnwrap(workflow.range(of: publishMarker))
         let signingWorkflow = String(workflow[..<publishRange.lowerBound])
         let publishWorkflow = String(workflow[publishRange.lowerBound...])
+        let certificateImport = try XCTUnwrap(signingWorkflow.range(of: "security import \"$certificate_path\""))
+        let certificateCleanup = try XCTUnwrap(
+            signingWorkflow.range(of: "rm -f \"$certificate_path\"\n          unset MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD")
+        )
+        let releasePackaging = try XCTUnwrap(signingWorkflow.range(of: "script/release_package.sh"))
+        XCTAssertLessThan(certificateImport.lowerBound, certificateCleanup.lowerBound)
+        XCTAssertLessThan(certificateCleanup.lowerBound, releasePackaging.lowerBound)
         XCTAssertTrue(signingWorkflow.contains("contents: read"))
         XCTAssertFalse(signingWorkflow.contains("contents: write"))
         XCTAssertTrue(publishWorkflow.contains("contents: write"))
