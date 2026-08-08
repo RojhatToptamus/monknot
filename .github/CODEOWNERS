@@ -1,7 +1,2 @@
-# Require the repository owner to review changes to security-sensitive automation.
-/.github/ @RojhatToptamus
-/Package.swift @RojhatToptamus
-/script/build_and_run.sh @RojhatToptamus
-/script/release_package.sh @RojhatToptamus
-/script/release_preflight.sh @RojhatToptamus
-/script/verify_release_artifact.sh @RojhatToptamus
+# Require the repository owner to review every change.
+* @RojhatToptamus

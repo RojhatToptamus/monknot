@@ -160,6 +160,9 @@ jobs:
             -k "$keychain_path" \
             -P "$MACOS_CERTIFICATE_PASSWORD" \
             -T /usr/bin/codesign
+          rm -f "$certificate_path"
+          unset MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD
+
           security set-key-partition-list \
             -S apple-tool:,apple: \
             -s \
