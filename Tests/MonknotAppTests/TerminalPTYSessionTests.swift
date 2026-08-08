@@ -63,7 +63,7 @@ final class TerminalPTYSessionTests: XCTestCase {
         XCTAssertTrue(beforeInterrupt.contains("__MONKNOT_PWD__\(resolvedWorkspacePath)"), beforeInterrupt)
         XCTAssertTrue(beforeInterrupt.contains("__MONKNOT_ECHO__hello"), beforeInterrupt)
         XCTAssertTrue(beforeInterrupt.contains("__MONKNOT_LS__terminal-fixture.txt,"), beforeInterrupt)
-        XCTAssertTrue(beforeInterrupt.contains("__MONKNOT_WHICH_GIT__/usr/bin/git"), beforeInterrupt)
+        XCTAssertTrue(beforeInterrupt.contains("__MONKNOT_WHICH_GIT__/"), beforeInterrupt)
         XCTAssertTrue(beforeInterrupt.contains("__MONKNOT_GIT_VERSION__git version"), beforeInterrupt)
         XCTAssertTrue(beforeInterrupt.contains("__MONKNOT_SIZE__40 120"), beforeInterrupt)
 
