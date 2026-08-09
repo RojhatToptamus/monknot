@@ -3,13 +3,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION_FILE="$ROOT_DIR/VERSION"
+BUILD_NUMBER_FILE="$ROOT_DIR/BUILD_NUMBER"
 APP_BUNDLE="$ROOT_DIR/dist/Monknot.app"
 DMG_PATH=""
 EXPECTED_DEVELOPER_ID="Developer ID Application: rojhat toptamus (ZD35XP4V7D)"
 EXPECTED_TEAM_ID="ZD35XP4V7D"
 IDENTITY_QUERY="${MONKNOT_DEVELOPER_ID_IDENTITY:-$EXPECTED_DEVELOPER_ID}"
 KEYCHAIN_PROFILE="${MONKNOT_NOTARYTOOL_PROFILE:-}"
-BUILD_NUMBER="${MONKNOT_BUILD_NUMBER:-1}"
 TARGET_ARCH="${MONKNOT_TARGET_ARCH:-arm64}"
 MIN_SYSTEM_VERSION="14.0"
 ADHOC=0
@@ -20,9 +20,14 @@ if [[ ! -f "$VERSION_FILE" ]]; then
   echo "missing release version file: $VERSION_FILE" >&2
   exit 66
 fi
+if [[ ! -f "$BUILD_NUMBER_FILE" ]]; then
+  echo "missing build number file: $BUILD_NUMBER_FILE" >&2
+  exit 66
+fi
 
 RELEASE_VERSION="${MONKNOT_RELEASE_VERSION:-$(tr -d '\r\n' <"$VERSION_FILE")}"
 BUNDLE_VERSION="${RELEASE_VERSION%%[-+]*}"
+BUILD_NUMBER="${MONKNOT_BUILD_NUMBER:-$(tr -d '\r\n' <"$BUILD_NUMBER_FILE")}"
 
 usage() {
   cat <<USAGE
@@ -40,7 +45,7 @@ Options:
   --skip-notarize          Stop after creating a signed DMG.
   --version VERSION        Stable semantic release version. Defaults to VERSION or
                            MONKNOT_RELEASE_VERSION.
-  --build-number NUMBER    Bundle build number. Defaults to MONKNOT_BUILD_NUMBER or 1.
+  --build-number NUMBER    Bundle build number. Defaults to MONKNOT_BUILD_NUMBER or BUILD_NUMBER.
   --dry-run                Print the release commands without running them.
   --dmg PATH               DMG output path. Defaults to a versioned, architecture-
                            specific path under dist.
@@ -170,7 +175,7 @@ find_identity() {
 }
 
 require_tool codesign
-require_tool file
+require_tool ditto
 require_tool hdiutil
 require_tool shasum
 
@@ -228,6 +233,7 @@ run env \
   "MONKNOT_SIGNING_MODE=adhoc" \
   "MONKNOT_VERSION=$BUNDLE_VERSION" \
   "MONKNOT_BUILD_NUMBER=$BUILD_NUMBER" \
+  "MONKNOT_SPARKLE_FEED_URL=https://monknot.app/updates/appcast.xml" \
   "MONKNOT_TARGET_ARCH=$TARGET_ARCH" \
   "MONKNOT_TARGET_TRIPLE=$TARGET_ARCH-apple-macosx$MIN_SYSTEM_VERSION" \
   "$ROOT_DIR/script/build_and_run.sh" --build
@@ -237,46 +243,29 @@ if [[ "$DRY_RUN" != "1" && ! -d "$APP_BUNDLE" ]]; then
   exit 66
 fi
 
-APP_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/Monknot"
-sign_nested_macho_code() {
-  local nested_count=0
-  local candidate
+SPARKLE_FRAMEWORK="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
+SPARKLE_AUTOUPDATE="$SPARKLE_FRAMEWORK/Versions/B/Autoupdate"
+SPARKLE_UPDATER_APP="$SPARKLE_FRAMEWORK/Versions/B/Updater.app"
+MONKNOT_CORE="$APP_BUNDLE/Contents/Frameworks/libMonknotCore.dylib"
 
-  if [[ "$DRY_RUN" == "1" ]]; then
-    candidate="$APP_BUNDLE/Contents/Frameworks/libMonknotCore.dylib"
-    if [[ "$ADHOC" == "1" ]]; then
-      run codesign --force --sign - "$candidate"
-    else
-      run codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$candidate"
-    fi
-    return
-  fi
-
-  while IFS= read -r -d '' candidate; do
-    [[ "$candidate" == "$APP_EXECUTABLE" ]] && continue
-    if file -b "$candidate" | grep -q '^Mach-O'; then
-      nested_count=$((nested_count + 1))
-      if [[ "$ADHOC" == "1" ]]; then
-        run codesign --force --sign - "$candidate"
-      else
-        run codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$candidate"
-      fi
-    fi
-  done < <(find "$APP_BUNDLE/Contents" -type f -print0)
-
-  if [[ "$nested_count" == "0" ]]; then
-    echo "no nested Mach-O code found to sign" >&2
+sign_code() {
+  local candidate="$1"
+  if [[ "$DRY_RUN" != "1" && ! -e "$candidate" ]]; then
+    echo "required nested code is missing: $candidate" >&2
     exit 1
   fi
-  echo "Signed $nested_count nested Mach-O file(s) before the app bundle"
+  if [[ "$ADHOC" == "1" ]]; then
+    run codesign --force --sign - "$candidate"
+  else
+    run codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$candidate"
+  fi
 }
 
-sign_nested_macho_code
-if [[ "$ADHOC" == "1" ]]; then
-  run codesign --force --sign - "$APP_BUNDLE"
-else
-  run codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
-fi
+sign_code "$SPARKLE_AUTOUPDATE"
+sign_code "$SPARKLE_UPDATER_APP"
+sign_code "$SPARKLE_FRAMEWORK"
+sign_code "$MONKNOT_CORE"
+sign_code "$APP_BUNDLE"
 
 run codesign --verify --deep --strict --verbose=4 "$APP_BUNDLE"
 
@@ -325,7 +314,7 @@ if [[ "$DRY_RUN" != "1" ]]; then
   trap cleanup EXIT
 fi
 
-run cp -R "$APP_BUNDLE" "$STAGING_DIR/Monknot.app"
+run ditto "$APP_BUNDLE" "$STAGING_DIR/Monknot.app"
 run ln -s /Applications "$STAGING_DIR/Applications"
 run rm -f "$DMG_PATH" "$CHECKSUM_PATH"
 run hdiutil create -volname Monknot -srcfolder "$STAGING_DIR" -ov -format UDZO "$DMG_PATH"

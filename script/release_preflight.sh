@@ -12,6 +12,11 @@ REQUIRED_IDENTITY="${MONKNOT_DEVELOPER_ID_IDENTITY:-$EXPECTED_DEVELOPER_ID}"
 EXPECTED_ARCH="arm64"
 MIN_SYSTEM_VERSION="14.0"
 VERSION_FILE="VERSION"
+BUILD_NUMBER_FILE="BUILD_NUMBER"
+SPARKLE_PUBLIC_ED_KEY_FILE="SPARKLE_PUBLIC_ED_KEY"
+SPARKLE_VERSION="2.9.5"
+SPARKLE_MIN_SYSTEM_VERSION="11.0"
+SPARKLE_FEED_URL="https://monknot.app/updates/appcast.xml"
 THEME_LICENSE_FILES=(
   theme-ayu-MIT.txt
   theme-catppuccin-MIT.txt
@@ -109,6 +114,7 @@ require_tool cmp
 require_tool file
 require_tool hdiutil
 require_tool lipo
+require_tool otool
 require_tool shasum
 require_tool xcrun
 
@@ -210,6 +216,10 @@ else
   INFO_PLIST="$APP_BUNDLE/Contents/Info.plist"
   APP_RESOURCES="$APP_BUNDLE/Contents/Resources"
   FRAMEWORK="$APP_BUNDLE/Contents/Frameworks/libMonknotCore.dylib"
+  SPARKLE_FRAMEWORK="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
+  SPARKLE_INFO_PLIST="$SPARKLE_FRAMEWORK/Versions/B/Resources/Info.plist"
+  SPARKLE_AUTOUPDATE="$SPARKLE_FRAMEWORK/Versions/B/Autoupdate"
+  SPARKLE_UPDATER_APP="$SPARKLE_FRAMEWORK/Versions/B/Updater.app"
   if [[ -f "$INFO_PLIST" ]]; then
     pass "Info.plist exists"
     EXECUTABLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$INFO_PLIST" 2>/dev/null || true)"
@@ -253,17 +263,50 @@ else
     check_plist_value CFBundlePackageType APPL
     check_plist_value LSMinimumSystemVersion "$MIN_SYSTEM_VERSION"
     check_plist_value NSHumanReadableCopyright "$APP_COPYRIGHT"
+    check_plist_value SUFeedURL "$SPARKLE_FEED_URL"
+    check_plist_value SURequireSignedFeed true
+    check_plist_value SUVerifyUpdateBeforeExtraction true
 
-    if [[ -f "$VERSION_FILE" ]]; then
+    check_plist_absent() {
+      local key="$1"
+      if /usr/libexec/PlistBuddy -c "Print :$key" "$INFO_PLIST" >/dev/null 2>&1; then
+        fail "$key must not be set"
+      else
+        pass "$key is not set"
+      fi
+    }
+    check_plist_absent SUEnableSystemProfiling
+    check_plist_absent SUSendProfileInfo
+    check_plist_absent SUEnableAutomaticChecks
+
+    if [[ -f "$VERSION_FILE" && -f "$BUILD_NUMBER_FILE" ]]; then
       RELEASE_VERSION="$(tr -d '\r\n' <"$VERSION_FILE")"
+      EXPECTED_BUILD_VERSION="$(tr -d '\r\n' <"$BUILD_NUMBER_FILE")"
       EXPECTED_SHORT_VERSION="${RELEASE_VERSION%%[-+]*}"
       if [[ "$SHORT_VERSION" == "$EXPECTED_SHORT_VERSION" ]]; then
         pass "bundle version matches VERSION: $RELEASE_VERSION"
       else
         fail "bundle version $SHORT_VERSION does not match VERSION $RELEASE_VERSION"
       fi
+      if [[ "$BUILD_VERSION" == "$EXPECTED_BUILD_VERSION" ]]; then
+        pass "bundle build matches BUILD_NUMBER: $BUILD_VERSION"
+      else
+        fail "bundle build $BUILD_VERSION does not match BUILD_NUMBER $EXPECTED_BUILD_VERSION"
+      fi
     else
-      fail "VERSION is missing"
+      fail "VERSION or BUILD_NUMBER is missing"
+    fi
+
+    if [[ -s "$SPARKLE_PUBLIC_ED_KEY_FILE" ]]; then
+      EXPECTED_SPARKLE_PUBLIC_ED_KEY="$(tr -d '\r\n' <"$SPARKLE_PUBLIC_ED_KEY_FILE")"
+      ACTUAL_SPARKLE_PUBLIC_ED_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$INFO_PLIST" 2>/dev/null || true)"
+      if [[ "$EXPECTED_SPARKLE_PUBLIC_ED_KEY" =~ ^[A-Za-z0-9+/]{43}=$ && "$ACTUAL_SPARKLE_PUBLIC_ED_KEY" == "$EXPECTED_SPARKLE_PUBLIC_ED_KEY" ]]; then
+        pass "SUPublicEDKey matches the tracked public key"
+      else
+        fail "SUPublicEDKey is malformed or does not match the tracked public key"
+      fi
+    else
+      fail "tracked Sparkle public key is missing or empty"
     fi
   else
     fail "Info.plist is missing"
@@ -274,6 +317,7 @@ else
     "$APP_RESOURCES/Legal/THIRD_PARTY_NOTICES.md"
     "$APP_RESOURCES/Legal/ThirdParty/xterm-MIT.txt"
     "$APP_RESOURCES/Legal/ThirdParty/xterm-addon-fit-MIT.txt"
+    "$APP_RESOURCES/Legal/ThirdParty/sparkle-MIT.txt"
   )
   for LEGAL_FILE in "${REQUIRED_LEGAL_FILES[@]}"; do
     if [[ -s "$LEGAL_FILE" ]]; then
@@ -308,6 +352,11 @@ else
       fail "packaged theme license differs from source: ${BUNDLED_LICENSE#"$APP_BUNDLE/"}"
     fi
   done
+  if cmp -s ThirdPartyLicenses/sparkle-MIT.txt "$APP_RESOURCES/Legal/ThirdParty/sparkle-MIT.txt"; then
+    pass "packaged Sparkle license matches the source copy"
+  else
+    fail "packaged Sparkle license differs from the source copy"
+  fi
 
   verify_bundled_resource_hash() {
     local resource_path="$1"
@@ -335,6 +384,39 @@ else
   verify_bundled_resource_hash \
     "$APP_RESOURCES/xterm-addon-fit.js" \
     "bdaefa370b1bfc42ee88d46fe6072400902a4d4b2d45cd93438dda9b23c97089"
+
+  if [[ -f "$SPARKLE_INFO_PLIST" ]]; then
+    ACTUAL_SPARKLE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$SPARKLE_INFO_PLIST" 2>/dev/null || true)"
+    if [[ "$ACTUAL_SPARKLE_VERSION" == "$SPARKLE_VERSION" ]]; then
+      pass "Sparkle framework version is $SPARKLE_VERSION"
+    else
+      fail "Sparkle framework version is ${ACTUAL_SPARKLE_VERSION:-unknown}; expected $SPARKLE_VERSION"
+    fi
+  else
+    fail "Sparkle framework Info.plist is missing"
+  fi
+  if [[ -x "$SPARKLE_AUTOUPDATE" && -x "$SPARKLE_UPDATER_APP/Contents/MacOS/Updater" ]]; then
+    pass "Sparkle Autoupdate and Updater.app helpers are present"
+  else
+    fail "Sparkle Autoupdate or Updater.app helper is missing"
+  fi
+  if [[ ! -e "$SPARKLE_FRAMEWORK/XPCServices" && ! -e "$SPARKLE_FRAMEWORK/Versions/B/XPCServices" ]]; then
+    pass "unused Sparkle XPC services are absent"
+  else
+    fail "unused Sparkle XPC services must not be embedded in the unsandboxed app"
+  fi
+  if otool -L "$APP_BUNDLE/Contents/MacOS/Monknot" | grep -F '@rpath/Sparkle.framework/Versions/B/Sparkle' >/dev/null; then
+    pass "main executable links Sparkle.framework"
+  else
+    fail "main executable does not link Sparkle.framework"
+  fi
+  for CODE_BUNDLE in "$SPARKLE_UPDATER_APP" "$SPARKLE_FRAMEWORK"; do
+    if codesign --verify --strict --verbose=2 "$CODE_BUNDLE" >/dev/null 2>&1; then
+      pass "Sparkle code bundle signature verifies: ${CODE_BUNDLE#"$APP_BUNDLE/"}"
+    else
+      fail "Sparkle code bundle signature does not verify: ${CODE_BUNDLE#"$APP_BUNDLE/"}"
+    fi
+  done
 
   if codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE" >/dev/null 2>&1; then
     pass "bundle code signature verifies"
@@ -376,6 +458,7 @@ else
     local binary_path="$1"
     local architectures
     local minimum_version
+    local expected_minimum_version="$MIN_SYSTEM_VERSION"
 
     if [[ ! -f "$binary_path" ]]; then
       fail "Mach-O file is missing: ${binary_path#"$APP_BUNDLE/"}"
@@ -389,9 +472,12 @@ else
       fail "unexpected or unreadable Mach-O architecture: ${binary_path#"$APP_BUNDLE/"}"
     fi
 
+    if [[ "$binary_path" == "$SPARKLE_FRAMEWORK"/* ]]; then
+      expected_minimum_version="$SPARKLE_MIN_SYSTEM_VERSION"
+    fi
     minimum_version="$(xcrun vtool -show-build "$binary_path" 2>/dev/null | awk '$1 == "minos" { print $2; exit }')"
-    if [[ "$minimum_version" == "$MIN_SYSTEM_VERSION" ]]; then
-      pass "deployment target is macOS $MIN_SYSTEM_VERSION: ${binary_path#"$APP_BUNDLE/"}"
+    if [[ "$minimum_version" == "$expected_minimum_version" ]]; then
+      pass "deployment target is macOS $expected_minimum_version: ${binary_path#"$APP_BUNDLE/"}"
     else
       fail "unexpected deployment target for ${binary_path#"$APP_BUNDLE/"}: ${minimum_version:-unknown}"
     fi

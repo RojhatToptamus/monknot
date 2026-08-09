@@ -48,6 +48,14 @@ if (vercel.buildCommand !== "npm run build" || vercel.outputDirectory !== "dist"
 if (vercel.cleanUrls !== true || vercel.trailingSlash !== false) {
   throw new Error("Vercel must expose support.html and privacy.html as /support and /privacy.");
 }
+const expectedAppcastRedirect = {
+  source: "/updates/appcast.xml",
+  destination: "https://github.com/RojhatToptamus/monknot/releases/latest/download/appcast.xml",
+  permanent: false,
+};
+if (vercel.redirects?.length !== 1 || Object.entries(expectedAppcastRedirect).some(([key, value]) => vercel.redirects[0][key] !== value)) {
+  throw new Error("Vercel must redirect the stable Sparkle feed to the latest GitHub Release appcast.");
+}
 
 const requiredMarkup = [
   "Markdown, PDFs, and a terminal. One window.",
@@ -147,11 +155,12 @@ const requiredPages = [
       'rel="canonical" href="https://monknot.app/privacy"',
       'property="og:url" content="https://monknot.app/privacy"',
       'name="twitter:card" content="summary_large_image"',
-      "Last updated: August 6, 2026",
+      "Last updated: August 9, 2026",
       "Files and Documents",
       "Local Application Data",
       "Terminal Sessions",
       "Network Connections",
+      "Software Updates",
       "Analytics and Crash Reporting",
       "Data Sharing",
       "Children’s Privacy",

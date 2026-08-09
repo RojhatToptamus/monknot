@@ -1,121 +1,199 @@
 # Monknot Release Guide
 
-Monknot is distributed directly through GitHub Releases as an Apple-silicon
-DMG. Production builds are signed with Developer ID Application, use Hardened
-Runtime and secure timestamps, and are notarized by Apple. Monknot is not a Mac
-App Store app and does not use App Sandbox, an App Store provisioning profile,
-Transporter, TestFlight, or a Store `.pkg`.
+Monknot is an arm64 macOS app distributed directly through GitHub Releases in
+a DMG. It does not use App Sandbox and is not a Mac App Store app. Production releases
+use Developer ID signing, Hardened Runtime, secure timestamps, Apple
+notarization, stapling, and Gatekeeper verification.
 
-Apple documents Developer ID as the certificate for software distributed
-outside the Mac App Store in [Developer ID certificates][developer-id]. Apple’s
-[notarization requirements][notarization] require Developer ID signing,
-Hardened Runtime, and a secure timestamp. The app currently needs no Hardened
-Runtime exception entitlement, so production signing intentionally supplies no
-entitlements file.
+Updates use Sparkle 2.9.5. The stable feed is
+`https://monknot.app/updates/appcast.xml`, which redirects to the
+`appcast.xml` asset on the latest GitHub Release. Each update release contains
+exactly these immutable assets:
+
+- `Monknot-<version>-arm64.dmg`
+- `Monknot-<version>-arm64.dmg.sha256`
+- `appcast.xml`
+
+Apple documents Developer ID for software distributed outside the Mac App
+Store in [Developer ID certificates][developer-id]. Apple’s
+[notarization guidance][notarization] requires Developer ID signing, Hardened
+Runtime, and a secure timestamp. The app needs no exception entitlements.
 
 [developer-id]: https://developer.apple.com/help/account/certificates/create-developer-id-certificates/
 [notarization]: https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution
 
-## Release contract
+## Release metadata
 
-`VERSION` is the authoritative release version. It must contain a stable
-semantic version with three numeric components. The first public release is:
+`VERSION` owns `CFBundleShortVersionString`. `BUILD_NUMBER` owns
+`CFBundleVersion`. Both files must be committed, and the build number must
+increase by exactly one for every release. Never reuse a build number or
+replace an uploaded DMG.
+
+The first Sparkle-enabled release is:
 
 ```text
-VERSION                         0.1.0
-Git tag                         v0.1.0
-CFBundleShortVersionString      0.1.0
-CFBundleVersion                 1
-Artifact                        Monknot-0.1.0-arm64.dmg
+VERSION                         0.1.1
+BUILD_NUMBER                    2
+Git tag                         v0.1.1
+CFBundleShortVersionString      0.1.1
+CFBundleVersion                 2
+Artifact                        Monknot-0.1.1-arm64.dmg
 Bundle identifier               com.monknot.app
 Minimum macOS                   14.0
 Architecture                    arm64
-Signing identity                Developer ID Application: rojhat toptamus (ZD35XP4V7D)
-Team identifier                 ZD35XP4V7D
 ```
 
-The release workflow rejects prerelease/build metadata, a tag that does not
-exactly match `v$(cat VERSION)`, or a tagged commit that is not reachable from
-`main`. The fixed build value is sufficient for the current direct-distribution
-flow; there is no App Store build-number lifecycle.
+Users of 0.1.0 must install 0.1.1 manually. The first automatic-update test is
+0.1.1 build 2 to 0.1.2 build 3.
 
-## GitHub release environment
+Update `RELEASE_NOTES.md` for every release. The release workflow embeds this
+file in the signed appcast and uses it as the GitHub Release notes.
 
-The signing/notarization job uses the protected GitHub Environment named
-`release`. Configure these environment secrets by name only:
+## Sparkle key setup
+
+The repository contains only the Ed25519 public key in
+`SPARKLE_PUBLIC_ED_KEY`. Never commit or upload the private key. Perform all
+private-key operations yourself on a trusted Mac.
+
+After `swift package resolve`, use Sparkle’s official tool:
+
+```sh
+.build/artifacts/sparkle/Sparkle/bin/generate_keys --account monknot
+```
+
+Copy only the printed base64 public key into `SPARKLE_PUBLIC_ED_KEY` as one
+line. Do not copy the private key into the repository, a shell argument, a
+prompt, or a log.
+
+Export the private key yourself to a protected location, then add it to the
+GitHub Environment named `release`:
+
+```sh
+.build/artifacts/sparkle/Sparkle/bin/generate_keys \
+  --account monknot \
+  -x /secure/path/to/private-key
+
+gh secret set SPARKLE_ED25519_PRIVATE_KEY \
+  --env release \
+  --repo RojhatToptamus/monknot \
+  < /secure/path/to/private-key
+```
+
+Delete the temporary export from its protected location and retain an
+encrypted offline recovery copy. Do not list, retrieve, echo, decode, or test
+the stored GitHub secret. The workflow exposes it only to the appcast-signing
+step and passes it directly to `generate_appcast --ed-key-file -` on standard
+input. It is not written to disk, passed as an argument, or uploaded.
+
+The existing `release` environment also needs these secrets:
 
 - `MACOS_CERTIFICATE_P12`
 - `MACOS_CERTIFICATE_PASSWORD`
 - `APPLE_API_KEY_P8`
 - `APPLE_API_KEY_ID`
 - `APPLE_API_ISSUER_ID`
+- `SPARKLE_ED25519_PRIVATE_KEY`
 
-`MACOS_CERTIFICATE_P12` is the base64-encoded Developer ID Application `.p12`.
-The workflow imports it into a randomly passworded temporary keychain, limits
-private-key access to `codesign`, verifies the exact identity, restores the
-runner’s keychain list, deletes the certificate file, and deletes the temporary
-keychain even when packaging fails.
+## Automated release flow
 
-The Apple API key is written with owner-only permissions only during the
-notarization steps. `notarytool` first submits without waiting so the workflow
-can validate and record the submission ID immediately. A separate bounded wait
-then independently requires the returned status to be `Accepted`. The workflow
-deletes the temporary key after each step, staples and validates the ticket,
-and runs Gatekeeper checks. Never print, commit, cache, or upload any secret
-value or decoded credential.
+Pushing `v$(cat VERSION)` runs `.github/workflows/release.yml`:
 
-## Automated flow
+1. Validate the version, sequential build number, exact tag, and `main`
+   ancestry.
+2. Build the SwiftPM products and run XCTest and executable smoke tests.
+3. Build `Monknot.app` and embed the arm64 Sparkle framework.
+4. Remove Sparkle’s unused XPC services because Monknot is unsandboxed.
+5. Sign `Autoupdate`, `Updater.app`, `Sparkle.framework`,
+   `libMonknotCore.dylib`, and `Monknot.app` in that order.
+6. Create and Developer ID sign the DMG.
+7. Submit the DMG to Apple, require `Accepted`, staple it, and run Gatekeeper.
+8. Verify metadata, linkage, Sparkle 2.9.5 layout, arm64 slices, deployment
+   targets, signatures, timestamps, lack of entitlements, and legal files.
+9. Generate a one-item signed appcast from the final DMG. No delta, channel,
+   phased, profiling, or analytics data is added.
+10. Upload the DMG, checksum, and appcast to a draft GitHub Release.
+11. Download and compare all three draft assets, then publish the release as
+    latest. Until this final step, the stable feed cannot expose the update.
 
-Pushing a matching tag runs `.github/workflows/release.yml`:
+A failure before step 11 leaves no public stable update. If publication fails
+after the draft is created, inspect and delete that draft before rerunning.
+Never overwrite its assets.
 
-1. Validate the stable version, exact tag, and `main` ancestry.
-2. Use an arm64 GitHub-hosted macOS runner with Xcode 26.3 and macOS 26 SDK.
-3. Build shipping SwiftPM products and run XCTest plus executable smoke suites.
-4. Build `Monknot.app` for arm64 with macOS 14 as its deployment target.
-5. Import the Developer ID certificate into a temporary keychain.
-6. Discover every nested Mach-O file, sign nested code first, then sign the app
-   with `--options runtime --timestamp` and no entitlements.
-7. Create `Monknot-<version>-arm64.dmg` containing `Monknot.app` and an
-   Applications shortcut.
-8. Submit that DMG to Apple, record its submission ID, wait for completion, and
-   require `Accepted`.
-9. Staple and validate the ticket, then assess the DMG and mounted app with
-   Gatekeeper.
-10. Verify bundle metadata, arm64 architecture, macOS 14 deployment target,
-    exact authority/team, Hardened Runtime, every nested signature, absence of
-    entitlements/provisioning profiles, legal payload, third-party hashes, and
-    runtime launch.
-11. Create the non-draft GitHub Release and attach only the final notarized,
-    stapled DMG.
+## Protected dry-run
 
-There is no unsigned or ad-hoc fallback in the workflow. A failed test, build,
-signature, notarization, staple, Gatekeeper assessment, verification, or
-missing artifact stops publication.
-
-## Mandatory pre-release dry-run
-
-Before creating `v0.1.0`, manually dispatch the Release workflow on `main` from
-GitHub Actions or run:
+Before tagging, dispatch the Release workflow from the current `main` tip with
+`publish_prerelease` disabled:
 
 ```sh
-gh workflow run release.yml --ref main
+gh workflow run release.yml --ref main -f publish_prerelease=false
 gh run watch
 ```
 
-The workflow refuses a manual dispatch from any ref other than the current
-`origin/main` tip. It uses the same protected `release` environment, temporary
-Keychain import, Developer ID signing, DMG creation, Apple notarization,
-stapling, Gatekeeper assessment, and final artifact verifier as a tagged
-release. The run summary records the notarization submission ID.
+The dry-run performs signing, notarization, final artifact verification, and
+signed appcast generation. It does not upload artifacts or create a release.
 
-The GitHub Release publishing step runs only for a tag-push event. A manual
-dispatch does not create or push a tag, publish a GitHub Release, change
-`VERSION`, or retain/upload the dry-run DMG. Review every workflow step and the
-submission ID before approving the release tag.
+## Publish 0.1.1
 
-## Before tagging
+Confirm the complete local suite and protected dry-run pass. Then tag the
+exact `main` commit:
 
-Run the complete local suite when the toolchain is available:
+```sh
+git tag v0.1.1
+git show --no-patch --oneline v0.1.1
+git push origin v0.1.1
+```
+
+After publication, verify all three assets and both URLs:
+
+```text
+https://github.com/RojhatToptamus/monknot/releases/download/v0.1.1/Monknot-0.1.1-arm64.dmg
+https://monknot.app/updates/appcast.xml
+```
+
+Install 0.1.1 manually in `/Applications`. Launch it twice so Sparkle can show
+its standard permission prompt. Confirm **Check for Updates…** reports no newer
+stable version.
+
+## Test 0.1.1 to 0.1.2
+
+Set `VERSION` to `0.1.2`, `BUILD_NUMBER` to `3`, and update
+`RELEASE_NOTES.md`. Dispatch the protected workflow with
+`publish_prerelease=true`. It publishes the fully verified, immutable assets
+as a GitHub prerelease without changing GitHub’s latest stable release.
+
+On a test Mac with the public 0.1.1 app in `/Applications`, point Sparkle’s
+user-default feed override to the prerelease appcast asset:
+
+```sh
+defaults write com.monknot.app SUFeedURL \
+  'https://github.com/RojhatToptamus/monknot/releases/download/v0.1.2/appcast.xml'
+```
+
+Test manual and scheduled checks, automatic download/install on quit, relaunch,
+offline failure, and an active terminal. Test multiple dirty windows and verify
+Save, Discard, and Cancel. Cancel must leave 0.1.1 running and installed. Also
+confirm a modified appcast or DMG is rejected.
+
+Remove the test override afterward:
+
+```sh
+defaults delete com.monknot.app SUFeedURL
+```
+
+When the exact prerelease assets pass, promote the unchanged release:
+
+```sh
+gh release edit v0.1.2 --prerelease=false --latest \
+  --repo RojhatToptamus/monknot
+```
+
+Do not upload or replace any asset during promotion. Repeat the update once
+from an untouched public 0.1.1 installation using the stable feed.
+
+## Local verification
+
+The public key file is required for bundle builds. Normal local builds remain
+unsandboxed and ad-hoc signed:
 
 ```sh
 swift test
@@ -125,92 +203,28 @@ swift run MonknotRecentWorkspaceSmokeTests
 swift run MonknotShortcutSmokeTests
 swift run MonknotWorkspaceExport
 npm --prefix website run build
-```
-
-Then confirm:
-
-- `VERSION` and release notes are committed on `main`.
-- `git status` is clean.
-- No `.p12`, `.p8`, provisioning profile, private key, `.env`, or build output
-  is tracked.
-- The named `release` environment and five secrets exist.
-- The Developer ID certificate has not expired or been revoked.
-- The mandatory manual Release workflow dry-run completed successfully on the
-  same `main` commit that will be tagged.
-
-Create and push the release tag only after those checks:
-
-```sh
-git tag v0.1.0
-git show --no-patch --oneline v0.1.0
-git push origin v0.1.0
-```
-
-Pushing the tag publishes the release, so do not push it as a dry run.
-
-## Local packaging
-
-Normal development builds remain unsandboxed and ad-hoc signed:
-
-```sh
 script/build_and_run.sh --verify
 ```
 
-For local Developer ID packaging, the exact certificate and its private key
-must be installed in Keychain. Store notarization credentials in a local
-`notarytool` keychain profile and run:
+For local packaging diagnostics:
 
 ```sh
-MONKNOT_NOTARYTOOL_PROFILE="monknot-notary" \
-script/release_package.sh --build-number 1
-
-script/release_preflight.sh
+script/release_package.sh --adhoc
 script/verify_release_artifact.sh \
+  --adhoc \
   --expected-version "$(tr -d '\r\n' < VERSION)" \
-  --expected-build 1 \
+  --expected-build "$(tr -d '\r\n' < BUILD_NUMBER)" \
   --expected-arch arm64 \
   "dist/Monknot-$(tr -d '\r\n' < VERSION)-arm64.dmg"
 ```
 
-`--skip-notarize` and `--adhoc` exist only for local packaging diagnostics.
-Their output is not a production release and must never be uploaded as a
-fallback artifact.
-
-## Terminal verification
-
-The app is intentionally unsandboxed. `TerminalPTYSession` launches
-`/bin/zsh -il`, so terminal sessions use normal login/interactive zsh startup,
-inherit the user environment, and can resolve tools installed through shell
-configuration and standard paths. Release verification must cover:
-
-```text
-pwd
-echo
-ls
-git --version
-which git
-which claude; claude --version     # when installed
-which codex; codex --version       # when installed
-which node; node --version         # when installed
-which brew                         # when installed
-echo $PATH
-```
-
-Also verify the workspace working directory, login and interactive shell modes,
-Ctrl+C, PTY resize, multiple sessions, `/opt/homebrew/bin`, and
-`/usr/local/bin` when those directories/tools exist. XCTest exercises the PTY
-contract on every release run. Before a public release, repeat the matrix from
-the final installed DMG on a representative clean Mac; signing without App
-Sandbox must not change shell behavior.
+Ad-hoc or `--skip-notarize` output must never be published. Appcast generation
+is intentionally limited to a final notarized and stapled DMG.
 
 ## Packaged legal payload
 
-Monknot’s first-party source and assets are MIT-licensed. Every app includes the
-root `LICENSE`, `THIRD_PARTY_NOTICES.md`, and the complete verified license
-texts under `Contents/Resources/Legal`. Third-party software and palettes keep
-their original licenses; the release verifier compares the packaged copies and
-vendored xterm hashes with the audited repository files.
-
-`LICENSE_AUDIT.md` is the source inventory. Gruvbox is not distributed. The
-historical `app-store/` screenshot folder is not consumed by any product or
-release build and does not represent a supported Store distribution path.
+Every app includes the root `LICENSE`, `THIRD_PARTY_NOTICES.md`, Sparkle’s
+complete license and external notices, the terminal licenses, and the verified
+theme licenses under `Contents/Resources/Legal`. `LICENSE_AUDIT.md` is the
+source inventory. The release verifier compares the packaged copies with the
+repository.
