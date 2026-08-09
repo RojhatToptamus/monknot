@@ -917,10 +917,12 @@ final class WorkspaceSplitViewTests: XCTestCase {
 
     func testNativeTerminalSnapCollapseReportsUserIntentAndOutwardDragRestoresWidth() throws {
         let recorder = PresentationRecorder()
-        let controller = makeController(recorder: recorder)
-        let window = mount(controller, width: 1_000)
+        let controller = makeController(sidebarPresented: false, recorder: recorder)
+        let window = mount(controller, width: 720)
+        let visibleFrame = NSScreen.screens.first?.visibleFrame ?? .zero
+        window.setFrameOrigin(NSPoint(x: visibleFrame.minX - 300, y: visibleFrame.minY))
 
-        controller.splitView.setPosition(controller.splitView.bounds.width - 380, ofDividerAt: 1)
+        controller.splitView.setPosition(controller.splitView.bounds.width - 350, ofDividerAt: 1)
         layout(window, controller)
         let usefulWidth = paneWidth(controller.terminalItem, in: controller)
         recorder.terminalEvents.removeAll()
@@ -944,7 +946,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
 
         // Mirror SwiftUI feeding the user-visible collapsed preference back
         // into the representable before the next pointer gesture.
-        update(controller, sidebarPresented: true, terminalPresented: false, recorder: recorder)
+        update(controller, sidebarPresented: false, terminalPresented: false, recorder: recorder)
 
         try dragDivider(
             1,
