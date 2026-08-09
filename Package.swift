@@ -37,7 +37,10 @@ let package = Package(
         ),
         .testTarget(
             name: "MonknotAppTests",
-            dependencies: ["MonknotApp"]
+            dependencies: [
+                "MonknotApp",
+                .product(name: "Sparkle", package: "Sparkle")
+            ]
         ),
         .executableTarget(
             name: "MonknotSmokeTests",

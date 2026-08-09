@@ -102,6 +102,30 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertTrue(window.firstResponder === documentEditor)
     }
 
+    func testTerminalFocusRestorerDiscardCancelsAnInfeasibleRevealCapture() async {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let documentEditor = NSTextView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
+        let currentResponder = NSTextView(frame: NSRect(x: 320, y: 0, width: 320, height: 480))
+        window.contentView?.addSubview(documentEditor)
+        window.contentView?.addSubview(currentResponder)
+        XCTAssertTrue(window.makeFirstResponder(documentEditor))
+
+        let restorer = TerminalFocusRestorer()
+        restorer.capture(from: window)
+        XCTAssertTrue(window.makeFirstResponder(currentResponder))
+
+        restorer.discard()
+        restorer.restore()
+        await Task.yield()
+
+        XCTAssertTrue(window.firstResponder === currentResponder)
+    }
+
     func testTerminalFocusRestorerUsesSourceFirstRegisteredTargetAfterMenuFocusLoss() async {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),

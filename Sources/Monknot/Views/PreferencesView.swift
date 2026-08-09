@@ -1,4 +1,5 @@
 import MonknotCore
+import Sparkle
 import SwiftUI
 
 struct PreferencesView: View {
@@ -23,6 +24,7 @@ struct PreferencesView: View {
     }
 
     @ObservedObject var themeStore: ThemeSettingsStore
+    let updater: SPUUpdater
     @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.defaultValue.rawValue
     @AppStorage("Monknot.settingsSection") private var selectedSectionRawValue = Section.general.rawValue
     @AppStorage("Monknot.zoomScale") private var persistedZoomScale = WorkspaceZoomPolicy.defaultValue
@@ -157,7 +159,7 @@ struct PreferencesView: View {
     private var sectionContent: some View {
         switch selectedSection {
         case .general:
-            GeneralSettingsView(uiTheme: panelTheme)
+            GeneralSettingsView(uiTheme: panelTheme, updater: updater)
         case .appearance:
             AppearanceSettingsView(themeStore: themeStore, uiTheme: panelTheme)
         case .editor:

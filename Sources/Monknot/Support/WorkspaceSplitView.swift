@@ -154,7 +154,7 @@ final class WorkspaceNativeSplitView: NSSplitView {
             window?.invalidateCursorRects(for: self)
         }
     }
-    var didFinishDraggingDivider: ((Int) -> Void)?
+    var didFinishDraggingDivider: ((Int, CGFloat?) -> Void)?
 
     private(set) var hoveredDividerIndex: Int?
     private(set) var activeDividerIndex: Int?
@@ -241,6 +241,14 @@ final class WorkspaceNativeSplitView: NSSplitView {
         activeDividerIndex = dividerIndex
         setHoveredDivider(dividerIndex)
         needsDisplay = true
+        let outerPaneIndex = dividerIndex == 0 ? 0 : dividerIndex + 1
+        let widthBeforeDrag: CGFloat?
+        if arrangedSubviews.indices.contains(outerPaneIndex),
+           !arrangedSubviews[outerPaneIndex].isHidden {
+            widthBeforeDrag = arrangedSubviews[outerPaneIndex].frame.width
+        } else {
+            widthBeforeDrag = nil
+        }
         defer {
             activeDividerIndex = nil
             if let window {
@@ -250,7 +258,7 @@ final class WorkspaceNativeSplitView: NSSplitView {
                 setHoveredDivider(nil)
             }
             needsDisplay = true
-            didFinishDraggingDivider?(dividerIndex)
+            didFinishDraggingDivider?(dividerIndex, widthBeforeDrag)
         }
         super.mouseDown(with: event)
     }
@@ -360,6 +368,13 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
     private var pendingForceSidebarPresentationReport = false
     private var pendingForceTerminalPresentationReport = false
     private var splitViewResizeObserver: NSObjectProtocol?
+    private var sidebarCollapseObservation: NSKeyValueObservation?
+    private var terminalCollapseObservation: NSKeyValueObservation?
+    // macOS 15 can normalize a hidden arranged view to its minimum width.
+    // Each value exists only while its pane is collapsed; visible geometry
+    // remains owned exclusively by NSSplitView.
+    private var collapsedSidebarWidth: CGFloat?
+    private var collapsedTerminalWidth: CGFloat?
     private var isReconcilingPresentation = false
     private var isChangingPressureDuringConstraint = false
     private let migratesLegacyLayout: Bool
@@ -424,8 +439,11 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         sidebarItem.isCollapsed = !isSidebarPresented
         terminalItem.isCollapsed = !isTerminalPresented
 
-        workspaceSplitView.didFinishDraggingDivider = { [weak self] dividerIndex in
-            self?.dividerDragDidFinish(dividerIndex)
+        sidebarCollapseObservation = observeCollapseChanges(for: sidebarItem)
+        terminalCollapseObservation = observeCollapseChanges(for: terminalItem)
+
+        workspaceSplitView.didFinishDraggingDivider = { [weak self] dividerIndex, widthBeforeDrag in
+            self?.dividerDragDidFinish(dividerIndex, widthBeforeDrag: widthBeforeDrag)
         }
         splitViewResizeObserver = NotificationCenter.default.addObserver(
             forName: NSSplitView.didResizeSubviewsNotification,
@@ -546,10 +564,12 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         let availableWidth = availableLayoutWidth
 
         if dividerIndex == 0 {
-            if sidebarItem.isCollapsed,
-               preferredSidebarPresentation,
-               sidebarPressureCollapseCause != nil,
-               proposedPosition < sidebarMinimum {
+            if sidebarItem.isCollapsed {
+                guard proposedPosition >= sidebarMinimum else { return 0 }
+                setCollapsed(false, for: sidebarItem, animated: false)
+            } else if proposedPosition
+                < sidebarMinimum * WorkspaceSplitMetrics.snapThresholdFraction {
+                setCollapsed(true, for: sidebarItem, animated: false)
                 return 0
             }
 
@@ -576,10 +596,15 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
             let maximumDividerForTerminalMinimum = availableWidth
                 - terminalMinimum
                 - dividerWidth
-            if terminalItem.isCollapsed,
-               preferredTerminalPresentation,
-               terminalPressureCollapseCause != nil,
-               proposedPosition > maximumDividerForTerminalMinimum {
+            if terminalItem.isCollapsed {
+                guard proposedPosition <= maximumDividerForTerminalMinimum else {
+                    return availableWidth - dividerWidth
+                }
+                setCollapsed(false, for: terminalItem, animated: false)
+            } else if proposedPosition > availableWidth
+                - terminalMinimum * WorkspaceSplitMetrics.snapThresholdFraction
+                - dividerWidth {
+                setCollapsed(true, for: terminalItem, animated: false)
                 return availableWidth - dividerWidth
             }
 
@@ -607,7 +632,8 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         }
 
         // NSSplitViewController's split-item constraints remain authoritative;
-        // this optional delegate hook only coordinates the nonadjacent pane.
+        // this delegate only coordinates edge snapping and the nonadjacent
+        // peripheral when the document reaches its minimum.
         return proposedPosition
     }
 
@@ -643,8 +669,8 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         let normalizedScale = WorkspaceSplitMetrics.normalizedScale(layoutScale)
         if self.layoutScale != normalizedScale {
             let previousScale = self.layoutScale
-            let sidebarWidth = nativeRetainedWidthIfAvailable(for: sidebarItem)
-            let terminalWidth = nativeRetainedWidthIfAvailable(for: terminalItem)
+            let sidebarWidth = restorableWidthIfAvailable(for: sidebarItem)
+            let terminalWidth = restorableWidthIfAvailable(for: terminalItem)
             applyLayoutScaleChange(
                 to: normalizedScale,
                 sidebarWidth: sidebarWidth,
@@ -829,8 +855,9 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         // A highly zoomed narrow window can be smaller than one peripheral
         // minimum plus the document minimum. Give the native split a temporary
         // staging capacity, then restore the real frame before presentation is
-        // reconciled. The collapsed arranged views retain the imported widths;
-        // no second width store or deferred migration is needed.
+        // reconciled. A pane that remains collapsed keeps its imported width
+        // only for that collapsed lifetime; no persistent width store or
+        // deferred migration is needed.
         if stagingWidth > availableWidth {
             splitView.frame = NSRect(
                 x: originalSplitFrame.minX,
@@ -845,8 +872,7 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
 
         // Stage each native pane against the document area independently.
         // This preserves both useful widths even when a narrow first window
-        // cannot display all three minima at once; hidden arranged views remain
-        // AppKit's only retained-width owner.
+        // cannot display all three minima at once.
         sidebarItem.isCollapsed = false
         splitView.layoutSubtreeIfNeeded()
         splitView.setPosition(sidebarWidth, ofDividerAt: 0)
@@ -972,7 +998,7 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         let sidebarMaximum = WorkspaceSplitMetrics.sidebarMaximumWidth * layoutScale
         let detailMinimum = WorkspaceSplitMetrics.detailMinimumWidth * layoutScale
         let sidebarWidth = preservingSidebarWidth
-            ? min(sidebarMaximum, max(sidebarMinimum, nativeRetainedWidth(for: sidebarItem)))
+            ? min(sidebarMaximum, max(sidebarMinimum, restorableWidth(for: sidebarItem)))
             : sidebarMinimum
         let terminalWidth = terminalItem.isCollapsed
             ? 0
@@ -1003,19 +1029,72 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
                 )
                 : WorkspaceSplitMetrics.sidebarMinimumWidth * layoutScale) + dividerWidth
         let terminalWidth = preservingTerminalWidth
-            ? min(terminalMaximum, max(terminalMinimum, nativeRetainedWidth(for: terminalItem)))
+            ? min(terminalMaximum, max(terminalMinimum, restorableWidth(for: terminalItem)))
             : terminalMinimum
         return sidebarWidth + detailMinimum + terminalWidth + dividerWidth
             <= availableLayoutWidth
     }
 
+    private func observeCollapseChanges(
+        for item: NSSplitViewItem
+    ) -> NSKeyValueObservation {
+        item.observe(\.isCollapsed, options: [.prior]) { [weak self] item, change in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if change.isPrior {
+                    self.captureWidthBeforeCollapse(for: item)
+                } else if !item.isCollapsed {
+                    self.restoreCollapsedWidthIfNeeded(for: item)
+                }
+            }
+        }
+    }
+
+    private func captureWidthBeforeCollapse(for item: NSSplitViewItem) {
+        guard !item.isCollapsed, collapsedWidth(for: item) == nil else { return }
+        let width = nativePaneWidth(for: item)
+        guard width.isFinite, width > 0 else { return }
+        setCollapsedWidth(width, for: item)
+    }
+
+    private func restoreCollapsedWidthIfNeeded(for item: NSSplitViewItem) {
+        let isOppositePressureRevealDuringDrag: Bool
+        if item === sidebarItem {
+            isOppositePressureRevealDuringDrag = workspaceSplitView.activeDividerIndex == 1
+                && sidebarPressureCollapseCause != nil
+        } else {
+            isOppositePressureRevealDuringDrag = workspaceSplitView.activeDividerIndex == 0
+                && terminalPressureCollapseCause != nil
+        }
+        if isOppositePressureRevealDuringDrag,
+           !isChangingPressureDuringConstraint {
+            item.isCollapsed = true
+            return
+        }
+
+        guard let width = collapsedWidth(for: item) else { return }
+        setCollapsedWidth(nil, for: item)
+        splitView.layoutSubtreeIfNeeded()
+        restoreNativeRetainedWidth(width, for: item)
+    }
+
+    private func collapsedWidth(for item: NSSplitViewItem) -> CGFloat? {
+        item === sidebarItem ? collapsedSidebarWidth : collapsedTerminalWidth
+    }
+
+    private func setCollapsedWidth(_ width: CGFloat?, for item: NSSplitViewItem) {
+        if item === sidebarItem {
+            collapsedSidebarWidth = width
+        } else {
+            collapsedTerminalWidth = width
+        }
+    }
+
     private func setCollapsed(_ collapsed: Bool, for item: NSSplitViewItem, animated: Bool) {
         guard item.isCollapsed != collapsed else { return }
         if !collapsed {
-            let retainedWidth = nativeRetainedWidth(for: item)
             item.isCollapsed = false
             splitView.layoutSubtreeIfNeeded()
-            restoreNativeRetainedWidth(retainedWidth, for: item)
             return
         }
         guard animated, view.window != nil else {
@@ -1028,19 +1107,26 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         }
     }
 
-    private func nativeRetainedWidth(for item: NSSplitViewItem) -> CGFloat {
-        if item === sidebarItem {
-            return splitView.arrangedSubviews[0].frame.width
+    private func restorableWidth(for item: NSSplitViewItem) -> CGFloat {
+        if item.isCollapsed, let collapsedWidth = collapsedWidth(for: item) {
+            return collapsedWidth
         }
-        return splitView.arrangedSubviews[2].frame.width
+        return nativePaneWidth(for: item)
     }
 
-    private func nativeRetainedWidthIfAvailable(for item: NSSplitViewItem) -> CGFloat? {
-        let index = item === sidebarItem ? 0 : 2
-        guard splitView.arrangedSubviews.indices.contains(index) else { return nil }
-        let width = splitView.arrangedSubviews[index].frame.width
+    private func restorableWidthIfAvailable(for item: NSSplitViewItem) -> CGFloat? {
+        if item.isCollapsed, let collapsedWidth = collapsedWidth(for: item) {
+            return collapsedWidth
+        }
+        let width = nativePaneWidth(for: item)
         guard width.isFinite, width > 0 else { return nil }
         return width
+    }
+
+    private func nativePaneWidth(for item: NSSplitViewItem) -> CGFloat {
+        let index = item === sidebarItem ? 0 : 2
+        guard splitView.arrangedSubviews.indices.contains(index) else { return 0 }
+        return splitView.arrangedSubviews[index].frame.width
     }
 
     private func applyScaleChangeToNativePaneWidths(
@@ -1078,10 +1164,10 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         defer { isReconcilingPresentation = wasReconcilingPresentation }
         splitView.layoutSubtreeIfNeeded()
 
-        // Hidden arranged views are AppKit's retained-width owner. Stage each
-        // collapsed pane through the native divider API while the detail pane
-        // temporarily yields its minimum, keeping the split itself inside the
-        // parent allocation throughout the scale change.
+        // Stage each collapsed pane through the native divider API while the
+        // detail pane temporarily yields its minimum. Its transient collapsed
+        // width is consumed on reveal and captured again after positioning at
+        // the new scale.
         if sidebarWasCollapsed || terminalWasCollapsed {
             let detailMinimum = detailItem.minimumThickness
             detailItem.minimumThickness = 0
@@ -1190,7 +1276,7 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         guard !isReconcilingPresentation, !isChangingPressureDuringConstraint else { return }
 
         // A native window-pressure collapse does not alter the user's preferred
-        // presentation. The retained split-item thickness is restored when the
+        // presentation. Its transient collapsed width is restored when the
         // document minimum and peripheral minimums fit again.
         if preferredSidebarPresentation,
            sidebarItem.isCollapsed,
@@ -1219,7 +1305,14 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         }
     }
 
-    private func dividerDragDidFinish(_ dividerIndex: Int) {
+    private func dividerDragDidFinish(_ dividerIndex: Int, widthBeforeDrag: CGFloat?) {
+        if let widthBeforeDrag {
+            let draggedItem = dividerIndex == 0 ? sidebarItem : terminalItem
+            if draggedItem.isCollapsed {
+                setCollapsedWidth(widthBeforeDrag, for: draggedItem)
+            }
+        }
+
         var userInitiatedSidebar = false
         var userInitiatedTerminal = false
         if dividerIndex == 0 {

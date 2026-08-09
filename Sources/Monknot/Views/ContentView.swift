@@ -40,6 +40,11 @@ final class TerminalFocusRestorer: ObservableObject {
         }
     }
 
+    func discard() {
+        generation &+= 1
+        clear()
+    }
+
     private var hasValidSavedTarget: Bool {
         guard let window, let responder else { return false }
         guard let view = responder as? NSView else { return true }
@@ -1338,8 +1343,7 @@ struct ContentView: View {
 
     private func showWorkspaceSearch() {
         guard store.workspaceURL != nil else { return }
-        sidebarPreferredVisible = true
-        setSidebarPresented(true, animated: false, requestsNativeReveal: true)
+        requestSidebarPresentation(true, animated: false)
         workspaceSearch.present(documents: store.documents)
     }
 
@@ -1398,16 +1402,24 @@ struct ContentView: View {
 
     private func setTerminalDrawerPresented(_ isPresented: Bool, animated: Bool) {
         guard terminalPreferredVisible != isPresented || isTerminalVisible != isPresented else { return }
+        let wasEffectivelyVisible = isTerminalVisible
         if isPresented {
             terminalFocusRestorer.capture(from: NSApp.keyWindow)
-            terminalRevealRequest &+= 1
         }
-        terminalPreferredVisible = isPresented
         updateChromeState(animated: animated) {
-            isTerminalVisible = isPresented
+            terminalPreferredVisible = isPresented
+            if isPresented {
+                terminalRevealRequest &+= 1
+            } else {
+                isTerminalVisible = false
+            }
         }
         if !isPresented {
-            terminalFocusRestorer.restore(fallbackFrom: NSApp.keyWindow)
+            if wasEffectivelyVisible {
+                terminalFocusRestorer.restore(fallbackFrom: NSApp.keyWindow)
+            } else {
+                terminalFocusRestorer.discard()
+            }
         }
     }
 
@@ -1415,14 +1427,26 @@ struct ContentView: View {
         _ isPresented: Bool,
         userInitiated: Bool
     ) {
-        if userInitiated {
-            setTerminalDrawerPresented(isPresented, animated: false)
+        let updatesPreference = userInitiated && terminalPreferredVisible != isPresented
+        let updatesEffectiveState = isTerminalVisible != isPresented
+        guard updatesPreference || updatesEffectiveState else {
+            if !userInitiated, !isPresented, terminalPreferredVisible {
+                // A forced native report after an infeasible explicit reveal
+                // cancels the focus capture without moving keyboard focus.
+                terminalFocusRestorer.discard()
+            }
             return
         }
 
-        guard isTerminalVisible != isPresented else { return }
+        if userInitiated, isPresented {
+            terminalFocusRestorer.capture(from: NSApp.keyWindow)
+        }
+
         let shouldRestoreDocumentFocus = isTerminalVisible && !isPresented
         updateChromeState(animated: false) {
+            if userInitiated {
+                terminalPreferredVisible = isPresented
+            }
             isTerminalVisible = isPresented
         }
         if shouldRestoreDocumentFocus {
@@ -1431,25 +1455,18 @@ struct ContentView: View {
     }
 
     private func toggleSidebar(animated: Bool) {
-        let willShowSidebar = !isSidebarVisible
-        sidebarPreferredVisible = willShowSidebar
-        setSidebarPresented(
-            willShowSidebar,
-            animated: animated,
-            requestsNativeReveal: willShowSidebar
-        )
+        requestSidebarPresentation(!isSidebarVisible, animated: animated)
     }
 
-    private func setSidebarPresented(
-        _ isPresented: Bool,
-        animated: Bool,
-        requestsNativeReveal: Bool = false
-    ) {
-        if isPresented, requestsNativeReveal {
-            sidebarRevealRequest &+= 1
-        }
+    private func requestSidebarPresentation(_ isPresented: Bool, animated: Bool) {
+        guard sidebarPreferredVisible != isPresented || isSidebarVisible != isPresented else { return }
         updateChromeState(animated: animated) {
-            isSidebarVisible = isPresented
+            sidebarPreferredVisible = isPresented
+            if isPresented {
+                sidebarRevealRequest &+= 1
+            } else {
+                isSidebarVisible = false
+            }
         }
     }
 
@@ -1457,11 +1474,15 @@ struct ContentView: View {
         _ isPresented: Bool,
         userInitiated: Bool
     ) {
-        if userInitiated {
-            sidebarPreferredVisible = isPresented
+        let updatesPreference = userInitiated && sidebarPreferredVisible != isPresented
+        let updatesEffectiveState = isSidebarVisible != isPresented
+        guard updatesPreference || updatesEffectiveState else { return }
+        updateChromeState(animated: false) {
+            if userInitiated {
+                sidebarPreferredVisible = isPresented
+            }
+            isSidebarVisible = isPresented
         }
-        guard isSidebarVisible != isPresented else { return }
-        setSidebarPresented(isPresented, animated: false)
     }
 
     private func updateChromeState(animated: Bool, updates: () -> Void) {

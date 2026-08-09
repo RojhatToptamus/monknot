@@ -8,3 +8,4 @@ This release makes Monknot's workspace layout reliable across normal, maximized,
 - Renames Preview Width to Content Width and applies it consistently to editable and rendered document content.
 - Uses Harbor Dark for new users while preserving every existing user's saved theme choice.
 - Preserves terminal sessions and focus while panes collapse and restore automatically.
+- Adds General settings for Sparkle's automatic update checks and downloads without creating duplicate app preferences.

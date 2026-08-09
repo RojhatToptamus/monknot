@@ -1,4 +1,5 @@
 import AppKit
+import Sparkle
 import SwiftUI
 import XCTest
 @testable import MonknotApp
@@ -19,6 +20,12 @@ final class WorkspaceSplitViewTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: defaultsName) }
         let themeStore = ThemeSettingsStore(defaults: defaults)
         let workspaceStore = WorkspaceStore()
+        let updaterController = SPUStandardUpdaterController(
+            startingUpdater: false,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
+        defer { withExtendedLifetime(updaterController) {} }
         let workspaceHost = LayoutCountingHostingView(
             rootView: ContentView(
                 store: workspaceStore,
@@ -54,7 +61,10 @@ final class WorkspaceSplitViewTests: XCTestCase {
         XCTAssertGreaterThan(initialSplitFrame.height, 0)
 
         let settingsHost = LayoutCountingHostingView(
-            rootView: PreferencesView(themeStore: themeStore)
+            rootView: PreferencesView(
+                themeStore: themeStore,
+                updater: updaterController.updater
+            )
         )
         let settingsSize = settingsHost.fittingSize
         let settingsWindow = UnconstrainedSplitTestWindow(
@@ -86,6 +96,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         settingsWindow.layoutIfNeeded()
         settingsHost.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        let settledSplitFrame = splitView.frame
 
         // Ignore the finite initial settings transaction. With no input or
         // state change, another run-loop interval must not keep measuring the
@@ -97,7 +108,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         XCTAssertLessThanOrEqual(workspaceHost.layoutCallCount, 2)
         XCTAssertLessThanOrEqual(workspaceHost.updateConstraintsCallCount, 2)
         XCTAssertLessThanOrEqual(splitResizeActivity.splitResizeCount, 1)
-        XCTAssertEqual(splitView.frame, initialSplitFrame)
+        XCTAssertEqual(splitView.frame, settledSplitFrame)
         XCTAssertTrue(
             zip(splitView.arrangedSubviews, initialPaneViews).allSatisfy { $0 === $1 }
         )
@@ -119,6 +130,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         let host = NSHostingView(rootView: rootView)
+        host.sizingOptions = []
         let window = UnconstrainedSplitTestWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1_600, height: 620),
             styleMask: [.titled, .closable, .resizable],
@@ -144,6 +156,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         for width in [CGFloat(1_300), 1_600] {
             let model = MountedSplitZoomModel()
             let host = NSHostingView(rootView: MountedSplitZoomFixture(model: model))
+            host.sizingOptions = []
             host.frame = NSRect(x: 0, y: 0, width: width, height: 620)
             let window = UnconstrainedSplitTestWindow(
                 contentRect: host.frame,
@@ -215,6 +228,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
     func testSwiftUIFeedbackDuringAnOutwardDragDoesNotRecollapseTheSidebar() throws {
         let model = LiveSplitFeedbackModel()
         let host = NSHostingView(rootView: LiveSplitFeedbackFixture(model: model))
+        host.sizingOptions = []
         host.frame = NSRect(x: 0, y: 0, width: 1_600, height: 620)
         let window = UnconstrainedSplitTestWindow(
             contentRect: host.frame,
@@ -258,6 +272,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
     func testNarrowSwiftUIFeedbackKeepsTheOppositePanePressureCollapsedAfterReveal() throws {
         let model = LiveSplitFeedbackModel()
         let host = NSHostingView(rootView: LiveSplitFeedbackFixture(model: model))
+        host.sizingOptions = []
         host.frame = NSRect(x: 0, y: 0, width: 940, height: 620)
         let window = UnconstrainedSplitTestWindow(
             contentRect: host.frame,
@@ -533,12 +548,6 @@ final class WorkspaceSplitViewTests: XCTestCase {
             controller.splitView(controller.splitView, shouldHideDividerAt: 0)
         )
         XCTAssertTrue(paneView(controller.sidebarItem, in: controller).isHidden)
-        XCTAssertEqual(
-            paneView(controller.sidebarItem, in: controller).bounds.width,
-            usefulWidth,
-            accuracy: 1,
-            "The hidden native pane retains the useful width used for reveal"
-        )
         let splitView = controller.splitView as! WorkspaceNativeSplitView
         let collapsedHitRect = splitView.centerBiasedHitRect(forDividerAt: 0)
         XCTAssertEqual(collapsedHitRect.minX, splitView.bounds.minX, accuracy: 0.001)
@@ -548,6 +557,14 @@ final class WorkspaceSplitViewTests: XCTestCase {
         )
         XCTAssertEqual(paneFrame(controller.detailItem, in: controller).minX, controller.splitView.bounds.minX, accuracy: 1)
         XCTAssertGreaterThan(paneWidth(controller.detailItem, in: controller), detailWidthBeforeCollapse)
+
+        normalizeHiddenPaneToMinimum(controller.sidebarItem, in: controller)
+        XCTAssertEqual(
+            paneView(controller.sidebarItem, in: controller).bounds.width,
+            controller.sidebarItem.minimumThickness,
+            accuracy: 0.001,
+            "The fixture must emulate macOS 15 discarding the hidden arranged view's useful width"
+        )
 
         update(controller, sidebarPresented: true, terminalPresented: true, recorder: recorder)
         layout(window, controller)
@@ -577,12 +594,6 @@ final class WorkspaceSplitViewTests: XCTestCase {
             controller.splitView(controller.splitView, shouldHideDividerAt: 1)
         )
         XCTAssertTrue(paneView(controller.terminalItem, in: controller).isHidden)
-        XCTAssertEqual(
-            paneView(controller.terminalItem, in: controller).bounds.width,
-            usefulWidth,
-            accuracy: 1,
-            "The hidden native pane retains the useful width used for reveal"
-        )
         let splitView = controller.splitView as! WorkspaceNativeSplitView
         let collapsedHitRect = splitView.centerBiasedHitRect(forDividerAt: 1)
         XCTAssertEqual(collapsedHitRect.maxX, splitView.bounds.maxX, accuracy: 0.001)
@@ -592,6 +603,14 @@ final class WorkspaceSplitViewTests: XCTestCase {
         )
         XCTAssertEqual(paneFrame(controller.detailItem, in: controller).maxX, controller.splitView.bounds.maxX, accuracy: 1)
         XCTAssertGreaterThan(paneWidth(controller.detailItem, in: controller), detailWidthBeforeCollapse)
+
+        normalizeHiddenPaneToMinimum(controller.terminalItem, in: controller)
+        XCTAssertEqual(
+            paneView(controller.terminalItem, in: controller).bounds.width,
+            controller.terminalItem.minimumThickness,
+            accuracy: 0.001,
+            "The fixture must emulate macOS 15 discarding the hidden arranged view's useful width"
+        )
 
         update(controller, sidebarPresented: true, terminalPresented: true, recorder: recorder)
         layout(window, controller)
@@ -874,11 +893,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
             recorder.sidebarEvents.last,
             PresentationEvent(isPresented: false, userInitiated: true)
         )
-        XCTAssertEqual(
-            paneView(controller.sidebarItem, in: controller).bounds.width,
-            usefulWidth,
-            accuracy: 1
-        )
+        normalizeHiddenPaneToMinimum(controller.sidebarItem, in: controller)
 
         // Mirror SwiftUI feeding the user-visible collapsed preference back
         // into the representable before the next pointer gesture.
@@ -925,11 +940,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
             recorder.terminalEvents.last,
             PresentationEvent(isPresented: false, userInitiated: true)
         )
-        XCTAssertEqual(
-            paneView(controller.terminalItem, in: controller).bounds.width,
-            usefulWidth,
-            accuracy: 1
-        )
+        normalizeHiddenPaneToMinimum(controller.terminalItem, in: controller)
 
         // Mirror SwiftUI feeding the user-visible collapsed preference back
         // into the representable before the next pointer gesture.
@@ -1163,11 +1174,6 @@ final class WorkspaceSplitViewTests: XCTestCase {
         )
         layout(window, controller)
         XCTAssertTrue(controller.terminalItem.isCollapsed)
-        XCTAssertEqual(
-            paneView(controller.terminalItem, in: controller).bounds.width,
-            scaledTerminalWidth,
-            accuracy: 2
-        )
 
         update(
             controller,
@@ -1361,6 +1367,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         )
         let allocationWidth: CGFloat = 1_230
         let host = NSHostingView(rootView: MountedConstrainedScaleFixture(model: model))
+        host.sizingOptions = []
         host.frame = NSRect(x: 0, y: 0, width: allocationWidth, height: 620)
         let window = UnconstrainedSplitTestWindow(
             contentRect: host.frame,
@@ -1448,6 +1455,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
                 terminalLifecycle: lifecycle
             )
         )
+        host.sizingOptions = []
         host.frame = NSRect(x: 0, y: 0, width: 1_600, height: 620)
         let window = UnconstrainedSplitTestWindow(
             contentRect: host.frame,
@@ -1495,6 +1503,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         )
         let allocationWidth: CGFloat = 1_100
         let host = NSHostingView(rootView: MountedConstrainedScaleFixture(model: model))
+        host.sizingOptions = []
         host.frame = NSRect(x: 0, y: 0, width: allocationWidth, height: 620)
         let window = UnconstrainedSplitTestWindow(
             contentRect: host.frame,
@@ -1570,6 +1579,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         )
         let allocationWidth: CGFloat = 1_800
         let host = NSHostingView(rootView: MountedConstrainedScaleFixture(model: model))
+        host.sizingOptions = []
         host.frame = NSRect(x: 0, y: 0, width: allocationWidth, height: 620)
         let window = UnconstrainedSplitTestWindow(
             contentRect: host.frame,
@@ -1675,6 +1685,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         )
         let allocationWidth: CGFloat = 1_100
         let host = NSHostingView(rootView: MountedConstrainedScaleFixture(model: model))
+        host.sizingOptions = []
         host.frame = NSRect(x: 0, y: 0, width: allocationWidth, height: 620)
         let window = UnconstrainedSplitTestWindow(
             contentRect: host.frame,
@@ -1773,6 +1784,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
             rootView: MountedConstrainedScaleFixture(model: model)
                 .frame(minWidth: 920, minHeight: 620)
         )
+        host.sizingOptions = []
         host.frame = NSRect(x: 0, y: 0, width: 1_600, height: 720)
         let window = UnconstrainedSplitTestWindow(
             contentRect: host.frame,
@@ -1830,7 +1842,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         XCTAssertTrue(model.terminalPreferred)
         XCTAssertFalse(model.terminalEffective)
         XCTAssertEqual(paneViews[0].frame.width, usefulSidebarWidth, accuracy: 2)
-        XCTAssertEqual(paneViews[2].bounds.width, usefulTerminalWidth, accuracy: 2)
+        normalizeHiddenPaneToMinimum(splitController.splitViewItems[2], in: splitController)
 
         let widthsBeforeRetainedPanesFit: [CGFloat] = [940, 1_000, 1_100]
         for width in widthsBeforeRetainedPanesFit {
@@ -1850,12 +1862,6 @@ final class WorkspaceSplitViewTests: XCTestCase {
                 usefulSidebarWidth,
                 accuracy: 2,
                 "Incremental window growth must not replace the user's sidebar width"
-            )
-            XCTAssertEqual(
-                paneViews[2].bounds.width,
-                usefulTerminalWidth,
-                accuracy: 2,
-                "A pressure-hidden terminal must retain its native useful width while the window grows"
             )
         }
 
@@ -1989,20 +1995,20 @@ final class WorkspaceSplitViewTests: XCTestCase {
         controller.splitView.setPosition(440, ofDividerAt: 0)
         controller.splitView.setPosition(controller.splitView.bounds.width - 430, ofDividerAt: 1)
         layout(window, controller)
+        let usefulTerminalWidth = paneWidth(controller.terminalItem, in: controller)
+        XCTAssertGreaterThan(
+            usefulTerminalWidth,
+            WorkspaceSplitMetrics.terminalMinimumWidth
+        )
         window.contentViewController = nil
         layoutController(controller, width: 900)
 
         XCTAssertFalse(controller.sidebarItem.isCollapsed)
         XCTAssertTrue(controller.terminalItem.isCollapsed)
         let sidebarWidthBeforeRestore = paneWidth(controller.sidebarItem, in: controller)
-        let terminalWidthBeforeRestore = paneView(controller.terminalItem, in: controller).bounds.width
         XCTAssertGreaterThan(
             sidebarWidthBeforeRestore,
             WorkspaceSplitMetrics.sidebarMinimumWidth
-        )
-        XCTAssertGreaterThan(
-            terminalWidthBeforeRestore,
-            WorkspaceSplitMetrics.terminalMinimumWidth
         )
 
         let minimumOnlyWidth = WorkspaceSplitMetrics.sidebarMinimumWidth
@@ -2021,15 +2027,10 @@ final class WorkspaceSplitViewTests: XCTestCase {
             sidebarWidthBeforeRestore,
             accuracy: 2
         )
-        XCTAssertEqual(
-            paneView(controller.terminalItem, in: controller).bounds.width,
-            terminalWidthBeforeRestore,
-            accuracy: 2
-        )
 
         let retainedWidthFit = sidebarWidthBeforeRestore
             + WorkspaceSplitMetrics.detailMinimumWidth
-            + terminalWidthBeforeRestore
+            + usefulTerminalWidth
             + 2 * controller.splitView.dividerThickness
             + 2
         layoutController(controller, width: retainedWidthFit)
@@ -2043,7 +2044,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         )
         XCTAssertEqual(
             paneWidth(controller.terminalItem, in: controller),
-            terminalWidthBeforeRestore,
+            usefulTerminalWidth,
             accuracy: 2
         )
         assertAllVisiblePanesMeetMinimums(controller)
@@ -2055,21 +2056,21 @@ final class WorkspaceSplitViewTests: XCTestCase {
         controller.splitView.setPosition(360, ofDividerAt: 0)
         controller.splitView.setPosition(controller.splitView.bounds.width - 500, ofDividerAt: 1)
         layout(window, controller)
+        let usefulSidebarWidth = paneWidth(controller.sidebarItem, in: controller)
+        let usefulTerminalWidth = paneWidth(controller.terminalItem, in: controller)
+        XCTAssertGreaterThan(
+            usefulSidebarWidth,
+            WorkspaceSplitMetrics.sidebarMinimumWidth
+        )
+        XCTAssertGreaterThan(
+            usefulTerminalWidth,
+            WorkspaceSplitMetrics.terminalMinimumWidth
+        )
         window.contentViewController = nil
         layoutController(controller, width: 550)
 
         XCTAssertTrue(controller.sidebarItem.isCollapsed)
         XCTAssertTrue(controller.terminalItem.isCollapsed)
-        let sidebarWidthBeforeRestore = paneView(controller.sidebarItem, in: controller).bounds.width
-        let terminalWidthBeforeRestore = paneView(controller.terminalItem, in: controller).bounds.width
-        XCTAssertGreaterThan(
-            sidebarWidthBeforeRestore,
-            WorkspaceSplitMetrics.sidebarMinimumWidth
-        )
-        XCTAssertGreaterThan(
-            terminalWidthBeforeRestore,
-            WorkspaceSplitMetrics.terminalMinimumWidth
-        )
 
         let minimumOnlyWidth = WorkspaceSplitMetrics.sidebarMinimumWidth
             + WorkspaceSplitMetrics.detailMinimumWidth
@@ -2083,9 +2084,9 @@ final class WorkspaceSplitViewTests: XCTestCase {
             "Minimum-only capacity must not discard a retained peripheral width"
         )
 
-        let retainedWidthFit = sidebarWidthBeforeRestore
+        let retainedWidthFit = usefulSidebarWidth
             + WorkspaceSplitMetrics.detailMinimumWidth
-            + terminalWidthBeforeRestore
+            + usefulTerminalWidth
             + 2 * controller.splitView.dividerThickness
             + 2
         layoutController(controller, width: retainedWidthFit)
@@ -2094,12 +2095,12 @@ final class WorkspaceSplitViewTests: XCTestCase {
         XCTAssertFalse(controller.terminalItem.isCollapsed)
         XCTAssertEqual(
             paneWidth(controller.sidebarItem, in: controller),
-            sidebarWidthBeforeRestore,
+            usefulSidebarWidth,
             accuracy: 2
         )
         XCTAssertEqual(
             paneWidth(controller.terminalItem, in: controller),
-            terminalWidthBeforeRestore,
+            usefulTerminalWidth,
             accuracy: 2
         )
         assertAllVisiblePanesMeetMinimums(controller)
@@ -2272,26 +2273,38 @@ final class WorkspaceSplitViewTests: XCTestCase {
             XCTAssertFalse(controller.sidebarItem.isCollapsed)
             XCTAssertTrue(controller.terminalItem.isCollapsed)
             XCTAssertEqual(
-                paneView(controller.sidebarItem, in: controller).bounds.width,
+                paneWidth(controller.sidebarItem, in: controller),
                 legacySidebarWidth,
-                accuracy: 2
-            )
-            XCTAssertEqual(
-                paneView(controller.terminalItem, in: controller).bounds.width,
-                legacyTerminalWidth,
                 accuracy: 2
             )
             XCTAssertNil(defaults.object(forKey: WorkspaceSplitMetrics.legacyTerminalWidthKey))
             XCTAssertTrue(defaults.bool(forKey: WorkspaceSplitMetrics.migrationMarkerKey))
+
+            layoutController(controller, width: 1_600)
+
+            XCTAssertFalse(controller.sidebarItem.isCollapsed)
+            XCTAssertFalse(controller.terminalItem.isCollapsed)
+            XCTAssertEqual(
+                paneWidth(controller.sidebarItem, in: controller),
+                legacySidebarWidth,
+                accuracy: 2
+            )
+            XCTAssertEqual(
+                paneWidth(controller.terminalItem, in: controller),
+                legacyTerminalWidth,
+                accuracy: 2
+            )
         }
     }
 
     func testScaleTwoNarrowMigrationStagesAndRestoresScaledNativeWidths() {
         let previousLegacySidebarWidth = readLegacySidebarWidth()
         defer { storeLegacySidebarWidth(previousLegacySidebarWidth) }
-        storeLegacySidebarWidth(360)
+        let legacySidebarWidth: CGFloat = 360
+        let legacyTerminalWidth: CGFloat = 520
+        storeLegacySidebarWidth(legacySidebarWidth)
 
-        withIsolatedLegacyMigrationDefaults(terminalWidth: 520) { defaults in
+        withIsolatedLegacyMigrationDefaults(terminalWidth: legacyTerminalWidth) { defaults in
             let controller = makeController(
                 layoutScale: 2,
                 migratesLegacyLayout: true
@@ -2305,15 +2318,19 @@ final class WorkspaceSplitViewTests: XCTestCase {
             XCTAssertTrue(controller.sidebarItem.isCollapsed)
             XCTAssertTrue(controller.terminalItem.isCollapsed)
 
-            let retainedSidebarWidth = paneView(controller.sidebarItem, in: controller).bounds.width
-            let retainedTerminalWidth = paneView(controller.terminalItem, in: controller).bounds.width
-            XCTAssertGreaterThanOrEqual(
-                retainedSidebarWidth,
-                WorkspaceSplitMetrics.sidebarMinimumWidth * controller.layoutScale - 1
+            let expectedSidebarWidth = min(
+                WorkspaceSplitMetrics.sidebarMaximumWidth * controller.layoutScale,
+                max(
+                    WorkspaceSplitMetrics.sidebarMinimumWidth * controller.layoutScale,
+                    legacySidebarWidth
+                )
             )
-            XCTAssertGreaterThanOrEqual(
-                retainedTerminalWidth,
-                WorkspaceSplitMetrics.terminalMinimumWidth * controller.layoutScale - 1
+            let expectedTerminalWidth = min(
+                WorkspaceSplitMetrics.terminalMaximumWidth * controller.layoutScale,
+                max(
+                    WorkspaceSplitMetrics.terminalMinimumWidth * controller.layoutScale,
+                    legacyTerminalWidth
+                )
             )
 
             layoutController(controller, width: 2_200)
@@ -2322,13 +2339,18 @@ final class WorkspaceSplitViewTests: XCTestCase {
             XCTAssertFalse(controller.terminalItem.isCollapsed)
             XCTAssertEqual(
                 paneWidth(controller.sidebarItem, in: controller),
-                retainedSidebarWidth,
-                accuracy: 2
+                expectedSidebarWidth,
+                accuracy: 2 * controller.splitView.dividerThickness + 2,
+                "The semantic sidebar container may add its fixed native edge decoration"
             )
             XCTAssertEqual(
                 paneWidth(controller.terminalItem, in: controller),
-                retainedTerminalWidth,
+                expectedTerminalWidth,
                 accuracy: 2
+            )
+            XCTAssertGreaterThanOrEqual(
+                paneWidth(controller.detailItem, in: controller),
+                WorkspaceSplitMetrics.detailMinimumWidth * controller.layoutScale - 1
             )
         }
     }
@@ -2756,6 +2778,20 @@ final class WorkspaceSplitViewTests: XCTestCase {
             clickCount: 1,
             pressure: 1
         )
+    }
+
+    private func normalizeHiddenPaneToMinimum(
+        _ item: NSSplitViewItem,
+        in controller: NSSplitViewController
+    ) {
+        let index = controller.splitViewItems.firstIndex { $0 === item }!
+        let view = controller.splitView.arrangedSubviews[index]
+        var frame = view.frame
+        frame.size.width = item.minimumThickness
+        view.frame = frame
+        var bounds = view.bounds
+        bounds.size.width = item.minimumThickness
+        view.bounds = bounds
     }
 
     private func paneWidth(

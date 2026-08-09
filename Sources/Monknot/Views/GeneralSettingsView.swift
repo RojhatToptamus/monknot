@@ -1,13 +1,58 @@
+import Combine
 import MonknotCore
+import Sparkle
 import SwiftUI
+
+@MainActor
+final class SparkleUpdateSettings: ObservableObject {
+    private let updater: SPUUpdater
+    private var cancellables: Set<AnyCancellable> = []
+
+    var automaticallyChecksForUpdates: Bool {
+        get { updater.automaticallyChecksForUpdates }
+        set { updater.automaticallyChecksForUpdates = newValue }
+    }
+
+    var automaticallyDownloadsUpdates: Bool {
+        get { updater.automaticallyDownloadsUpdates }
+        set { updater.automaticallyDownloadsUpdates = newValue }
+    }
+
+    var canChangeAutomaticallyDownloadsUpdates: Bool {
+        updater.automaticallyChecksForUpdates && updater.allowsAutomaticUpdates
+    }
+
+    init(updater: SPUUpdater) {
+        self.updater = updater
+
+        updater.publisher(for: \.automaticallyChecksForUpdates, options: [.new])
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        updater.publisher(for: \.automaticallyDownloadsUpdates, options: [.new])
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        updater.publisher(for: \.allowsAutomaticUpdates, options: [.new])
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+    }
+}
 
 struct GeneralSettingsView: View {
     let uiTheme: AppTheme
+    @StateObject private var updateSettings: SparkleUpdateSettings
     @AppStorage("Monknot.usePointerCursors") private var usePointerCursors = false
     @AppStorage("Monknot.reopenLastWorkspace") private var reopenLastWorkspace = true
     @AppStorage("Monknot.fontSmoothing") private var fontSmoothing = true
     @AppStorage(ContentWidthPreference.key) private var contentWidthPercent = ContentWidthPreference.initialValue()
     @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    @MainActor
+    init(uiTheme: AppTheme, updater: SPUUpdater) {
+        self.uiTheme = uiTheme
+        _updateSettings = StateObject(
+            wrappedValue: SparkleUpdateSettings(updater: updater)
+        )
+    }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceDensity(base, theme: uiTheme, zoomScale: settingsZoomScale)
@@ -36,6 +81,30 @@ struct GeneralSettingsView: View {
                     detail: "Use native macOS anti-aliasing",
                     showsDivider: false,
                     isOn: $fontSmoothing
+                )
+            }
+
+            SettingsSectionHeader(theme: uiTheme, title: "Updates")
+                .padding(.top, scaled(22))
+            SettingsGroupCard(theme: uiTheme) {
+                SettingsToggleRow(
+                    theme: uiTheme,
+                    title: "Automatically check for updates",
+                    isOn: Binding(
+                        get: { updateSettings.automaticallyChecksForUpdates },
+                        set: { updateSettings.automaticallyChecksForUpdates = $0 }
+                    )
+                )
+
+                SettingsToggleRow(
+                    theme: uiTheme,
+                    title: "Automatically download updates",
+                    showsDivider: false,
+                    isDisabled: !updateSettings.canChangeAutomaticallyDownloadsUpdates,
+                    isOn: Binding(
+                        get: { updateSettings.automaticallyDownloadsUpdates },
+                        set: { updateSettings.automaticallyDownloadsUpdates = $0 }
+                    )
                 )
             }
 
