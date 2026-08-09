@@ -27,7 +27,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
             )
                 .frame(minWidth: 920, minHeight: 620)
         )
-        let workspaceWindow = NSWindow(
+        let workspaceWindow = UnconstrainedSplitTestWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1_300, height: 720),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
@@ -57,7 +57,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
             rootView: PreferencesView(themeStore: themeStore)
         )
         let settingsSize = settingsHost.fittingSize
-        let settingsWindow = NSWindow(
+        let settingsWindow = UnconstrainedSplitTestWindow(
             contentRect: NSRect(origin: .zero, size: settingsSize),
             styleMask: [.titled, .closable],
             backing: .buffered,
@@ -119,7 +119,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         let host = NSHostingView(rootView: rootView)
-        let window = NSWindow(
+        let window = UnconstrainedSplitTestWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1_600, height: 620),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
@@ -145,7 +145,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
             let model = MountedSplitZoomModel()
             let host = NSHostingView(rootView: MountedSplitZoomFixture(model: model))
             host.frame = NSRect(x: 0, y: 0, width: width, height: 620)
-            let window = NSWindow(
+            let window = UnconstrainedSplitTestWindow(
                 contentRect: host.frame,
                 styleMask: [.titled, .closable, .resizable],
                 backing: .buffered,
@@ -216,7 +216,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         let model = LiveSplitFeedbackModel()
         let host = NSHostingView(rootView: LiveSplitFeedbackFixture(model: model))
         host.frame = NSRect(x: 0, y: 0, width: 1_600, height: 620)
-        let window = NSWindow(
+        let window = UnconstrainedSplitTestWindow(
             contentRect: host.frame,
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
@@ -259,7 +259,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         let model = LiveSplitFeedbackModel()
         let host = NSHostingView(rootView: LiveSplitFeedbackFixture(model: model))
         host.frame = NSRect(x: 0, y: 0, width: 940, height: 620)
-        let window = NSWindow(
+        let window = UnconstrainedSplitTestWindow(
             contentRect: host.frame,
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
@@ -529,6 +529,9 @@ final class WorkspaceSplitViewTests: XCTestCase {
         layout(window, controller)
 
         XCTAssertTrue(controller.sidebarItem.isCollapsed)
+        XCTAssertTrue(
+            controller.splitView(controller.splitView, shouldHideDividerAt: 0)
+        )
         XCTAssertTrue(paneView(controller.sidebarItem, in: controller).isHidden)
         XCTAssertEqual(
             paneView(controller.sidebarItem, in: controller).bounds.width,
@@ -570,6 +573,9 @@ final class WorkspaceSplitViewTests: XCTestCase {
         layout(window, controller)
 
         XCTAssertTrue(controller.terminalItem.isCollapsed)
+        XCTAssertTrue(
+            controller.splitView(controller.splitView, shouldHideDividerAt: 1)
+        )
         XCTAssertTrue(paneView(controller.terminalItem, in: controller).isHidden)
         XCTAssertEqual(
             paneView(controller.terminalItem, in: controller).bounds.width,
@@ -1356,7 +1362,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         let allocationWidth: CGFloat = 1_230
         let host = NSHostingView(rootView: MountedConstrainedScaleFixture(model: model))
         host.frame = NSRect(x: 0, y: 0, width: allocationWidth, height: 620)
-        let window = NSWindow(
+        let window = UnconstrainedSplitTestWindow(
             contentRect: host.frame,
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
@@ -1443,7 +1449,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
             )
         )
         host.frame = NSRect(x: 0, y: 0, width: 1_600, height: 620)
-        let window = NSWindow(
+        let window = UnconstrainedSplitTestWindow(
             contentRect: host.frame,
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
@@ -1490,7 +1496,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         let allocationWidth: CGFloat = 1_100
         let host = NSHostingView(rootView: MountedConstrainedScaleFixture(model: model))
         host.frame = NSRect(x: 0, y: 0, width: allocationWidth, height: 620)
-        let window = NSWindow(
+        let window = UnconstrainedSplitTestWindow(
             contentRect: host.frame,
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
@@ -1565,7 +1571,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         let allocationWidth: CGFloat = 1_800
         let host = NSHostingView(rootView: MountedConstrainedScaleFixture(model: model))
         host.frame = NSRect(x: 0, y: 0, width: allocationWidth, height: 620)
-        let window = NSWindow(
+        let window = UnconstrainedSplitTestWindow(
             contentRect: host.frame,
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
@@ -1670,7 +1676,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         let allocationWidth: CGFloat = 1_100
         let host = NSHostingView(rootView: MountedConstrainedScaleFixture(model: model))
         host.frame = NSRect(x: 0, y: 0, width: allocationWidth, height: 620)
-        let window = NSWindow(
+        let window = UnconstrainedSplitTestWindow(
             contentRect: host.frame,
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
@@ -1768,7 +1774,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
                 .frame(minWidth: 920, minHeight: 620)
         )
         host.frame = NSRect(x: 0, y: 0, width: 1_600, height: 720)
-        let window = NSWindow(
+        let window = UnconstrainedSplitTestWindow(
             contentRect: host.frame,
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
@@ -2482,7 +2488,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
         _ controller: TestWorkspaceSplitViewController,
         width: CGFloat
     ) -> NSWindow {
-        let window = NSWindow(
+        let window = UnconstrainedSplitTestWindow(
             contentRect: NSRect(x: 0, y: 0, width: width, height: 620),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
@@ -2787,6 +2793,13 @@ final class WorkspaceSplitViewTests: XCTestCase {
             }
         }
         return nil
+    }
+}
+
+@MainActor
+private final class UnconstrainedSplitTestWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        frameRect
     }
 }
 

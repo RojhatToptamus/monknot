@@ -515,6 +515,19 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
 
     override func splitView(
         _ splitView: NSSplitView,
+        shouldHideDividerAt dividerIndex: Int
+    ) -> Bool {
+        let systemShouldHideDivider = super.splitView(
+            splitView,
+            shouldHideDividerAt: dividerIndex
+        )
+        let isCollapsedOuterDivider = (dividerIndex == 0 && sidebarItem.isCollapsed)
+            || (dividerIndex == 1 && terminalItem.isCollapsed)
+        return systemShouldHideDivider || isCollapsedOuterDivider
+    }
+
+    override func splitView(
+        _ splitView: NSSplitView,
         constrainSplitPosition proposedPosition: CGFloat,
         ofSubviewAt dividerIndex: Int
     ) -> CGFloat {
