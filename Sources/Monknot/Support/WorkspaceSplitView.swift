@@ -154,7 +154,9 @@ final class WorkspaceNativeSplitView: NSSplitView {
             window?.invalidateCursorRects(for: self)
         }
     }
-    var didFinishDraggingDivider: ((Int, CGFloat?) -> Void)?
+    // The final value is the pointer-requested divider position before any
+    // native minimum-width clamp, not a second pane-width owner.
+    var didFinishDraggingDivider: ((Int, CGFloat?, CGFloat?) -> Void)?
 
     private(set) var hoveredDividerIndex: Int?
     private(set) var activeDividerIndex: Int?
@@ -242,6 +244,12 @@ final class WorkspaceNativeSplitView: NSSplitView {
         setHoveredDivider(dividerIndex)
         needsDisplay = true
         let outerPaneIndex = dividerIndex == 0 ? 0 : dividerIndex + 1
+        let leadingView = arrangedSubviews[dividerIndex]
+        let trailingView = arrangedSubviews[dividerIndex + 1]
+        let dividerPosition = leadingView.isHidden
+            ? trailingView.frame.minX
+            : leadingView.frame.maxX
+        let pointerOffsetFromDivider = point.x - dividerPosition
         let widthBeforeDrag: CGFloat?
         if arrangedSubviews.indices.contains(outerPaneIndex),
            !arrangedSubviews[outerPaneIndex].isHidden {
@@ -251,14 +259,28 @@ final class WorkspaceNativeSplitView: NSSplitView {
         }
         defer {
             activeDividerIndex = nil
+            let finalRequestedPosition: CGFloat?
             if let window {
-                let pointer = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+                let pointer: NSPoint
+                if let currentEvent = NSApp.currentEvent,
+                   currentEvent.type == .leftMouseUp,
+                   currentEvent.windowNumber == window.windowNumber {
+                    pointer = convert(currentEvent.locationInWindow, from: nil)
+                } else {
+                    pointer = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+                }
                 setHoveredDivider(self.dividerIndex(containing: pointer))
+                finalRequestedPosition = pointer.x - pointerOffsetFromDivider
             } else {
                 setHoveredDivider(nil)
+                finalRequestedPosition = nil
             }
             needsDisplay = true
-            didFinishDraggingDivider?(dividerIndex, widthBeforeDrag)
+            didFinishDraggingDivider?(
+                dividerIndex,
+                widthBeforeDrag,
+                finalRequestedPosition
+            )
         }
         super.mouseDown(with: event)
     }
@@ -442,8 +464,13 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         sidebarCollapseObservation = observeCollapseChanges(for: sidebarItem)
         terminalCollapseObservation = observeCollapseChanges(for: terminalItem)
 
-        workspaceSplitView.didFinishDraggingDivider = { [weak self] dividerIndex, widthBeforeDrag in
-            self?.dividerDragDidFinish(dividerIndex, widthBeforeDrag: widthBeforeDrag)
+        workspaceSplitView.didFinishDraggingDivider = {
+            [weak self] dividerIndex, widthBeforeDrag, finalRequestedPosition in
+            self?.dividerDragDidFinish(
+                dividerIndex,
+                widthBeforeDrag: widthBeforeDrag,
+                finalRequestedPosition: finalRequestedPosition
+            )
         }
         splitViewResizeObserver = NotificationCenter.default.addObserver(
             forName: NSSplitView.didResizeSubviewsNotification,
@@ -1316,8 +1343,28 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         }
     }
 
-    private func dividerDragDidFinish(_ dividerIndex: Int, widthBeforeDrag: CGFloat?) {
+    private func dividerDragDidFinish(
+        _ dividerIndex: Int,
+        widthBeforeDrag: CGFloat?,
+        finalRequestedPosition: CGFloat?
+    ) {
         let draggedItem = dividerIndex == 0 ? sidebarItem : terminalItem
+        // Some AppKit releases finish an inspector drag at its minimum instead
+        // of honoring the native half-minimum collapse. Reconcile that same
+        // completed gesture once, after AppKit releases its tracking loop.
+        if widthBeforeDrag != nil,
+           !draggedItem.isCollapsed,
+           let finalRequestedPosition,
+           shouldSnapDraggedPaneClosed(
+               at: finalRequestedPosition,
+               dividerIndex: dividerIndex
+           ) {
+            let wasReconcilingPresentation = isReconcilingPresentation
+            isReconcilingPresentation = true
+            setCollapsed(true, for: draggedItem, animated: false)
+            isReconcilingPresentation = wasReconcilingPresentation
+        }
+
         if let widthBeforeDrag {
             if draggedItem.isCollapsed {
                 setCollapsedWidth(widthBeforeDrag, for: draggedItem)
@@ -1353,6 +1400,21 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
             forceTerminal: userInitiatedTerminal
         )
         reconcilePresentation(animated: false)
+    }
+
+    private func shouldSnapDraggedPaneClosed(
+        at requestedPosition: CGFloat,
+        dividerIndex: Int
+    ) -> Bool {
+        if dividerIndex == 0 {
+            let sidebarMinimum = WorkspaceSplitMetrics.sidebarMinimumWidth * layoutScale
+            return requestedPosition
+                < sidebarMinimum * WorkspaceSplitMetrics.snapThresholdFraction
+        }
+        let terminalMinimum = WorkspaceSplitMetrics.terminalMinimumWidth * layoutScale
+        return requestedPosition > availableLayoutWidth
+            - terminalMinimum * WorkspaceSplitMetrics.snapThresholdFraction
+            - splitView.dividerThickness
     }
 
     private func changePressureCollapse(_ collapsed: Bool, for item: NSSplitViewItem) {

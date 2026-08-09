@@ -985,6 +985,57 @@ final class WorkspaceSplitViewTests: XCTestCase {
         )
     }
 
+    func testMouseUpReconcilesAnUnclampedTerminalSnapAfterNativeTrackingEndsOpen() throws {
+        let recorder = PresentationRecorder()
+        let controller = makeController(sidebarPresented: false, recorder: recorder)
+        let window = mount(controller, width: 720)
+        let splitView = try XCTUnwrap(controller.splitView as? WorkspaceNativeSplitView)
+
+        controller.splitView.setPosition(controller.splitView.bounds.width - 350, ofDividerAt: 1)
+        layout(window, controller)
+        let usefulWidth = paneWidth(controller.terminalItem, in: controller)
+        let terminalMinimum = WorkspaceSplitMetrics.terminalMinimumWidth * controller.layoutScale
+
+        splitView.didFinishDraggingDivider?(
+            1,
+            usefulWidth,
+            splitView.bounds.width - terminalMinimum * 0.6
+        )
+        XCTAssertFalse(controller.terminalItem.isCollapsed)
+        XCTAssertTrue(controller.preferredTerminalPresentation)
+
+        recorder.terminalEvents.removeAll()
+        splitView.didFinishDraggingDivider?(
+            1,
+            usefulWidth,
+            splitView.bounds.width - terminalMinimum * 0.4
+        )
+
+        XCTAssertTrue(controller.terminalItem.isCollapsed)
+        XCTAssertFalse(controller.preferredTerminalPresentation)
+        XCTAssertEqual(
+            recorder.terminalEvents.last,
+            PresentationEvent(isPresented: false, userInitiated: true)
+        )
+        normalizeHiddenPaneToMinimum(controller.terminalItem, in: controller)
+
+        update(
+            controller,
+            sidebarPresented: false,
+            terminalPresented: true,
+            terminalRevealRequest: 1,
+            recorder: recorder
+        )
+        layout(window, controller)
+
+        XCTAssertFalse(controller.terminalItem.isCollapsed)
+        XCTAssertEqual(
+            paneWidth(controller.terminalItem, in: controller),
+            usefulWidth,
+            accuracy: controller.splitView.dividerThickness + 1
+        )
+    }
+
     func testNativeTerminalDragSymmetricallyCollapsesAndRestoresTheSidebar() throws {
         let recorder = PresentationRecorder()
         let controller = makeController(recorder: recorder)
