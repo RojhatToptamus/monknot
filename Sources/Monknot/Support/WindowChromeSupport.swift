@@ -256,11 +256,55 @@ struct WindowTitleBarDragArea: View {
     }
 }
 
+@MainActor
+final class ApplicationTerminationCoordinator {
+    typealias Handler = () async -> Bool
+
+    private var handlers: [UUID: Handler] = [:]
+    private var terminationTask: Task<Void, Never>?
+
+    func register(id: UUID, handler: @escaping Handler) {
+        handlers[id] = handler
+    }
+
+    func unregister(id: UUID) {
+        handlers.removeValue(forKey: id)
+    }
+
+    func resolveRegisteredHandlers() async -> Bool {
+        for handler in Array(handlers.values) {
+            guard await handler() else { return false }
+        }
+        return true
+    }
+
+    func applicationShouldTerminate(_ application: NSApplication) -> NSApplication.TerminateReply {
+        guard !handlers.isEmpty else { return .terminateNow }
+        guard terminationTask == nil else { return .terminateLater }
+
+        terminationTask = Task { @MainActor [weak self, weak application] in
+            guard let self else {
+                application?.reply(toApplicationShouldTerminate: true)
+                return
+            }
+
+            let shouldTerminate = await resolveRegisteredHandlers()
+            terminationTask = nil
+            application?.reply(toApplicationShouldTerminate: shouldTerminate)
+        }
+        return .terminateLater
+    }
+}
+
 struct WindowCloseGuard: NSViewRepresentable {
+    let terminationCoordinator: ApplicationTerminationCoordinator
     var shouldClose: () async -> Bool
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(shouldClose: shouldClose)
+        Coordinator(
+            terminationCoordinator: terminationCoordinator,
+            shouldClose: shouldClose
+        )
     }
 
     func makeNSView(context: Context) -> NSView {
@@ -274,19 +318,32 @@ struct WindowCloseGuard: NSViewRepresentable {
         context.coordinator.installIfPossible(from: nsView)
     }
 
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.uninstall()
+    }
+
+    @MainActor
     final class Coordinator: NSObject, NSWindowDelegate {
         var shouldClose: () async -> Bool
+        private let terminationCoordinator: ApplicationTerminationCoordinator
+        private let terminationHandlerID = UUID()
         private weak var window: NSWindow?
         private weak var previousDelegate: NSWindowDelegate?
         private var isConfirmedClose = false
 
-        init(shouldClose: @escaping () async -> Bool) {
+        init(
+            terminationCoordinator: ApplicationTerminationCoordinator,
+            shouldClose: @escaping () async -> Bool
+        ) {
+            self.terminationCoordinator = terminationCoordinator
             self.shouldClose = shouldClose
         }
 
         deinit {
-            if window?.delegate === self {
-                window?.delegate = previousDelegate
+            let terminationCoordinator = terminationCoordinator
+            let terminationHandlerID = terminationHandlerID
+            Task { @MainActor in
+                terminationCoordinator.unregister(id: terminationHandlerID)
             }
         }
 
@@ -300,13 +357,23 @@ struct WindowCloseGuard: NSViewRepresentable {
         func install(on window: NSWindow) {
             guard self.window !== window else { return }
 
-            if self.window?.delegate === self {
-                self.window?.delegate = previousDelegate
-            }
+            uninstall()
 
             self.window = window
             previousDelegate = window.delegate
             window.delegate = self
+            terminationCoordinator.register(id: terminationHandlerID) { [weak self] in
+                await self?.shouldClose() ?? true
+            }
+        }
+
+        func uninstall() {
+            if window?.delegate === self {
+                window?.delegate = previousDelegate
+            }
+            terminationCoordinator.unregister(id: terminationHandlerID)
+            window = nil
+            previousDelegate = nil
         }
 
         override func responds(to aSelector: Selector!) -> Bool {

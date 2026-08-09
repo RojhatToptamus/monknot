@@ -48,13 +48,23 @@ if (vercel.buildCommand !== "npm run build" || vercel.outputDirectory !== "dist"
 if (vercel.cleanUrls !== true || vercel.trailingSlash !== false) {
   throw new Error("Vercel must expose support.html and privacy.html as /support and /privacy.");
 }
+const expectedAppcastRedirect = {
+  source: "/updates/appcast.xml",
+  destination: "https://github.com/RojhatToptamus/monknot/releases/latest/download/appcast.xml",
+  permanent: false,
+};
+if (vercel.redirects?.length !== 1 || Object.entries(expectedAppcastRedirect).some(([key, value]) => vercel.redirects[0][key] !== value)) {
+  throw new Error("Vercel must redirect the stable Sparkle feed to the latest GitHub Release appcast.");
+}
 
 const requiredMarkup = [
   "Markdown, PDFs, and a terminal. One window.",
   "19 light presets. 30 dark.",
-  "<title>Monknot for macOS — Markdown Editor, PDFs &amp; Terminal</title>",
+  "<title>Monknot — Markdown Editor with PDF Tools &amp; Terminal</title>",
   'name="description"',
-  'content="Open a folder and work with Markdown, text files, searchable PDFs, and terminal sessions in one native macOS workspace."',
+  'content="A native macOS app for working with Markdown, PDFs, and terminal sessions in one place. Edit Markdown, annotate PDFs, and run multiple terminals alongside your documents."',
+  'property="og:title" content="Monknot — Markdown Editor with PDF Tools &amp; Terminal"',
+  'property="og:description" content="A native macOS app for working with Markdown, PDFs, and terminal sessions in one place. Edit Markdown, annotate PDFs, and run multiple terminals alongside your documents."',
   'name="robots" content="index, follow, max-image-preview:large"',
   `rel="canonical" href="${canonicalURL}"`,
   'property="og:type" content="website"',
@@ -66,6 +76,8 @@ const requiredMarkup = [
   'property="og:image:height" content="630"',
   'property="og:image:alt" content="Monknot showing Markdown source and its rendered preview side by side in a dark macOS workspace."',
   'name="twitter:card" content="summary_large_image"',
+  'name="twitter:title" content="Monknot — Markdown Editor with PDF Tools &amp; Terminal"',
+  'name="twitter:description" content="A native macOS app for working with Markdown, PDFs, and terminal sessions in one place. Edit Markdown, annotate PDFs, and run multiple terminals alongside your documents."',
   'name="twitter:image" content="https://monknot.app/social/monknot-social.jpg"',
   'name="twitter:image:alt" content="Monknot showing Markdown source and its rendered preview side by side in a dark macOS workspace."',
   'rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png"',
@@ -143,11 +155,12 @@ const requiredPages = [
       'rel="canonical" href="https://monknot.app/privacy"',
       'property="og:url" content="https://monknot.app/privacy"',
       'name="twitter:card" content="summary_large_image"',
-      "Last updated: August 6, 2026",
+      "Last updated: August 9, 2026",
       "Files and Documents",
       "Local Application Data",
       "Terminal Sessions",
       "Network Connections",
+      "Software Updates",
       "Analytics and Crash Reporting",
       "Data Sharing",
       "Children’s Privacy",

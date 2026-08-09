@@ -5,9 +5,22 @@ texts are distributed in `ThirdPartyLicenses/` in the source repository and in
 `Monknot.app/Contents/Resources/Legal/ThirdParty/` in release builds. The source
 copies of theme licenses reproduce the complete upstream text without changes.
 
-The bundled files were compared byte-for-byte with the named official npm
-package tarballs. Their SHA-256 hashes are recorded below so the notice can be
-checked deterministically against a release bundle.
+The bundled terminal files were compared byte-for-byte with the named official
+npm package tarballs. Their SHA-256 hashes are recorded below so the notice can
+be checked deterministically against a release bundle.
+
+## Sparkle
+
+- Sparkle 2.9.5
+- Source repository: <https://github.com/sparkle-project/Sparkle>
+- Package source revision: `79bc9e872948e47877e76f194cb0c8e0412b0b90`
+- License: MIT and bundled external notices
+- Complete license: `ThirdPartyLicenses/sparkle-MIT.txt`
+- Bundled components: `Sparkle.framework`, `Autoupdate`, and `Updater.app`
+
+Monknot uses Sparkle’s standard user interface and update installer for secure
+in-app updates. The unused sandbox XPC services are not included because
+Monknot is distributed as an unsandboxed Developer ID application.
 
 ## xterm.js
 

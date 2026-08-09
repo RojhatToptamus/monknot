@@ -103,6 +103,7 @@ final class TerminalFocusRestorer: ObservableObject {
 struct ContentView: View {
     @ObservedObject var store: WorkspaceStore
     @ObservedObject var themeStore: ThemeSettingsStore
+    let terminationCoordinator: ApplicationTerminationCoordinator
     @AppStorage("Monknot.editorMode") private var editorModeRawValue = EditorMode.source.rawValue
     @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.defaultValue.rawValue
     @AppStorage("Monknot.zoomScale") private var persistedZoomScale = WorkspaceZoomPolicy.defaultValue
@@ -190,6 +191,7 @@ struct ContentView: View {
                 usesDarkAppearance: activeTheme.isDark
             ))
             .background(WindowCloseGuard(
+                terminationCoordinator: terminationCoordinator,
                 shouldClose: { await resolveAllOpenUnsavedChanges() }
             ))
             .background(KeyboardShortcutMonitor(handler: handleKeyDown))

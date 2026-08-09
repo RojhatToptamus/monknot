@@ -1325,7 +1325,10 @@ final class ChromeAlignmentTests: XCTestCase {
         )
         let originalDelegate = StandardFrameWindowDelegate()
         window.delegate = originalDelegate
-        let coordinator = WindowCloseGuard.Coordinator(shouldClose: { true })
+        let coordinator = WindowCloseGuard.Coordinator(
+            terminationCoordinator: ApplicationTerminationCoordinator(),
+            shouldClose: { true }
+        )
         coordinator.install(on: window)
 
         let proposedFrame = NSRect(x: 20, y: 30, width: 800, height: 600)

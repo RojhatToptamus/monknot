@@ -71,22 +71,37 @@ done
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION_FILE="$ROOT_DIR/VERSION"
+BUILD_NUMBER_FILE="$ROOT_DIR/BUILD_NUMBER"
+SPARKLE_PUBLIC_ED_KEY_FILE="$ROOT_DIR/SPARKLE_PUBLIC_ED_KEY"
 APP_NAME="Monknot"
 APP_COPYRIGHT="Copyright © 2026 Rojhat Toptamuş"
 BUNDLE_ID="${MONKNOT_BUNDLE_ID:-com.monknot.app}"
-BUILD_NUMBER="${MONKNOT_BUILD_NUMBER:-1}"
 MIN_SYSTEM_VERSION="14.0"
 TARGET_ARCH="${MONKNOT_TARGET_ARCH:-$(uname -m)}"
 TARGET_TRIPLE="${MONKNOT_TARGET_TRIPLE:-$TARGET_ARCH-apple-macosx$MIN_SYSTEM_VERSION}"
+SPARKLE_VERSION="2.9.5"
+SPARKLE_FEED_URL="${MONKNOT_SPARKLE_FEED_URL:-https://monknot.app/updates/appcast.xml}"
 
 if [[ ! -f "$VERSION_FILE" ]]; then
   echo "missing release version file: $VERSION_FILE" >&2
   exit 66
 fi
+if [[ ! -f "$BUILD_NUMBER_FILE" ]]; then
+  echo "missing build number file: $BUILD_NUMBER_FILE" >&2
+  exit 66
+fi
+if [[ ! -f "$SPARKLE_PUBLIC_ED_KEY_FILE" ]]; then
+  echo "missing Sparkle public key file: $SPARKLE_PUBLIC_ED_KEY_FILE" >&2
+  echo "generate the key yourself with Sparkle's generate_keys tool and add only its public key to this file" >&2
+  exit 66
+fi
 
 RELEASE_VERSION="$(tr -d '\r\n' <"$VERSION_FILE")"
+DEFAULT_BUILD_NUMBER="$(tr -d '\r\n' <"$BUILD_NUMBER_FILE")"
+BUILD_NUMBER="${MONKNOT_BUILD_NUMBER:-$DEFAULT_BUILD_NUMBER}"
 DEFAULT_BUNDLE_VERSION="${RELEASE_VERSION%%[-+]*}"
 BUNDLE_VERSION="${MONKNOT_VERSION:-$DEFAULT_BUNDLE_VERSION}"
+SPARKLE_PUBLIC_ED_KEY="$(tr -d '\r\n' <"$SPARKLE_PUBLIC_ED_KEY_FILE")"
 
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
@@ -108,6 +123,11 @@ APP_ICON_BUILD_DIR="$BUILD_DIR/AppIconAssets"
 APP_ICON_INFO_PLIST="$BUILD_DIR/AppIcon-Info.plist"
 APP_ICON_ICNS="$APP_ICON_BUILD_DIR/$APP_ICON_NAME.icns"
 APP_ICON_ASSETS_CAR="$APP_ICON_BUILD_DIR/Assets.car"
+SPARKLE_FRAMEWORK_SOURCE="$ROOT_DIR/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+SPARKLE_FRAMEWORK_PARENT="$(dirname "$SPARKLE_FRAMEWORK_SOURCE")"
+SPARKLE_FRAMEWORK="$APP_FRAMEWORKS/Sparkle.framework"
+SPARKLE_AUTOUPDATE="$SPARKLE_FRAMEWORK/Versions/B/Autoupdate"
+SPARKLE_UPDATER_APP="$SPARKLE_FRAMEWORK/Versions/B/Updater.app"
 THEME_LICENSE_FILES=(
   theme-ayu-MIT.txt
   theme-catppuccin-MIT.txt
@@ -137,6 +157,14 @@ if [[ ! "$BUNDLE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
   echo "invalid MONKNOT_BUILD_NUMBER (expected digits): $BUILD_NUMBER" >&2
+  exit 64
+fi
+if [[ ! "$SPARKLE_PUBLIC_ED_KEY" =~ ^[A-Za-z0-9+/]{43}=$ ]]; then
+  echo "SPARKLE_PUBLIC_ED_KEY must contain one 32-byte Ed25519 public key encoded as base64" >&2
+  exit 64
+fi
+if [[ ! "$SPARKLE_FEED_URL" =~ ^https:// ]]; then
+  echo "MONKNOT_SPARKLE_FEED_URL must be an HTTPS URL: $SPARKLE_FEED_URL" >&2
   exit 64
 fi
 if [[ ! "$TARGET_ARCH" =~ ^(arm64|x86_64)$ ]]; then
@@ -213,6 +241,19 @@ esac
 
 cd "$ROOT_DIR"
 mkdir -p "$BUILD_DIR" "$MODULE_CACHE_DIR" "$APP_MACOS" "$APP_RESOURCES" "$APP_FRAMEWORKS"
+
+if [[ ! -d "$SPARKLE_FRAMEWORK_SOURCE" ]]; then
+  swift package resolve
+fi
+if [[ ! -d "$SPARKLE_FRAMEWORK_SOURCE" ]]; then
+  echo "Sparkle $SPARKLE_VERSION framework was not resolved at the expected SwiftPM artifact path" >&2
+  exit 66
+fi
+ACTUAL_SPARKLE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$SPARKLE_FRAMEWORK_SOURCE/Versions/B/Resources/Info.plist" 2>/dev/null || true)"
+if [[ "$ACTUAL_SPARKLE_VERSION" != "$SPARKLE_VERSION" ]]; then
+  echo "resolved Sparkle version is ${ACTUAL_SPARKLE_VERSION:-unknown}; expected $SPARKLE_VERSION" >&2
+  exit 1
+fi
 
 SWIFTC_BIN="$(xcrun --find swiftc)"
 SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
@@ -415,6 +456,8 @@ APP_SOURCES=(
   -I "$BUILD_DIR" \
   -L "$BUILD_DIR" \
   -lMonknotCore \
+  -F "$SPARKLE_FRAMEWORK_PARENT" \
+  -framework Sparkle \
   -Xlinker -rpath \
   -Xlinker @executable_path/../Frameworks \
   "${APP_SOURCES[@]}" \
@@ -426,6 +469,20 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS" "$APP_RESOURCES" "$APP_FRAMEWORKS" "$APP_THIRD_PARTY_RESOURCES"
 cp "$BUILD_DIR/$APP_NAME" "$APP_BINARY"
 cp "$BUILD_DIR/libMonknotCore.dylib" "$APP_FRAMEWORKS/libMonknotCore.dylib"
+ditto "$SPARKLE_FRAMEWORK_SOURCE" "$SPARKLE_FRAMEWORK"
+rm -rf "$SPARKLE_FRAMEWORK/Versions/B/XPCServices"
+rm -f "$SPARKLE_FRAMEWORK/XPCServices"
+
+thin_sparkle_binary() {
+  local binary_path="$1"
+  local temporary_path="$binary_path.$TARGET_ARCH"
+  lipo "$binary_path" -thin "$TARGET_ARCH" -output "$temporary_path"
+  mv "$temporary_path" "$binary_path"
+}
+
+thin_sparkle_binary "$SPARKLE_FRAMEWORK/Versions/B/Sparkle"
+thin_sparkle_binary "$SPARKLE_AUTOUPDATE"
+thin_sparkle_binary "$SPARKLE_UPDATER_APP/Contents/MacOS/Updater"
 chmod +x "$APP_BINARY"
 cp "$APP_ICON_ICNS" "$APP_RESOURCES/$APP_ICON_NAME.icns"
 cp "$APP_ICON_ASSETS_CAR" "$APP_RESOURCES/Assets.car"
@@ -438,6 +495,7 @@ cp "$ROOT_DIR/LICENSE" "$APP_LEGAL_RESOURCES/LICENSE"
 cp "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$APP_LEGAL_RESOURCES/THIRD_PARTY_NOTICES.md"
 cp "$ROOT_DIR/ThirdPartyLicenses/xterm-MIT.txt" "$APP_THIRD_PARTY_RESOURCES/xterm-MIT.txt"
 cp "$ROOT_DIR/ThirdPartyLicenses/xterm-addon-fit-MIT.txt" "$APP_THIRD_PARTY_RESOURCES/xterm-addon-fit-MIT.txt"
+cp "$ROOT_DIR/ThirdPartyLicenses/sparkle-MIT.txt" "$APP_THIRD_PARTY_RESOURCES/sparkle-MIT.txt"
 for LICENSE_FILE in "${THEME_LICENSE_FILES[@]}"; do
   cp "$ROOT_DIR/ThirdPartyLicenses/$LICENSE_FILE" "$APP_THIRD_PARTY_RESOURCES/$LICENSE_FILE"
 done
@@ -517,6 +575,14 @@ cat >"$INFO_PLIST" <<PLIST
   <string>$APP_COPYRIGHT</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
+  <key>SUFeedURL</key>
+  <string>$SPARKLE_FEED_URL</string>
+  <key>SUPublicEDKey</key>
+  <string>$SPARKLE_PUBLIC_ED_KEY</string>
+  <key>SURequireSignedFeed</key>
+  <true/>
+  <key>SUVerifyUpdateBeforeExtraction</key>
+  <true/>
 </dict>
 </plist>
 PLIST
@@ -541,10 +607,17 @@ verify_plist_value CFBundleShortVersionString "$BUNDLE_VERSION"
 verify_plist_value CFBundleVersion "$BUILD_NUMBER"
 verify_plist_value LSMinimumSystemVersion "$MIN_SYSTEM_VERSION"
 verify_plist_value NSHumanReadableCopyright "$APP_COPYRIGHT"
+verify_plist_value SUFeedURL "$SPARKLE_FEED_URL"
+verify_plist_value SUPublicEDKey "$SPARKLE_PUBLIC_ED_KEY"
+verify_plist_value SURequireSignedFeed true
+verify_plist_value SUVerifyUpdateBeforeExtraction true
 
 # Direct-distribution and local builds do not embed a provisioning profile.
 # Sign nested code before the main application bundle.
 rm -f "$APP_CONTENTS/embedded.provisionprofile"
+codesign --force --sign "$SIGN_IDENTITY" "$SPARKLE_AUTOUPDATE"
+codesign --force --sign "$SIGN_IDENTITY" "$SPARKLE_UPDATER_APP"
+codesign --force --sign "$SIGN_IDENTITY" "$SPARKLE_FRAMEWORK"
 codesign --force --sign "$SIGN_IDENTITY" "$APP_FRAMEWORKS/libMonknotCore.dylib"
 codesign --force --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
 codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
@@ -565,6 +638,7 @@ fi
 
 verify_macho_release_metadata() {
   local binary_path="$1"
+  local expected_minimum_version="$2"
   local architectures
   local minimum_version
 
@@ -575,14 +649,17 @@ verify_macho_release_metadata() {
   fi
 
   minimum_version="$(xcrun vtool -show-build "$binary_path" | awk '$1 == "minos" { print $2; exit }')"
-  if [[ "$minimum_version" != "$MIN_SYSTEM_VERSION" ]]; then
-    echo "unexpected deployment target for $binary_path: $minimum_version (expected $MIN_SYSTEM_VERSION)" >&2
+  if [[ "$minimum_version" != "$expected_minimum_version" ]]; then
+    echo "unexpected deployment target for $binary_path: $minimum_version (expected $expected_minimum_version)" >&2
     exit 1
   fi
 }
 
-verify_macho_release_metadata "$APP_BINARY"
-verify_macho_release_metadata "$APP_FRAMEWORKS/libMonknotCore.dylib"
+verify_macho_release_metadata "$APP_BINARY" "$MIN_SYSTEM_VERSION"
+verify_macho_release_metadata "$APP_FRAMEWORKS/libMonknotCore.dylib" "$MIN_SYSTEM_VERSION"
+verify_macho_release_metadata "$SPARKLE_FRAMEWORK/Versions/B/Sparkle" "11.0"
+verify_macho_release_metadata "$SPARKLE_AUTOUPDATE" "11.0"
+verify_macho_release_metadata "$SPARKLE_UPDATER_APP/Contents/MacOS/Updater" "11.0"
 
 open_app() {
   /usr/bin/open -n "$APP_BUNDLE"

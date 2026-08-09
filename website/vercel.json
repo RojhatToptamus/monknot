@@ -3,5 +3,12 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "cleanUrls": true,
-  "trailingSlash": false
+  "trailingSlash": false,
+  "redirects": [
+    {
+      "source": "/updates/appcast.xml",
+      "destination": "https://github.com/RojhatToptamus/monknot/releases/latest/download/appcast.xml",
+      "permanent": false
+    }
+  ]
 }

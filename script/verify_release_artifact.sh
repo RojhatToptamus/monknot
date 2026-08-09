@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION_FILE="$ROOT_DIR/VERSION"
+BUILD_NUMBER_FILE="$ROOT_DIR/BUILD_NUMBER"
+SPARKLE_PUBLIC_ED_KEY_FILE="$ROOT_DIR/SPARKLE_PUBLIC_ED_KEY"
 BUNDLE_ID="com.monknot.app"
 EXPECTED_DEVELOPER_ID="Developer ID Application: rojhat toptamus (ZD35XP4V7D)"
 EXPECTED_TEAM_ID="ZD35XP4V7D"
@@ -12,6 +14,9 @@ EXPECTED_RELEASE_VERSION=""
 EXPECTED_BUILD_NUMBER=""
 EXPECTED_ARCH="arm64"
 MIN_SYSTEM_VERSION="14.0"
+SPARKLE_VERSION="2.9.5"
+SPARKLE_MIN_SYSTEM_VERSION="11.0"
+SPARKLE_FEED_URL="https://monknot.app/updates/appcast.xml"
 ADHOC=0
 MOUNT_POINT=""
 SMOKE_DIRECTORY=""
@@ -95,8 +100,19 @@ if [[ ! -f "$VERSION_FILE" ]]; then
   echo "missing release version file: $VERSION_FILE" >&2
   exit 66
 fi
+if [[ ! -f "$BUILD_NUMBER_FILE" ]]; then
+  echo "missing build number file: $BUILD_NUMBER_FILE" >&2
+  exit 66
+fi
+if [[ ! -s "$SPARKLE_PUBLIC_ED_KEY_FILE" ]]; then
+  echo "missing tracked Sparkle public key: $SPARKLE_PUBLIC_ED_KEY_FILE" >&2
+  exit 66
+fi
 if [[ -z "$EXPECTED_RELEASE_VERSION" ]]; then
   EXPECTED_RELEASE_VERSION="$(tr -d '\r\n' <"$VERSION_FILE")"
+fi
+if [[ -z "$EXPECTED_BUILD_NUMBER" ]]; then
+  EXPECTED_BUILD_NUMBER="$(tr -d '\r\n' <"$BUILD_NUMBER_FILE")"
 fi
 if [[ ! "$EXPECTED_RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
   echo "invalid expected release version: $EXPECTED_RELEASE_VERSION" >&2
@@ -122,7 +138,7 @@ require_tool() {
   fi
 }
 
-for tool in codesign cmp file hdiutil lipo shasum xcrun; do
+for tool in codesign cmp file hdiutil lipo otool shasum xcrun; do
   require_tool "$tool"
 done
 if [[ "$ADHOC" != "1" ]]; then
@@ -214,9 +230,13 @@ done < <(find "$MOUNT_POINT" -mindepth 1 -maxdepth 1 -print)
 INFO_PLIST="$APP_BUNDLE/Contents/Info.plist"
 EXECUTABLE="$APP_BUNDLE/Contents/MacOS/Monknot"
 FRAMEWORK="$APP_BUNDLE/Contents/Frameworks/libMonknotCore.dylib"
+SPARKLE_FRAMEWORK="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
+SPARKLE_INFO_PLIST="$SPARKLE_FRAMEWORK/Versions/B/Resources/Info.plist"
+SPARKLE_AUTOUPDATE="$SPARKLE_FRAMEWORK/Versions/B/Autoupdate"
+SPARKLE_UPDATER_APP="$SPARKLE_FRAMEWORK/Versions/B/Updater.app"
 RESOURCES="$APP_BUNDLE/Contents/Resources"
 
-if [[ ! -f "$INFO_PLIST" || ! -x "$EXECUTABLE" || ! -f "$FRAMEWORK" ]]; then
+if [[ ! -f "$INFO_PLIST" || ! -x "$EXECUTABLE" || ! -f "$FRAMEWORK" || ! -f "$SPARKLE_INFO_PLIST" ]]; then
   echo "packaged application structure is incomplete" >&2
   exit 1
 fi
@@ -270,12 +290,52 @@ verify_plist_value CFBundleDisplayName Monknot
 verify_plist_value CFBundleExecutable Monknot
 verify_plist_value CFBundlePackageType APPL
 verify_plist_value NSHumanReadableCopyright "$APP_COPYRIGHT"
+verify_plist_value SUFeedURL "$SPARKLE_FEED_URL"
+verify_plist_value SURequireSignedFeed true
+verify_plist_value SUVerifyUpdateBeforeExtraction true
+
+verify_plist_absent() {
+  local key="$1"
+  if /usr/libexec/PlistBuddy -c "Print :$key" "$INFO_PLIST" >/dev/null 2>&1; then
+    echo "$key must not be set" >&2
+    exit 1
+  fi
+}
+verify_plist_absent SUEnableSystemProfiling
+verify_plist_absent SUSendProfileInfo
+verify_plist_absent SUEnableAutomaticChecks
+
+EXPECTED_SPARKLE_PUBLIC_ED_KEY="$(tr -d '\r\n' <"$SPARKLE_PUBLIC_ED_KEY_FILE")"
+ACTUAL_SPARKLE_PUBLIC_ED_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$INFO_PLIST" 2>/dev/null || true)"
+if [[ ! "$EXPECTED_SPARKLE_PUBLIC_ED_KEY" =~ ^[A-Za-z0-9+/]{43}=$ || "$ACTUAL_SPARKLE_PUBLIC_ED_KEY" != "$EXPECTED_SPARKLE_PUBLIC_ED_KEY" ]]; then
+  echo "SUPublicEDKey is malformed or does not match the tracked public key" >&2
+  exit 1
+fi
+
+ACTUAL_SPARKLE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$SPARKLE_INFO_PLIST" 2>/dev/null || true)"
+if [[ "$ACTUAL_SPARKLE_VERSION" != "$SPARKLE_VERSION" ]]; then
+  echo "Sparkle framework version is ${ACTUAL_SPARKLE_VERSION:-unknown}; expected $SPARKLE_VERSION" >&2
+  exit 1
+fi
+if [[ ! -x "$SPARKLE_AUTOUPDATE" || ! -x "$SPARKLE_UPDATER_APP/Contents/MacOS/Updater" ]]; then
+  echo "Sparkle Autoupdate or Updater.app helper is missing" >&2
+  exit 1
+fi
+if [[ -e "$SPARKLE_FRAMEWORK/XPCServices" || -e "$SPARKLE_FRAMEWORK/Versions/B/XPCServices" ]]; then
+  echo "unused Sparkle XPC services are present in the unsandboxed app" >&2
+  exit 1
+fi
+if ! otool -L "$EXECUTABLE" | grep -F '@rpath/Sparkle.framework/Versions/B/Sparkle' >/dev/null; then
+  echo "main executable does not link Sparkle.framework" >&2
+  exit 1
+fi
 
 REQUIRED_LEGAL_FILES=(
   "Legal/LICENSE"
   "Legal/THIRD_PARTY_NOTICES.md"
   "Legal/ThirdParty/xterm-MIT.txt"
   "Legal/ThirdParty/xterm-addon-fit-MIT.txt"
+  "Legal/ThirdParty/sparkle-MIT.txt"
 )
 for LICENSE_FILE in "${THEME_LICENSE_FILES[@]}"; do
   REQUIRED_LEGAL_FILES+=("Legal/ThirdParty/$LICENSE_FILE")
@@ -291,6 +351,7 @@ cmp "$ROOT_DIR/LICENSE" "$RESOURCES/Legal/LICENSE"
 cmp "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$RESOURCES/Legal/THIRD_PARTY_NOTICES.md"
 cmp "$ROOT_DIR/ThirdPartyLicenses/xterm-MIT.txt" "$RESOURCES/Legal/ThirdParty/xterm-MIT.txt"
 cmp "$ROOT_DIR/ThirdPartyLicenses/xterm-addon-fit-MIT.txt" "$RESOURCES/Legal/ThirdParty/xterm-addon-fit-MIT.txt"
+cmp "$ROOT_DIR/ThirdPartyLicenses/sparkle-MIT.txt" "$RESOURCES/Legal/ThirdParty/sparkle-MIT.txt"
 for LICENSE_FILE in "${THEME_LICENSE_FILES[@]}"; do
   cmp "$ROOT_DIR/ThirdPartyLicenses/$LICENSE_FILE" "$RESOURCES/Legal/ThirdParty/$LICENSE_FILE"
 done
@@ -334,6 +395,7 @@ verify_macho() {
   local binary_path="$1"
   local architectures
   local minimum_version
+  local expected_minimum_version="$MIN_SYSTEM_VERSION"
 
   architectures="$(lipo -archs "$binary_path")"
   if [[ "$architectures" != "$EXPECTED_ARCH" ]]; then
@@ -341,8 +403,11 @@ verify_macho() {
     exit 1
   fi
 
+  if [[ "$binary_path" == "$SPARKLE_FRAMEWORK"/* ]]; then
+    expected_minimum_version="$SPARKLE_MIN_SYSTEM_VERSION"
+  fi
   minimum_version="$(xcrun vtool -show-build "$binary_path" | awk '$1 == "minos" { print $2; exit }')"
-  if [[ "$minimum_version" != "$MIN_SYSTEM_VERSION" ]]; then
+  if [[ "$minimum_version" != "$expected_minimum_version" ]]; then
     echo "deployment target mismatch for ${binary_path#"$APP_BUNDLE/"}: $minimum_version" >&2
     exit 1
   fi
@@ -388,6 +453,10 @@ if [[ "$MACHO_COUNT" == "0" || "$NESTED_MACHO_COUNT" == "0" ]]; then
   exit 1
 fi
 echo "Verified $MACHO_COUNT Mach-O files, including $NESTED_MACHO_COUNT nested file(s)"
+
+for CODE_BUNDLE in "$SPARKLE_UPDATER_APP" "$SPARKLE_FRAMEWORK"; do
+  codesign --verify --strict --verbose=4 "$CODE_BUNDLE"
+done
 
 codesign --verify --deep --strict --verbose=4 "$APP_BUNDLE"
 
