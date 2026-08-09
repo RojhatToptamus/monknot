@@ -11,6 +11,12 @@ let package = Package(
         .executable(name: "monknot-capture", targets: ["MonknotCapture"]),
         .executable(name: "monknot-export", targets: ["MonknotExport"])
     ],
+    dependencies: [
+        .package(
+            url: "https://github.com/sparkle-project/Sparkle",
+            .exact("2.9.5")
+        )
+    ],
     targets: [
         .target(
             name: "MonknotCore",
@@ -18,7 +24,10 @@ let package = Package(
         ),
         .target(
             name: "MonknotApp",
-            dependencies: ["MonknotCore"],
+            dependencies: [
+                "MonknotCore",
+                .product(name: "Sparkle", package: "Sparkle")
+            ],
             path: "Sources/Monknot",
             resources: [.process("Resources")]
         ),

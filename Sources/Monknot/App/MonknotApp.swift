@@ -1,15 +1,23 @@
 import AppKit
+import Combine
 import MonknotCore
+import Sparkle
 import SwiftUI
 
 #if !SWIFT_PACKAGE
 @main
 #endif
+@MainActor
 struct MonknotApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var workspaceRestoration = InitialWorkspaceRestorationCoordinator()
     @StateObject private var themeStore = ThemeSettingsStore()
     private let workspaceWindowRequests = WorkspaceWindowRequestCenter.shared
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
 
     var body: some Scene {
         WindowGroup(
@@ -21,7 +29,8 @@ struct MonknotApp: App {
                 request: request.wrappedValue,
                 themeStore: themeStore,
                 workspaceRestoration: workspaceRestoration,
-                workspaceWindowRequests: workspaceWindowRequests
+                workspaceWindowRequests: workspaceWindowRequests,
+                terminationCoordinator: appDelegate.terminationCoordinator
             )
                 .background(WorkspaceWindowRequestInstaller(requestCenter: workspaceWindowRequests))
                 .frame(minWidth: 920, minHeight: 620)
@@ -31,6 +40,9 @@ struct MonknotApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             MonknotCommandMenu()
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesView(updater: updaterController.updater)
+            }
         }
 
         Settings {
@@ -45,18 +57,51 @@ struct MonknotApp: App {
     }
 }
 
+@MainActor
+private final class CheckForUpdatesViewModel: ObservableObject {
+    @Published private(set) var canCheckForUpdates = false
+
+    init(updater: SPUUpdater) {
+        updater.publisher(for: \.canCheckForUpdates)
+            .assign(to: &$canCheckForUpdates)
+    }
+}
+
+private struct CheckForUpdatesView: View {
+    @StateObject private var viewModel: CheckForUpdatesViewModel
+    private let updater: SPUUpdater
+
+    @MainActor
+    init(updater: SPUUpdater) {
+        self.updater = updater
+        _viewModel = StateObject(wrappedValue: CheckForUpdatesViewModel(updater: updater))
+    }
+
+    var body: some View {
+        Button("Check for Updates…") {
+            updater.checkForUpdates()
+        }
+        .disabled(!viewModel.canCheckForUpdates)
+    }
+}
+
 private struct MonknotWindowRootView: View {
     @StateObject private var workspaceStore = WorkspaceStore()
     let request: MonknotWorkspaceWindowRequest
     @ObservedObject var themeStore: ThemeSettingsStore
     @ObservedObject var workspaceRestoration: InitialWorkspaceRestorationCoordinator
     let workspaceWindowRequests: WorkspaceWindowRequestCenter
+    let terminationCoordinator: ApplicationTerminationCoordinator
     @AppStorage("Monknot.reopenLastWorkspace") private var reopenLastWorkspace = true
     @State private var didHandleInitialRequest = false
     @State private var reusableWindowHandlerID = UUID()
 
     var body: some View {
-        ContentView(store: workspaceStore, themeStore: themeStore)
+        ContentView(
+            store: workspaceStore,
+            themeStore: themeStore,
+            terminationCoordinator: terminationCoordinator
+        )
             .onAppear {
                 workspaceWindowRequests.installReusableWindowHandler(id: reusableWindowHandlerID) { request in
                     guard workspaceStore.workspaceURL == nil,
@@ -137,11 +182,16 @@ private struct WorkspaceWindowRequestInstaller: View {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let recentWorkspaceStore = RecentWorkspaceStore()
+    let terminationCoordinator = ApplicationTerminationCoordinator()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         openLaunchCaptureIfPresent()
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        terminationCoordinator.applicationShouldTerminate(sender)
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {

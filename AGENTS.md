@@ -6,6 +6,10 @@ This file orients AI agents and contributors working in this repository. Keep it
 
 Monknot is a SwiftPM macOS app for browsing a workspace, opening multiple files in lightweight tabs, editing Markdown and text-like files, previewing Markdown, viewing PDFs, skipping unsupported binary/media file types, searching text/PDF documents, exporting Markdown to PDF, and running an embedded terminal.
 
+Direct releases use Sparkle 2 for standard in-app updates. The custom bundle
+builder embeds and signs Sparkle.framework; GitHub Releases host immutable
+DMGs and the signed appcast.
+
 The package is organized around these main SwiftPM targets and helper executables:
 
 - `MonknotCore`: reusable model and service logic with minimal UI coupling.
@@ -210,6 +214,7 @@ The script also manually copies these runtime resources into the app bundle:
 - `THIRD_PARTY_NOTICES.md`
 - `ThirdPartyLicenses/xterm-MIT.txt`
 - `ThirdPartyLicenses/xterm-addon-fit-MIT.txt`
+- `ThirdPartyLicenses/sparkle-MIT.txt`
 - Verified theme MIT texts listed by `THEME_LICENSE_FILES` in
   `script/build_and_run.sh`
 

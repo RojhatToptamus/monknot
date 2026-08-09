@@ -34,7 +34,8 @@ final class BuildScriptSyncTests: XCTestCase {
             "LICENSE",
             "THIRD_PARTY_NOTICES.md",
             "ThirdPartyLicenses/xterm-MIT.txt",
-            "ThirdPartyLicenses/xterm-addon-fit-MIT.txt"
+            "ThirdPartyLicenses/xterm-addon-fit-MIT.txt",
+            "ThirdPartyLicenses/sparkle-MIT.txt",
         ]
         let themeLicenseFiles = [
             "theme-ayu-MIT.txt", "theme-catppuccin-MIT.txt", "theme-dracula-MIT.txt",
@@ -74,6 +75,10 @@ final class BuildScriptSyncTests: XCTestCase {
             contentsOf: root.appendingPathComponent("ThirdPartyLicenses/xterm-addon-fit-MIT.txt"),
             encoding: .utf8
         )
+        let sparkleLicense = try String(
+            contentsOf: root.appendingPathComponent("ThirdPartyLicenses/sparkle-MIT.txt"),
+            encoding: .utf8
+        )
         let buildScript = try String(
             contentsOf: root.appendingPathComponent("script/build_and_run.sh"),
             encoding: .utf8
@@ -92,9 +97,13 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(readme.contains("[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)"))
         XCTAssertTrue(notices.contains("@xterm/xterm` 5.5.0"))
         XCTAssertTrue(notices.contains("@xterm/addon-fit` 0.10.0"))
+        XCTAssertTrue(notices.contains("Sparkle 2.9.5"))
+        XCTAssertTrue(notices.contains("79bc9e872948e47877e76f194cb0c8e0412b0b90"))
         XCTAssertTrue(notices.contains("9ba6c00a195c95fcf8292a2b9084d91450e5daae"))
         XCTAssertTrue(xtermLicense.contains("Permission is hereby granted, free of charge"))
         XCTAssertTrue(addonLicense.contains("Permission is hereby granted, free of charge"))
+        XCTAssertTrue(sparkleLicense.contains("Copyright (c) 2006-2013 Andy Matuschak"))
+        XCTAssertTrue(sparkleLicense.contains("EXTERNAL LICENSES"))
         XCTAssertTrue(audit.contains("Cleared for the direct-distribution application bundle"))
         XCTAssertTrue(audit.contains("Owner-provided replacement palettes"))
         XCTAssertTrue(audit.contains("Cleared by project-owner representation"))
@@ -230,6 +239,9 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(script.contains("Mach-O signature has a secure timestamp"))
         XCTAssertFalse(script.contains("RELEASE_COMPLIANCE_BLOCKER"))
         XCTAssertTrue(script.contains("theme-tokyo-night-MIT.txt"))
+        XCTAssertTrue(script.contains("Sparkle framework version is $SPARKLE_VERSION"))
+        XCTAssertTrue(script.contains("unused Sparkle XPC services are absent"))
+        XCTAssertTrue(script.contains("SUVerifyUpdateBeforeExtraction"))
     }
 
     func testReleasePackageSupportsAdHocAndNotarizedDMGs() throws {
@@ -254,8 +266,12 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(script.contains("shasum -a 256"))
         XCTAssertTrue(script.contains("MONKNOT_TARGET_TRIPLE"))
         XCTAssertTrue(script.contains("VERSION"))
-        XCTAssertTrue(script.contains("find \"$APP_BUNDLE/Contents\" -type f -print0"))
-        XCTAssertTrue(script.contains("no nested Mach-O code found to sign"))
+        XCTAssertTrue(script.contains("sign_code \"$SPARKLE_AUTOUPDATE\""))
+        XCTAssertTrue(script.contains("sign_code \"$SPARKLE_UPDATER_APP\""))
+        XCTAssertTrue(script.contains("sign_code \"$SPARKLE_FRAMEWORK\""))
+        XCTAssertTrue(script.contains("sign_code \"$MONKNOT_CORE\""))
+        XCTAssertTrue(script.contains("sign_code \"$APP_BUNDLE\""))
+        XCTAssertTrue(script.contains("run ditto \"$APP_BUNDLE\""))
         XCTAssertTrue(script.contains("Monknot-$RELEASE_VERSION-$TARGET_ARCH.dmg"))
         XCTAssertFalse(script.contains("RELEASE_COMPLIANCE_BLOCKER"))
     }
@@ -272,6 +288,7 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(script.contains("Contents/Resources"))
         XCTAssertTrue(script.contains("Legal/ThirdParty/xterm-MIT.txt"))
         XCTAssertTrue(script.contains("Legal/ThirdParty/xterm-addon-fit-MIT.txt"))
+        XCTAssertTrue(script.contains("Legal/ThirdParty/sparkle-MIT.txt"))
         XCTAssertTrue(script.contains("theme-ayu-MIT.txt"))
         XCTAssertTrue(script.contains("theme-tokyo-night-MIT.txt"))
         XCTAssertTrue(script.contains("Developer ID Application: rojhat toptamus (ZD35XP4V7D)"))
@@ -284,6 +301,9 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(script.contains("codesign --verify --deep --strict"))
         XCTAssertTrue(script.contains("CFFIXED_USER_HOME"))
         XCTAssertTrue(script.contains("unexpected top-level DMG item"))
+        XCTAssertTrue(script.contains("Sparkle framework version"))
+        XCTAssertTrue(script.contains("unused Sparkle XPC services"))
+        XCTAssertTrue(script.contains("@rpath/Sparkle.framework/Versions/B/Sparkle"))
     }
 
     func testCodeOwnersRequiresRepositoryOwnerReviewForEveryChange() throws {
@@ -300,7 +320,7 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertEqual(rules, ["* @RojhatToptamus"])
     }
 
-    func testTagReleaseWorkflowPublishesOneSignedNotarizedArm64DMG() throws {
+    func testReleaseWorkflowPublishesAtomicSparkleUpdates() throws {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
         let workflowURL = root.appendingPathComponent(".github/workflows/release.yml")
         let workflow = try String(contentsOf: workflowURL, encoding: .utf8)
@@ -347,17 +367,21 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(workflow.contains("xcrun stapler validate"))
         XCTAssertTrue(workflow.contains("spctl --assess"))
         XCTAssertTrue(workflow.contains("gh release create"))
-        XCTAssertTrue(workflow.contains("if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}"))
-        XCTAssertTrue(workflow.contains("if: ${{ github.event_name == 'workflow_dispatch' }}"))
+        XCTAssertTrue(workflow.contains("inputs.publish_prerelease"))
+        XCTAssertTrue(workflow.contains("BUILD_NUMBER must increase exactly once"))
         XCTAssertTrue(workflow.contains("No tag or GitHub Release was created."))
-        XCTAssertTrue(workflow.contains("first public release for Apple silicon Macs"))
-        XCTAssertTrue(workflow.contains("Requires macOS 14 or later"))
-        XCTAssertTrue(workflow.contains("Developer ID signed and notarized by Apple"))
+        XCTAssertTrue(workflow.contains("SPARKLE_ED25519_PRIVATE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY }}"))
+        XCTAssertTrue(workflow.contains("script/generate_appcast.sh"))
+        XCTAssertTrue(workflow.contains("script/verify_appcast.sh"))
+        XCTAssertTrue(workflow.contains("RELEASE_APPCAST: dist/appcast.xml"))
         XCTAssertTrue(workflow.contains("--notes-file"))
         XCTAssertFalse(workflow.contains("--generate-notes"))
         XCTAssertTrue(workflow.contains("Monknot-${{ needs.metadata.outputs.release_version }}-arm64.dmg"))
-        XCTAssertFalse(workflow.contains("--draft"))
+        XCTAssertTrue(workflow.contains("--draft"))
         XCTAssertFalse(workflow.contains("--adhoc"))
+        XCTAssertTrue(workflow.contains("gh release download"))
+        XCTAssertTrue(workflow.contains("cmp \"$RELEASE_APPCAST\""))
+        XCTAssertTrue(workflow.contains("gh release edit \"$tag\" --draft=false --latest"))
         XCTAssertTrue(workflow.contains("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"))
         XCTAssertTrue(workflow.contains("actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"))
         XCTAssertTrue(workflow.contains("persist-credentials: false"))
@@ -375,6 +399,7 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertLessThan(certificateCleanup.lowerBound, releasePackaging.lowerBound)
         XCTAssertTrue(signingWorkflow.contains("contents: read"))
         XCTAssertFalse(signingWorkflow.contains("contents: write"))
+        XCTAssertTrue(signingWorkflow.contains("SPARKLE_ED25519_PRIVATE_KEY"))
         XCTAssertTrue(publishWorkflow.contains("contents: write"))
         XCTAssertTrue(publishWorkflow.contains("sha256sum --check"))
         XCTAssertFalse(publishWorkflow.contains("environment: release"))
@@ -383,6 +408,7 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertFalse(publishWorkflow.contains("APPLE_API_KEY_P8"))
         XCTAssertFalse(publishWorkflow.contains("APPLE_API_KEY_ID"))
         XCTAssertFalse(publishWorkflow.contains("APPLE_API_ISSUER_ID"))
+        XCTAssertFalse(publishWorkflow.contains("SPARKLE_ED25519_PRIVATE_KEY"))
         XCTAssertFalse(workflow.contains("actions/checkout@v"))
     }
 
@@ -420,7 +446,47 @@ final class BuildScriptSyncTests: XCTestCase {
         let configuration = try String(contentsOf: configurationURL, encoding: .utf8)
 
         XCTAssertTrue(configuration.contains("package-ecosystem: github-actions"))
+        XCTAssertTrue(configuration.contains("package-ecosystem: swift"))
         XCTAssertTrue(configuration.contains("interval: weekly"))
+    }
+
+    func testSparkleDependencyBundleConfigurationAndAppcastToolsStayPinned() throws {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let package = try String(contentsOf: root.appendingPathComponent("Package.swift"), encoding: .utf8)
+        let resolved = try String(contentsOf: root.appendingPathComponent("Package.resolved"), encoding: .utf8)
+        let buildScript = try String(contentsOf: root.appendingPathComponent("script/build_and_run.sh"), encoding: .utf8)
+        let appcastScript = try String(contentsOf: root.appendingPathComponent("script/generate_appcast.sh"), encoding: .utf8)
+        let verifier = try String(contentsOf: root.appendingPathComponent("script/verify_appcast.sh"), encoding: .utf8)
+        let signatureVerifier = try String(
+            contentsOf: root.appendingPathComponent("script/verify_appcast_signatures.swift"),
+            encoding: .utf8
+        )
+        let vercel = try String(contentsOf: root.appendingPathComponent("website/vercel.json"), encoding: .utf8)
+
+        XCTAssertTrue(package.contains(#".exact("2.9.5")"#))
+        XCTAssertTrue(package.contains(#".product(name: "Sparkle", package: "Sparkle")"#))
+        XCTAssertTrue(resolved.contains(#""version": "2.9.5""#))
+        XCTAssertTrue(resolved.contains("79bc9e872948e47877e76f194cb0c8e0412b0b90"))
+        XCTAssertTrue(buildScript.contains("https://monknot.app/updates/appcast.xml"))
+        XCTAssertTrue(buildScript.contains("<key>SUPublicEDKey</key>"))
+        XCTAssertTrue(buildScript.contains("<key>SURequireSignedFeed</key>"))
+        XCTAssertTrue(buildScript.contains("<key>SUVerifyUpdateBeforeExtraction</key>"))
+        XCTAssertFalse(buildScript.contains("<key>SUEnableSystemProfiling</key>"))
+        XCTAssertTrue(buildScript.contains("rm -rf \"$SPARKLE_FRAMEWORK/Versions/B/XPCServices\""))
+        XCTAssertTrue(buildScript.contains("thin_sparkle_binary"))
+        XCTAssertTrue(appcastScript.contains("--ed-key-file -"))
+        XCTAssertTrue(appcastScript.contains("--maximum-deltas 0"))
+        XCTAssertTrue(appcastScript.contains("--maximum-versions 1"))
+        XCTAssertFalse(appcastScript.contains("SPARKLE_ED25519_PRIVATE_KEY"))
+        XCTAssertTrue(verifier.contains("appcast must not contain delta updates or Sparkle channels"))
+        XCTAssertTrue(verifier.contains("appcast signed-feed block is missing or malformed"))
+        XCTAssertTrue(verifier.contains("verify_appcast_signatures.swift"))
+        XCTAssertTrue(signatureVerifier.contains("Curve25519.Signing.PublicKey"))
+        XCTAssertTrue(signatureVerifier.contains("isValidSignature(feedSignature"))
+        XCTAssertTrue(signatureVerifier.contains("isValidSignature(archiveSignature"))
+        XCTAssertTrue(vercel.contains("/updates/appcast.xml"))
+        XCTAssertTrue(vercel.contains("/releases/latest/download/appcast.xml"))
+        XCTAssertTrue(vercel.contains(#""permanent": false"#))
     }
 
     func testGitHubActionsUseImmutableCommitPins() throws {

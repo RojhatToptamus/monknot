@@ -1,6 +1,6 @@
 # License Audit
 
-Audit date: 2026-08-07
+Audit date: 2026-08-09
 
 This file records the repository and release-bundle license inventory. It is a
 technical compliance record, not legal advice and not a representation that an
@@ -12,9 +12,9 @@ uncleared item is suitable for commercial distribution.
 project owner confirmed authorship of the current Monknot icon/logo and the
 Brasspants, Codechimp, Greaseball, Lobster, Proof, Sockpuppet, and Temple
 palettes. Those first-party assets are covered by Monknot's MIT License.
-Gruvbox has been removed. The vendored terminal libraries and twelve remaining
-canonical third-party theme projects retain their verified MIT licenses and
-complete notices.
+Gruvbox has been removed. Sparkle, the vendored terminal libraries, and twelve
+remaining canonical third-party theme projects retain their verified licenses
+and complete notices.
 
 This inventory does not replace the release controls: the public DMG must still
 be Developer ID signed, notarized, stapled, and verified. Repository-only
@@ -26,6 +26,7 @@ separately below where provenance is incomplete.
 | Component | Version or location | License/provenance | Distribution action | Status |
 | --- | --- | --- | --- | --- |
 | Monknot first-party source, documentation, and assets | Repository root | MIT; root `LICENSE` | Ship `LICENSE` in `Contents/Resources/Legal/LICENSE` | Cleared by project-owner representation |
+| Sparkle | 2.9.5; exact SwiftPM package revision in `Package.resolved` | MIT plus external notices; upstream `LICENSE` copied byte-for-byte | Ship `Sparkle.framework` and `ThirdPartyLicenses/sparkle-MIT.txt`; remove unused XPC services | Verified |
 | `@xterm/xterm` | 5.5.0; `xterm.js`, `xterm.css` | MIT; official npm tarball and source revision recorded in `THIRD_PARTY_NOTICES.md` | Retain notices and ship `ThirdPartyLicenses/xterm-MIT.txt` | Verified |
 | `@xterm/addon-fit` | 0.10.0; `xterm-addon-fit.js` | MIT; official npm tarball and source revision recorded in `THIRD_PARTY_NOTICES.md` | Retain notices and ship `ThirdPartyLicenses/xterm-addon-fit-MIT.txt` | Verified |
 | App icon/logo PNG set | `Sources/Monknot/Resources/Assets.xcassets` and current first-party logo derivatives | Original work by Rojhat Toptamuş; MIT | Treat as first-party Monknot assets | Cleared by project-owner representation |
@@ -79,11 +80,11 @@ Gruvbox Light and Gruvbox Dark were removed from the application and website
 catalog because complete authoritative license evidence was not retained. They
 are not present in the distributed application or third-party notice list.
 
-Monknot also links only against Apple system frameworks and renders system fonts
-and SF Symbols by name. Those platform-provided resources are not vendored into
-the repository or copied into the app as third-party packages. `Package.swift`
-declares no external SwiftPM package dependencies, and the repository has no
-`Package.resolved` file or bundled third-party frameworks.
+Besides Sparkle, Monknot links only against Apple system frameworks and renders
+system fonts and SF Symbols by name. Those platform-provided resources are not
+vendored into the repository or copied into the app as third-party packages.
+Sparkle is the only external SwiftPM dependency; `Package.resolved` pins its
+2.9.5 revision, and the release bundle embeds its framework and required helpers.
 
 ## Repository-only and development dependencies
 
@@ -105,8 +106,9 @@ the app.
 
 ## License obligations and risk summary
 
-- Verified distributed third-party code is MIT-licensed. Keep each complete MIT
-  text and its copyright notice with every distributed app bundle.
+- Verified distributed third-party code uses permissive MIT, BSD, and
+  zlib-style terms. Keep Sparkle's complete upstream license file and each
+  separate MIT text with every distributed app bundle.
 - No GPL, AGPL, LGPL, SSPL, Business Source License, Commons Clause, or other
   source-disclosure/relinking restriction was found in the verified distributed
   dependencies.

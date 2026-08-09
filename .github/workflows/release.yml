@@ -5,6 +5,12 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      publish_prerelease:
+        description: Publish verified assets as a GitHub prerelease for update testing
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -20,6 +26,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       release_version: ${{ steps.version.outputs.release_version }}
+      build_number: ${{ steps.version.outputs.build_number }}
     steps:
       - name: Check out the release commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -34,8 +41,13 @@ jobs:
           set -euo pipefail
 
           release_version="$(tr -d '\r\n' < VERSION)"
+          build_number="$(tr -d '\r\n' < BUILD_NUMBER)"
           if [[ ! "$release_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo "VERSION is not a stable semantic version: $release_version" >&2
+            exit 1
+          fi
+          if [[ ! "$build_number" =~ ^[1-9][0-9]*$ ]]; then
+            echo "BUILD_NUMBER must be a positive integer: $build_number" >&2
             exit 1
           fi
 
@@ -61,7 +73,37 @@ jobs:
             fi
           fi
 
+          highest_prior_build=0
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] || continue
+            if [[ "$GITHUB_EVENT_NAME" == "push" && "$tag" == "$GITHUB_REF_NAME" ]]; then
+              continue
+            fi
+
+            prior_build=""
+            if git cat-file -e "$tag:BUILD_NUMBER" 2>/dev/null; then
+              prior_build="$(git show "$tag:BUILD_NUMBER" | tr -d '\r\n')"
+            elif [[ "$tag" == "v0.1.0" ]]; then
+              prior_build=1
+            fi
+            [[ -n "$prior_build" ]] || continue
+            if [[ ! "$prior_build" =~ ^[1-9][0-9]*$ ]]; then
+              echo "tag $tag has an invalid BUILD_NUMBER: $prior_build" >&2
+              exit 1
+            fi
+            if (( prior_build > highest_prior_build )); then
+              highest_prior_build="$prior_build"
+            fi
+          done < <(git tag --list 'v[0-9]*')
+
+          expected_build=$((highest_prior_build + 1))
+          if (( build_number != expected_build )); then
+            echo "BUILD_NUMBER must increase exactly once: found $build_number, expected $expected_build" >&2
+            exit 1
+          fi
+
           echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
+          echo "build_number=$build_number" >> "$GITHUB_OUTPUT"
 
   release:
     name: Build, sign, notarize, and verify arm64
@@ -75,6 +117,7 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       DEVELOPER_IDENTITY: "Developer ID Application: rojhat toptamus (ZD35XP4V7D)"
       RELEASE_DMG: dist/Monknot-${{ needs.metadata.outputs.release_version }}-arm64.dmg
+      RELEASE_APPCAST: dist/appcast.xml
 
     steps:
       - name: Check out the release commit
@@ -184,7 +227,7 @@ jobs:
               --identity "$DEVELOPER_IDENTITY" \
               --skip-notarize \
               --version "${{ needs.metadata.outputs.release_version }}" \
-              --build-number 1 \
+              --build-number "${{ needs.metadata.outputs.build_number }}" \
               --dmg "$RELEASE_DMG"
 
           test -s "$RELEASE_DMG"
@@ -300,12 +343,25 @@ jobs:
           script/release_preflight.sh --allow-missing-identity
           script/verify_release_artifact.sh \
             --expected-version "${{ needs.metadata.outputs.release_version }}" \
-            --expected-build 1 \
+            --expected-build "${{ needs.metadata.outputs.build_number }}" \
             --expected-arch arm64 \
             "$RELEASE_DMG"
 
+      - name: Generate and verify the signed Sparkle appcast
+        shell: bash
+        env:
+          SPARKLE_ED25519_PRIVATE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY }}
+        run: |
+          set +x
+          set -euo pipefail
+          printf '%s' "$SPARKLE_ED25519_PRIVATE_KEY" \
+            | env -u SPARKLE_ED25519_PRIVATE_KEY \
+                script/generate_appcast.sh "$RELEASE_DMG" RELEASE_NOTES.md "$RELEASE_APPCAST"
+          unset SPARKLE_ED25519_PRIVATE_KEY
+          script/verify_appcast.sh "$RELEASE_APPCAST"
+
       - name: Record successful non-publishing dry-run
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.publish_prerelease }}
         shell: bash
         env:
           NOTARY_SUBMISSION_ID: ${{ steps.notarize.outputs.submission_id }}
@@ -316,26 +372,29 @@ jobs:
             echo "## Release dry-run succeeded"
             echo
             echo "Version: ${{ needs.metadata.outputs.release_version }}"
+            echo "Build: ${{ needs.metadata.outputs.build_number }}"
             echo "Artifact: $(basename "$RELEASE_DMG")"
+            echo "Appcast: $(basename "$RELEASE_APPCAST")"
             echo "Notarization submission: $NOTARY_SUBMISSION_ID"
             echo "No tag or GitHub Release was created."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Stage the verified production artifact for publishing
-        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+      - name: Stage the verified production artifacts for publishing
+        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.publish_prerelease }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: monknot-production-${{ needs.metadata.outputs.release_version }}
           path: |
             ${{ env.RELEASE_DMG }}
             ${{ env.RELEASE_DMG }}.sha256
+            ${{ env.RELEASE_APPCAST }}
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
 
   publish:
     name: Publish verified GitHub Release
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.publish_prerelease }}
     needs:
       - metadata
       - release
@@ -345,8 +404,14 @@ jobs:
       contents: write
     env:
       RELEASE_DMG: dist/Monknot-${{ needs.metadata.outputs.release_version }}-arm64.dmg
+      RELEASE_APPCAST: dist/appcast.xml
 
     steps:
+      - name: Check out the release commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
       - name: Download the verified production artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -359,34 +424,73 @@ jobs:
           set -euo pipefail
           test -s "$RELEASE_DMG"
           test -s "$RELEASE_DMG.sha256"
+          test -s "$RELEASE_APPCAST"
           (
             cd "$(dirname "$RELEASE_DMG")"
             sha256sum --check "$(basename "$RELEASE_DMG").sha256"
           )
 
-      - name: Publish GitHub Release with final DMG
+      - name: Publish an atomically verified GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_VERSION: ${{ needs.metadata.outputs.release_version }}
+          PUBLISH_PRERELEASE: ${{ inputs.publish_prerelease || false }}
         run: |
           set -euo pipefail
           tag="v$RELEASE_VERSION"
-          notes_file="$RUNNER_TEMP/monknot-release-notes.md"
           test -s "$RELEASE_DMG"
+          test -s "$RELEASE_DMG.sha256"
+          test -s "$RELEASE_APPCAST"
+          test -s RELEASE_NOTES.md
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "refusing to replace an existing GitHub Release: $tag" >&2
             exit 1
           fi
-          {
-            echo "Monknot $RELEASE_VERSION is the first public release for Apple silicon Macs."
-            echo
-            echo "It brings Markdown and text editing, Markdown and HTML previews, PDF viewing and search, workspace search, Markdown-to-PDF export, themes, and an embedded local terminal into one native workspace."
-            echo
-            echo "Requires macOS 14 or later. This release is Developer ID signed and notarized by Apple."
-          } > "$notes_file"
-          gh release create "$tag" "$RELEASE_DMG" \
-            --verify-tag \
-            --title "Monknot $RELEASE_VERSION" \
-            --notes-file "$notes_file"
+
+          release_flags=(--draft --title "Monknot $RELEASE_VERSION" --notes-file RELEASE_NOTES.md)
+          if [[ "$PUBLISH_PRERELEASE" == "true" ]]; then
+            release_flags+=(--prerelease --target "$GITHUB_SHA")
+          else
+            release_flags+=(--verify-tag)
+          fi
+
+          gh release create "$tag" \
+            "$RELEASE_DMG" \
+            "$RELEASE_DMG.sha256" \
+            "$RELEASE_APPCAST" \
+            "${release_flags[@]}"
+
+          verify_dir="$(mktemp -d "$RUNNER_TEMP/monknot-release-assets.XXXXXX")"
+          cleanup() {
+            rm -rf -- "$verify_dir"
+          }
+          trap cleanup EXIT
+
+          gh release download "$tag" \
+            --dir "$verify_dir" \
+            --pattern "$(basename "$RELEASE_DMG")" \
+            --pattern "$(basename "$RELEASE_DMG").sha256" \
+            --pattern "$(basename "$RELEASE_APPCAST")"
+
+          cmp "$RELEASE_DMG" "$verify_dir/$(basename "$RELEASE_DMG")"
+          cmp "$RELEASE_DMG.sha256" "$verify_dir/$(basename "$RELEASE_DMG").sha256"
+          cmp "$RELEASE_APPCAST" "$verify_dir/$(basename "$RELEASE_APPCAST")"
+          (
+            cd "$verify_dir"
+            sha256sum --check "$(basename "$RELEASE_DMG").sha256"
+          )
+
+          asset_count="$(gh release view "$tag" --json assets --jq '.assets | length')"
+          is_draft="$(gh release view "$tag" --json isDraft --jq '.isDraft')"
+          if [[ "$asset_count" != "3" || "$is_draft" != "true" ]]; then
+            echo "draft release assets were not uploaded atomically" >&2
+            exit 1
+          fi
+
+          if [[ "$PUBLISH_PRERELEASE" == "true" ]]; then
+            gh release edit "$tag" --draft=false --prerelease=true
+          else
+            gh release edit "$tag" --draft=false --latest
+          fi
