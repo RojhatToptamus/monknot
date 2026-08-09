@@ -20,7 +20,11 @@ final class WorkspaceSplitViewTests: XCTestCase {
         let themeStore = ThemeSettingsStore(defaults: defaults)
         let workspaceStore = WorkspaceStore()
         let workspaceHost = LayoutCountingHostingView(
-            rootView: ContentView(store: workspaceStore, themeStore: themeStore)
+            rootView: ContentView(
+                store: workspaceStore,
+                themeStore: themeStore,
+                terminationCoordinator: ApplicationTerminationCoordinator()
+            )
                 .frame(minWidth: 920, minHeight: 620)
         )
         let workspaceWindow = NSWindow(

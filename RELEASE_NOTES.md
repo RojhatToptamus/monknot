@@ -1,9 +1,10 @@
-# Monknot 0.1.1
+# Monknot 0.1.2
 
-This release adds secure in-app update checks for future Monknot releases.
+This release makes Monknot's workspace layout reliable across normal, maximized, and full-screen windows.
 
-- Adds the standard **Check for Updates…** command.
-- Adds optional automatic update checks and downloads through Sparkle 2.
-- Keeps updates Developer ID signed, notarized by Apple, and distributed as immutable GitHub Release DMGs.
-
-Existing Monknot 0.1.0 users must install this release manually. Automatic updates begin with the next release.
+- Makes both workspace dividers smoothly resizable with native hover, drag, collapse, and width-restoration behavior.
+- Keeps the editor readable when the sidebar and terminal compete for space, including at every zoom level.
+- Adds native top-bar double-click maximize and restore behavior without intercepting tabs, fields, or controls.
+- Renames Preview Width to Content Width and applies it consistently to editable and rendered document content.
+- Uses Harbor Dark for new users while preserving every existing user's saved theme choice.
+- Preserves terminal sessions and focus while panes collapse and restore automatically.
