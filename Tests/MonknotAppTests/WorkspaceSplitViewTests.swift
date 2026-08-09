@@ -918,9 +918,9 @@ final class WorkspaceSplitViewTests: XCTestCase {
     func testNativeTerminalSnapCollapseReportsUserIntentAndOutwardDragRestoresWidth() throws {
         let recorder = PresentationRecorder()
         let controller = makeController(recorder: recorder)
-        let window = mount(controller, width: 1_600)
+        let window = mount(controller, width: 1_000)
 
-        controller.splitView.setPosition(controller.splitView.bounds.width - 430, ofDividerAt: 1)
+        controller.splitView.setPosition(controller.splitView.bounds.width - 380, ofDividerAt: 1)
         layout(window, controller)
         let usefulWidth = paneWidth(controller.terminalItem, in: controller)
         recorder.terminalEvents.removeAll()
