@@ -605,8 +605,10 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
             if sidebarItem.isCollapsed {
                 guard proposedPosition >= sidebarMinimum else { return 0 }
                 setCollapsed(false, for: sidebarItem, animated: false)
-            } else if proposedPosition
-                < sidebarMinimum * WorkspaceSplitMetrics.snapThresholdFraction {
+            } else if shouldSnapDraggedPaneClosed(
+                at: proposedPosition,
+                dividerIndex: dividerIndex
+            ) {
                 setCollapsed(true, for: sidebarItem, animated: false)
                 return 0
             }
@@ -639,9 +641,10 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
                     return availableWidth - dividerWidth
                 }
                 setCollapsed(false, for: terminalItem, animated: false)
-            } else if proposedPosition > availableWidth
-                - terminalMinimum * WorkspaceSplitMetrics.snapThresholdFraction
-                - dividerWidth {
+            } else if shouldSnapDraggedPaneClosed(
+                at: proposedPosition,
+                dividerIndex: dividerIndex
+            ) {
                 setCollapsed(true, for: terminalItem, animated: false)
                 return availableWidth - dividerWidth
             }
@@ -1349,9 +1352,9 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         finalRequestedPosition: CGFloat?
     ) {
         let draggedItem = dividerIndex == 0 ? sidebarItem : terminalItem
-        // Some AppKit releases finish an inspector drag at its minimum instead
-        // of honoring the native half-minimum collapse. Reconcile that same
-        // completed gesture once, after AppKit releases its tracking loop.
+        // Some AppKit releases clamp inspector tracking at its minimum and
+        // leave the pane expanded instead of honoring the native half-minimum
+        // collapse. Reconcile that gesture after AppKit releases tracking.
         if widthBeforeDrag != nil,
            !draggedItem.isCollapsed,
            let finalRequestedPosition,
