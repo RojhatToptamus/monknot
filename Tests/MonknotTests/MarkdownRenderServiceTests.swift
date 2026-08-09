@@ -25,6 +25,18 @@ final class MarkdownRenderServiceTests: XCTestCase {
         XCTAssertTrue(AppTheme.darkThemes.contains { $0.id == "night-owl-dark" })
     }
 
+    func testNewUsersDefaultToHarborDarkWithoutReplacingSavedPreferences() {
+        XCTAssertEqual(ThemePreference.defaultValue, .dark)
+        XCTAssertEqual(ThemePreference.resolved(rawValue: nil), .dark)
+        for savedPreference in ThemePreference.allCases {
+            XCTAssertEqual(
+                ThemePreference.resolved(rawValue: savedPreference.rawValue),
+                savedPreference
+            )
+        }
+        XCTAssertEqual(AppTheme.defaultDark.id, "harbor-dark")
+    }
+
     func testThemeCatalogIncludesEveryCurrentLightAndDarkPreset() {
         let expectedLightNames = [
             "Parchment", "Brasspants", "Catppuccin Latte", "Harbor", "Codechimp", "Everforest",
@@ -328,7 +340,7 @@ final class MarkdownRenderServiceTests: XCTestCase {
         XCTAssertTrue(html.contains("--table-border: color-mix(in srgb, #FDFCFB 16.0%, transparent);"))
         XCTAssertTrue(html.contains("--selection-bg: #102030;"))
         XCTAssertTrue(html.contains("--base-font-size: 16.2px;"))
-        XCTAssertTrue(html.contains("--preview-max-width: 88%;"))
+        XCTAssertTrue(html.contains("--content-max-width: 88%;"))
     }
 
     func testHTMLDocumentUsesThemeCodeFontSizeAndContrast() throws {
@@ -340,12 +352,12 @@ final class MarkdownRenderServiceTests: XCTestCase {
             appTheme: theme,
             zoomScale: 1.2,
             baseFontSize: theme.codeFontSize,
-            previewWidthPercent: 96,
+            contentWidthPercent: 96,
             baseURL: nil
         )
 
         XCTAssertTrue(html.contains("--base-font-size: 24.0px;"))
-        XCTAssertTrue(html.contains("--preview-max-width: 96%;"))
+        XCTAssertTrue(html.contains("--content-max-width: 96%;"))
         XCTAssertTrue(html.contains("--table-border: color-mix(in srgb, #ebebeb 20.0%, transparent);"))
     }
 
@@ -356,13 +368,13 @@ final class MarkdownRenderServiceTests: XCTestCase {
             for: .defaultDark,
             zoomScale: 0.7,
             baseFontSize: 16,
-            previewWidthPercent: 88
+            contentWidthPercent: 88
         ))
         let enlargedValues = Dictionary(uniqueKeysWithValues: service.themeVariableValues(
             for: .defaultDark,
             zoomScale: 8,
             baseFontSize: 16,
-            previewWidthPercent: 88
+            contentWidthPercent: 88
         ))
 
         XCTAssertEqual(compactValues["--base-font-size"], "11.2px")
@@ -375,7 +387,7 @@ final class MarkdownRenderServiceTests: XCTestCase {
             appTheme: AppTheme.defaultDark,
             zoomScale: 1,
             baseFontSize: AppTheme.defaultDark.codeFontSize,
-            previewWidthPercent: 82,
+            contentWidthPercent: 82,
             usePointerCursors: false,
             fontSmoothing: true,
             baseURL: nil
@@ -385,26 +397,26 @@ final class MarkdownRenderServiceTests: XCTestCase {
         XCTAssertTrue(html.contains("print-color-adjust: exact;"))
         XCTAssertTrue(html.contains("--bg: #121212;"))
         XCTAssertTrue(html.contains("--fg: #ebebeb;"))
-        XCTAssertTrue(html.contains("--preview-max-width: 82%;"))
+        XCTAssertTrue(html.contains("--content-max-width: 82%;"))
         XCTAssertTrue(html.contains("html.monknot-pdf-export"))
         XCTAssertTrue(html.contains(":root.monknot-pdf-export .markdown-body"))
     }
 
-    func testPreviewWidthUsesTheAvailablePaneInsteadOfALegacyPixelCap() throws {
+    func testContentWidthUsesTheAvailablePaneInsteadOfALegacyPixelCap() throws {
         let html = try MarkdownRenderService().htmlDocument(
             markdown: "# Full width",
             appTheme: .defaultLight,
             zoomScale: 1,
             baseFontSize: AppTheme.defaultLight.codeFontSize,
-            previewWidthPercent: 100,
+            contentWidthPercent: 100,
             baseURL: nil
         )
 
         XCTAssertTrue(html.contains(
-            "width: min(var(--preview-max-width, 88%), calc(100% - 28px));"
+            "width: min(var(--content-max-width, 88%), calc(100% - 28px));"
         ))
         XCTAssertFalse(html.contains(
-            "width: min(var(--preview-max-width, 88%), 700px, calc(100% - 28px));"
+            "width: min(var(--content-max-width, 88%), 700px, calc(100% - 28px));"
         ))
         XCTAssertFalse(html.contains("@media (max-width: 720px) {\n  .markdown-body {\n    width: 100%;"))
     }

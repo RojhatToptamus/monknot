@@ -102,7 +102,7 @@ body {
 
 .markdown-body {
   box-sizing: border-box;
-  width: min(var(--preview-max-width, 88%), calc(100% - 28px));
+  width: min(var(--content-max-width, 88%), calc(100% - 28px));
   max-width: none;
   margin: 0 auto;
   padding: 34px clamp(18px, 2.2vw, 38px) 56px;
@@ -354,7 +354,7 @@ html.monknot-pdf-export body {
 }
 
 :root.monknot-pdf-export .markdown-body {
-  width: min(var(--preview-max-width, 100%), 100%);
+  width: min(var(--content-max-width, 100%), 100%);
   max-width: none;
   margin: 0 auto;
   padding: 0;

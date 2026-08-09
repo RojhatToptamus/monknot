@@ -25,7 +25,7 @@ public struct MarkdownRenderService: Sendable {
             appTheme: appTheme,
             zoomScale: zoomScale,
             baseFontSize: appTheme.codeFontSize,
-            previewWidthPercent: 88,
+            contentWidthPercent: 88,
             baseURL: baseURL
         )
     }
@@ -35,7 +35,7 @@ public struct MarkdownRenderService: Sendable {
         appTheme: AppTheme,
         zoomScale: Double,
         baseFontSize: Double,
-        previewWidthPercent: Double = 88,
+        contentWidthPercent: Double = 88,
         usePointerCursors: Bool = false,
         fontSmoothing: Bool = true,
         baseURL: URL?
@@ -47,7 +47,7 @@ public struct MarkdownRenderService: Sendable {
             for: appTheme,
             zoomScale: zoomScale,
             baseFontSize: baseFontSize,
-            previewWidthPercent: previewWidthPercent,
+            contentWidthPercent: contentWidthPercent,
             usePointerCursors: usePointerCursors,
             fontSmoothing: fontSmoothing
         )
@@ -85,7 +85,7 @@ public struct MarkdownRenderService: Sendable {
         for theme: AppTheme,
         zoomScale: Double,
         baseFontSize: Double,
-        previewWidthPercent: Double,
+        contentWidthPercent: Double,
         usePointerCursors: Bool,
         fontSmoothing: Bool
     ) -> String {
@@ -93,7 +93,7 @@ public struct MarkdownRenderService: Sendable {
             for: theme,
             zoomScale: zoomScale,
             baseFontSize: baseFontSize,
-            previewWidthPercent: previewWidthPercent,
+            contentWidthPercent: contentWidthPercent,
             usePointerCursors: usePointerCursors,
             fontSmoothing: fontSmoothing
         )
@@ -116,16 +116,16 @@ public struct MarkdownRenderService: Sendable {
         for theme: AppTheme,
         zoomScale: Double,
         baseFontSize: Double,
-        previewWidthPercent: Double,
+        contentWidthPercent: Double,
         usePointerCursors: Bool = false,
         fontSmoothing: Bool = true
     ) -> [(String, String)] {
         let baseFont = max(8, min(120, baseFontSize * zoomScale))
         let baseFontSize = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), baseFont)
-        let previewWidth = String(
+        let contentWidth = String(
             format: "%.0f",
             locale: Locale(identifier: "en_US_POSIX"),
-            max(55, min(100, previewWidthPercent))
+            max(55, min(100, contentWidthPercent))
         )
         let contrast = max(0, min(100, theme.contrast))
         let borderMix = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), 8 + contrast * 0.16)
@@ -172,7 +172,7 @@ public struct MarkdownRenderService: Sendable {
             ("--tok-comment", theme.codeComment),
             ("--tok-builtin", theme.codeBuiltin),
             ("--base-font-size", "\(baseFontSize)px"),
-            ("--preview-max-width", "\(previewWidth)%"),
+            ("--content-max-width", "\(contentWidth)%"),
             ("--font-smoothing", fontSmoothing ? "antialiased" : "auto"),
             ("--interactive-cursor", usePointerCursors ? "pointer" : "default"),
             ("--ui-font", uiFontStack),

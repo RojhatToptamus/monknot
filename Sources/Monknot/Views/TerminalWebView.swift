@@ -141,6 +141,8 @@ struct TerminalWebView: NSViewRepresentable {
           const fitAddon = new FitAddon.FitAddon();
           term.loadAddon(fitAddon);
           term.open(document.getElementById('terminal'));
+          let pendingResizeFrame = null;
+          let pendingScrollDistanceFromBottom = null;
 
           function applyCSSVariables(options) {
             if (!options || !options.css) return;
@@ -161,28 +163,37 @@ struct TerminalWebView: NSViewRepresentable {
 
           function postResize(options = {}) {
             const buffer = term.buffer.active;
-            const viewportY = buffer.viewportY;
-            const distanceFromBottom = buffer.baseY - buffer.viewportY;
+            if (options.preserveScroll && pendingScrollDistanceFromBottom === null) {
+              pendingScrollDistanceFromBottom = buffer.baseY - buffer.viewportY;
+            }
             fitAddon.fit();
 
-            if (options.preserveScroll) {
-              requestAnimationFrame(() => {
+            // FitAddon can synchronously trigger another observed resize before
+            // the first animation frame restores scrollback. Keep the first
+            // user-visible anchor for the whole burst so a nested callback
+            // cannot replace it with FitAddon's temporary bottom position.
+            if (pendingResizeFrame !== null) return;
+            pendingResizeFrame = requestAnimationFrame(() => {
+              const distanceFromBottom = pendingScrollDistanceFromBottom;
+              pendingResizeFrame = null;
+              pendingScrollDistanceFromBottom = null;
+
+              if (distanceFromBottom !== null) {
                 if (distanceFromBottom <= 0) {
                   term.scrollToBottom();
                 } else {
-                  term.scrollToLine(Math.max(0, Math.min(viewportY, term.buffer.active.baseY)));
+                  term.scrollToLine(Math.max(0, term.buffer.active.baseY - distanceFromBottom));
                 }
-                notifyResize();
-              });
-              return;
-            }
-
-            notifyResize();
+              }
+              notifyResize();
+            });
           }
 
           function writeAndFollow(data) {
+            const buffer = term.buffer.active;
+            const wasAtBottom = buffer.baseY - buffer.viewportY <= 0;
             term.write(data, () => {
-              term.scrollToBottom();
+              if (wasAtBottom) term.scrollToBottom();
             });
           }
 
@@ -213,7 +224,6 @@ struct TerminalWebView: NSViewRepresentable {
           resizeObserver.observe(document.getElementById('terminal'));
           requestAnimationFrame(() => {
             postResize();
-            term.focus();
           });
           </script>
         </body>
@@ -292,7 +302,9 @@ struct TerminalWebView: NSViewRepresentable {
             isLoaded = true
             render(transcript: session.transcript)
             DispatchQueue.main.async {
-                webView.window?.makeFirstResponder(webView)
+                guard !webView.isHiddenOrHasHiddenAncestor,
+                      let window = webView.window,
+                      window.makeFirstResponder(webView) else { return }
                 self.focus()
             }
         }

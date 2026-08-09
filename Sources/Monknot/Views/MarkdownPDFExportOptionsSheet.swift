@@ -85,7 +85,7 @@ struct MarkdownPDFExportOptionsSheet: View {
 
                 SettingsSliderRow(
                     theme: theme,
-                    title: "Line width",
+                    title: "Content Width",
                     detail: "Control how much of the printable width the text uses.",
                     value: Binding(
                         get: { options.contentWidthPercent },

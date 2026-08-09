@@ -6,6 +6,8 @@ struct NativeMarkdownEditorView: View {
     @Binding var text: String
     let theme: AppTheme
     let fontSize: CGFloat
+    let zoomScale: Double
+    let contentWidthPercent: Double
     let fontSmoothing: Bool
     let scrollPosition: DocumentScrollPosition?
     let syncScrollEnabled: Bool
@@ -18,33 +20,57 @@ struct NativeMarkdownEditorView: View {
     let onVisibleTopLineChange: ((Int) -> Void)?
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            MarkdownTextEditor(
-                documentID: documentID,
-                text: $text,
-                theme: theme,
-                fontSize: fontSize,
-                fontSmoothing: fontSmoothing,
-                scrollPosition: scrollPosition,
-                sourceLocation: $sourceLocation,
-                searchState: $searchState,
-                onScrollPositionChange: onScrollPositionChange,
-                syncScrollEnabled: syncScrollEnabled,
-                syncScrollTargetLine: syncScrollTargetLine,
-                onVisibleTopLineChange: onVisibleTopLineChange,
-                commandRequest: commandRequest,
-                markdownShortcutsEnabled: true,
-                wikilinkDocuments: wikilinkDocuments
-            )
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                MarkdownTextEditor(
+                    documentID: documentID,
+                    text: $text,
+                    theme: theme,
+                    fontSize: fontSize,
+                    zoomScale: zoomScale,
+                    contentWidthPercent: contentWidthPercent,
+                    fontSmoothing: fontSmoothing,
+                    scrollPosition: scrollPosition,
+                    sourceLocation: $sourceLocation,
+                    searchState: $searchState,
+                    onScrollPositionChange: onScrollPositionChange,
+                    syncScrollEnabled: syncScrollEnabled,
+                    syncScrollTargetLine: syncScrollTargetLine,
+                    onVisibleTopLineChange: onVisibleTopLineChange,
+                    commandRequest: commandRequest,
+                    markdownShortcutsEnabled: true,
+                    wikilinkDocuments: wikilinkDocuments
+                )
 
-            if text.isEmpty {
-                Text("Start writing")
-                    .font(.system(size: max(fontSize, 13), weight: .regular))
-                    .foregroundStyle(theme.mutedForegroundColor.opacity(0.52))
-                    .padding(.leading, 28)
-                    .padding(.top, 26)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
+                if text.isEmpty {
+                    Text("Start writing")
+                        .font(
+                            .system(
+                                size: max(
+                                    fontSize,
+                                    ContentWidthPreference.editorPlaceholderMinimumFontSize(
+                                        zoomScale: zoomScale
+                                    )
+                                ),
+                                weight: .regular
+                            )
+                        )
+                        .foregroundStyle(theme.mutedForegroundColor.opacity(0.52))
+                        .padding(
+                            .leading,
+                            ContentWidthPreference.editorPlaceholderLeadingInset(
+                                viewportWidth: proxy.size.width,
+                                contentWidthPercent: contentWidthPercent,
+                                zoomScale: zoomScale
+                            )
+                        )
+                        .padding(
+                            .top,
+                            ContentWidthPreference.editorPlaceholderTopInset(zoomScale: zoomScale)
+                        )
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
             }
         }
         .background(theme.surfaceColor)

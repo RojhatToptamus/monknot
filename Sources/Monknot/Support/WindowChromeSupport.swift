@@ -204,36 +204,54 @@ enum NativeWindowChromeGeometry {
     }
 }
 
-/// A deliberate title-bar gap. macOS 15+ uses SwiftUI's native
-/// `WindowDragGesture`; macOS 14 falls back to AppKit's title-bar hit testing.
-/// Neither path overrides mouse-down handling, so AppKit retains the user's
-/// system double-click preference (Fill, Zoom, Minimize, or No Action).
-/// https://developer.apple.com/documentation/swiftui/windowdraggesture
-/// https://support.apple.com/guide/mac-help/mchlp1119/mac
+/// A deliberate title-bar gap. AppKit handles window dragging and the standard
+/// zoom transition, including retention of the user's previous window frame.
+/// Controls never mount this view, so their mouse events remain independent.
+/// https://developer.apple.com/documentation/appkit/nswindow/performdrag(with:)
+/// https://developer.apple.com/documentation/appkit/nswindow/performzoom(_:)
 struct WindowTitleBarDragArea: View {
-    @ViewBuilder
+    var doubleClickZoomsWindow = true
+
     var body: some View {
-        if #available(macOS 15.0, *) {
-            Color.clear
-                .contentShape(Rectangle())
-                .gesture(WindowDragGesture())
-                .allowsWindowActivationEvents()
-        } else {
-            NativeTitleBarDragRepresentable()
-        }
+        NativeTitleBarDragRepresentable(doubleClickZoomsWindow: doubleClickZoomsWindow)
     }
 
     private struct NativeTitleBarDragRepresentable: NSViewRepresentable {
+        let doubleClickZoomsWindow: Bool
+
         func makeNSView(context: Context) -> NSView {
-            NativeTitleBarDragView(frame: .zero)
+            let view = NativeTitleBarDragView(frame: .zero)
+            view.doubleClickZoomsWindow = doubleClickZoomsWindow
+            return view
         }
 
-        func updateNSView(_ nsView: NSView, context: Context) {}
+        func updateNSView(_ nsView: NSView, context: Context) {
+            guard let dragView = nsView as? NativeTitleBarDragView else { return }
+            dragView.doubleClickZoomsWindow = doubleClickZoomsWindow
+        }
     }
 
     final class NativeTitleBarDragView: NSView {
-        override var mouseDownCanMoveWindow: Bool {
+        var doubleClickZoomsWindow = true
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
             true
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            guard let window else { return }
+
+            if event.clickCount == 2 {
+                guard doubleClickZoomsWindow else { return }
+                guard window.styleMask.contains(.resizable),
+                      !window.styleMask.contains(.fullScreen) else {
+                    return
+                }
+                window.performZoom(self)
+                return
+            }
+
+            window.performDrag(with: event)
         }
     }
 }

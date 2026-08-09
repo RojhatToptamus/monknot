@@ -31,12 +31,6 @@ enum MonknotMetrics {
     // the entire titlebar.
     static let tabMinWidthBase: CGFloat = 0
     static let tabMaxWidthBase: CGFloat = 220
-    /// Below this width, the editor can no longer keep useful content beside
-    /// the trailing terminal panel, so the terminal takes over the detail area.
-    static let editorMinimumReadableWidth: CGFloat = 360
-    static let terminalDrawerMinWidth: CGFloat = 320
-    static let terminalDrawerMaxWidth: CGFloat = 640
-    static let terminalResizeHitWidth: CGFloat = 32
     static let settingsMaxContentWidth: CGFloat = 720
     /// Native settings content is 532 points tall so the standard 28-point
     /// macOS title bar produces the specification's 600 × 560 window.

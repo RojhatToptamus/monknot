@@ -174,7 +174,7 @@ private struct TerminalDrawerTabGroup: View {
                                     }
                                 }
 
-                                WindowTitleBarDragArea()
+                                WindowTitleBarDragArea(doubleClickZoomsWindow: false)
                                     .frame(minWidth: scaled(28), maxWidth: .infinity, maxHeight: .infinity)
                                     .accessibilityHidden(true)
                             }

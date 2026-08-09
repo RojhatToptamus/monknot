@@ -68,6 +68,7 @@ struct TopNavigationBar: View {
                 .accessibilityHidden(true)
 
             sidebarToggleButton
+                .allowsTopBarWindowActivationEvents()
 
             WindowNavigationControls(
                 navigateBack: navigateBack,
@@ -77,6 +78,7 @@ struct TopNavigationBar: View {
                 theme: theme,
                 zoomScale: zoomScale
             )
+            .allowsTopBarWindowActivationEvents()
 
             Rectangle()
                 .fill(theme.separatorColor)
@@ -97,8 +99,10 @@ struct TopNavigationBar: View {
 
             if documentSearch.isPresented {
                 documentSearchBar
+                    .allowsTopBarWindowActivationEvents()
             } else {
                 viewModeControl
+                    .allowsTopBarWindowActivationEvents()
 
                 Rectangle()
                     .fill(theme.separatorColor)
@@ -106,6 +110,7 @@ struct TopNavigationBar: View {
                     .padding(.horizontal, scaled(4))
 
                 drawerToggleButton
+                    .allowsTopBarWindowActivationEvents()
             }
         }
         .monknotChromeRowLayout(theme: theme, zoomScale: zoomScale)
@@ -204,6 +209,7 @@ struct TopNavigationBar: View {
                 reorderTab: reorderTab
             )
             .frame(maxWidth: .infinity, alignment: .leading)
+            .allowsTopBarWindowActivationEvents()
         }
     }
 
@@ -299,4 +305,15 @@ struct TopNavigationBar: View {
         )
     }
 
+}
+
+private extension View {
+    @ViewBuilder
+    func allowsTopBarWindowActivationEvents() -> some View {
+        if #available(macOS 15.0, *) {
+            allowsWindowActivationEvents()
+        } else {
+            self
+        }
+    }
 }

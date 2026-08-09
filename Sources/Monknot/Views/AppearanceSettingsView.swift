@@ -4,7 +4,7 @@ import SwiftUI
 struct AppearanceSettingsView: View {
     @ObservedObject var themeStore: ThemeSettingsStore
     let uiTheme: AppTheme
-    @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.system.rawValue
+    @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.defaultValue.rawValue
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
     @State private var lightDraft = ThemeConfiguration(theme: AppTheme.defaultLight)
@@ -13,7 +13,7 @@ struct AppearanceSettingsView: View {
     @State private var darkBaseline = ThemeEditBaseline(themeID: AppTheme.defaultDark.id, configuration: ThemeConfiguration(theme: AppTheme.defaultDark))
 
     private var themePreference: ThemePreference {
-        get { ThemePreference(rawValue: themePreferenceRawValue) ?? .system }
+        get { ThemePreference.resolved(rawValue: themePreferenceRawValue) }
         nonmutating set { themePreferenceRawValue = newValue.rawValue }
     }
 
@@ -42,7 +42,7 @@ struct AppearanceSettingsView: View {
                         },
                         selection: Binding(
                             get: { themePreference.rawValue },
-                            set: { themePreference = ThemePreference(rawValue: $0) ?? .system }
+                            set: { themePreference = ThemePreference.resolved(rawValue: $0) }
                         ),
                         theme: uiTheme
                     )

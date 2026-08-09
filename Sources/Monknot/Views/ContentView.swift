@@ -104,15 +104,18 @@ struct ContentView: View {
     @ObservedObject var store: WorkspaceStore
     @ObservedObject var themeStore: ThemeSettingsStore
     @AppStorage("Monknot.editorMode") private var editorModeRawValue = EditorMode.source.rawValue
-    @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.system.rawValue
+    @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.defaultValue.rawValue
     @AppStorage("Monknot.zoomScale") private var persistedZoomScale = WorkspaceZoomPolicy.defaultValue
-    @AppStorage("Monknot.previewWidthPercent") private var previewWidthPercent = 88.0
+    @AppStorage(ContentWidthPreference.key) private var contentWidthPercent = ContentWidthPreference.initialValue()
     @AppStorage("Monknot.showDocumentOutline") private var showDocumentOutline = true
     @State private var isMarkdownSplitViewEnabled = false
     @AppStorage("Monknot.usePointerCursors") private var usePointerCursors = false
     @AppStorage("Monknot.fontSmoothing") private var fontSmoothing = true
-    @SceneStorage("Monknot.isTerminalDrawerOpen") private var isTerminalDrawerOpen = false
+    @SceneStorage("Monknot.isTerminalDrawerOpen") private var terminalPreferredVisible = false
+    @State private var isTerminalVisible = false
+    @State private var terminalRevealRequest: UInt = 0
     @StateObject private var terminalFocusRestorer = TerminalFocusRestorer()
+    @StateObject private var terminalSessions = TerminalSessionCollectionStore()
     @StateObject private var workspaceSearch = WorkspaceSearchState()
     @StateObject private var quickOpen = WorkspaceQuickOpenState()
     @StateObject private var symbolQuickOpen = MarkdownSymbolQuickOpenState()
@@ -133,6 +136,7 @@ struct ContentView: View {
     @State private var documentSearch = DocumentSearchState()
     @State private var isSidebarVisible = true
     @SceneStorage("Monknot.sidebarPreferredVisible") private var sidebarPreferredVisible = true
+    @State private var sidebarRevealRequest: UInt = 0
     @State private var exportNotice: ExportSuccessNotice?
     @State private var pendingPDFExportDocument: WorkspaceDocument?
     @State private var pdfExportOptions = MarkdownPDFExportOptions.loadLastUsed()
@@ -154,7 +158,7 @@ struct ContentView: View {
     }
 
     private var themePreference: ThemePreference {
-        get { ThemePreference(rawValue: themePreferenceRawValue) ?? .system }
+        get { ThemePreference.resolved(rawValue: themePreferenceRawValue) }
         nonmutating set { themePreferenceRawValue = newValue.rawValue }
     }
 
@@ -197,6 +201,7 @@ struct ContentView: View {
     private var lifecycleContent: AnyView {
         AnyView(chromeContent
             .onChange(of: store.selectedDocument?.id) { oldDocumentID, newDocumentID in
+                terminalSessions.setDefaultDirectory(activeTerminalDirectory)
                 if documentNavigationHistory.currentDocumentID != newDocumentID {
                     documentNavigationHistory.replaceCurrent(with: newDocumentID)
                 }
@@ -249,6 +254,7 @@ struct ContentView: View {
                 workspaceSearch.refresh(documents: store.documents)
             }
             .onChange(of: store.workspaceURL?.standardizedFileURL.path ?? "") { _, _ in
+                terminalSessions.setDefaultDirectory(activeTerminalDirectory)
                 tabState.reset()
                 documentNavigationHistory.reset()
                 restoredTabStateWorkspacePath = nil
@@ -302,7 +308,11 @@ struct ContentView: View {
         rootContentStack
             .onAppear {
                 persistedZoomScale = WorkspaceZoomPolicy.clamp(persistedZoomScale)
-                setSidebarPresented(sidebarPreferredVisible, animated: false)
+                // Preferred visibility survives pressure collapse, while the
+                // effective state comes from WorkspaceSplitView. Reappearing
+                // after Settings or another window transition must not make
+                // the chrome claim that a native-collapsed pane is visible.
+                terminalSessions.setDefaultDirectory(activeTerminalDirectory)
             }
     }
 
@@ -313,10 +323,32 @@ struct ContentView: View {
                     primaryTitlebar
                 }
 
-                WorkspaceSplitView(isSidebarPresented: isSidebarVisible) {
+                WorkspaceSplitView(
+                    isSidebarPresented: sidebarPreferredVisible,
+                    isTerminalPresented: terminalPreferredVisible,
+                    layoutScale: activeTheme.layoutScale(zoomScale: zoomScale),
+                    separatorColor: NSColor(activeTheme.separatorColor),
+                    accentColor: NSColor(activeTheme.accentColor),
+                    sidebarRevealRequest: sidebarRevealRequest,
+                    terminalRevealRequest: terminalRevealRequest,
+                    onSidebarPresentationChange: { isPresented, userInitiated in
+                        handleNativeSidebarPresentationChange(
+                            isPresented,
+                            userInitiated: userInitiated
+                        )
+                    },
+                    onTerminalPresentationChange: { isPresented, userInitiated in
+                        handleNativeTerminalPresentationChange(
+                            isPresented,
+                            userInitiated: userInitiated
+                        )
+                    }
+                ) {
                     sidebarContent
                 } detail: {
                     detailContent
+                } terminal: {
+                    terminalContent
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
@@ -402,7 +434,7 @@ struct ContentView: View {
             isSaving: store.isSaving,
             theme: activeTheme,
             zoomScale: zoomScale,
-            isTerminalPresented: isTerminalDrawerOpen,
+            isTerminalPresented: isTerminalVisible,
             isSidebarVisible: isSidebarVisible,
             toggleTerminal: { toggleTerminalDrawer(animated: true) },
             toggleSidebar: { toggleSidebar(animated: true) },
@@ -455,7 +487,7 @@ struct ContentView: View {
             theme: activeTheme,
             zoomScale: zoomScale,
             codeFontSize: CGFloat(activeTheme.codeFontSize),
-            previewWidthPercent: previewWidthPercent,
+            contentWidthPercent: contentWidthPercent,
             showsDocumentOutline: showDocumentOutline,
             usePointerCursors: usePointerCursors,
             fontSmoothing: fontSmoothing,
@@ -464,7 +496,7 @@ struct ContentView: View {
             pdfUndoCommandSerial: pdfUndoCommandSerial,
             pdfRedoCommandSerial: pdfRedoCommandSerial,
             updatePDFAnnotationUndoState: updatePDFAnnotationShortcutState(canUndo:canRedo:),
-            isTerminalPresented: $isTerminalDrawerOpen,
+            isTerminalPresented: isTerminalVisible,
             sourceLocation: $pendingSourceLocation,
             previewLocation: $pendingPreviewLocation,
             pdfSearchTarget: $pendingPDFSearchTarget,
@@ -478,6 +510,31 @@ struct ContentView: View {
             onPreviewSourceJump: openSourceFromPreview(location:)
         )
         .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
+    }
+
+    @ViewBuilder
+    private var terminalContent: some View {
+        if terminalPreferredVisible {
+            TerminalDrawerView(
+                sessions: terminalSessions,
+                workingDirectory: activeTerminalDirectory,
+                theme: activeTheme,
+                zoomScale: zoomScale,
+                usePointerCursors: usePointerCursors,
+                fontSmoothing: fontSmoothing,
+                showsChrome: true,
+                close: { setTerminalDrawerPresented(false, animated: true) }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(activeTheme.terminalSurfaceColor)
+        }
+    }
+
+    private var activeTerminalDirectory: URL? {
+        TerminalWorkingDirectoryPolicy.directory(
+            workspaceURL: store.workspaceURL,
+            selectedDocumentURL: store.selectedDocument?.url
+        )
     }
 
     private func openFolderPanel() {
@@ -1279,7 +1336,8 @@ struct ContentView: View {
 
     private func showWorkspaceSearch() {
         guard store.workspaceURL != nil else { return }
-        setSidebarPresented(true, animated: false)
+        sidebarPreferredVisible = true
+        setSidebarPresented(true, animated: false, requestsNativeReveal: true)
         workspaceSearch.present(documents: store.documents)
     }
 
@@ -1333,18 +1391,39 @@ struct ContentView: View {
     }
 
     private func toggleTerminalDrawer(animated: Bool) {
-        setTerminalDrawerPresented(!isTerminalDrawerOpen, animated: animated)
+        setTerminalDrawerPresented(!isTerminalVisible, animated: animated)
     }
 
     private func setTerminalDrawerPresented(_ isPresented: Bool, animated: Bool) {
-        guard isTerminalDrawerOpen != isPresented else { return }
+        guard terminalPreferredVisible != isPresented || isTerminalVisible != isPresented else { return }
         if isPresented {
             terminalFocusRestorer.capture(from: NSApp.keyWindow)
+            terminalRevealRequest &+= 1
         }
+        terminalPreferredVisible = isPresented
         updateChromeState(animated: animated) {
-            isTerminalDrawerOpen = isPresented
+            isTerminalVisible = isPresented
         }
         if !isPresented {
+            terminalFocusRestorer.restore(fallbackFrom: NSApp.keyWindow)
+        }
+    }
+
+    private func handleNativeTerminalPresentationChange(
+        _ isPresented: Bool,
+        userInitiated: Bool
+    ) {
+        if userInitiated {
+            setTerminalDrawerPresented(isPresented, animated: false)
+            return
+        }
+
+        guard isTerminalVisible != isPresented else { return }
+        let shouldRestoreDocumentFocus = isTerminalVisible && !isPresented
+        updateChromeState(animated: false) {
+            isTerminalVisible = isPresented
+        }
+        if shouldRestoreDocumentFocus {
             terminalFocusRestorer.restore(fallbackFrom: NSApp.keyWindow)
         }
     }
@@ -1352,16 +1431,35 @@ struct ContentView: View {
     private func toggleSidebar(animated: Bool) {
         let willShowSidebar = !isSidebarVisible
         sidebarPreferredVisible = willShowSidebar
-        setSidebarPresented(willShowSidebar, animated: animated)
+        setSidebarPresented(
+            willShowSidebar,
+            animated: animated,
+            requestsNativeReveal: willShowSidebar
+        )
     }
 
     private func setSidebarPresented(
         _ isPresented: Bool,
-        animated: Bool
+        animated: Bool,
+        requestsNativeReveal: Bool = false
     ) {
+        if isPresented, requestsNativeReveal {
+            sidebarRevealRequest &+= 1
+        }
         updateChromeState(animated: animated) {
             isSidebarVisible = isPresented
         }
+    }
+
+    private func handleNativeSidebarPresentationChange(
+        _ isPresented: Bool,
+        userInitiated: Bool
+    ) {
+        if userInitiated {
+            sidebarPreferredVisible = isPresented
+        }
+        guard isSidebarVisible != isPresented else { return }
+        setSidebarPresented(isPresented, animated: false)
     }
 
     private func updateChromeState(animated: Bool, updates: () -> Void) {

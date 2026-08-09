@@ -9,7 +9,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
     let theme: AppTheme
     let zoomScale: Double
     let codeFontSize: Double
-    let previewWidthPercent: Double
+    let contentWidthPercent: Double
     let usePointerCursors: Bool
     let fontSmoothing: Bool
     let scrollPosition: DocumentScrollPosition?
@@ -78,7 +78,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
             theme: theme,
             zoomScale: WorkspaceZoomPolicy.documentScale(zoomScale),
             codeFontSize: codeFontSize,
-            previewWidthPercent: previewWidthPercent,
+            contentWidthPercent: contentWidthPercent,
             usePointerCursors: usePointerCursors,
             fontSmoothing: fontSmoothing
         )
@@ -102,7 +102,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
                             appTheme: appearanceRequest.theme,
                             zoomScale: appearanceRequest.zoomScale,
                             baseFontSize: appearanceRequest.codeFontSize,
-                            previewWidthPercent: appearanceRequest.previewWidthPercent,
+                            contentWidthPercent: appearanceRequest.contentWidthPercent,
                             usePointerCursors: appearanceRequest.usePointerCursors,
                             fontSmoothing: appearanceRequest.fontSmoothing,
                             baseURL: shellRequest.baseURL
@@ -399,7 +399,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 for: request.theme,
                 zoomScale: request.zoomScale,
                 baseFontSize: request.codeFontSize,
-                previewWidthPercent: request.previewWidthPercent,
+                contentWidthPercent: request.contentWidthPercent,
                 usePointerCursors: request.usePointerCursors,
                 fontSmoothing: request.fontSmoothing
             ))
@@ -697,7 +697,7 @@ fileprivate struct PreviewAppearanceRequest: Equatable {
     let theme: AppTheme
     let zoomScale: Double
     let codeFontSize: Double
-    let previewWidthPercent: Double
+    let contentWidthPercent: Double
     let usePointerCursors: Bool
     let fontSmoothing: Bool
 

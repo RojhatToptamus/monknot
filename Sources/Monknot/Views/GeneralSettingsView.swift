@@ -6,7 +6,7 @@ struct GeneralSettingsView: View {
     @AppStorage("Monknot.usePointerCursors") private var usePointerCursors = false
     @AppStorage("Monknot.reopenLastWorkspace") private var reopenLastWorkspace = true
     @AppStorage("Monknot.fontSmoothing") private var fontSmoothing = true
-    @AppStorage("Monknot.previewWidthPercent") private var previewWidthPercent = 88.0
+    @AppStorage(ContentWidthPreference.key) private var contentWidthPercent = ContentWidthPreference.initialValue()
     @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -44,10 +44,10 @@ struct GeneralSettingsView: View {
             SettingsGroupCard(theme: uiTheme) {
                 SettingsSliderRow(
                     theme: uiTheme,
-                    title: "Preview width",
-                    detail: "Share of the editor pane",
-                    value: $previewWidthPercent,
-                    range: 55...100,
+                    title: "Content Width",
+                    detail: "Share of the document pane",
+                    value: $contentWidthPercent,
+                    range: ContentWidthPreference.allowedRange,
                     suffix: "%"
                 )
 
