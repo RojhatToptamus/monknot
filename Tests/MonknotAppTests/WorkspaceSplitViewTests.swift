@@ -14,6 +14,17 @@ final class WorkspaceSplitViewTests: XCTestCase {
         XCTAssertTrue(controller.terminalHostingController.sizingOptions.isEmpty)
     }
 
+    func testNativeSplitDelegateExposesOnlyOuterPanesAsCollapsible() {
+        let controller = makeController()
+        _ = controller.view
+        let panes = controller.splitView.arrangedSubviews
+
+        XCTAssertEqual(panes.count, 3)
+        XCTAssertTrue(controller.splitView(controller.splitView, canCollapseSubview: panes[0]))
+        XCTAssertFalse(controller.splitView(controller.splitView, canCollapseSubview: panes[1]))
+        XCTAssertTrue(controller.splitView(controller.splitView, canCollapseSubview: panes[2]))
+    }
+
     func testOpeningSettingsWindowLetsMountedWorkspaceLayoutBecomeQuiescent() throws {
         let defaultsName = "WorkspaceSplitViewTests.Settings.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsName))
@@ -971,101 +982,6 @@ final class WorkspaceSplitViewTests: XCTestCase {
             paneWidth(controller.terminalItem, in: controller),
             usefulWidth,
             accuracy: controller.splitView.dividerThickness + 1
-        )
-    }
-
-    func testNativeTerminalSnapReversalDoesNotForceCollapseAfterAppKitReopensItem() throws {
-        let recorder = PresentationRecorder()
-        let controller = makeController(sidebarPresented: false, recorder: recorder)
-        let window = mount(controller, width: 720)
-        let visibleFrame = NSScreen.screens.first?.visibleFrame ?? .zero
-        window.setFrameOrigin(NSPoint(x: visibleFrame.minX - 300, y: visibleFrame.minY))
-
-        controller.splitView.setPosition(controller.splitView.bounds.width - 350, ofDividerAt: 1)
-        layout(window, controller)
-        let usefulWidth = paneWidth(controller.terminalItem, in: controller)
-        recorder.terminalEvents.removeAll()
-
-        let reopener = OneShotSplitItemReopener()
-        let observation = controller.terminalItem.observe(\.isCollapsed, options: [.new]) { item, _ in
-            MainActor.assumeIsolated {
-                reopener.reopenIfNeeded(item)
-            }
-        }
-        defer { observation.invalidate() }
-
-        try dragDivider(
-            1,
-            through: [
-                controller.splitView.bounds.width
-                    - WorkspaceSplitMetrics.terminalMinimumWidth * 0.4,
-                controller.splitView.bounds.width - usefulWidth,
-            ],
-            in: controller,
-            window: window
-        )
-        layout(window, controller)
-
-        XCTAssertTrue(reopener.didReopen)
-        XCTAssertFalse(controller.terminalItem.isCollapsed)
-        XCTAssertTrue(controller.preferredTerminalPresentation)
-        XCTAssertEqual(
-            recorder.terminalEvents.last,
-            PresentationEvent(isPresented: true, userInitiated: true)
-        )
-        XCTAssertEqual(
-            recorder.terminalEvents.filter(\.userInitiated),
-            [PresentationEvent(isPresented: true, userInitiated: true)]
-        )
-        XCTAssertEqual(
-            paneWidth(controller.terminalItem, in: controller),
-            usefulWidth,
-            accuracy: controller.splitView.dividerThickness + 1
-        )
-    }
-
-    func testNativeTerminalSnapSmallReversalRemainsCollapsedAfterAppKitReopensItem() throws {
-        let recorder = PresentationRecorder()
-        let controller = makeController(sidebarPresented: false, recorder: recorder)
-        let window = mount(controller, width: 720)
-        let visibleFrame = NSScreen.screens.first?.visibleFrame ?? .zero
-        window.setFrameOrigin(NSPoint(x: visibleFrame.minX - 300, y: visibleFrame.minY))
-
-        controller.splitView.setPosition(controller.splitView.bounds.width - 350, ofDividerAt: 1)
-        layout(window, controller)
-        recorder.terminalEvents.removeAll()
-
-        let reopener = OneShotSplitItemReopener()
-        let observation = controller.terminalItem.observe(\.isCollapsed, options: [.new]) { item, _ in
-            MainActor.assumeIsolated {
-                reopener.reopenIfNeeded(item)
-            }
-        }
-        defer { observation.invalidate() }
-
-        try dragDivider(
-            1,
-            through: [
-                controller.splitView.bounds.width
-                    - WorkspaceSplitMetrics.terminalMinimumWidth * 0.4,
-                controller.splitView.bounds.width
-                    - WorkspaceSplitMetrics.terminalMinimumWidth * 0.75,
-            ],
-            in: controller,
-            window: window
-        )
-        layout(window, controller)
-
-        XCTAssertTrue(reopener.didReopen)
-        XCTAssertTrue(controller.terminalItem.isCollapsed)
-        XCTAssertFalse(controller.preferredTerminalPresentation)
-        XCTAssertEqual(
-            recorder.terminalEvents.last,
-            PresentationEvent(isPresented: false, userInitiated: true)
-        )
-        XCTAssertEqual(
-            recorder.terminalEvents.filter(\.userInitiated),
-            [PresentationEvent(isPresented: false, userInitiated: true)]
         )
     }
 
@@ -2810,24 +2726,10 @@ final class WorkspaceSplitViewTests: XCTestCase {
         in controller: TestWorkspaceSplitViewController,
         window: NSWindow
     ) throws {
-        try dragDivider(
-            dividerIndex,
-            through: [destinationX],
-            in: controller,
-            window: window
-        )
-    }
-
-    private func dragDivider(
-        _ dividerIndex: Int,
-        through destinationXs: [CGFloat],
-        in controller: TestWorkspaceSplitViewController,
-        window: NSWindow
-    ) throws {
         let splitView = try XCTUnwrap(controller.splitView as? WorkspaceNativeSplitView)
         try dragDivider(
             dividerIndex,
-            through: destinationXs,
+            to: destinationX,
             in: splitView,
             window: window
         )
@@ -2836,20 +2738,6 @@ final class WorkspaceSplitViewTests: XCTestCase {
     private func dragDivider(
         _ dividerIndex: Int,
         to destinationX: CGFloat,
-        in splitView: WorkspaceNativeSplitView,
-        window: NSWindow
-    ) throws {
-        try dragDivider(
-            dividerIndex,
-            through: [destinationX],
-            in: splitView,
-            window: window
-        )
-    }
-
-    private func dragDivider(
-        _ dividerIndex: Int,
-        through destinationXs: [CGFloat],
         in splitView: WorkspaceNativeSplitView,
         window: NSWindow
     ) throws {
@@ -2864,26 +2752,21 @@ final class WorkspaceSplitViewTests: XCTestCase {
             NSPoint(x: hitRect.midX, y: splitView.bounds.midY),
             to: nil
         )
-        let destinations = destinationXs.map { destinationX in
-            splitView.convert(
-                NSPoint(
-                    x: destinationX + pointerOffsetFromDivider,
-                    y: splitView.bounds.midY
-                ),
-                to: nil
-            )
-        }
-        let finalDestination = try XCTUnwrap(destinations.last)
-        let drags = try destinations.map { destination in
-            try XCTUnwrap(mouseEvent(
-                type: .leftMouseDragged,
-                location: destination,
-                windowNumber: window.windowNumber
-            ))
-        }
+        let destination = splitView.convert(
+            NSPoint(
+                x: destinationX + pointerOffsetFromDivider,
+                y: splitView.bounds.midY
+            ),
+            to: nil
+        )
+        let drag = try XCTUnwrap(mouseEvent(
+            type: .leftMouseDragged,
+            location: destination,
+            windowNumber: window.windowNumber
+        ))
         let up = try XCTUnwrap(mouseEvent(
             type: .leftMouseUp,
-            location: finalDestination,
+            location: destination,
             windowNumber: window.windowNumber
         ))
         let down = try XCTUnwrap(mouseEvent(
@@ -2892,9 +2775,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
             windowNumber: window.windowNumber
         ))
 
-        for drag in drags {
-            NSApp.postEvent(drag, atStart: false)
-        }
+        NSApp.postEvent(drag, atStart: false)
         NSApp.postEvent(up, atStart: false)
         splitView.mouseDown(with: down)
     }
@@ -2986,17 +2867,6 @@ private struct PresentationEvent: Equatable {
 private final class PresentationRecorder {
     var sidebarEvents: [PresentationEvent] = []
     var terminalEvents: [PresentationEvent] = []
-}
-
-@MainActor
-private final class OneShotSplitItemReopener {
-    private(set) var didReopen = false
-
-    func reopenIfNeeded(_ item: NSSplitViewItem) {
-        guard item.isCollapsed, !didReopen else { return }
-        didReopen = true
-        item.isCollapsed = false
-    }
 }
 
 @MainActor

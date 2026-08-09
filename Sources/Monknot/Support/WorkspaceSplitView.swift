@@ -377,10 +377,6 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
     private var collapsedTerminalWidth: CGFloat?
     private var isReconcilingPresentation = false
     private var isChangingPressureDuringConstraint = false
-    // macOS 15 can restore a directly snapped pane when native mouse
-    // tracking ends. Retain only that active gesture's collapse decision so it
-    // can be reconciled with the native item before reporting user intent.
-    private var directSnapCollapseDividerIndex: Int?
     private let migratesLegacyLayout: Bool
     private let workspaceSplitView: WorkspaceNativeSplitView
 
@@ -550,6 +546,17 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
 
     override func splitView(
         _ splitView: NSSplitView,
+        canCollapseSubview subview: NSView
+    ) -> Bool {
+        let systemCanCollapse = super.splitView(splitView, canCollapseSubview: subview)
+        guard splitView.arrangedSubviews.count == 3 else { return systemCanCollapse }
+        return systemCanCollapse
+            || (subview === splitView.arrangedSubviews[0] && sidebarItem.canCollapse)
+            || (subview === splitView.arrangedSubviews[2] && terminalItem.canCollapse)
+    }
+
+    override func splitView(
+        _ splitView: NSSplitView,
         constrainSplitPosition proposedPosition: CGFloat,
         ofSubviewAt dividerIndex: Int
     ) -> CGFloat {
@@ -568,20 +575,11 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         let availableWidth = availableLayoutWidth
 
         if dividerIndex == 0 {
-            if sidebarItem.isCollapsed || directSnapCollapseDividerIndex == dividerIndex {
-                guard proposedPosition >= sidebarMinimum else {
-                    if !sidebarItem.isCollapsed {
-                        setCollapsed(true, for: sidebarItem, animated: false)
-                    }
-                    return 0
-                }
-                directSnapCollapseDividerIndex = nil
-                if sidebarItem.isCollapsed {
-                    setCollapsed(false, for: sidebarItem, animated: false)
-                }
+            if sidebarItem.isCollapsed {
+                guard proposedPosition >= sidebarMinimum else { return 0 }
+                setCollapsed(false, for: sidebarItem, animated: false)
             } else if proposedPosition
                 < sidebarMinimum * WorkspaceSplitMetrics.snapThresholdFraction {
-                directSnapCollapseDividerIndex = dividerIndex
                 setCollapsed(true, for: sidebarItem, animated: false)
                 return 0
             }
@@ -609,21 +607,14 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
             let maximumDividerForTerminalMinimum = availableWidth
                 - terminalMinimum
                 - dividerWidth
-            if terminalItem.isCollapsed || directSnapCollapseDividerIndex == dividerIndex {
+            if terminalItem.isCollapsed {
                 guard proposedPosition <= maximumDividerForTerminalMinimum else {
-                    if !terminalItem.isCollapsed {
-                        setCollapsed(true, for: terminalItem, animated: false)
-                    }
                     return availableWidth - dividerWidth
                 }
-                directSnapCollapseDividerIndex = nil
-                if terminalItem.isCollapsed {
-                    setCollapsed(false, for: terminalItem, animated: false)
-                }
+                setCollapsed(false, for: terminalItem, animated: false)
             } else if proposedPosition > availableWidth
                 - terminalMinimum * WorkspaceSplitMetrics.snapThresholdFraction
                 - dividerWidth {
-                directSnapCollapseDividerIndex = dividerIndex
                 setCollapsed(true, for: terminalItem, animated: false)
                 return availableWidth - dividerWidth
             }
@@ -1327,15 +1318,6 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
 
     private func dividerDragDidFinish(_ dividerIndex: Int, widthBeforeDrag: CGFloat?) {
         let draggedItem = dividerIndex == 0 ? sidebarItem : terminalItem
-        let directlySnappedClosed = directSnapCollapseDividerIndex == dividerIndex
-        directSnapCollapseDividerIndex = nil
-        if directlySnappedClosed, !draggedItem.isCollapsed {
-            let wasReconcilingPresentation = isReconcilingPresentation
-            isReconcilingPresentation = true
-            setCollapsed(true, for: draggedItem, animated: false)
-            isReconcilingPresentation = wasReconcilingPresentation
-        }
-
         if let widthBeforeDrag {
             if draggedItem.isCollapsed {
                 setCollapsedWidth(widthBeforeDrag, for: draggedItem)
