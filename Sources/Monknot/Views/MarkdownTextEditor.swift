@@ -27,6 +27,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
     @Binding var text: String
     let theme: AppTheme
     let fontSize: CGFloat
+    let zoomScale: Double
+    let contentWidthPercent: Double
     let fontSmoothing: Bool
     let scrollPosition: DocumentScrollPosition?
     let syncScrollEnabled: Bool
@@ -44,6 +46,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         text: Binding<String>,
         theme: AppTheme,
         fontSize: CGFloat,
+        zoomScale: Double,
+        contentWidthPercent: Double,
         fontSmoothing: Bool,
         scrollPosition: DocumentScrollPosition?,
         sourceLocation: Binding<MarkdownSourceLocation?>,
@@ -60,6 +64,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         self._text = text
         self.theme = theme
         self.fontSize = fontSize
+        self.zoomScale = zoomScale
+        self.contentWidthPercent = contentWidthPercent
         self.fontSmoothing = fontSmoothing
         self.scrollPosition = scrollPosition
         self.syncScrollEnabled = syncScrollEnabled
@@ -103,7 +109,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
-        textView.textContainerInset = NSSize(width: 16, height: 18)
+        textView.zoomScale = zoomScale
+        textView.contentWidthPercent = contentWidthPercent
+        textView.refreshContentWidthLayout()
         let resolvedFont = font(for: theme, size: fontSize)
         textView.font = resolvedFont
         textView.textContainer?.widthTracksTextView = true
@@ -154,6 +162,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
             textView.font = resolvedFont
         }
         if let textView = textView as? MarkdownNSTextView {
+            textView.zoomScale = zoomScale
+            textView.contentWidthPercent = contentWidthPercent
             if context.coordinator.shouldApplyFontSmoothing(fontSmoothing) {
                 textView.fontSmoothingEnabled = fontSmoothing
             }
@@ -1048,6 +1058,18 @@ private final class MarkdownNSTextView: NSTextView {
     var markdownShortcutsEnabled = false
     var wikilinkDocuments: [WorkspaceDocument] = []
     var commandHandler: ((MarkdownTextEditorCommand) -> Bool)?
+    var zoomScale = WorkspaceZoomPolicy.defaultValue {
+        didSet {
+            guard zoomScale != oldValue else { return }
+            refreshContentWidthLayout()
+        }
+    }
+    var contentWidthPercent = ContentWidthPreference.defaultValue {
+        didSet {
+            guard contentWidthPercent != oldValue else { return }
+            refreshContentWidthLayout()
+        }
+    }
     private var wikilinkSuggestionIndex = 0
     private var lastWikilinkPartial = ""
     var fontSmoothingEnabled = true {
@@ -1055,6 +1077,25 @@ private final class MarkdownNSTextView: NSTextView {
             guard fontSmoothingEnabled != oldValue else { return }
             needsDisplay = true
         }
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        refreshContentWidthLayout()
+    }
+
+    func refreshContentWidthLayout() {
+        textContainer?.lineFragmentPadding = ContentWidthPreference.editorLineFragmentPadding(
+            zoomScale: zoomScale
+        )
+        textContainerInset = NSSize(
+            width: ContentWidthPreference.editorHorizontalInset(
+                viewportWidth: bounds.width,
+                contentWidthPercent: contentWidthPercent,
+                zoomScale: zoomScale
+            ),
+            height: ContentWidthPreference.editorVerticalInset(zoomScale: zoomScale)
+        )
     }
 
     override func keyDown(with event: NSEvent) {

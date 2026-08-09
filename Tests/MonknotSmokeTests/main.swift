@@ -191,7 +191,7 @@ let preferenceHTML = try renderService.htmlDocument(
     appTheme: AppTheme.defaultDark,
     zoomScale: 1,
     baseFontSize: 16,
-    previewWidthPercent: 88,
+    contentWidthPercent: 88,
     usePointerCursors: true,
     fontSmoothing: false,
     baseURL: root

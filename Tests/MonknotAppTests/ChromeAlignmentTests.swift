@@ -1,7 +1,7 @@
 import AppKit
 import MonknotCore
-import ObjectiveC.runtime
 import SwiftUI
+import WebKit
 import XCTest
 @testable import MonknotApp
 
@@ -102,6 +102,30 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertTrue(window.firstResponder === documentEditor)
     }
 
+    func testTerminalFocusRestorerDiscardCancelsAnInfeasibleRevealCapture() async {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let documentEditor = NSTextView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
+        let currentResponder = NSTextView(frame: NSRect(x: 320, y: 0, width: 320, height: 480))
+        window.contentView?.addSubview(documentEditor)
+        window.contentView?.addSubview(currentResponder)
+        XCTAssertTrue(window.makeFirstResponder(documentEditor))
+
+        let restorer = TerminalFocusRestorer()
+        restorer.capture(from: window)
+        XCTAssertTrue(window.makeFirstResponder(currentResponder))
+
+        restorer.discard()
+        restorer.restore()
+        await Task.yield()
+
+        XCTAssertTrue(window.firstResponder === currentResponder)
+    }
+
     func testTerminalFocusRestorerUsesSourceFirstRegisteredTargetAfterMenuFocusLoss() async {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
@@ -129,6 +153,83 @@ final class ChromeAlignmentTests: XCTestCase {
         await Task.yield()
 
         XCTAssertTrue(window.firstResponder === documentEditor)
+    }
+
+    func testTerminalFocusRestorerFallsBackWhenTheCapturedDocumentViewWasReplaced() async {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let originalEditor = NSTextView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
+        originalEditor.identifier = .monknotDocumentFocusTarget
+        let replacementEditor = NSTextView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
+        replacementEditor.identifier = .monknotDocumentFocusTarget
+        let terminalResponder = NSTextView(frame: NSRect(x: 320, y: 0, width: 320, height: 480))
+        window.contentView?.addSubview(originalEditor)
+        window.contentView?.addSubview(terminalResponder)
+        XCTAssertTrue(window.makeFirstResponder(originalEditor))
+
+        let restorer = TerminalFocusRestorer()
+        restorer.capture(from: window)
+        originalEditor.removeFromSuperview()
+        window.contentView?.addSubview(replacementEditor)
+        XCTAssertTrue(window.makeFirstResponder(terminalResponder))
+
+        restorer.restore(fallbackFrom: window)
+        await Task.yield()
+
+        XCTAssertTrue(window.firstResponder === replacementEditor)
+    }
+
+    func testHiddenTerminalLoadDoesNotStealDocumentFocus() async {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let documentEditor = NSTextView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
+        let hiddenTerminalContainer = NSView(
+            frame: NSRect(x: 320, y: 0, width: 320, height: 480)
+        )
+        let terminalWebView = WKWebView(frame: hiddenTerminalContainer.bounds)
+        hiddenTerminalContainer.addSubview(terminalWebView)
+        hiddenTerminalContainer.isHidden = true
+        window.contentView?.addSubview(documentEditor)
+        window.contentView?.addSubview(hiddenTerminalContainer)
+        XCTAssertTrue(window.makeFirstResponder(documentEditor))
+
+        let coordinator = TerminalWebView.Coordinator(session: TerminalSessionStore())
+        coordinator.webView = terminalWebView
+        coordinator.webView(terminalWebView, didFinish: nil)
+        await Task.yield()
+
+        XCTAssertTrue(window.firstResponder === documentEditor)
+    }
+
+    func testVisibleTerminalLoadFocusesTheTerminal() async {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let documentEditor = NSTextView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
+        let terminalWebView = WKWebView(
+            frame: NSRect(x: 320, y: 0, width: 320, height: 480)
+        )
+        window.contentView?.addSubview(documentEditor)
+        window.contentView?.addSubview(terminalWebView)
+        XCTAssertTrue(window.makeFirstResponder(documentEditor))
+
+        let coordinator = TerminalWebView.Coordinator(session: TerminalSessionStore())
+        coordinator.webView = terminalWebView
+        coordinator.webView(terminalWebView, didFinish: nil)
+        await Task.yield()
+
+        XCTAssertTrue(window.firstResponder === terminalWebView)
     }
 
     func testThemeEditComparisonIgnoresHexLetterCase() {
@@ -272,6 +373,21 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertEqual(store.darkThemeID, "harbor-dark")
         XCTAssertTrue(ThemeSlot.light.themes.contains { $0.name == "Harbor" })
         XCTAssertTrue(ThemeSlot.dark.themes.contains { $0.name == "Harbor" })
+    }
+
+    func testThemeSettingsPreservesAnExistingValidDarkThemeChoice() throws {
+        let suiteName = "MonknotTests.SavedDarkTheme.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let savedThemeID = try XCTUnwrap(
+            AppTheme.darkThemes.first { $0.id != AppTheme.defaultDark.id }?.id
+        )
+        defaults.set(savedThemeID, forKey: "Monknot.darkThemeID")
+
+        let store = ThemeSettingsStore(defaults: defaults)
+
+        XCTAssertEqual(store.darkThemeID, savedThemeID)
+        XCTAssertEqual(defaults.string(forKey: "Monknot.darkThemeID"), savedThemeID)
     }
 
     func testRemovedThemeSelectionAndCustomizationFallBackToHarbor() throws {
@@ -698,6 +814,27 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertNotNil(window.standardWindowButton(.zoomButton))
     }
 
+    func testWindowBackgroundDoesNotTurnTopBarControlsIntoDragOrZoomTargets() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 620),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isMovableByWindowBackground = true
+        let host = NSHostingView(rootView: Color.clear.background(
+            WindowBackgroundDragEnabler(surfaceColor: .black)
+        ))
+        window.contentView = host
+
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+
+        XCTAssertFalse(
+            window.isMovableByWindowBackground,
+            "Only explicit unused title-bar gaps may move or zoom the window"
+        )
+    }
+
     func testSettingsChromeEnablesEveryNativeWindowControl() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 780, height: 720),
@@ -972,22 +1109,6 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertLessThanOrEqual(longWidth - shortWidth, MonknotMetrics.tabMaxWidthBase)
     }
 
-    func testTerminalDrawerUsesFullDetailTakeoverBelowReadableSplitWidth() {
-        let threshold = MonknotMetrics.editorMinimumReadableWidth
-            + MonknotMetrics.terminalDrawerMinWidth
-        for availableWidth in [CGFloat(557), threshold - 1] {
-            let layout = TerminalDrawerLayoutPolicy.resolve(
-                availableWidth: availableWidth,
-                preferredDrawerWidth: 600
-            )
-
-            XCTAssertEqual(layout.presentation, .takeover)
-            XCTAssertEqual(layout.drawerWidth, availableWidth, accuracy: 0.001)
-            XCTAssertEqual(layout.maximumDrawerWidth, availableWidth, accuracy: 0.001)
-            XCTAssertFalse(layout.isResizable)
-        }
-    }
-
     func testDocumentTabsSizeToTheirMeasuredTitles() {
         let theme = AppTheme.defaultDark
         let short = DocumentTabWidthPolicy.preferredWidth(
@@ -1037,38 +1158,6 @@ final class ChromeAlignmentTests: XCTestCase {
                 accuracy: 0.001
             )
         }
-    }
-
-    func testTerminalDrawerSideBySideLayoutProtectsEditorAndPanelMinimums() {
-        let threshold = MonknotMetrics.editorMinimumReadableWidth
-            + MonknotMetrics.terminalDrawerMinWidth
-        let thresholdLayout = TerminalDrawerLayoutPolicy.resolve(
-            availableWidth: threshold,
-            preferredDrawerWidth: 420
-        )
-        let preferredLayout = TerminalDrawerLayoutPolicy.resolve(
-            availableWidth: 1_000,
-            preferredDrawerWidth: 420
-        )
-        let maximumLayout = TerminalDrawerLayoutPolicy.resolve(
-            availableWidth: 1_240,
-            preferredDrawerWidth: 900
-        )
-
-        XCTAssertEqual(thresholdLayout.presentation, .sideBySide)
-        XCTAssertEqual(
-            thresholdLayout.drawerWidth,
-            MonknotMetrics.terminalDrawerMinWidth,
-            accuracy: 0.001
-        )
-        XCTAssertFalse(thresholdLayout.isResizable)
-        XCTAssertEqual(preferredLayout.drawerWidth, 420, accuracy: 0.001)
-        XCTAssertTrue(preferredLayout.isResizable)
-        XCTAssertEqual(
-            maximumLayout.drawerWidth,
-            MonknotMetrics.terminalDrawerMaxWidth,
-            accuracy: 0.001
-        )
     }
 
     func testDisabledWindowNavigationAvoidsDoubleAttenuation() {
@@ -1276,20 +1365,158 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertEqual(resolvedFrame, proposedFrame.insetBy(dx: 12, dy: 12))
     }
 
-    func testExplicitTitleBarGapIsMovableWithoutCustomDoubleClickHandling() {
-        let dragView = WindowTitleBarDragArea.NativeTitleBarDragView(frame: .zero)
-        let selector = #selector(NSView.mouseDown(with:))
-        let nativeImplementation = class_getMethodImplementation(NSView.self, selector)
-        let dragImplementation = class_getMethodImplementation(
-            WindowTitleBarDragArea.NativeTitleBarDragView.self,
-            selector
+    func testExplicitTitleBarGapDragsAndDoubleClickZoomsThroughAppKit() {
+        let window = WindowInteractionRecordingWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 620),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        let dragView = WindowTitleBarDragArea.NativeTitleBarDragView(
+            frame: NSRect(x: 0, y: 0, width: 300, height: 44)
+        )
+        window.contentView = dragView
+
+        let firstClick = titleBarMouseEvent(clickCount: 1, windowNumber: window.windowNumber)
+        XCTAssertFalse(window.isKeyWindow)
+        XCTAssertTrue(dragView.acceptsFirstMouse(for: firstClick))
+
+        dragView.mouseDown(with: firstClick)
+        XCTAssertEqual(window.dragCallCount, 1)
+        XCTAssertEqual(window.zoomCallCount, 0)
+
+        dragView.mouseDown(with: titleBarMouseEvent(clickCount: 2, windowNumber: window.windowNumber))
+        XCTAssertEqual(window.dragCallCount, 1)
+        XCTAssertEqual(window.zoomCallCount, 1)
+    }
+
+    func testTerminalHeaderDragGapDragsWithoutZoomingTheWindow() throws {
+        let host = NSHostingView(
+            rootView: WindowTitleBarDragArea(doubleClickZoomsWindow: false)
+        )
+        host.frame = NSRect(x: 0, y: 0, width: 300, height: 44)
+        let window = WindowInteractionRecordingWindow(
+            contentRect: host.frame,
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = host
+        window.layoutIfNeeded()
+        host.layoutSubtreeIfNeeded()
+        let dragView = try XCTUnwrap(
+            host.allDescendantsForTesting()
+                .compactMap { $0 as? WindowTitleBarDragArea.NativeTitleBarDragView }
+                .first
         )
 
-        XCTAssertTrue(dragView.mouseDownCanMoveWindow)
+        dragView.mouseDown(with: titleBarMouseEvent(clickCount: 1, windowNumber: window.windowNumber))
+        dragView.mouseDown(with: titleBarMouseEvent(clickCount: 2, windowNumber: window.windowNumber))
+
+        XCTAssertEqual(window.dragCallCount, 1)
+        XCTAssertEqual(window.zoomCallCount, 0)
+    }
+
+    func testTopNavigationControlsRemainOutsideTheExplicitTitleBarDragGap() throws {
+        let theme = AppTheme.defaultDark
+        let chromeHeight = MonknotMetrics.chromeHeight(theme: theme, zoomScale: 1)
+        let actions = TopBarActionRecorder()
+        let topBar = TopNavigationBar(
+            editorMode: .constant(.source),
+            isSplitViewEnabled: .constant(false),
+            emptyStateTitle: "Monknot",
+            selectedDocument: nil,
+            isBusy: false,
+            isDocumentLoading: false,
+            isSaving: false,
+            theme: theme,
+            zoomScale: 1,
+            isTerminalPresented: false,
+            isSidebarVisible: true,
+            toggleTerminal: { actions.terminalToggleCount += 1 },
+            toggleSidebar: {},
+            toggleSplitView: {},
+            documentSearch: .constant(DocumentSearchState()),
+            tabs: [],
+            activeTabID: nil,
+            missingTabIDs: [],
+            saveState: { _ in .clean },
+            selectTab: { _ in },
+            closeTab: { _ in },
+            togglePinTab: { _ in },
+            reorderTab: { _, _ in }
+        )
+        let host = NSHostingView(rootView: topBar.frame(width: 1_200, height: chromeHeight))
+        host.frame = NSRect(x: 0, y: 0, width: 1_200, height: chromeHeight)
+        let window = NSWindow(
+            contentRect: host.frame,
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = host
+        window.layoutIfNeeded()
+        host.layoutSubtreeIfNeeded()
+
+        let dragView = try XCTUnwrap(
+            host.allDescendantsForTesting()
+                .compactMap { $0 as? WindowTitleBarDragArea.NativeTitleBarDragView }
+                .first
+        )
+        let dragFrame = dragView.convert(dragView.bounds, to: host)
+        XCTAssertGreaterThan(dragFrame.minX, host.bounds.minX)
+        XCTAssertLessThan(dragFrame.maxX, host.bounds.maxX)
+
+        let otherWindow = NSWindow(
+            contentRect: NSRect(x: 40, y: 40, width: 200, height: 120),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let previousActivationPolicy = NSApp.activationPolicy()
+        _ = NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+
+        let terminalControlPoint = NSPoint(
+            x: host.bounds.maxX - 20,
+            y: host.bounds.midY
+        )
+        let locationInWindow = host.convert(terminalControlPoint, to: nil)
+        let controlHitView = try XCTUnwrap(
+            host.hitTest(terminalControlPoint)
+        )
+        XCTAssertFalse(controlHitView.isDescendantForTesting(of: dragView))
+
+        otherWindow.makeKeyAndOrderFront(nil)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+        defer {
+            otherWindow.orderOut(nil)
+            window.orderOut(nil)
+            _ = NSApp.setActivationPolicy(previousActivationPolicy)
+        }
+        XCTAssertFalse(window.isKeyWindow)
+
+        let down = try XCTUnwrap(mouseEventForChromeTesting(
+            type: .leftMouseDown,
+            location: locationInWindow,
+            windowNumber: window.windowNumber
+        ))
+        let up = try XCTUnwrap(mouseEventForChromeTesting(
+            type: .leftMouseUp,
+            location: locationInWindow,
+            windowNumber: window.windowNumber
+        ))
+        NSApp.sendEvent(down)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02))
+        NSApp.sendEvent(up)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+
         XCTAssertEqual(
-            nativeImplementation,
-            dragImplementation,
-            "The drag view must leave double-click interpretation to AppKit"
+            actions.terminalToggleCount,
+            1,
+            "A top-bar control should handle the first click while activating an inactive window"
         )
     }
 
@@ -1419,6 +1646,61 @@ final class ChromeAlignmentTests: XCTestCase {
                 )
             }
         }
+    }
+
+    func testConstrainedMaximumZoomKeepsTheTabViewportInsideTheTopBarAllocation() throws {
+        let theme = AppTheme.defaultDark
+        let zoomScale = WorkspaceZoomPolicy.maximum
+        let chromeHeight = MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
+        let allocationWidth: CGFloat = 1_230
+        let tab = WorkspaceTabItem(
+            documentID: "/README.md",
+            displayName: "README.md",
+            relativePath: "README.md",
+            kind: .markdown
+        )
+        let topBar = TopNavigationBar(
+            editorMode: .constant(.source),
+            isSplitViewEnabled: .constant(false),
+            emptyStateTitle: "Monknot",
+            selectedDocument: nil,
+            isBusy: false,
+            isDocumentLoading: false,
+            isSaving: false,
+            theme: theme,
+            zoomScale: zoomScale,
+            isTerminalPresented: true,
+            isSidebarVisible: true,
+            toggleTerminal: {},
+            toggleSidebar: {},
+            toggleSplitView: {},
+            documentSearch: .constant(DocumentSearchState()),
+            tabs: [tab],
+            activeTabID: tab.documentID,
+            missingTabIDs: [],
+            saveState: { _ in .clean },
+            selectTab: { _ in },
+            closeTab: { _ in },
+            togglePinTab: { _ in },
+            reorderTab: { _, _ in }
+        )
+        let host = NSHostingView(
+            rootView: topBar.frame(width: allocationWidth, height: chromeHeight)
+        )
+        host.frame = NSRect(x: 0, y: 0, width: allocationWidth, height: chromeHeight)
+        host.layoutSubtreeIfNeeded()
+
+        let tabScroller = try XCTUnwrap(
+            host.allDescendantsForTesting().compactMap { $0 as? NSScrollView }.first
+        )
+        let viewportFrame = tabScroller.convert(tabScroller.bounds, to: host)
+        XCTAssertGreaterThan(viewportFrame.width, 0)
+        XCTAssertGreaterThan(viewportFrame.height, 0)
+        XCTAssertGreaterThanOrEqual(viewportFrame.minX, host.bounds.minX - 1)
+        XCTAssertLessThanOrEqual(viewportFrame.maxX, host.bounds.maxX + 1)
+        XCTAssertGreaterThanOrEqual(viewportFrame.minY, host.bounds.minY - 1)
+        XCTAssertLessThanOrEqual(viewportFrame.maxY, host.bounds.maxY + 1)
+        XCTAssertEqual(host.fittingSize.height, chromeHeight, accuracy: 0.01)
     }
 
     func testDocumentSearchKeepsScrollableFileTabsMountedInThePrimaryRow() {
@@ -1803,10 +2085,37 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertTrue(html.contains("padding: 10px 12px;"))
         XCTAssertFalse(html.contains("padding: 18px 20px;"))
         XCTAssertTrue(html.contains("new ResizeObserver"))
+        XCTAssertFalse(
+            html.contains("postResize();\n            term.focus();"),
+            "A pressure-hidden terminal must not focus itself outside the native visibility gate"
+        )
         XCTAssertTrue(html.contains("width: 12px;"))
         XCTAssertTrue(html.contains("--terminal-bg: \(theme.terminalSurfaceHex);"))
         XCTAssertTrue(html.contains("background: '\(theme.terminalSurfaceHex)'"))
         XCTAssertFalse(html.contains("background: '\(theme.background)'"))
+    }
+
+    func testTerminalResizeKeepsTheFirstScrollbackAnchorAcrossObserverCallbacks() {
+        let html = TerminalWebView.html(
+            theme: .defaultDark,
+            fontSize: 13.5,
+            usePointerCursors: true,
+            fontSmoothing: true
+        )
+
+        XCTAssertTrue(html.contains("let pendingResizeFrame = null;"))
+        XCTAssertTrue(html.contains("let pendingScrollDistanceFromBottom = null;"))
+        XCTAssertTrue(
+            html.contains("options.preserveScroll && pendingScrollDistanceFromBottom === null")
+        )
+        XCTAssertTrue(html.contains("if (pendingResizeFrame !== null) return;"))
+        XCTAssertTrue(
+            html.contains("term.buffer.active.baseY - distanceFromBottom")
+        )
+        XCTAssertTrue(html.contains("const wasAtBottom = buffer.baseY - buffer.viewportY <= 0;"))
+        XCTAssertTrue(html.contains("if (wasAtBottom) term.scrollToBottom();"))
+        XCTAssertFalse(html.contains("Math.min(viewportY, term.buffer.active.baseY)"))
+        XCTAssertFalse(html.contains("term.write(data, () => {\n              term.scrollToBottom();"))
     }
 
     func testTerminalFontUsesTheSameWorkspaceZoomAsDocumentContent() {
@@ -1862,6 +2171,15 @@ private func renderedTIFF(of view: NSView) throws -> Data {
 private extension NSView {
     func allDescendantsForTesting() -> [NSView] {
         subviews + subviews.flatMap { $0.allDescendantsForTesting() }
+    }
+
+    func isDescendantForTesting(of ancestor: NSView) -> Bool {
+        var candidate: NSView? = self
+        while let current = candidate {
+            if current === ancestor { return true }
+            candidate = current.superview
+        }
+        return false
     }
 
 }
@@ -1933,4 +2251,53 @@ private final class StandardFrameWindowDelegate: NSObject, NSWindowDelegate {
         standardFrameCallCount += 1
         return newFrame.insetBy(dx: 12, dy: 12)
     }
+}
+
+private final class WindowInteractionRecordingWindow: NSWindow {
+    private(set) var dragCallCount = 0
+    private(set) var zoomCallCount = 0
+
+    override func performDrag(with event: NSEvent) {
+        dragCallCount += 1
+    }
+
+    override func performZoom(_ sender: Any?) {
+        zoomCallCount += 1
+    }
+}
+
+private func titleBarMouseEvent(clickCount: Int, windowNumber: Int) -> NSEvent {
+    NSEvent.mouseEvent(
+        with: .leftMouseDown,
+        location: NSPoint(x: 10, y: 10),
+        modifierFlags: [],
+        timestamp: 0,
+        windowNumber: windowNumber,
+        context: nil,
+        eventNumber: 1,
+        clickCount: clickCount,
+        pressure: 1
+    )!
+}
+
+private func mouseEventForChromeTesting(
+    type: NSEvent.EventType,
+    location: NSPoint,
+    windowNumber: Int
+) -> NSEvent? {
+    NSEvent.mouseEvent(
+        with: type,
+        location: location,
+        modifierFlags: [],
+        timestamp: ProcessInfo.processInfo.systemUptime,
+        windowNumber: windowNumber,
+        context: nil,
+        eventNumber: 1,
+        clickCount: 1,
+        pressure: 1
+    )
+}
+
+private final class TopBarActionRecorder {
+    var terminalToggleCount = 0
 }

@@ -360,6 +360,7 @@ CORE_SOURCES=(
 
 APP_SOURCES=(
   "Sources/Monknot/App/MonknotApp.swift"
+  "Sources/Monknot/Models/ContentWidthPreference.swift"
   "Sources/Monknot/Models/DocumentSaveState.swift"
   "Sources/Monknot/Models/DocumentSearchState.swift"
   "Sources/Monknot/Models/DocumentViewportState.swift"

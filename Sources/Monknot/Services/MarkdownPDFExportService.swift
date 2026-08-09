@@ -39,7 +39,7 @@ final class MarkdownPDFExportService: NSObject, WKNavigationDelegate {
             appTheme: request.theme,
             zoomScale: request.options.resolvedScale,
             baseFontSize: request.options.textSizePoints,
-            previewWidthPercent: request.options.contentWidthPercent,
+            contentWidthPercent: request.options.contentWidthPercent,
             usePointerCursors: request.usePointerCursors,
             fontSmoothing: request.fontSmoothing,
             baseURL: request.baseURL

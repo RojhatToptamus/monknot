@@ -46,7 +46,10 @@ struct MonknotApp: App {
         }
 
         Settings {
-            PreferencesView(themeStore: themeStore)
+            PreferencesView(
+                themeStore: themeStore,
+                updater: updaterController.updater
+            )
         }
         .windowStyle(.titleBar)
         .defaultSize(

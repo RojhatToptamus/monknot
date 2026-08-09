@@ -8,6 +8,7 @@ struct HTMLPreviewView: NSViewRepresentable {
     let baseURL: URL?
     let theme: AppTheme
     let zoomScale: Double
+    let contentWidthPercent: Double
     let scrollPosition: DocumentScrollPosition?
     let syncScrollEnabled: Bool
     let syncScrollTargetLine: Int?
@@ -41,6 +42,7 @@ struct HTMLPreviewView: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.applyZoom(zoomScale, in: webView)
+        context.coordinator.applyContentWidth(contentWidthPercent, in: webView)
         context.coordinator.onScrollPositionChange = onScrollPositionChange
         context.coordinator.onVisibleSourceLineChange = onVisibleSourceLineChange
         context.coordinator.syncScrollEnabled = syncScrollEnabled
@@ -88,7 +90,9 @@ struct HTMLPreviewView: NSViewRepresentable {
               let searchCurrentIndex = 0;
 
               installSearchStyle();
+              installContentWidthStyle();
               window.monknotHTMLSearch = searchDocument;
+              window.monknotHTMLApplyContentWidth = applyContentWidth;
 
               window.monknotHTMLScrollToLine = scrollToSourceLine;
               window.monknotHTMLVisibleSourceLine = visibleSourceLine;
@@ -156,6 +160,29 @@ struct HTMLPreviewView: NSViewRepresentable {
                   }
                 `;
                 (document.head || document.documentElement).appendChild(style);
+              }
+
+              function installContentWidthStyle() {
+                if (document.getElementById("monknot-html-content-width-style")) return;
+                const style = document.createElement("style");
+                style.id = "monknot-html-content-width-style";
+                style.textContent = `
+                  body {
+                    box-sizing: border-box !important;
+                    max-width: var(--monknot-content-max-width, 100%) !important;
+                    margin-left: auto !important;
+                    margin-right: auto !important;
+                  }
+                `;
+                (document.head || document.documentElement).appendChild(style);
+              }
+
+              function applyContentWidth(percent) {
+                const value = Math.max(55, Math.min(100, Number(percent) || 100));
+                document.documentElement.style.setProperty(
+                  "--monknot-content-max-width",
+                  `${value}%`
+                );
               }
 
               function searchDocument(nextState = {}) {
@@ -315,6 +342,8 @@ struct HTMLPreviewView: NSViewRepresentable {
         private var pendingSyncScrollTargetLine: Int?
         private var isApplyingSyncScroll = false
         private var lastAppliedZoomScale: Double?
+        private var pendingContentWidthPercent = ContentWidthPreference.defaultValue
+        private var lastAppliedContentWidthPercent: Double?
         private(set) var isLoaded = false
 
         fileprivate func applyZoom(_ zoomScale: Double, in webView: WKWebView) {
@@ -322,6 +351,20 @@ struct HTMLPreviewView: NSViewRepresentable {
             guard lastAppliedZoomScale != clampedZoom else { return }
             lastAppliedZoomScale = clampedZoom
             webView.pageZoom = CGFloat(clampedZoom)
+        }
+
+        fileprivate func applyContentWidth(_ contentWidthPercent: Double, in webView: WKWebView) {
+            let clampedWidth = ContentWidthPreference.clamped(contentWidthPercent)
+            pendingContentWidthPercent = clampedWidth
+            guard isLoaded, lastAppliedContentWidthPercent != clampedWidth else { return }
+
+            webView.evaluateJavaScript(
+                "window.monknotHTMLApplyContentWidth && window.monknotHTMLApplyContentWidth(\(clampedWidth));"
+            ) { [weak self] _, error in
+                if error == nil {
+                    self?.lastAppliedContentWidthPercent = clampedWidth
+                }
+            }
         }
 
         fileprivate func prepareForDocument(_ nextDocumentID: String, in webView: WKWebView) -> Bool {
@@ -342,6 +385,7 @@ struct HTMLPreviewView: NSViewRepresentable {
             guard request != lastContentRequest || !isLoaded else { return false }
             lastContentRequest = request
             lastSearchRequest = nil
+            lastAppliedContentWidthPercent = nil
             isLoaded = false
             return true
         }
@@ -416,6 +460,7 @@ struct HTMLPreviewView: NSViewRepresentable {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             isLoaded = true
             webView.evaluateJavaScript("window.__monknotHTMLSourceLineCount = \(max(sourceLineCount, 1));")
+            applyContentWidth(pendingContentWidthPercent, in: webView)
             applySearch(pendingSearch ?? DocumentSearchState(), in: webView)
             applyPendingScrollPositionIfNeeded(in: webView)
             applySyncScrollTargetLine(pendingSyncScrollTargetLine, in: webView)

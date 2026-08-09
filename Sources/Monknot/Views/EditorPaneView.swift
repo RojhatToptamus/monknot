@@ -1,63 +1,10 @@
-import AppKit
 import MonknotCore
 import SwiftUI
-
-enum TerminalDrawerPresentation: Equatable {
-    case sideBySide
-    case takeover
-}
-
-struct TerminalDrawerLayout: Equatable {
-    let presentation: TerminalDrawerPresentation
-    let drawerWidth: CGFloat
-    let maximumDrawerWidth: CGFloat
-
-    var isResizable: Bool {
-        presentation == .sideBySide
-            && maximumDrawerWidth > MonknotMetrics.terminalDrawerMinWidth
-    }
-}
-
-enum TerminalDrawerLayoutPolicy {
-    static func resolve(
-        availableWidth: CGFloat,
-        preferredDrawerWidth: CGFloat
-    ) -> TerminalDrawerLayout {
-        let availableWidth = max(0, availableWidth)
-        let minimumSideBySideWidth = MonknotMetrics.editorMinimumReadableWidth
-            + MonknotMetrics.terminalDrawerMinWidth
-
-        guard availableWidth >= minimumSideBySideWidth else {
-            return TerminalDrawerLayout(
-                presentation: .takeover,
-                drawerWidth: availableWidth,
-                maximumDrawerWidth: availableWidth
-            )
-        }
-
-        let maximumDrawerWidth = min(
-            MonknotMetrics.terminalDrawerMaxWidth,
-            availableWidth - MonknotMetrics.editorMinimumReadableWidth
-        )
-        let drawerWidth = min(
-            max(preferredDrawerWidth, MonknotMetrics.terminalDrawerMinWidth),
-            maximumDrawerWidth
-        )
-
-        return TerminalDrawerLayout(
-            presentation: .sideBySide,
-            drawerWidth: drawerWidth,
-            maximumDrawerWidth: maximumDrawerWidth
-        )
-    }
-}
 
 struct EditorPaneView: View {
     @ObservedObject var store: WorkspaceStore
     @Binding var editorMode: EditorMode
     @Binding var isSplitViewEnabled: Bool
-    @AppStorage("Monknot.terminalDrawerWidth") private var terminalDrawerWidth = 420.0
-    @StateObject private var terminalSessions = TerminalSessionCollectionStore()
     @State private var markdownCommandSerial = 0
     @State private var markdownCommandRequest: MarkdownTextEditorCommandRequest?
     @State private var splitScrollSyncLock = false
@@ -68,7 +15,7 @@ struct EditorPaneView: View {
     let theme: AppTheme
     let zoomScale: Double
     let codeFontSize: CGFloat
-    let previewWidthPercent: Double
+    let contentWidthPercent: Double
     let showsDocumentOutline: Bool
     let usePointerCursors: Bool
     let fontSmoothing: Bool
@@ -77,7 +24,7 @@ struct EditorPaneView: View {
     let pdfUndoCommandSerial: Int
     let pdfRedoCommandSerial: Int
     let updatePDFAnnotationUndoState: (Bool, Bool) -> Void
-    @Binding var isTerminalPresented: Bool
+    let isTerminalPresented: Bool
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var previewLocation: MarkdownSourceLocation?
     @Binding var pdfSearchTarget: WorkspaceSearchPDFTarget?
@@ -89,48 +36,41 @@ struct EditorPaneView: View {
     let outlineItems: [MarkdownOutlineItem]
     let selectOutlineItem: (MarkdownOutlineItem) -> Void
     let onPreviewSourceJump: (MarkdownSourceLocation) -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        GeometryReader { proxy in
-            editorAndDrawer(in: proxy.size)
-        }
-        .background(theme.surfaceColor)
-        .onExitCommand {
-            if documentSearch.isPresented {
-                documentSearch.dismiss()
-                return
+        editorColumn
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(theme.surfaceColor)
+            .onExitCommand {
+                if documentSearch.isPresented {
+                    documentSearch.dismiss()
+                    return
+                }
+                guard isTerminalPresented else { return }
+                closeTerminal()
             }
-            guard isTerminalPresented else { return }
-            closeTerminal()
-        }
-        .onAppear {
-            terminalSessions.setDefaultDirectory(activeTerminalDirectory)
-            if let documentID = store.selectedDocument?.id,
-               supportsSplitViewRatioPersistence(forDocumentID: documentID) {
-                splitSourcePaneRatio = DocumentSplitViewPersistence.sourcePaneRatio(forDocumentPath: documentID)
+            .onAppear {
+                if let documentID = store.selectedDocument?.id,
+                   supportsSplitViewRatioPersistence(forDocumentID: documentID) {
+                    splitSourcePaneRatio = DocumentSplitViewPersistence.sourcePaneRatio(forDocumentPath: documentID)
+                }
             }
-        }
-        .onChange(of: store.workspaceURL) { _, _ in
-            terminalSessions.setDefaultDirectory(activeTerminalDirectory)
-        }
-        .onChange(of: store.selectedDocument?.id) { oldDocumentID, newDocumentID in
-            currentVisibleSourceLine = 1
-            if let oldDocumentID,
-               supportsSplitViewRatioPersistence(forDocumentID: oldDocumentID) {
-                DocumentSplitViewPersistence.setSourcePaneRatio(
-                    splitSourcePaneRatio,
-                    forDocumentPath: oldDocumentID
-                )
+            .onChange(of: store.selectedDocument?.id) { oldDocumentID, newDocumentID in
+                currentVisibleSourceLine = 1
+                if let oldDocumentID,
+                   supportsSplitViewRatioPersistence(forDocumentID: oldDocumentID) {
+                    DocumentSplitViewPersistence.setSourcePaneRatio(
+                        splitSourcePaneRatio,
+                        forDocumentPath: oldDocumentID
+                    )
+                }
+                if let newDocumentID,
+                   supportsSplitViewRatioPersistence(forDocumentID: newDocumentID) {
+                    splitSourcePaneRatio = DocumentSplitViewPersistence.sourcePaneRatio(forDocumentPath: newDocumentID)
+                } else {
+                    splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
+                }
             }
-            if let newDocumentID,
-               supportsSplitViewRatioPersistence(forDocumentID: newDocumentID) {
-                splitSourcePaneRatio = DocumentSplitViewPersistence.sourcePaneRatio(forDocumentPath: newDocumentID)
-            } else {
-                splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
-            }
-            terminalSessions.setDefaultDirectory(activeTerminalDirectory)
-        }
     }
 
     private var showsMarkdownSourceSubchrome: Bool {
@@ -146,35 +86,6 @@ struct EditorPaneView: View {
     private func supportsSplitViewRatioPersistence(forDocumentID documentID: String) -> Bool {
         guard let document = store.document(id: documentID) else { return false }
         return document.kind == .markdown || document.capabilities.canPreviewHTML
-    }
-
-    @ViewBuilder
-    private func editorAndDrawer(in size: CGSize) -> some View {
-        let layout = TerminalDrawerLayoutPolicy.resolve(
-            availableWidth: size.width,
-            preferredDrawerWidth: terminalDrawerWidth
-        )
-        let editorWidth = isTerminalPresented && layout.presentation == .sideBySide
-            ? max(0, size.width - layout.drawerWidth)
-            : size.width
-        let terminalTakesOver = isTerminalPresented && layout.presentation == .takeover
-
-        ZStack(alignment: .trailing) {
-            editorColumn
-                .frame(width: editorWidth)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                .allowsHitTesting(!terminalTakesOver)
-                .accessibilityHidden(terminalTakesOver)
-
-            if isTerminalPresented {
-                terminalDrawer(layout: layout)
-                    .frame(width: layout.drawerWidth)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
-                    .transition(.move(edge: .trailing))
-                    .zIndex(2)
-            }
-        }
-        .animation(drawerAnimation, value: isTerminalPresented)
     }
 
     private var editorColumn: some View {
@@ -200,50 +111,6 @@ struct EditorPaneView: View {
                 )
                 .clipped()
         }
-    }
-
-    private func terminalDrawer(layout: TerminalDrawerLayout) -> some View {
-        TerminalDrawerView(
-            sessions: terminalSessions,
-            workingDirectory: activeTerminalDirectory,
-            theme: theme,
-            zoomScale: zoomScale,
-            usePointerCursors: usePointerCursors,
-            fontSmoothing: fontSmoothing,
-            showsChrome: true,
-            close: closeTerminal
-        )
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.terminalSurfaceColor)
-        .overlay(alignment: .leading) {
-            if layout.presentation == .sideBySide {
-                Rectangle()
-                    .fill(theme.separatorColor)
-                    .frame(width: 1)
-                    .frame(maxHeight: .infinity)
-            }
-        }
-        .overlay(alignment: .leading) {
-            if layout.isResizable {
-                TerminalResizeHandle(
-                    width: $terminalDrawerWidth,
-                    minWidth: MonknotMetrics.terminalDrawerMinWidth,
-                    maxWidth: layout.maximumDrawerWidth
-                )
-                // Keep the visible divider at one point while providing a
-                // forgiving target on both sides of it.
-                .frame(width: MonknotMetrics.terminalResizeHitWidth)
-                .offset(x: -MonknotMetrics.terminalResizeHitWidth / 2)
-                .zIndex(3)
-            }
-        }
-    }
-
-    private var activeTerminalDirectory: URL? {
-        TerminalWorkingDirectoryPolicy.directory(
-            workspaceURL: store.workspaceURL,
-            selectedDocumentURL: store.selectedDocument?.url
-        )
     }
 
     private func sendMarkdownCommand(_ command: MarkdownTextEditorCommand) {
@@ -375,6 +242,8 @@ struct EditorPaneView: View {
             ),
             theme: theme,
             fontSize: codeFontSize * WorkspaceZoomPolicy.documentScale(zoomScale),
+            zoomScale: zoomScale,
+            contentWidthPercent: contentWidthPercent,
             fontSmoothing: fontSmoothing,
             scrollPosition: activeViewportState?.textScrollPosition,
             sourceLocation: $sourceLocation,
@@ -397,6 +266,7 @@ struct EditorPaneView: View {
             baseURL: URL(fileURLWithPath: selectedDocument.id).deletingLastPathComponent(),
             theme: theme,
             zoomScale: zoomScale,
+            contentWidthPercent: contentWidthPercent,
             scrollPosition: activeViewportState?.htmlPreviewScrollPosition,
             syncScrollEnabled: isSplitViewEnabled,
             syncScrollTargetLine: previewSyncLine,
@@ -420,6 +290,8 @@ struct EditorPaneView: View {
             ),
             theme: theme,
             fontSize: codeFontSize * WorkspaceZoomPolicy.documentScale(zoomScale),
+            zoomScale: zoomScale,
+            contentWidthPercent: contentWidthPercent,
             fontSmoothing: fontSmoothing,
             scrollPosition: activeViewportState?.textScrollPosition,
             sourceLocation: $sourceLocation,
@@ -478,6 +350,8 @@ struct EditorPaneView: View {
             ),
             theme: theme,
             fontSize: codeFontSize * WorkspaceZoomPolicy.documentScale(zoomScale),
+            zoomScale: zoomScale,
+            contentWidthPercent: contentWidthPercent,
             fontSmoothing: fontSmoothing,
             scrollPosition: activeViewportState?.textScrollPosition,
             syncScrollEnabled: isSplitViewEnabled,
@@ -504,7 +378,7 @@ struct EditorPaneView: View {
             theme: theme,
             zoomScale: zoomScale,
             codeFontSize: Double(codeFontSize),
-            previewWidthPercent: previewWidthPercent,
+            contentWidthPercent: contentWidthPercent,
             usePointerCursors: usePointerCursors,
             fontSmoothing: fontSmoothing,
             scrollPosition: activeViewportState?.markdownPreviewScrollPosition,
@@ -563,9 +437,6 @@ struct EditorPaneView: View {
         )
     }
 
-    private var drawerAnimation: Animation? {
-        MonknotMotion.sidebarTransition(reduceMotion: reduceMotion)
-    }
 }
 
 private struct UnsupportedDocumentView: View {
@@ -610,183 +481,6 @@ private struct DocumentLoadingPlaceholder: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.surfaceColor)
-    }
-}
-
-struct TerminalResizeHandle: NSViewRepresentable {
-    @Binding var width: Double
-    let minWidth: CGFloat
-    let maxWidth: CGFloat
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(width: $width, minWidth: minWidth, maxWidth: maxWidth)
-    }
-
-    func makeNSView(context: Context) -> ResizeHandleView {
-        let view = ResizeHandleView()
-        view.coordinator = context.coordinator
-        return view
-    }
-
-    func updateNSView(_ nsView: ResizeHandleView, context: Context) {
-        context.coordinator.width = $width
-        context.coordinator.minWidth = minWidth
-        context.coordinator.maxWidth = maxWidth
-        nsView.coordinator = context.coordinator
-    }
-
-    final class Coordinator {
-        var width: Binding<Double>
-        var minWidth: CGFloat
-        var maxWidth: CGFloat
-        var dragStartWidth: Double?
-        var dragStartX: CGFloat?
-
-        init(width: Binding<Double>, minWidth: CGFloat, maxWidth: CGFloat) {
-            self.width = width
-            self.minWidth = minWidth
-            self.maxWidth = maxWidth
-        }
-
-        func beginDrag(at screenX: CGFloat) {
-            dragStartWidth = clamped(width.wrappedValue)
-            dragStartX = screenX
-        }
-
-        func drag(to screenX: CGFloat) {
-            guard let dragStartWidth, let dragStartX else { return }
-            width.wrappedValue = clamped(dragStartWidth - Double(screenX - dragStartX))
-        }
-
-        func endDrag() {
-            width.wrappedValue = clamped(width.wrappedValue)
-            dragStartWidth = nil
-            dragStartX = nil
-        }
-
-        @discardableResult
-        func adjustWidth(by delta: Double) -> Bool {
-            let currentWidth = clamped(width.wrappedValue)
-            let adjustedWidth = clamped(currentWidth + delta)
-            guard adjustedWidth != currentWidth else { return false }
-            width.wrappedValue = adjustedWidth
-            return true
-        }
-
-        func clamped(_ value: Double) -> Double {
-            min(Double(maxWidth), max(Double(minWidth), value))
-        }
-    }
-
-    final class ResizeHandleView: NSView {
-        weak var coordinator: Coordinator?
-        private var isCursorPushed = false
-
-        override init(frame frameRect: NSRect) {
-            super.init(frame: frameRect)
-            setAccessibilityElement(true)
-            setAccessibilityRole(.splitter)
-            setAccessibilityOrientation(.vertical)
-            setAccessibilityLabel("Resize terminal panel")
-            setAccessibilityHelp("Drag left or right, or adjust the value, to resize the terminal panel.")
-        }
-
-        @available(*, unavailable)
-        required init?(coder: NSCoder) {
-            fatalError("init(coder:) has not been implemented")
-        }
-
-        override var mouseDownCanMoveWindow: Bool {
-            false
-        }
-
-        override func resetCursorRects() {
-            addCursorRect(bounds, cursor: .resizeLeftRight)
-        }
-
-        override func updateTrackingAreas() {
-            super.updateTrackingAreas()
-            trackingAreas.forEach(removeTrackingArea)
-            addTrackingArea(
-                NSTrackingArea(
-                    rect: bounds,
-                    options: [.activeAlways, .mouseEnteredAndExited, .inVisibleRect],
-                    owner: self
-                )
-            )
-        }
-
-        override func mouseEntered(with event: NSEvent) {
-            pushResizeCursor()
-        }
-
-        override func mouseExited(with event: NSEvent) {
-            popResizeCursorIfNeeded()
-        }
-
-        override func mouseDown(with event: NSEvent) {
-            pushResizeCursor()
-            coordinator?.beginDrag(at: event.locationInWindow.x)
-        }
-
-        override func mouseDragged(with event: NSEvent) {
-            coordinator?.drag(to: event.locationInWindow.x)
-        }
-
-        override func mouseUp(with event: NSEvent) {
-            coordinator?.endDrag()
-            postAccessibilityValueChanged()
-        }
-
-        override func accessibilityValue() -> Any? {
-            guard let coordinator else { return nil }
-            return coordinator.clamped(coordinator.width.wrappedValue) as NSNumber
-        }
-
-        override func accessibilityMinValue() -> Any? {
-            coordinator.map { NSNumber(value: Double($0.minWidth)) }
-        }
-
-        override func accessibilityMaxValue() -> Any? {
-            coordinator.map { NSNumber(value: Double($0.maxWidth)) }
-        }
-
-        override func accessibilityPerformIncrement() -> Bool {
-            adjustAccessibilityWidth(by: 20)
-        }
-
-        override func accessibilityPerformDecrement() -> Bool {
-            adjustAccessibilityWidth(by: -20)
-        }
-
-        override func viewWillMove(toWindow newWindow: NSWindow?) {
-            if newWindow == nil {
-                popResizeCursorIfNeeded()
-            }
-            super.viewWillMove(toWindow: newWindow)
-        }
-
-        private func pushResizeCursor() {
-            guard !isCursorPushed else { return }
-            NSCursor.resizeLeftRight.push()
-            isCursorPushed = true
-        }
-
-        private func popResizeCursorIfNeeded() {
-            guard isCursorPushed else { return }
-            NSCursor.pop()
-            isCursorPushed = false
-        }
-
-        private func adjustAccessibilityWidth(by delta: Double) -> Bool {
-            guard coordinator?.adjustWidth(by: delta) == true else { return false }
-            postAccessibilityValueChanged()
-            return true
-        }
-
-        private func postAccessibilityValueChanged() {
-            NSAccessibility.post(element: self, notification: .valueChanged)
-        }
     }
 }
 

@@ -10,6 +10,7 @@ struct SettingsRow<Control: View>: View {
     let title: String
     var detail: String? = nil
     var showsDivider: Bool = true
+    var contentOpacity: Double = 1
     @ViewBuilder let control: () -> Control
     @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
 
@@ -33,6 +34,7 @@ struct SettingsRow<Control: View>: View {
             Spacer(minLength: scaled(20))
             control()
         }
+        .opacity(contentOpacity)
         .padding(.horizontal, scaled(MonknotMetrics.Spacing.settingsRowHorizontal))
         .padding(.vertical, scaled(MonknotMetrics.Spacing.settingsRowVertical))
         .overlay(alignment: .bottom) {
@@ -104,16 +106,24 @@ struct SettingsToggleRow: View {
     let title: String
     var detail: String? = nil
     var showsDivider: Bool = true
+    var isDisabled: Bool = false
     @Binding var isOn: Bool
 
     var body: some View {
-        SettingsRow(theme: theme, title: title, detail: detail, showsDivider: showsDivider) {
+        SettingsRow(
+            theme: theme,
+            title: title,
+            detail: detail,
+            showsDivider: showsDivider,
+            contentOpacity: isDisabled ? 0.55 : 1
+        ) {
             Toggle(title, isOn: $isOn)
                 .toggleStyle(MonknotSettingsSwitchStyle(theme: theme))
                 .labelsHidden()
                 .accessibilityHint(detail ?? "")
-                .monknotPointerCursor()
+                .monknotPointerCursor(enabled: !isDisabled)
         }
+        .disabled(isDisabled)
     }
 }
 

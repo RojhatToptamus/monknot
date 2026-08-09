@@ -1,4 +1,5 @@
 import MonknotCore
+import Sparkle
 import SwiftUI
 
 struct PreferencesView: View {
@@ -23,7 +24,8 @@ struct PreferencesView: View {
     }
 
     @ObservedObject var themeStore: ThemeSettingsStore
-    @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.system.rawValue
+    let updater: SPUUpdater
+    @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.defaultValue.rawValue
     @AppStorage("Monknot.settingsSection") private var selectedSectionRawValue = Section.general.rawValue
     @AppStorage("Monknot.zoomScale") private var persistedZoomScale = WorkspaceZoomPolicy.defaultValue
     @Environment(\.colorScheme) private var colorScheme
@@ -36,7 +38,7 @@ struct PreferencesView: View {
     }
 
     private var themePreference: ThemePreference {
-        ThemePreference(rawValue: themePreferenceRawValue) ?? .system
+        ThemePreference.resolved(rawValue: themePreferenceRawValue)
     }
 
     private var panelTheme: AppTheme {
@@ -157,7 +159,7 @@ struct PreferencesView: View {
     private var sectionContent: some View {
         switch selectedSection {
         case .general:
-            GeneralSettingsView(uiTheme: panelTheme)
+            GeneralSettingsView(uiTheme: panelTheme, updater: updater)
         case .appearance:
             AppearanceSettingsView(themeStore: themeStore, uiTheme: panelTheme)
         case .editor:
@@ -266,7 +268,7 @@ private struct ExportSettingsView: View {
 
                 SettingsSliderRow(
                     theme: uiTheme,
-                    title: "Content width",
+                    title: "Content Width",
                     detail: "Share of the printable page used by content",
                     showsDivider: false,
                     value: $options.contentWidthPercent,
