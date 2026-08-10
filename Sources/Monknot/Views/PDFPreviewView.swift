@@ -9,7 +9,9 @@ struct PDFPreviewView: View {
     let zoomScale: Double
     let saveState: DocumentSaveState
     let dirtyData: Data?
+    let contentVersion: Int
     let viewportState: PDFDocumentViewportState?
+    let viewportCaptureBridge: PDFViewportCaptureBridge
     let externalUndoCommandSerial: Int
     let externalRedoCommandSerial: Int
     @Binding var searchState: DocumentSearchState
@@ -17,6 +19,11 @@ struct PDFPreviewView: View {
     let markEdited: (Data?, Data) -> Void
     let reportError: (String) -> Void
     let saveDocument: () -> Void
+    var pageNavigationRequest: PDFPageNavigationRequest? = nil
+    var externalNavigatorToggleCommandSerial: Int = 0
+    var insertLinkedExcerpt: (PDFSelectionSnapshot) -> Void = { _ in }
+    var onSelectionSnapshotChange: (PDFSelectionSnapshot?) -> Void = { _ in }
+    var onPageNavigationRequestConsumed: (PDFPageNavigationRequest) -> Void = { _ in }
 
     let onViewportStateChange: (PDFDocumentViewportState) -> Void
     let updateAnnotationUndoState: (Bool, Bool) -> Void
@@ -36,6 +43,8 @@ struct PDFPreviewView: View {
     @State private var pageStatus = PDFPageStatus.unavailable
     @State private var loadState = PDFLoadState.loading
     @State private var markupHint: String?
+    @State private var isNavigatorPresented = false
+    @State private var lastNavigatorToggleCommandSerial = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -56,7 +65,9 @@ struct PDFPreviewView: View {
                     pageStatus: pageStatus,
                     zoomStatus: zoomStatus,
                     runZoom: runZoom(_:),
-                    saveDocument: saveDocument
+                    saveDocument: saveDocument,
+                    isNavigatorPresented: isNavigatorPresented,
+                    toggleNavigator: toggleNavigator
                 )
             }
 
@@ -92,8 +103,10 @@ struct PDFPreviewView: View {
                     documentID: document.id,
                     url: document.url,
                     dirtyData: dirtyData,
+                    contentVersion: contentVersion,
                     theme: theme,
                     viewportState: viewportState,
+                    viewportCaptureBridge: viewportCaptureBridge,
                     annotationMode: interactionMode,
                     annotationColor: selectedColor,
                     strokeWidth: CGFloat(strokeWidth),
@@ -101,9 +114,15 @@ struct PDFPreviewView: View {
                     zoomCommand: zoomCommand,
                     undoCommandSerial: externalUndoCommandSerial + undoCommandSerial,
                     redoCommandSerial: externalRedoCommandSerial + redoCommandSerial,
+                    pageNavigationRequest: pageNavigationRequest,
+                    isNavigatorPresented: isNavigatorPresented,
+                    navigatorWidth: scaled(224),
                     searchState: $searchState,
                     searchTarget: $searchTarget,
                     markEdited: markEdited,
+                    insertLinkedExcerpt: insertLinkedExcerpt,
+                    onSelectionSnapshotChange: onSelectionSnapshotChange,
+                    onPageNavigationRequestConsumed: onPageNavigationRequestConsumed,
                     onViewportStateChange: onViewportStateChange,
                     updatePageStatus: updatePageStatus(_:),
                     updateZoomStatus: updateZoomStatus(_:),
@@ -121,6 +140,15 @@ struct PDFPreviewView: View {
         .onChange(of: document.id) { _, _ in
             loadState = .loading
             markupHint = nil
+            onSelectionSnapshotChange(nil)
+        }
+        .onAppear {
+            lastNavigatorToggleCommandSerial = externalNavigatorToggleCommandSerial
+        }
+        .onChange(of: externalNavigatorToggleCommandSerial) { _, serial in
+            guard serial != lastNavigatorToggleCommandSerial else { return }
+            lastNavigatorToggleCommandSerial = serial
+            toggleNavigator()
         }
         .task(id: markupHint) {
             guard markupHint != nil else { return }
@@ -162,6 +190,10 @@ struct PDFPreviewView: View {
     private func runZoom(_ command: PDFZoomCommand) {
         zoomCommandSerial += 1
         zoomCommand = PDFZoomCommandRequest(serial: zoomCommandSerial, command: command)
+    }
+
+    private func toggleNavigator() {
+        isNavigatorPresented.toggle()
     }
 
     private func updateZoomStatus(_ status: PDFZoomStatus) {
@@ -257,6 +289,22 @@ struct PDFZoomCommandRequest: Equatable {
     let command: PDFZoomCommand
 }
 
+struct PDFPageNavigationRequest: Equatable, Sendable {
+    let serial: Int
+    let documentID: String
+    let pageNumber: Int
+}
+
+struct PDFDocumentLoadIdentity: Equatable {
+    let url: URL
+    let contentVersion: Int
+
+    init(url: URL, contentVersion: Int) {
+        self.url = url.standardizedFileURL
+        self.contentVersion = contentVersion
+    }
+}
+
 struct PDFZoomStatus: Equatable {
     let mode: PDFZoomMode
     let scaleFactor: Double
@@ -316,6 +364,8 @@ private struct PDFAnnotationToolbar: View {
     let zoomStatus: PDFZoomStatus
     let runZoom: (PDFZoomCommand) -> Void
     let saveDocument: () -> Void
+    let isNavigatorPresented: Bool
+    let toggleNavigator: () -> Void
 
     @State private var strokeWidthPopoverAnchor: PDFStrokeWidthPopoverAnchor?
     @State private var hoveredMenu: PDFToolbarMenuHoverTarget?
@@ -349,6 +399,8 @@ private struct PDFAnnotationToolbar: View {
         HStack(spacing: scaled(5)) {
             pageIndicator
             toolbarDivider
+            navigatorButton
+            toolbarDivider
             toolbarContent
             toolbarDivider
             strokeWidthControl
@@ -363,6 +415,7 @@ private struct PDFAnnotationToolbar: View {
         HStack(spacing: scaled(5)) {
             pageIndicator
             toolbarDivider
+            navigatorButton
             toolMenu
             MonknotIconButton(
                 systemImage: "highlighter",
@@ -407,6 +460,7 @@ private struct PDFAnnotationToolbar: View {
         HStack(spacing: scaled(5)) {
             pageIndicator
             toolbarDivider
+            navigatorButton
             selectButton
 
             MonknotIconButton(
@@ -454,6 +508,7 @@ private struct PDFAnnotationToolbar: View {
         HStack(spacing: scaled(5)) {
             pageIndicator
             toolbarDivider
+            navigatorButton
             toolMenu
             styleMenu(anchor: .minimal)
             moreMenu
@@ -708,6 +763,19 @@ private struct PDFAnnotationToolbar: View {
         .onHover { updateMenuHover(.more, isHovered: $0) }
         .help("More PDF actions")
         .accessibilityLabel("More PDF actions")
+    }
+
+    private var navigatorButton: some View {
+        MonknotIconButton(
+            systemImage: "sidebar.left",
+            label: isNavigatorPresented ? "Hide PDF Navigator" : "Show PDF Navigator",
+            theme: theme,
+            zoomScale: zoomScale,
+            isActive: isNavigatorPresented,
+            size: .compact,
+            action: toggleNavigator
+        )
+        .accessibilityAddTraits(isNavigatorPresented ? .isSelected : [])
     }
 
     @ViewBuilder
@@ -1102,49 +1170,597 @@ private struct PDFColorSwatchButton: View {
     }
 }
 
-private struct PDFKitPreviewRepresentable: NSViewRepresentable {
+final class PDFPreviewContainerView: NSView {
+    let pdfView = AnnotatingPDFView()
+    let navigatorView = PDFNavigatorView()
+
+    private let separatorView = NSView()
+    private var navigatorWidthConstraint: NSLayoutConstraint!
+    private var pdfLeadingWithNavigatorConstraint: NSLayoutConstraint!
+    private var pdfLeadingWithoutNavigatorConstraint: NSLayoutConstraint!
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configureViews()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureViews()
+    }
+
+    func setNavigatorWidth(_ width: CGFloat) {
+        navigatorWidthConstraint.constant = max(180, min(280, width))
+    }
+
+    func setNavigatorPresented(_ isPresented: Bool) {
+        navigatorView.isHidden = !isPresented
+        separatorView.isHidden = !isPresented
+        if isPresented {
+            pdfLeadingWithoutNavigatorConstraint.isActive = false
+            pdfLeadingWithNavigatorConstraint.isActive = true
+        } else {
+            pdfLeadingWithNavigatorConstraint.isActive = false
+            pdfLeadingWithoutNavigatorConstraint.isActive = true
+        }
+        navigatorView.setPresented(isPresented)
+    }
+
+    func applyAppearance(theme: AppTheme) {
+        separatorView.layer?.backgroundColor = NSColor(hex: theme.foreground)
+            .withAlphaComponent(theme.isDark ? 0.09 : 0.12)
+            .cgColor
+        navigatorView.applyAppearance(theme: theme)
+    }
+
+    func prepareForDismantle() {
+        navigatorView.prepareForDismantle()
+        pdfView.prepareForDismantle()
+    }
+
+    private func configureViews() {
+        navigatorView.translatesAutoresizingMaskIntoConstraints = false
+        separatorView.translatesAutoresizingMaskIntoConstraints = false
+        pdfView.translatesAutoresizingMaskIntoConstraints = false
+        separatorView.wantsLayer = true
+
+        addSubview(navigatorView)
+        addSubview(separatorView)
+        addSubview(pdfView)
+
+        navigatorWidthConstraint = navigatorView.widthAnchor.constraint(equalToConstant: 224)
+        pdfLeadingWithNavigatorConstraint = pdfView.leadingAnchor.constraint(equalTo: separatorView.trailingAnchor)
+        pdfLeadingWithoutNavigatorConstraint = pdfView.leadingAnchor.constraint(equalTo: leadingAnchor)
+
+        NSLayoutConstraint.activate([
+            navigatorView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            navigatorView.topAnchor.constraint(equalTo: topAnchor),
+            navigatorView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            navigatorWidthConstraint,
+            separatorView.leadingAnchor.constraint(equalTo: navigatorView.trailingAnchor),
+            separatorView.topAnchor.constraint(equalTo: topAnchor),
+            separatorView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            separatorView.widthAnchor.constraint(equalToConstant: 1),
+            pdfView.topAnchor.constraint(equalTo: topAnchor),
+            pdfView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            pdfView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            pdfLeadingWithoutNavigatorConstraint
+        ])
+
+        navigatorView.isHidden = true
+        separatorView.isHidden = true
+    }
+}
+
+enum PDFNavigatorSection: Int {
+    case pages
+    case outline
+    case annotations
+}
+
+struct PDFNavigatorAnnotationItem {
+    let pageIndex: Int
+    let annotation: PDFAnnotation
+    let kind: String
+    let excerpt: String?
+
+    var label: String {
+        let pageLabel = "Page \(pageIndex + 1) · \(kind)"
+        guard let excerpt else { return pageLabel }
+        return "\(pageLabel)\n\(excerpt)"
+    }
+}
+
+final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate, NSTableViewDataSource, NSTableViewDelegate {
+    let thumbnailView = PDFThumbnailView()
+    let outlineView = NSOutlineView()
+    let annotationTableView = NSTableView()
+    private(set) var annotationItems: [PDFNavigatorAnnotationItem] = []
+
+    private let headerView = NSView()
+    private let segmentedControl = NSSegmentedControl(
+        labels: ["Pages", "Outline", "Annotations"],
+        trackingMode: .selectOne,
+        target: nil,
+        action: nil
+    )
+    private let headerSeparatorView = NSView()
+    private let contentView = NSView()
+    private let outlineScrollView = NSScrollView()
+    private let annotationScrollView = NSScrollView()
+    private let emptyLabel = NSTextField(labelWithString: "")
+    private weak var pdfView: AnnotatingPDFView?
+    private var outlineRoot: PDFOutline?
+    private var selectedSection = PDFNavigatorSection.pages
+    private var isPresented = false
+    private var annotationsNeedReload = true
+    private var foregroundColor = NSColor.labelColor
+    private var mutedForegroundColor = NSColor.secondaryLabelColor
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configureViews()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureViews()
+    }
+
+    func attach(to pdfView: AnnotatingPDFView) {
+        guard self.pdfView !== pdfView else { return }
+        thumbnailView.pdfView = nil
+        self.pdfView = pdfView
+        documentDidChange()
+    }
+
+    func setPresented(_ isPresented: Bool) {
+        guard self.isPresented != isPresented else { return }
+        self.isPresented = isPresented
+        if isPresented {
+            showSelectedSection()
+        } else {
+            thumbnailView.pdfView = nil
+        }
+    }
+
+    func documentDidChange() {
+        outlineRoot = nil
+        annotationsNeedReload = true
+        annotationItems = []
+        if isPresented {
+            showSelectedSection()
+        }
+    }
+
+    func noteAnnotationsChanged() {
+        annotationsNeedReload = true
+        if isPresented, selectedSection == .annotations {
+            reloadAnnotationsIfNeeded()
+            updateEmptyState()
+        }
+    }
+
+    func selectSection(_ section: PDFNavigatorSection) {
+        selectedSection = section
+        segmentedControl.selectedSegment = section.rawValue
+        showSelectedSection()
+    }
+
+    func applyAppearance(theme: AppTheme) {
+        let foreground = NSColor(hex: theme.foreground)
+        foregroundColor = foreground
+        mutedForegroundColor = foreground.withAlphaComponent(theme.isDark ? 0.62 : 0.64)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor(hex: theme.background)
+            .blended(withFraction: theme.isDark ? 0.055 : 0.035, of: foreground)?
+            .cgColor
+        headerSeparatorView.layer?.backgroundColor = foreground
+            .withAlphaComponent(theme.isDark ? 0.09 : 0.12)
+            .cgColor
+        emptyLabel.textColor = mutedForegroundColor
+        outlineView.reloadData()
+        annotationTableView.reloadData()
+    }
+
+    func prepareForDismantle() {
+        thumbnailView.pdfView = nil
+        pdfView = nil
+        outlineRoot = nil
+        annotationItems = []
+        segmentedControl.target = nil
+        segmentedControl.action = nil
+        outlineView.delegate = nil
+        outlineView.dataSource = nil
+        annotationTableView.delegate = nil
+        annotationTableView.dataSource = nil
+    }
+
+    private func configureViews() {
+        wantsLayer = true
+        headerView.translatesAutoresizingMaskIntoConstraints = false
+        headerSeparatorView.translatesAutoresizingMaskIntoConstraints = false
+        headerSeparatorView.wantsLayer = true
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(headerView)
+        addSubview(headerSeparatorView)
+        addSubview(contentView)
+
+        segmentedControl.translatesAutoresizingMaskIntoConstraints = false
+        segmentedControl.controlSize = .small
+        segmentedControl.segmentStyle = .rounded
+        segmentedControl.selectedSegment = PDFNavigatorSection.pages.rawValue
+        segmentedControl.target = self
+        segmentedControl.action = #selector(sectionChanged(_:))
+        segmentedControl.setAccessibilityLabel("PDF Navigator")
+        headerView.addSubview(segmentedControl)
+
+        NSLayoutConstraint.activate([
+            headerView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            headerView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            headerView.topAnchor.constraint(equalTo: topAnchor),
+            headerView.heightAnchor.constraint(equalToConstant: 38),
+            segmentedControl.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 8),
+            segmentedControl.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -8),
+            segmentedControl.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            headerSeparatorView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            headerSeparatorView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            headerSeparatorView.topAnchor.constraint(equalTo: headerView.bottomAnchor),
+            headerSeparatorView.heightAnchor.constraint(equalToConstant: 1),
+            contentView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            contentView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            contentView.topAnchor.constraint(equalTo: headerSeparatorView.bottomAnchor),
+            contentView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+
+        configureThumbnailView()
+        configureOutlineView()
+        configureAnnotationView()
+        configureEmptyState()
+        showSelectedSection()
+    }
+
+    private func configureThumbnailView() {
+        thumbnailView.translatesAutoresizingMaskIntoConstraints = false
+        thumbnailView.thumbnailSize = NSSize(width: 112, height: 150)
+        thumbnailView.allowsDragging = false
+        thumbnailView.allowsMultipleSelection = false
+        thumbnailView.setAccessibilityLabel("PDF Pages")
+        contentView.addSubview(thumbnailView)
+        NSLayoutConstraint.activate([
+            thumbnailView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 4),
+            thumbnailView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -4),
+            thumbnailView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
+            thumbnailView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4)
+        ])
+    }
+
+    private func configureOutlineView() {
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("PDFNavigatorOutlineColumn"))
+        outlineView.addTableColumn(column)
+        outlineView.outlineTableColumn = column
+        outlineView.headerView = nil
+        outlineView.rowHeight = 26
+        outlineView.indentationPerLevel = 14
+        outlineView.style = .sourceList
+        outlineView.backgroundColor = .clear
+        outlineView.delegate = self
+        outlineView.dataSource = self
+        outlineView.setAccessibilityLabel("PDF Outline")
+
+        outlineScrollView.translatesAutoresizingMaskIntoConstraints = false
+        outlineScrollView.documentView = outlineView
+        outlineScrollView.drawsBackground = false
+        outlineScrollView.hasVerticalScroller = true
+        contentView.addSubview(outlineScrollView)
+        NSLayoutConstraint.activate([
+            outlineScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            outlineScrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            outlineScrollView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            outlineScrollView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
+        ])
+    }
+
+    private func configureAnnotationView() {
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("PDFNavigatorAnnotationColumn"))
+        annotationTableView.addTableColumn(column)
+        annotationTableView.headerView = nil
+        annotationTableView.rowHeight = 44
+        annotationTableView.style = .sourceList
+        annotationTableView.backgroundColor = .clear
+        annotationTableView.delegate = self
+        annotationTableView.dataSource = self
+        annotationTableView.setAccessibilityLabel("PDF Annotations")
+
+        annotationScrollView.translatesAutoresizingMaskIntoConstraints = false
+        annotationScrollView.documentView = annotationTableView
+        annotationScrollView.drawsBackground = false
+        annotationScrollView.hasVerticalScroller = true
+        contentView.addSubview(annotationScrollView)
+        NSLayoutConstraint.activate([
+            annotationScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            annotationScrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            annotationScrollView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            annotationScrollView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
+        ])
+    }
+
+    private func configureEmptyState() {
+        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        emptyLabel.font = .systemFont(ofSize: 12)
+        emptyLabel.alignment = .center
+        emptyLabel.maximumNumberOfLines = 2
+        contentView.addSubview(emptyLabel)
+        NSLayoutConstraint.activate([
+            emptyLabel.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 16),
+            emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16)
+        ])
+    }
+
+    @objc private func sectionChanged(_ sender: NSSegmentedControl) {
+        guard let section = PDFNavigatorSection(rawValue: sender.selectedSegment) else { return }
+        selectSection(section)
+    }
+
+    private func showSelectedSection() {
+        thumbnailView.isHidden = selectedSection != .pages
+        outlineScrollView.isHidden = selectedSection != .outline
+        annotationScrollView.isHidden = selectedSection != .annotations
+        thumbnailView.pdfView = isPresented && selectedSection == .pages ? pdfView : nil
+
+        if selectedSection == .outline {
+            outlineRoot = pdfView?.document?.outlineRoot
+            outlineView.reloadData()
+            if outlineView.numberOfRows > 0 {
+                outlineView.expandItem(nil, expandChildren: false)
+            }
+        } else if selectedSection == .annotations {
+            reloadAnnotationsIfNeeded()
+        }
+        updateEmptyState()
+    }
+
+    private func updateEmptyState() {
+        switch selectedSection {
+        case .pages:
+            emptyLabel.stringValue = "No pages"
+            emptyLabel.isHidden = (pdfView?.document?.pageCount ?? 0) > 0
+        case .outline:
+            emptyLabel.stringValue = "No outline"
+            emptyLabel.isHidden = (outlineRoot?.numberOfChildren ?? 0) > 0
+        case .annotations:
+            emptyLabel.stringValue = "No annotations"
+            emptyLabel.isHidden = !annotationItems.isEmpty
+        }
+    }
+
+    private func reloadAnnotationsIfNeeded() {
+        guard annotationsNeedReload else { return }
+        annotationsNeedReload = false
+        annotationItems = Self.annotationItems(from: pdfView?.document)
+        annotationTableView.reloadData()
+    }
+
+    static func annotationItems(from document: PDFDocument?) -> [PDFNavigatorAnnotationItem] {
+        guard let document else { return [] }
+        var items: [PDFNavigatorAnnotationItem] = []
+        for pageIndex in 0..<document.pageCount {
+            guard let page = document.page(at: pageIndex) else { continue }
+            let annotations = page.annotations
+                .filter { annotationKind(for: $0) != nil }
+                .sorted { lhs, rhs in
+                    if lhs.bounds.maxY == rhs.bounds.maxY {
+                        return lhs.bounds.minX < rhs.bounds.minX
+                    }
+                    return lhs.bounds.maxY > rhs.bounds.maxY
+                }
+            for annotation in annotations {
+                guard let kind = annotationKind(for: annotation) else { continue }
+                let trimmed = annotation.contents?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let excerpt = trimmed.flatMap { value -> String? in
+                    guard !value.isEmpty else { return nil }
+                    return String(value.prefix(140))
+                }
+                items.append(PDFNavigatorAnnotationItem(
+                    pageIndex: pageIndex,
+                    annotation: annotation,
+                    kind: kind,
+                    excerpt: excerpt
+                ))
+            }
+        }
+        return items
+    }
+
+    private static func annotationKind(for annotation: PDFAnnotation) -> String? {
+        let type = (annotation.type ?? "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            .lowercased()
+        switch type {
+        case "highlight": return "Highlight"
+        case "underline": return "Underline"
+        case "strikeout": return "Strikeout"
+        case "ink": return "Drawing"
+        case "text": return "Note"
+        case "freetext": return "Text"
+        default: return nil
+        }
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+        (item as? PDFOutline ?? outlineRoot)?.numberOfChildren ?? 0
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+        let parent = item as? PDFOutline ?? outlineRoot
+        guard let parent,
+              index >= 0,
+              index < parent.numberOfChildren,
+              let child = parent.child(at: index)
+        else {
+            return NSNull()
+        }
+        return child
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+        ((item as? PDFOutline)?.numberOfChildren ?? 0) > 0
+    }
+
+    func outlineView(
+        _ outlineView: NSOutlineView,
+        viewFor tableColumn: NSTableColumn?,
+        item: Any
+    ) -> NSView? {
+        let identifier = NSUserInterfaceItemIdentifier("PDFNavigatorOutlineCell")
+        let cell = textCell(in: outlineView, identifier: identifier, maximumNumberOfLines: 1)
+        cell.textField?.stringValue = (item as? PDFOutline)?.label ?? "Untitled section"
+        cell.textField?.textColor = foregroundColor
+        cell.textField?.font = .systemFont(ofSize: 12)
+        return cell
+    }
+
+    func outlineViewSelectionDidChange(_ notification: Notification) {
+        let row = outlineView.selectedRow
+        guard row >= 0,
+              let outline = outlineView.item(atRow: row) as? PDFOutline,
+              let destination = outline.destination
+        else {
+            return
+        }
+        pdfView?.go(to: destination)
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        annotationItems.count
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard row >= 0, row < annotationItems.count else { return nil }
+        let identifier = NSUserInterfaceItemIdentifier("PDFNavigatorAnnotationCell")
+        let cell = textCell(in: tableView, identifier: identifier, maximumNumberOfLines: 2)
+        cell.textField?.stringValue = annotationItems[row].label
+        cell.textField?.textColor = foregroundColor
+        cell.textField?.font = .systemFont(ofSize: 11.5)
+        return cell
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        let row = annotationTableView.selectedRow
+        guard row >= 0,
+              row < annotationItems.count,
+              let pdfView,
+              let document = pdfView.document
+        else {
+            return
+        }
+
+        let item = annotationItems[row]
+        guard let page = document.page(at: item.pageIndex),
+              page.annotations.contains(where: { $0 === item.annotation })
+        else {
+            annotationsNeedReload = true
+            reloadAnnotationsIfNeeded()
+            updateEmptyState()
+            return
+        }
+
+        let bounds = item.annotation.bounds
+        let destination = PDFDestination(
+            page: page,
+            at: CGPoint(x: bounds.minX, y: bounds.maxY)
+        )
+        pdfView.go(to: destination)
+    }
+
+    private func textCell(
+        in tableView: NSTableView,
+        identifier: NSUserInterfaceItemIdentifier,
+        maximumNumberOfLines: Int
+    ) -> NSTableCellView {
+        if let existing = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView {
+            return existing
+        }
+
+        let cell = NSTableCellView()
+        cell.identifier = identifier
+        let textField = NSTextField(labelWithString: "")
+        textField.translatesAutoresizingMaskIntoConstraints = false
+        textField.lineBreakMode = .byTruncatingTail
+        textField.maximumNumberOfLines = maximumNumberOfLines
+        textField.usesSingleLineMode = maximumNumberOfLines == 1
+        cell.addSubview(textField)
+        cell.textField = textField
+        NSLayoutConstraint.activate([
+            textField.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 5),
+            textField.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -5),
+            textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
+        ])
+        return cell
+    }
+}
+
+struct PDFKitPreviewRepresentable: NSViewRepresentable {
     let documentID: String
     let url: URL
     let dirtyData: Data?
+    let contentVersion: Int
     let theme: AppTheme
     let viewportState: PDFDocumentViewportState?
-    let annotationMode: PDFAnnotationInteractionMode
-    let annotationColor: PDFAnnotationPaletteColor
+    let viewportCaptureBridge: PDFViewportCaptureBridge
+    fileprivate let annotationMode: PDFAnnotationInteractionMode
+    fileprivate let annotationColor: PDFAnnotationPaletteColor
     let strokeWidth: CGFloat
-    let markupCommand: PDFTextMarkupCommand?
+    fileprivate let markupCommand: PDFTextMarkupCommand?
     let zoomCommand: PDFZoomCommandRequest?
     let undoCommandSerial: Int
     let redoCommandSerial: Int
+    let pageNavigationRequest: PDFPageNavigationRequest?
+    let isNavigatorPresented: Bool
+    let navigatorWidth: CGFloat
     @Binding var searchState: DocumentSearchState
     @Binding var searchTarget: WorkspaceSearchPDFTarget?
     let markEdited: (Data?, Data) -> Void
+    let insertLinkedExcerpt: (PDFSelectionSnapshot) -> Void
+    let onSelectionSnapshotChange: (PDFSelectionSnapshot?) -> Void
+    let onPageNavigationRequestConsumed: (PDFPageNavigationRequest) -> Void
     let onViewportStateChange: (PDFDocumentViewportState) -> Void
     let updatePageStatus: (PDFPageStatus) -> Void
     let updateZoomStatus: (PDFZoomStatus) -> Void
     let updateUndoState: (Bool, Bool) -> Void
-    let updateLoadState: (PDFLoadState) -> Void
+    fileprivate let updateLoadState: (PDFLoadState) -> Void
     let reportError: (String) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
     }
 
-    func makeNSView(context: Context) -> AnnotatingPDFView {
-        let view = AnnotatingPDFView()
-        view.identifier = .monknotDocumentFocusTarget
-        view.displayMode = .singlePageContinuous
-        view.displayDirection = .vertical
-        view.displaysPageBreaks = true
-        view.pageShadowsEnabled = true
-        view.autoScales = false
-        view.scaleFactor = 1
-        view.backgroundColor = NSColor(hex: theme.background)
+    func makeNSView(context: Context) -> PDFPreviewContainerView {
+        let container = PDFPreviewContainerView()
+        let pdfView = container.pdfView
+        pdfView.identifier = .monknotDocumentFocusTarget
+        pdfView.displayMode = .singlePageContinuous
+        pdfView.displayDirection = .vertical
+        pdfView.displaysPageBreaks = true
+        pdfView.pageShadowsEnabled = true
+        pdfView.autoScales = false
+        pdfView.scaleFactor = 1
+        pdfView.backgroundColor = NSColor(hex: theme.background)
+        container.setNavigatorWidth(navigatorWidth)
+        container.setNavigatorPresented(isNavigatorPresented)
+        container.applyAppearance(theme: theme)
         context.coordinator.documentID = documentID
+        context.coordinator.documentContentVersion = contentVersion
+        context.coordinator.viewportCaptureBridge = viewportCaptureBridge
+        viewportCaptureBridge.attach(documentID: documentID, to: pdfView)
         context.coordinator.onViewportStateChange = { state in
             DispatchQueue.main.async {
                 self.onViewportStateChange(state)
             }
         }
+        context.coordinator.onFinalViewportStateChange = onViewportStateChange
         context.coordinator.onZoomStatusChange = { status in
             DispatchQueue.main.async {
                 self.updateZoomStatus(status)
@@ -1160,16 +1776,34 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
                 self.updateLoadState(state)
             }
         }
+        context.coordinator.onSelectionSnapshotChange = { snapshot in
+            DispatchQueue.main.async {
+                self.onSelectionSnapshotChange(snapshot)
+            }
+        }
+        context.coordinator.onPageNavigationRequestConsumed = { request in
+            DispatchQueue.main.async {
+                self.onPageNavigationRequestConsumed(request)
+            }
+        }
         context.coordinator.acceptCurrentCommandSerials(
             undoSerial: undoCommandSerial,
             redoSerial: redoCommandSerial,
             zoomSerial: zoomCommand?.serial ?? 0
         )
-        context.coordinator.attach(to: view)
-        return view
+        context.coordinator.attach(to: pdfView)
+        container.navigatorView.attach(to: pdfView)
+        return container
     }
 
-    func updateNSView(_ pdfView: AnnotatingPDFView, context: Context) {
+    func updateNSView(_ container: PDFPreviewContainerView, context: Context) {
+        let pdfView = container.pdfView
+        if context.coordinator.viewportCaptureBridge !== viewportCaptureBridge {
+            context.coordinator.viewportCaptureBridge?.detach(from: pdfView)
+            context.coordinator.viewportCaptureBridge = viewportCaptureBridge
+        }
+        viewportCaptureBridge.attach(documentID: documentID, to: pdfView)
+        context.coordinator.documentContentVersion = contentVersion
         let didChangeDocument = context.coordinator.prepareForDocument(
             documentID,
             undoSerial: undoCommandSerial,
@@ -1182,6 +1816,7 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
                 self.onViewportStateChange(state)
             }
         }
+        context.coordinator.onFinalViewportStateChange = onViewportStateChange
         context.coordinator.onZoomStatusChange = { status in
             DispatchQueue.main.async {
                 self.updateZoomStatus(status)
@@ -1197,11 +1832,27 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
                 self.updateLoadState(state)
             }
         }
+        context.coordinator.onSelectionSnapshotChange = { snapshot in
+            DispatchQueue.main.async {
+                self.onSelectionSnapshotChange(snapshot)
+            }
+        }
+        context.coordinator.onPageNavigationRequestConsumed = { request in
+            DispatchQueue.main.async {
+                self.onPageNavigationRequestConsumed(request)
+            }
+        }
         pdfView.annotationMode = annotationMode
         pdfView.annotationColor = annotationColor.nsColor
         pdfView.annotationLineWidth = strokeWidth
+        pdfView.linkedExcerptDocumentID = documentID
+        pdfView.linkedExcerptContentVersion = contentVersion
         pdfView.onEdited = markEdited
         pdfView.onError = reportError
+        pdfView.onRequestLinkedExcerpt = insertLinkedExcerpt
+        pdfView.onAnnotationsChanged = { [weak navigatorView = container.navigatorView] in
+            navigatorView?.noteAnnotationsChanged()
+        }
         pdfView.onUndoStateChanged = { canUndo, canRedo in
             DispatchQueue.main.async {
                 self.updateUndoState(canUndo, canRedo)
@@ -1226,13 +1877,28 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
         }
         context.coordinator.setPendingSearchTarget(searchTarget)
 
-        let didLoadDocument = context.coordinator.loadDocumentIfNeeded(url, dirtyData: dirtyData, in: pdfView)
+        container.setNavigatorWidth(navigatorWidth)
+        container.setNavigatorPresented(isNavigatorPresented)
+        let didLoadDocument = context.coordinator.loadDocumentIfNeeded(
+            url,
+            dirtyData: dirtyData,
+            contentVersion: contentVersion,
+            in: pdfView,
+            navigatorView: container.navigatorView
+        )
         context.coordinator.applyAppearance(theme: theme, in: pdfView)
+        container.applyAppearance(theme: theme)
+        let hasMatchingPageRequest = pageNavigationRequest?.documentID == documentID
         context.coordinator.restoreViewportStateIfNeeded(
             viewportState,
             force: didChangeDocument || didLoadDocument,
-            skipPosition: searchTarget != nil,
+            skipPosition: searchTarget != nil || hasMatchingPageRequest,
             in: pdfView
+        )
+        context.coordinator.applyPageNavigationRequest(
+            pageNavigationRequest,
+            in: pdfView,
+            reportError: reportError
         )
         context.coordinator.applyZoomCommand(zoomCommand, in: pdfView)
         context.coordinator.applySearch(searchState, theme: theme, in: pdfView)
@@ -1240,20 +1906,28 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
         context.coordinator.applyUndoRedoCommands(undoSerial: undoCommandSerial, redoSerial: redoCommandSerial, in: pdfView)
     }
 
-    static func dismantleNSView(_ pdfView: AnnotatingPDFView, coordinator: Coordinator) {
-        coordinator.publishViewportState(from: pdfView)
+    static func dismantleNSView(_ container: PDFPreviewContainerView, coordinator: Coordinator) {
+        coordinator.publishFinalViewportState(from: container.pdfView)
+        coordinator.viewportCaptureBridge?.detach(from: container.pdfView)
+        coordinator.clearSelectionSnapshot()
         coordinator.detach()
+        container.prepareForDismantle()
     }
 
     final class Coordinator {
         var documentID: String?
+        var documentContentVersion = 0
+        weak var viewportCaptureBridge: PDFViewportCaptureBridge?
         var onSearchResult: (DocumentSearchResult) -> Void = { _ in }
         var onSearchTargetConsumed: () -> Void = {}
         var onViewportStateChange: (PDFDocumentViewportState) -> Void = { _ in }
+        var onFinalViewportStateChange: (PDFDocumentViewportState) -> Void = { _ in }
         var onPageStatusChange: (PDFPageStatus) -> Void = { _ in }
         var onZoomStatusChange: (PDFZoomStatus) -> Void = { _ in }
-        var onLoadStateChange: (PDFLoadState) -> Void = { _ in }
-        private var documentURL: URL?
+        fileprivate var onLoadStateChange: (PDFLoadState) -> Void = { _ in }
+        var onSelectionSnapshotChange: (PDFSelectionSnapshot?) -> Void = { _ in }
+        var onPageNavigationRequestConsumed: (PDFPageNavigationRequest) -> Void = { _ in }
+        private var documentLoadIdentity: PDFDocumentLoadIdentity?
         private var lastAppliedTheme: AppTheme?
         private var lastSearchRequest: DocumentSearchRequest?
         private var lastSearchHighlightTheme: SearchHighlightTheme?
@@ -1264,10 +1938,12 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
         private var lastUndoCommandSerial = 0
         private var lastRedoCommandSerial = 0
         private var lastZoomCommandSerial = 0
+        private var lastPageNavigationRequest: PDFPageNavigationRequest?
         private var shouldRestoreViewportState = false
         private var lastPublishedViewportState: PDFDocumentViewportState?
         private var lastPublishedPageStatus: PDFPageStatus?
         private var lastPublishedZoomStatus: PDFZoomStatus?
+        private var lastPublishedSelectionSnapshot: PDFSelectionSnapshot?
         private var isRestoringViewportState = false
 
         func attach(to pdfView: AnnotatingPDFView) {
@@ -1289,10 +1965,33 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
                 name: .PDFViewScaleChanged,
                 object: pdfView
             )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(pdfViewSelectionDidChange(_:)),
+                name: .PDFViewSelectionChanged,
+                object: pdfView
+            )
         }
 
         func detach() {
             NotificationCenter.default.removeObserver(self)
+            onSearchResult = { _ in }
+            onSearchTargetConsumed = {}
+            onViewportStateChange = { _ in }
+            onFinalViewportStateChange = { _ in }
+            onPageStatusChange = { _ in }
+            onZoomStatusChange = { _ in }
+            onLoadStateChange = { _ in }
+            onSelectionSnapshotChange = { _ in }
+            onPageNavigationRequestConsumed = { _ in }
+            viewportCaptureBridge = nil
+            matches = []
+            pendingSearchTarget = nil
+        }
+
+        func clearSelectionSnapshot() {
+            lastPublishedSelectionSnapshot = nil
+            onSelectionSnapshotChange(nil)
         }
 
         func acceptCurrentCommandSerials(undoSerial: Int, redoSerial: Int, zoomSerial: Int) {
@@ -1320,16 +2019,24 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
             lastPublishedViewportState = nil
             lastPublishedPageStatus = nil
             lastPublishedZoomStatus = nil
+            lastPublishedSelectionSnapshot = nil
+            onSelectionSnapshotChange(nil)
             shouldRestoreViewportState = true
             return true
         }
 
         @discardableResult
-        func loadDocumentIfNeeded(_ url: URL, dirtyData: Data?, in pdfView: AnnotatingPDFView) -> Bool {
-            let standardizedURL = url.standardizedFileURL
-            guard documentURL != standardizedURL else { return false }
+        func loadDocumentIfNeeded(
+            _ url: URL,
+            dirtyData: Data?,
+            contentVersion: Int,
+            in pdfView: AnnotatingPDFView,
+            navigatorView: PDFNavigatorView
+        ) -> Bool {
+            let nextIdentity = PDFDocumentLoadIdentity(url: url, contentVersion: contentVersion)
+            guard documentLoadIdentity != nextIdentity else { return false }
 
-            documentURL = standardizedURL
+            documentLoadIdentity = nextIdentity
             matches = []
             currentMatchIndex = 0
             lastSearchRequest = nil
@@ -1339,7 +2046,7 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
                 if let dirtyData, let dirtyDocument = PDFDocument(data: dirtyData) {
                     loadedDocument = dirtyDocument
                 } else {
-                    loadedDocument = PDFDocument(url: standardizedURL)
+                    loadedDocument = PDFDocument(url: nextIdentity.url)
                 }
                 pdfView.document = loadedDocument
                 applyPDFZoomMode(.fixed(scaleFactor: 1), to: pdfView)
@@ -1347,8 +2054,10 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
             onLoadStateChange(loadedDocument == nil ? .failed : .loaded)
             pdfView.clearAnnotationUndoHistory()
             pdfView.resetEditBaselineCapture(needsSnapshot: dirtyData == nil)
+            navigatorView.documentDidChange()
             shouldRestoreViewportState = true
             onSearchResult(.init())
+            publishSelectionSnapshot(from: pdfView)
             return true
         }
 
@@ -1422,7 +2131,7 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
             lastSearchRequest = request
         }
 
-        func applyMarkupCommand(_ command: PDFTextMarkupCommand?, in pdfView: AnnotatingPDFView) {
+        fileprivate func applyMarkupCommand(_ command: PDFTextMarkupCommand?, in pdfView: AnnotatingPDFView) {
             guard let command, command.serial != lastMarkupCommandSerial else { return }
             lastMarkupCommandSerial = command.serial
             pdfView.addTextMarkup(kind: command.kind, color: command.color.nsColor)
@@ -1454,6 +2163,40 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
             publishViewportState(from: pdfView)
         }
 
+        func applyPageNavigationRequest(
+            _ request: PDFPageNavigationRequest?,
+            in pdfView: AnnotatingPDFView,
+            reportError: (String) -> Void
+        ) {
+            guard let request,
+                  request.documentID == documentID,
+                  request != lastPageNavigationRequest
+            else {
+                return
+            }
+
+            lastPageNavigationRequest = request
+            defer { onPageNavigationRequestConsumed(request) }
+
+            guard let document = pdfView.document,
+                  let destination = pdfPageDestination(
+                    pageNumber: request.pageNumber,
+                    document: document,
+                    displayBox: pdfView.displayBox
+                  )
+            else {
+                reportError("Page \(request.pageNumber) is unavailable in this PDF.")
+                return
+            }
+
+            performWithoutPublishingViewportStateChanges {
+                pdfView.clearSelection()
+                pdfView.go(to: destination)
+            }
+            publishSelectionSnapshot(from: pdfView)
+            publishViewportState(from: pdfView)
+        }
+
         func restoreViewportStateIfNeeded(
             _ state: PDFDocumentViewportState?,
             force: Bool,
@@ -1464,12 +2207,17 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
                 shouldRestoreViewportState = true
             }
 
+            if let state,
+               state.isMeaningfullyDifferent(from: lastPublishedViewportState) {
+                shouldRestoreViewportState = true
+            }
+
             guard shouldRestoreViewportState else { return }
-            shouldRestoreViewportState = false
             guard let document = pdfView.document else {
                 publishZoomStatus(from: pdfView)
                 return
             }
+            shouldRestoreViewportState = false
 
             performWithoutPublishingViewportStateChanges {
                 let restoredZoomMode: PDFZoomMode
@@ -1484,7 +2232,7 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
 
                 if !skipPosition,
                    let position = state?.position,
-                   let destination = position.destination(in: document) {
+                   let destination = position.destination(in: document, displayBox: pdfView.displayBox) {
                     pdfView.go(to: destination)
                 }
             }
@@ -1502,6 +2250,13 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
 
             publishPageStatus(from: pdfView)
             publishZoomStatus(from: pdfView)
+        }
+
+        func publishFinalViewportState(from pdfView: PDFView) {
+            deliverFinalPDFViewportStateSynchronously(
+                from: pdfView,
+                to: onFinalViewportStateChange
+            )
         }
 
         private func publishPageStatus(from pdfView: PDFView) {
@@ -1524,6 +2279,23 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
         @objc private func pdfViewViewportDidChange(_ notification: Notification) {
             guard let pdfView = notification.object as? PDFView else { return }
             publishViewportState(from: pdfView)
+        }
+
+        @objc private func pdfViewSelectionDidChange(_ notification: Notification) {
+            guard let pdfView = notification.object as? PDFView else { return }
+            publishSelectionSnapshot(from: pdfView)
+        }
+
+        private func publishSelectionSnapshot(from pdfView: PDFView) {
+            let snapshot = makePDFSelectionSnapshot(
+                documentID: documentID,
+                contentVersion: documentContentVersion,
+                document: pdfView.document,
+                selection: pdfView.currentSelection
+            )
+            guard snapshot != lastPublishedSelectionSnapshot else { return }
+            lastPublishedSelectionSnapshot = snapshot
+            onSelectionSnapshotChange(snapshot)
         }
 
         private func performWithoutPublishingViewportStateChanges(_ body: () -> Void) {
@@ -1585,6 +2357,40 @@ private struct PDFKitPreviewRepresentable: NSViewRepresentable {
     }
 }
 
+@MainActor
+final class PDFViewportCaptureBridge: ObservableObject {
+    private var documentID: String?
+    private weak var pdfView: PDFView?
+
+    func attach(documentID: String, to pdfView: PDFView) {
+        self.documentID = documentID
+        self.pdfView = pdfView
+    }
+
+    func detach(from pdfView: PDFView) {
+        guard self.pdfView === pdfView else { return }
+        documentID = nil
+        self.pdfView = nil
+    }
+
+    func capture() -> (documentID: String, state: PDFDocumentViewportState)? {
+        guard let documentID,
+              let pdfView,
+              let state = PDFDocumentViewportState(pdfView: pdfView)
+        else { return nil }
+        return (documentID, state)
+    }
+}
+
+func deliverFinalPDFViewportStateSynchronously(
+    from pdfView: PDFView,
+    to callback: (PDFDocumentViewportState) -> Void
+) {
+    precondition(Thread.isMainThread)
+    guard let state = PDFDocumentViewportState(pdfView: pdfView) else { return }
+    callback(state)
+}
+
 extension PDFDocumentViewportPosition {
     init?(pdfView: PDFView) {
         guard let document = pdfView.document,
@@ -1603,12 +2409,25 @@ extension PDFDocumentViewportPosition {
         )
     }
 
-    func destination(in document: PDFDocument) -> PDFDestination? {
-        guard pageIndex >= 0, let page = document.page(at: pageIndex) else {
+    func destination(
+        in document: PDFDocument,
+        displayBox: PDFDisplayBox = .cropBox
+    ) -> PDFDestination? {
+        guard document.pageCount > 0 else {
             return nil
         }
 
-        return PDFDestination(page: page, at: point.point)
+        let clampedPageIndex = min(max(pageIndex, 0), document.pageCount - 1)
+        guard let page = document.page(at: clampedPageIndex) else { return nil }
+        let bounds = page.bounds(for: displayBox)
+        let requestedPoint = point.point
+        let x = requestedPoint.x.isFinite
+            ? min(max(requestedPoint.x, bounds.minX), bounds.maxX)
+            : bounds.minX
+        let y = requestedPoint.y.isFinite
+            ? min(max(requestedPoint.y, bounds.minY), bounds.maxY)
+            : bounds.maxY
+        return PDFDestination(page: page, at: CGPoint(x: x, y: y))
     }
 }
 
@@ -1745,8 +2564,68 @@ private func clampedPDFScaleFactor(_ requestedScale: CGFloat, in pdfView: PDFVie
     return Swift.min(maximum, Swift.max(minimum, requestedScale))
 }
 
-private final class AnnotatingPDFView: PDFView {
-    var annotationMode: PDFAnnotationInteractionMode = .select {
+func makePDFSelectionSnapshot(
+    documentID: String?,
+    contentVersion: Int = 0,
+    document: PDFDocument?,
+    selection: PDFSelection?
+) -> PDFSelectionSnapshot? {
+    guard let documentID,
+          !documentID.isEmpty,
+          let document,
+          document.allowsCopying,
+          let selection,
+          let rawText = selection.string
+    else {
+        return nil
+    }
+
+    let text = rawText
+        .replacingOccurrences(of: "\r\n", with: "\n")
+        .replacingOccurrences(of: "\r", with: "\n")
+        .trimmingCharacters(in: .newlines)
+    guard text.rangeOfCharacter(from: .whitespacesAndNewlines.inverted) != nil else {
+        return nil
+    }
+
+    var pageIndices: Set<Int> = []
+    for page in selection.pages {
+        let index = document.index(for: page)
+        guard index >= 0, index < document.pageCount else { return nil }
+        pageIndices.insert(index)
+    }
+    guard pageIndices.count == 1, let pageIndex = pageIndices.first else {
+        return nil
+    }
+
+    return PDFSelectionSnapshot(
+        documentID: documentID,
+        text: text,
+        pageNumber: pageIndex + 1,
+        contentVersion: contentVersion
+    )
+}
+
+func pdfPageDestination(
+    pageNumber: Int,
+    document: PDFDocument,
+    displayBox: PDFDisplayBox
+) -> PDFDestination? {
+    guard pageNumber > 0,
+          pageNumber <= document.pageCount,
+          let page = document.page(at: pageNumber - 1)
+    else {
+        return nil
+    }
+    let bounds = page.bounds(for: displayBox)
+    return PDFDestination(
+        page: page,
+        at: CGPoint(x: bounds.minX, y: bounds.maxY)
+    )
+}
+
+final class AnnotatingPDFView: PDFView {
+    fileprivate var annotationMode: PDFAnnotationInteractionMode = .select {
         didSet {
             if oldValue != annotationMode {
                 discardActiveInkAnnotation()
@@ -1761,6 +2640,10 @@ private final class AnnotatingPDFView: PDFView {
     var onEdited: (Data?, Data) -> Void = { _, _ in }
     var onUndoStateChanged: (Bool, Bool) -> Void = { _, _ in }
     var onError: (String) -> Void = { _ in }
+    var onRequestLinkedExcerpt: (PDFSelectionSnapshot) -> Void = { _ in }
+    var onAnnotationsChanged: () -> Void = {}
+    var linkedExcerptDocumentID: String?
+    var linkedExcerptContentVersion = 0
 
     private weak var activeInkPage: PDFPage?
     private var activeInkPoints: [CGPoint] = []
@@ -1805,6 +2688,45 @@ private final class AnnotatingPDFView: PDFView {
         }
 
         super.keyDown(with: event)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event) ?? NSMenu()
+        let title = "Insert Linked Excerpt into Markdown…"
+        let item: NSMenuItem
+        if let existingItem = menu.items.first(where: { $0.title == title }) {
+            item = existingItem
+        } else {
+            if !menu.items.isEmpty, menu.items.last?.isSeparatorItem == false {
+                menu.addItem(.separator())
+            }
+            item = NSMenuItem(
+                title: title,
+                action: #selector(requestLinkedExcerpt(_:)),
+                keyEquivalent: ""
+            )
+            menu.addItem(item)
+        }
+        item.target = self
+        item.isEnabled = currentLinkedExcerptSelectionSnapshot != nil
+        return menu
+    }
+
+    @objc private func requestLinkedExcerpt(_ sender: Any?) {
+        guard let snapshot = currentLinkedExcerptSelectionSnapshot else {
+            onError("Select text on one PDF page to insert a linked excerpt.")
+            return
+        }
+        onRequestLinkedExcerpt(snapshot)
+    }
+
+    private var currentLinkedExcerptSelectionSnapshot: PDFSelectionSnapshot? {
+        makePDFSelectionSnapshot(
+            documentID: linkedExcerptDocumentID,
+            contentVersion: linkedExcerptContentVersion,
+            document: document,
+            selection: currentSelection
+        )
     }
 
     override func resetCursorRects() {
@@ -1922,6 +2844,7 @@ private final class AnnotatingPDFView: PDFView {
                         )
                     )
                 }
+                onAnnotationsChanged()
                 publishEditedDocument(previousData: activeInkBaselineData)
             } else {
                 discardActiveInkAnnotation()
@@ -1954,7 +2877,7 @@ private final class AnnotatingPDFView: PDFView {
 
                 let annotation = PDFAnnotation(bounds: bounds, forType: kind.annotationSubtype, withProperties: nil)
                 annotation.color = kind == .highlight ? color.withAlphaComponent(0.46) : color
-                annotation.contents = selection.string
+                annotation.contents = lineSelection.string?.trimmingCharacters(in: .newlines)
                 annotation.userName = NSFullUserName()
                 annotation.modificationDate = Date()
                 annotation.shouldDisplay = true
@@ -1972,6 +2895,7 @@ private final class AnnotatingPDFView: PDFView {
 
         registerAnnotationEdit(PDFAnnotationEditOperation(added: addedAnnotations, removed: []))
         refreshAnnotationDisplay()
+        onAnnotationsChanged()
         clearSelection()
         publishEditedDocument(previousData: previousData)
     }
@@ -2063,6 +2987,7 @@ private final class AnnotatingPDFView: PDFView {
         target.page.removeAnnotation(annotation)
         registerAnnotationEdit(PDFAnnotationEditOperation(added: [], removed: [removedItem]))
         refreshAnnotationDisplay(on: target.page)
+        onAnnotationsChanged()
         publishEditedDocument(previousData: previousData)
     }
 
@@ -2071,6 +2996,7 @@ private final class AnnotatingPDFView: PDFView {
         applyInverse(operation)
         redoStack.append(operation)
         publishUndoState()
+        onAnnotationsChanged()
         publishEditedDocument(previousData: nil)
     }
 
@@ -2079,6 +3005,7 @@ private final class AnnotatingPDFView: PDFView {
         apply(operation)
         undoStack.append(operation)
         publishUndoState()
+        onAnnotationsChanged()
         publishEditedDocument(previousData: nil)
     }
 
@@ -2193,6 +3120,27 @@ private final class AnnotatingPDFView: PDFView {
         let dy = lhs.y - rhs.y
         return dx * dx + dy * dy
     }
+
+    func prepareForDismantle() {
+        discardActiveInkAnnotation()
+        if let toolTrackingArea,
+           trackingAreas.contains(where: { $0 === toolTrackingArea }) {
+            removeTrackingArea(toolTrackingArea)
+        }
+        toolTrackingArea = nil
+        highlightedSelections = nil
+        clearSelection()
+        undoStack = []
+        redoStack = []
+        linkedExcerptDocumentID = nil
+        linkedExcerptContentVersion = 0
+        onEdited = { _, _ in }
+        onUndoStateChanged = { _, _ in }
+        onError = { _ in }
+        onRequestLinkedExcerpt = { _ in }
+        onAnnotationsChanged = {}
+        document = nil
+    }
 }
 
 func pdfTextMarkupQuadrilateralPoints(for size: CGSize) -> [NSValue] {
@@ -2204,7 +3152,7 @@ func pdfTextMarkupQuadrilateralPoints(for size: CGSize) -> [NSValue] {
     ]
 }
 
-private enum PDFAnnotationInteractionMode: Equatable {
+fileprivate enum PDFAnnotationInteractionMode: Equatable {
     case select
     case pen
     case eraser
@@ -2254,7 +3202,7 @@ private enum PDFAnnotationToolCursor {
     }
 }
 
-private enum PDFTextMarkupKind: Equatable {
+enum PDFTextMarkupKind: Equatable {
     case highlight
     case underline
     case strikeOut

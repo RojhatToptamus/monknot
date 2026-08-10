@@ -134,9 +134,15 @@ struct MonknotStoreSmokeTests {
         let didDetectExternalConflict = await waitUntil(8) { store.selectedDocumentExternalChange }
         expect(didDetectExternalConflict, "dirty selected document should report an external disk change conflict")
 
-        store.acknowledgeExternalChange()
-        expect(!store.selectedDocumentExternalChange, "acknowledging external change should dismiss conflict banner")
-        expect(store.documentText == "# A\ncopied dirty text\n", "acknowledging external change should keep dirty buffer")
+        store.prepareExternalDocumentReview()
+        let didPrepareExternalReview = await waitUntil { store.externalDocumentReview != nil }
+        expect(didPrepareExternalReview, "external change review should load disk and local versions")
+        store.resolveExternalDocumentReview(.keepLocal)
+        let didKeepLocalVersion = await waitUntil {
+            store.externalDocumentReview == nil && !store.selectedDocumentExternalChange
+        }
+        expect(didKeepLocalVersion, "keeping the local version should dismiss the conflict banner")
+        expect(store.documentText == "# A\ncopied dirty text\n", "keeping the local version should preserve the dirty buffer")
 
         store.reloadSelectedDocumentFromDisk()
         _ = await waitUntil { !store.isDocumentLoading }

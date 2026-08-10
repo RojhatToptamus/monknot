@@ -3,6 +3,75 @@ import XCTest
 
 @MainActor
 final class WorkspaceStoreReplaceUndoTests: XCTestCase {
+    func testTextMutationUndoAndRedoApplyExactTextSynchronously() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("note.md")
+        try "alpha beta".write(to: file, atomically: true, encoding: .utf8)
+
+        let store = WorkspaceStore()
+        store.openWorkspace(root)
+        let didLoad = await waitUntil {
+            !store.isBusy && !store.isDocumentLoading && store.documentText == "alpha beta"
+        }
+        XCTAssertTrue(didLoad)
+        let documentID = try XCTUnwrap(store.selectedDocumentID)
+        let range = (store.documentText as NSString).range(of: "beta")
+        let undoMutation = try XCTUnwrap(store.applyTextMutation(
+            documentID: documentID,
+            range: range,
+            expectedText: "beta",
+            replacement: "gamma"
+        ))
+        XCTAssertEqual(store.documentText, "alpha gamma")
+
+        let undoManager = UndoManager()
+        undoManager.groupsByEvent = false
+        undoManager.beginUndoGrouping()
+        WorkspaceTextMutationUndo.register(
+            undoMutation,
+            store: store,
+            undoManager: undoManager,
+            actionName: "Replace Word"
+        )
+        undoManager.endUndoGrouping()
+
+        undoManager.undo()
+        XCTAssertEqual(store.documentText, "alpha beta")
+        XCTAssertTrue(undoManager.canRedo)
+
+        undoManager.redo()
+        XCTAssertEqual(store.documentText, "alpha gamma")
+        XCTAssertTrue(undoManager.canUndo)
+    }
+
+    func testLaterUserTextMutationInvalidatesWorkspaceReplaceUndo() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("note.md")
+        try "alpha beta".write(to: file, atomically: true, encoding: .utf8)
+
+        let store = WorkspaceStore()
+        store.openWorkspace(root)
+        let didLoad = await waitUntil {
+            !store.isBusy && !store.isDocumentLoading && store.documentText == "alpha beta"
+        }
+        XCTAssertTrue(didLoad)
+
+        store.replaceInWorkspace(find: "beta", replacement: "gamma")
+        let didReplace = await waitUntil {
+            !store.isBusy && store.canUndoWorkspaceReplace && store.documentText == "alpha gamma"
+        }
+        XCTAssertTrue(didReplace)
+
+        store.setDocumentText("alpha gamma!")
+
+        XCTAssertFalse(store.canUndoWorkspaceReplace)
+        store.undoLastWorkspaceReplace()
+        XCTAssertEqual(store.documentText, "alpha gamma!")
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "alpha gamma")
+    }
+
     func testReplaceThenUndoRestoresContent() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

@@ -2,6 +2,42 @@ import MonknotCore
 import SwiftUI
 import WebKit
 
+struct MarkdownPreviewRenderIdentity: Equatable, Hashable {
+    let documentID: String
+    let renderID: Int
+}
+
+struct MarkdownPreviewLinkRequest: Equatable {
+    let identity: MarkdownPreviewRenderIdentity
+    let kind: MarkdownWorkspaceLinkKind
+    let destination: String
+}
+
+struct MarkdownPreviewTaskRequest: Equatable {
+    let identity: MarkdownPreviewRenderIdentity
+    let sourceLine: Int
+    let expectedChecked: Bool
+    let desiredChecked: Bool
+}
+
+struct MarkdownPreviewTerminalPasteRequest: Equatable {
+    let identity: MarkdownPreviewRenderIdentity
+    let text: String
+    let sourceLine: Int?
+}
+
+struct MarkdownPreviewSelection: Equatable {
+    let identity: MarkdownPreviewRenderIdentity
+    let text: String
+    let sourceLine: Int?
+}
+
+enum MarkdownPreviewBridgeInteraction: Equatable {
+    case link(MarkdownPreviewLinkRequest)
+    case task(MarkdownPreviewTaskRequest)
+    case terminalPaste(MarkdownPreviewTerminalPasteRequest)
+}
+
 struct MarkdownPreviewView: NSViewRepresentable {
     let documentID: String
     let markdown: String
@@ -20,6 +56,56 @@ struct MarkdownPreviewView: NSViewRepresentable {
     let onSourceJump: (MarkdownSourceLocation) -> Void
     let onScrollPositionChange: (DocumentScrollPosition) -> Void
     let onVisibleSourceLineChange: ((Int) -> Void)?
+    let onLinkRequest: (MarkdownPreviewLinkRequest) -> Void
+    let onTaskRequest: (MarkdownPreviewTaskRequest) -> Void
+    let onTerminalPasteRequest: (MarkdownPreviewTerminalPasteRequest) -> Void
+    let onSelectionChange: (MarkdownPreviewSelection) -> Void
+
+    init(
+        documentID: String,
+        markdown: String,
+        baseURL: URL?,
+        theme: AppTheme,
+        zoomScale: Double,
+        codeFontSize: Double,
+        contentWidthPercent: Double,
+        usePointerCursors: Bool,
+        fontSmoothing: Bool,
+        scrollPosition: DocumentScrollPosition?,
+        syncScrollEnabled: Bool,
+        syncScrollTargetLine: Int?,
+        sourceLocation: Binding<MarkdownSourceLocation?>,
+        searchState: Binding<DocumentSearchState>,
+        onSourceJump: @escaping (MarkdownSourceLocation) -> Void,
+        onLinkRequest: @escaping (MarkdownPreviewLinkRequest) -> Void = { _ in },
+        onTaskRequest: @escaping (MarkdownPreviewTaskRequest) -> Void = { _ in },
+        onTerminalPasteRequest: @escaping (MarkdownPreviewTerminalPasteRequest) -> Void = { _ in },
+        onSelectionChange: @escaping (MarkdownPreviewSelection) -> Void = { _ in },
+        onScrollPositionChange: @escaping (DocumentScrollPosition) -> Void,
+        onVisibleSourceLineChange: ((Int) -> Void)?
+    ) {
+        self.documentID = documentID
+        self.markdown = markdown
+        self.baseURL = baseURL
+        self.theme = theme
+        self.zoomScale = zoomScale
+        self.codeFontSize = codeFontSize
+        self.contentWidthPercent = contentWidthPercent
+        self.usePointerCursors = usePointerCursors
+        self.fontSmoothing = fontSmoothing
+        self.scrollPosition = scrollPosition
+        self.syncScrollEnabled = syncScrollEnabled
+        self.syncScrollTargetLine = syncScrollTargetLine
+        self._sourceLocation = sourceLocation
+        self._searchState = searchState
+        self.onSourceJump = onSourceJump
+        self.onLinkRequest = onLinkRequest
+        self.onTaskRequest = onTaskRequest
+        self.onTerminalPasteRequest = onTerminalPasteRequest
+        self.onSelectionChange = onSelectionChange
+        self.onScrollPositionChange = onScrollPositionChange
+        self.onVisibleSourceLineChange = onVisibleSourceLineChange
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onSourceJump: onSourceJump)
@@ -30,6 +116,8 @@ struct MarkdownPreviewView: NSViewRepresentable {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.userContentController.add(context.coordinator, name: Coordinator.sourceJumpHandlerName)
         configuration.userContentController.add(context.coordinator, name: Coordinator.scrollPositionHandlerName)
+        configuration.userContentController.add(context.coordinator, name: Coordinator.interactionHandlerName)
+        configuration.userContentController.add(context.coordinator, name: Coordinator.selectionHandlerName)
         configuration.userContentController.addUserScript(Coordinator.scrollTrackingScript)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -45,6 +133,10 @@ struct MarkdownPreviewView: NSViewRepresentable {
         context.coordinator.onSourceJump = onSourceJump
         context.coordinator.onScrollPositionChange = onScrollPositionChange
         context.coordinator.onVisibleSourceLineChange = onVisibleSourceLineChange
+        context.coordinator.onLinkRequest = onLinkRequest
+        context.coordinator.onTaskRequest = onTaskRequest
+        context.coordinator.onTerminalPasteRequest = onTerminalPasteRequest
+        context.coordinator.onSelectionChange = onSelectionChange
         context.coordinator.syncScrollEnabled = syncScrollEnabled
         context.coordinator.onSearchResult = { result in
             DispatchQueue.main.async {
@@ -191,8 +283,18 @@ struct MarkdownPreviewView: NSViewRepresentable {
         coordinator.applyPendingScrollPositionIfNeeded(in: webView)
     }
 
-    private static func javaScriptPayload(markdown: String, themeName: String) throws -> String {
-        let payload = ["markdown": markdown, "theme": themeName]
+    private static func javaScriptPayload(
+        markdown: String,
+        themeName: String,
+        documentID: String,
+        renderID: Int
+    ) throws -> String {
+        let payload: [String: Any] = [
+            "markdown": markdown,
+            "theme": themeName,
+            "documentID": documentID,
+            "renderID": renderID,
+        ]
         return try javaScriptPayload(payload)
     }
 
@@ -207,10 +309,17 @@ struct MarkdownPreviewView: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
-        coordinator.cancelShellLoad()
+        webView.evaluateJavaScript(
+            "window.monknotTearDown && window.monknotTearDown(); window.monknotScrollTrackingTeardown && window.monknotScrollTrackingTeardown();"
+        )
+        webView.stopLoading()
+        coordinator.tearDown()
         webView.navigationDelegate = nil
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.sourceJumpHandlerName)
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.scrollPositionHandlerName)
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.interactionHandlerName)
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.selectionHandlerName)
+        webView.configuration.userContentController.removeAllUserScripts()
     }
 
     private static func errorHTML(_ message: String) -> String {
@@ -228,9 +337,12 @@ struct MarkdownPreviewView: NSViewRepresentable {
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         static let sourceJumpHandlerName = "monknotSourceJump"
         static let scrollPositionHandlerName = "monknotScrollPosition"
+        static let interactionHandlerName = "monknotInteraction"
+        static let selectionHandlerName = "monknotSelection"
         static let scrollTrackingScript = WKUserScript(
             source: """
             (() => {
+              window.monknotScrollTrackingTeardown?.();
               let pending = false;
               const publish = () => {
                 pending = false;
@@ -238,16 +350,26 @@ struct MarkdownPreviewView: NSViewRepresentable {
                   x: window.scrollX || 0,
                   y: window.scrollY || 0
                 };
+                const identity = window.monknotCurrentIdentity?.();
+                if (identity) {
+                  payload.documentID = identity.documentID;
+                  payload.renderID = identity.renderID;
+                }
                 if (window.monknotVisibleSourceLine) {
                   payload.sourceLine = window.monknotVisibleSourceLine();
                 }
                 window.webkit.messageHandlers.monknotScrollPosition.postMessage(payload);
               };
-              window.addEventListener('scroll', () => {
+              const handleScroll = () => {
                 if (pending) return;
                 pending = true;
                 window.requestAnimationFrame(publish);
-              }, { passive: true });
+              };
+              window.addEventListener('scroll', handleScroll, { passive: true });
+              window.monknotScrollTrackingTeardown = () => {
+                window.removeEventListener('scroll', handleScroll);
+                window.monknotScrollTrackingTeardown = undefined;
+              };
             })();
             """,
             injectionTime: .atDocumentEnd,
@@ -258,13 +380,19 @@ struct MarkdownPreviewView: NSViewRepresentable {
         var onSourceJump: (MarkdownSourceLocation) -> Void
         var onScrollPositionChange: (DocumentScrollPosition) -> Void = { _ in }
         var onVisibleSourceLineChange: ((Int) -> Void)?
+        var onLinkRequest: (MarkdownPreviewLinkRequest) -> Void = { _ in }
+        var onTaskRequest: (MarkdownPreviewTaskRequest) -> Void = { _ in }
+        var onTerminalPasteRequest: (MarkdownPreviewTerminalPasteRequest) -> Void = { _ in }
+        var onSelectionChange: (MarkdownPreviewSelection) -> Void = { _ in }
         var syncScrollEnabled = false
         var onSearchResult: (DocumentSearchResult) -> Void = { _ in }
         var onSourceRevealConsumed: () -> Void = {}
         private var shellTask: Task<Void, Never>?
         private var renderTask: Task<Void, Never>?
         private var renderSerial = 0
+        private var activeRenderID: Int?
         private var documentID: String?
+        private var isTornDown = false
         private var lastShellRequest: PreviewShellRequest?
         private var lastAppliedAppearance: PreviewAppearanceRequest?
         private var lastRenderedContent: PreviewContentRequest?
@@ -295,6 +423,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 publishPreviousScrollPosition(Self.scrollPosition(from: value))
             }
             documentID = nextDocumentID
+            activeRenderID = nil
             lastPublishedScrollPosition = nil
             shouldRestorePendingScrollPosition = true
             return true
@@ -320,6 +449,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
             lastShellRequest = request
             isShellLoaded = false
             lastRenderedContent = nil
+            activeRenderID = nil
             scheduledRenderContent = nil
             lastAppliedAppearance = nil
             lastSearchRequest = nil
@@ -373,6 +503,23 @@ struct MarkdownPreviewView: NSViewRepresentable {
             renderSerial += 1
         }
 
+        func tearDown() {
+            guard !isTornDown else { return }
+            isTornDown = true
+            cancelShellLoad()
+            documentID = nil
+            activeRenderID = nil
+            onSourceJump = { _ in }
+            onScrollPositionChange = { _ in }
+            onVisibleSourceLineChange = nil
+            onSearchResult = { _ in }
+            onSourceRevealConsumed = {}
+            onLinkRequest = { _ in }
+            onTaskRequest = { _ in }
+            onTerminalPasteRequest = { _ in }
+            onSelectionChange = { _ in }
+        }
+
         func markShellNeedsReload() {
             isShellLoaded = false
             lastShellRequest = nil
@@ -380,13 +527,23 @@ struct MarkdownPreviewView: NSViewRepresentable {
             renderTask?.cancel()
             renderTask = nil
             scheduledRenderContent = nil
+            activeRenderID = nil
             renderSerial += 1
         }
 
-        fileprivate func markRenderedContent(_ request: PreviewContentRequest) {
+        fileprivate func markRenderedContent(_ request: PreviewContentRequest, renderID: Int) {
             lastRenderedContent = request
+            activeRenderID = renderID
             scheduledRenderContent = nil
             lastSearchRequest = nil
+            onSelectionChange(MarkdownPreviewSelection(
+                identity: MarkdownPreviewRenderIdentity(
+                    documentID: request.documentID,
+                    renderID: renderID
+                ),
+                text: "",
+                sourceLine: nil
+            ))
         }
 
         fileprivate func markAppliedAppearance(_ request: PreviewAppearanceRequest) {
@@ -480,7 +637,9 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 do {
                     payload = try MarkdownPreviewView.javaScriptPayload(
                         markdown: request.markdown,
-                        themeName: latestThemeName
+                        themeName: latestThemeName,
+                        documentID: request.documentID,
+                        renderID: serial
                     )
                 } catch {
                     await MainActor.run {
@@ -501,7 +660,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
                             return
                         }
 
-                        self.markRenderedContent(request)
+                        self.markRenderedContent(request, renderID: serial)
                         self.applySearch(self.pendingSearch ?? searchState, in: webView)
                         self.setPendingSourceReveal(sourceLocation)
                         let isRevealingSource = sourceLocation != nil
@@ -602,6 +761,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard !isTornDown else { return }
             shellTask = nil
             isShellLoaded = true
             lastAppliedAppearance = loadingAppearance
@@ -631,33 +791,206 @@ struct MarkdownPreviewView: NSViewRepresentable {
             isShellLoaded = false
         }
 
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            guard navigationAction.navigationType == .linkActivated else {
+                decisionHandler(isTornDown ? .cancel : .allow)
+                return
+            }
+
+            guard let url = navigationAction.request.url else {
+                decisionHandler(.cancel)
+                return
+            }
+            if Self.allowsActivatedNavigation(to: url, currentURL: webView.url) {
+                decisionHandler(.allow)
+                return
+            }
+
+            decisionHandler(.cancel)
+            guard let identity = currentIdentity else { return }
+            let destination = url.absoluteString
+            guard !destination.isEmpty, destination.utf8.count <= 16_384 else { return }
+            onLinkRequest(MarkdownPreviewLinkRequest(
+                identity: identity,
+                kind: .markdown,
+                destination: destination
+            ))
+        }
+
+        static func allowsActivatedNavigation(to url: URL, currentURL: URL?) -> Bool {
+            let fragment = url.fragment?.lowercased() ?? ""
+            guard fragment.hasPrefix("fn-") || fragment.hasPrefix("fnref-") else { return false }
+            guard let currentURL else { return false }
+            if url.isFileURL, currentURL.isFileURL {
+                return url.standardizedFileURL.path == currentURL.standardizedFileURL.path
+            }
+            return url.scheme == currentURL.scheme
+                && url.host == currentURL.host
+                && url.path == currentURL.path
+        }
+
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard !isTornDown else { return }
             if message.name == Self.scrollPositionHandlerName {
+                guard validatedIdentity(from: message.body) != nil else { return }
                 publishScrollPosition(from: message.body)
                 return
             }
 
-            guard message.name == Self.sourceJumpHandlerName else { return }
-
-            let line: Int?
-            let offset: Int
-            if let body = message.body as? [String: Any], let value = body["line"] as? NSNumber {
-                line = value.intValue
-                offset = (body["offset"] as? NSNumber)?.intValue ?? 0
-            } else if let body = message.body as? [String: Any], let value = body["line"] as? Int {
-                line = value
-                offset = body["offset"] as? Int ?? 0
-            } else {
-                line = nil
-                offset = 0
+            if message.name == Self.interactionHandlerName {
+                handleInteraction(message.body)
+                return
             }
 
-            guard let line, line > 0 else { return }
+            if message.name == Self.selectionHandlerName {
+                handleSelection(message.body)
+                return
+            }
+
+            guard message.name == Self.sourceJumpHandlerName else { return }
+            guard let body = message.body as? [String: Any],
+                  validatedIdentity(from: body) != nil,
+                  let line = Self.integer(body["line"]),
+                  line > 0
+            else { return }
+            let offset = max(0, Self.integer(body["offset"]) ?? 0)
             let location = MarkdownSourceLocation(line: line, offset: offset)
 
-            DispatchQueue.main.async { [onSourceJump] in
-                onSourceJump(location)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.isTornDown else { return }
+                self.onSourceJump(location)
             }
+        }
+
+        private var currentIdentity: MarkdownPreviewRenderIdentity? {
+            guard let documentID, let activeRenderID, activeRenderID > 0 else { return nil }
+            return MarkdownPreviewRenderIdentity(documentID: documentID, renderID: activeRenderID)
+        }
+
+        private func validatedIdentity(from body: Any) -> MarkdownPreviewRenderIdentity? {
+            guard let body = body as? [String: Any],
+                  let messageDocumentID = body["documentID"] as? String,
+                  !messageDocumentID.isEmpty,
+                  let messageRenderID = Self.integer(body["renderID"]),
+                  messageRenderID > 0
+            else { return nil }
+            let identity = MarkdownPreviewRenderIdentity(
+                documentID: messageDocumentID,
+                renderID: messageRenderID
+            )
+            return identity == currentIdentity ? identity : nil
+        }
+
+        private func handleInteraction(_ value: Any) {
+            guard let currentIdentity,
+                  let interaction = Self.bridgeInteraction(from: value, expectedIdentity: currentIdentity)
+            else { return }
+            switch interaction {
+            case .link(let request):
+                onLinkRequest(request)
+            case .task(let request):
+                onTaskRequest(request)
+            case .terminalPaste(let request):
+                onTerminalPasteRequest(request)
+            }
+        }
+
+        private func handleSelection(_ value: Any) {
+            guard let currentIdentity,
+                  let selection = Self.bridgeSelection(from: value, expectedIdentity: currentIdentity)
+            else { return }
+            onSelectionChange(selection)
+        }
+
+        static func bridgeInteraction(
+            from value: Any,
+            expectedIdentity: MarkdownPreviewRenderIdentity
+        ) -> MarkdownPreviewBridgeInteraction? {
+            guard let body = value as? [String: Any],
+                  messageIdentity(from: body) == expectedIdentity,
+                  let action = body["action"] as? String
+            else { return nil }
+            switch action {
+            case "link":
+                guard let destination = body["destination"] as? String,
+                      !destination.isEmpty,
+                      destination.utf8.count <= 16_384
+                else { return nil }
+                let kind = (body["kind"] as? String).flatMap(MarkdownWorkspaceLinkKind.init(rawValue:))
+                    ?? .markdown
+                guard kind == .markdown || kind == .wikilink else { return nil }
+                return .link(MarkdownPreviewLinkRequest(
+                    identity: expectedIdentity,
+                    kind: kind,
+                    destination: destination
+                ))
+            case "task":
+                guard let sourceLine = integer(body["sourceLine"]),
+                      sourceLine > 0,
+                      let expectedChecked = boolean(body["expectedChecked"]),
+                      let desiredChecked = boolean(body["desiredChecked"]),
+                      expectedChecked != desiredChecked
+                else { return nil }
+                return .task(MarkdownPreviewTaskRequest(
+                    identity: expectedIdentity,
+                    sourceLine: sourceLine,
+                    expectedChecked: expectedChecked,
+                    desiredChecked: desiredChecked
+                ))
+            case "terminalPaste":
+                guard let text = body["text"] as? String,
+                      !text.isEmpty,
+                      text.utf8.count <= 1_000_000
+                else { return nil }
+                let sourceLine = integer(body["sourceLine"]).flatMap { $0 > 0 ? $0 : nil }
+                return .terminalPaste(MarkdownPreviewTerminalPasteRequest(
+                    identity: expectedIdentity,
+                    text: text,
+                    sourceLine: sourceLine
+                ))
+            default:
+                return nil
+            }
+        }
+
+        static func bridgeSelection(
+            from value: Any,
+            expectedIdentity: MarkdownPreviewRenderIdentity
+        ) -> MarkdownPreviewSelection? {
+            guard let body = value as? [String: Any],
+                  messageIdentity(from: body) == expectedIdentity,
+                  let text = body["text"] as? String,
+                  text.utf8.count <= 1_000_000
+            else { return nil }
+            let sourceLine = integer(body["sourceLine"]).flatMap { $0 > 0 ? $0 : nil }
+            return MarkdownPreviewSelection(
+                identity: expectedIdentity,
+                text: text,
+                sourceLine: sourceLine
+            )
+        }
+
+        private static func messageIdentity(from body: [String: Any]) -> MarkdownPreviewRenderIdentity? {
+            guard let documentID = body["documentID"] as? String,
+                  !documentID.isEmpty,
+                  let renderID = integer(body["renderID"]),
+                  renderID > 0
+            else { return nil }
+            return MarkdownPreviewRenderIdentity(documentID: documentID, renderID: renderID)
+        }
+
+        private static func integer(_ value: Any?) -> Int? {
+            if let number = value as? NSNumber { return number.intValue }
+            return value as? Int
+        }
+
+        private static func boolean(_ value: Any?) -> Bool? {
+            if let number = value as? NSNumber { return number.boolValue }
+            return value as? Bool
         }
 
         private func publishScrollPosition(from body: Any) {

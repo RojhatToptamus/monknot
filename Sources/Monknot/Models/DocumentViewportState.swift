@@ -1,14 +1,15 @@
 import CoreGraphics
 import Foundation
 
-struct DocumentViewportState: Equatable {
+struct DocumentViewportState: Codable, Equatable {
     var textScrollPosition: DocumentScrollPosition?
+    var textSelection: DocumentTextSelection?
     var markdownPreviewScrollPosition: DocumentScrollPosition?
     var htmlPreviewScrollPosition: DocumentScrollPosition?
     var pdfViewportState: PDFDocumentViewportState?
 }
 
-struct DocumentScrollPosition: Equatable {
+struct DocumentScrollPosition: Codable, Equatable {
     var x: Double
     var y: Double
 
@@ -31,7 +32,17 @@ struct DocumentScrollPosition: Equatable {
     }
 }
 
-struct PDFDocumentViewportPosition: Equatable {
+struct DocumentTextSelection: Codable, Equatable {
+    var location: Int
+    var length: Int
+
+    init(location: Int, length: Int) {
+        self.location = max(0, location)
+        self.length = max(0, length)
+    }
+}
+
+struct PDFDocumentViewportPosition: Codable, Equatable {
     var pageIndex: Int
     var point: DocumentScrollPosition
 
@@ -46,12 +57,12 @@ struct PDFDocumentViewportPosition: Equatable {
     }
 }
 
-enum PDFZoomMode: Equatable {
+enum PDFZoomMode: Codable, Equatable {
     case fitToView
     case fixed(scaleFactor: Double)
 }
 
-struct PDFDocumentViewportState: Equatable {
+struct PDFDocumentViewportState: Codable, Equatable {
     var position: PDFDocumentViewportPosition?
     var zoomMode: PDFZoomMode
 
@@ -89,7 +100,63 @@ struct PDFDocumentViewportState: Equatable {
 
 enum DocumentViewportStateChange {
     case textScrollPosition(DocumentScrollPosition)
+    case textSelection(DocumentTextSelection)
     case markdownPreviewScrollPosition(DocumentScrollPosition)
     case htmlPreviewScrollPosition(DocumentScrollPosition)
     case pdfViewportState(PDFDocumentViewportState)
+}
+
+struct DocumentViewportStatePersistence {
+    private struct StoredState: Codable {
+        let statesByDocumentID: [String: DocumentViewportState]
+    }
+
+    private let defaults: UserDefaults
+    private let keyPrefix: String
+    private let maximumDocumentCount: Int
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
+
+    init(
+        defaults: UserDefaults = .standard,
+        keyPrefix: String = "Monknot.documentViewportState",
+        maximumDocumentCount: Int = 100
+    ) {
+        self.defaults = defaults
+        self.keyPrefix = keyPrefix
+        self.maximumDocumentCount = max(1, maximumDocumentCount)
+    }
+
+    func load(for workspaceURL: URL) -> [String: DocumentViewportState] {
+        guard let data = defaults.data(forKey: key(for: workspaceURL)),
+              let stored = try? decoder.decode(StoredState.self, from: data)
+        else {
+            return [:]
+        }
+        return stored.statesByDocumentID
+    }
+
+    func save(
+        _ states: [String: DocumentViewportState],
+        retaining documentIDs: [String],
+        for workspaceURL: URL
+    ) {
+        var retained: [String: DocumentViewportState] = [:]
+        for documentID in documentIDs.reversed() where retained.count < maximumDocumentCount {
+            if let state = states[documentID] {
+                retained[documentID] = state
+            }
+        }
+
+        let stored = StoredState(statesByDocumentID: retained)
+        guard let data = try? encoder.encode(stored) else { return }
+        let storageKey = key(for: workspaceURL)
+        guard defaults.data(forKey: storageKey) != data else { return }
+        defaults.set(data, forKey: storageKey)
+    }
+
+    func key(for workspaceURL: URL) -> String {
+        let pathData = Data(workspaceURL.standardizedFileURL.path.utf8)
+        return "\(keyPrefix).\(pathData.base64EncodedString())"
+    }
 }

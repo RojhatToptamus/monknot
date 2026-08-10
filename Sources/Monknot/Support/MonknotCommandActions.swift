@@ -16,7 +16,11 @@ struct MonknotCommandActions {
     let saveDocument: () -> Void
     let cut: () -> Void
     let copy: () -> Void
+    let copyRenderedMarkdown: () -> Void
+    let canCopyRenderedMarkdown: Bool
     let paste: () -> Void
+    let pasteSelectionIntoTerminal: () -> Void
+    let canPasteSelectionIntoTerminal: Bool
     let selectAll: () -> Void
     let refreshWorkspace: () -> Void
     let navigateBack: () -> Void
@@ -41,6 +45,11 @@ struct MonknotCommandActions {
     let toggleSidebar: () -> Void
     let toggleSplitView: () -> Void
     let canToggleSplitView: Bool
+    let togglePDFNavigator: () -> Void
+    let canTogglePDFNavigator: Bool
+    let insertPDFLinkedExcerpt: () -> Void
+    let canInsertPDFLinkedExcerpt: Bool
+    let showKeyboardShortcutsHelp: () -> Void
     let undoWorkspaceReplace: () -> Void
     let canUndoWorkspaceReplace: Bool
 }
@@ -145,6 +154,12 @@ struct MonknotCommandMenu: Commands {
             .keyboardShortcut("c", modifiers: [.command])
             .disabled(actions == nil && !MonknotNativePasteboardCommand.hasNativeEditingFocus)
 
+            Button("Copy Rendered Markdown") {
+                actions?.copyRenderedMarkdown()
+            }
+            .keyboardShortcut("c", modifiers: [.command, .option])
+            .disabled(actions?.canCopyRenderedMarkdown != true)
+
             Button("Paste") {
                 if let actions {
                     actions.paste()
@@ -196,6 +211,22 @@ struct MonknotCommandMenu: Commands {
             }
             .keyboardShortcut("\\", modifiers: [.command])
             .disabled(actions?.canToggleSplitView != true)
+
+            Button("Toggle PDF Navigator") {
+                actions?.togglePDFNavigator()
+            }
+            .disabled(actions?.canTogglePDFNavigator != true)
+
+            Button("Insert Linked PDF Excerpt…") {
+                actions?.insertPDFLinkedExcerpt()
+            }
+            .disabled(actions?.canInsertPDFLinkedExcerpt != true)
+
+            Button("Paste Selection into Terminal") {
+                actions?.pasteSelectionIntoTerminal()
+            }
+            .keyboardShortcut("v", modifiers: [.command, .option, .control])
+            .disabled(actions?.canPasteSelectionIntoTerminal != true)
 
             Divider()
 
@@ -283,6 +314,13 @@ struct MonknotCommandMenu: Commands {
                 Button("Reset Zoom") {
                     actions?.resetZoom()
                 }
+            }
+            .disabled(actions == nil)
+        }
+
+        CommandGroup(after: .help) {
+            Button("Keyboard Shortcuts") {
+                actions?.showKeyboardShortcutsHelp()
             }
             .disabled(actions == nil)
         }

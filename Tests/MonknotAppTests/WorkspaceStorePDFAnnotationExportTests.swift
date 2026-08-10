@@ -27,7 +27,7 @@ final class WorkspaceStorePDFAnnotationExportTests: XCTestCase {
         store.exportPDFAnnotationsToMarkdown(for: pdfDocument)
 
         let didExport = await waitUntil { !store.isBusy && store.selectedDocument?.relativePath == "notes/Paper Annotations.md" }
-        XCTAssertTrue(didExport)
+        XCTAssertTrue(didExport, store.errorMessage ?? "Export did not select its destination")
         XCTAssertTrue(store.documentText.contains("> Unsaved highlight"))
         XCTAssertFalse(store.documentText.contains("> Disk highlight"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("notes/Paper Annotations.md").path))
@@ -90,7 +90,7 @@ final class WorkspaceStorePDFAnnotationExportTests: XCTestCase {
         store.exportAnnotatedPDFCopy(for: pdfDocument)
 
         let didExport = await waitUntil { !store.isBusy && store.selectedDocument?.relativePath == "exports/Paper Annotated.pdf" }
-        XCTAssertTrue(didExport)
+        XCTAssertTrue(didExport, store.errorMessage ?? "Export did not select its destination")
 
         let exportedURL = root.appendingPathComponent("exports/Paper Annotated.pdf")
         XCTAssertTrue(FileManager.default.fileExists(atPath: exportedURL.path))
@@ -126,6 +126,31 @@ final class WorkspaceStorePDFAnnotationExportTests: XCTestCase {
         XCTAssertEqual(store.dirtyPDFDataByDocumentID[pdfDocument.id], dirtyData)
     }
 
+    func testFirstPDFEditWithoutLiveBaselineIsRejectedAndRequestsReload() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pdfURL = root.appendingPathComponent("Paper.pdf")
+        let diskData = try makePDFData(annotationText: "Disk highlight")
+        let dirtyData = try makePDFData(annotationText: "Unverified edit")
+        try diskData.write(to: pdfURL)
+
+        let store = WorkspaceStore()
+        store.openWorkspace(root)
+        let didLoad = await waitUntil { !store.isBusy && store.selectedDocument != nil }
+        XCTAssertTrue(didLoad)
+        let document = try XCTUnwrap(store.documents.first(where: { $0.id == pdfURL.standardizedFileURL.path }))
+        let initialContentVersion = store.pdfContentVersion(for: document.id)
+
+        store.markPDFDocumentEdited(id: document.id, previousData: nil, data: dirtyData)
+
+        XCTAssertNil(store.dirtyPDFData(for: document.id))
+        XCTAssertTrue(store.saveState(for: document.id).isClean)
+        XCTAssertFalse(store.hasUnsavedChanges)
+        XCTAssertGreaterThan(store.pdfContentVersion(for: document.id), initialContentVersion)
+        XCTAssertTrue(store.errorMessage?.contains("original PDF contents are unavailable") == true)
+    }
+
     func testRepeatedPDFEditsReuseTheOriginalBaselineWithoutAnotherSnapshot() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -152,6 +177,150 @@ final class WorkspaceStorePDFAnnotationExportTests: XCTestCase {
         XCTAssertNil(store.dirtyPDFDataByDocumentID[pdfDocument.id])
         XCTAssertTrue(store.saveState(for: pdfDocument.id).isClean)
         XCTAssertFalse(store.hasUnsavedChanges)
+    }
+
+    func testDiscardAndManualReloadAdvancePDFContentVersionWithoutAdvancingForLiveEdits() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pdfURL = root.appendingPathComponent("Paper.pdf")
+        let diskData = try makePDFData(annotationText: "Disk highlight")
+        let dirtyData = try makePDFData(annotationText: "Unsaved highlight")
+        try diskData.write(to: pdfURL)
+
+        let store = WorkspaceStore()
+        store.openWorkspace(root)
+        let didLoad = await waitUntil { !store.isBusy && store.selectedDocument != nil }
+        XCTAssertTrue(didLoad)
+        let document = try XCTUnwrap(store.documents.first(where: { $0.id == pdfURL.standardizedFileURL.path }))
+        let initialVersion = store.pdfContentVersion(for: document.id)
+
+        store.markPDFDocumentEdited(id: document.id, previousData: diskData, data: dirtyData)
+
+        XCTAssertEqual(store.pdfContentVersion(for: document.id), initialVersion)
+        XCTAssertEqual(store.dirtyPDFData(for: document.id), dirtyData)
+
+        store.discardUnsavedChanges(for: document.id)
+        let discardedVersion = store.pdfContentVersion(for: document.id)
+
+        XCTAssertGreaterThan(discardedVersion, initialVersion)
+        XCTAssertNil(store.dirtyPDFData(for: document.id))
+
+        store.reloadSelectedDocumentFromDisk()
+
+        XCTAssertGreaterThan(store.pdfContentVersion(for: document.id), discardedVersion)
+    }
+
+    func testCleanExternalPDFModificationAdvancesContentVersion() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pdfURL = root.appendingPathComponent("Paper.pdf")
+        try makePDFData(annotationText: "Disk highlight").write(to: pdfURL)
+
+        let store = WorkspaceStore()
+        store.openWorkspace(root)
+        let didLoad = await waitUntil { !store.isBusy && store.selectedDocument != nil }
+        XCTAssertTrue(didLoad)
+        let document = try XCTUnwrap(store.documents.first(where: { $0.id == pdfURL.standardizedFileURL.path }))
+        let initialVersion = store.pdfContentVersion(for: document.id)
+
+        try makePDFData(annotationText: "A longer externally replaced highlight").write(to: pdfURL)
+        store.testing_clearWatcherSuppression()
+        store.testing_scheduleExternalWorkspaceRefresh(.init(
+            changedPaths: [pdfURL.standardizedFileURL.path],
+            modifiedOnlyPaths: [pdfURL.standardizedFileURL.path],
+            requiresFullRescan: false
+        ))
+
+        XCTAssertGreaterThan(store.pdfContentVersion(for: document.id), initialVersion)
+        XCTAssertFalse(store.hasUnsavedChanges)
+        XCTAssertNil(store.dirtyPDFData(for: document.id))
+    }
+
+    func testDirtyExternalPDFModificationSurfacesConflictWithoutReplacingLiveData() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pdfURL = root.appendingPathComponent("Paper.pdf")
+        let baseline = try makePDFData(annotationText: "Disk highlight")
+        let dirtyData = try makePDFData(annotationText: "Unsaved highlight")
+        let laterDirtyData = try makePDFData(annotationText: "A later unsaved highlight")
+        let externalData = try makePDFData(annotationText: "External highlight")
+        try baseline.write(to: pdfURL)
+
+        let store = WorkspaceStore()
+        store.openWorkspace(root)
+        let didLoad = await waitUntil { !store.isBusy && store.selectedDocument != nil }
+        XCTAssertTrue(didLoad)
+        let document = try XCTUnwrap(store.documents.first(where: { $0.id == pdfURL.standardizedFileURL.path }))
+        let initialContentVersion = store.pdfContentVersion(for: document.id)
+        store.markPDFDocumentEdited(id: document.id, previousData: baseline, data: dirtyData)
+
+        try externalData.write(to: pdfURL)
+        store.testing_clearWatcherSuppression()
+        store.testing_scheduleExternalWorkspaceRefresh(.init(
+            changedPaths: [pdfURL.standardizedFileURL.path],
+            modifiedOnlyPaths: [pdfURL.standardizedFileURL.path],
+            requiresFullRescan: false
+        ))
+
+        XCTAssertTrue(store.selectedDocumentExternalChange)
+        XCTAssertTrue(store.hasUnsavedChanges)
+        XCTAssertEqual(store.dirtyPDFData(for: document.id), dirtyData)
+        XCTAssertEqual(store.pdfContentVersion(for: document.id), initialContentVersion)
+        XCTAssertEqual(try Data(contentsOf: pdfURL), externalData)
+
+        store.markPDFDocumentEdited(id: document.id, previousData: nil, data: laterDirtyData)
+
+        XCTAssertTrue(store.selectedDocumentExternalChange)
+        XCTAssertEqual(store.dirtyPDFData(for: document.id), laterDirtyData)
+        XCTAssertEqual(store.pdfContentVersion(for: document.id), initialContentVersion)
+
+        store.markPDFDocumentEdited(id: document.id, previousData: nil, data: baseline)
+
+        XCTAssertFalse(store.selectedDocumentExternalChange)
+        XCTAssertFalse(store.hasUnsavedChanges)
+        XCTAssertNil(store.dirtyPDFData(for: document.id))
+        XCTAssertGreaterThan(store.pdfContentVersion(for: document.id), initialContentVersion)
+        XCTAssertEqual(try Data(contentsOf: pdfURL), externalData)
+    }
+
+    func testStalePDFSaveIsRejectedAndPreservesExternalDiskData() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pdfURL = root.appendingPathComponent("Paper.pdf")
+        let baseline = try makePDFData(annotationText: "Disk highlight")
+        let dirtyData = try makePDFData(annotationText: "Unsaved highlight")
+        let externalData = try makePDFData(annotationText: "External replacement")
+        try baseline.write(to: pdfURL)
+
+        let store = WorkspaceStore()
+        store.openWorkspace(root)
+        let didLoad = await waitUntil { !store.isBusy && store.selectedDocument != nil }
+        XCTAssertTrue(didLoad)
+        let document = try XCTUnwrap(store.documents.first(where: { $0.id == pdfURL.standardizedFileURL.path }))
+        store.markPDFDocumentEdited(id: document.id, previousData: baseline, data: dirtyData)
+        try externalData.write(to: pdfURL)
+
+        store.saveSelectedFile()
+        let didReject = await waitUntil {
+            guard !store.isSaving, store.selectedDocumentExternalChange else { return false }
+            if case .failed = store.saveState(for: document.id) {
+                return true
+            }
+            return false
+        }
+
+        XCTAssertTrue(
+            didReject,
+            "state=\(store.saveState(for: document.id)), external=\(store.selectedDocumentExternalChange), error=\(store.errorMessage ?? "nil")"
+        )
+        XCTAssertEqual(try Data(contentsOf: pdfURL), externalData)
+        XCTAssertEqual(store.dirtyPDFData(for: document.id), dirtyData)
+        XCTAssertTrue(store.hasUnsavedChanges)
+        XCTAssertTrue(store.errorMessage?.contains("save your annotated version as a copy") == true)
     }
 
     private func makePDFData(annotationText: String) throws -> Data {

@@ -13,6 +13,7 @@ struct SidebarView: View {
     let exportPDF: (WorkspaceDocument) -> Void
     let openDocument: (String) -> Void
     let openWorkspaceSearchResult: (WorkspaceSearchResult) -> Void
+    let insertPathIntoTerminal: (URL) -> Void
     @State private var isDropTargeted = false
     @State private var expandedFolderIDs: Set<String> = []
     @State private var sidebarPrompt: SidebarNamePrompt?
@@ -26,6 +27,16 @@ struct SidebarView: View {
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    private var markdownLinkMoveReviewBinding: Binding<MarkdownLinkMoveReviewState?> {
+        Binding(
+            get: { store.pendingMarkdownLinkMoveReview },
+            set: { review in
+                guard review == nil, let current = store.pendingMarkdownLinkMoveReview else { return }
+                store.cancelMarkdownLinkMoveReview(id: current.id)
+            }
+        )
     }
 
     private var displayedVisibleNodes: [VisibleSidebarNode] {
@@ -133,6 +144,19 @@ struct SidebarView: View {
                 }
             )
         }
+        .sheet(item: markdownLinkMoveReviewBinding) { review in
+            MarkdownLinkMoveReviewSheet(
+                review: review,
+                theme: theme,
+                zoomScale: zoomScale,
+                cancel: {
+                    store.cancelMarkdownLinkMoveReview(id: review.id)
+                },
+                confirm: {
+                    store.confirmMarkdownLinkMoveReview(id: review.id)
+                }
+            )
+        }
     }
 
     @ViewBuilder
@@ -192,6 +216,7 @@ struct SidebarView: View {
                                         createFileInFolder: beginCreateFile(in:),
                                         createFolderInFolder: beginCreateFolder(in:),
                                         copyFolderPath: copyPath(_:),
+                                        insertFolderPathIntoTerminal: insertPathIntoTerminal,
                                         revealFolderInFinder: revealInFinder(_:),
                                         renameFolder: beginRenameFolder(_:),
                                         isMoveSource: draggedSidebarNodeID == visibleNode.id,
@@ -200,6 +225,7 @@ struct SidebarView: View {
                                         dragEnded: handleSidebarNodeDragEnded(id:location:),
                                         renameDocument: beginRename(_:),
                                         copyPath: copyPath(_:),
+                                        insertPathIntoTerminal: { insertPathIntoTerminal($0.url) },
                                         revealInFinder: revealInFinder(_:),
                                         exportPDF: exportPDF,
                                         copyDocument: copyDocument(_:),
@@ -775,6 +801,7 @@ private struct SidebarNodeRow: View {
     let createFileInFolder: (URL) -> Void
     let createFolderInFolder: (URL) -> Void
     let copyFolderPath: (URL) -> Void
+    let insertFolderPathIntoTerminal: (URL) -> Void
     let revealFolderInFinder: (URL) -> Void
     let renameFolder: (SidebarNode) -> Void
     let isMoveSource: Bool
@@ -783,6 +810,7 @@ private struct SidebarNodeRow: View {
     let dragEnded: (String, CGPoint) -> Void
     let renameDocument: (WorkspaceDocument) -> Void
     let copyPath: (WorkspaceDocument) -> Void
+    let insertPathIntoTerminal: (WorkspaceDocument) -> Void
     let revealInFinder: (WorkspaceDocument) -> Void
     let exportPDF: (WorkspaceDocument) -> Void
     let copyDocument: (WorkspaceDocument) -> Void
@@ -999,6 +1027,12 @@ private struct SidebarNodeRow: View {
         }
 
         Button {
+            insertFolderPathIntoTerminal(targetNode.url)
+        } label: {
+            Label("Insert Path in Terminal", systemImage: "terminal")
+        }
+
+        Button {
             revealFolderInFinder(targetNode.url)
         } label: {
             Label("Reveal in Finder", systemImage: MonknotWorkspaceIcons.revealInFinder)
@@ -1017,6 +1051,12 @@ private struct SidebarNodeRow: View {
             copyPath(document)
         } label: {
             Label("Copy Path", systemImage: "link")
+        }
+
+        Button {
+            insertPathIntoTerminal(document)
+        } label: {
+            Label("Insert Path in Terminal", systemImage: "terminal")
         }
 
         Button {
@@ -1631,6 +1671,111 @@ private struct EmptySidebarView: View {
                 && FileManager.default.fileExists(atPath: entry.path, isDirectory: &isDirectory)
                 && isDirectory.boolValue
         }
+    }
+}
+
+private struct MarkdownLinkMoveReviewSheet: View {
+    let review: MarkdownLinkMoveReviewState
+    let theme: AppTheme
+    let zoomScale: Double
+    let cancel: () -> Void
+    let confirm: () -> Void
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: scaled(16)) {
+            VStack(alignment: .leading, spacing: scaled(5)) {
+                Text("Update Links Before Moving?")
+                    .font(.system(size: scaled(16), weight: .semibold))
+                    .foregroundStyle(theme.foregroundColor)
+
+                Text(moveSummary)
+                    .font(.system(size: scaled(13)))
+                    .foregroundStyle(theme.mutedForegroundColor)
+            }
+
+            HStack(spacing: scaled(8)) {
+                Text(review.plan.sourceURL.lastPathComponent)
+                Image(systemName: "arrow.right")
+                    .foregroundStyle(theme.mutedForegroundColor)
+                    .accessibilityHidden(true)
+                Text(review.plan.destinationURL.lastPathComponent)
+            }
+            .font(.system(size: scaled(12.5), design: .monospaced))
+            .foregroundStyle(theme.foregroundColor)
+            .lineLimit(1)
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: scaled(12)) {
+                    ForEach(Array(review.plan.rewriteFiles.enumerated()), id: \.offset) { _, filePlan in
+                        VStack(alignment: .leading, spacing: scaled(6)) {
+                            Text(relativePath(for: filePlan.finalURL))
+                                .font(.system(size: scaled(12.5)))
+                                .foregroundStyle(theme.foregroundColor)
+
+                            ForEach(Array(filePlan.rewrites.enumerated()), id: \.offset) { _, rewrite in
+                                HStack(alignment: .firstTextBaseline, spacing: scaled(6)) {
+                                    Text(rewrite.oldDestination)
+                                        .foregroundStyle(theme.mutedForegroundColor)
+                                    Image(systemName: "arrow.right")
+                                        .font(.system(size: scaled(9)))
+                                        .foregroundStyle(theme.mutedForegroundColor)
+                                        .accessibilityHidden(true)
+                                    Text(rewrite.newDestination)
+                                        .foregroundStyle(theme.foregroundColor)
+                                }
+                                .font(.system(size: scaled(11.5), design: .monospaced))
+                                .textSelection(.enabled)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if filePlan.originalURL != review.plan.rewriteFiles.last?.originalURL {
+                            Divider()
+                        }
+                    }
+                }
+            }
+            .frame(minHeight: scaled(110), maxHeight: scaled(300))
+
+            HStack(spacing: scaled(8)) {
+                Spacer()
+
+                MonknotActionButton(
+                    title: "Cancel",
+                    role: .secondary,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    action: cancel
+                )
+                .keyboardShortcut(.cancelAction)
+
+                MonknotActionButton(
+                    title: "Move and Update",
+                    role: .primary,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    action: confirm
+                )
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(scaled(18))
+        .frame(width: scaled(520))
+        .background(theme.surfaceColor)
+    }
+
+    private var moveSummary: String {
+        let linkNoun = review.plan.rewriteCount == 1 ? "link" : "links"
+        let fileNoun = review.plan.rewriteFiles.count == 1 ? "file" : "files"
+        return "\(review.plan.rewriteCount) \(linkNoun) in \(review.plan.rewriteFiles.count) \(fileNoun) will be updated."
+    }
+
+    private func relativePath(for url: URL) -> String {
+        WorkspaceDocumentSupport.relativePath(for: url, in: review.workspaceURL)
     }
 }
 

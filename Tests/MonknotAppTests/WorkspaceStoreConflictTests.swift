@@ -160,7 +160,49 @@ final class WorkspaceStoreConflictTests: XCTestCase {
         XCTAssertFalse(store.isSelectedDocumentRemovedExternally)
     }
 
-    func testAcknowledgeExternalChangeKeepsDirtyBuffer() async throws {
+    func testRevertingLocalEditsAfterExternalChangeAdoptsDiskAndClearsConflict() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let fileURL = root.appendingPathComponent("Revert.md")
+        let baseline = "# Revert\n"
+        let diskText = "# Revert\nexternal version\n"
+        try baseline.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let store = WorkspaceStore()
+        store.openWorkspace(root)
+        _ = await waitUntil { !store.isBusy && store.selectedDocument != nil }
+
+        guard let document = store.documents.first(where: { $0.url == fileURL.standardizedFileURL }) else {
+            return XCTFail("Expected revert document")
+        }
+
+        store.selectDocument(id: document.id)
+        _ = await waitUntil { !store.isDocumentLoading }
+        store.setDocumentText("# Revert\nlocal version\n")
+
+        try diskText.write(to: fileURL, atomically: false, encoding: .utf8)
+        store.testing_clearWatcherSuppression()
+        store.refresh()
+        let didDetectConflict = await waitUntil(timeout: 8) {
+            store.selectedDocumentExternalChange
+        }
+        XCTAssertTrue(didDetectConflict)
+
+        store.setDocumentText(baseline)
+
+        let didAdoptDisk = await waitUntil {
+            !store.isDocumentLoading
+                && store.documentText == diskText
+                && !store.hasUnsavedChanges
+                && !store.selectedDocumentExternalChange
+        }
+        XCTAssertTrue(didAdoptDisk)
+        XCTAssertNil(store.externalDocumentReview)
+        XCTAssertTrue(store.saveState(for: document.id).isClean)
+    }
+
+    func testKeepLocalExternalReviewKeepsDirtyBuffer() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -184,7 +226,14 @@ final class WorkspaceStoreConflictTests: XCTestCase {
         store.refresh()
         _ = await waitUntil(timeout: 8) { store.selectedDocumentExternalChange }
 
-        store.acknowledgeExternalChange()
+        store.prepareExternalDocumentReview()
+        let didPrepareReview = await waitUntil { store.externalDocumentReview != nil }
+        XCTAssertTrue(didPrepareReview)
+        store.resolveExternalDocumentReview(.keepLocal)
+        let didResolveReview = await waitUntil {
+            store.externalDocumentReview == nil && !store.selectedDocumentExternalChange
+        }
+        XCTAssertTrue(didResolveReview)
         XCTAssertFalse(store.selectedDocumentExternalChange)
         XCTAssertEqual(store.documentText, "# Keep\nlocal\n")
         XCTAssertTrue(store.hasUnsavedChanges)
@@ -429,6 +478,176 @@ final class WorkspaceStoreConflictTests: XCTestCase {
 
         XCTAssertTrue(store.errorMessage?.localizedCaseInsensitiveContains("Save or close") == true)
         XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
+    }
+
+    func testExternalReviewShowsExactVersionsAndAppliesSafeMergeWithoutWriting() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let fileURL = root.appendingPathComponent("Merge.md")
+        let baseline = "head\nbody\ntail\n"
+        let local = "local head\nbody\ntail\n"
+        let disk = "head\nbody\ndisk tail\n"
+        try baseline.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let store = WorkspaceStore()
+        store.openWorkspace(root)
+        _ = await waitUntil { !store.isBusy && !store.isDocumentLoading }
+        store.setDocumentText(local)
+        try disk.write(to: fileURL, atomically: false, encoding: .utf8)
+        store.testing_clearWatcherSuppression()
+        store.refresh()
+        _ = await waitUntil(timeout: 8) { store.selectedDocumentExternalChange }
+
+        store.prepareExternalDocumentReview()
+        let didReview = await waitUntil { store.externalDocumentReview != nil }
+        XCTAssertTrue(didReview)
+        XCTAssertEqual(store.externalDocumentReview?.review.baselineText, baseline)
+        XCTAssertEqual(store.externalDocumentReview?.review.localText, local)
+        XCTAssertEqual(store.externalDocumentReview?.review.diskText, disk)
+        XCTAssertEqual(store.externalDocumentReview?.review.mergedText, "local head\nbody\ndisk tail\n")
+
+        store.resolveExternalDocumentReview(.merge)
+        _ = await waitUntil { store.externalDocumentReview == nil }
+
+        XCTAssertEqual(store.documentText, "local head\nbody\ndisk tail\n")
+        XCTAssertTrue(store.hasUnsavedChanges)
+        XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8), disk)
+    }
+
+    func testExternalReviewRevalidatesDiskBeforeResolution() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let fileURL = root.appendingPathComponent("Stale.md")
+        try "baseline\n".write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let store = WorkspaceStore()
+        store.openWorkspace(root)
+        _ = await waitUntil { !store.isBusy && !store.isDocumentLoading }
+        store.setDocumentText("local\n")
+        try "disk one\n".write(to: fileURL, atomically: false, encoding: .utf8)
+        store.testing_clearWatcherSuppression()
+        store.refresh()
+        _ = await waitUntil(timeout: 8) { store.selectedDocumentExternalChange }
+        store.prepareExternalDocumentReview()
+        _ = await waitUntil { store.externalDocumentReview?.review.diskText == "disk one\n" }
+
+        try "disk two\n".write(to: fileURL, atomically: true, encoding: .utf8)
+        store.resolveExternalDocumentReview(.keepLocal)
+        let didRefresh = await waitUntil {
+            store.externalDocumentReview?.review.diskText == "disk two\n"
+        }
+
+        XCTAssertTrue(didRefresh)
+        XCTAssertEqual(store.documentText, "local\n")
+        XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8), "disk two\n")
+        XCTAssertTrue(store.errorMessage?.localizedCaseInsensitiveContains("refreshed") == true)
+    }
+
+    func testSaveRejectsUnreviewedExternalChange() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let fileURL = root.appendingPathComponent("Protected Save.md")
+        try "baseline\n".write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let store = WorkspaceStore()
+        store.openWorkspace(root)
+        _ = await waitUntil { !store.isBusy && !store.isDocumentLoading }
+        store.setDocumentText("local\n")
+        try "external\n".write(to: fileURL, atomically: true, encoding: .utf8)
+
+        store.saveSelectedFile()
+        _ = await waitUntil { !store.isSaving }
+
+        XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8), "external\n")
+        XCTAssertTrue(store.selectedDocumentExternalChange)
+        XCTAssertTrue(store.hasUnsavedChanges)
+    }
+
+    func testCancellingExternalReviewLeavesLocalAndDiskVersionsUnchanged() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let fileURL = root.appendingPathComponent("Cancel Review.md")
+        try "baseline\n".write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let store = WorkspaceStore()
+        store.openWorkspace(root)
+        _ = await waitUntil { !store.isBusy && !store.isDocumentLoading }
+        store.setDocumentText("local\n")
+        try "disk\n".write(to: fileURL, atomically: true, encoding: .utf8)
+        store.prepareExternalDocumentReview()
+        let didPrepareReview = await waitUntil { store.externalDocumentReview != nil }
+        XCTAssertTrue(didPrepareReview)
+
+        store.cancelExternalDocumentReview()
+
+        XCTAssertNil(store.externalDocumentReview)
+        XCTAssertEqual(store.documentText, "local\n")
+        XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8), "disk\n")
+        XCTAssertTrue(store.hasUnsavedChanges)
+    }
+
+    func testExternalReviewClearsAcrossDocumentAndWorkspaceChanges() async throws {
+        let firstRoot = try makeTemporaryDirectory()
+        let secondRoot = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: firstRoot)
+            try? FileManager.default.removeItem(at: secondRoot)
+        }
+
+        let alphaURL = firstRoot.appendingPathComponent("Alpha.md")
+        let betaURL = firstRoot.appendingPathComponent("Beta.md")
+        let otherURL = secondRoot.appendingPathComponent("Other.md")
+        try "alpha baseline\n".write(to: alphaURL, atomically: true, encoding: .utf8)
+        try "beta baseline\n".write(to: betaURL, atomically: true, encoding: .utf8)
+        try "other\n".write(to: otherURL, atomically: true, encoding: .utf8)
+
+        let store = WorkspaceStore()
+        store.openWorkspace(firstRoot)
+        _ = await waitUntil { !store.isBusy && !store.isDocumentLoading }
+
+        guard let alpha = store.documents.first(where: { $0.url == alphaURL.standardizedFileURL }),
+              let beta = store.documents.first(where: { $0.url == betaURL.standardizedFileURL })
+        else {
+            return XCTFail("Expected both documents in the first workspace")
+        }
+
+        XCTAssertTrue(store.selectDocument(id: alpha.id))
+        _ = await waitUntil { !store.isDocumentLoading }
+        store.setDocumentText("alpha local\n")
+        try "alpha disk\n".write(to: alphaURL, atomically: true, encoding: .utf8)
+        store.prepareExternalDocumentReview()
+        let didPrepareAlphaReview = await waitUntil {
+            store.externalDocumentReview?.documentID == alpha.id
+        }
+        XCTAssertTrue(didPrepareAlphaReview)
+
+        XCTAssertTrue(store.selectDocument(id: beta.id))
+        XCTAssertNil(store.externalDocumentReview)
+        _ = await waitUntil { !store.isDocumentLoading }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertNil(store.externalDocumentReview)
+
+        store.setDocumentText("beta local\n")
+        try "beta disk\n".write(to: betaURL, atomically: true, encoding: .utf8)
+        store.prepareExternalDocumentReview()
+        let didPrepareBetaReview = await waitUntil {
+            store.externalDocumentReview?.documentID == beta.id
+        }
+        XCTAssertTrue(didPrepareBetaReview)
+
+        store.openWorkspace(secondRoot)
+        XCTAssertNil(store.externalDocumentReview)
+        let didOpenSecondWorkspace = await waitUntil {
+            !store.isBusy && !store.isDocumentLoading
+        }
+        XCTAssertTrue(didOpenSecondWorkspace)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertNil(store.externalDocumentReview)
+        XCTAssertEqual(store.selectedDocument?.url, otherURL.standardizedFileURL)
     }
 
     @MainActor

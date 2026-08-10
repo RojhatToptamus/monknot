@@ -20,6 +20,7 @@ struct EditorPaneView: View {
     let usePointerCursors: Bool
     let fontSmoothing: Bool
     let activeViewportState: DocumentViewportState?
+    let pdfViewportCaptureBridge: PDFViewportCaptureBridge
     let updateViewportState: (String, DocumentViewportStateChange) -> Void
     let pdfUndoCommandSerial: Int
     let pdfRedoCommandSerial: Int
@@ -28,6 +29,8 @@ struct EditorPaneView: View {
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var previewLocation: MarkdownSourceLocation?
     @Binding var pdfSearchTarget: WorkspaceSearchPDFTarget?
+    let pdfPageNavigationRequest: PDFPageNavigationRequest?
+    let pdfNavigatorToggleCommandSerial: Int
     @Binding var documentSearch: DocumentSearchState
     let newMarkdown: () -> Void
     let bootstrapStarterWorkspace: () -> Void
@@ -36,6 +39,16 @@ struct EditorPaneView: View {
     let outlineItems: [MarkdownOutlineItem]
     let selectOutlineItem: (MarkdownOutlineItem) -> Void
     let onPreviewSourceJump: (MarkdownSourceLocation) -> Void
+    let insertPDFLinkedExcerpt: (PDFSelectionSnapshot) -> Void
+    let updatePDFSelectionSnapshot: (PDFSelectionSnapshot?) -> Void
+    let consumePDFPageNavigationRequest: (PDFPageNavigationRequest) -> Void
+    let onMarkdownSelectionChange: (MarkdownEditorSelectionSnapshot) -> Void
+    let onMarkdownLinkRequest: (MarkdownEditorLinkRequest) -> Void
+    let onMarkdownImagePasteRequest: (MarkdownImagePasteRequest) -> Void
+    let onMarkdownPreviewLinkRequest: (MarkdownPreviewLinkRequest) -> Void
+    let onMarkdownTaskRequest: (MarkdownPreviewTaskRequest) -> Void
+    let onMarkdownTerminalPasteRequest: (MarkdownPreviewTerminalPasteRequest) -> Void
+    let onMarkdownPreviewSelectionChange: (MarkdownPreviewSelection) -> Void
 
     var body: some View {
         editorColumn
@@ -70,6 +83,20 @@ struct EditorPaneView: View {
                 } else {
                     splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
                 }
+            }
+            .sheet(item: Binding(
+                get: { store.externalDocumentReview },
+                set: { value in
+                    if value == nil {
+                        store.cancelExternalDocumentReview()
+                    }
+                }
+            )) { _ in
+                ExternalDocumentReconciliationSheet(
+                    store: store,
+                    theme: theme,
+                    zoomScale: zoomScale
+                )
             }
     }
 
@@ -128,11 +155,17 @@ struct EditorPaneView: View {
                 ExternalDocumentChangeBanner(
                     isRemovedExternally: store.isSelectedDocumentRemovedExternally,
                     isSaving: store.isSaving,
+                    documentKind: store.selectedDocument?.kind,
                     theme: theme,
                     zoomScale: zoomScale,
-                    reload: { store.reloadSelectedDocumentFromDisk() },
-                    keepEditing: { store.acknowledgeExternalChange() },
-                    save: { store.saveSelectedFile() }
+                    review: { store.prepareExternalDocumentReview() },
+                    reloadPDF: { store.reloadSelectedDocumentFromDisk() },
+                    savePDFCopy: {
+                        guard let document = store.selectedDocument,
+                              document.kind == .pdf
+                        else { return }
+                        store.exportAnnotatedPDFCopy(for: document)
+                    }
                 )
             }
 
@@ -179,7 +212,9 @@ struct EditorPaneView: View {
                 zoomScale: zoomScale,
                 saveState: store.saveState(for: selectedDocument.id),
                 dirtyData: store.dirtyPDFData(for: selectedDocument.id),
+                contentVersion: store.pdfContentVersion(for: selectedDocument.id),
                 viewportState: activeViewportState?.pdfViewportState,
+                viewportCaptureBridge: pdfViewportCaptureBridge,
                 externalUndoCommandSerial: pdfUndoCommandSerial,
                 externalRedoCommandSerial: pdfRedoCommandSerial,
                 searchState: $documentSearch,
@@ -197,6 +232,11 @@ struct EditorPaneView: View {
                 saveDocument: {
                     store.saveSelectedFile()
                 },
+                pageNavigationRequest: pdfPageNavigationRequest,
+                externalNavigatorToggleCommandSerial: pdfNavigatorToggleCommandSerial,
+                insertLinkedExcerpt: insertPDFLinkedExcerpt,
+                onSelectionSnapshotChange: updatePDFSelectionSnapshot,
+                onPageNavigationRequestConsumed: consumePDFPageNavigationRequest,
                 onViewportStateChange: { state in
                     updateViewportState(selectedDocument.id, .pdfViewportState(state))
                 },
@@ -354,12 +394,16 @@ struct EditorPaneView: View {
             contentWidthPercent: contentWidthPercent,
             fontSmoothing: fontSmoothing,
             scrollPosition: activeViewportState?.textScrollPosition,
+            textSelection: activeViewportState?.textSelection,
             syncScrollEnabled: isSplitViewEnabled,
             syncScrollTargetLine: sourceSyncLine,
             sourceLocation: $sourceLocation,
             searchState: $documentSearch,
             commandRequest: markdownCommandRequest,
             wikilinkDocuments: store.markdownDocuments,
+            onSelectionChange: onMarkdownSelectionChange,
+            onOpenLink: onMarkdownLinkRequest,
+            onImagePasteRequest: onMarkdownImagePasteRequest,
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
             },
@@ -387,6 +431,10 @@ struct EditorPaneView: View {
             sourceLocation: $previewLocation,
             searchState: $documentSearch,
             onSourceJump: onPreviewSourceJump,
+            onLinkRequest: onMarkdownPreviewLinkRequest,
+            onTaskRequest: onMarkdownTaskRequest,
+            onTerminalPasteRequest: onMarkdownTerminalPasteRequest,
+            onSelectionChange: onMarkdownPreviewSelectionChange,
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .markdownPreviewScrollPosition(position))
             },

@@ -1,6 +1,202 @@
 import Foundation
 import PDFKit
 
+public struct PDFSelectionSnapshot: Hashable, Identifiable, Sendable {
+    public let documentID: String
+    public let text: String
+    public let pageNumber: Int
+    public let contentVersion: Int
+
+    public init(documentID: String, text: String, pageNumber: Int, contentVersion: Int = 0) {
+        self.documentID = documentID
+        self.text = text
+        self.pageNumber = pageNumber
+        self.contentVersion = contentVersion
+    }
+
+    public var id: PDFSelectionSnapshot { self }
+}
+
+public struct PDFLinkedExcerptSourceValidator {
+    public init() {}
+
+    public func validate(_ selection: PDFSelectionSnapshot, in data: Data) throws {
+        let selectedText = Self.normalizedText(selection.text)
+        guard !selectedText.isEmpty else {
+            throw PDFLinkedExcerptSourceValidationError.emptySelection
+        }
+        guard selection.pageNumber > 0 else {
+            throw PDFLinkedExcerptSourceValidationError.pageUnavailable
+        }
+        guard let document = PDFDocument(data: data), !document.isLocked else {
+            throw PDFLinkedExcerptSourceValidationError.unreadablePDF
+        }
+
+        let pageIndex = selection.pageNumber - 1
+        guard pageIndex < document.pageCount,
+              let page = document.page(at: pageIndex)
+        else {
+            throw PDFLinkedExcerptSourceValidationError.pageUnavailable
+        }
+
+        let pageText = Self.normalizedText(page.string ?? "")
+        guard pageText.range(of: selectedText, options: .literal) != nil else {
+            throw PDFLinkedExcerptSourceValidationError.selectionChanged
+        }
+    }
+
+    private static func normalizedText(_ value: String) -> String {
+        value
+            .precomposedStringWithCanonicalMapping
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+}
+
+public enum PDFLinkedExcerptSourceValidationError: LocalizedError, Equatable {
+    case emptySelection
+    case unreadablePDF
+    case pageUnavailable
+    case selectionChanged
+
+    public var errorDescription: String? {
+        switch self {
+        case .emptySelection:
+            return "The selected PDF text is empty."
+        case .unreadablePDF:
+            return "The PDF source could not be read."
+        case .pageUnavailable:
+            return "The selected PDF page is no longer available."
+        case .selectionChanged:
+            return "The selected text is no longer present on that PDF page."
+        }
+    }
+}
+
+public struct PDFLinkedExcerptFormatter {
+    public init() {}
+
+    public func markdown(
+        for selection: PDFSelectionSnapshot,
+        sourceRelativePath: String,
+        destinationRelativePath: String
+    ) throws -> String {
+        let text = Self.normalizedExcerpt(selection.text)
+        guard !text.isEmpty else {
+            throw PDFLinkedExcerptFormatterError.emptySelection
+        }
+        guard selection.pageNumber > 0 else {
+            throw PDFLinkedExcerptFormatterError.invalidPageNumber
+        }
+
+        let sourceComponents = try Self.relativePathComponents(sourceRelativePath)
+        let destinationComponents = try Self.relativePathComponents(destinationRelativePath)
+        guard !sourceComponents.isEmpty, !destinationComponents.isEmpty else {
+            throw PDFLinkedExcerptFormatterError.invalidRelativePath
+        }
+
+        let destinationDirectory = Array(destinationComponents.dropLast())
+        let commonPrefixCount = zip(destinationDirectory, sourceComponents)
+            .prefix { $0.0 == $0.1 }
+            .count
+        let parentComponents = Array(
+            repeating: "..",
+            count: destinationDirectory.count - commonPrefixCount
+        )
+        let sourceRemainder = sourceComponents.dropFirst(commonPrefixCount)
+        let relativeComponents = parentComponents + sourceRemainder
+        let encodedPath = try relativeComponents
+            .map(Self.percentEncodedPathComponent(_:))
+            .joined(separator: "/")
+        guard !encodedPath.isEmpty else {
+            throw PDFLinkedExcerptFormatterError.invalidRelativePath
+        }
+
+        let quoteLines = text.components(separatedBy: "\n").map { line in
+            line.isEmpty ? ">" : "> \(line)"
+        }
+        let sourceName = sourceComponents.last ?? sourceRelativePath
+        let label = Self.markdownLinkLabelEscaped(
+            "Source: \(sourceName), page \(selection.pageNumber)"
+        )
+        let sourceLine = "> [\(label)](\(encodedPath)#page=\(selection.pageNumber))"
+
+        return (quoteLines + [">", sourceLine]).joined(separator: "\n")
+    }
+
+    private static func normalizedExcerpt(_ value: String) -> String {
+        let normalized = value
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .newlines)
+        guard normalized.rangeOfCharacter(from: .whitespacesAndNewlines.inverted) != nil else {
+            return ""
+        }
+        return normalized
+    }
+
+    private static func relativePathComponents(_ path: String) throws -> [String] {
+        guard !path.isEmpty,
+              !path.hasPrefix("/"),
+              !path.contains("\0")
+        else {
+            throw PDFLinkedExcerptFormatterError.invalidRelativePath
+        }
+
+        var components: [String] = []
+        for component in path.split(separator: "/", omittingEmptySubsequences: true).map(String.init) {
+            switch component {
+            case ".":
+                continue
+            case "..":
+                guard !components.isEmpty else {
+                    throw PDFLinkedExcerptFormatterError.invalidRelativePath
+                }
+                components.removeLast()
+            default:
+                components.append(component)
+            }
+        }
+        return components
+    }
+
+    private static func percentEncodedPathComponent(_ component: String) throws -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        guard let encoded = component.addingPercentEncoding(withAllowedCharacters: allowed),
+              !encoded.isEmpty
+        else {
+            throw PDFLinkedExcerptFormatterError.invalidRelativePath
+        }
+        return encoded
+    }
+
+    private static func markdownLinkLabelEscaped(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "[", with: "\\[")
+            .replacingOccurrences(of: "]", with: "\\]")
+    }
+}
+
+public enum PDFLinkedExcerptFormatterError: LocalizedError, Equatable {
+    case emptySelection
+    case invalidPageNumber
+    case invalidRelativePath
+
+    public var errorDescription: String? {
+        switch self {
+        case .emptySelection:
+            return "Select PDF text before inserting a linked excerpt."
+        case .invalidPageNumber:
+            return "The selected PDF page is unavailable."
+        case .invalidRelativePath:
+            return "The PDF source link could not be created safely."
+        }
+    }
+}
+
 public struct PDFAnnotationMarkdownExportItem: Sendable {
     public let data: Data
     public let documentName: String

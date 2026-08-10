@@ -129,12 +129,27 @@ struct ContentView: View {
     @State private var pendingSourceLocation: MarkdownSourceLocation?
     @State private var pendingPreviewLocation: MarkdownSourceLocation?
     @State private var pendingPDFSearchTarget: WorkspaceSearchPDFTarget?
+    @State private var pendingPDFPageNavigationRequest: PDFPageNavigationRequest?
+    @State private var pdfPageNavigationSerial = 0
+    @State private var pdfNavigatorToggleCommandSerial = 0
+    @State private var pdfSelectionSnapshot: PDFSelectionSnapshot?
+    @State private var pendingPDFExcerptSelection: PDFSelectionSnapshot?
+    @State private var pendingPDFExcerptInsertion: PendingPDFExcerptInsertion?
+    @State private var pendingPDFExcerptValidationTask: Task<Void, Never>?
+    @State private var markdownEditorSelection: MarkdownEditorSelectionSnapshot?
+    @State private var markdownPreviewSelection: MarkdownPreviewSelection?
+    @State private var markdownSelectionOrigin: MarkdownSelectionOrigin?
+    @State private var deferredWorkspaceHeadingJump: DeferredWorkspaceHeadingJump?
+    @State private var ambiguousMarkdownLinkRequest: AmbiguousMarkdownLinkRequest?
     @State private var deferredWorkspaceSourceJump: DeferredWorkspaceSourceJump?
     @State private var tabState = WorkspaceTabState()
     @State private var documentNavigationHistory = DocumentNavigationHistory()
     @State private var restoredTabStateWorkspacePath: String?
     @State private var pendingTabStatePersistenceTask: Task<Void, Never>?
     @State private var documentViewportStates: [String: DocumentViewportState] = [:]
+    @State private var restoredViewportStateWorkspacePath: String?
+    @State private var pendingViewportStatePersistenceTask: Task<Void, Never>?
+    @StateObject private var pdfViewportCaptureBridge = PDFViewportCaptureBridge()
     @State private var pdfUndoCommandSerial = 0
     @State private var pdfRedoCommandSerial = 0
     @State private var canUndoPDFAnnotation = false
@@ -152,6 +167,7 @@ struct ContentView: View {
     @Environment(\.colorScheme) private var systemColorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let tabStatePersistence = WorkspaceTabStatePersistence()
+    private let viewportStatePersistence = DocumentViewportStatePersistence()
 
     private var zoomScale: Double {
         get { WorkspaceZoomPolicy.clamp(persistedZoomScale) }
@@ -197,7 +213,7 @@ struct ContentView: View {
             ))
             .background(WindowCloseGuard(
                 terminationCoordinator: terminationCoordinator,
-                shouldClose: { await resolveAllOpenUnsavedChanges() }
+                shouldClose: { await prepareForWindowClose() }
             ))
             .background(KeyboardShortcutMonitor(handler: handleKeyDown))
             .preferredColorScheme(themePreference.preferredColorScheme)
@@ -214,6 +230,10 @@ struct ContentView: View {
                 }
                 resetPDFAnnotationShortcutState()
                 pendingPDFSearchTarget = nil
+                pdfSelectionSnapshot = nil
+                markdownEditorSelection = nil
+                markdownPreviewSelection = nil
+                markdownSelectionOrigin = nil
                 if let oldDocumentID, supportsSplitView(store.document(id: oldDocumentID)) {
                     DocumentSplitViewPersistence.setEnabled(
                         isMarkdownSplitViewEnabled,
@@ -233,6 +253,7 @@ struct ContentView: View {
                 }
                 updateOutline()
                 fulfillDeferredWorkspaceSourceJump()
+                fulfillDeferredWorkspaceHeadingJump()
             }
             .onChange(of: isMarkdownSplitViewEnabled) { _, isEnabled in
                 guard let documentID = store.selectedDocument?.id,
@@ -245,12 +266,16 @@ struct ContentView: View {
             .onChange(of: store.documentText) { _, _ in
                 updateOutline()
                 fulfillDeferredWorkspaceSourceJump()
+                fulfillDeferredWorkspaceHeadingJump()
+                fulfillPendingPDFExcerptInsertion()
             }
             .onChange(of: store.isDocumentLoading) { _, isLoading in
                 if !isLoading {
                     updateOutline()
                 }
                 fulfillDeferredWorkspaceSourceJump()
+                fulfillDeferredWorkspaceHeadingJump()
+                fulfillPendingPDFExcerptInsertion()
             }
             .onChange(of: store.documents) { _, documents in
                 workspaceSearch.refresh(documents: documents)
@@ -260,11 +285,20 @@ struct ContentView: View {
             .onChange(of: store.workspaceSearchContentChangeSerial) { _, _ in
                 workspaceSearch.refresh(documents: store.documents)
             }
-            .onChange(of: store.workspaceURL?.standardizedFileURL.path ?? "") { _, _ in
+            .onChange(of: store.workspaceURL?.standardizedFileURL.path ?? "") { previousPath, _ in
+                cancelPendingPDFExcerptWork()
+                if !previousPath.isEmpty {
+                    flushPendingViewportStatePersistence(
+                        for: URL(fileURLWithPath: previousPath, isDirectory: true)
+                    )
+                }
                 terminalSessions.setDefaultDirectory(activeTerminalDirectory)
                 tabState.reset()
                 documentNavigationHistory.reset()
                 restoredTabStateWorkspacePath = nil
+                restoredViewportStateWorkspacePath = nil
+                pendingViewportStatePersistenceTask?.cancel()
+                pendingViewportStatePersistenceTask = nil
                 documentViewportStates.removeAll()
                 publishOpenTabIDs(persistTabs: false)
             }
@@ -275,7 +309,13 @@ struct ContentView: View {
                 applyDocumentIDRemapEvent()
             }
             .onDisappear {
+                cancelPendingPDFExcerptWork()
                 flushPendingTabStatePersistence()
+                flushPendingViewportStatePersistence()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+                flushPendingTabStatePersistence()
+                flushPendingViewportStatePersistence()
             }
             .focusedSceneValue(\.monknotCommandActions, commandActions)
         )
@@ -305,6 +345,18 @@ struct ContentView: View {
                     },
                     export: {
                         performMarkdownPDFExport(document, options: pdfExportOptions)
+                    }
+                )
+            }
+            .sheet(item: $pendingPDFExcerptSelection) { selection in
+                PDFLinkedExcerptDestinationSheet(
+                    selection: selection,
+                    documents: store.markdownDocuments,
+                    theme: activeTheme,
+                    zoomScale: zoomScale,
+                    cancel: { pendingPDFExcerptSelection = nil },
+                    insert: { destination in
+                        beginPDFExcerptInsertion(selection, into: destination)
                     }
                 )
             }
@@ -416,6 +468,26 @@ struct ContentView: View {
                 .transition(.opacity)
             }
 
+            if let ambiguousMarkdownLinkRequest {
+                AmbiguousMarkdownLinkPicker(
+                    documents: ambiguousMarkdownLinkRequest.documentIDs.compactMap(store.document(id:)),
+                    theme: activeTheme,
+                    zoomScale: zoomScale,
+                    close: { self.ambiguousMarkdownLinkRequest = nil },
+                    open: { documentID in
+                        let request = ambiguousMarkdownLinkRequest
+                        self.ambiguousMarkdownLinkRequest = nil
+                        openResolvedMarkdownDocument(
+                            documentID: documentID,
+                            normalizedFragment: request.normalizedFragment,
+                            rawFragment: request.rawFragment,
+                            preferredMode: request.preferredMode
+                        )
+                    }
+                )
+                .transition(.opacity)
+            }
+
         }
         .task(id: exportNotice?.id) {
             guard exportNotice != nil else { return }
@@ -478,7 +550,8 @@ struct ContentView: View {
             newMarkdown: { store.createMarkdownFile() },
             exportPDF: exportMarkdownPDF(_:),
             openDocument: openDocumentTab(id:),
-            openWorkspaceSearchResult: openWorkspaceSearchResult(_:)
+            openWorkspaceSearchResult: openWorkspaceSearchResult(_:),
+            insertPathIntoTerminal: insertPathIntoTerminal(_:)
         )
         .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
     }
@@ -499,6 +572,7 @@ struct ContentView: View {
             usePointerCursors: usePointerCursors,
             fontSmoothing: fontSmoothing,
             activeViewportState: activeDocumentViewportState,
+            pdfViewportCaptureBridge: pdfViewportCaptureBridge,
             updateViewportState: updateDocumentViewportState(documentID:change:),
             pdfUndoCommandSerial: pdfUndoCommandSerial,
             pdfRedoCommandSerial: pdfRedoCommandSerial,
@@ -507,6 +581,8 @@ struct ContentView: View {
             sourceLocation: $pendingSourceLocation,
             previewLocation: $pendingPreviewLocation,
             pdfSearchTarget: $pendingPDFSearchTarget,
+            pdfPageNavigationRequest: pendingPDFPageNavigationRequest,
+            pdfNavigatorToggleCommandSerial: pdfNavigatorToggleCommandSerial,
             documentSearch: $documentSearch,
             newMarkdown: { store.createMarkdownFile() },
             bootstrapStarterWorkspace: { store.bootstrapStarterWorkspace() },
@@ -514,7 +590,32 @@ struct ContentView: View {
             closeTerminal: { setTerminalDrawerPresented(false, animated: true) },
             outlineItems: outlineStore.items,
             selectOutlineItem: openOutlineItem(_:),
-            onPreviewSourceJump: openSourceFromPreview(location:)
+            onPreviewSourceJump: openSourceFromPreview(location:),
+            insertPDFLinkedExcerpt: { selection in
+                pendingPDFExcerptSelection = selection
+            },
+            updatePDFSelectionSnapshot: { snapshot in
+                pdfSelectionSnapshot = snapshot
+            },
+            consumePDFPageNavigationRequest: { request in
+                if pendingPDFPageNavigationRequest == request {
+                    pendingPDFPageNavigationRequest = nil
+                }
+            },
+            onMarkdownSelectionChange: handleMarkdownEditorSelection(_:),
+            onMarkdownLinkRequest: handleMarkdownEditorLink(_:),
+            onMarkdownImagePasteRequest: handleMarkdownImagePaste(_:),
+            onMarkdownPreviewLinkRequest: handleMarkdownPreviewLink(_:),
+            onMarkdownTaskRequest: handleMarkdownTaskRequest(_:),
+            onMarkdownTerminalPasteRequest: { request in
+                guard request.identity.documentID == store.selectedDocumentID else { return }
+                pasteIntoTerminal(request.text)
+            },
+            onMarkdownPreviewSelectionChange: { selection in
+                guard selection.identity.documentID == store.selectedDocumentID else { return }
+                markdownPreviewSelection = selection
+                markdownSelectionOrigin = .preview
+            }
         )
         .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
     }
@@ -529,6 +630,22 @@ struct ContentView: View {
                 zoomScale: zoomScale,
                 usePointerCursors: usePointerCursors,
                 fontSmoothing: fontSmoothing,
+                workspaceURL: store.workspaceURL,
+                workspaceDocumentURLs: store.documents.map(\.url),
+                openFileReference: openTerminalFileReference(_:),
+                reportInteractionError: { message in
+                    store.errorMessage = message
+                },
+                insertionOutcome: { _, outcome in
+                    switch outcome {
+                    case .inserted:
+                        break
+                    case .bracketedPasteRequired:
+                        store.errorMessage = "Multiline text was not pasted because this shell has not enabled bracketed paste. Nothing was executed."
+                    case .unavailable:
+                        store.errorMessage = "The terminal is not ready to accept pasted text. Nothing was executed."
+                    }
+                },
                 showsChrome: true,
                 close: { setTerminalDrawerPresented(false, animated: true) }
             )
@@ -542,6 +659,60 @@ struct ContentView: View {
             workspaceURL: store.workspaceURL,
             selectedDocumentURL: store.selectedDocument?.url
         )
+    }
+
+    private func openTerminalFileReference(_ reference: ResolvedTerminalFileReference) {
+        guard let document = store.documents.first(where: {
+            $0.url.standardizedFileURL.resolvingSymlinksInPath()
+                == reference.url.standardizedFileURL.resolvingSymlinksInPath()
+        }) else {
+            store.errorMessage = "The terminal path does not point to a supported workspace document."
+            return
+        }
+
+        openDocumentTab(id: document.id)
+        if let line = reference.line {
+            guard document.capabilities.canEditText else {
+                store.errorMessage = "Line and column links require an editable text document."
+                return
+            }
+            editorMode = .source
+            deferredWorkspaceSourceJump = DeferredWorkspaceSourceJump(
+                documentID: document.id,
+                location: MarkdownSourceLocation(
+                    line: line,
+                    offset: max(0, (reference.column ?? 1) - 1)
+                )
+            )
+            fulfillDeferredWorkspaceSourceJump()
+        }
+    }
+
+    private func pasteIntoTerminal(_ text: String) {
+        guard !text.isEmpty else {
+            store.errorMessage = "Select text before pasting it into the terminal."
+            return
+        }
+        do {
+            _ = try terminalSessions.requestInsertion(text, in: activeTerminalDirectory)
+            setTerminalDrawerPresented(true, animated: true)
+        } catch {
+            store.errorMessage = "Could not paste into the terminal: \(error.localizedDescription)"
+        }
+    }
+
+    private func insertPathIntoTerminal(_ url: URL) {
+        guard let workspaceURL = store.workspaceURL else { return }
+        do {
+            _ = try terminalSessions.requestPathInsertion(
+                url,
+                workspaceURL: workspaceURL,
+                in: activeTerminalDirectory
+            )
+            setTerminalDrawerPresented(true, animated: true)
+        } catch {
+            store.errorMessage = "Could not insert the path: \(error.localizedDescription)"
+        }
     }
 
     private func openFolderPanel() {
@@ -612,6 +783,13 @@ struct ContentView: View {
             }
         }
 
+        return true
+    }
+
+    private func prepareForWindowClose() async -> Bool {
+        guard await resolveAllOpenUnsavedChanges() else { return false }
+        flushPendingTabStatePersistence()
+        flushPendingViewportStatePersistence()
         return true
     }
 
@@ -798,6 +976,7 @@ struct ContentView: View {
         let nextDocumentID = tabState.close(documentID: documentID)
         documentNavigationHistory.remove(documentID: documentID)
         documentViewportStates.removeValue(forKey: documentID)
+        persistViewportStates()
         publishOpenTabIDs()
 
         if wasActive || store.selectedDocumentID == documentID {
@@ -915,6 +1094,7 @@ struct ContentView: View {
                 to: mapping.destinationID
             )
         }
+        persistViewportStates()
         if let selectedDocumentID = store.selectedDocument?.id {
             if supportsSplitView(store.selectedDocument) {
                 isMarkdownSplitViewEnabled = DocumentSplitViewPersistence.isEnabled(
@@ -933,6 +1113,8 @@ struct ContentView: View {
         let workspacePath = workspaceURL.path
         guard restoredTabStateWorkspacePath != workspacePath else { return false }
         restoredTabStateWorkspacePath = workspacePath
+
+        restorePersistedViewportStatesIfNeeded(for: workspaceURL)
 
         guard var restoredState = tabStatePersistence.load(for: workspaceURL) else {
             return false
@@ -989,18 +1171,78 @@ struct ContentView: View {
         tabStatePersistence.save(tabState, for: workspaceURL)
     }
 
+    private func restorePersistedViewportStatesIfNeeded(for workspaceURL: URL) {
+        let workspacePath = workspaceURL.standardizedFileURL.path
+        guard restoredViewportStateWorkspacePath != workspacePath else { return }
+        restoredViewportStateWorkspacePath = workspacePath
+
+        let availableDocumentIDs = Set(store.documents.map(\.id))
+        documentViewportStates = viewportStatePersistence
+            .load(for: workspaceURL)
+            .filter { availableDocumentIDs.contains($0.key) }
+    }
+
+    private func persistViewportStates() {
+        guard let workspaceURL = store.workspaceURL?.standardizedFileURL else { return }
+        let states = documentViewportStates
+        let retainedDocumentIDs = tabState.tabs.map(\.documentID)
+        let persistence = viewportStatePersistence
+
+        pendingViewportStatePersistenceTask?.cancel()
+        pendingViewportStatePersistenceTask = Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: 500_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            persistence.save(states, retaining: retainedDocumentIDs, for: workspaceURL)
+        }
+    }
+
+    private func flushPendingViewportStatePersistence(for explicitWorkspaceURL: URL? = nil) {
+        captureLivePDFViewportState()
+        pendingViewportStatePersistenceTask?.cancel()
+        pendingViewportStatePersistenceTask = nil
+        guard let workspaceURL = explicitWorkspaceURL?.standardizedFileURL
+            ?? store.workspaceURL?.standardizedFileURL
+        else { return }
+        viewportStatePersistence.save(
+            documentViewportStates,
+            retaining: tabState.tabs.map(\.documentID),
+            for: workspaceURL
+        )
+    }
+
+    private func captureLivePDFViewportState() {
+        guard let capture = pdfViewportCaptureBridge.capture() else { return }
+        updateDocumentViewportState(
+            documentID: capture.documentID,
+            change: .pdfViewportState(capture.state)
+        )
+    }
+
     private var activeDocumentViewportState: DocumentViewportState? {
         guard let selectedDocumentID = tabState.selectedDocumentID else { return nil }
         return documentViewportStates[selectedDocumentID]
     }
 
     private func updateDocumentViewportState(documentID: String, change: DocumentViewportStateChange) {
+        guard shouldAcceptDocumentViewportUpdate(
+            documentID: documentID,
+            isCurrentWorkspaceDocument: store.document(id: documentID) != nil,
+            removedDirtyDocumentIDs: store.removedDirtyOpenDocumentIDs
+        ) else { return }
+
         var state = documentViewportStates[documentID] ?? DocumentViewportState()
 
         switch change {
         case .textScrollPosition(let position):
             guard position.isMeaningfullyDifferent(from: state.textScrollPosition) else { return }
             state.textScrollPosition = position
+        case .textSelection(let selection):
+            guard selection != state.textSelection else { return }
+            state.textSelection = selection
         case .markdownPreviewScrollPosition(let position):
             guard position.isMeaningfullyDifferent(from: state.markdownPreviewScrollPosition) else { return }
             state.markdownPreviewScrollPosition = position
@@ -1013,6 +1255,7 @@ struct ContentView: View {
         }
 
         documentViewportStates[documentID] = state
+        persistViewportStates()
     }
 
     private func pruneDocumentViewportStates() {
@@ -1020,11 +1263,210 @@ struct ContentView: View {
             .union(store.removedDirtyOpenDocumentIDs)
             .union(store.selectedDocumentID.map { [$0] } ?? [])
         documentViewportStates = documentViewportStates.filter { retainedDocumentIDs.contains($0.key) }
+        persistViewportStates()
     }
 
     private func openSourceFromPreview(location: MarkdownSourceLocation) {
         pendingSourceLocation = location
         editorMode = .source
+    }
+
+    private func handleMarkdownEditorSelection(_ selection: MarkdownEditorSelectionSnapshot) {
+        guard selection.documentID == store.selectedDocumentID else { return }
+        markdownEditorSelection = selection
+        markdownSelectionOrigin = .source
+        updateDocumentViewportState(
+            documentID: selection.documentID,
+            change: .textSelection(DocumentTextSelection(
+                location: selection.selectedRange.location,
+                length: selection.selectedRange.length
+            ))
+        )
+    }
+
+    private func handleMarkdownEditorLink(_ request: MarkdownEditorLinkRequest) {
+        guard request.documentID == store.selectedDocumentID,
+              MarkdownWorkspaceLinkParser().links(in: store.documentText).contains(request.link)
+        else {
+            store.errorMessage = "The link changed before it could be opened."
+            return
+        }
+        navigateMarkdownLink(
+            request.link,
+            sourceDocumentID: request.documentID,
+            preferredMode: .source
+        )
+    }
+
+    private func handleMarkdownPreviewLink(_ request: MarkdownPreviewLinkRequest) {
+        guard request.identity.documentID == store.selectedDocumentID else { return }
+        let link = MarkdownWorkspaceLink(
+            kind: request.kind,
+            destination: request.destination,
+            label: request.destination,
+            sourceRange: MarkdownSourceRange(location: 0, length: 0),
+            destinationRange: MarkdownSourceRange(location: 0, length: 0)
+        )
+        navigateMarkdownLink(
+            link,
+            sourceDocumentID: request.identity.documentID,
+            preferredMode: .preview
+        )
+    }
+
+    private func navigateMarkdownLink(
+        _ link: MarkdownWorkspaceLink,
+        sourceDocumentID: String,
+        preferredMode: EditorMode
+    ) {
+        guard let workspaceURL = store.workspaceURL,
+              let sourceDocument = store.document(id: sourceDocumentID)
+        else { return }
+
+        let resolution = MarkdownWorkspaceLinkResolver().resolve(
+            link,
+            sourceDocument: sourceDocument,
+            workspaceRootURL: workspaceURL,
+            documents: store.documents
+        )
+        let rawFragment = link.destinationComponents.fragment?.removingPercentEncoding
+
+        switch resolution {
+        case .document(let documentID, let fragment):
+            openResolvedMarkdownDocument(
+                documentID: documentID,
+                normalizedFragment: fragment,
+                rawFragment: rawFragment,
+                preferredMode: preferredMode
+            )
+        case .external(let url):
+            guard NSWorkspace.shared.open(url) else {
+                store.errorMessage = "macOS could not open this link."
+                return
+            }
+        case .ambiguous(let documentIDs):
+            ambiguousMarkdownLinkRequest = AmbiguousMarkdownLinkRequest(
+                documentIDs: documentIDs,
+                normalizedFragment: rawFragment.map(MarkdownHeadingFragment.normalized),
+                rawFragment: rawFragment,
+                preferredMode: preferredMode
+            )
+        case .missing:
+            store.errorMessage = "No workspace document matches this link."
+        case .invalid:
+            store.errorMessage = "This link is not a safe workspace or web destination."
+        }
+    }
+
+    private func openResolvedMarkdownDocument(
+        documentID: String,
+        normalizedFragment: String?,
+        rawFragment: String?,
+        preferredMode: EditorMode
+    ) {
+        guard let document = store.document(id: documentID) else {
+            store.errorMessage = "The linked document is no longer available."
+            return
+        }
+        openDocumentTab(id: documentID)
+
+        if document.kind == .pdf, let rawFragment {
+            guard let pageNumber = Self.pdfPageNumber(from: rawFragment) else {
+                if rawFragment.hasPrefix("page=") {
+                    store.errorMessage = "The PDF page link is not valid."
+                }
+                return
+            }
+            pdfPageNavigationSerial &+= 1
+            pendingPDFPageNavigationRequest = PDFPageNavigationRequest(
+                serial: pdfPageNavigationSerial,
+                documentID: documentID,
+                pageNumber: pageNumber
+            )
+            return
+        }
+
+        guard document.kind == .markdown, let normalizedFragment else { return }
+        editorMode = preferredMode
+        deferredWorkspaceHeadingJump = DeferredWorkspaceHeadingJump(
+            documentID: documentID,
+            normalizedFragment: normalizedFragment,
+            preferredMode: preferredMode
+        )
+        fulfillDeferredWorkspaceHeadingJump()
+    }
+
+    private static func pdfPageNumber(from fragment: String) -> Int? {
+        let expression = try? NSRegularExpression(pattern: #"^page=([1-9][0-9]*)$"#)
+        let range = NSRange(location: 0, length: (fragment as NSString).length)
+        guard let match = expression?.firstMatch(in: fragment, range: range),
+              let valueRange = Range(match.range(at: 1), in: fragment),
+              let page = Int(fragment[valueRange]),
+              page > 0
+        else { return nil }
+        return page
+    }
+
+    private func fulfillDeferredWorkspaceHeadingJump() {
+        guard let jump = deferredWorkspaceHeadingJump,
+              store.selectedDocumentID == jump.documentID,
+              !store.isDocumentLoading
+        else { return }
+        deferredWorkspaceHeadingJump = nil
+        guard let location = MarkdownHeadingFragment.sourceLocation(
+            for: jump.normalizedFragment,
+            in: store.documentText
+        ) else {
+            store.errorMessage = "The linked heading no longer exists in this document."
+            return
+        }
+        if jump.preferredMode == .preview {
+            pendingPreviewLocation = location
+        } else {
+            pendingSourceLocation = location
+        }
+    }
+
+    private func handleMarkdownTaskRequest(_ request: MarkdownPreviewTaskRequest) {
+        guard request.identity.documentID == store.selectedDocumentID,
+              let replacement = MarkdownTaskSourceMutation.replacement(
+                in: store.documentText,
+                sourceLine: request.sourceLine,
+                expectedChecked: request.expectedChecked,
+                desiredChecked: request.desiredChecked
+              ),
+              let undoMutation = store.applyTextMutation(
+                documentID: request.identity.documentID,
+                range: replacement.range.nsRange,
+                expectedText: replacement.expectedText,
+                replacement: replacement.replacementText
+              )
+        else {
+            store.errorMessage = "The task changed before it could be updated."
+            return
+        }
+        WorkspaceTextMutationUndo.register(
+            undoMutation,
+            store: store,
+            undoManager: NSApp.keyWindow?.undoManager,
+            actionName: "Toggle Task"
+        )
+    }
+
+    private func handleMarkdownImagePaste(_ request: MarkdownImagePasteRequest) {
+        guard request.documentID == store.selectedDocumentID,
+              request.sourceText == store.documentText,
+              let pngData = WorkspacePasteboardImportService.pngData(for: request.image)
+        else {
+            store.errorMessage = "The image or insertion point is no longer available."
+            return
+        }
+        store.createMarkdownImageAsset(
+            pngData: pngData,
+            documentID: request.documentID
+        ) { asset in
+            request.insertMarkdown(asset.markdown)
+        }
     }
 
     private var commandActions: MonknotCommandActions {
@@ -1053,7 +1495,17 @@ struct ContentView: View {
             saveDocument: { store.saveSelectedFile() },
             cut: { _ = cutFromCommand() },
             copy: { _ = copyFromCommand() },
+            copyRenderedMarkdown: {
+                _ = MonknotNativeMarkdownCommand.copyRenderedSelection()
+            },
+            canCopyRenderedMarkdown: canCopyRenderedMarkdown,
             paste: { _ = pasteFromCommand() },
+            pasteSelectionIntoTerminal: {
+                if let text = terminalPasteSelectionText {
+                    pasteIntoTerminal(text)
+                }
+            },
+            canPasteSelectionIntoTerminal: terminalPasteSelectionText != nil,
             selectAll: { _ = MonknotNativePasteboardCommand.performSelectAllIfAvailable() },
             refreshWorkspace: { store.refresh() },
             navigateBack: navigateBack,
@@ -1078,6 +1530,21 @@ struct ContentView: View {
             toggleSidebar: { toggleSidebar(animated: false) },
             toggleSplitView: { toggleMarkdownSplitView() },
             canToggleSplitView: canToggleMarkdownSplitView,
+            togglePDFNavigator: {
+                pdfNavigatorToggleCommandSerial &+= 1
+            },
+            canTogglePDFNavigator: store.selectedDocument?.kind == .pdf,
+            insertPDFLinkedExcerpt: {
+                if let pdfSelectionSnapshot,
+                   pdfSelectionSnapshot.documentID == store.selectedDocumentID {
+                    pendingPDFExcerptSelection = pdfSelectionSnapshot
+                }
+            },
+            canInsertPDFLinkedExcerpt: store.selectedDocument?.kind == .pdf
+                && pdfSelectionSnapshot?.documentID == store.selectedDocumentID,
+            showKeyboardShortcutsHelp: {
+                isKeyboardShortcutsHelpPresented = true
+            },
             undoWorkspaceReplace: { store.undoLastWorkspaceReplace() },
             canUndoWorkspaceReplace: store.canUndoWorkspaceReplace && !store.isBusy
         )
@@ -1086,6 +1553,39 @@ struct ContentView: View {
     private var canToggleMarkdownSplitView: Bool {
         guard !store.isBusy else { return false }
         return supportsSplitView(store.selectedDocument)
+    }
+
+    private var terminalPasteSelectionText: String? {
+        switch markdownSelectionOrigin {
+        case .source:
+            if let selection = markdownEditorSelection,
+               selection.documentID == store.selectedDocumentID,
+               selection.selectedRange.length > 0,
+               NSMaxRange(selection.selectedRange) <= (store.documentText as NSString).length,
+               (store.documentText as NSString).substring(with: selection.selectedRange) == selection.selectedMarkdown {
+                return selection.selectedMarkdown
+            }
+        case .preview:
+            if let selection = markdownPreviewSelection,
+               selection.identity.documentID == store.selectedDocumentID,
+               !selection.text.isEmpty {
+                return selection.text
+            }
+        case nil:
+            break
+        }
+        return nil
+    }
+
+    private var canCopyRenderedMarkdown: Bool {
+        guard MonknotNativeMarkdownCommand.canCopyRenderedSelection,
+              let selection = markdownEditorSelection,
+              selection.documentID == store.selectedDocumentID,
+              selection.selectedRange.length > 0,
+              NSMaxRange(selection.selectedRange) <= (store.documentText as NSString).length
+        else { return false }
+        return (store.documentText as NSString).substring(with: selection.selectedRange)
+            == selection.selectedMarkdown
     }
 
     private func supportsSplitView(_ document: WorkspaceDocument?) -> Bool {
@@ -1371,13 +1871,247 @@ struct ContentView: View {
         }
     }
 
+    private func beginPDFExcerptInsertion(
+        _ selection: PDFSelectionSnapshot,
+        into destination: WorkspaceDocument
+    ) {
+        guard let source = store.document(id: selection.documentID),
+              source.kind == .pdf,
+              destination.kind == .markdown
+        else {
+            pendingPDFExcerptSelection = nil
+            store.errorMessage = "The PDF source or Markdown destination is no longer available."
+            return
+        }
+        guard selection.contentVersion == store.pdfContentVersion(for: selection.documentID) else {
+            pendingPDFExcerptSelection = nil
+            store.errorMessage = "The PDF source changed before the excerpt could be inserted. Select the text again and retry."
+            return
+        }
+
+        do {
+            pendingPDFExcerptValidationTask?.cancel()
+            pendingPDFExcerptValidationTask = nil
+            pendingPDFExcerptInsertion = nil
+            let markdown = try PDFLinkedExcerptFormatter().markdown(
+                for: selection,
+                sourceRelativePath: source.relativePath,
+                destinationRelativePath: destination.relativePath
+            )
+            pendingPDFExcerptInsertion = PendingPDFExcerptInsertion(
+                destinationDocumentID: destination.id,
+                sourceURL: source.url.standardizedFileURL,
+                selection: selection,
+                markdown: markdown
+            )
+            pendingPDFExcerptSelection = nil
+            editorMode = .source
+            openDocumentTab(id: destination.id)
+            fulfillPendingPDFExcerptInsertion()
+        } catch {
+            pendingPDFExcerptSelection = nil
+            store.errorMessage = "Could not create the linked excerpt: \(error.localizedDescription)"
+        }
+    }
+
+    private func fulfillPendingPDFExcerptInsertion() {
+        guard let pending = pendingPDFExcerptInsertion,
+              pendingPDFExcerptValidationTask == nil,
+              store.selectedDocumentID == pending.destinationDocumentID,
+              store.selectedDocument?.kind == .markdown,
+              !store.isDocumentLoading
+        else { return }
+
+        guard let workspaceURL = store.workspaceURL?.standardizedFileURL,
+              let sourceDocument = store.document(id: pending.selection.documentID),
+              sourceDocument.kind == .pdf,
+              sourceDocument.url.standardizedFileURL == pending.sourceURL,
+              pending.selection.contentVersion == store.pdfContentVersion(for: pending.selection.documentID)
+        else {
+            pendingPDFExcerptInsertion = nil
+            store.errorMessage = "The PDF source changed before the excerpt could be inserted. Nothing was changed."
+            return
+        }
+
+        let currentText = store.documentText
+        let range = pdfExcerptInsertionRange(
+            documentID: pending.destinationDocumentID,
+            text: currentText
+        )
+        let source = currentText as NSString
+        let expectedText = source.substring(with: range)
+        let dirtyPDFData = store.dirtyPDFData(for: sourceDocument.id)
+        let sourceURL = sourceDocument.url.standardizedFileURL
+        let selection = pending.selection
+
+        pendingPDFExcerptValidationTask = Task { @MainActor in
+            let validationTask = Task.detached(priority: .userInitiated) {
+                try Task.checkCancellation()
+                let data: Data
+                if let dirtyPDFData {
+                    data = dirtyPDFData
+                } else {
+                    guard let diskData = try? Data(contentsOf: sourceURL) else {
+                        throw PDFLinkedExcerptSourceValidationError.unreadablePDF
+                    }
+                    data = diskData
+                }
+                try Task.checkCancellation()
+                try PDFLinkedExcerptSourceValidator().validate(selection, in: data)
+            }
+
+            do {
+                try await withTaskCancellationHandler {
+                    try await validationTask.value
+                } onCancel: {
+                    validationTask.cancel()
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                pendingPDFExcerptValidationTask = nil
+                guard pendingPDFExcerptInsertion == pending else { return }
+                pendingPDFExcerptInsertion = nil
+                store.errorMessage = "The linked excerpt was not inserted: \(error.localizedDescription) Nothing was changed."
+                return
+            }
+
+            guard !Task.isCancelled else { return }
+            pendingPDFExcerptValidationTask = nil
+            guard pendingPDFExcerptInsertion == pending else { return }
+
+            let destinationStillMatches = store.workspaceURL?.standardizedFileURL == workspaceURL
+                && store.selectedDocumentID == pending.destinationDocumentID
+                && store.selectedDocument?.kind == .markdown
+                && !store.isDocumentLoading
+            let currentSourceDocument = store.document(id: selection.documentID)
+            let sourceStillMatches = currentSourceDocument?.kind == .pdf
+                && currentSourceDocument?.url.standardizedFileURL == sourceURL
+                && selection.contentVersion == store.pdfContentVersion(for: selection.documentID)
+            guard destinationStillMatches, sourceStillMatches else {
+                pendingPDFExcerptInsertion = nil
+                store.errorMessage = "The PDF source or Markdown destination changed before the excerpt could be inserted. Nothing was changed."
+                return
+            }
+
+            let latestText = store.documentText
+            let latestRange = pdfExcerptInsertionRange(
+                documentID: pending.destinationDocumentID,
+                text: latestText
+            )
+            guard latestRange == range,
+                  (latestText as NSString).substring(with: range) == expectedText
+            else {
+                pendingPDFExcerptInsertion = nil
+                store.errorMessage = "The Markdown destination changed before the excerpt could be inserted. Nothing was changed."
+                return
+            }
+
+            let insertion = Self.separatedMarkdownInsertion(
+                pending.markdown,
+                in: latestText,
+                replacing: range
+            )
+            pendingPDFExcerptInsertion = nil
+            guard let undoMutation = store.applyTextMutation(
+                documentID: pending.destinationDocumentID,
+                range: range,
+                expectedText: expectedText,
+                replacement: insertion
+            ) else {
+                store.errorMessage = "The Markdown destination changed before the excerpt could be inserted. Nothing was changed."
+                return
+            }
+
+            WorkspaceTextMutationUndo.register(
+                undoMutation,
+                store: store,
+                undoManager: NSApp.keyWindow?.undoManager,
+                actionName: "Insert Linked PDF Excerpt"
+            )
+            let caret = range.location + (insertion as NSString).length
+            updateDocumentViewportState(
+                documentID: pending.destinationDocumentID,
+                change: .textSelection(DocumentTextSelection(location: caret, length: 0))
+            )
+            let precedingText = (store.documentText as NSString).substring(
+                to: min(caret, (store.documentText as NSString).length)
+            )
+            let line = precedingText.reduce(into: 1) { count, character in
+                if character == "\n" { count += 1 }
+            }
+            pendingSourceLocation = MarkdownSourceLocation(line: line, offset: 0)
+        }
+    }
+
+    private func pdfExcerptInsertionRange(documentID: String, text: String) -> NSRange {
+        let length = (text as NSString).length
+        guard let selection = documentViewportStates[documentID]?.textSelection else {
+            return NSRange(location: length, length: 0)
+        }
+
+        let range = NSRange(location: selection.location, length: selection.length)
+        guard range.location >= 0,
+              range.length >= 0,
+              NSMaxRange(range) <= length
+        else {
+            return NSRange(location: length, length: 0)
+        }
+        return range
+    }
+
+    private func cancelPendingPDFExcerptWork() {
+        pendingPDFExcerptValidationTask?.cancel()
+        pendingPDFExcerptValidationTask = nil
+        pendingPDFExcerptInsertion = nil
+        pendingPDFExcerptSelection = nil
+    }
+
+    private static func separatedMarkdownInsertion(
+        _ markdown: String,
+        in currentText: String,
+        replacing range: NSRange
+    ) -> String {
+        let source = currentText as NSString
+        let before = source.substring(to: range.location)
+        let after = source.substring(from: NSMaxRange(range))
+        let prefix: String
+        if before.isEmpty || before.hasSuffix("\n\n") {
+            prefix = ""
+        } else if before.hasSuffix("\n") {
+            prefix = "\n"
+        } else {
+            prefix = "\n\n"
+        }
+        let suffix: String
+        if after.isEmpty {
+            suffix = "\n"
+        } else if after.hasPrefix("\n\n") {
+            suffix = ""
+        } else if after.hasPrefix("\n") {
+            suffix = "\n"
+        } else {
+            suffix = "\n\n"
+        }
+        return prefix + markdown + suffix
+    }
+
     private func fulfillDeferredWorkspaceSourceJump() {
         guard let deferredWorkspaceSourceJump else { return }
         guard store.selectedDocumentID == deferredWorkspaceSourceJump.documentID else { return }
         guard !store.isDocumentLoading else { return }
 
-        pendingSourceLocation = deferredWorkspaceSourceJump.location
         self.deferredWorkspaceSourceJump = nil
+        guard let location = TerminalSourceLocationValidator.location(
+            line: deferredWorkspaceSourceJump.location.line,
+            column: deferredWorkspaceSourceJump.location.offset + 1,
+            in: store.documentText
+        ) else {
+            store.errorMessage = "The requested line or column no longer exists in this document."
+            return
+        }
+        pendingSourceLocation = location
     }
 
     private func openOutlineItem(_ item: MarkdownOutlineItem) {
@@ -1541,6 +2275,150 @@ struct WindowNavigationControls: View {
     }
 }
 
+func shouldAcceptDocumentViewportUpdate(
+    documentID: String,
+    isCurrentWorkspaceDocument: Bool,
+    removedDirtyDocumentIDs: Set<String>
+) -> Bool {
+    isCurrentWorkspaceDocument || removedDirtyDocumentIDs.contains(documentID)
+}
+
+private struct PendingPDFExcerptInsertion: Equatable {
+    let destinationDocumentID: String
+    let sourceURL: URL
+    let selection: PDFSelectionSnapshot
+    let markdown: String
+}
+
+private enum MarkdownSelectionOrigin {
+    case source
+    case preview
+}
+
+private struct PDFLinkedExcerptDestinationSheet: View {
+    let selection: PDFSelectionSnapshot
+    let documents: [WorkspaceDocument]
+    let theme: AppTheme
+    let zoomScale: Double
+    let cancel: () -> Void
+    let insert: (WorkspaceDocument) -> Void
+    @State private var selectedDocumentID: String?
+
+    init(
+        selection: PDFSelectionSnapshot,
+        documents: [WorkspaceDocument],
+        theme: AppTheme,
+        zoomScale: Double,
+        cancel: @escaping () -> Void,
+        insert: @escaping (WorkspaceDocument) -> Void
+    ) {
+        self.selection = selection
+        self.documents = documents
+        self.theme = theme
+        self.zoomScale = zoomScale
+        self.cancel = cancel
+        self.insert = insert
+        _selectedDocumentID = State(initialValue: documents.first?.id)
+    }
+
+    private func scaled(_ value: CGFloat) -> CGFloat {
+        MonknotMetrics.scale(value, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: scaled(14)) {
+            VStack(alignment: .leading, spacing: scaled(4)) {
+                Text("Insert Linked PDF Excerpt")
+                    .font(MonknotTypography.panelTitle(theme: theme))
+                    .foregroundStyle(theme.foregroundColor)
+                Text("Choose the Markdown note that should receive the page-linked quote.")
+                    .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
+                    .foregroundStyle(theme.mutedForegroundColor)
+            }
+
+            Text(selection.text)
+                .font(.system(size: scaled(12)))
+                .foregroundStyle(theme.foregroundColor)
+                .lineLimit(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(scaled(10))
+                .background(theme.elevatedSurfaceColor)
+                .clipShape(RoundedRectangle(cornerRadius: theme.settingsControlCornerRadius))
+
+            if documents.isEmpty {
+                ContentUnavailableView(
+                    "No Markdown Notes",
+                    systemImage: "doc.text",
+                    description: Text("Create a Markdown note, then try again.")
+                )
+                .frame(maxWidth: .infinity, minHeight: scaled(220))
+            } else {
+                List(documents, selection: $selectedDocumentID) { document in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(document.displayName)
+                            .foregroundStyle(theme.foregroundColor)
+                        Text(document.relativePath)
+                            .font(.caption)
+                            .foregroundStyle(theme.mutedForegroundColor)
+                    }
+                    .tag(document.id)
+                }
+                .listStyle(.inset)
+                .frame(minHeight: scaled(240))
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel", action: cancel)
+                    .keyboardShortcut(.cancelAction)
+                Button("Insert") {
+                    guard let selectedDocumentID,
+                          let document = documents.first(where: { $0.id == selectedDocumentID })
+                    else { return }
+                    insert(document)
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(selectedDocumentID == nil)
+            }
+        }
+        .padding(scaled(20))
+        .frame(minWidth: scaled(520), minHeight: scaled(480))
+        .background(theme.surfaceColor)
+    }
+}
+
+@MainActor
+enum WorkspaceTextMutationUndo {
+    static func register(
+        _ mutation: WorkspaceTextMutation,
+        store: WorkspaceStore,
+        undoManager: UndoManager?,
+        actionName: String
+    ) {
+        guard let undoManager else { return }
+        undoManager.registerUndo(withTarget: store) { target in
+            MainActor.assumeIsolated {
+                guard let inverse = target.applyTextMutation(
+                    documentID: mutation.documentID,
+                    range: mutation.range,
+                    expectedText: mutation.expectedText,
+                    replacement: mutation.replacement
+                ) else {
+                    NSSound.beep()
+                    return
+                }
+                register(
+                    inverse,
+                    store: target,
+                    undoManager: undoManager,
+                    actionName: actionName
+                )
+            }
+        }
+        undoManager.setActionName(actionName)
+    }
+}
+
 private struct ExportSuccessNotice: Identifiable, Equatable {
     let url: URL
 
@@ -1606,6 +2484,88 @@ private struct ExportSuccessToast: View {
 private struct DeferredWorkspaceSourceJump: Equatable {
     let documentID: String
     let location: MarkdownSourceLocation
+}
+
+private struct DeferredWorkspaceHeadingJump: Equatable {
+    let documentID: String
+    let normalizedFragment: String
+    let preferredMode: EditorMode
+}
+
+private struct AmbiguousMarkdownLinkRequest: Equatable {
+    let documentIDs: [String]
+    let normalizedFragment: String?
+    let rawFragment: String?
+    let preferredMode: EditorMode
+}
+
+private struct AmbiguousMarkdownLinkPicker: View {
+    let documents: [WorkspaceDocument]
+    let theme: AppTheme
+    let zoomScale: Double
+    let close: () -> Void
+    let open: (String) -> Void
+    @FocusState private var focusedDocumentID: String?
+
+    private func scaled(_ value: CGFloat) -> CGFloat {
+        MonknotMetrics.scale(value, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
+        MonknotCommandOverlay(
+            theme: theme,
+            zoomScale: zoomScale,
+            panelHeight: scaled(CGFloat(52 + min(max(documents.count, 1), 8) * 40)),
+            close: close
+        ) {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Choose Linked Note")
+                        .font(.system(size: scaled(13), weight: .medium))
+                        .foregroundStyle(theme.foregroundColor)
+                    Spacer()
+                    MonknotCommandOverlayEscapeButton(theme: theme, close: close)
+                }
+                .padding(.horizontal, scaled(14))
+                .frame(height: scaled(44))
+
+                Divider().overlay(theme.separatorColor)
+
+                ScrollView {
+                    LazyVStack(spacing: scaled(2)) {
+                        ForEach(documents) { document in
+                            Button {
+                                open(document.id)
+                            } label: {
+                                HStack(spacing: scaled(8)) {
+                                    Image(systemName: document.kind.resolvedSystemImage)
+                                        .foregroundStyle(theme.mutedForegroundColor)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(document.displayName)
+                                            .foregroundStyle(theme.foregroundColor)
+                                        Text(document.relativePath)
+                                            .font(.caption)
+                                            .foregroundStyle(theme.tertiaryForegroundColor)
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.horizontal, scaled(12))
+                                .frame(height: scaled(38))
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .focused($focusedDocumentID, equals: document.id)
+                            .monknotPointerCursor()
+                        }
+                    }
+                    .padding(scaled(6))
+                }
+            }
+        }
+        .onAppear {
+            focusedDocumentID = documents.first?.id
+        }
+    }
 }
 
 struct DocumentNavigationHistory: Equatable {

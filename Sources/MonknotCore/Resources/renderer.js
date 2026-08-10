@@ -7,6 +7,10 @@
   let searchMatches = [];
   let searchCurrentIndex = 0;
   let hasRendered = false;
+  let documentID = "";
+  let renderID = 0;
+  let selectionPublishPending = false;
+  let lastPublishedSelection = { text: "", sourceLine: 0 };
 
   const target = document.getElementById("content");
   if (!target) return;
@@ -17,20 +21,35 @@
   window.monknotRevealSourceLine = revealSourceLine;
   window.monknotScrollToLine = scrollToSourceLine;
   window.monknotVisibleSourceLine = visibleSourceLine;
+  window.monknotCurrentIdentity = currentIdentity;
+  window.monknotNormalizeHeadingFragment = slug;
+  window.monknotTearDown = tearDown;
   render(window.monknot || {});
   target.addEventListener("dblclick", handleSourceJump);
+  target.addEventListener("click", handleInteraction);
+  document.addEventListener?.("selectionchange", scheduleSelectionPublish);
 
   function render(nextState) {
     const nextMarkdown = typeof nextState.markdown === "string" ? nextState.markdown : "";
     const nextTheme = nextState.theme === "dark" ? "dark" : "light";
-    if (hasRendered && nextMarkdown === markdown && document.documentElement.dataset.theme === nextTheme) {
+    const nextDocumentID = typeof nextState.documentID === "string" ? nextState.documentID : "";
+    const parsedRenderID = Number(nextState.renderID);
+    const nextRenderID = Number.isSafeInteger(parsedRenderID) && parsedRenderID >= 0 ? parsedRenderID : 0;
+    if (hasRendered
+        && nextMarkdown === markdown
+        && document.documentElement.dataset.theme === nextTheme
+        && nextDocumentID === documentID
+        && nextRenderID === renderID) {
       return;
     }
 
     markdown = nextMarkdown;
+    documentID = nextDocumentID;
+    renderID = nextRenderID;
     document.documentElement.dataset.theme = nextTheme;
     target.innerHTML = renderMarkdown(markdown);
     hasRendered = true;
+    publishSelection(true);
     if (searchQuery) {
       searchDocument({
         query: searchQuery,
@@ -39,6 +58,121 @@
         isPresented: true
       });
     }
+  }
+
+  function currentIdentity() {
+    return { documentID, renderID };
+  }
+
+  function postInteraction(action, payload = {}) {
+    if (!documentID || !Number.isSafeInteger(renderID) || renderID < 1) return;
+    window.webkit?.messageHandlers?.monknotInteraction?.postMessage({
+      action,
+      documentID,
+      renderID,
+      ...payload
+    });
+  }
+
+  function handleInteraction(event) {
+    const targetElement = event.target instanceof Element ? event.target : event.target?.parentElement;
+    if (!targetElement) return;
+
+    const task = targetElement.closest('input[type="checkbox"][data-monknot-task]');
+    if (task) {
+      event.preventDefault();
+      event.stopPropagation();
+      const expectedChecked = task.dataset.taskChecked === "true";
+      task.checked = expectedChecked;
+      const sourceLine = Number(task.dataset.sourceLine || task.closest("[data-source-line]")?.dataset.sourceLine || "0");
+      if (!Number.isSafeInteger(sourceLine) || sourceLine < 1) return;
+      postInteraction("task", {
+        sourceLine,
+        expectedChecked,
+        desiredChecked: !expectedChecked
+      });
+      return;
+    }
+
+    const terminalButton = targetElement.closest("button[data-monknot-paste-code]");
+    if (terminalButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      const code = terminalButton.closest(".monknot-code-block")?.querySelector("code");
+      const text = code?.textContent || "";
+      if (!text) return;
+      const sourceLine = Number(code?.closest("[data-source-line]")?.dataset.sourceLine || "0");
+      postInteraction("terminalPaste", {
+        text,
+        sourceLine: Number.isSafeInteger(sourceLine) && sourceLine > 0 ? sourceLine : 0
+      });
+      return;
+    }
+
+    const anchor = targetElement.closest("a");
+    if (!anchor) return;
+    const href = anchor.getAttribute("href") || "";
+    if (anchor.classList.contains("footnote-backref")
+        || anchor.closest(".footnote-ref")
+        || href.startsWith("#fn-")
+        || href.startsWith("#fnref-")) {
+      return;
+    }
+
+    const destination = anchor.dataset.monknotDestination || href;
+    if (!destination) return;
+    event.preventDefault();
+    event.stopPropagation();
+    postInteraction("link", {
+      kind: anchor.dataset.monknotLinkKind === "wikilink" ? "wikilink" : "markdown",
+      destination
+    });
+  }
+
+  function scheduleSelectionPublish() {
+    if (selectionPublishPending) return;
+    selectionPublishPending = true;
+    window.requestAnimationFrame(() => {
+      selectionPublishPending = false;
+      publishSelection(false);
+    });
+  }
+
+  function publishSelection(force) {
+    if (!documentID || !Number.isSafeInteger(renderID) || renderID < 1) return;
+    const selection = window.getSelection?.();
+    let text = "";
+    let sourceLine = 0;
+    if (selection && selection.rangeCount > 0 && !selection.isCollapsed) {
+      const range = selection.getRangeAt(0);
+      const ancestor = range.commonAncestorContainer instanceof Element
+        ? range.commonAncestorContainer
+        : range.commonAncestorContainer?.parentElement;
+      if (ancestor && target.contains(ancestor)) {
+        text = String(selection).slice(0, 1_000_000);
+        const sourceElement = ancestor.closest?.("[data-source-line]");
+        const parsedLine = Number(sourceElement?.dataset.sourceLine || "0");
+        sourceLine = Number.isSafeInteger(parsedLine) && parsedLine > 0 ? parsedLine : 0;
+      }
+    }
+
+    if (!force && text === lastPublishedSelection.text && sourceLine === lastPublishedSelection.sourceLine) {
+      return;
+    }
+    lastPublishedSelection = { text, sourceLine };
+    window.webkit?.messageHandlers?.monknotSelection?.postMessage({
+      documentID,
+      renderID,
+      text,
+      sourceLine
+    });
+  }
+
+  function tearDown() {
+    target.removeEventListener("dblclick", handleSourceJump);
+    target.removeEventListener("click", handleInteraction);
+    document.removeEventListener?.("selectionchange", scheduleSelectionPublish);
+    window.monknotTearDown = undefined;
   }
 
   function applyAppearance(nextState) {
@@ -170,7 +304,7 @@
 
           const parent = node.parentElement;
           if (!parent) return NodeFilter.FILTER_REJECT;
-          if (parent.closest("script, style, mark.monknot-search-match")) {
+          if (parent.closest("script, style, mark.monknot-search-match, .monknot-code-terminal-action")) {
             return NodeFilter.FILTER_REJECT;
           }
 
@@ -303,22 +437,57 @@
   function renderMarkdown(source) {
     const footnotes = new Map();
     const footnoteOrder = [];
+    const references = new Map();
     const lines = source.replace(/\r\n?/g, "\n").split("\n");
     const bodyLines = [];
+    let definitionFence = null;
 
     for (const line of lines) {
-      const match = line.match(/^\[\^([^\]]+)\]:\s*(.*)$/);
-      if (match) {
-        const key = match[1].trim();
-        if (!footnotes.has(key)) footnoteOrder.push(key);
-        footnotes.set(key, match[2]);
-      } else {
+      if (definitionFence) {
+        if (isFenceCloser(line, definitionFence)) definitionFence = null;
         bodyLines.push(line);
+        continue;
       }
+      const fence = openingFence(line);
+      if (fence) {
+        definitionFence = fence;
+        bodyLines.push(line);
+        continue;
+      }
+
+      const footnote = line.match(/^\[\^([^\]]+)\]:\s*(.*)$/);
+      if (footnote) {
+        const key = footnote[1].trim();
+        if (!footnotes.has(key)) footnoteOrder.push(key);
+        footnotes.set(key, footnote[2]);
+        // Keep a blank slot so every later data-source-line still refers to
+        // the original Markdown line rather than the filtered body index.
+        bodyLines.push("");
+        continue;
+      }
+
+      const reference = line.match(/^ {0,3}\[([^\]\r\n]+)\]:[ \t]*(<[^>\r\n]+>|[^\s\r\n]+)(?:[ \t]+(?:"([^"\r\n]*)"|'([^'\r\n]*)'|\(([^)\r\n]*)\)))?[ \t]*$/);
+      if (reference && !reference[1].startsWith("^")) {
+        const key = normalizeReferenceLabel(reference[1]);
+        let destination = reference[2];
+        if (destination.startsWith("<") && destination.endsWith(">")) {
+          destination = destination.slice(1, -1);
+        }
+        if (key && destination && !references.has(key)) {
+          references.set(key, {
+            destination,
+            title: reference[3] ?? reference[4] ?? reference[5] ?? ""
+          });
+        }
+        bodyLines.push("");
+        continue;
+      }
+
+      bodyLines.push(line);
     }
 
     const refNumbers = new Map();
-    const html = parseBlocks(bodyLines, footnotes, footnoteOrder, refNumbers);
+    const html = parseBlocks(bodyLines, footnotes, footnoteOrder, refNumbers, references);
 
     if (refNumbers.size === 0) return html;
 
@@ -327,14 +496,14 @@
       .sort((a, b) => refNumbers.get(a) - refNumbers.get(b))
       .map((key) => {
         const number = refNumbers.get(key);
-        return `<li id="fn-${escapeAttr(slug(key))}">${inline(footnotes.get(key) || "", footnotes, footnoteOrder, refNumbers)} <a class="footnote-backref" href="#fnref-${escapeAttr(slug(key))}">↩</a></li>`;
+        return `<li id="fn-${escapeAttr(slug(key))}">${inline(footnotes.get(key) || "", footnotes, footnoteOrder, refNumbers, references)} <a class="footnote-backref" href="#fnref-${escapeAttr(slug(key))}">↩</a></li>`;
       })
       .join("");
 
     return `${html}<section class="footnotes"><ol>${notes}</ol></section>`;
   }
 
-  function parseBlocks(lines, footnotes, footnoteOrder, refNumbers) {
+  function parseBlocks(lines, footnotes, footnoteOrder, refNumbers, references, sourceLineBase = 0) {
     const blocks = [];
     let index = 0;
 
@@ -346,19 +515,19 @@
         continue;
       }
 
-      const fence = line.match(/^ {0,3}(```+|~~~+)\s*([\w.+-]*)\s*$/);
+      const fence = openingFence(line);
       if (fence) {
         const startLine = index;
-        const marker = fence[1][0];
-        const lang = fence[2] || "";
+        const lang = fence.language;
         const codeLines = [];
         index += 1;
-        while (index < lines.length && !new RegExp(`^ {0,3}${escapeRegExp(marker.repeat(3))}`).test(lines[index])) {
+        while (index < lines.length && !isFenceCloser(lines[index], fence)) {
           codeLines.push(lines[index]);
           index += 1;
         }
         if (index < lines.length) index += 1;
-        blocks.push(markSource(`<pre><code class="language-${escapeAttr(lang)}">${highlightCode(codeLines.join("\n"), lang)}</code></pre>`, startLine));
+        const code = markSource(`<pre><code class="language-${escapeAttr(lang)}">${highlightCode(codeLines.join("\n"), lang)}</code></pre>`, sourceLineBase + startLine);
+        blocks.push(`<div class="monknot-code-block"><button type="button" class="monknot-code-terminal-action" data-monknot-paste-code aria-label="Paste code into Terminal">Paste into Terminal</button>${code}</div>`);
         continue;
       }
 
@@ -367,7 +536,7 @@
         const startLine = index;
         const level = heading[1].length;
         const text = heading[2].trim();
-        blocks.push(markSource(`<h${level} id="${escapeAttr(slug(stripInline(text)))}">${inline(text, footnotes, footnoteOrder, refNumbers)}</h${level}>`, startLine));
+        blocks.push(markSource(`<h${level} id="${escapeAttr(slug(stripInline(text)))}">${inline(text, footnotes, footnoteOrder, refNumbers, references)}</h${level}>`, sourceLineBase + startLine));
         index += 1;
         continue;
       }
@@ -380,8 +549,8 @@
 
       if (isTableStart(lines, index)) {
         const startLine = index;
-        const parsed = parseTable(lines, index, footnotes, footnoteOrder, refNumbers);
-        blocks.push(markSource(parsed.html, startLine));
+        const parsed = parseTable(lines, index, footnotes, footnoteOrder, refNumbers, references);
+        blocks.push(markSource(parsed.html, sourceLineBase + startLine));
         index = parsed.nextIndex;
         continue;
       }
@@ -393,14 +562,17 @@
           quoteLines.push(lines[index].replace(/^ {0,3}>\s?/, ""));
           index += 1;
         }
-        blocks.push(markSource(`<blockquote>${parseBlocks(quoteLines, footnotes, footnoteOrder, refNumbers)}</blockquote>`, startLine));
+        blocks.push(markSource(
+          `<blockquote>${parseBlocks(quoteLines, footnotes, footnoteOrder, refNumbers, references, sourceLineBase + startLine)}</blockquote>`,
+          sourceLineBase + startLine
+        ));
         continue;
       }
 
       if (isListLine(line)) {
         const startLine = index;
-        const parsed = parseList(lines, index, footnotes, footnoteOrder, refNumbers);
-        blocks.push(markSource(parsed.html, startLine));
+        const parsed = parseList(lines, index, footnotes, footnoteOrder, refNumbers, references, sourceLineBase);
+        blocks.push(markSource(parsed.html, sourceLineBase + startLine));
         index = parsed.nextIndex;
         continue;
       }
@@ -411,7 +583,7 @@
         paragraph.push(lines[index]);
         index += 1;
       }
-      blocks.push(markSource(`<p>${inline(paragraphText(paragraph), footnotes, footnoteOrder, refNumbers)}</p>`, startLine));
+      blocks.push(markSource(`<p>${inline(paragraphText(paragraph), footnotes, footnoteOrder, refNumbers, references)}</p>`, sourceLineBase + startLine));
     }
 
     return blocks.join("\n");
@@ -419,6 +591,7 @@
 
   function handleSourceJump(event) {
     const targetElement = event.target instanceof Element ? event.target : event.target?.parentElement;
+    if (targetElement?.closest("a, button, input")) return;
     const quoteElement = targetElement?.closest("blockquote[data-source-line]");
     const sourceElement = quoteElement || targetElement?.closest("[data-source-line]");
 
@@ -426,7 +599,12 @@
     if (!Number.isFinite(line) || line < 1) return;
 
     event.preventDefault();
-    window.webkit?.messageHandlers?.monknotSourceJump?.postMessage({ line, offset: 0 });
+    window.webkit?.messageHandlers?.monknotSourceJump?.postMessage({
+      line,
+      offset: 0,
+      documentID,
+      renderID
+    });
   }
 
   function markSource(html, zeroBasedLine) {
@@ -444,7 +622,7 @@
       || isTableStart(lines, index);
   }
 
-  function parseList(lines, start, footnotes, footnoteOrder, refNumbers) {
+  function parseList(lines, start, footnotes, footnoteOrder, refNumbers, references, sourceLineBase) {
     const first = lines[start].match(/^(\s*)([-+*]|\d+[.)])\s+(\[[ xX]\]\s+)?(.*)$/);
     const ordered = /\d/.test(first[2]);
     const tag = ordered ? "ol" : "ul";
@@ -457,16 +635,17 @@
       if (!match || /\d/.test(match[2]) !== ordered) break;
 
       const task = match[3];
-      let content = inline(match[4], footnotes, footnoteOrder, refNumbers);
+      let content = inline(match[4], footnotes, footnoteOrder, refNumbers, references);
       let className = "";
       if (task) {
         hasTasks = true;
-        const checked = /\[[xX]\]/.test(task) ? " checked" : "";
+        const isChecked = /\[[xX]\]/.test(task);
+        const checked = isChecked ? " checked" : "";
         className = " class=\"task-list-item\"";
-        content = `<input type="checkbox" disabled${checked}> <span>${content}</span>`;
+        content = `<input type="checkbox" data-monknot-task data-source-line="${sourceLineBase + index + 1}" data-task-checked="${isChecked}" aria-label="Toggle task"${checked}> <span>${content}</span>`;
       }
 
-      items.push(markSource(`<li${className}>${content}</li>`, index));
+      items.push(markSource(`<li${className}>${content}</li>`, sourceLineBase + index));
       index += 1;
     }
 
@@ -474,7 +653,7 @@
     return { html: `<${tag}${listClass}>${items.join("")}</${tag}>`, nextIndex: index };
   }
 
-  function parseTable(lines, start, footnotes, footnoteOrder, refNumbers) {
+  function parseTable(lines, start, footnotes, footnoteOrder, refNumbers, references) {
     const headers = splitTableRow(lines[start]);
     const alignment = splitTableRow(lines[start + 1]).map((cell) => {
       const trimmed = cell.trim();
@@ -492,8 +671,8 @@
     }
 
     const alignAttr = (idx) => alignment[idx] ? ` align="${alignment[idx]}"` : "";
-    const thead = `<thead><tr>${headers.map((cell, idx) => `<th${alignAttr(idx)}>${inline(cell.trim(), footnotes, footnoteOrder, refNumbers)}</th>`).join("")}</tr></thead>`;
-    const tbody = `<tbody>${rows.map((row) => `<tr>${headers.map((_, idx) => `<td${alignAttr(idx)}>${inline((row[idx] || "").trim(), footnotes, footnoteOrder, refNumbers)}</td>`).join("")}</tr>`).join("")}</tbody>`;
+    const thead = `<thead><tr>${headers.map((cell, idx) => `<th${alignAttr(idx)}>${inline(cell.trim(), footnotes, footnoteOrder, refNumbers, references)}</th>`).join("")}</tr></thead>`;
+    const tbody = `<tbody>${rows.map((row) => `<tr>${headers.map((_, idx) => `<td${alignAttr(idx)}>${inline((row[idx] || "").trim(), footnotes, footnoteOrder, refNumbers, references)}</td>`).join("")}</tr>`).join("")}</tbody>`;
 
     return { html: `<div class="table-wrapper"><table>${thead}${tbody}</table></div>`, nextIndex: index };
   }
@@ -502,6 +681,21 @@
     if (index + 1 >= lines.length) return false;
     if (!/\|/.test(lines[index])) return false;
     return splitTableRow(lines[index + 1]).every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+  }
+
+  function openingFence(line) {
+    const match = line.match(/^ {0,3}(```+|~~~+)\s*([\w.+-]*)\s*$/);
+    if (!match) return null;
+    return { marker: match[1][0], length: match[1].length, language: match[2] || "" };
+  }
+
+  function isFenceCloser(line, opening) {
+    const match = line.match(/^ {0,3}(`+|~+)/);
+    return Boolean(
+      match
+      && match[1][0] === opening.marker
+      && match[1].length >= opening.length
+    );
   }
 
   function splitTableRow(line) {
@@ -522,35 +716,60 @@
     return text;
   }
 
-  function inline(text, footnotes, footnoteOrder, refNumbers) {
+  function inline(text, footnotes, footnoteOrder, refNumbers, references) {
     const codeTokens = [];
+    const wikilinkTokens = [];
+    const generatedHTMLTokens = [];
     let value = text.replace(/`([\s\S]+?)`/g, (_, code) => {
       const token = `\u0000CODE${codeTokens.length}\u0000`;
       codeTokens.push(`<code>${escapeHTML(code)}</code>`);
+      return token;
+    });
+    value = value.replace(/\[\[([^\]\n]+)\]\]/g, (_, content) => {
+      const token = `\u0000WIKILINK${wikilinkTokens.length}\u0000`;
+      const separator = content.indexOf("|");
+      const destination = (separator >= 0 ? content.slice(0, separator) : content).trim();
+      const alias = separator >= 0 ? content.slice(separator + 1).trim() : "";
+      const label = alias || destination;
+      wikilinkTokens.push(destination
+        ? `<a href="#" class="wikilink" data-monknot-link-kind="wikilink" data-monknot-destination="${escapeAttr(destination)}">${escapeHTML(label)}</a>`
+        : escapeHTML(label));
+      return token;
+    });
+    value = value.replace(/(?<!!)\[([^\]\n]+)\]\[([^\]\n]*)\]/g, (match, label, identifier) => {
+      const reference = references.get(normalizeReferenceLabel(identifier || label));
+      if (!reference) return match;
+      const safe = sanitizeURL(reference.destination, false);
+      if (!safe) return label;
+      const titleAttr = reference.title ? ` title="${escapeAttr(reference.title)}"` : "";
+      const token = `\u0000GENERATED${generatedHTMLTokens.length}\u0000`;
+      generatedHTMLTokens.push(`<a href="${escapeAttr(safe)}" data-monknot-link-kind="markdown" data-monknot-destination="${escapeAttr(safe)}"${titleAttr}>${inline(label, footnotes, footnoteOrder, refNumbers, references)}</a>`);
       return token;
     });
 
     value = escapeHTML(value);
     value = value.replace(/(?: {2,}|\\)\n/g, "<br>");
 
-    value = value.replace(/\[\[([^\]\n]+)\]\]/g, '<span class="wikilink">$1</span>');
-
     value = value.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]+)")?\)/g, (_, alt, url, title) => {
       const safe = sanitizeURL(url, true);
       if (!safe) return "";
       const titleAttr = title ? ` title="${escapeAttr(title)}"` : "";
-      return `<img src="${escapeAttr(safe)}" alt="${escapeAttr(alt)}"${titleAttr}>`;
+      const token = `\u0000GENERATED${generatedHTMLTokens.length}\u0000`;
+      generatedHTMLTokens.push(`<img src="${escapeAttr(safe)}" alt="${escapeAttr(alt)}"${titleAttr}>`);
+      return token;
     });
 
     value = value.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+"([^"]+)")?\)/g, (_, label, url, title) => {
       const safe = sanitizeURL(url, false);
       if (!safe) return label;
       const titleAttr = title ? ` title="${escapeAttr(title)}"` : "";
-      return `<a href="${escapeAttr(safe)}"${titleAttr}>${label}</a>`;
+      const token = `\u0000GENERATED${generatedHTMLTokens.length}\u0000`;
+      generatedHTMLTokens.push(`<a href="${escapeAttr(safe)}" data-monknot-link-kind="markdown" data-monknot-destination="${escapeAttr(safe)}"${titleAttr}>${inline(label, footnotes, footnoteOrder, refNumbers, references)}</a>`);
+      return token;
     });
 
-    value = value.replace(/&lt;(https?:\/\/[^&\s]+)&gt;/g, (_, url) => `<a href="${escapeAttr(url)}">${escapeHTML(url)}</a>`);
-    value = value.replace(/(^|[\s(])(https?:\/\/[^\s<]+)/g, (_, prefix, url) => `${prefix}<a href="${escapeAttr(url)}">${escapeHTML(url)}</a>`);
+    value = value.replace(/(^|[\s(])(https?:\/\/[^\s<]+)/g, (_, prefix, url) => `${prefix}<a href="${escapeAttr(url)}" data-monknot-link-kind="markdown" data-monknot-destination="${escapeAttr(url)}">${escapeHTML(url)}</a>`);
+    value = value.replace(/&lt;(https?:\/\/[^&\s]+)&gt;/g, (_, url) => `<a href="${escapeAttr(url)}" data-monknot-link-kind="markdown" data-monknot-destination="${escapeAttr(url)}">${escapeHTML(url)}</a>`);
 
     value = value.replace(/\[\^([^\]]+)\]/g, (_, key) => {
       const normalized = key.trim();
@@ -567,6 +786,12 @@
 
     codeTokens.forEach((html, index) => {
       value = value.replace(`\u0000CODE${index}\u0000`, html);
+    });
+    wikilinkTokens.forEach((html, index) => {
+      value = value.replace(`\u0000WIKILINK${index}\u0000`, html);
+    });
+    generatedHTMLTokens.forEach((html, index) => {
+      value = value.replace(`\u0000GENERATED${index}\u0000`, html);
     });
 
     return value;
@@ -629,6 +854,10 @@
       .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
       .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
       .replace(/[*_~#]/g, "");
+  }
+
+  function normalizeReferenceLabel(label) {
+    return String(label || "").trim().split(/\s+/).join(" ").toLowerCase();
   }
 
   function slug(text) {
