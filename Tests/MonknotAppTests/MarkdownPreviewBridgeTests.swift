@@ -5,7 +5,7 @@ import XCTest
 final class MarkdownPreviewBridgeTests: XCTestCase {
     private let identity = MarkdownPreviewRenderIdentity(documentID: "/workspace/Note.md", renderID: 7)
 
-    func testBridgeParsesLinkTaskAndTerminalPasteMessages() {
+    func testBridgeParsesLinkAndTaskMessages() {
         XCTAssertEqual(
             MarkdownPreviewView.Coordinator.bridgeInteraction(
                 from: payload(action: "link", extra: [
@@ -34,20 +34,6 @@ final class MarkdownPreviewBridgeTests: XCTestCase {
                 sourceLine: 12,
                 expectedChecked: false,
                 desiredChecked: true
-            ))
-        )
-        XCTAssertEqual(
-            MarkdownPreviewView.Coordinator.bridgeInteraction(
-                from: payload(action: "terminalPaste", extra: [
-                    "text": "printf 'safe'",
-                    "sourceLine": 20,
-                ]),
-                expectedIdentity: identity
-            ),
-            .terminalPaste(MarkdownPreviewTerminalPasteRequest(
-                identity: identity,
-                text: "printf 'safe'",
-                sourceLine: 20
             ))
         )
     }
@@ -85,32 +71,7 @@ final class MarkdownPreviewBridgeTests: XCTestCase {
             expectedIdentity: identity
         ))
         XCTAssertNil(MarkdownPreviewView.Coordinator.bridgeInteraction(
-            from: payload(action: "terminalPaste", extra: [
-                "text": String(repeating: "a", count: 1_000_001),
-            ]),
-            expectedIdentity: identity
-        ))
-    }
-
-    func testSelectionRequiresCurrentIdentityAndAllowsEmptySelectionToClearState() {
-        let selectionPayload: [String: Any] = [
-            "documentID": identity.documentID,
-            "renderID": identity.renderID,
-            "text": "",
-            "sourceLine": 0,
-        ]
-        XCTAssertEqual(
-            MarkdownPreviewView.Coordinator.bridgeSelection(
-                from: selectionPayload,
-                expectedIdentity: identity
-            ),
-            MarkdownPreviewSelection(identity: identity, text: "", sourceLine: nil)
-        )
-
-        var stale = selectionPayload
-        stale["documentID"] = "/workspace/Other.md"
-        XCTAssertNil(MarkdownPreviewView.Coordinator.bridgeSelection(
-            from: stale,
+            from: payload(action: "terminalPaste", extra: ["text": "removed"]),
             expectedIdentity: identity
         ))
     }

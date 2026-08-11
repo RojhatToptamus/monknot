@@ -85,39 +85,6 @@ final class TerminalSessionCollectionStore: ObservableObject {
         sessionsByID[terminalID]?.restart()
     }
 
-    @discardableResult
-    func requestInsertion(
-        _ text: String,
-        in directory: URL? = nil
-    ) throws -> TerminalInsertionRequest {
-        let session: TerminalSessionStore
-        if let activeSession {
-            session = activeSession
-        } else if let createdSession = createTerminal(in: directory ?? defaultDirectory) {
-            session = createdSession
-        } else {
-            throw TerminalSessionInsertionError.sessionUnavailable
-        }
-
-        return try session.requestInsertion(text)
-    }
-
-    @discardableResult
-    func requestPathInsertion(
-        _ url: URL,
-        workspaceURL: URL,
-        in directory: URL? = nil
-    ) throws -> TerminalInsertionRequest {
-        let canonicalURL = try TerminalWorkspacePathResolver.canonicalWorkspaceURL(
-            for: url,
-            workspaceURL: workspaceURL
-        )
-        return try requestInsertion(
-            TerminalShellArgument.quote(canonicalURL.path),
-            in: directory
-        )
-    }
-
     func stopAll() {
         for session in sessionsByID.values {
             session.stop()

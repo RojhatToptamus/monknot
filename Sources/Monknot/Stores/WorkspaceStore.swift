@@ -46,6 +46,8 @@ final class WorkspaceStore: ObservableObject {
     private var pdfDocumentBaselines: [String: Data] = [:]
     private var dirtyPDFDocumentData: [String: Data] = [:]
     private var dirtyPDFDocumentVersions: [String: Int] = [:]
+    private var dirtyPDFDocumentEditCheckpoints: [String: PDFAnnotationEditCheckpoint] = [:]
+    @Published private var pdfDocumentSavedEditCheckpoints: [String: PDFAnnotationEditCheckpoint] = [:]
     @Published private var pdfDocumentContentVersions: [String: Int] = [:]
     private var removedDirtyDocuments: [String: WorkspaceDocument] = [:]
     private var openDocumentIDs: Set<String> = []
@@ -1060,15 +1062,28 @@ final class WorkspaceStore: ObservableObject {
         dirtyPDFDocumentData[documentID]
     }
 
+    func dirtyPDFEditVersion(for documentID: String) -> Int? {
+        dirtyPDFDocumentVersions[documentID]
+    }
+
     func pdfContentVersion(for documentID: String) -> Int {
         pdfDocumentContentVersions[documentID] ?? 0
+    }
+
+    func pdfSavedEditCheckpoint(for documentID: String) -> PDFAnnotationEditCheckpoint? {
+        pdfDocumentSavedEditCheckpoints[documentID]
     }
 
     var dirtyPDFDataByDocumentID: [String: Data] {
         dirtyPDFDocumentData
     }
 
-    func markPDFDocumentEdited(id documentID: String, previousData: Data?, data: Data?) {
+    func markPDFDocumentEdited(
+        id documentID: String,
+        previousData: Data?,
+        data: Data?,
+        editCheckpoint: PDFAnnotationEditCheckpoint? = nil
+    ) {
         guard let file = document(id: documentID), file.kind == .pdf else { return }
         guard let data else {
             errorMessage = "Could not prepare PDF annotation data."
@@ -1086,7 +1101,30 @@ final class WorkspaceStore: ObservableObject {
             pdfDocumentBaselines[documentID] = previousData
         }
 
-        applyPDFData(data, to: file)
+        applyPDFData(data, editCheckpoint: editCheckpoint, to: file)
+    }
+
+    @discardableResult
+    func restorePDFSavedEditCheckpoint(
+        id documentID: String,
+        checkpoint: PDFAnnotationEditCheckpoint
+    ) -> Bool {
+        guard pdfDocumentSavedEditCheckpoints[documentID] == checkpoint,
+              let file = document(id: documentID),
+              file.kind == .pdf,
+              let baseline = pdfDocumentBaselines[documentID]
+        else { return false }
+
+        guard let diskData = try? Data(contentsOf: file.url), diskData == baseline else {
+            if selectedDocumentID == documentID {
+                setSelectedDocumentExternalChangeIfChanged(true)
+            }
+            errorMessage = "\(file.displayName) changed on disk. Reload it or save your annotated version as a copy."
+            return false
+        }
+
+        applyPDFData(baseline, editCheckpoint: checkpoint, to: file)
+        return dirtyPDFDocumentData[documentID] == nil
     }
 
     func reportPDFAnnotationError(_ message: String) {
@@ -1355,19 +1393,15 @@ final class WorkspaceStore: ObservableObject {
 
         externalReviewTask = Task.detached(priority: .userInitiated) { [weak self] in
             let revision: WorkspaceTextRevision?
-            if FileManager.default.fileExists(atPath: url.path) {
-                do {
-                    revision = try WorkspaceConditionalTextWriter.read(from: url)
-                } catch {
-                    await self?.finishExternalReviewFailure(
-                        error,
-                        documentID: documentID,
-                        generation: generation
-                    )
-                    return
-                }
-            } else {
-                revision = nil
+            do {
+                revision = try Self.externalTextRevision(at: url)
+            } catch {
+                await self?.finishExternalReviewFailure(
+                    error,
+                    documentID: documentID,
+                    generation: generation
+                )
+                return
             }
             guard !Task.isCancelled else { return }
             let review = ExternalDocumentReconciliationService.review(
@@ -1379,7 +1413,11 @@ final class WorkspaceStore: ObservableObject {
                 ExternalDocumentReviewState(
                     documentID: documentID,
                     displayName: displayName,
-                    review: review
+                    review: review,
+                    diskToMineDiff: ExternalDocumentReconciliationService.unifiedDiff(
+                        from: revision?.text ?? "",
+                        to: localText
+                    )
                 ),
                 generation: generation
             )
@@ -1406,19 +1444,15 @@ final class WorkspaceStore: ObservableObject {
 
         externalReviewTask = Task.detached(priority: .userInitiated) { [weak self] in
             let currentDiskRevision: WorkspaceTextRevision?
-            if FileManager.default.fileExists(atPath: url.path) {
-                do {
-                    currentDiskRevision = try WorkspaceConditionalTextWriter.read(from: url)
-                } catch {
-                    await self?.finishExternalReviewFailure(
-                        error,
-                        documentID: state.documentID,
-                        generation: generation
-                    )
-                    return
-                }
-            } else {
-                currentDiskRevision = nil
+            do {
+                currentDiskRevision = try Self.externalTextRevision(at: url)
+            } catch {
+                await self?.finishExternalReviewFailure(
+                    error,
+                    documentID: state.documentID,
+                    generation: generation
+                )
+                return
             }
 
             guard !Task.isCancelled else { return }
@@ -1439,6 +1473,160 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    func resolveSelectedExternalDocumentWithoutReview(_ resolution: ExternalDocumentResolution) {
+        guard resolution != .merge,
+              externalDocumentReview == nil,
+              selectedDocumentExternalChange,
+              let document = selectedDocument,
+              document.capabilities.canEditText,
+              let localText = dirtyDocumentTexts[document.id] ?? (hasUnsavedChanges ? documentText : nil)
+        else { return }
+
+        let baselineText = dirtyDocumentBaselines[document.id] ?? lastSavedText
+        externalReviewTask?.cancel()
+        externalReviewGeneration &+= 1
+        let generation = externalReviewGeneration
+
+        externalReviewTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let currentDiskRevision: WorkspaceTextRevision?
+            do {
+                currentDiskRevision = try Self.externalTextRevision(at: document.url)
+            } catch {
+                await self?.finishExternalReviewFailure(
+                    error,
+                    documentID: document.id,
+                    generation: generation
+                )
+                return
+            }
+            guard !Task.isCancelled else { return }
+
+            let state = ExternalDocumentReviewState(
+                documentID: document.id,
+                displayName: document.displayName,
+                review: ExternalDocumentReconciliationService.review(
+                    baselineText: baselineText,
+                    localText: localText,
+                    diskRevision: currentDiskRevision
+                ),
+                diskToMineDiff: nil
+            )
+            await self?.applyExternalDocumentResolution(
+                resolution,
+                state: state,
+                currentDiskRevision: currentDiskRevision,
+                generation: generation
+            )
+        }
+    }
+
+    func saveExternalDocumentCopy(to destinationURL: URL) {
+        guard selectedDocumentExternalChange,
+              let document = selectedDocument,
+              document.capabilities.canEditText,
+              let localText = dirtyDocumentTexts[document.id] ?? (hasUnsavedChanges ? documentText : nil)
+        else { return }
+
+        let destinationURL = destinationURL.standardizedFileURL
+        guard !Self.externalCopyDestination(destinationURL, aliases: document.url) else {
+            errorMessage = ExternalDocumentCopyError.sourceAlias.localizedDescription
+            return
+        }
+
+        let baselineText = dirtyDocumentBaselines[document.id] ?? lastSavedText
+        let reviewedState = externalDocumentReview
+        externalReviewTask?.cancel()
+        externalReviewGeneration &+= 1
+        let generation = externalReviewGeneration
+
+        externalReviewTask = Task.detached(priority: .userInitiated) { [weak self] in
+            do {
+                let currentDiskRevision = try Self.externalTextRevision(at: document.url)
+                guard !Task.isCancelled else { return }
+
+                if let reviewedState,
+                   currentDiskRevision != reviewedState.review.diskRevision {
+                    await self?.refreshStaleExternalReview(
+                        state: reviewedState,
+                        currentDiskRevision: currentDiskRevision,
+                        generation: generation
+                    )
+                    return
+                }
+
+                let state = reviewedState ?? ExternalDocumentReviewState(
+                    documentID: document.id,
+                    displayName: document.displayName,
+                    review: ExternalDocumentReconciliationService.review(
+                        baselineText: baselineText,
+                        localText: localText,
+                        diskRevision: currentDiskRevision
+                    ),
+                    diskToMineDiff: nil
+                )
+                guard await self?.validateExternalDocumentState(
+                    state,
+                    currentDiskRevision: currentDiskRevision,
+                    generation: generation,
+                    refreshesVisibleReview: reviewedState != nil
+                ) == true else { return }
+
+                let destinationExpectation: WorkspaceDataRevisionExpectation
+                if FileManager.default.fileExists(atPath: destinationURL.path) {
+                    destinationExpectation = .present(try Data(contentsOf: destinationURL))
+                } else {
+                    destinationExpectation = .absent
+                }
+
+                guard !Task.isCancelled else { return }
+                let latestDiskRevision = try Self.externalTextRevision(at: document.url)
+                guard latestDiskRevision == currentDiskRevision else {
+                    if let reviewedState {
+                        await self?.refreshStaleExternalReview(
+                            state: reviewedState,
+                            currentDiskRevision: latestDiskRevision,
+                            generation: generation
+                        )
+                    } else {
+                        await self?.finishExternalCopyStale(
+                            documentID: document.id,
+                            generation: generation
+                        )
+                    }
+                    return
+                }
+                guard !Task.isCancelled,
+                      await self?.validateExternalDocumentState(
+                        state,
+                        currentDiskRevision: latestDiskRevision,
+                        generation: generation,
+                        refreshesVisibleReview: reviewedState != nil
+                      ) == true
+                else { return }
+                guard !Self.externalCopyDestination(destinationURL, aliases: document.url) else {
+                    throw ExternalDocumentCopyError.sourceAlias
+                }
+
+                try WorkspaceConditionalDataWriter.write(
+                    Data(state.review.localText.utf8),
+                    to: destinationURL,
+                    expecting: destinationExpectation
+                )
+                await self?.finishExternalCopy(
+                    documentID: document.id,
+                    destinationURL: destinationURL,
+                    generation: generation
+                )
+            } catch {
+                await self?.finishExternalCopyFailure(
+                    error,
+                    documentID: document.id,
+                    generation: generation
+                )
+            }
+        }
+    }
+
     func reloadSelectedDocumentFromDisk() {
         guard let selectedDocumentID else { return }
         discardUnsavedChanges(for: selectedDocumentID)
@@ -1453,6 +1641,8 @@ final class WorkspaceStore: ObservableObject {
         pdfDocumentBaselines.removeValue(forKey: documentID)
         dirtyPDFDocumentData.removeValue(forKey: documentID)
         dirtyPDFDocumentVersions.removeValue(forKey: documentID)
+        dirtyPDFDocumentEditCheckpoints.removeValue(forKey: documentID)
+        pdfDocumentSavedEditCheckpoints.removeValue(forKey: documentID)
         removedDirtyDocuments.removeValue(forKey: documentID)
         setSaveState(.clean, for: documentID)
         pruneRemovedDirtyDocuments()
@@ -1484,6 +1674,7 @@ final class WorkspaceStore: ObservableObject {
             }
             return
         }
+        let savedEditCheckpoint = dirtyPDFDocumentEditCheckpoints[file.id]
 
         saveGeneration += 1
         let generation = saveGeneration
@@ -1503,6 +1694,7 @@ final class WorkspaceStore: ObservableObject {
                     fileID: file.id,
                     url: file.url,
                     dirtyVersion: dirtyVersion,
+                    savedEditCheckpoint: savedEditCheckpoint,
                     writtenData: writtenData,
                     generation: generation
                 )
@@ -1517,6 +1709,7 @@ final class WorkspaceStore: ObservableObject {
               let pdfData = dirtyPDFDocumentData[file.id] else {
             return true
         }
+        let savedEditCheckpoint = dirtyPDFDocumentEditCheckpoints[file.id]
         guard let baseline = pdfDocumentBaselines[file.id] else {
             setSaveState(.failed("The original PDF could not be verified."), for: file.id)
             errorMessage = "Could not safely save \(file.displayName) because its original contents are unavailable."
@@ -1541,6 +1734,7 @@ final class WorkspaceStore: ObservableObject {
                 fileID: file.id,
                 url: file.url,
                 dirtyVersion: dirtyVersion,
+                savedEditCheckpoint: savedEditCheckpoint,
                 writtenData: writtenData,
                 generation: generation
             )
@@ -1558,12 +1752,19 @@ final class WorkspaceStore: ObservableObject {
         return try? Data(contentsOf: file.url)
     }
 
-    private func applyPDFData(_ data: Data, to file: WorkspaceDocument) {
+    private func applyPDFData(
+        _ data: Data,
+        editCheckpoint: PDFAnnotationEditCheckpoint?,
+        to file: WorkspaceDocument
+    ) {
         if let baseline = pdfDocumentBaselines[file.id], data == baseline {
             let shouldReloadExternalReplacement = selectedDocumentID == file.id
                 && selectedDocumentExternalChange
+            pdfDocumentBaselines.removeValue(forKey: file.id)
             dirtyPDFDocumentData.removeValue(forKey: file.id)
             dirtyPDFDocumentVersions.removeValue(forKey: file.id)
+            dirtyPDFDocumentEditCheckpoints.removeValue(forKey: file.id)
+            pdfDocumentSavedEditCheckpoints.removeValue(forKey: file.id)
             setSaveState(.clean, for: file.id)
             if selectedDocumentID == file.id {
                 setHasUnsavedChangesIfChanged(false)
@@ -1579,6 +1780,11 @@ final class WorkspaceStore: ObservableObject {
 
         dirtyPDFDocumentData[file.id] = data
         dirtyPDFDocumentVersions[file.id, default: 0] += 1
+        if let editCheckpoint {
+            dirtyPDFDocumentEditCheckpoints[file.id] = editCheckpoint
+        } else {
+            dirtyPDFDocumentEditCheckpoints.removeValue(forKey: file.id)
+        }
         if selectedDocumentID == file.id {
             setHasUnsavedChangesIfChanged(true)
         }
@@ -1587,6 +1793,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func publishPDFContentReplacement(for documentID: String) {
+        pdfDocumentBaselines.removeValue(forKey: documentID)
+        dirtyPDFDocumentEditCheckpoints.removeValue(forKey: documentID)
+        pdfDocumentSavedEditCheckpoints.removeValue(forKey: documentID)
         pdfDocumentContentVersions[documentID, default: 0] &+= 1
     }
 
@@ -1639,6 +1848,8 @@ final class WorkspaceStore: ObservableObject {
             pdfDocumentBaselines = [:]
             dirtyPDFDocumentData = [:]
             dirtyPDFDocumentVersions = [:]
+            dirtyPDFDocumentEditCheckpoints = [:]
+            pdfDocumentSavedEditCheckpoints = [:]
             pdfDocumentContentVersions = [:]
             removedDirtyDocuments = [:]
             removedDirtyOpenDocumentIDs = []
@@ -2065,6 +2276,7 @@ final class WorkspaceStore: ObservableObject {
               selectedDocumentID == state.documentID,
               dirtyDocumentTexts[state.documentID] != nil || hasUnsavedChanges
         else { return }
+        externalReviewTask = nil
         externalDocumentReview = state
     }
 
@@ -2078,6 +2290,75 @@ final class WorkspaceStore: ObservableObject {
         else { return }
         externalReviewTask = nil
         errorMessage = "Could not review the disk copy: \(error.localizedDescription)"
+    }
+
+    private func validateExternalDocumentState(
+        _ state: ExternalDocumentReviewState,
+        currentDiskRevision: WorkspaceTextRevision?,
+        generation: Int,
+        refreshesVisibleReview: Bool
+    ) -> Bool {
+        guard generation == externalReviewGeneration,
+              selectedDocumentID == state.documentID
+        else { return false }
+
+        let currentLocalText = dirtyDocumentTexts[state.documentID] ?? documentText
+        guard currentLocalText == state.review.localText,
+              dirtyDocumentBaselines[state.documentID] ?? lastSavedText == state.review.baselineText
+        else {
+            if refreshesVisibleReview {
+                refreshStaleExternalReview(
+                    state: state,
+                    currentDiskRevision: currentDiskRevision,
+                    generation: generation
+                )
+            } else {
+                externalReviewTask = nil
+                errorMessage = "Your local text changed before the operation could finish. Try again."
+            }
+            return false
+        }
+        return true
+    }
+
+    private func finishExternalCopy(
+        documentID: String,
+        destinationURL: URL,
+        generation: Int
+    ) {
+        guard generation == externalReviewGeneration,
+              selectedDocumentID == documentID
+        else { return }
+        externalReviewTask = nil
+        guard let workspaceURL else { return }
+        let canonicalRoot = workspaceURL.standardizedFileURL.resolvingSymlinksInPath()
+        let canonicalDestination = destinationURL.standardizedFileURL.resolvingSymlinksInPath()
+        if Self.isCanonicalURL(canonicalDestination, containedIn: canonicalRoot) {
+            refresh()
+        }
+    }
+
+    private func finishExternalCopyStale(
+        documentID: String,
+        generation: Int
+    ) {
+        guard generation == externalReviewGeneration,
+              selectedDocumentID == documentID
+        else { return }
+        externalReviewTask = nil
+        errorMessage = "The disk copy changed again. No copy was saved; try again."
+    }
+
+    private func finishExternalCopyFailure(
+        _ error: Error,
+        documentID: String,
+        generation: Int
+    ) {
+        guard generation == externalReviewGeneration,
+              selectedDocumentID == documentID
+        else { return }
+        externalReviewTask = nil
+        errorMessage = "Could not save a copy: \(error.localizedDescription)"
     }
 
     private func refreshStaleExternalReview(
@@ -2097,8 +2378,13 @@ final class WorkspaceStore: ObservableObject {
                 baselineText: currentBaseline,
                 localText: currentLocalText,
                 diskRevision: currentDiskRevision
+            ),
+            diskToMineDiff: ExternalDocumentReconciliationService.unifiedDiff(
+                from: currentDiskRevision?.text ?? "",
+                to: currentLocalText
             )
         )
+        externalReviewTask = nil
         errorMessage = "The disk copy changed while the review was open. The comparison has been refreshed; no changes were applied."
     }
 
@@ -2112,22 +2398,19 @@ final class WorkspaceStore: ObservableObject {
               selectedDocumentID == state.documentID
         else { return }
 
+        guard validateExternalDocumentState(
+            state,
+            currentDiskRevision: currentDiskRevision,
+            generation: generation,
+            refreshesVisibleReview: state.diskToMineDiff != nil
+        ) else { return }
         let currentLocalText = dirtyDocumentTexts[state.documentID] ?? documentText
-        guard currentLocalText == state.review.localText,
-              dirtyDocumentBaselines[state.documentID] ?? lastSavedText == state.review.baselineText
-        else {
-            refreshStaleExternalReview(
-                state: state,
-                currentDiskRevision: currentDiskRevision,
-                generation: generation
-            )
-            return
-        }
 
         let newText: String
         switch resolution {
         case .useDisk:
             guard let currentDiskRevision else {
+                externalReviewTask = nil
                 errorMessage = "The file is still missing. Keep your local text or cancel the review."
                 return
             }
@@ -2138,6 +2421,7 @@ final class WorkspaceStore: ObservableObject {
             guard currentDiskRevision != nil,
                   let mergedText = state.review.mergedText
             else {
+                externalReviewTask = nil
                 errorMessage = "These edits overlap. Choose a complete version or reconcile the text manually."
                 return
             }
@@ -2170,6 +2454,32 @@ final class WorkspaceStore: ObservableObject {
         } ?? .absent
         setHasUnsavedChangesIfChanged(true)
         setSaveState(.edited, for: state.documentID)
+    }
+
+    nonisolated private static func externalTextRevision(at url: URL) throws -> WorkspaceTextRevision? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return try WorkspaceConditionalTextWriter.read(from: url)
+    }
+
+    nonisolated private static func externalCopyDestination(
+        _ destinationURL: URL,
+        aliases sourceURL: URL
+    ) -> Bool {
+        let canonicalSource = sourceURL.standardizedFileURL.resolvingSymlinksInPath()
+        let canonicalDestination = destinationURL.standardizedFileURL.resolvingSymlinksInPath()
+        if canonicalSource == canonicalDestination { return true }
+
+        guard FileManager.default.fileExists(atPath: canonicalSource.path),
+              FileManager.default.fileExists(atPath: canonicalDestination.path),
+              let sourceAttributes = try? FileManager.default.attributesOfItem(atPath: canonicalSource.path),
+              let destinationAttributes = try? FileManager.default.attributesOfItem(atPath: canonicalDestination.path),
+              let sourceSystem = (sourceAttributes[.systemNumber] as? NSNumber)?.uint64Value,
+              let sourceFile = (sourceAttributes[.systemFileNumber] as? NSNumber)?.uint64Value,
+              let destinationSystem = (destinationAttributes[.systemNumber] as? NSNumber)?.uint64Value,
+              let destinationFile = (destinationAttributes[.systemFileNumber] as? NSNumber)?.uint64Value
+        else { return false }
+
+        return sourceSystem == destinationSystem && sourceFile == destinationFile
     }
 
     private func finishSave(
@@ -2227,6 +2537,7 @@ final class WorkspaceStore: ObservableObject {
         fileID: String,
         url: URL,
         dirtyVersion: Int,
+        savedEditCheckpoint: PDFAnnotationEditCheckpoint?,
         writtenData: Data,
         generation: Int
     ) {
@@ -2242,6 +2553,8 @@ final class WorkspaceStore: ObservableObject {
             pdfDocumentBaselines.removeValue(forKey: fileID)
             dirtyPDFDocumentData.removeValue(forKey: fileID)
             dirtyPDFDocumentVersions.removeValue(forKey: fileID)
+            dirtyPDFDocumentEditCheckpoints.removeValue(forKey: fileID)
+            pdfDocumentSavedEditCheckpoints.removeValue(forKey: fileID)
             setSaveState(.clean, for: fileID)
             if selectedDocumentID == fileID {
                 setHasUnsavedChangesIfChanged(false)
@@ -2251,6 +2564,11 @@ final class WorkspaceStore: ObservableObject {
             invalidateWorkspaceSearchCaches(paths: [url.path])
         } else {
             pdfDocumentBaselines[fileID] = writtenData
+            if let savedEditCheckpoint {
+                pdfDocumentSavedEditCheckpoints[fileID] = savedEditCheckpoint
+            } else {
+                pdfDocumentSavedEditCheckpoints.removeValue(forKey: fileID)
+            }
             setSaveState(.edited, for: fileID)
             if selectedDocumentID == fileID {
                 setHasUnsavedChangesIfChanged(true)
@@ -2361,6 +2679,12 @@ final class WorkspaceStore: ObservableObject {
         pdfDocumentBaselines = pdfDocumentBaselines.filter { preservedDocumentIDs.contains($0.key) }
         dirtyPDFDocumentData = dirtyPDFDocumentData.filter { preservedDocumentIDs.contains($0.key) }
         dirtyPDFDocumentVersions = dirtyPDFDocumentVersions.filter { preservedDocumentIDs.contains($0.key) }
+        dirtyPDFDocumentEditCheckpoints = dirtyPDFDocumentEditCheckpoints.filter {
+            preservedDocumentIDs.contains($0.key)
+        }
+        pdfDocumentSavedEditCheckpoints = pdfDocumentSavedEditCheckpoints.filter {
+            preservedDocumentIDs.contains($0.key)
+        }
         pdfDocumentContentVersions = pdfDocumentContentVersions.filter { preservedDocumentIDs.contains($0.key) }
         if let selectedDocumentID {
             setHasUnsavedChangesIfChanged(
@@ -2397,6 +2721,14 @@ final class WorkspaceStore: ObservableObject {
 
         if let dirtyPDFVersion = dirtyPDFDocumentVersions.removeValue(forKey: sourceID) {
             dirtyPDFDocumentVersions[destinationID] = dirtyPDFVersion
+        }
+
+        if let editCheckpoint = dirtyPDFDocumentEditCheckpoints.removeValue(forKey: sourceID) {
+            dirtyPDFDocumentEditCheckpoints[destinationID] = editCheckpoint
+        }
+
+        if let savedEditCheckpoint = pdfDocumentSavedEditCheckpoints.removeValue(forKey: sourceID) {
+            pdfDocumentSavedEditCheckpoints[destinationID] = savedEditCheckpoint
         }
 
         if let contentVersion = pdfDocumentContentVersions.removeValue(forKey: sourceID) {
@@ -3179,6 +3511,14 @@ final class WorkspaceStore: ObservableObject {
 
 private typealias FileSignature = WorkspaceFileSignature
 
+private enum ExternalDocumentCopyError: LocalizedError {
+    case sourceAlias
+
+    var errorDescription: String? {
+        "Choose a different location so the disk copy remains unchanged."
+    }
+}
+
 struct MarkdownLinkMoveReviewState: Identifiable, Equatable, Sendable {
     let id: Int
     let plan: MarkdownLinkMovePlan
@@ -3245,8 +3585,22 @@ struct ExternalDocumentReviewState: Identifiable, Equatable, Sendable {
     let documentID: String
     let displayName: String
     let review: ExternalDocumentReconciliationReview
+    let diskToMineDiff: ExternalDocumentUnifiedDiff?
 
     var id: String { documentID }
+
+    var canMerge: Bool {
+        guard review.diskRevision != nil,
+              let mergedText = review.mergedText
+        else { return false }
+        return mergedText != review.localText && mergedText != review.diskText
+    }
+
+    var hasMergeConflict: Bool {
+        review.diskRevision != nil
+            && review.localText != review.diskText
+            && review.mergedText == nil
+    }
 }
 
 enum ExternalDocumentResolution: Equatable, Sendable {

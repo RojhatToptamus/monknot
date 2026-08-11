@@ -1,26 +1,11 @@
 import Combine
 import Foundation
-import MonknotCore
 
 enum TerminalSessionStatus: Equatable {
     case idle
     case running
     case exited(Int32?)
     case failed(String)
-}
-
-enum TerminalSessionInsertionError: Error, Equatable, LocalizedError {
-    case requestPending
-    case sessionUnavailable
-
-    var errorDescription: String? {
-        switch self {
-        case .requestPending:
-            return "Wait for the pending terminal insertion to finish."
-        case .sessionUnavailable:
-            return "The terminal session is not available."
-        }
-    }
 }
 
 @MainActor
@@ -30,7 +15,6 @@ final class TerminalSessionStore: ObservableObject {
     @Published private(set) var workingDirectory: URL
     @Published private(set) var outputRevision = 0
     @Published private(set) var status: TerminalSessionStatus = .idle
-    @Published private(set) var insertionRequest: TerminalInsertionRequest?
 
     static let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
     private let maxTranscriptLength = 240_000
@@ -41,7 +25,6 @@ final class TerminalSessionStore: ObservableObject {
     private var sessionGeneration = 0
     private var pendingOutput = ""
     private var outputFlushTask: Task<Void, Never>?
-    private var nextInsertionSerial: UInt64 = 0
 
     init(initialDirectory: URL? = nil) {
         workingDirectory = Self.resolvedDirectory(initialDirectory) ?? Self.homeDirectory
@@ -109,7 +92,6 @@ final class TerminalSessionStore: ObservableObject {
         pendingOutput = ""
         outputFlushTask?.cancel()
         outputFlushTask = nil
-        insertionRequest = nil
         isRunning = false
         status = .idle
         outputRevision += 1
@@ -120,39 +102,6 @@ final class TerminalSessionStore: ObservableObject {
         startIfNeeded()
         guard isRunning else { return }
         ptySession?.write(text)
-    }
-
-    @discardableResult
-    func requestInsertion(_ text: String) throws -> TerminalInsertionRequest {
-        guard insertionRequest == nil else {
-            throw TerminalSessionInsertionError.requestPending
-        }
-        guard status == .idle || status == .running else {
-            throw TerminalSessionInsertionError.sessionUnavailable
-        }
-
-        nextInsertionSerial &+= 1
-        if nextInsertionSerial == 0 {
-            nextInsertionSerial = 1
-        }
-        let request = try TerminalInsertionRequest(serial: nextInsertionSerial, text: text)
-
-        startIfNeeded()
-        guard isRunning else {
-            throw TerminalSessionInsertionError.sessionUnavailable
-        }
-        insertionRequest = request
-        return request
-    }
-
-    /// Removes a request before WebKit attempts it. This gives app-initiated
-    /// terminal insertion at-most-once behavior across view teardown/remounts.
-    @discardableResult
-    func consumeInsertionRequest(serial: UInt64) -> TerminalInsertionRequest? {
-        guard insertionRequest?.serial == serial else { return nil }
-        let request = insertionRequest
-        insertionRequest = nil
-        return request
     }
 
     func resize(columns: Int, rows: Int) {
@@ -167,7 +116,6 @@ final class TerminalSessionStore: ObservableObject {
         pendingOutput = ""
         outputFlushTask?.cancel()
         outputFlushTask = nil
-        insertionRequest = nil
         isRunning = false
         status = .idle
     }

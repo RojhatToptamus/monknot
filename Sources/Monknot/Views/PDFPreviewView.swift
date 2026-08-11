@@ -9,6 +9,7 @@ struct PDFPreviewView: View {
     let zoomScale: Double
     let saveState: DocumentSaveState
     let dirtyData: Data?
+    let savedEditCheckpoint: PDFAnnotationEditCheckpoint?
     let contentVersion: Int
     let viewportState: PDFDocumentViewportState?
     let viewportCaptureBridge: PDFViewportCaptureBridge
@@ -16,12 +17,13 @@ struct PDFPreviewView: View {
     let externalRedoCommandSerial: Int
     @Binding var searchState: DocumentSearchState
     @Binding var searchTarget: WorkspaceSearchPDFTarget?
-    let markEdited: (Data?, Data) -> Void
+    let markEdited: (Data?, Data, PDFAnnotationEditCheckpoint) -> Void
+    let restoreSavedEditCheckpoint: (PDFAnnotationEditCheckpoint) -> Bool
     let reportError: (String) -> Void
     let saveDocument: () -> Void
     var pageNavigationRequest: PDFPageNavigationRequest? = nil
     var externalNavigatorToggleCommandSerial: Int = 0
-    var insertLinkedExcerpt: (PDFSelectionSnapshot) -> Void = { _ in }
+    var copyLinkedExcerpt: (PDFSelectionSnapshot) -> Void = { _ in }
     var onSelectionSnapshotChange: (PDFSelectionSnapshot?) -> Void = { _ in }
     var onPageNavigationRequestConsumed: (PDFPageNavigationRequest) -> Void = { _ in }
 
@@ -45,6 +47,9 @@ struct PDFPreviewView: View {
     @State private var markupHint: String?
     @State private var isNavigatorPresented = false
     @State private var lastNavigatorToggleCommandSerial = 0
+    @State private var selectedFreeTextFormatting: PDFFreeTextFormatting?
+    @State private var freeTextFormattingCommand: PDFFreeTextFormattingCommand?
+    @State private var freeTextFormattingCommandSerial = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -67,7 +72,9 @@ struct PDFPreviewView: View {
                     runZoom: runZoom(_:),
                     saveDocument: saveDocument,
                     isNavigatorPresented: isNavigatorPresented,
-                    toggleNavigator: toggleNavigator
+                    toggleNavigator: toggleNavigator,
+                    selectedFreeTextFormatting: selectedFreeTextFormatting,
+                    updateFreeTextFormatting: updateFreeTextFormatting(_:)
                 )
             }
 
@@ -103,6 +110,7 @@ struct PDFPreviewView: View {
                     documentID: document.id,
                     url: document.url,
                     dirtyData: dirtyData,
+                    savedEditCheckpoint: savedEditCheckpoint,
                     contentVersion: contentVersion,
                     theme: theme,
                     viewportState: viewportState,
@@ -111,17 +119,20 @@ struct PDFPreviewView: View {
                     annotationColor: selectedColor,
                     strokeWidth: CGFloat(strokeWidth),
                     markupCommand: markupCommand,
+                    freeTextFormattingCommand: freeTextFormattingCommand,
                     zoomCommand: zoomCommand,
                     undoCommandSerial: externalUndoCommandSerial + undoCommandSerial,
                     redoCommandSerial: externalRedoCommandSerial + redoCommandSerial,
                     pageNavigationRequest: pageNavigationRequest,
                     isNavigatorPresented: isNavigatorPresented,
-                    navigatorWidth: scaled(224),
+                    navigatorWidth: scaled(248),
                     searchState: $searchState,
                     searchTarget: $searchTarget,
                     markEdited: markEdited,
-                    insertLinkedExcerpt: insertLinkedExcerpt,
+                    restoreSavedEditCheckpoint: restoreSavedEditCheckpoint,
+                    copyLinkedExcerpt: copyLinkedExcerpt,
                     onSelectionSnapshotChange: onSelectionSnapshotChange,
+                    onFreeTextSelectionChange: updateFreeTextSelection(_:),
                     onPageNavigationRequestConsumed: onPageNavigationRequestConsumed,
                     onViewportStateChange: onViewportStateChange,
                     updatePageStatus: updatePageStatus(_:),
@@ -140,6 +151,7 @@ struct PDFPreviewView: View {
         .onChange(of: document.id) { _, _ in
             loadState = .loading
             markupHint = nil
+            selectedFreeTextFormatting = nil
             onSelectionSnapshotChange(nil)
         }
         .onAppear {
@@ -185,6 +197,20 @@ struct PDFPreviewView: View {
 
     private func runRedo() {
         redoCommandSerial += 1
+    }
+
+    private func updateFreeTextFormatting(_ formatting: PDFFreeTextFormatting) {
+        freeTextFormattingCommandSerial &+= 1
+        freeTextFormattingCommand = PDFFreeTextFormattingCommand(
+            serial: freeTextFormattingCommandSerial,
+            formatting: formatting
+        )
+    }
+
+    private func updateFreeTextSelection(_ formatting: PDFFreeTextFormatting?) {
+        if selectedFreeTextFormatting != formatting {
+            selectedFreeTextFormatting = formatting
+        }
     }
 
     private func runZoom(_ command: PDFZoomCommand) {
@@ -295,6 +321,11 @@ struct PDFPageNavigationRequest: Equatable, Sendable {
     let pageNumber: Int
 }
 
+struct PDFAnnotationEditCheckpoint: Equatable, Sendable {
+    let operationCount: Int
+    let lastOperationID: UUID?
+}
+
 struct PDFDocumentLoadIdentity: Equatable {
     let url: URL
     let contentVersion: Int
@@ -347,6 +378,302 @@ struct PDFPageStatus: Equatable {
     }
 }
 
+struct PDFFreeTextFormatting: Equatable {
+    var fontFamily: String
+    var fontSize: CGFloat
+    var fontColor: NSColor
+    var isBold: Bool
+    var isItalic: Bool
+    var alignment: NSTextAlignment
+
+    static let defaultValue = PDFFreeTextFormatting(
+        fontFamily: "Helvetica",
+        fontSize: 14,
+        fontColor: .black,
+        isBold: false,
+        isItalic: false,
+        alignment: .left
+    )
+
+    init(
+        fontFamily: String,
+        fontSize: CGFloat,
+        fontColor: NSColor,
+        isBold: Bool,
+        isItalic: Bool,
+        alignment: NSTextAlignment
+    ) {
+        self.fontFamily = fontFamily
+        self.fontSize = fontSize
+        self.fontColor = fontColor
+        self.isBold = isBold
+        self.isItalic = isItalic
+        self.alignment = alignment
+    }
+
+    init(annotation: PDFAnnotation) {
+        let font = annotation.font ?? NSFont(name: "Helvetica", size: 14) ?? .systemFont(ofSize: 14)
+        let traits = NSFontManager.shared.traits(of: font)
+        self.init(
+            fontFamily: font.familyName ?? font.fontName,
+            fontSize: max(6, font.pointSize),
+            fontColor: annotation.fontColor ?? .black,
+            isBold: traits.contains(.boldFontMask),
+            isItalic: traits.contains(.italicFontMask),
+            alignment: Self.supportedAlignment(annotation.alignment)
+        )
+    }
+
+    static func == (lhs: PDFFreeTextFormatting, rhs: PDFFreeTextFormatting) -> Bool {
+        lhs.fontFamily == rhs.fontFamily
+            && abs(lhs.fontSize - rhs.fontSize) < 0.01
+            && lhs.fontColor.isEqual(rhs.fontColor)
+            && lhs.isBold == rhs.isBold
+            && lhs.isItalic == rhs.isItalic
+            && lhs.alignment == rhs.alignment
+    }
+
+    var font: NSFont {
+        var traits: NSFontTraitMask = []
+        if isBold { traits.insert(.boldFontMask) }
+        if isItalic { traits.insert(.italicFontMask) }
+        return NSFontManager.shared.font(
+            withFamily: fontFamily,
+            traits: traits,
+            weight: isBold ? 9 : 5,
+            size: min(max(fontSize, 6), 144)
+        ) ?? NSFont(name: fontFamily, size: min(max(fontSize, 6), 144))
+            ?? NSFont(name: "Helvetica", size: min(max(fontSize, 6), 144))
+            ?? .systemFont(ofSize: min(max(fontSize, 6), 144))
+    }
+
+    func apply(to annotation: PDFAnnotation) {
+        annotation.font = font
+        annotation.fontColor = fontColor
+        annotation.alignment = Self.supportedAlignment(alignment)
+    }
+
+    private static func supportedAlignment(_ alignment: NSTextAlignment) -> NSTextAlignment {
+        switch alignment {
+        case .left, .center, .right:
+            return alignment
+        default:
+            return .left
+        }
+    }
+}
+
+private struct PDFFreeTextFormattingCommand {
+    let serial: Int
+    let formatting: PDFFreeTextFormatting
+}
+
+final class PDFFreeTextCommittedColorWell: NSColorWell {
+    private var onCommit: ((NSColor) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configureControl()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureControl()
+    }
+
+    func update(color: NSColor, onCommit: @escaping (NSColor) -> Void) {
+        self.onCommit = onCommit
+        if !self.color.isEqual(color) {
+            self.color = color
+        }
+    }
+
+    func tearDown() {
+        deactivate()
+        target = nil
+        action = nil
+        onCommit = nil
+    }
+
+    private func configureControl() {
+        isContinuous = false
+        colorWellStyle = .minimal
+        target = self
+        action = #selector(commitColorChange(_:))
+    }
+
+    @objc private func commitColorChange(_ sender: NSColorWell) {
+        onCommit?(sender.color)
+    }
+}
+
+private struct PDFFreeTextColorWell: NSViewRepresentable {
+    let color: NSColor
+    let onCommit: (NSColor) -> Void
+
+    func makeNSView(context: Context) -> PDFFreeTextCommittedColorWell {
+        let colorWell = PDFFreeTextCommittedColorWell(frame: .zero)
+        colorWell.update(color: color, onCommit: onCommit)
+        return colorWell
+    }
+
+    func updateNSView(_ colorWell: PDFFreeTextCommittedColorWell, context: Context) {
+        colorWell.update(color: color, onCommit: onCommit)
+    }
+
+    static func dismantleNSView(_ colorWell: PDFFreeTextCommittedColorWell, coordinator: ()) {
+        colorWell.tearDown()
+    }
+}
+
+private struct PDFFreeTextFormattingPopover: View {
+    let formatting: PDFFreeTextFormatting
+    let theme: AppTheme
+    let zoomScale: Double
+    let update: (PDFFreeTextFormatting) -> Void
+
+    private var availableFamilies: [String] {
+        NSFontManager.shared.availableFontFamilies.sorted {
+            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+        }
+    }
+
+    private func scaled(_ value: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(value, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: scaled(10)) {
+            HStack(spacing: scaled(8)) {
+                Picker("Font", selection: valueBinding(\.fontFamily)) {
+                    ForEach(availableFamilies, id: \.self) { family in
+                        Text(family).tag(family)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: scaled(188))
+
+                Stepper(
+                    value: Binding(
+                        get: { Double(formatting.fontSize) },
+                        set: { value in
+                            var next = formatting
+                            next.fontSize = CGFloat(min(max(value, 6), 144))
+                            update(next)
+                        }
+                    ),
+                    in: 6...144,
+                    step: 1
+                ) {
+                    Text("\(Int(formatting.fontSize.rounded())) pt")
+                        .monospacedDigit()
+                        .frame(width: scaled(48), alignment: .trailing)
+                }
+
+                PDFFreeTextColorWell(color: formatting.fontColor) { color in
+                    var next = formatting
+                    next.fontColor = color
+                    update(next)
+                }
+                .frame(width: scaled(28), height: scaled(24))
+                .accessibilityLabel("Text Color")
+            }
+
+            HStack(spacing: scaled(6)) {
+                formatToggle(
+                    title: "Bold",
+                    systemImage: "bold",
+                    isOn: formatting.isBold
+                ) {
+                    var next = formatting
+                    next.isBold.toggle()
+                    update(next)
+                }
+                formatToggle(
+                    title: "Italic",
+                    systemImage: "italic",
+                    isOn: formatting.isItalic
+                ) {
+                    var next = formatting
+                    next.isItalic.toggle()
+                    update(next)
+                }
+                formatToggle(
+                    title: "Underline is not preserved by PDFKit Free Text annotations",
+                    systemImage: "underline",
+                    isOn: false,
+                    action: {}
+                )
+                .disabled(true)
+                .help("PDFKit does not preserve underlining for Free Text annotations.")
+
+                Divider()
+                    .frame(height: scaled(22))
+
+                alignmentButton(.left, image: "text.alignleft", label: "Align Left")
+                alignmentButton(.center, image: "text.aligncenter", label: "Align Center")
+                alignmentButton(.right, image: "text.alignright", label: "Align Right")
+                formatToggle(
+                    title: "Justified alignment is not preserved by PDFKit Free Text annotations",
+                    systemImage: "text.justify",
+                    isOn: false,
+                    action: {}
+                )
+                .disabled(true)
+                .help("PDFKit supports only left, center, and right Free Text alignment.")
+            }
+        }
+        .font(.system(size: scaled(12)))
+        .foregroundStyle(theme.foregroundColor)
+        .padding(scaled(12))
+        .frame(minWidth: scaled(372))
+    }
+
+    private func valueBinding<Value>(_ keyPath: WritableKeyPath<PDFFreeTextFormatting, Value>) -> Binding<Value> {
+        Binding(
+            get: { formatting[keyPath: keyPath] },
+            set: { value in
+                var next = formatting
+                next[keyPath: keyPath] = value
+                update(next)
+            }
+        )
+    }
+
+    private func alignmentButton(_ alignment: NSTextAlignment, image: String, label: String) -> some View {
+        formatToggle(
+            title: label,
+            systemImage: image,
+            isOn: formatting.alignment == alignment
+        ) {
+            var next = formatting
+            next.alignment = alignment
+            update(next)
+        }
+    }
+
+    private func formatToggle(
+        title: String,
+        systemImage: String,
+        isOn: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .frame(width: scaled(24), height: scaled(22))
+                .background(
+                    isOn ? theme.accentColor.opacity(theme.isDark ? 0.28 : 0.18) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(title)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+    }
+}
+
 private struct PDFAnnotationToolbar: View {
     @Binding var interactionMode: PDFAnnotationInteractionMode
     @Binding var selectedColor: PDFAnnotationPaletteColor
@@ -366,9 +693,12 @@ private struct PDFAnnotationToolbar: View {
     let saveDocument: () -> Void
     let isNavigatorPresented: Bool
     let toggleNavigator: () -> Void
+    let selectedFreeTextFormatting: PDFFreeTextFormatting?
+    let updateFreeTextFormatting: (PDFFreeTextFormatting) -> Void
 
     @State private var strokeWidthPopoverAnchor: PDFStrokeWidthPopoverAnchor?
     @State private var hoveredMenu: PDFToolbarMenuHoverTarget?
+    @State private var isFreeTextFormattingPresented = false
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
@@ -391,6 +721,24 @@ private struct PDFAnnotationToolbar: View {
         .onChange(of: interactionMode) { _, mode in
             if mode != .pen {
                 strokeWidthPopoverAnchor = nil
+            }
+            if mode != .freeText {
+                isFreeTextFormattingPresented = false
+            }
+        }
+        .onChange(of: selectedFreeTextFormatting) { _, formatting in
+            if formatting == nil {
+                isFreeTextFormattingPresented = false
+            }
+        }
+        .popover(isPresented: $isFreeTextFormattingPresented, arrowEdge: .top) {
+            if let selectedFreeTextFormatting {
+                PDFFreeTextFormattingPopover(
+                    formatting: selectedFreeTextFormatting,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    update: updateFreeTextFormatting
+                )
             }
         }
     }
@@ -494,6 +842,7 @@ private struct PDFAnnotationToolbar: View {
             }
 
             penButton
+            freeTextButton
             eraserButton
             colorPalette
             moreMenu
@@ -568,6 +917,7 @@ private struct PDFAnnotationToolbar: View {
             }
 
             penButton
+            freeTextButton
             eraserButton
 
             toolbarDivider
@@ -645,6 +995,24 @@ private struct PDFAnnotationToolbar: View {
         .accessibilityAddTraits(interactionMode == .pen ? .isSelected : [])
     }
 
+    private var freeTextButton: some View {
+        MonknotIconButton(
+            systemImage: "character.textbox",
+            label: "Free Text",
+            theme: theme,
+            zoomScale: zoomScale,
+            isActive: interactionMode == .freeText,
+            size: .compact
+        ) {
+            if interactionMode == .freeText, selectedFreeTextFormatting != nil {
+                isFreeTextFormattingPresented.toggle()
+            } else {
+                interactionMode = .freeText
+            }
+        }
+        .accessibilityAddTraits(interactionMode == .freeText ? .isSelected : [])
+    }
+
     private var eraserButton: some View {
         MonknotIconButton(
             systemImage: "eraser",
@@ -667,8 +1035,18 @@ private struct PDFAnnotationToolbar: View {
             Button("Draw", systemImage: "pencil.tip") {
                 interactionMode = .pen
             }
+            Button("Free Text", systemImage: "character.textbox") {
+                interactionMode = .freeText
+            }
             Button("Erase Annotation", systemImage: "eraser") {
                 interactionMode = .eraser
+            }
+
+            if selectedFreeTextFormatting != nil {
+                Divider()
+                Button("Free Text Formatting…", systemImage: "textformat") {
+                    isFreeTextFormattingPresented = true
+                }
             }
         } label: {
             toolbarMenuLabel(
@@ -885,6 +1263,8 @@ private struct PDFAnnotationToolbar: View {
             return "cursorarrow"
         case .pen:
             return "pencil.tip"
+        case .freeText:
+            return "character.textbox"
         case .eraser:
             return "eraser"
         }
@@ -896,6 +1276,8 @@ private struct PDFAnnotationToolbar: View {
             return "Select"
         case .pen:
             return "Draw"
+        case .freeText:
+            return "Free Text"
         case .eraser:
             return "Erase"
         }
@@ -1190,7 +1572,7 @@ final class PDFPreviewContainerView: NSView {
     }
 
     func setNavigatorWidth(_ width: CGFloat) {
-        navigatorWidthConstraint.constant = max(180, min(280, width))
+        navigatorWidthConstraint.constant = max(220, min(320, width))
     }
 
     func setNavigatorPresented(_ isPresented: Bool) {
@@ -1228,7 +1610,7 @@ final class PDFPreviewContainerView: NSView {
         addSubview(separatorView)
         addSubview(pdfView)
 
-        navigatorWidthConstraint = navigatorView.widthAnchor.constraint(equalToConstant: 224)
+        navigatorWidthConstraint = navigatorView.widthAnchor.constraint(equalToConstant: 248)
         pdfLeadingWithNavigatorConstraint = pdfView.leadingAnchor.constraint(equalTo: separatorView.trailingAnchor)
         pdfLeadingWithoutNavigatorConstraint = pdfView.leadingAnchor.constraint(equalTo: leadingAnchor)
 
@@ -1359,6 +1741,8 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
             .withAlphaComponent(theme.isDark ? 0.09 : 0.12)
             .cgColor
         emptyLabel.textColor = mutedForegroundColor
+        thumbnailView.backgroundColor = .clear
+        thumbnailView.labelFont = .systemFont(ofSize: 12, weight: .medium)
         outlineView.reloadData()
         annotationTableView.reloadData()
     }
@@ -1422,7 +1806,9 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
 
     private func configureThumbnailView() {
         thumbnailView.translatesAutoresizingMaskIntoConstraints = false
-        thumbnailView.thumbnailSize = NSSize(width: 112, height: 150)
+        thumbnailView.thumbnailSize = NSSize(width: 132, height: 176)
+        thumbnailView.maximumNumberOfColumns = 1
+        thumbnailView.labelFont = .systemFont(ofSize: 12, weight: .medium)
         thumbnailView.allowsDragging = false
         thumbnailView.allowsMultipleSelection = false
         thumbnailView.setAccessibilityLabel("PDF Pages")
@@ -1440,9 +1826,9 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         outlineView.addTableColumn(column)
         outlineView.outlineTableColumn = column
         outlineView.headerView = nil
-        outlineView.rowHeight = 26
         outlineView.indentationPerLevel = 14
         outlineView.style = .sourceList
+        outlineView.rowHeight = 30
         outlineView.backgroundColor = .clear
         outlineView.delegate = self
         outlineView.dataSource = self
@@ -1465,8 +1851,8 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("PDFNavigatorAnnotationColumn"))
         annotationTableView.addTableColumn(column)
         annotationTableView.headerView = nil
-        annotationTableView.rowHeight = 44
         annotationTableView.style = .sourceList
+        annotationTableView.rowHeight = 48
         annotationTableView.backgroundColor = .clear
         annotationTableView.delegate = self
         annotationTableView.dataSource = self
@@ -1706,6 +2092,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
     let documentID: String
     let url: URL
     let dirtyData: Data?
+    let savedEditCheckpoint: PDFAnnotationEditCheckpoint?
     let contentVersion: Int
     let theme: AppTheme
     let viewportState: PDFDocumentViewportState?
@@ -1714,6 +2101,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
     fileprivate let annotationColor: PDFAnnotationPaletteColor
     let strokeWidth: CGFloat
     fileprivate let markupCommand: PDFTextMarkupCommand?
+    fileprivate let freeTextFormattingCommand: PDFFreeTextFormattingCommand?
     let zoomCommand: PDFZoomCommandRequest?
     let undoCommandSerial: Int
     let redoCommandSerial: Int
@@ -1722,9 +2110,11 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
     let navigatorWidth: CGFloat
     @Binding var searchState: DocumentSearchState
     @Binding var searchTarget: WorkspaceSearchPDFTarget?
-    let markEdited: (Data?, Data) -> Void
-    let insertLinkedExcerpt: (PDFSelectionSnapshot) -> Void
+    let markEdited: (Data?, Data, PDFAnnotationEditCheckpoint) -> Void
+    let restoreSavedEditCheckpoint: (PDFAnnotationEditCheckpoint) -> Bool
+    let copyLinkedExcerpt: (PDFSelectionSnapshot) -> Void
     let onSelectionSnapshotChange: (PDFSelectionSnapshot?) -> Void
+    let onFreeTextSelectionChange: (PDFFreeTextFormatting?) -> Void
     let onPageNavigationRequestConsumed: (PDFPageNavigationRequest) -> Void
     let onViewportStateChange: (PDFDocumentViewportState) -> Void
     let updatePageStatus: (PDFPageStatus) -> Void
@@ -1779,6 +2169,11 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         context.coordinator.onSelectionSnapshotChange = { snapshot in
             DispatchQueue.main.async {
                 self.onSelectionSnapshotChange(snapshot)
+            }
+        }
+        pdfView.onFreeTextSelectionChanged = { formatting in
+            DispatchQueue.main.async {
+                self.onFreeTextSelectionChange(formatting)
             }
         }
         context.coordinator.onPageNavigationRequestConsumed = { request in
@@ -1848,8 +2243,14 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         pdfView.linkedExcerptDocumentID = documentID
         pdfView.linkedExcerptContentVersion = contentVersion
         pdfView.onEdited = markEdited
+        pdfView.onRestoreSavedEditCheckpoint = restoreSavedEditCheckpoint
         pdfView.onError = reportError
-        pdfView.onRequestLinkedExcerpt = insertLinkedExcerpt
+        pdfView.onRequestLinkedExcerptCopy = copyLinkedExcerpt
+        pdfView.onFreeTextSelectionChanged = { formatting in
+            DispatchQueue.main.async {
+                self.onFreeTextSelectionChange(formatting)
+            }
+        }
         pdfView.onAnnotationsChanged = { [weak navigatorView = container.navigatorView] in
             navigatorView?.noteAnnotationsChanged()
         }
@@ -1886,6 +2287,10 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             in: pdfView,
             navigatorView: container.navigatorView
         )
+        pdfView.reconcileEditBaselineCapture(
+            hasDirtyData: dirtyData != nil,
+            savedEditCheckpoint: savedEditCheckpoint
+        )
         context.coordinator.applyAppearance(theme: theme, in: pdfView)
         container.applyAppearance(theme: theme)
         let hasMatchingPageRequest = pageNavigationRequest?.documentID == documentID
@@ -1903,6 +2308,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         context.coordinator.applyZoomCommand(zoomCommand, in: pdfView)
         context.coordinator.applySearch(searchState, theme: theme, in: pdfView)
         context.coordinator.applyMarkupCommand(markupCommand, in: pdfView)
+        context.coordinator.applyFreeTextFormattingCommand(freeTextFormattingCommand, in: pdfView)
         context.coordinator.applyUndoRedoCommands(undoSerial: undoCommandSerial, redoSerial: redoCommandSerial, in: pdfView)
     }
 
@@ -1935,6 +2341,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         private var currentMatchIndex = 0
         private var pendingSearchTarget: WorkspaceSearchPDFTarget?
         private var lastMarkupCommandSerial = 0
+        private var lastFreeTextFormattingCommandSerial = 0
         private var lastUndoCommandSerial = 0
         private var lastRedoCommandSerial = 0
         private var lastZoomCommandSerial = 0
@@ -2009,6 +2416,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         ) -> Bool {
             guard documentID != nextDocumentID else { return false }
 
+            pdfView.finishFreeTextEditingForDocumentSwitch()
             publishViewportState(from: pdfView)
             documentID = nextDocumentID
             acceptCurrentCommandSerials(
@@ -2042,18 +2450,31 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             lastSearchRequest = nil
             lastSearchHighlightTheme = nil
             var loadedDocument: PDFDocument?
+            var loadedSourceData: Data?
             performWithoutPublishingViewportStateChanges {
+                pdfView.cancelFreeTextEditingBeforeDocumentReplacement()
                 if let dirtyData, let dirtyDocument = PDFDocument(data: dirtyData) {
                     loadedDocument = dirtyDocument
                 } else {
-                    loadedDocument = PDFDocument(url: nextIdentity.url)
+                    // PDFKit may rewrite object order, metadata, or trailers when a loaded
+                    // document is serialized. Keep the exact bytes parsed by the live view so
+                    // the first conditional save compares against the real disk revision.
+                    if let sourceData = try? Data(contentsOf: nextIdentity.url),
+                       let sourceDocument = PDFDocument(data: sourceData) {
+                        loadedSourceData = sourceData
+                        loadedDocument = sourceDocument
+                    }
                 }
                 pdfView.document = loadedDocument
+                pdfView.replaceEditBaselineCapture(
+                    with: loadedSourceData,
+                    needsSnapshot: dirtyData == nil && loadedDocument != nil,
+                    currentOwnedData: dirtyData
+                )
                 applyPDFZoomMode(.fixed(scaleFactor: 1), to: pdfView)
             }
             onLoadStateChange(loadedDocument == nil ? .failed : .loaded)
             pdfView.clearAnnotationUndoHistory()
-            pdfView.resetEditBaselineCapture(needsSnapshot: dirtyData == nil)
             navigatorView.documentDidChange()
             shouldRestoreViewportState = true
             onSearchResult(.init())
@@ -2135,6 +2556,15 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             guard let command, command.serial != lastMarkupCommandSerial else { return }
             lastMarkupCommandSerial = command.serial
             pdfView.addTextMarkup(kind: command.kind, color: command.color.nsColor)
+        }
+
+        fileprivate func applyFreeTextFormattingCommand(
+            _ command: PDFFreeTextFormattingCommand?,
+            in pdfView: AnnotatingPDFView
+        ) {
+            guard let command, command.serial != lastFreeTextFormattingCommandSerial else { return }
+            lastFreeTextFormattingCommandSerial = command.serial
+            pdfView.applyFreeTextFormatting(command.formatting)
         }
 
         func applyUndoRedoCommands(undoSerial: Int, redoSerial: Int, in pdfView: AnnotatingPDFView) {
@@ -2380,6 +2810,31 @@ final class PDFViewportCaptureBridge: ObservableObject {
         else { return nil }
         return (documentID, state)
     }
+
+    @discardableResult
+    func commitActiveFreeTextEdit(documentID: String) -> Bool {
+        guard self.documentID == documentID,
+              let pdfView = pdfView as? AnnotatingPDFView
+        else { return false }
+        return pdfView.commitActiveFreeTextEdit()
+    }
+
+    func hasActiveFreeTextEditor(documentID: String) -> Bool {
+        guard self.documentID == documentID,
+              let pdfView = pdfView as? AnnotatingPDFView
+        else { return false }
+        return pdfView.hasActiveFreeTextEditor
+    }
+
+    @discardableResult
+    func cancelActiveFreeTextEdit(documentID: String) -> Bool {
+        guard self.documentID == documentID,
+              let pdfView = pdfView as? AnnotatingPDFView,
+              pdfView.hasActiveFreeTextEditor
+        else { return false }
+        pdfView.cancelFreeTextEditingBeforeDocumentReplacement()
+        return true
+    }
 }
 
 func deliverFinalPDFViewportStateSynchronously(
@@ -2394,18 +2849,42 @@ func deliverFinalPDFViewportStateSynchronously(
 extension PDFDocumentViewportPosition {
     init?(pdfView: PDFView) {
         guard let document = pdfView.document,
-              let destination = pdfView.currentDestination,
-              let page = destination.page
+              let page = pdfView.currentPage
         else {
             return nil
         }
 
         let pageIndex = document.index(for: page)
         guard pageIndex >= 0 else { return nil }
+        let bounds = page.bounds(for: pdfView.displayBox)
+        let candidatePoint: CGPoint
+        if let destination = pdfView.currentDestination,
+           destination.page === page {
+            candidatePoint = destination.point
+        } else {
+            let pageRect = pdfView.convert(bounds, from: page)
+            let visiblePageRect = pageRect.intersection(pdfView.bounds)
+            if visiblePageRect.isNull || visiblePageRect.isEmpty {
+                candidatePoint = CGPoint(x: bounds.minX, y: bounds.maxY)
+            } else {
+                candidatePoint = pdfView.convert(
+                    CGPoint(x: visiblePageRect.minX, y: visiblePageRect.maxY),
+                    to: page
+                )
+            }
+        }
+        let point = CGPoint(
+            x: candidatePoint.x.isFinite
+                ? min(max(candidatePoint.x, bounds.minX), bounds.maxX)
+                : bounds.minX,
+            y: candidatePoint.y.isFinite
+                ? min(max(candidatePoint.y, bounds.minY), bounds.maxY)
+                : bounds.maxY
+        )
 
         self.init(
             pageIndex: pageIndex,
-            point: DocumentScrollPosition(destination.point)
+            point: DocumentScrollPosition(point)
         )
     }
 
@@ -2597,12 +3076,27 @@ func makePDFSelectionSnapshot(
     guard pageIndices.count == 1, let pageIndex = pageIndices.first else {
         return nil
     }
+    guard let page = document.page(at: pageIndex) else { return nil }
+
+    let rangeCount = selection.numberOfTextRanges(on: page)
+    guard rangeCount > 0 else { return nil }
+    var textRanges: [NSRange] = []
+    textRanges.reserveCapacity(rangeCount)
+    for index in 0..<rangeCount {
+        let range = selection.range(at: index, on: page)
+        guard range.location != NSNotFound,
+              range.length > 0,
+              range.location <= Int.max - range.length
+        else { return nil }
+        textRanges.append(range)
+    }
 
     return PDFSelectionSnapshot(
         documentID: documentID,
         text: text,
         pageNumber: pageIndex + 1,
-        contentVersion: contentVersion
+        contentVersion: contentVersion,
+        textRanges: textRanges
     )
 }
 
@@ -2624,11 +3118,279 @@ func pdfPageDestination(
     )
 }
 
-final class AnnotatingPDFView: PDFView {
+struct PDFFreeTextAnnotationSnapshot: Equatable {
+    let bounds: CGRect
+    let contents: String
+    let formatting: PDFFreeTextFormatting
+    let shouldDisplay: Bool
+    let shouldPrint: Bool
+    let modificationDate: Date?
+
+    init(annotation: PDFAnnotation) {
+        bounds = annotation.bounds.standardized
+        contents = annotation.contents ?? ""
+        formatting = PDFFreeTextFormatting(annotation: annotation)
+        shouldDisplay = annotation.shouldDisplay
+        shouldPrint = annotation.shouldPrint
+        modificationDate = annotation.modificationDate
+    }
+
+    func apply(to annotation: PDFAnnotation) {
+        annotation.bounds = bounds
+        annotation.contents = contents
+        formatting.apply(to: annotation)
+        annotation.shouldDisplay = shouldDisplay
+        annotation.shouldPrint = shouldPrint
+        annotation.modificationDate = modificationDate
+    }
+}
+
+struct PDFFreeTextEditorGeometry: Equatable {
+    let center: CGPoint
+    let localXAxis: CGVector
+    let localYAxis: CGVector
+    let effectiveScale: CGFloat
+    let unrotatedSize: CGSize
+    let rotationDegrees: CGFloat
+}
+
+func pdfFreeTextEditorGeometry(
+    for annotationBounds: CGRect,
+    on page: PDFPage,
+    in pdfView: PDFView
+) -> PDFFreeTextEditorGeometry? {
+    let bounds = annotationBounds.standardized
+    guard bounds.width > 0, bounds.height > 0 else { return nil }
+
+    let center = pdfView.convert(
+        CGPoint(x: bounds.midX, y: bounds.midY),
+        from: page
+    )
+    let xStart = pdfView.convert(
+        CGPoint(x: bounds.minX, y: bounds.midY),
+        from: page
+    )
+    let xEnd = pdfView.convert(
+        CGPoint(x: bounds.maxX, y: bounds.midY),
+        from: page
+    )
+    let yStart = pdfView.convert(
+        CGPoint(x: bounds.midX, y: bounds.minY),
+        from: page
+    )
+    let yEnd = pdfView.convert(
+        CGPoint(x: bounds.midX, y: bounds.maxY),
+        from: page
+    )
+    let xAxis = CGVector(dx: xEnd.x - xStart.x, dy: xEnd.y - xStart.y)
+    let yAxis = CGVector(dx: yEnd.x - yStart.x, dy: yEnd.y - yStart.y)
+    let displayedWidth = hypot(xAxis.dx, xAxis.dy)
+    let displayedHeight = hypot(yAxis.dx, yAxis.dy)
+    let xScale = displayedWidth / bounds.width
+    let yScale = displayedHeight / bounds.height
+    let effectiveScale = (xScale + yScale) / 2
+    guard center.x.isFinite,
+          center.y.isFinite,
+          displayedWidth.isFinite,
+          displayedHeight.isFinite,
+          displayedWidth > 0,
+          displayedHeight > 0,
+          effectiveScale.isFinite,
+          effectiveScale > 0
+    else { return nil }
+
+    return PDFFreeTextEditorGeometry(
+        center: center,
+        localXAxis: xAxis,
+        localYAxis: yAxis,
+        effectiveScale: effectiveScale,
+        unrotatedSize: CGSize(width: displayedWidth, height: displayedHeight),
+        rotationDegrees: atan2(xAxis.dy, xAxis.dx) * 180 / .pi
+    )
+}
+
+func clampedPDFFreeTextBounds(
+    _ requestedBounds: CGRect,
+    to pageBounds: CGRect,
+    minimumSize: CGSize = CGSize(width: 36, height: 24)
+) -> CGRect {
+    let pageBounds = pageBounds.standardized
+    guard pageBounds.width > 0, pageBounds.height > 0 else { return .zero }
+
+    var bounds = requestedBounds.standardized
+    bounds.size.width = min(max(bounds.width, minimumSize.width), pageBounds.width)
+    bounds.size.height = min(max(bounds.height, minimumSize.height), pageBounds.height)
+    bounds.origin.x = min(max(bounds.minX, pageBounds.minX), pageBounds.maxX - bounds.width)
+    bounds.origin.y = min(max(bounds.minY, pageBounds.minY), pageBounds.maxY - bounds.height)
+    return bounds
+}
+
+func defaultPDFFreeTextBounds(at point: CGPoint, pageBounds: CGRect) -> CGRect {
+    clampedPDFFreeTextBounds(
+        CGRect(x: point.x, y: point.y - 72, width: 220, height: 72),
+        to: pageBounds
+    )
+}
+
+func draggedPDFFreeTextBounds(from start: CGPoint, to end: CGPoint, pageBounds: CGRect) -> CGRect {
+    clampedPDFFreeTextBounds(
+        CGRect(
+            x: start.x,
+            y: start.y,
+            width: end.x - start.x,
+            height: end.y - start.y
+        ).standardized,
+        to: pageBounds
+    )
+}
+
+func makePDFFreeTextAnnotation(
+    bounds: CGRect,
+    contents: String = "",
+    formatting: PDFFreeTextFormatting = .defaultValue
+) -> PDFAnnotation {
+    let annotation = PDFAnnotation(bounds: bounds.standardized, forType: .freeText, withProperties: nil)
+    annotation.contents = contents
+    formatting.apply(to: annotation)
+    let border = PDFBorder()
+    border.lineWidth = 0
+    annotation.border = border
+    annotation.color = .clear
+    annotation.userName = NSFullUserName()
+    annotation.modificationDate = Date()
+    annotation.shouldDisplay = true
+    annotation.shouldPrint = true
+    return annotation
+}
+
+enum PDFFreeTextResizeHandle: CaseIterable {
+    case minXMinY
+    case midXMinY
+    case maxXMinY
+    case minXMidY
+    case maxXMidY
+    case minXMaxY
+    case midXMaxY
+    case maxXMaxY
+}
+
+func resizedPDFFreeTextBounds(
+    _ original: CGRect,
+    handle: PDFFreeTextResizeHandle,
+    to point: CGPoint,
+    pageBounds: CGRect,
+    minimumSize: CGSize
+) -> CGRect {
+    let pageBounds = pageBounds.standardized
+    var minX = original.minX
+    var maxX = original.maxX
+    var minY = original.minY
+    var maxY = original.maxY
+
+    switch handle {
+    case .minXMinY, .minXMidY, .minXMaxY:
+        minX = min(point.x, maxX - minimumSize.width)
+    case .maxXMinY, .maxXMidY, .maxXMaxY:
+        maxX = max(point.x, minX + minimumSize.width)
+    case .midXMinY, .midXMaxY:
+        break
+    }
+    switch handle {
+    case .minXMinY, .midXMinY, .maxXMinY:
+        minY = min(point.y, maxY - minimumSize.height)
+    case .minXMaxY, .midXMaxY, .maxXMaxY:
+        maxY = max(point.y, minY + minimumSize.height)
+    case .minXMidY, .maxXMidY:
+        break
+    }
+
+    minX = max(minX, pageBounds.minX)
+    maxX = min(maxX, pageBounds.maxX)
+    minY = max(minY, pageBounds.minY)
+    maxY = min(maxY, pageBounds.maxY)
+    if maxX - minX < minimumSize.width {
+        if handle == .minXMinY || handle == .minXMidY || handle == .minXMaxY {
+            minX = max(pageBounds.minX, maxX - minimumSize.width)
+        } else {
+            maxX = min(pageBounds.maxX, minX + minimumSize.width)
+        }
+    }
+    if maxY - minY < minimumSize.height {
+        if handle == .minXMinY || handle == .midXMinY || handle == .maxXMinY {
+            minY = max(pageBounds.minY, maxY - minimumSize.height)
+        } else {
+            maxY = min(pageBounds.maxY, minY + minimumSize.height)
+        }
+    }
+    return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY).standardized
+}
+
+private final class PDFFreeTextGesture {
+    enum Kind {
+        case create
+        case move
+        case resize(PDFFreeTextResizeHandle)
+    }
+
+    let kind: Kind
+    let page: PDFPage
+    let pageIndex: Int
+    let startPoint: CGPoint
+    var baselineData: Data?
+    var didCaptureBaseline = false
+    var annotation: PDFAnnotation?
+    var beforeSnapshot: PDFFreeTextAnnotationSnapshot?
+    var expectedSnapshot: PDFFreeTextAnnotationSnapshot?
+    var currentPoint: CGPoint
+
+    init(
+        kind: Kind,
+        page: PDFPage,
+        pageIndex: Int,
+        startPoint: CGPoint,
+        baselineData: Data?,
+        annotation: PDFAnnotation? = nil,
+        beforeSnapshot: PDFFreeTextAnnotationSnapshot? = nil
+    ) {
+        self.kind = kind
+        self.page = page
+        self.pageIndex = pageIndex
+        self.startPoint = startPoint
+        self.baselineData = baselineData
+        didCaptureBaseline = baselineData != nil
+        self.annotation = annotation
+        self.beforeSnapshot = beforeSnapshot
+        self.expectedSnapshot = beforeSnapshot
+        self.currentPoint = startPoint
+    }
+}
+
+private final class PDFFreeTextEditorTextView: NSTextView {
+    var cancelEditing: () -> Void = {}
+    var commitEditing: () -> Void = {}
+
+    override func cancelOperation(_ sender: Any?) {
+        cancelEditing()
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.independentFlags == [.command],
+           event.charactersIgnoringModifiers?.lowercased() == "s" {
+            commitEditing()
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+}
+
+final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
     fileprivate var annotationMode: PDFAnnotationInteractionMode = .select {
         didSet {
             if oldValue != annotationMode {
                 discardActiveInkAnnotation()
+                if oldValue == .freeText, annotationMode != .freeText {
+                    endFreeTextEditing(commit: true)
+                    clearFreeTextSelection()
+                }
                 syncToolTrackingArea()
                 window?.invalidateCursorRects(for: self)
                 setToolCursorIfPointerIsInside()
@@ -2637,11 +3399,13 @@ final class AnnotatingPDFView: PDFView {
     }
     var annotationColor: NSColor = PDFAnnotationPaletteColor.yellow.nsColor
     var annotationLineWidth: CGFloat = 3
-    var onEdited: (Data?, Data) -> Void = { _, _ in }
+    var onEdited: (Data?, Data, PDFAnnotationEditCheckpoint) -> Void = { _, _, _ in }
+    var onRestoreSavedEditCheckpoint: (PDFAnnotationEditCheckpoint) -> Bool = { _ in false }
     var onUndoStateChanged: (Bool, Bool) -> Void = { _, _ in }
     var onError: (String) -> Void = { _ in }
-    var onRequestLinkedExcerpt: (PDFSelectionSnapshot) -> Void = { _ in }
+    var onRequestLinkedExcerptCopy: (PDFSelectionSnapshot) -> Void = { _ in }
     var onAnnotationsChanged: () -> Void = {}
+    var onFreeTextSelectionChanged: (PDFFreeTextFormatting?) -> Void = { _ in }
     var linkedExcerptDocumentID: String?
     var linkedExcerptContentVersion = 0
 
@@ -2649,10 +3413,30 @@ final class AnnotatingPDFView: PDFView {
     private var activeInkPoints: [CGPoint] = []
     private var activeInkAnnotation: PDFAnnotation?
     private var activeInkBaselineData: Data?
+    private var selectedFreeTextAnnotation: PDFAnnotation?
+    private weak var selectedFreeTextPage: PDFPage?
+    private var freeTextGesture: PDFFreeTextGesture?
+    private var freeTextEditorScrollView: NSScrollView?
+    private var freeTextEditor: PDFFreeTextEditorTextView?
+    private var freeTextEditorBeforeSnapshot: PDFFreeTextAnnotationSnapshot?
+    private var freeTextEditorBaselineData: Data?
+    private var freeTextEditorOriginalData: Data?
+    private var freeTextEditorStartedWithCleanBaseline = false
+    private var freeTextEditorIsNew = false
+    private var freeTextEditorHasPublished = false
+    private var freeTextEditorObserverTokens: [NSObjectProtocol] = []
+    private weak var freeTextObservedClipView: NSClipView?
+    private var freeTextObservedClipViewPreviouslyPostedBoundsChanges = false
+    private var isEndingFreeTextEditing = false
     private var toolTrackingArea: NSTrackingArea?
     private var undoStack: [PDFAnnotationEditOperation] = []
     private var redoStack: [PDFAnnotationEditOperation] = []
     private var needsEditBaselineSnapshot = true
+    private var loadedSourceBaselineData: Data?
+    private var lastPublishedDocumentData: Data?
+    private var cleanUndoOperationIDs: [UUID]?
+    private var savedEditCheckpoint: PDFAnnotationEditCheckpoint?
+    var serializeDocument: (PDFDocument) -> Data? = { $0.dataRepresentation() }
     private var toolCursor: NSCursor {
         PDFAnnotationToolCursor.cursor(for: annotationMode)
     }
@@ -2661,14 +3445,35 @@ final class AnnotatingPDFView: PDFView {
         true
     }
 
+    var hasActiveFreeTextEditor: Bool {
+        freeTextEditor != nil && freeTextEditorScrollView?.superview === self
+    }
+
     override func layout() {
         super.layout()
         if let scrollView = documentView?.enclosingScrollView {
             MonknotScrollbarStyle.apply(to: scrollView)
         }
+        updateFreeTextEditorFrame()
+    }
+
+    override func drawPagePost(_ page: PDFPage, to context: CGContext) {
+        super.drawPagePost(page, to: context)
+        drawFreeTextSelection(on: page, in: context)
     }
 
     override func keyDown(with event: NSEvent) {
+        if annotationMode == .freeText {
+            if event.keyCode == 51 || event.keyCode == 117 {
+                deleteSelectedFreeTextAnnotation()
+                return
+            }
+            if event.keyCode == 53 {
+                clearFreeTextSelection()
+                return
+            }
+        }
+
         guard let characters = event.charactersIgnoringModifiers?.lowercased() else {
             super.keyDown(with: event)
             return
@@ -2692,7 +3497,7 @@ final class AnnotatingPDFView: PDFView {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event) ?? NSMenu()
-        let title = "Insert Linked Excerpt into Markdown…"
+        let title = "Copy Linked Excerpt"
         let item: NSMenuItem
         if let existingItem = menu.items.first(where: { $0.title == title }) {
             item = existingItem
@@ -2702,7 +3507,7 @@ final class AnnotatingPDFView: PDFView {
             }
             item = NSMenuItem(
                 title: title,
-                action: #selector(requestLinkedExcerpt(_:)),
+                action: #selector(requestLinkedExcerptCopy(_:)),
                 keyEquivalent: ""
             )
             menu.addItem(item)
@@ -2712,12 +3517,12 @@ final class AnnotatingPDFView: PDFView {
         return menu
     }
 
-    @objc private func requestLinkedExcerpt(_ sender: Any?) {
+    @objc private func requestLinkedExcerptCopy(_ sender: Any?) {
         guard let snapshot = currentLinkedExcerptSelectionSnapshot else {
-            onError("Select text on one PDF page to insert a linked excerpt.")
+            onError("Select text on one PDF page to copy a linked excerpt.")
             return
         }
-        onRequestLinkedExcerpt(snapshot)
+        onRequestLinkedExcerptCopy(snapshot)
     }
 
     private var currentLinkedExcerptSelectionSnapshot: PDFSelectionSnapshot? {
@@ -2800,6 +3605,8 @@ final class AnnotatingPDFView: PDFView {
             activeInkPoints = [target.point]
             activeInkAnnotation = nil
             activeInkBaselineData = takeEditBaselineSnapshotIfNeeded()
+        case .freeText:
+            handleFreeTextMouseDown(event)
         case .eraser:
             eraseAnnotation(at: event)
         }
@@ -2822,6 +3629,8 @@ final class AnnotatingPDFView: PDFView {
 
             activeInkPoints.append(target.point)
             renderActiveInkAnnotation(finalizing: false)
+        case .freeText:
+            handleFreeTextMouseDragged(event)
         case .eraser:
             eraseAnnotation(at: event)
         }
@@ -2850,9 +3659,790 @@ final class AnnotatingPDFView: PDFView {
                 discardActiveInkAnnotation()
             }
             activeInkBaselineData = nil
+        case .freeText:
+            handleFreeTextMouseUp(event)
         case .eraser:
             break
         }
+    }
+
+    private func handleFreeTextMouseDown(_ event: NSEvent) {
+        guard canAnnotate(), let target = pagePoint(for: event), let document else { return }
+        if freeTextEditor != nil {
+            endFreeTextEditing(commit: true)
+        }
+
+        let viewPoint = convert(event.locationInWindow, from: nil)
+        if let annotation = selectedFreeTextAnnotation,
+           let page = selectedFreeTextPage,
+           page === target.page,
+           isValidFreeTextAnnotation(annotation, on: page) {
+            if beginEditingSelectedFreeTextIfDoubleClicked(
+                at: target.point,
+                on: page,
+                clickCount: event.clickCount
+            ) {
+                return
+            }
+            let before = PDFFreeTextAnnotationSnapshot(annotation: annotation)
+            if let handle = freeTextResizeHandle(at: viewPoint, annotation: annotation, page: page) {
+                freeTextGesture = PDFFreeTextGesture(
+                    kind: .resize(handle),
+                    page: page,
+                    pageIndex: document.index(for: page),
+                    startPoint: target.point,
+                    baselineData: nil,
+                    annotation: annotation,
+                    beforeSnapshot: before
+                )
+                return
+            }
+            if convert(annotation.bounds, from: page).standardized.contains(viewPoint) {
+                freeTextGesture = PDFFreeTextGesture(
+                    kind: .move,
+                    page: page,
+                    pageIndex: document.index(for: page),
+                    startPoint: target.point,
+                    baselineData: nil,
+                    annotation: annotation,
+                    beforeSnapshot: before
+                )
+                return
+            }
+        }
+
+        if let annotation = freeTextAnnotation(on: target.page, at: target.point) {
+            selectFreeTextAnnotation(annotation, on: target.page)
+            if event.clickCount >= 2 {
+                beginFreeTextEditing(
+                    annotation,
+                    on: target.page,
+                    isNew: false,
+                    baselineData: editBaselineDataWithoutConsuming()
+                )
+            }
+            return
+        }
+
+        clearFreeTextSelection()
+        freeTextGesture = PDFFreeTextGesture(
+            kind: .create,
+            page: target.page,
+            pageIndex: document.index(for: target.page),
+            startPoint: target.point,
+            baselineData: nil
+        )
+        invalidateFreeTextSelection(on: target.page)
+    }
+
+    private func handleFreeTextMouseDragged(_ event: NSEvent) {
+        guard let gesture = freeTextGesture,
+              let document,
+              document.page(at: gesture.pageIndex) === gesture.page
+        else { return }
+
+        let viewPoint = convert(event.locationInWindow, from: nil)
+        let currentPoint = convert(viewPoint, to: gesture.page)
+        gesture.currentPoint = currentPoint
+
+        switch gesture.kind {
+        case .create:
+            invalidateFreeTextSelection(on: gesture.page)
+        case .move, .resize:
+            guard let annotation = gesture.annotation,
+                  let before = gesture.beforeSnapshot,
+                  let expected = gesture.expectedSnapshot,
+                  isValidFreeTextAnnotation(annotation, on: gesture.page),
+                  PDFFreeTextAnnotationSnapshot(annotation: annotation) == expected
+            else {
+                cancelFreeTextGestureWithStaleAnnotation()
+                return
+            }
+
+            if !gesture.didCaptureBaseline {
+                gesture.baselineData = editBaselineDataWithoutConsuming()
+                gesture.didCaptureBaseline = true
+                if needsEditBaselineSnapshot, gesture.baselineData == nil {
+                    freeTextGesture = nil
+                    onError(PDFAnnotationOperationError.dataRepresentationFailed.localizedDescription)
+                    return
+                }
+            }
+
+            let pageBounds = gesture.page.bounds(for: displayBox)
+            let nextBounds: CGRect
+            switch gesture.kind {
+            case .move:
+                let delta = CGPoint(
+                    x: currentPoint.x - gesture.startPoint.x,
+                    y: currentPoint.y - gesture.startPoint.y
+                )
+                nextBounds = clampedPDFFreeTextBounds(
+                    before.bounds.offsetBy(dx: delta.x, dy: delta.y),
+                    to: pageBounds,
+                    minimumSize: minimumFreeTextSize(for: annotation)
+                )
+            case .resize(let handle):
+                nextBounds = resizedPDFFreeTextBounds(
+                    before.bounds,
+                    handle: handle,
+                    to: currentPoint,
+                    pageBounds: pageBounds,
+                    minimumSize: minimumFreeTextSize(for: annotation)
+                )
+            case .create:
+                return
+            }
+
+            guard nextBounds != annotation.bounds.standardized else { return }
+            annotation.bounds = nextBounds
+            gesture.expectedSnapshot = PDFFreeTextAnnotationSnapshot(annotation: annotation)
+            annotationsChanged(on: gesture.page)
+            invalidateFreeTextSelection(on: gesture.page)
+        }
+    }
+
+    private func handleFreeTextMouseUp(_ event: NSEvent) {
+        guard let gesture = freeTextGesture else { return }
+        freeTextGesture = nil
+
+        switch gesture.kind {
+        case .create:
+            guard let document,
+                  document.page(at: gesture.pageIndex) === gesture.page,
+                  canAnnotate()
+            else { return }
+            let startViewPoint = convert(gesture.startPoint, from: gesture.page)
+            let currentViewPoint = convert(gesture.currentPoint, from: gesture.page)
+            let distance = hypot(currentViewPoint.x - startViewPoint.x, currentViewPoint.y - startViewPoint.y)
+            let requestedBounds: CGRect
+            if distance < 4 {
+                requestedBounds = defaultPDFFreeTextBounds(
+                    at: gesture.startPoint,
+                    pageBounds: gesture.page.bounds(for: displayBox)
+                )
+            } else {
+                requestedBounds = draggedPDFFreeTextBounds(
+                    from: gesture.startPoint,
+                    to: gesture.currentPoint,
+                    pageBounds: gesture.page.bounds(for: displayBox)
+                )
+            }
+            let bounds = clampedPDFFreeTextBounds(
+                requestedBounds,
+                to: gesture.page.bounds(for: displayBox)
+            )
+            guard bounds.width > 0, bounds.height > 0 else { return }
+            let baselineData = editBaselineDataWithoutConsuming()
+            guard !needsEditBaselineSnapshot || baselineData != nil else {
+                onError(PDFAnnotationOperationError.dataRepresentationFailed.localizedDescription)
+                return
+            }
+            guard let originalData = baselineData ?? document.dataRepresentation() else {
+                onError(PDFAnnotationOperationError.dataRepresentationFailed.localizedDescription)
+                return
+            }
+            let annotation = makePDFFreeTextAnnotation(bounds: bounds)
+            gesture.baselineData = needsEditBaselineSnapshot ? baselineData : nil
+            gesture.didCaptureBaseline = true
+            gesture.page.addAnnotation(annotation)
+            selectFreeTextAnnotation(annotation, on: gesture.page)
+            annotationsChanged(on: gesture.page)
+            onAnnotationsChanged()
+            beginFreeTextEditing(
+                annotation,
+                on: gesture.page,
+                isNew: true,
+                baselineData: gesture.baselineData,
+                originalData: originalData
+            )
+        case .move, .resize:
+            guard let annotation = gesture.annotation,
+                  let before = gesture.beforeSnapshot,
+                  let expected = gesture.expectedSnapshot,
+                  isValidFreeTextAnnotation(annotation, on: gesture.page),
+                  PDFFreeTextAnnotationSnapshot(annotation: annotation) == expected
+            else {
+                onError(PDFAnnotationOperationError.annotationChanged.localizedDescription)
+                return
+            }
+            guard before.bounds != annotation.bounds.standardized else { return }
+            annotation.modificationDate = Date()
+            let after = PDFFreeTextAnnotationSnapshot(annotation: annotation)
+            registerAnnotationEdit(PDFAnnotationEditOperation(
+                added: [],
+                removed: [],
+                updated: [.init(
+                    pageIndex: gesture.pageIndex,
+                    annotation: annotation,
+                    before: before,
+                    after: after
+                )]
+            ))
+            annotationsChanged(on: gesture.page)
+            onAnnotationsChanged()
+            publishEditedDocument(previousData: gesture.baselineData)
+            publishFreeTextSelection()
+        }
+    }
+
+    func selectFreeTextAnnotation(_ annotation: PDFAnnotation, on page: PDFPage) {
+        guard isValidFreeTextAnnotation(annotation, on: page) else {
+            onError(PDFAnnotationOperationError.annotationChanged.localizedDescription)
+            return
+        }
+        let previousPage = selectedFreeTextPage
+        selectedFreeTextAnnotation = annotation
+        selectedFreeTextPage = page
+        if let previousPage { invalidateFreeTextSelection(on: previousPage) }
+        invalidateFreeTextSelection(on: page)
+        publishFreeTextSelection()
+    }
+
+    @discardableResult
+    func beginEditingSelectedFreeTextIfDoubleClicked(
+        at pagePoint: CGPoint,
+        on page: PDFPage,
+        clickCount: Int
+    ) -> Bool {
+        guard clickCount >= 2,
+              let annotation = selectedFreeTextAnnotation,
+              selectedFreeTextPage === page,
+              isValidFreeTextAnnotation(annotation, on: page),
+              annotation.bounds.standardized.contains(pagePoint)
+        else { return false }
+        beginFreeTextEditing(
+            annotation,
+            on: page,
+            isNew: false,
+            baselineData: editBaselineDataWithoutConsuming()
+        )
+        return true
+    }
+
+    func applyFreeTextFormatting(_ formatting: PDFFreeTextFormatting) {
+        endFreeTextEditing(commit: true)
+        guard let annotation = selectedFreeTextAnnotation,
+              let page = selectedFreeTextPage,
+              let document,
+              isValidFreeTextAnnotation(annotation, on: page)
+        else {
+            onError(PDFAnnotationOperationError.annotationChanged.localizedDescription)
+            clearFreeTextSelection()
+            return
+        }
+
+        let before = PDFFreeTextAnnotationSnapshot(annotation: annotation)
+        let previousData = editBaselineDataWithoutConsuming()
+        if needsEditBaselineSnapshot, previousData == nil {
+            onError(PDFAnnotationOperationError.dataRepresentationFailed.localizedDescription)
+            return
+        }
+        formatting.apply(to: annotation)
+        guard PDFFreeTextFormatting(annotation: annotation) != before.formatting else {
+            publishFreeTextSelection()
+            return
+        }
+        annotation.modificationDate = Date()
+        let after = PDFFreeTextAnnotationSnapshot(annotation: annotation)
+
+        registerAnnotationEdit(PDFAnnotationEditOperation(
+            added: [],
+            removed: [],
+            updated: [.init(
+                pageIndex: document.index(for: page),
+                annotation: annotation,
+                before: before,
+                after: after
+            )]
+        ))
+        annotationsChanged(on: page)
+        onAnnotationsChanged()
+        publishEditedDocument(previousData: previousData)
+        publishFreeTextSelection()
+    }
+
+    func beginFreeTextEditing(
+        _ annotation: PDFAnnotation,
+        on page: PDFPage,
+        isNew: Bool,
+        baselineData: Data?,
+        originalData: Data? = nil
+    ) {
+        guard isValidFreeTextAnnotation(annotation, on: page) else {
+            onError(PDFAnnotationOperationError.annotationChanged.localizedDescription)
+            return
+        }
+        if needsEditBaselineSnapshot, baselineData == nil {
+            onError(PDFAnnotationOperationError.dataRepresentationFailed.localizedDescription)
+            return
+        }
+        endFreeTextEditing(commit: true)
+        selectFreeTextAnnotation(annotation, on: page)
+
+        let scrollView = NSScrollView(frame: .zero)
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.96)
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+
+        let editor = PDFFreeTextEditorTextView(frame: .zero)
+        editor.isRichText = false
+        editor.importsGraphics = false
+        editor.allowsUndo = true
+        editor.isHorizontallyResizable = false
+        editor.isVerticallyResizable = true
+        editor.autoresizingMask = [.width]
+        editor.textContainerInset = NSSize(width: 4, height: 3)
+        editor.textContainer?.widthTracksTextView = true
+        editor.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        editor.drawsBackground = false
+        editor.string = annotation.contents ?? ""
+        let formatting = PDFFreeTextFormatting(annotation: annotation)
+        editor.font = formatting.font
+        editor.textColor = formatting.fontColor
+        editor.alignment = formatting.alignment
+        editor.delegate = self
+        editor.cancelEditing = { [weak self] in
+            self?.cancelActiveFreeTextEditing()
+        }
+        editor.commitEditing = { [weak self] in
+            self?.commitActiveFreeTextEdit()
+        }
+        scrollView.documentView = editor
+        addSubview(scrollView)
+
+        freeTextEditorScrollView = scrollView
+        freeTextEditor = editor
+        freeTextEditorBeforeSnapshot = isNew ? nil : PDFFreeTextAnnotationSnapshot(annotation: annotation)
+        freeTextEditorBaselineData = baselineData
+        freeTextEditorOriginalData = originalData ?? baselineData ?? document?.dataRepresentation()
+        freeTextEditorStartedWithCleanBaseline = baselineData != nil
+        freeTextEditorIsNew = isNew
+        freeTextEditorHasPublished = false
+        installFreeTextEditorObservers()
+        updateFreeTextEditorFrame()
+        editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
+        window?.makeFirstResponder(editor)
+    }
+
+    func cancelActiveFreeTextEditing() {
+        endFreeTextEditing(commit: true)
+    }
+
+    func textDidChange(_ notification: Notification) {
+        guard let editor = notification.object as? PDFFreeTextEditorTextView,
+              editor === freeTextEditor,
+              let annotation = selectedFreeTextAnnotation,
+              let page = selectedFreeTextPage,
+              isValidFreeTextAnnotation(annotation, on: page)
+        else { return }
+
+        annotation.contents = editor.string
+        if freeTextEditorIsNew || freeTextEditorBeforeSnapshot?.contents != editor.string {
+            annotation.modificationDate = Date()
+        }
+        annotationsChanged(on: page)
+        onAnnotationsChanged()
+        invalidateFreeTextSelection(on: page)
+
+        if !freeTextEditorHasPublished {
+            publishActiveFreeTextEdit()
+        }
+    }
+
+    func textDidEndEditing(_ notification: Notification) {
+        guard let editor = notification.object as? NSTextView,
+              editor === freeTextEditor,
+              !isEndingFreeTextEditing
+        else { return }
+        endFreeTextEditing(commit: true)
+    }
+
+    func finishFreeTextEditingForDocumentSwitch() {
+        endFreeTextEditing(commit: true)
+    }
+
+    func cancelFreeTextEditingBeforeDocumentReplacement() {
+        endFreeTextEditing(commit: false)
+        freeTextGesture = nil
+        clearFreeTextSelection()
+    }
+
+    private func endFreeTextEditing(commit: Bool) {
+        guard !isEndingFreeTextEditing,
+              let editor = freeTextEditor,
+              let annotation = selectedFreeTextAnnotation,
+              let page = selectedFreeTextPage
+        else { return }
+        isEndingFreeTextEditing = true
+        defer { isEndingFreeTextEditing = false }
+
+        removeFreeTextEditorObservers()
+        editor.delegate = nil
+        editor.cancelEditing = {}
+        editor.commitEditing = {}
+        freeTextEditorScrollView?.removeFromSuperview()
+        freeTextEditorScrollView = nil
+        freeTextEditor = nil
+
+        guard isValidFreeTextAnnotation(annotation, on: page) else {
+            clearFreeTextEditorState()
+            clearFreeTextSelection()
+            onError(PDFAnnotationOperationError.annotationChanged.localizedDescription)
+            return
+        }
+
+        annotation.contents = editor.string
+        if !commit, !freeTextEditorIsNew {
+            freeTextEditorBeforeSnapshot?.apply(to: annotation)
+            annotationsChanged(on: page)
+            onAnnotationsChanged()
+            clearFreeTextEditorState()
+            publishFreeTextSelection()
+            return
+        }
+        let isEmpty = editor.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let finalPreviousData = freeTextEditorHasPublished ? nil : freeTextEditorBaselineData
+        if freeTextEditorIsNew, (!commit || isEmpty) {
+            page.removeAnnotation(annotation)
+            annotationsChanged(on: page)
+            onAnnotationsChanged()
+            if commit {
+                restoreOriginalFreeTextDataAfterCancellationIfNeeded()
+            }
+            clearFreeTextEditorState()
+            clearFreeTextSelection()
+            return
+        }
+
+        if !freeTextEditorIsNew,
+           let before = freeTextEditorBeforeSnapshot,
+           before.contents == editor.string {
+            before.apply(to: annotation)
+            annotationsChanged(on: page)
+            onAnnotationsChanged()
+            restoreOriginalFreeTextDataAfterCancellationIfNeeded()
+            clearFreeTextEditorState()
+            publishFreeTextSelection()
+            return
+        }
+
+        if freeTextEditorIsNew || freeTextEditorBeforeSnapshot?.contents != editor.string {
+            annotation.modificationDate = Date()
+        }
+        let after = PDFFreeTextAnnotationSnapshot(annotation: annotation)
+        if freeTextEditorIsNew, let document {
+            registerAnnotationEdit(PDFAnnotationEditOperation(
+                added: [.init(pageIndex: document.index(for: page), annotation: annotation)],
+                removed: [],
+                updated: []
+            ))
+        } else if let before = freeTextEditorBeforeSnapshot,
+                  before != after,
+                  let document {
+            registerAnnotationEdit(PDFAnnotationEditOperation(
+                added: [],
+                removed: [],
+                updated: [.init(
+                    pageIndex: document.index(for: page),
+                    annotation: annotation,
+                    before: before,
+                    after: after
+                )]
+            ))
+        }
+
+        if freeTextEditorIsNew || freeTextEditorBeforeSnapshot != after {
+            publishEditedDocument(previousData: finalPreviousData)
+            annotationsChanged(on: page)
+            onAnnotationsChanged()
+        }
+        clearFreeTextEditorState()
+        publishFreeTextSelection()
+    }
+
+    private func clearFreeTextEditorState() {
+        freeTextEditorBeforeSnapshot = nil
+        freeTextEditorBaselineData = nil
+        freeTextEditorOriginalData = nil
+        freeTextEditorStartedWithCleanBaseline = false
+        freeTextEditorIsNew = false
+        freeTextEditorHasPublished = false
+    }
+
+    private func restoreOriginalFreeTextDataAfterCancellationIfNeeded() {
+        guard freeTextEditorHasPublished else { return }
+        if let originalData = freeTextEditorOriginalData {
+            publishEditedData(originalData, previousData: nil)
+            if freeTextEditorStartedWithCleanBaseline {
+                needsEditBaselineSnapshot = true
+            }
+        } else {
+            publishEditedDocument(previousData: nil)
+        }
+    }
+
+    private func publishActiveFreeTextEdit() {
+        guard freeTextEditor != nil,
+              let annotation = selectedFreeTextAnnotation,
+              let page = selectedFreeTextPage,
+              isValidFreeTextAnnotation(annotation, on: page)
+        else { return }
+        let previousData = freeTextEditorHasPublished ? nil : freeTextEditorBaselineData
+        if publishEditedDocument(previousData: previousData) {
+            freeTextEditorHasPublished = true
+            freeTextEditorBaselineData = nil
+        }
+    }
+
+    private func installFreeTextEditorObservers() {
+        removeFreeTextEditorObservers()
+        let center = NotificationCenter.default
+        for name in [Notification.Name.PDFViewScaleChanged, .PDFViewPageChanged, .PDFViewVisiblePagesChanged] {
+            freeTextEditorObserverTokens.append(center.addObserver(
+                forName: name,
+                object: self,
+                queue: .main
+            ) { [weak self] _ in
+                self?.updateFreeTextEditorFrame()
+            })
+        }
+        if let clipView = documentView?.enclosingScrollView?.contentView {
+            freeTextObservedClipView = clipView
+            freeTextObservedClipViewPreviouslyPostedBoundsChanges = clipView.postsBoundsChangedNotifications
+            clipView.postsBoundsChangedNotifications = true
+            freeTextEditorObserverTokens.append(center.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: clipView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.updateFreeTextEditorFrame()
+            })
+        }
+    }
+
+    private func removeFreeTextEditorObservers() {
+        for token in freeTextEditorObserverTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+        freeTextEditorObserverTokens = []
+        if let freeTextObservedClipView {
+            freeTextObservedClipView.postsBoundsChangedNotifications =
+                freeTextObservedClipViewPreviouslyPostedBoundsChanges
+        }
+        freeTextObservedClipView = nil
+        freeTextObservedClipViewPreviouslyPostedBoundsChanges = false
+    }
+
+    private func updateFreeTextEditorFrame() {
+        guard let scrollView = freeTextEditorScrollView,
+              let editor = freeTextEditor,
+              let annotation = selectedFreeTextAnnotation,
+              let page = selectedFreeTextPage,
+              isValidFreeTextAnnotation(annotation, on: page),
+              let geometry = pdfFreeTextEditorGeometry(
+                for: annotation.bounds,
+                on: page,
+                in: self
+              )
+        else { return }
+
+        let editorSize = CGSize(
+            width: max(geometry.unrotatedSize.width - 2, 1),
+            height: max(geometry.unrotatedSize.height - 2, 1)
+        )
+        scrollView.frameCenterRotation = 0
+        scrollView.frame = CGRect(
+            x: geometry.center.x - editorSize.width / 2,
+            y: geometry.center.y - editorSize.height / 2,
+            width: editorSize.width,
+            height: editorSize.height
+        )
+        scrollView.frameCenterRotation = geometry.rotationDegrees
+
+        let formatting = PDFFreeTextFormatting(annotation: annotation)
+        editor.font = formatting.font.withSize(
+            max(formatting.font.pointSize * geometry.effectiveScale, 1)
+        )
+        editor.textContainerInset = NSSize(
+            width: 4 * geometry.effectiveScale,
+            height: 3 * geometry.effectiveScale
+        )
+        editor.frame = NSRect(origin: .zero, size: editorSize)
+    }
+
+    @discardableResult
+    func commitActiveFreeTextEdit() -> Bool {
+        guard hasActiveFreeTextEditor else { return false }
+        endFreeTextEditing(commit: true)
+        return true
+    }
+
+    func deleteSelectedFreeTextAnnotation() {
+        endFreeTextEditing(commit: true)
+        guard let annotation = selectedFreeTextAnnotation,
+              let page = selectedFreeTextPage,
+              let document,
+              isValidFreeTextAnnotation(annotation, on: page)
+        else {
+            clearFreeTextSelection()
+            return
+        }
+        let previousData = editBaselineDataWithoutConsuming()
+        if needsEditBaselineSnapshot, previousData == nil {
+            onError(PDFAnnotationOperationError.dataRepresentationFailed.localizedDescription)
+            return
+        }
+        let item = PDFAnnotationEditOperation.Item(pageIndex: document.index(for: page), annotation: annotation)
+        page.removeAnnotation(annotation)
+        registerAnnotationEdit(PDFAnnotationEditOperation(added: [], removed: [item], updated: []))
+        annotationsChanged(on: page)
+        onAnnotationsChanged()
+        clearFreeTextSelection()
+        publishEditedDocument(previousData: previousData)
+    }
+
+    private func clearFreeTextSelection() {
+        let page = selectedFreeTextPage
+        selectedFreeTextAnnotation = nil
+        selectedFreeTextPage = nil
+        freeTextGesture = nil
+        if let page { invalidateFreeTextSelection(on: page) }
+        onFreeTextSelectionChanged(nil)
+    }
+
+    private func publishFreeTextSelection() {
+        guard let annotation = selectedFreeTextAnnotation,
+              let page = selectedFreeTextPage,
+              isValidFreeTextAnnotation(annotation, on: page)
+        else {
+            onFreeTextSelectionChanged(nil)
+            return
+        }
+        onFreeTextSelectionChanged(PDFFreeTextFormatting(annotation: annotation))
+    }
+
+    private func freeTextAnnotation(on page: PDFPage, at point: CGPoint) -> PDFAnnotation? {
+        page.annotations.reversed().first {
+            isFreeTextAnnotation($0) && $0.bounds.standardized.contains(point)
+        }
+    }
+
+    private func isFreeTextAnnotation(_ annotation: PDFAnnotation) -> Bool {
+        (annotation.type ?? "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            .caseInsensitiveCompare("FreeText") == .orderedSame
+    }
+
+    private func isValidFreeTextAnnotation(_ annotation: PDFAnnotation, on page: PDFPage) -> Bool {
+        guard isFreeTextAnnotation(annotation),
+              let document,
+              document.index(for: page) >= 0,
+              document.page(at: document.index(for: page)) === page
+        else { return false }
+        return page.annotations.contains { $0 === annotation }
+    }
+
+    private func editBaselineDataWithoutConsuming() -> Data? {
+        guard needsEditBaselineSnapshot else { return nil }
+        return loadedSourceBaselineData ?? document?.dataRepresentation()
+    }
+
+    private func cancelFreeTextGestureWithStaleAnnotation() {
+        freeTextGesture = nil
+        onError(PDFAnnotationOperationError.annotationChanged.localizedDescription)
+        clearFreeTextSelection()
+    }
+
+    private func minimumFreeTextSize(for annotation: PDFAnnotation) -> CGSize {
+        CGSize(width: 36, height: max(24, (annotation.font?.pointSize ?? 14) * 1.45))
+    }
+
+    private func freeTextResizeHandle(
+        at viewPoint: CGPoint,
+        annotation: PDFAnnotation,
+        page: PDFPage
+    ) -> PDFFreeTextResizeHandle? {
+        let hitSize: CGFloat = 12
+        return freeTextHandlePoints(annotation: annotation, page: page).first { _, point in
+            CGRect(x: point.x - hitSize / 2, y: point.y - hitSize / 2, width: hitSize, height: hitSize)
+                .contains(viewPoint)
+        }?.0
+    }
+
+    private func freeTextHandlePoints(
+        annotation: PDFAnnotation,
+        page: PDFPage
+    ) -> [(PDFFreeTextResizeHandle, CGPoint)] {
+        let bounds = annotation.bounds.standardized
+        let points: [(PDFFreeTextResizeHandle, CGPoint)] = [
+            (.minXMinY, CGPoint(x: bounds.minX, y: bounds.minY)),
+            (.midXMinY, CGPoint(x: bounds.midX, y: bounds.minY)),
+            (.maxXMinY, CGPoint(x: bounds.maxX, y: bounds.minY)),
+            (.minXMidY, CGPoint(x: bounds.minX, y: bounds.midY)),
+            (.maxXMidY, CGPoint(x: bounds.maxX, y: bounds.midY)),
+            (.minXMaxY, CGPoint(x: bounds.minX, y: bounds.maxY)),
+            (.midXMaxY, CGPoint(x: bounds.midX, y: bounds.maxY)),
+            (.maxXMaxY, CGPoint(x: bounds.maxX, y: bounds.maxY))
+        ]
+        return points.map { ($0.0, convert($0.1, from: page)) }
+    }
+
+    private func drawFreeTextSelection(on page: PDFPage, in context: CGContext) {
+        if let gesture = freeTextGesture,
+           case .create = gesture.kind,
+           gesture.page === page {
+            let start = convert(gesture.startPoint, from: page)
+            let current = convert(gesture.currentPoint, from: page)
+            let rect = CGRect(
+                x: start.x,
+                y: start.y,
+                width: current.x - start.x,
+                height: current.y - start.y
+            ).standardized
+            guard rect.width >= 1, rect.height >= 1 else { return }
+            context.saveGState()
+            context.setStrokeColor(NSColor.controlAccentColor.withAlphaComponent(0.72).cgColor)
+            context.setLineWidth(1)
+            context.setLineDash(phase: 0, lengths: [4, 3])
+            context.stroke(rect)
+            context.restoreGState()
+            return
+        }
+
+        guard let annotation = selectedFreeTextAnnotation,
+              selectedFreeTextPage === page,
+              isValidFreeTextAnnotation(annotation, on: page)
+        else { return }
+        let rect = convert(annotation.bounds, from: page).standardized
+        context.saveGState()
+        context.setStrokeColor(NSColor.controlAccentColor.cgColor)
+        context.setFillColor(NSColor.controlAccentColor.cgColor)
+        context.setLineWidth(1.25)
+        context.stroke(rect)
+        let handleSize: CGFloat = 7
+        for (_, point) in freeTextHandlePoints(annotation: annotation, page: page) {
+            let handleRect = CGRect(
+                x: point.x - handleSize / 2,
+                y: point.y - handleSize / 2,
+                width: handleSize,
+                height: handleSize
+            )
+            context.fillEllipse(in: handleRect)
+            context.setStrokeColor(NSColor.windowBackgroundColor.cgColor)
+            context.setLineWidth(1)
+            context.strokeEllipse(in: handleRect)
+            context.setStrokeColor(NSColor.controlAccentColor.cgColor)
+        }
+        context.restoreGState()
+    }
+
+    private func invalidateFreeTextSelection(on page: PDFPage) {
+        let pageRect = convert(page.bounds(for: displayBox), from: page)
+        setNeedsDisplay(pageRect)
     }
 
     func addTextMarkup(kind: PDFTextMarkupKind, color: NSColor) {
@@ -2894,6 +4484,11 @@ final class AnnotatingPDFView: PDFView {
         }
 
         registerAnnotationEdit(PDFAnnotationEditOperation(added: addedAnnotations, removed: []))
+        for pageIndex in Set(addedAnnotations.map(\.pageIndex)) {
+            if let page = page(at: pageIndex) {
+                annotationsChanged(on: page)
+            }
+        }
         refreshAnnotationDisplay()
         onAnnotationsChanged()
         clearSelection()
@@ -2992,68 +4587,144 @@ final class AnnotatingPDFView: PDFView {
     }
 
     func undoAnnotationEdit() {
+        endFreeTextEditing(commit: true)
         guard let operation = undoStack.popLast() else { return }
-        applyInverse(operation)
+        let previousData = editBaselineDataWithoutConsuming()
+        guard apply(operation, inverse: true) else {
+            undoStack.append(operation)
+            onError(PDFAnnotationOperationError.annotationChanged.localizedDescription)
+            publishUndoState()
+            return
+        }
         redoStack.append(operation)
         publishUndoState()
         onAnnotationsChanged()
-        publishEditedDocument(previousData: nil)
+        publishUndoRedoDocument(previousData: previousData)
+        publishFreeTextSelection()
     }
 
     func redoAnnotationEdit() {
+        endFreeTextEditing(commit: true)
         guard let operation = redoStack.popLast() else { return }
-        apply(operation)
+        let previousData = editBaselineDataWithoutConsuming()
+        guard apply(operation, inverse: false) else {
+            redoStack.append(operation)
+            onError(PDFAnnotationOperationError.annotationChanged.localizedDescription)
+            publishUndoState()
+            return
+        }
         undoStack.append(operation)
         publishUndoState()
         onAnnotationsChanged()
-        publishEditedDocument(previousData: nil)
+        publishUndoRedoDocument(previousData: previousData)
+        publishFreeTextSelection()
     }
 
     func clearAnnotationUndoHistory() {
         undoStack = []
         redoStack = []
+        savedEditCheckpoint = nil
+        cleanUndoOperationIDs = loadedSourceBaselineData == nil ? nil : []
         publishUndoState()
     }
 
-    func resetEditBaselineCapture(needsSnapshot: Bool) {
+    func replaceEditBaselineCapture(
+        with sourceData: Data?,
+        needsSnapshot: Bool,
+        currentOwnedData: Data? = nil
+    ) {
+        loadedSourceBaselineData = sourceData
+        lastPublishedDocumentData = currentOwnedData
+        cleanUndoOperationIDs = sourceData == nil ? nil : undoStack.map(\.id)
         needsEditBaselineSnapshot = needsSnapshot
+    }
+
+    func reconcileEditBaselineCapture(
+        hasDirtyData: Bool,
+        savedEditCheckpoint: PDFAnnotationEditCheckpoint? = nil
+    ) {
+        self.savedEditCheckpoint = savedEditCheckpoint
+        if hasDirtyData {
+            needsEditBaselineSnapshot = false
+            return
+        }
+
+        if let lastPublishedDocumentData {
+            loadedSourceBaselineData = lastPublishedDocumentData
+            self.lastPublishedDocumentData = nil
+        }
+        cleanUndoOperationIDs = loadedSourceBaselineData == nil ? nil : undoStack.map(\.id)
+        needsEditBaselineSnapshot = loadedSourceBaselineData != nil
     }
 
     private func takeEditBaselineSnapshotIfNeeded() -> Data? {
         guard needsEditBaselineSnapshot else { return nil }
+        guard let baselineData = loadedSourceBaselineData ?? document?.dataRepresentation() else {
+            return nil
+        }
         needsEditBaselineSnapshot = false
-        return document?.dataRepresentation()
+        return baselineData
     }
 
     private func registerAnnotationEdit(_ operation: PDFAnnotationEditOperation) {
-        guard !operation.added.isEmpty || !operation.removed.isEmpty else { return }
+        guard !operation.added.isEmpty || !operation.removed.isEmpty || !operation.updated.isEmpty else { return }
         undoStack.append(operation)
         redoStack = []
         publishUndoState()
     }
 
-    private func apply(_ operation: PDFAnnotationEditOperation) {
-        for item in operation.removed {
-            page(at: item.pageIndex)?.removeAnnotation(item.annotation)
-        }
+    private func apply(_ operation: PDFAnnotationEditOperation, inverse: Bool) -> Bool {
+        guard canApply(operation, inverse: inverse) else { return false }
+        let removing = inverse ? operation.added : operation.removed
+        let adding = inverse ? operation.removed : operation.added
 
-        for item in operation.added {
+        for item in removing {
+            page(at: item.pageIndex)?.removeAnnotation(item.annotation)
+            if selectedFreeTextAnnotation === item.annotation {
+                clearFreeTextSelection()
+            }
+        }
+        for item in adding {
             page(at: item.pageIndex)?.addAnnotation(item.annotation)
         }
+        for item in operation.updated {
+            let snapshot = inverse ? item.before : item.after
+            snapshot.apply(to: item.annotation)
+        }
 
+        let changedPageIndices = Set(
+            removing.map(\.pageIndex) + adding.map(\.pageIndex) + operation.updated.map(\.pageIndex)
+        )
+        for pageIndex in changedPageIndices {
+            if let page = page(at: pageIndex) {
+                annotationsChanged(on: page)
+            }
+        }
         refreshAnnotationDisplay()
+        return true
     }
 
-    private func applyInverse(_ operation: PDFAnnotationEditOperation) {
-        for item in operation.added {
-            page(at: item.pageIndex)?.removeAnnotation(item.annotation)
+    private func canApply(_ operation: PDFAnnotationEditOperation, inverse: Bool) -> Bool {
+        let removing = inverse ? operation.added : operation.removed
+        let adding = inverse ? operation.removed : operation.added
+        for item in removing {
+            guard let page = page(at: item.pageIndex),
+                  page.annotations.contains(where: { $0 === item.annotation })
+            else { return false }
         }
-
-        for item in operation.removed {
-            page(at: item.pageIndex)?.addAnnotation(item.annotation)
+        for item in adding {
+            guard let page = page(at: item.pageIndex),
+                  !page.annotations.contains(where: { $0 === item.annotation })
+            else { return false }
         }
-
-        refreshAnnotationDisplay()
+        for item in operation.updated {
+            guard let page = page(at: item.pageIndex),
+                  page.annotations.contains(where: { $0 === item.annotation })
+            else { return false }
+            let expected = inverse ? item.after : item.before
+            guard PDFFreeTextAnnotationSnapshot(annotation: item.annotation) == expected else { return false }
+        }
+        return true
     }
 
     private func page(at pageIndex: Int) -> PDFPage? {
@@ -3067,6 +4738,7 @@ final class AnnotatingPDFView: PDFView {
 
     private func refreshAnnotationDisplay(on page: PDFPage? = nil) {
         if let page {
+            annotationsChanged(on: page)
             let pageBounds = page.bounds(for: displayBox)
             setNeedsDisplay(convert(pageBounds, from: page))
         } else {
@@ -3075,12 +4747,100 @@ final class AnnotatingPDFView: PDFView {
         }
     }
 
-    private func publishEditedDocument(previousData: Data?) {
-        guard let data = document?.dataRepresentation() else {
+    @discardableResult
+    private func publishEditedDocument(previousData: Data?) -> Bool {
+        guard let document,
+              let data = serializeDocument(document) else {
+            restoreAfterFailedSerialization(previousData: previousData)
             onError(PDFAnnotationOperationError.dataRepresentationFailed.localizedDescription)
+            return false
+        }
+        publishEditedData(data, previousData: previousData)
+        return true
+    }
+
+    private func publishUndoRedoDocument(previousData: Data?) {
+        if let savedEditCheckpoint,
+           savedEditCheckpoint == currentEditCheckpoint,
+           onRestoreSavedEditCheckpoint(savedEditCheckpoint) {
+            self.savedEditCheckpoint = nil
+            loadedSourceBaselineData = nil
+            lastPublishedDocumentData = nil
+            cleanUndoOperationIDs = undoStack.map(\.id)
+            needsEditBaselineSnapshot = true
             return
         }
-        onEdited(previousData, data)
+        if let cleanUndoOperationIDs,
+           cleanUndoOperationIDs == undoStack.map(\.id),
+           let loadedSourceBaselineData {
+            publishEditedData(loadedSourceBaselineData, previousData: previousData)
+            needsEditBaselineSnapshot = true
+        } else {
+            publishEditedDocument(previousData: previousData)
+        }
+    }
+
+    private func publishEditedData(_ data: Data, previousData: Data?) {
+        lastPublishedDocumentData = data
+        if previousData != nil {
+            needsEditBaselineSnapshot = false
+        }
+        onEdited(previousData, data, currentEditCheckpoint)
+    }
+
+    private var currentEditCheckpoint: PDFAnnotationEditCheckpoint {
+        PDFAnnotationEditCheckpoint(
+            operationCount: undoStack.count,
+            lastOperationID: undoStack.last?.id
+        )
+    }
+
+    private func restoreAfterFailedSerialization(previousData: Data?) {
+        let wasDirty = lastPublishedDocumentData != nil
+        removeFreeTextEditorObservers()
+        freeTextEditor?.delegate = nil
+        freeTextEditor?.cancelEditing = {}
+        freeTextEditor?.commitEditing = {}
+        freeTextEditorScrollView?.removeFromSuperview()
+        freeTextEditorScrollView = nil
+        freeTextEditor = nil
+        clearFreeTextEditorState()
+        freeTextGesture = nil
+        selectedFreeTextAnnotation = nil
+        selectedFreeTextPage = nil
+        activeInkPage = nil
+        activeInkPoints = []
+        activeInkAnnotation = nil
+        activeInkBaselineData = nil
+        clearSelection()
+
+        guard let rollbackData = lastPublishedDocumentData ?? previousData ?? loadedSourceBaselineData,
+              let restoredDocument = PDFDocument(data: rollbackData)
+        else {
+            clearAnnotationUndoHistory()
+            document = nil
+            onFreeTextSelectionChanged(nil)
+            onAnnotationsChanged()
+            return
+        }
+
+        document = restoredDocument
+        undoStack = []
+        redoStack = []
+        savedEditCheckpoint = nil
+        cleanUndoOperationIDs = wasDirty ? nil : []
+        if wasDirty {
+            lastPublishedDocumentData = rollbackData
+            needsEditBaselineSnapshot = false
+        } else {
+            loadedSourceBaselineData = rollbackData
+            lastPublishedDocumentData = nil
+            needsEditBaselineSnapshot = true
+        }
+        publishUndoState()
+        onFreeTextSelectionChanged(nil)
+        onAnnotationsChanged()
+        refreshAnnotationDisplay()
     }
 
     private func canAnnotate() -> Bool {
@@ -3122,6 +4882,10 @@ final class AnnotatingPDFView: PDFView {
     }
 
     func prepareForDismantle() {
+        endFreeTextEditing(commit: true)
+        removeFreeTextEditorObservers()
+        freeTextGesture = nil
+        clearFreeTextSelection()
         discardActiveInkAnnotation()
         if let toolTrackingArea,
            trackingAreas.contains(where: { $0 === toolTrackingArea }) {
@@ -3132,13 +4896,20 @@ final class AnnotatingPDFView: PDFView {
         clearSelection()
         undoStack = []
         redoStack = []
+        loadedSourceBaselineData = nil
+        lastPublishedDocumentData = nil
+        cleanUndoOperationIDs = nil
+        savedEditCheckpoint = nil
         linkedExcerptDocumentID = nil
         linkedExcerptContentVersion = 0
-        onEdited = { _, _ in }
+        onEdited = { _, _, _ in }
+        onRestoreSavedEditCheckpoint = { _ in false }
         onUndoStateChanged = { _, _ in }
         onError = { _ in }
-        onRequestLinkedExcerpt = { _ in }
+        onRequestLinkedExcerptCopy = { _ in }
         onAnnotationsChanged = {}
+        onFreeTextSelectionChanged = { _ in }
+        serializeDocument = { $0.dataRepresentation() }
         document = nil
     }
 }
@@ -3155,17 +4926,34 @@ func pdfTextMarkupQuadrilateralPoints(for size: CGSize) -> [NSValue] {
 fileprivate enum PDFAnnotationInteractionMode: Equatable {
     case select
     case pen
+    case freeText
     case eraser
 }
 
 private struct PDFAnnotationEditOperation {
+    let id = UUID()
+
     struct Item {
         let pageIndex: Int
         let annotation: PDFAnnotation
     }
 
+    struct UpdatedItem {
+        let pageIndex: Int
+        let annotation: PDFAnnotation
+        let before: PDFFreeTextAnnotationSnapshot
+        let after: PDFFreeTextAnnotationSnapshot
+    }
+
     let added: [Item]
     let removed: [Item]
+    let updated: [UpdatedItem]
+
+    init(added: [Item], removed: [Item], updated: [UpdatedItem] = []) {
+        self.added = added
+        self.removed = removed
+        self.updated = updated
+    }
 }
 
 private enum PDFAnnotationToolCursor {
@@ -3175,6 +4963,8 @@ private enum PDFAnnotationToolCursor {
             return .arrow
         case .pen:
             return pen
+        case .freeText:
+            return .iBeam
         case .eraser:
             return eraser
         }
@@ -3265,6 +5055,7 @@ private enum PDFAnnotationOperationError: LocalizedError {
     case commentingNotAllowed
     case noSelection
     case dataRepresentationFailed
+    case annotationChanged
 
     var errorDescription: String? {
         switch self {
@@ -3278,6 +5069,8 @@ private enum PDFAnnotationOperationError: LocalizedError {
             return "Select PDF text before applying markup."
         case .dataRepresentationFailed:
             return "PDFKit could not prepare the annotated document."
+        case .annotationChanged:
+            return "The PDF annotation changed before the action completed."
         }
     }
 }

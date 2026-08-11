@@ -9,8 +9,6 @@
   let hasRendered = false;
   let documentID = "";
   let renderID = 0;
-  let selectionPublishPending = false;
-  let lastPublishedSelection = { text: "", sourceLine: 0 };
 
   const target = document.getElementById("content");
   if (!target) return;
@@ -27,7 +25,6 @@
   render(window.monknot || {});
   target.addEventListener("dblclick", handleSourceJump);
   target.addEventListener("click", handleInteraction);
-  document.addEventListener?.("selectionchange", scheduleSelectionPublish);
 
   function render(nextState) {
     const nextMarkdown = typeof nextState.markdown === "string" ? nextState.markdown : "";
@@ -49,7 +46,6 @@
     document.documentElement.dataset.theme = nextTheme;
     target.innerHTML = renderMarkdown(markdown);
     hasRendered = true;
-    publishSelection(true);
     if (searchQuery) {
       searchDocument({
         query: searchQuery,
@@ -94,21 +90,6 @@
       return;
     }
 
-    const terminalButton = targetElement.closest("button[data-monknot-paste-code]");
-    if (terminalButton) {
-      event.preventDefault();
-      event.stopPropagation();
-      const code = terminalButton.closest(".monknot-code-block")?.querySelector("code");
-      const text = code?.textContent || "";
-      if (!text) return;
-      const sourceLine = Number(code?.closest("[data-source-line]")?.dataset.sourceLine || "0");
-      postInteraction("terminalPaste", {
-        text,
-        sourceLine: Number.isSafeInteger(sourceLine) && sourceLine > 0 ? sourceLine : 0
-      });
-      return;
-    }
-
     const anchor = targetElement.closest("a");
     if (!anchor) return;
     const href = anchor.getAttribute("href") || "";
@@ -129,49 +110,9 @@
     });
   }
 
-  function scheduleSelectionPublish() {
-    if (selectionPublishPending) return;
-    selectionPublishPending = true;
-    window.requestAnimationFrame(() => {
-      selectionPublishPending = false;
-      publishSelection(false);
-    });
-  }
-
-  function publishSelection(force) {
-    if (!documentID || !Number.isSafeInteger(renderID) || renderID < 1) return;
-    const selection = window.getSelection?.();
-    let text = "";
-    let sourceLine = 0;
-    if (selection && selection.rangeCount > 0 && !selection.isCollapsed) {
-      const range = selection.getRangeAt(0);
-      const ancestor = range.commonAncestorContainer instanceof Element
-        ? range.commonAncestorContainer
-        : range.commonAncestorContainer?.parentElement;
-      if (ancestor && target.contains(ancestor)) {
-        text = String(selection).slice(0, 1_000_000);
-        const sourceElement = ancestor.closest?.("[data-source-line]");
-        const parsedLine = Number(sourceElement?.dataset.sourceLine || "0");
-        sourceLine = Number.isSafeInteger(parsedLine) && parsedLine > 0 ? parsedLine : 0;
-      }
-    }
-
-    if (!force && text === lastPublishedSelection.text && sourceLine === lastPublishedSelection.sourceLine) {
-      return;
-    }
-    lastPublishedSelection = { text, sourceLine };
-    window.webkit?.messageHandlers?.monknotSelection?.postMessage({
-      documentID,
-      renderID,
-      text,
-      sourceLine
-    });
-  }
-
   function tearDown() {
     target.removeEventListener("dblclick", handleSourceJump);
     target.removeEventListener("click", handleInteraction);
-    document.removeEventListener?.("selectionchange", scheduleSelectionPublish);
     window.monknotTearDown = undefined;
   }
 
@@ -304,7 +245,7 @@
 
           const parent = node.parentElement;
           if (!parent) return NodeFilter.FILTER_REJECT;
-          if (parent.closest("script, style, mark.monknot-search-match, .monknot-code-terminal-action")) {
+          if (parent.closest("script, style, mark.monknot-search-match")) {
             return NodeFilter.FILTER_REJECT;
           }
 
@@ -527,7 +468,7 @@
         }
         if (index < lines.length) index += 1;
         const code = markSource(`<pre><code class="language-${escapeAttr(lang)}">${highlightCode(codeLines.join("\n"), lang)}</code></pre>`, sourceLineBase + startLine);
-        blocks.push(`<div class="monknot-code-block"><button type="button" class="monknot-code-terminal-action" data-monknot-paste-code aria-label="Paste code into Terminal">Paste into Terminal</button>${code}</div>`);
+        blocks.push(code);
         continue;
       }
 

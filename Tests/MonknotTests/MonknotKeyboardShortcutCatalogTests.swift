@@ -7,18 +7,15 @@ final class MonknotKeyboardShortcutCatalogTests: XCTestCase {
         XCTAssertEqual(entry?.shortcut, "⌘P")
     }
 
-    func testNewExplicitClipboardAndTerminalActionsAreListed() {
+    func testExplicitRenderedClipboardActionIsListed() {
         XCTAssertEqual(
             MonknotKeyboardShortcutCatalog.entries.first {
                 $0.title == "Copy Rendered Markdown"
             }?.shortcut,
             "⌥⌘C"
         )
-        XCTAssertEqual(
-            MonknotKeyboardShortcutCatalog.entries.first {
-                $0.title == "Paste Selection into Terminal"
-            }?.shortcut,
-            "⌃⌥⌘V"
-        )
+        XCTAssertFalse(MonknotKeyboardShortcutCatalog.entries.contains {
+            $0.title == "Paste Selection into Terminal"
+        })
     }
 }

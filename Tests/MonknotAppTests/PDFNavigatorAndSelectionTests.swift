@@ -42,6 +42,7 @@ final class PDFNavigatorAndSelectionTests: XCTestCase {
             zoomScale: 1,
             saveState: .clean,
             dirtyData: nil,
+            savedEditCheckpoint: nil,
             contentVersion: 0,
             viewportState: nil,
             viewportCaptureBridge: PDFViewportCaptureBridge(),
@@ -49,12 +50,13 @@ final class PDFNavigatorAndSelectionTests: XCTestCase {
             externalRedoCommandSerial: 0,
             searchState: .constant(DocumentSearchState()),
             searchTarget: .constant(nil),
-            markEdited: { _, _ in },
+            markEdited: { _, _, _ in },
+            restoreSavedEditCheckpoint: { _ in false },
             reportError: { _ in },
             saveDocument: {},
             pageNavigationRequest: request,
             externalNavigatorToggleCommandSerial: 2,
-            insertLinkedExcerpt: { _ in },
+            copyLinkedExcerpt: { _ in },
             onSelectionSnapshotChange: { _ in },
             onPageNavigationRequestConsumed: { _ in },
             onViewportStateChange: { _ in },
@@ -74,13 +76,17 @@ final class PDFNavigatorAndSelectionTests: XCTestCase {
 
         XCTAssertTrue(container.navigatorView.thumbnailView.pdfView === container.pdfView)
         XCTAssertTrue(container.pdfView.document === document)
+        XCTAssertEqual(container.navigatorView.thumbnailView.thumbnailSize, NSSize(width: 132, height: 176))
+        XCTAssertEqual(container.navigatorView.thumbnailView.maximumNumberOfColumns, 1)
+        XCTAssertEqual(container.navigatorView.outlineView.rowHeight, 30)
+        XCTAssertEqual(container.navigatorView.annotationTableView.rowHeight, 48)
         container.navigatorView.selectSection(.outline)
         XCTAssertNil(container.navigatorView.thumbnailView.pdfView)
         container.navigatorView.selectSection(.pages)
         XCTAssertTrue(container.navigatorView.thumbnailView.pdfView === container.pdfView)
 
         var editCallbackCount = 0
-        container.pdfView.onEdited = { _, _ in editCallbackCount += 1 }
+        container.pdfView.onEdited = { _, _, _ in editCallbackCount += 1 }
         container.prepareForDismantle()
 
         XCTAssertNil(container.navigatorView.thumbnailView.pdfView)
@@ -90,7 +96,11 @@ final class PDFNavigatorAndSelectionTests: XCTestCase {
         XCTAssertNil(container.navigatorView.annotationTableView.dataSource)
         XCTAssertNil(container.pdfView.document)
 
-        container.pdfView.onEdited(nil, Data())
+        container.pdfView.onEdited(
+            nil,
+            Data(),
+            PDFAnnotationEditCheckpoint(operationCount: 0, lastOperationID: nil)
+        )
         XCTAssertEqual(editCallbackCount, 0)
     }
 
@@ -220,20 +230,122 @@ final class PDFNavigatorAndSelectionTests: XCTestCase {
         XCTAssertEqual(container.pdfView.scaleFactor, 1.4, accuracy: 0.001)
     }
 
-    func testLiveViewportCapturePersistsPageAndZoomBeforeTerminationTeardown() throws {
+    func testCleanDiskLoadUsesExactBytesForFirstEditAndDirtyReloadNeedsNoNewBaseline() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("monknot-pdf-load-baseline-tests")
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let url = root.appendingPathComponent("Paper.pdf")
+        let sourceDocument = try makeImagePDFDocument(pageCount: 1)
+        let sourcePage = try XCTUnwrap(sourceDocument.page(at: 0))
+        sourcePage.addAnnotation(makePDFFreeTextAnnotation(
+            bounds: CGRect(x: 30, y: 40, width: 150, height: 54),
+            contents: "Editable"
+        ))
+        var exactDiskData = try XCTUnwrap(sourceDocument.dataRepresentation())
+        exactDiskData.append(Data("\n% Monknot exact-byte baseline fixture\n".utf8))
+        try exactDiskData.write(to: url)
+
+        let reparsed = try XCTUnwrap(PDFDocument(data: exactDiskData)?.dataRepresentation())
+        XCTAssertNotEqual(reparsed, exactDiskData, "Fixture must expose PDFKit reserialization drift")
+
+        let container = PDFPreviewContainerView()
+        let coordinator = PDFKitPreviewRepresentable.Coordinator()
+        container.navigatorView.attach(to: container.pdfView)
+        defer {
+            coordinator.detach()
+            container.prepareForDismantle()
+        }
+
+        XCTAssertTrue(coordinator.loadDocumentIfNeeded(
+            url,
+            dirtyData: nil,
+            contentVersion: 1,
+            in: container.pdfView,
+            navigatorView: container.navigatorView
+        ))
+        container.pdfView.reconcileEditBaselineCapture(hasDirtyData: false)
+        let loadedPage = try XCTUnwrap(container.pdfView.document?.page(at: 0))
+        let annotation = try XCTUnwrap(loadedPage.annotations.first(where: {
+            ($0.type ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/")) == "FreeText"
+        }))
+        var firstPreviousData: Data?
+        var firstDirtyData: Data?
+        container.pdfView.onEdited = { previousData, data, _ in
+            firstPreviousData = previousData
+            firstDirtyData = data
+        }
+        container.pdfView.selectFreeTextAnnotation(annotation, on: loadedPage)
+        var formatting = PDFFreeTextFormatting(annotation: annotation)
+        formatting.fontSize = 18
+        container.pdfView.applyFreeTextFormatting(formatting)
+
+        XCTAssertEqual(firstPreviousData, exactDiskData)
+        _ = try XCTUnwrap(firstDirtyData)
+
+        container.pdfView.reconcileEditBaselineCapture(hasDirtyData: true)
+        var undoPreviousData: Data?
+        var undoData: Data?
+        container.pdfView.onEdited = { previousData, data, _ in
+            undoPreviousData = previousData
+            undoData = data
+        }
+        container.pdfView.undoAnnotationEdit()
+        XCTAssertNil(undoPreviousData)
+        XCTAssertEqual(undoData, exactDiskData)
+
+        container.pdfView.reconcileEditBaselineCapture(hasDirtyData: false)
+        var redoPreviousData: Data?
+        var redoData: Data?
+        container.pdfView.onEdited = { previousData, data, _ in
+            redoPreviousData = previousData
+            redoData = data
+        }
+        container.pdfView.redoAnnotationEdit()
+        XCTAssertEqual(redoPreviousData, exactDiskData)
+        let dirtyData = try XCTUnwrap(redoData)
+
+        XCTAssertTrue(coordinator.loadDocumentIfNeeded(
+            url,
+            dirtyData: dirtyData,
+            contentVersion: 2,
+            in: container.pdfView,
+            navigatorView: container.navigatorView
+        ))
+        container.pdfView.reconcileEditBaselineCapture(hasDirtyData: true)
+        let dirtyPage = try XCTUnwrap(container.pdfView.document?.page(at: 0))
+        let dirtyAnnotation = try XCTUnwrap(dirtyPage.annotations.first(where: {
+            ($0.type ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/")) == "FreeText"
+        }))
+        var dirtyReloadPreviousData: Data?
+        container.pdfView.onEdited = { previousData, _, _ in
+            dirtyReloadPreviousData = previousData
+        }
+        container.pdfView.selectFreeTextAnnotation(dirtyAnnotation, on: dirtyPage)
+        formatting = PDFFreeTextFormatting(annotation: dirtyAnnotation)
+        formatting.fontSize = 22
+        container.pdfView.applyFreeTextFormatting(formatting)
+
+        XCTAssertNil(dirtyReloadPreviousData)
+    }
+
+    func testNavigatorPageCaptureWinsWhenCurrentDestinationLagsAndPersistsForRelaunch() throws {
         let suiteName = "MonknotPDFTerminationViewportTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let persistence = DocumentViewportStatePersistence(defaults: defaults)
         let workspaceURL = URL(fileURLWithPath: "/workspace", isDirectory: true)
         let documentID = "/workspace/Paper.pdf"
-        let pdfView = AnnotatingPDFView(frame: CGRect(x: 0, y: 0, width: 640, height: 480))
+        let pdfView = NavigatorLaggingPDFView(frame: CGRect(x: 0, y: 0, width: 640, height: 480))
         pdfView.displayMode = .singlePageContinuous
         pdfView.displayDirection = .vertical
         let document = try makeImagePDFDocument(
             pageCount: 2,
             pageSize: NSSize(width: 612, height: 792)
         )
+        let firstPage = try XCTUnwrap(document.page(at: 0))
         let secondPage = try XCTUnwrap(document.page(at: 1))
         pdfView.document = document
         pdfView.layoutDocumentView()
@@ -243,10 +355,20 @@ final class PDFNavigatorAndSelectionTests: XCTestCase {
             page: secondPage,
             at: CGPoint(x: 20, y: secondPage.bounds(for: .cropBox).maxY - 20)
         ))
+        pdfView.navigatorCurrentPage = secondPage
+        pdfView.laggingDestination = PDFDestination(
+            page: firstPage,
+            at: CGPoint(x: -500, y: firstPage.bounds(for: .cropBox).maxY)
+        )
         let bridge = PDFViewportCaptureBridge()
         bridge.attach(documentID: documentID, to: pdfView)
 
         let capture = try XCTUnwrap(bridge.capture())
+        XCTAssertEqual(PDFPageStatus(pdfView: pdfView).currentPage, 2)
+        XCTAssertTrue(pdfView.currentDestination?.page === firstPage)
+        XCTAssertEqual(capture.state.position?.pageIndex, 1)
+        let capturedPoint = try XCTUnwrap(capture.state.position?.point.point)
+        XCTAssertTrue(secondPage.bounds(for: .cropBox).contains(capturedPoint))
         persistence.save(
             [documentID: DocumentViewportState(
                 textScrollPosition: nil,
@@ -259,11 +381,15 @@ final class PDFNavigatorAndSelectionTests: XCTestCase {
             for: workspaceURL
         )
         bridge.detach(from: pdfView)
-        pdfView.prepareForDismantle()
+        pdfView.navigatorCurrentPage = nil
+        pdfView.laggingDestination = nil
+        pdfView.document = nil
 
         let restored = try XCTUnwrap(persistence.load(for: workspaceURL)[documentID]?.pdfViewportState)
         XCTAssertEqual(restored.position?.pageIndex, 1)
         XCTAssertEqual(restored.zoomMode, .fixed(scaleFactor: 1.2))
+        let restoredDestination = try XCTUnwrap(restored.position?.destination(in: document))
+        XCTAssertTrue(restoredDestination.page === secondPage)
         XCTAssertNil(bridge.capture())
     }
 
@@ -323,6 +449,15 @@ final class PDFNavigatorAndSelectionTests: XCTestCase {
         XCTAssertEqual(snapshot?.pageNumber, 2)
         XCTAssertEqual(snapshot?.text, "Second page quote")
         XCTAssertEqual(snapshot?.contentVersion, 7)
+        let expectedRanges = (0..<secondSelection.numberOfTextRanges(on: secondPage)).map {
+            secondSelection.range(at: $0, on: secondPage)
+        }
+        XCTAssertEqual(snapshot?.textRanges, expectedRanges)
+        let serializedData = try XCTUnwrap(document.dataRepresentation())
+        XCTAssertNoThrow(try PDFLinkedExcerptSourceValidator().validate(
+            XCTUnwrap(snapshot),
+            in: serializedData
+        ))
 
         let multiplePageSelection = PDFSelection(document: document)
         multiplePageSelection.add(firstSelection)
@@ -339,6 +474,42 @@ final class PDFNavigatorAndSelectionTests: XCTestCase {
         ))
     }
 
+    func testSelectionSnapshotKeepsExactDuplicateOccurrenceIdentity() throws {
+        let originalDocument = try makeTextPDFDocument(linesByPage: [
+            ["Repeated quote", "Repeated quote"]
+        ])
+        let originalPage = try XCTUnwrap(originalDocument.page(at: 0))
+        let pageText = try XCTUnwrap(originalPage.string) as NSString
+        let firstRange = pageText.range(of: "Repeated quote")
+        guard firstRange.location != NSNotFound else {
+            return XCTFail("Expected the first duplicate in extracted PDF text")
+        }
+        let remainingRange = NSRange(
+            location: NSMaxRange(firstRange),
+            length: pageText.length - NSMaxRange(firstRange)
+        )
+        let secondRange = pageText.range(of: "Repeated quote", options: [], range: remainingRange)
+        guard secondRange.location != NSNotFound else {
+            return XCTFail("Expected the second duplicate in extracted PDF text")
+        }
+        let secondSelection = try XCTUnwrap(originalPage.selection(for: secondRange))
+        let snapshot = try XCTUnwrap(makePDFSelectionSnapshot(
+            documentID: "/workspace/Paper.pdf",
+            document: originalDocument,
+            selection: secondSelection
+        ))
+
+        XCTAssertEqual(snapshot.textRanges, [secondRange])
+
+        let changedDocument = try makeTextPDFDocument(linesByPage: [
+            ["Repeated quote", "Replacement text"]
+        ])
+        let changedData = try XCTUnwrap(changedDocument.dataRepresentation())
+        XCTAssertThrowsError(try PDFLinkedExcerptSourceValidator().validate(snapshot, in: changedData)) {
+            XCTAssertEqual($0 as? PDFLinkedExcerptSourceValidationError, .selectionChanged)
+        }
+    }
+
     func testPageDestinationValidatesOneBasedPageNumber() throws {
         let document = try makeImagePDFDocument(pageCount: 2)
 
@@ -351,6 +522,48 @@ final class PDFNavigatorAndSelectionTests: XCTestCase {
         let secondPage = try XCTUnwrap(document.page(at: 1))
         XCTAssertTrue(destination.page === secondPage)
         XCTAssertEqual(destination.point.y, secondPage.bounds(for: .cropBox).maxY, accuracy: 0.001)
+    }
+
+    func testRootRelativeWikilinkFromNestedMarkdownResolvesPDFPageTarget() throws {
+        let root = URL(fileURLWithPath: "/workspace", isDirectory: true)
+        let source = WorkspaceDocument(
+            url: root.appendingPathComponent("notes/deep/Review.md"),
+            rootURL: root
+        )
+        let pdf = WorkspaceDocument(
+            url: root.appendingPathComponent("papers/Paper.pdf"),
+            rootURL: root
+        )
+        let markdown = "[[papers/Paper.pdf#page=4|Source: Paper.pdf, page 4]]"
+        let link = try XCTUnwrap(MarkdownWorkspaceLinkParser().links(in: markdown).first)
+
+        let resolution = MarkdownWorkspaceLinkResolver().resolve(
+            link,
+            sourceDocument: source,
+            workspaceRootURL: root,
+            documents: [source, pdf]
+        )
+
+        guard case .document(let documentID, _) = resolution else {
+            return XCTFail("Expected the root-relative wikilink to resolve inside the workspace")
+        }
+        XCTAssertEqual(documentID, pdf.id)
+        XCTAssertEqual(link.destinationComponents.fragment, "page=4")
+
+        let document = try makeImagePDFDocument(pageCount: 4)
+        let destination = try XCTUnwrap(
+            pdfPageDestination(pageNumber: 4, document: document, displayBox: .cropBox)
+        )
+        XCTAssertTrue(destination.page === document.page(at: 3))
+    }
+
+    func testPDFPageFragmentParserAcceptsOnlyStrictPositivePageNumbers() {
+        XCTAssertEqual(pdfPageNumber(from: "page=4"), 4)
+        XCTAssertNil(pdfPageNumber(from: "page=0"))
+        XCTAssertNil(pdfPageNumber(from: "page=04"))
+        XCTAssertNil(pdfPageNumber(from: "Page=4"))
+        XCTAssertNil(pdfPageNumber(from: "page=4&zoom=120"))
+        XCTAssertNil(pdfPageNumber(from: "page=999999999999999999999999999999999"))
     }
 
     func testViewportDestinationClampsPageAndPointToReplacementDocument() throws {
@@ -438,4 +651,18 @@ final class PDFNavigatorAndSelectionTests: XCTestCase {
         return try XCTUnwrap(PDFDocument(data: data as Data))
     }
 
+}
+
+@MainActor
+private final class NavigatorLaggingPDFView: PDFView {
+    var navigatorCurrentPage: PDFPage?
+    var laggingDestination: PDFDestination?
+
+    override var currentPage: PDFPage? {
+        navigatorCurrentPage ?? super.currentPage
+    }
+
+    override var currentDestination: PDFDestination? {
+        laggingDestination ?? super.currentDestination
+    }
 }

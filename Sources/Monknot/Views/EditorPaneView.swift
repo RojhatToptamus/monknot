@@ -1,3 +1,4 @@
+import AppKit
 import MonknotCore
 import SwiftUI
 
@@ -5,6 +6,8 @@ struct EditorPaneView: View {
     @ObservedObject var store: WorkspaceStore
     @Binding var editorMode: EditorMode
     @Binding var isSplitViewEnabled: Bool
+    @AppStorage(VisualExternalChangeReviewPreference.key)
+    private var visualExternalChangeReviewEnabled = VisualExternalChangeReviewPreference.defaultValue
     @State private var markdownCommandSerial = 0
     @State private var markdownCommandRequest: MarkdownTextEditorCommandRequest?
     @State private var splitScrollSyncLock = false
@@ -36,10 +39,11 @@ struct EditorPaneView: View {
     let bootstrapStarterWorkspace: () -> Void
     let openFolder: () -> Void
     let closeTerminal: () -> Void
+    let saveDocument: () -> Void
     let outlineItems: [MarkdownOutlineItem]
     let selectOutlineItem: (MarkdownOutlineItem) -> Void
     let onPreviewSourceJump: (MarkdownSourceLocation) -> Void
-    let insertPDFLinkedExcerpt: (PDFSelectionSnapshot) -> Void
+    let copyPDFLinkedExcerpt: (PDFSelectionSnapshot) -> Void
     let updatePDFSelectionSnapshot: (PDFSelectionSnapshot?) -> Void
     let consumePDFPageNavigationRequest: (PDFPageNavigationRequest) -> Void
     let onMarkdownSelectionChange: (MarkdownEditorSelectionSnapshot) -> Void
@@ -47,8 +51,6 @@ struct EditorPaneView: View {
     let onMarkdownImagePasteRequest: (MarkdownImagePasteRequest) -> Void
     let onMarkdownPreviewLinkRequest: (MarkdownPreviewLinkRequest) -> Void
     let onMarkdownTaskRequest: (MarkdownPreviewTaskRequest) -> Void
-    let onMarkdownTerminalPasteRequest: (MarkdownPreviewTerminalPasteRequest) -> Void
-    let onMarkdownPreviewSelectionChange: (MarkdownPreviewSelection) -> Void
 
     var body: some View {
         editorColumn
@@ -95,7 +97,8 @@ struct EditorPaneView: View {
                 ExternalDocumentReconciliationSheet(
                     store: store,
                     theme: theme,
-                    zoomScale: zoomScale
+                    zoomScale: zoomScale,
+                    saveCopy: saveExternalTextCopy
                 )
             }
     }
@@ -156,14 +159,25 @@ struct EditorPaneView: View {
                     isRemovedExternally: store.isSelectedDocumentRemovedExternally,
                     isSaving: store.isSaving,
                     documentKind: store.selectedDocument?.kind,
+                    visualReviewEnabled: visualExternalChangeReviewEnabled,
                     theme: theme,
                     zoomScale: zoomScale,
                     review: { store.prepareExternalDocumentReview() },
+                    saveTextCopy: saveExternalTextCopy,
+                    keepLocalText: {
+                        store.resolveSelectedExternalDocumentWithoutReview(.keepLocal)
+                    },
+                    useDiskText: {
+                        store.resolveSelectedExternalDocumentWithoutReview(.useDisk)
+                    },
                     reloadPDF: { store.reloadSelectedDocumentFromDisk() },
                     savePDFCopy: {
                         guard let document = store.selectedDocument,
                               document.kind == .pdf
                         else { return }
+                        pdfViewportCaptureBridge.commitActiveFreeTextEdit(
+                            documentID: document.id
+                        )
                         store.exportAnnotatedPDFCopy(for: document)
                     }
                 )
@@ -194,6 +208,32 @@ struct EditorPaneView: View {
         }
     }
 
+    private func saveExternalTextCopy() {
+        guard let document = store.selectedDocument,
+              document.capabilities.canEditText
+        else { return }
+
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        let sourceURL = document.url
+        let fileExtension = sourceURL.pathExtension
+        let baseName = sourceURL.deletingPathExtension().lastPathComponent
+        panel.nameFieldStringValue = fileExtension.isEmpty
+            ? "\(baseName) Copy"
+            : "\(baseName) Copy.\(fileExtension)"
+
+        let completion: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let destinationURL = panel.url else { return }
+            store.saveExternalDocumentCopy(to: destinationURL)
+        }
+        if let window = NSApp.keyWindow {
+            panel.beginSheetModal(for: window, completionHandler: completion)
+        } else {
+            panel.begin(completionHandler: completion)
+        }
+    }
+
     @ViewBuilder
     private func editor(for selectedDocument: WorkspaceDocument) -> some View {
         switch selectedDocument.kind {
@@ -212,6 +252,7 @@ struct EditorPaneView: View {
                 zoomScale: zoomScale,
                 saveState: store.saveState(for: selectedDocument.id),
                 dirtyData: store.dirtyPDFData(for: selectedDocument.id),
+                savedEditCheckpoint: store.pdfSavedEditCheckpoint(for: selectedDocument.id),
                 contentVersion: store.pdfContentVersion(for: selectedDocument.id),
                 viewportState: activeViewportState?.pdfViewportState,
                 viewportCaptureBridge: pdfViewportCaptureBridge,
@@ -219,22 +260,29 @@ struct EditorPaneView: View {
                 externalRedoCommandSerial: pdfRedoCommandSerial,
                 searchState: $documentSearch,
                 searchTarget: $pdfSearchTarget,
-                markEdited: { previousData, data in
+                markEdited: { previousData, data, editCheckpoint in
                     store.markPDFDocumentEdited(
                         id: selectedDocument.id,
                         previousData: previousData,
-                        data: data
+                        data: data,
+                        editCheckpoint: editCheckpoint
+                    )
+                },
+                restoreSavedEditCheckpoint: { checkpoint in
+                    store.restorePDFSavedEditCheckpoint(
+                        id: selectedDocument.id,
+                        checkpoint: checkpoint
                     )
                 },
                 reportError: { message in
                     store.reportPDFAnnotationError(message)
                 },
                 saveDocument: {
-                    store.saveSelectedFile()
+                    saveDocument()
                 },
                 pageNavigationRequest: pdfPageNavigationRequest,
                 externalNavigatorToggleCommandSerial: pdfNavigatorToggleCommandSerial,
-                insertLinkedExcerpt: insertPDFLinkedExcerpt,
+                copyLinkedExcerpt: copyPDFLinkedExcerpt,
                 onSelectionSnapshotChange: updatePDFSelectionSnapshot,
                 onPageNavigationRequestConsumed: consumePDFPageNavigationRequest,
                 onViewportStateChange: { state in
@@ -433,8 +481,6 @@ struct EditorPaneView: View {
             onSourceJump: onPreviewSourceJump,
             onLinkRequest: onMarkdownPreviewLinkRequest,
             onTaskRequest: onMarkdownTaskRequest,
-            onTerminalPasteRequest: onMarkdownTerminalPasteRequest,
-            onSelectionChange: onMarkdownPreviewSelectionChange,
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .markdownPreviewScrollPosition(position))
             },

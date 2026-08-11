@@ -422,10 +422,25 @@ public struct MarkdownWorkspaceLinkResolver: Sendable {
         let root = Self.canonicalURL(workspaceRootURL)
         let sourceURL = Self.canonicalURL(sourceDocument.url)
         guard Self.isContained(sourceURL, in: root) else { return .invalid }
+        let pageFragment = decodedFragment.flatMap { value -> Int? in
+            guard value.hasPrefix("page=") else { return nil }
+            let digits = String(value.dropFirst("page=".count))
+            guard let page = Int(digits), page > 0, String(page) == digits else { return nil }
+            return page
+        }
+        let prefersWorkspaceRoot = link.kind == .wikilink
+            && !decodedPath.hasPrefix("./")
+            && !decodedPath.hasPrefix("../")
+            && (decodedPath as NSString).pathExtension.lowercased() == "pdf"
+            && components.query == nil
+            && pageFragment != nil
 
         var candidates: [URL] = []
         if decodedPath.hasPrefix("/") {
             candidates.append(root.appendingPathComponent(String(decodedPath.drop(while: { $0 == "/" }))))
+        } else if prefersWorkspaceRoot {
+            candidates.append(root.appendingPathComponent(decodedPath))
+            candidates.append(sourceURL.deletingLastPathComponent().appendingPathComponent(decodedPath))
         } else {
             candidates.append(sourceURL.deletingLastPathComponent().appendingPathComponent(decodedPath))
             candidates.append(root.appendingPathComponent(decodedPath))
@@ -435,6 +450,9 @@ public struct MarkdownWorkspaceLinkResolver: Sendable {
                 let suffix = ".\(fileExtension)"
                 if decodedPath.hasPrefix("/") {
                     candidates.append(root.appendingPathComponent(String(decodedPath.drop(while: { $0 == "/" })) + suffix))
+                } else if prefersWorkspaceRoot {
+                    candidates.append(root.appendingPathComponent(decodedPath + suffix))
+                    candidates.append(sourceURL.deletingLastPathComponent().appendingPathComponent(decodedPath + suffix))
                 } else {
                     candidates.append(sourceURL.deletingLastPathComponent().appendingPathComponent(decodedPath + suffix))
                     candidates.append(root.appendingPathComponent(decodedPath + suffix))
@@ -620,6 +638,41 @@ public enum MarkdownHeadingFragment {
 
     private static func replacing(_ pattern: String, in value: String, with template: String) -> String {
         value.replacingOccurrences(of: pattern, with: template, options: .regularExpression)
+    }
+}
+
+public enum MarkdownSourceLocationValidator {
+    public static func validated(
+        _ location: MarkdownSourceLocation,
+        in text: String
+    ) -> MarkdownSourceLocation? {
+        guard location.line > 0, location.offset >= 0 else { return nil }
+
+        let source = text as NSString
+        var currentLine = 1
+        var lineStart = 0
+        while currentLine < location.line, lineStart < source.length {
+            let range = source.lineRange(for: NSRange(location: lineStart, length: 0))
+            let next = NSMaxRange(range)
+            guard next > lineStart else { return nil }
+            lineStart = next
+            currentLine += 1
+        }
+        guard currentLine == location.line,
+              location.line == 1 || lineStart < source.length
+        else { return nil }
+
+        let lineRange = source.lineRange(
+            for: NSRange(location: min(lineStart, source.length), length: 0)
+        )
+        var contentEnd = min(NSMaxRange(lineRange), source.length)
+        while contentEnd > lineStart {
+            let character = source.character(at: contentEnd - 1)
+            guard character == 0x0A || character == 0x0D else { break }
+            contentEnd -= 1
+        }
+        guard location.offset <= contentEnd - lineStart else { return nil }
+        return location
     }
 }
 

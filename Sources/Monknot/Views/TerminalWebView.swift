@@ -10,24 +10,9 @@ struct TerminalWebView: NSViewRepresentable {
     let fontSize: CGFloat
     let usePointerCursors: Bool
     let fontSmoothing: Bool
-    let workspaceURL: URL?
-    let workspaceDocumentURLs: [URL]
-    let consumeInsertionRequest: (UInt64) -> Bool
-    let openFileReference: (ResolvedTerminalFileReference) -> Void
-    let reportInteractionError: (String) -> Void
-    let insertionOutcome: (TerminalInsertionRequest, TerminalInsertionOutcome) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(
-            session: session,
-            workspaceURL: workspaceURL,
-            workspaceDocumentURLs: workspaceDocumentURLs,
-            insertionRequest: session.insertionRequest,
-            consumeInsertionRequest: consumeInsertionRequest,
-            openFileReference: openFileReference,
-            reportInteractionError: reportInteractionError,
-            insertionOutcome: insertionOutcome
-        )
+        Coordinator(session: session)
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -35,7 +20,6 @@ struct TerminalWebView: NSViewRepresentable {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.userContentController.add(context.coordinator, name: Coordinator.inputHandlerName)
         configuration.userContentController.add(context.coordinator, name: Coordinator.resizeHandlerName)
-        configuration.userContentController.add(context.coordinator, name: Coordinator.pathHandlerName)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -56,15 +40,6 @@ struct TerminalWebView: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         Self.configureBackground(of: webView, theme: theme)
-        context.coordinator.updateInteractionConfiguration(
-            workspaceURL: workspaceURL,
-            workspaceDocumentURLs: workspaceDocumentURLs,
-            insertionRequest: session.insertionRequest,
-            consumeInsertionRequest: consumeInsertionRequest,
-            openFileReference: openFileReference,
-            reportInteractionError: reportInteractionError,
-            insertionOutcome: insertionOutcome
-        )
         if context.coordinator.session !== session {
             context.coordinator.switchSession(to: session)
         }
@@ -75,7 +50,6 @@ struct TerminalWebView: NSViewRepresentable {
             fontSmoothing: fontSmoothing
         )
         context.coordinator.render(transcript: session.transcript)
-        context.coordinator.applyPendingInsertion()
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
@@ -83,7 +57,6 @@ struct TerminalWebView: NSViewRepresentable {
         webView.navigationDelegate = nil
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.inputHandlerName)
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.resizeHandlerName)
-        webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.pathHandlerName)
         coordinator.finishDismantle()
     }
 
@@ -258,75 +231,9 @@ struct TerminalWebView: NSViewRepresentable {
             postResize({ preserveScroll: true });
           };
 
-          window.monknotPaste = function(data) {
-            if (disposed || typeof data !== 'string') return 'unavailable';
-            if (/[\\x00-\\x08\\x0B-\\x1F\\x7F]/.test(data)) return 'unavailable';
-            if (data.includes('\\n') && !term.modes.bracketedPasteMode) {
-              return 'bracketedPasteRequired';
-            }
-            term.paste(data);
-            term.focus();
-            return 'inserted';
-          };
-
-          function cellRange(line, startIndex, endIndex) {
-            let stringIndex = 0;
-            let startCell = null;
-            let endCell = null;
-            for (let x = 0; x < line.length; x += 1) {
-              const cell = line.getCell(x);
-              if (!cell || cell.getWidth() === 0) continue;
-              const characterLength = (cell.getChars() || ' ').length;
-              if (startCell === null && stringIndex >= startIndex) {
-                startCell = x + 1;
-              }
-              stringIndex += characterLength;
-              if (stringIndex >= endIndex) {
-                endCell = x + Math.max(1, cell.getWidth());
-                break;
-              }
-            }
-            if (startCell === null || endCell === null) return null;
-            return { startCell, endCell };
-          }
-
-          function linksForLine(bufferLineNumber) {
-            if (disposed) return undefined;
-            const line = term.buffer.active.getLine(bufferLineNumber - 1);
-            if (!line) return undefined;
-            const text = line.translateToString(true);
-            const expression = /(^|[\\s(\\[{])((?:"[^"\\r\\n]+"|'[^'\\r\\n]+'|[^\\s"'<>()[\\]{}]+):[1-9]\\d*(?::[1-9]\\d*)?)(?=$|[\\s,:;)\\]}])/g;
-            const links = [];
-            let match;
-            while ((match = expression.exec(text)) !== null) {
-              const candidate = match[2];
-              const startIndex = match.index + match[1].length;
-              const range = cellRange(line, startIndex, startIndex + candidate.length);
-              if (!range) continue;
-              links.push({
-                text: candidate,
-                range: {
-                  start: { x: range.startCell, y: bufferLineNumber },
-                  end: { x: range.endCell, y: bufferLineNumber }
-                },
-                activate: (event, value) => {
-                  if (!disposed && event.metaKey) {
-                    window.webkit.messageHandlers.\(Coordinator.pathHandlerName).postMessage(value);
-                  }
-                }
-              });
-            }
-            return links.length > 0 ? links : undefined;
-          }
-
           const inputDisposable = term.onData(data => {
             if (!disposed) {
               window.webkit.messageHandlers.\(Coordinator.inputHandlerName).postMessage(data);
-            }
-          });
-          const pathLinkDisposable = term.registerLinkProvider({
-            provideLinks: (bufferLineNumber, callback) => {
-              callback(linksForLine(bufferLineNumber));
             }
           });
           const resizeListener = () => scheduleResize({ preserveScroll: true });
@@ -345,7 +252,6 @@ struct TerminalWebView: NSViewRepresentable {
             resizeObserver.disconnect();
             window.removeEventListener('resize', resizeListener);
             inputDisposable.dispose();
-            pathLinkDisposable.dispose();
             if (typeof fitAddon.dispose === 'function') fitAddon.dispose();
             term.dispose();
           };
@@ -402,75 +308,28 @@ struct TerminalWebView: NSViewRepresentable {
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         static let inputHandlerName = "terminalInput"
         static let resizeHandlerName = "terminalResize"
-        static let pathHandlerName = "terminalPath"
 
         var session: TerminalSessionStore
         weak var webView: WKWebView?
         private var isLoaded = false
         private var renderedTranscript = ""
         private var lastAppearance: TerminalAppearance?
-        private var workspaceURL: URL?
-        private var workspaceDocumentURLs: [URL]
-        private var insertionRequest: TerminalInsertionRequest?
-        private var consumeInsertionRequest: (UInt64) -> Bool
-        private var openFileReference: (ResolvedTerminalFileReference) -> Void
-        private var reportInteractionError: (String) -> Void
-        private var insertionOutcome: (TerminalInsertionRequest, TerminalInsertionOutcome) -> Void
-        private var lastAttemptedInsertionSerial: UInt64?
-
-        init(
-            session: TerminalSessionStore,
-            workspaceURL: URL? = nil,
-            workspaceDocumentURLs: [URL] = [],
-            insertionRequest: TerminalInsertionRequest? = nil,
-            consumeInsertionRequest: @escaping (UInt64) -> Bool = { _ in false },
-            openFileReference: @escaping (ResolvedTerminalFileReference) -> Void = { _ in },
-            reportInteractionError: @escaping (String) -> Void = { _ in },
-            insertionOutcome: @escaping (TerminalInsertionRequest, TerminalInsertionOutcome) -> Void = { _, _ in }
-        ) {
+        init(session: TerminalSessionStore) {
             self.session = session
-            self.workspaceURL = workspaceURL
-            self.workspaceDocumentURLs = workspaceDocumentURLs
-            self.insertionRequest = insertionRequest
-            self.consumeInsertionRequest = consumeInsertionRequest
-            self.openFileReference = openFileReference
-            self.reportInteractionError = reportInteractionError
-            self.insertionOutcome = insertionOutcome
-        }
-
-        func updateInteractionConfiguration(
-            workspaceURL: URL?,
-            workspaceDocumentURLs: [URL],
-            insertionRequest: TerminalInsertionRequest?,
-            consumeInsertionRequest: @escaping (UInt64) -> Bool,
-            openFileReference: @escaping (ResolvedTerminalFileReference) -> Void,
-            reportInteractionError: @escaping (String) -> Void,
-            insertionOutcome: @escaping (TerminalInsertionRequest, TerminalInsertionOutcome) -> Void
-        ) {
-            self.workspaceURL = workspaceURL
-            self.workspaceDocumentURLs = workspaceDocumentURLs
-            self.insertionRequest = insertionRequest
-            self.consumeInsertionRequest = consumeInsertionRequest
-            self.openFileReference = openFileReference
-            self.reportInteractionError = reportInteractionError
-            self.insertionOutcome = insertionOutcome
         }
 
         func switchSession(to session: TerminalSessionStore) {
             self.session = session
             renderedTranscript = ""
-            lastAttemptedInsertionSerial = nil
             guard isLoaded, let webView else { return }
             evaluate("window.monknotReset && window.monknotReset();", in: webView)
             render(transcript: session.transcript)
-            applyPendingInsertion()
             focus()
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             isLoaded = true
             render(transcript: session.transcript)
-            applyPendingInsertion()
             DispatchQueue.main.async {
                 guard !webView.isHiddenOrHasHiddenAncestor,
                       let window = webView.window,
@@ -491,54 +350,8 @@ struct TerminalWebView: NSViewRepresentable {
                    let rows = payload["rows"] as? Int {
                     session.resize(columns: columns, rows: rows)
                 }
-            case Self.pathHandlerName:
-                if let candidate = message.body as? String {
-                    openTerminalPath(candidate)
-                }
             default:
                 break
-            }
-        }
-
-        func applyPendingInsertion() {
-            guard isLoaded,
-                  let webView,
-                  let request = insertionRequest,
-                  request.serial != lastAttemptedInsertionSerial,
-                  let json = Self.jsonLiteral(request.text)
-            else {
-                return
-            }
-
-            guard consumeInsertionRequest(request.serial) else {
-                lastAttemptedInsertionSerial = request.serial
-                return
-            }
-            lastAttemptedInsertionSerial = request.serial
-            let script = "window.monknotPaste ? window.monknotPaste(\(json)) : 'unavailable';"
-            webView.evaluateJavaScript(script) { [weak self] result, error in
-                guard let self else { return }
-                let outcome: TerminalInsertionOutcome
-                if error != nil {
-                    outcome = .unavailable
-                } else if let result = result as? String,
-                          let parsedOutcome = TerminalInsertionOutcome(rawValue: result) {
-                    outcome = parsedOutcome
-                } else {
-                    outcome = .unavailable
-                }
-
-                self.insertionOutcome(request, outcome)
-                switch outcome {
-                case .inserted:
-                    break
-                case .bracketedPasteRequired:
-                    self.reportInteractionError(
-                        "Multiline text was not inserted because this terminal is not using bracketed paste."
-                    )
-                case .unavailable:
-                    self.reportInteractionError("Could not insert text into the terminal.")
-                }
             }
         }
 
@@ -552,13 +365,6 @@ struct TerminalWebView: NSViewRepresentable {
 
         func finishDismantle() {
             webView = nil
-            insertionRequest = nil
-            workspaceURL = nil
-            workspaceDocumentURLs = []
-            consumeInsertionRequest = { _ in false }
-            openFileReference = { _ in }
-            reportInteractionError = { _ in }
-            insertionOutcome = { _, _ in }
         }
 
         func render(transcript: String) {
@@ -627,28 +433,6 @@ struct TerminalWebView: NSViewRepresentable {
         func focus() {
             guard isLoaded, let webView else { return }
             evaluate("window.monknotFocus && window.monknotFocus();", in: webView)
-        }
-
-        private func openTerminalPath(_ candidate: String) {
-            guard let workspaceURL else {
-                reportInteractionError("Open a workspace before following terminal paths.")
-                return
-            }
-            guard let reference = TerminalFileReferenceParser.parse(candidate) else {
-                reportInteractionError("The terminal path is not valid.")
-                return
-            }
-
-            do {
-                let resolved = try TerminalWorkspacePathResolver.resolve(
-                    reference,
-                    workspaceURL: workspaceURL,
-                    knownDocumentURLs: workspaceDocumentURLs
-                )
-                openFileReference(resolved)
-            } catch {
-                reportInteractionError(error.localizedDescription)
-            }
         }
 
         private func write(_ text: String, in webView: WKWebView) {

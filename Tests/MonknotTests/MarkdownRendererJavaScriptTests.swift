@@ -181,7 +181,7 @@ final class MarkdownRendererJavaScriptTests: XCTestCase {
         XCTAssertTrue(html.contains(#"<li data-source-line="4" class="task-list-item">"#))
     }
 
-    func testFencedCodeOffersPasteIntoTerminalWithoutEmbeddingExecutableBehavior() throws {
+    func testFencedCodeRendersCompleteSelectableBlockWithoutTerminalAction() throws {
         let html = try renderMarkdown(
             """
             ```sh
@@ -190,9 +190,11 @@ final class MarkdownRendererJavaScriptTests: XCTestCase {
             """
         )
 
-        XCTAssertTrue(html.contains(#"type="button" class="monknot-code-terminal-action" data-monknot-paste-code"#))
-        XCTAssertTrue(html.contains(">Paste into Terminal</button>"))
-        XCTAssertFalse(html.contains("onclick="))
+        XCTAssertTrue(html.contains(#"<pre data-source-line="1"><code class="language-sh">printf "#))
+        XCTAssertTrue(html.contains("safe"))
+        XCTAssertFalse(html.contains("data-monknot-paste-code"))
+        XCTAssertFalse(html.contains("Paste into Terminal"))
+        XCTAssertFalse(html.contains("monknot-code-terminal-action"))
     }
 
     func testExportedHeadingNormalizerMatchesCoreNormalizer() throws {

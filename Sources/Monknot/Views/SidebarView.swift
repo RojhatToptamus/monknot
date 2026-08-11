@@ -13,7 +13,7 @@ struct SidebarView: View {
     let exportPDF: (WorkspaceDocument) -> Void
     let openDocument: (String) -> Void
     let openWorkspaceSearchResult: (WorkspaceSearchResult) -> Void
-    let insertPathIntoTerminal: (URL) -> Void
+    let copyRelativePath: (URL) -> Void
     @State private var isDropTargeted = false
     @State private var expandedFolderIDs: Set<String> = []
     @State private var sidebarPrompt: SidebarNamePrompt?
@@ -216,7 +216,7 @@ struct SidebarView: View {
                                         createFileInFolder: beginCreateFile(in:),
                                         createFolderInFolder: beginCreateFolder(in:),
                                         copyFolderPath: copyPath(_:),
-                                        insertFolderPathIntoTerminal: insertPathIntoTerminal,
+                                        copyFolderRelativePath: copyRelativePath,
                                         revealFolderInFinder: revealInFinder(_:),
                                         renameFolder: beginRenameFolder(_:),
                                         isMoveSource: draggedSidebarNodeID == visibleNode.id,
@@ -225,7 +225,7 @@ struct SidebarView: View {
                                         dragEnded: handleSidebarNodeDragEnded(id:location:),
                                         renameDocument: beginRename(_:),
                                         copyPath: copyPath(_:),
-                                        insertPathIntoTerminal: { insertPathIntoTerminal($0.url) },
+                                        copyRelativePath: { copyRelativePath($0.url) },
                                         revealInFinder: revealInFinder(_:),
                                         exportPDF: exportPDF,
                                         copyDocument: copyDocument(_:),
@@ -801,7 +801,7 @@ private struct SidebarNodeRow: View {
     let createFileInFolder: (URL) -> Void
     let createFolderInFolder: (URL) -> Void
     let copyFolderPath: (URL) -> Void
-    let insertFolderPathIntoTerminal: (URL) -> Void
+    let copyFolderRelativePath: (URL) -> Void
     let revealFolderInFinder: (URL) -> Void
     let renameFolder: (SidebarNode) -> Void
     let isMoveSource: Bool
@@ -810,7 +810,7 @@ private struct SidebarNodeRow: View {
     let dragEnded: (String, CGPoint) -> Void
     let renameDocument: (WorkspaceDocument) -> Void
     let copyPath: (WorkspaceDocument) -> Void
-    let insertPathIntoTerminal: (WorkspaceDocument) -> Void
+    let copyRelativePath: (WorkspaceDocument) -> Void
     let revealInFinder: (WorkspaceDocument) -> Void
     let exportPDF: (WorkspaceDocument) -> Void
     let copyDocument: (WorkspaceDocument) -> Void
@@ -1027,9 +1027,9 @@ private struct SidebarNodeRow: View {
         }
 
         Button {
-            insertFolderPathIntoTerminal(targetNode.url)
+            copyFolderRelativePath(targetNode.url)
         } label: {
-            Label("Insert Path in Terminal", systemImage: "terminal")
+            Label("Copy Relative Path", systemImage: "doc.on.doc")
         }
 
         Button {
@@ -1054,9 +1054,9 @@ private struct SidebarNodeRow: View {
         }
 
         Button {
-            insertPathIntoTerminal(document)
+            copyRelativePath(document)
         } label: {
-            Label("Insert Path in Terminal", systemImage: "terminal")
+            Label("Copy Relative Path", systemImage: "doc.on.doc")
         }
 
         Button {

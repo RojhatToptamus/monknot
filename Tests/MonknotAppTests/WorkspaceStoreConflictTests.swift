@@ -4,6 +4,57 @@ import MonknotCore
 
 @MainActor
 final class WorkspaceStoreConflictTests: XCTestCase {
+    func testVisualExternalChangeReviewPreferenceDefaultsOn() {
+        XCTAssertEqual(
+            VisualExternalChangeReviewPreference.key,
+            "Monknot.visualExternalChangeReview"
+        )
+        XCTAssertTrue(VisualExternalChangeReviewPreference.defaultValue)
+    }
+
+    func testExternalReviewDoesNotReportConflictForProvenOneSidedChange() {
+        let baseline = "head\nbody\n"
+        let review = ExternalDocumentReconciliationService.review(
+            baselineText: baseline,
+            localText: "local head\nbody\n",
+            diskRevision: WorkspaceTextRevision(
+                text: baseline,
+                signature: WorkspaceFileSignature(modificationDate: nil, fileSize: nil)
+            )
+        )
+        let state = ExternalDocumentReviewState(
+            documentID: "/workspace/Note.md",
+            displayName: "Note.md",
+            review: review,
+            diskToMineDiff: nil
+        )
+
+        XCTAssertEqual(review.mergedText, review.localText)
+        XCTAssertFalse(state.canMerge)
+        XCTAssertFalse(state.hasMergeConflict)
+    }
+
+    func testExternalReviewReportsConflictOnlyForOverlappingChanges() {
+        let review = ExternalDocumentReconciliationService.review(
+            baselineText: "value\n",
+            localText: "mine\n",
+            diskRevision: WorkspaceTextRevision(
+                text: "theirs\n",
+                signature: WorkspaceFileSignature(modificationDate: nil, fileSize: nil)
+            )
+        )
+        let state = ExternalDocumentReviewState(
+            documentID: "/workspace/Note.md",
+            displayName: "Note.md",
+            review: review,
+            diskToMineDiff: nil
+        )
+
+        XCTAssertNil(review.mergedText)
+        XCTAssertFalse(state.canMerge)
+        XCTAssertTrue(state.hasMergeConflict)
+    }
+
     func testStarterWorkspaceEligibilityWaitsForCompletedEmptyWorkspaceScan() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -506,6 +557,9 @@ final class WorkspaceStoreConflictTests: XCTestCase {
         XCTAssertEqual(store.externalDocumentReview?.review.localText, local)
         XCTAssertEqual(store.externalDocumentReview?.review.diskText, disk)
         XCTAssertEqual(store.externalDocumentReview?.review.mergedText, "local head\nbody\ndisk tail\n")
+        let diffLines = try XCTUnwrap(store.externalDocumentReview?.diskToMineDiff).hunks.flatMap(\.lines)
+        XCTAssertTrue(diffLines.contains { $0.kind == .removal && $0.text == "disk tail" })
+        XCTAssertTrue(diffLines.contains { $0.kind == .addition && $0.text == "local head" })
 
         store.resolveExternalDocumentReview(.merge)
         _ = await waitUntil { store.externalDocumentReview == nil }
@@ -564,6 +618,137 @@ final class WorkspaceStoreConflictTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8), "external\n")
         XCTAssertTrue(store.selectedDocumentExternalChange)
         XCTAssertTrue(store.hasUnsavedChanges)
+    }
+
+    func testExternalReviewSaveCopyWritesLocalTextRefreshesWorkspaceAndKeepsConflictOpen() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (store, sourceURL) = try await makeConflictedStore(in: root)
+        store.prepareExternalDocumentReview()
+        let didPrepareReview = await waitUntil { store.externalDocumentReview != nil }
+        XCTAssertTrue(didPrepareReview)
+
+        let destinationURL = root.appendingPathComponent("Note Local Copy.md")
+        store.saveExternalDocumentCopy(to: destinationURL)
+
+        let didRefreshWorkspace = await waitUntil(timeout: 8) {
+            store.documents.contains { $0.url == destinationURL.standardizedFileURL }
+        }
+        XCTAssertTrue(didRefreshWorkspace)
+        XCTAssertEqual(try String(contentsOf: destinationURL, encoding: .utf8), "local\n")
+        XCTAssertEqual(try String(contentsOf: sourceURL, encoding: .utf8), "disk\n")
+        XCTAssertTrue(store.selectedDocumentExternalChange)
+        XCTAssertNotNil(store.externalDocumentReview)
+        XCTAssertTrue(store.hasUnsavedChanges)
+    }
+
+    func testExternalReviewSaveCopyRefreshesStaleDiskBeforeWritingDestination() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (store, sourceURL) = try await makeConflictedStore(in: root)
+        store.prepareExternalDocumentReview()
+        let didPrepareReview = await waitUntil {
+            store.externalDocumentReview?.review.diskText == "disk\n"
+        }
+        XCTAssertTrue(didPrepareReview)
+
+        try "newer disk\n".write(to: sourceURL, atomically: true, encoding: .utf8)
+        let destinationURL = root.appendingPathComponent("Should Not Exist.md")
+        store.saveExternalDocumentCopy(to: destinationURL)
+
+        let didRefreshReview = await waitUntil {
+            store.externalDocumentReview?.review.diskText == "newer disk\n"
+        }
+        XCTAssertTrue(didRefreshReview)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destinationURL.path))
+        XCTAssertEqual(store.documentText, "local\n")
+        XCTAssertTrue(store.selectedDocumentExternalChange)
+        XCTAssertTrue(store.errorMessage?.localizedCaseInsensitiveContains("refreshed") == true)
+    }
+
+    func testExternalReviewSaveCopyRejectsCanonicalSourcePath() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (store, sourceURL) = try await makeConflictedStore(in: root)
+        let canonicalAlias = root
+            .appendingPathComponent("Nested", isDirectory: true)
+            .appendingPathComponent("..", isDirectory: true)
+            .appendingPathComponent(sourceURL.lastPathComponent)
+
+        store.saveExternalDocumentCopy(to: canonicalAlias)
+
+        XCTAssertEqual(try String(contentsOf: sourceURL, encoding: .utf8), "disk\n")
+        XCTAssertTrue(store.selectedDocumentExternalChange)
+        XCTAssertTrue(store.errorMessage?.localizedCaseInsensitiveContains("different location") == true)
+    }
+
+    func testExternalReviewSaveCopyRejectsSymlinkAliasToSource() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (store, sourceURL) = try await makeConflictedStore(in: root)
+        let aliasURL = root.appendingPathComponent("Source Alias.md")
+        try FileManager.default.createSymbolicLink(at: aliasURL, withDestinationURL: sourceURL)
+
+        store.saveExternalDocumentCopy(to: aliasURL)
+
+        XCTAssertEqual(try String(contentsOf: sourceURL, encoding: .utf8), "disk\n")
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: aliasURL.path), sourceURL.path)
+        XCTAssertTrue(store.selectedDocumentExternalChange)
+        XCTAssertTrue(store.errorMessage?.localizedCaseInsensitiveContains("different location") == true)
+    }
+
+    func testExternalReviewSaveCopyRejectsHardLinkAliasToSource() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (store, sourceURL) = try await makeConflictedStore(in: root)
+        let aliasURL = root.appendingPathComponent("Source Hard Link.md")
+        try FileManager.default.linkItem(at: sourceURL, to: aliasURL)
+
+        store.saveExternalDocumentCopy(to: aliasURL)
+
+        XCTAssertEqual(try String(contentsOf: sourceURL, encoding: .utf8), "disk\n")
+        XCTAssertEqual(try String(contentsOf: aliasURL, encoding: .utf8), "disk\n")
+        XCTAssertTrue(store.selectedDocumentExternalChange)
+        XCTAssertTrue(store.errorMessage?.localizedCaseInsensitiveContains("different location") == true)
+    }
+
+    func testMinimalExternalReviewKeepMineRebasesExpectationWithoutOpeningReview() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (store, sourceURL) = try await makeConflictedStore(in: root)
+
+        store.resolveSelectedExternalDocumentWithoutReview(.keepLocal)
+        let didResolve = await waitUntil {
+            !store.selectedDocumentExternalChange && store.hasUnsavedChanges
+        }
+
+        XCTAssertTrue(didResolve)
+        XCTAssertNil(store.externalDocumentReview)
+        XCTAssertEqual(store.documentText, "local\n")
+        XCTAssertEqual(try String(contentsOf: sourceURL, encoding: .utf8), "disk\n")
+
+        store.saveSelectedFile()
+        let didSave = await waitForSave(store)
+        XCTAssertTrue(didSave)
+        XCTAssertEqual(try String(contentsOf: sourceURL, encoding: .utf8), "local\n")
+        XCTAssertFalse(store.hasUnsavedChanges)
+    }
+
+    func testMinimalExternalReviewUseDiskReadsLatestVersionWithoutOpeningReview() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (store, sourceURL) = try await makeConflictedStore(in: root)
+        try "newest disk\n".write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        store.resolveSelectedExternalDocumentWithoutReview(.useDisk)
+        let didResolve = await waitUntil {
+            !store.selectedDocumentExternalChange && !store.hasUnsavedChanges
+        }
+
+        XCTAssertTrue(didResolve)
+        XCTAssertNil(store.externalDocumentReview)
+        XCTAssertEqual(store.documentText, "newest disk\n")
+        XCTAssertEqual(try String(contentsOf: sourceURL, encoding: .utf8), "newest disk\n")
     }
 
     func testCancellingExternalReviewLeavesLocalAndDiskVersionsUnchanged() async throws {
@@ -660,6 +845,37 @@ final class WorkspaceStoreConflictTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
         return condition()
+    }
+
+    private func makeConflictedStore(
+        in root: URL
+    ) async throws -> (store: WorkspaceStore, sourceURL: URL) {
+        let sourceURL = root.appendingPathComponent("Note.md")
+        try "baseline\n".write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        let store = WorkspaceStore()
+        store.openWorkspace(root)
+        let didOpen = await waitUntil { !store.isBusy && !store.isDocumentLoading }
+        guard didOpen else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        store.setDocumentText("local\n")
+        try "disk\n".write(to: sourceURL, atomically: false, encoding: .utf8)
+        store.testing_clearWatcherSuppression()
+        store.refresh()
+        let didDetectConflict = await waitUntil(timeout: 8) {
+            store.selectedDocumentExternalChange
+        }
+        guard didDetectConflict else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        return (store, sourceURL)
+    }
+
+    private func waitForSave(_ store: WorkspaceStore) async -> Bool {
+        let didStart = await waitUntil { store.isSaving }
+        guard didStart else { return false }
+        return await waitUntil { !store.isSaving }
     }
 
     private func makeTemporaryDirectory() throws -> URL {

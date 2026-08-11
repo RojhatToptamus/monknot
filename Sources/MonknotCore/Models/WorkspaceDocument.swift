@@ -70,6 +70,26 @@ public struct WorkspaceDocument: Identifiable, Hashable, Codable, Sendable {
 }
 
 public enum WorkspaceDocumentSupport {
+    public enum RelativePathValidationError: Error, Equatable, LocalizedError, Sendable {
+        case workspaceUnavailable
+        case itemUnavailable
+        case workspaceRoot
+        case outsideWorkspace
+
+        public var errorDescription: String? {
+            switch self {
+            case .workspaceUnavailable:
+                return "The workspace folder is no longer available."
+            case .itemUnavailable:
+                return "The item is no longer available."
+            case .workspaceRoot:
+                return "The workspace root does not have a relative path."
+            case .outsideWorkspace:
+                return "The item is outside the current workspace."
+            }
+        }
+    }
+
     public struct Classification: Equatable, Sendable {
         public let kind: WorkspaceDocumentKind
         public let contentTypeIdentifier: String?
@@ -305,5 +325,57 @@ public enum WorkspaceDocumentSupport {
         }
 
         return String(filePath.dropFirst(prefix.count))
+    }
+
+    /// Returns a current, workspace-contained POSIX path for a file or folder.
+    /// Unlike `relativePath(for:in:)`, this rejects stale and out-of-workspace URLs.
+    public static func validatedRelativePath(
+        for url: URL,
+        in rootURL: URL,
+        fileManager: FileManager = .default
+    ) throws -> String {
+        let standardizedRootURL = rootURL.standardizedFileURL
+        var rootIsDirectory: ObjCBool = false
+        guard fileManager.fileExists(
+            atPath: standardizedRootURL.path,
+            isDirectory: &rootIsDirectory
+        ), rootIsDirectory.boolValue else {
+            throw RelativePathValidationError.workspaceUnavailable
+        }
+
+        let standardizedURL = url.standardizedFileURL
+        guard fileManager.fileExists(atPath: standardizedURL.path) else {
+            throw RelativePathValidationError.itemUnavailable
+        }
+
+        let itemValues: URLResourceValues
+        do {
+            itemValues = try standardizedURL.resourceValues(
+                forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]
+            )
+        } catch {
+            throw RelativePathValidationError.itemUnavailable
+        }
+        guard itemValues.isSymbolicLink != true,
+              itemValues.isDirectory == true || itemValues.isRegularFile == true
+        else {
+            throw RelativePathValidationError.itemUnavailable
+        }
+
+        let canonicalRootURL = standardizedRootURL.resolvingSymlinksInPath()
+        let canonicalURL = standardizedURL.resolvingSymlinksInPath()
+        let rootComponents = canonicalRootURL.pathComponents
+        let itemComponents = canonicalURL.pathComponents
+
+        guard itemComponents != rootComponents else {
+            throw RelativePathValidationError.workspaceRoot
+        }
+        guard itemComponents.count > rootComponents.count,
+              Array(itemComponents.prefix(rootComponents.count)) == rootComponents
+        else {
+            throw RelativePathValidationError.outsideWorkspace
+        }
+
+        return itemComponents.dropFirst(rootComponents.count).joined(separator: "/")
     }
 }

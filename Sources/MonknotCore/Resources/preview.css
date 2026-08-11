@@ -290,42 +290,6 @@ pre code {
   white-space: pre;
 }
 
-.monknot-code-block {
-  position: relative;
-}
-
-.monknot-code-terminal-action {
-  position: absolute;
-  z-index: 1;
-  top: 8px;
-  right: 8px;
-  padding: 4px 7px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--code-bg) 92%, var(--fg));
-  color: var(--muted);
-  font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
-  -webkit-user-select: none;
-  user-select: none;
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-
-.monknot-code-block:hover .monknot-code-terminal-action,
-.monknot-code-terminal-action:focus-visible {
-  opacity: 1;
-}
-
-.monknot-code-terminal-action:hover {
-  color: var(--fg);
-}
-
-@media print {
-  .monknot-code-terminal-action {
-    display: none;
-  }
-}
-
 .tok-keyword {
   color: var(--tok-keyword);
 }

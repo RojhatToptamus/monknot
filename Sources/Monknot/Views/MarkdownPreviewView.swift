@@ -20,22 +20,9 @@ struct MarkdownPreviewTaskRequest: Equatable {
     let desiredChecked: Bool
 }
 
-struct MarkdownPreviewTerminalPasteRequest: Equatable {
-    let identity: MarkdownPreviewRenderIdentity
-    let text: String
-    let sourceLine: Int?
-}
-
-struct MarkdownPreviewSelection: Equatable {
-    let identity: MarkdownPreviewRenderIdentity
-    let text: String
-    let sourceLine: Int?
-}
-
 enum MarkdownPreviewBridgeInteraction: Equatable {
     case link(MarkdownPreviewLinkRequest)
     case task(MarkdownPreviewTaskRequest)
-    case terminalPaste(MarkdownPreviewTerminalPasteRequest)
 }
 
 struct MarkdownPreviewView: NSViewRepresentable {
@@ -58,8 +45,6 @@ struct MarkdownPreviewView: NSViewRepresentable {
     let onVisibleSourceLineChange: ((Int) -> Void)?
     let onLinkRequest: (MarkdownPreviewLinkRequest) -> Void
     let onTaskRequest: (MarkdownPreviewTaskRequest) -> Void
-    let onTerminalPasteRequest: (MarkdownPreviewTerminalPasteRequest) -> Void
-    let onSelectionChange: (MarkdownPreviewSelection) -> Void
 
     init(
         documentID: String,
@@ -79,8 +64,6 @@ struct MarkdownPreviewView: NSViewRepresentable {
         onSourceJump: @escaping (MarkdownSourceLocation) -> Void,
         onLinkRequest: @escaping (MarkdownPreviewLinkRequest) -> Void = { _ in },
         onTaskRequest: @escaping (MarkdownPreviewTaskRequest) -> Void = { _ in },
-        onTerminalPasteRequest: @escaping (MarkdownPreviewTerminalPasteRequest) -> Void = { _ in },
-        onSelectionChange: @escaping (MarkdownPreviewSelection) -> Void = { _ in },
         onScrollPositionChange: @escaping (DocumentScrollPosition) -> Void,
         onVisibleSourceLineChange: ((Int) -> Void)?
     ) {
@@ -101,8 +84,6 @@ struct MarkdownPreviewView: NSViewRepresentable {
         self.onSourceJump = onSourceJump
         self.onLinkRequest = onLinkRequest
         self.onTaskRequest = onTaskRequest
-        self.onTerminalPasteRequest = onTerminalPasteRequest
-        self.onSelectionChange = onSelectionChange
         self.onScrollPositionChange = onScrollPositionChange
         self.onVisibleSourceLineChange = onVisibleSourceLineChange
     }
@@ -117,7 +98,6 @@ struct MarkdownPreviewView: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: Coordinator.sourceJumpHandlerName)
         configuration.userContentController.add(context.coordinator, name: Coordinator.scrollPositionHandlerName)
         configuration.userContentController.add(context.coordinator, name: Coordinator.interactionHandlerName)
-        configuration.userContentController.add(context.coordinator, name: Coordinator.selectionHandlerName)
         configuration.userContentController.addUserScript(Coordinator.scrollTrackingScript)
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -135,8 +115,6 @@ struct MarkdownPreviewView: NSViewRepresentable {
         context.coordinator.onVisibleSourceLineChange = onVisibleSourceLineChange
         context.coordinator.onLinkRequest = onLinkRequest
         context.coordinator.onTaskRequest = onTaskRequest
-        context.coordinator.onTerminalPasteRequest = onTerminalPasteRequest
-        context.coordinator.onSelectionChange = onSelectionChange
         context.coordinator.syncScrollEnabled = syncScrollEnabled
         context.coordinator.onSearchResult = { result in
             DispatchQueue.main.async {
@@ -318,7 +296,6 @@ struct MarkdownPreviewView: NSViewRepresentable {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.sourceJumpHandlerName)
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.scrollPositionHandlerName)
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.interactionHandlerName)
-        webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.selectionHandlerName)
         webView.configuration.userContentController.removeAllUserScripts()
     }
 
@@ -338,7 +315,6 @@ struct MarkdownPreviewView: NSViewRepresentable {
         static let sourceJumpHandlerName = "monknotSourceJump"
         static let scrollPositionHandlerName = "monknotScrollPosition"
         static let interactionHandlerName = "monknotInteraction"
-        static let selectionHandlerName = "monknotSelection"
         static let scrollTrackingScript = WKUserScript(
             source: """
             (() => {
@@ -382,8 +358,6 @@ struct MarkdownPreviewView: NSViewRepresentable {
         var onVisibleSourceLineChange: ((Int) -> Void)?
         var onLinkRequest: (MarkdownPreviewLinkRequest) -> Void = { _ in }
         var onTaskRequest: (MarkdownPreviewTaskRequest) -> Void = { _ in }
-        var onTerminalPasteRequest: (MarkdownPreviewTerminalPasteRequest) -> Void = { _ in }
-        var onSelectionChange: (MarkdownPreviewSelection) -> Void = { _ in }
         var syncScrollEnabled = false
         var onSearchResult: (DocumentSearchResult) -> Void = { _ in }
         var onSourceRevealConsumed: () -> Void = {}
@@ -516,8 +490,6 @@ struct MarkdownPreviewView: NSViewRepresentable {
             onSourceRevealConsumed = {}
             onLinkRequest = { _ in }
             onTaskRequest = { _ in }
-            onTerminalPasteRequest = { _ in }
-            onSelectionChange = { _ in }
         }
 
         func markShellNeedsReload() {
@@ -536,14 +508,6 @@ struct MarkdownPreviewView: NSViewRepresentable {
             activeRenderID = renderID
             scheduledRenderContent = nil
             lastSearchRequest = nil
-            onSelectionChange(MarkdownPreviewSelection(
-                identity: MarkdownPreviewRenderIdentity(
-                    documentID: request.documentID,
-                    renderID: renderID
-                ),
-                text: "",
-                sourceLine: nil
-            ))
         }
 
         fileprivate func markAppliedAppearance(_ request: PreviewAppearanceRequest) {
@@ -846,11 +810,6 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 return
             }
 
-            if message.name == Self.selectionHandlerName {
-                handleSelection(message.body)
-                return
-            }
-
             guard message.name == Self.sourceJumpHandlerName else { return }
             guard let body = message.body as? [String: Any],
                   validatedIdentity(from: body) != nil,
@@ -894,16 +853,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 onLinkRequest(request)
             case .task(let request):
                 onTaskRequest(request)
-            case .terminalPaste(let request):
-                onTerminalPasteRequest(request)
             }
-        }
-
-        private func handleSelection(_ value: Any) {
-            guard let currentIdentity,
-                  let selection = Self.bridgeSelection(from: value, expectedIdentity: currentIdentity)
-            else { return }
-            onSelectionChange(selection)
         }
 
         static func bridgeInteraction(
@@ -941,37 +891,9 @@ struct MarkdownPreviewView: NSViewRepresentable {
                     expectedChecked: expectedChecked,
                     desiredChecked: desiredChecked
                 ))
-            case "terminalPaste":
-                guard let text = body["text"] as? String,
-                      !text.isEmpty,
-                      text.utf8.count <= 1_000_000
-                else { return nil }
-                let sourceLine = integer(body["sourceLine"]).flatMap { $0 > 0 ? $0 : nil }
-                return .terminalPaste(MarkdownPreviewTerminalPasteRequest(
-                    identity: expectedIdentity,
-                    text: text,
-                    sourceLine: sourceLine
-                ))
             default:
                 return nil
             }
-        }
-
-        static func bridgeSelection(
-            from value: Any,
-            expectedIdentity: MarkdownPreviewRenderIdentity
-        ) -> MarkdownPreviewSelection? {
-            guard let body = value as? [String: Any],
-                  messageIdentity(from: body) == expectedIdentity,
-                  let text = body["text"] as? String,
-                  text.utf8.count <= 1_000_000
-            else { return nil }
-            let sourceLine = integer(body["sourceLine"]).flatMap { $0 > 0 ? $0 : nil }
-            return MarkdownPreviewSelection(
-                identity: expectedIdentity,
-                text: text,
-                sourceLine: sourceLine
-            )
         }
 
         private static func messageIdentity(from body: [String: Any]) -> MarkdownPreviewRenderIdentity? {

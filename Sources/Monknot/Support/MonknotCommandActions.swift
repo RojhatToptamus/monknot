@@ -14,13 +14,16 @@ struct MonknotCommandActions {
     let exportAnnotatedPDFCopy: () -> Void
     let canExportAnnotatedPDFCopy: Bool
     let saveDocument: () -> Void
+    let undoPDFAnnotation: () -> Void
+    let canUndoPDFAnnotation: Bool
+    let redoPDFAnnotation: () -> Void
+    let canRedoPDFAnnotation: Bool
+    let isPDFDocumentActive: Bool
     let cut: () -> Void
     let copy: () -> Void
     let copyRenderedMarkdown: () -> Void
     let canCopyRenderedMarkdown: Bool
     let paste: () -> Void
-    let pasteSelectionIntoTerminal: () -> Void
-    let canPasteSelectionIntoTerminal: Bool
     let selectAll: () -> Void
     let refreshWorkspace: () -> Void
     let navigateBack: () -> Void
@@ -47,8 +50,8 @@ struct MonknotCommandActions {
     let canToggleSplitView: Bool
     let togglePDFNavigator: () -> Void
     let canTogglePDFNavigator: Bool
-    let insertPDFLinkedExcerpt: () -> Void
-    let canInsertPDFLinkedExcerpt: Bool
+    let copyPDFLinkedExcerpt: () -> Void
+    let canCopyPDFLinkedExcerpt: Bool
     let showKeyboardShortcutsHelp: () -> Void
     let undoWorkspaceReplace: () -> Void
     let canUndoWorkspaceReplace: Bool
@@ -67,6 +70,25 @@ extension FocusedValues {
 
 struct MonknotCommandMenu: Commands {
     @FocusedValue(\.monknotCommandActions) private var actions
+
+    private var undoDestination: MonknotUndoCommandDestination {
+        monknotUndoCommandDestination(
+            isPDFDocumentActive: actions?.isPDFDocumentActive == true,
+            hasNativeEditingFocus: MonknotNativePasteboardCommand.hasNativeEditingFocus,
+            canPerformNative: MonknotNativeUndoCommand.canUndo,
+            canPerformWorkspaceReplace: actions?.canUndoWorkspaceReplace == true,
+            canPerformPDF: actions?.canUndoPDFAnnotation == true
+        )
+    }
+
+    private var redoDestination: MonknotUndoCommandDestination {
+        monknotUndoCommandDestination(
+            isPDFDocumentActive: actions?.isPDFDocumentActive == true,
+            hasNativeEditingFocus: MonknotNativePasteboardCommand.hasNativeEditingFocus,
+            canPerformNative: MonknotNativeUndoCommand.canRedo,
+            canPerformPDF: actions?.canRedoPDFAnnotation == true
+        )
+    }
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -133,6 +155,38 @@ struct MonknotCommandMenu: Commands {
             .disabled(actions == nil)
         }
 
+        CommandGroup(replacing: .undoRedo) {
+            Button("Undo") {
+                switch undoDestination {
+                case .native:
+                    _ = MonknotNativeUndoCommand.performUndoIfAvailable()
+                case .workspaceReplace:
+                    actions?.undoWorkspaceReplace()
+                case .pdf:
+                    actions?.undoPDFAnnotation()
+                case .unavailable:
+                    break
+                }
+            }
+            .keyboardShortcut("z", modifiers: [.command])
+            .disabled(undoDestination == .unavailable)
+
+            Button("Redo") {
+                switch redoDestination {
+                case .native:
+                    _ = MonknotNativeUndoCommand.performRedoIfAvailable()
+                case .workspaceReplace:
+                    break
+                case .pdf:
+                    actions?.redoPDFAnnotation()
+                case .unavailable:
+                    break
+                }
+            }
+            .keyboardShortcut("z", modifiers: [.command, .shift])
+            .disabled(redoDestination == .unavailable)
+        }
+
         CommandGroup(replacing: .pasteboard) {
             Button("Cut") {
                 if let actions {
@@ -159,6 +213,11 @@ struct MonknotCommandMenu: Commands {
             }
             .keyboardShortcut("c", modifiers: [.command, .option])
             .disabled(actions?.canCopyRenderedMarkdown != true)
+
+            Button("Copy Linked Excerpt") {
+                actions?.copyPDFLinkedExcerpt()
+            }
+            .disabled(actions?.canCopyPDFLinkedExcerpt != true)
 
             Button("Paste") {
                 if let actions {
@@ -216,17 +275,6 @@ struct MonknotCommandMenu: Commands {
                 actions?.togglePDFNavigator()
             }
             .disabled(actions?.canTogglePDFNavigator != true)
-
-            Button("Insert Linked PDF Excerpt…") {
-                actions?.insertPDFLinkedExcerpt()
-            }
-            .disabled(actions?.canInsertPDFLinkedExcerpt != true)
-
-            Button("Paste Selection into Terminal") {
-                actions?.pasteSelectionIntoTerminal()
-            }
-            .keyboardShortcut("v", modifiers: [.command, .option, .control])
-            .disabled(actions?.canPasteSelectionIntoTerminal != true)
 
             Divider()
 
@@ -325,4 +373,30 @@ struct MonknotCommandMenu: Commands {
             .disabled(actions == nil)
         }
     }
+}
+
+enum MonknotUndoCommandDestination: Equatable {
+    case native
+    case workspaceReplace
+    case pdf
+    case unavailable
+}
+
+func monknotUndoCommandDestination(
+    isPDFDocumentActive: Bool,
+    hasNativeEditingFocus: Bool,
+    canPerformNative: Bool,
+    canPerformWorkspaceReplace: Bool = false,
+    canPerformPDF: Bool
+) -> MonknotUndoCommandDestination {
+    if hasNativeEditingFocus {
+        return canPerformNative ? .native : .unavailable
+    }
+    if canPerformWorkspaceReplace {
+        return .workspaceReplace
+    }
+    if isPDFDocumentActive {
+        return canPerformPDF ? .pdf : .unavailable
+    }
+    return canPerformNative ? .native : .unavailable
 }

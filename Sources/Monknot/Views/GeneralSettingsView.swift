@@ -3,6 +3,11 @@ import MonknotCore
 import Sparkle
 import SwiftUI
 
+enum VisualExternalChangeReviewPreference {
+    static let key = "Monknot.visualExternalChangeReview"
+    static let defaultValue = true
+}
+
 @MainActor
 final class SparkleUpdateSettings: ObservableObject {
     private let updater: SPUUpdater
@@ -42,6 +47,8 @@ struct GeneralSettingsView: View {
     @StateObject private var updateSettings: SparkleUpdateSettings
     @AppStorage("Monknot.usePointerCursors") private var usePointerCursors = false
     @AppStorage("Monknot.reopenLastWorkspace") private var reopenLastWorkspace = true
+    @AppStorage(VisualExternalChangeReviewPreference.key)
+    private var visualExternalChangeReviewEnabled = VisualExternalChangeReviewPreference.defaultValue
     @AppStorage("Monknot.fontSmoothing") private var fontSmoothing = true
     @AppStorage(ContentWidthPreference.key) private var contentWidthPercent = ContentWidthPreference.initialValue()
     @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
@@ -73,6 +80,13 @@ struct GeneralSettingsView: View {
                     theme: uiTheme,
                     title: "Reopen last workspace on launch",
                     isOn: $reopenLastWorkspace
+                )
+
+                SettingsToggleRow(
+                    theme: uiTheme,
+                    title: "Visual External Change Review",
+                    detail: "Show a readable diff before reconciling text changed on disk",
+                    isOn: $visualExternalChangeReviewEnabled
                 )
 
                 SettingsToggleRow(

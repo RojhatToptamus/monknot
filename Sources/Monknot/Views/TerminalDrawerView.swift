@@ -11,11 +11,6 @@ struct TerminalDrawerView: View {
     let zoomScale: Double
     let usePointerCursors: Bool
     let fontSmoothing: Bool
-    var workspaceURL: URL? = nil
-    var workspaceDocumentURLs: [URL] = []
-    var openFileReference: (ResolvedTerminalFileReference) -> Void = { _ in }
-    var reportInteractionError: (String) -> Void = { _ in }
-    var insertionOutcome: (TerminalInsertionRequest, TerminalInsertionOutcome) -> Void = { _, _ in }
     var showsChrome = true
     let close: () -> Void
 
@@ -68,15 +63,7 @@ struct TerminalDrawerView: View {
                 theme: theme,
                 fontSize: Self.terminalFontSize(theme: theme, zoomScale: zoomScale),
                 usePointerCursors: usePointerCursors,
-                fontSmoothing: fontSmoothing,
-                workspaceURL: workspaceURL ?? workingDirectory,
-                workspaceDocumentURLs: workspaceDocumentURLs,
-                consumeInsertionRequest: { serial in
-                    session.consumeInsertionRequest(serial: serial) != nil
-                },
-                openFileReference: openFileReference,
-                reportInteractionError: reportInteractionError,
-                insertionOutcome: insertionOutcome
+                fontSmoothing: fontSmoothing
             )
             .id(sessions.activeTerminalID)
         } else {
