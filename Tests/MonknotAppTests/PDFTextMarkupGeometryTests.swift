@@ -20,7 +20,6 @@ final class PDFTextMarkupGeometryTests: XCTestCase {
         let light = pdfView.freeTextOverlayAppearance
         XCTAssertEqual(pdfView.freeTextOverlayMetrics.handleSize, 6)
         XCTAssertEqual(pdfView.freeTextOverlayMetrics.handleHitSize, 14)
-        XCTAssertEqual(pdfView.freeTextOverlayMetrics.creationDashLengths, [3, 2])
 
         coordinator.applyAppearance(
             theme: lightTheme,
@@ -29,7 +28,6 @@ final class PDFTextMarkupGeometryTests: XCTestCase {
         )
         XCTAssertEqual(pdfView.freeTextOverlayMetrics.handleSize, 8, accuracy: 0.001)
         XCTAssertEqual(pdfView.freeTextOverlayMetrics.handleHitSize, 18, accuracy: 0.001)
-        XCTAssertEqual(pdfView.freeTextOverlayMetrics.creationDashLengths, [4, 3])
 
         coordinator.applyAppearance(
             theme: darkTheme,
@@ -39,15 +37,9 @@ final class PDFTextMarkupGeometryTests: XCTestCase {
         let dark = pdfView.freeTextOverlayAppearance
         XCTAssertEqual(pdfView.freeTextOverlayMetrics.handleSize, 16, accuracy: 0.001)
         XCTAssertEqual(pdfView.freeTextOverlayMetrics.handleHitSize, 36, accuracy: 0.001)
-        XCTAssertEqual(pdfView.freeTextOverlayMetrics.creationDashLengths, [8, 6])
 
         XCTAssertTrue(light.handleColor.isEqual(NSColor(hex: lightTheme.accent)))
         XCTAssertTrue(light.handleRingColor.isEqual(NSColor(hex: lightTheme.selectionForeground)))
-        XCTAssertTrue(
-            light.creationColor.isEqual(
-                NSColor(hex: lightTheme.accent).withAlphaComponent(0.72)
-            )
-        )
         XCTAssertTrue(dark.handleColor.isEqual(NSColor(hex: darkTheme.accent)))
         XCTAssertTrue(dark.handleRingColor.isEqual(NSColor(hex: darkTheme.selectionForeground)))
         XCTAssertFalse(light.borderColor.isEqual(dark.borderColor))
@@ -66,12 +58,12 @@ final class PDFTextMarkupGeometryTests: XCTestCase {
             .drawing
         )
         XCTAssertEqual(
-            PDFAnnotationStyleDisclosure(mode: .freeText, hasSelectedText: true),
+            PDFAnnotationStyleDisclosure(mode: .select, hasSelectedText: true),
             .text
         )
         XCTAssertEqual(
-            PDFAnnotationStyleDisclosure(mode: .freeText, hasSelectedText: false),
-            .none
+            PDFAnnotationStyleDisclosure(mode: .pen, hasSelectedText: true),
+            .drawing
         )
         XCTAssertEqual(
             PDFAnnotationStyleDisclosure(mode: .eraser, hasSelectedText: true),
@@ -401,23 +393,23 @@ final class PDFTextMarkupGeometryTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(clamped.height, 24)
     }
 
-    func testFreeTextClickAndDragCreationBoundsUseProductionGeometry() {
+    func testDefaultFreeTextBoundsCenterAtRequestedPointAndClampToPage() {
         let pageBounds = CGRect(x: 40, y: 55, width: 280, height: 180)
 
-        let clickBounds = defaultPDFFreeTextBounds(
+        let centeredBounds = defaultPDFFreeTextBounds(
+            at: CGPoint(x: pageBounds.midX - 110, y: pageBounds.midY + 36),
+            pageBounds: pageBounds
+        )
+        let clampedBounds = defaultPDFFreeTextBounds(
             at: CGPoint(x: 300, y: 80),
             pageBounds: pageBounds
         )
-        let dragBounds = draggedPDFFreeTextBounds(
-            from: CGPoint(x: 260, y: 200),
-            to: CGPoint(x: 90, y: 90),
-            pageBounds: pageBounds
-        )
 
-        XCTAssertEqual(clickBounds.size, CGSize(width: 220, height: 72))
-        XCTAssertTrue(pageBounds.contains(clickBounds))
-        XCTAssertEqual(dragBounds, CGRect(x: 90, y: 90, width: 170, height: 110))
-        XCTAssertTrue(pageBounds.contains(dragBounds))
+        XCTAssertEqual(centeredBounds.size, CGSize(width: 220, height: 72))
+        XCTAssertEqual(centeredBounds.midX, pageBounds.midX, accuracy: 0.001)
+        XCTAssertEqual(centeredBounds.midY, pageBounds.midY, accuracy: 0.001)
+        XCTAssertTrue(pageBounds.contains(centeredBounds))
+        XCTAssertTrue(pageBounds.contains(clampedBounds))
     }
 
     func testFreeTextMoveAndSideResizeScaleBoundsAndFontInsideOriginalPage() {
@@ -1025,7 +1017,7 @@ final class PDFTextMarkupGeometryTests: XCTestCase {
     }
 
     @MainActor
-    func testFailedFreeTextCreationMouseUpRemovesTransientOverlay() throws {
+    func testFailedAddTextCommandDoesNotCreateTransientState() throws {
         let page = try makePage(size: NSSize(width: 320, height: 420))
         let document = PDFDocument()
         document.insert(page, at: 0)
@@ -1034,26 +1026,23 @@ final class PDFTextMarkupGeometryTests: XCTestCase {
         pdfView.autoScales = false
         pdfView.scaleFactor = 1
         pdfView.document = document
-        pdfView.annotationMode = .freeText
+        pdfView.annotationMode = .pen
         pdfView.replaceEditBaselineCapture(with: nil, needsSnapshot: false)
         pdfView.serializeDocument = { _ in nil }
         pdfView.layoutDocumentView()
+        var errors: [String] = []
+        pdfView.onError = { errors.append($0) }
 
         let initialSubviewCount = pdfView.subviews.count
-        let start = pdfView.convert(CGPoint(x: 80, y: 160), from: page)
-        let end = pdfView.convert(CGPoint(x: 200, y: 220), from: page)
-        let down = try XCTUnwrap(freeTextMouseEvent(type: .leftMouseDown, location: start))
-        let drag = try XCTUnwrap(freeTextMouseEvent(type: .leftMouseDragged, location: end))
-        let up = try XCTUnwrap(freeTextMouseEvent(type: .leftMouseUp, location: end, pressure: 0))
+        pdfView.addFreeTextBox()
 
-        pdfView.mouseDown(with: down)
-        pdfView.mouseDragged(with: drag)
-        XCTAssertEqual(pdfView.subviews.count, initialSubviewCount + 1)
-
-        pdfView.mouseUp(with: up)
-
+        XCTAssertEqual(pdfView.annotationMode, .select)
         XCTAssertEqual(pdfView.subviews.count, initialSubviewCount)
         XCTAssertTrue(page.annotations.isEmpty)
+        XCTAssertEqual(
+            errors.last,
+            "PDFKit could not prepare the annotated document."
+        )
     }
 
     @MainActor
@@ -1224,7 +1213,7 @@ final class PDFTextMarkupGeometryTests: XCTestCase {
     }
 
     @MainActor
-    func testSelectModeMovesExistingTextWhileTextModeEditsWithoutMoving() throws {
+    func testSelectModeMovesAndDoubleClickEditsExistingText() throws {
         let page = try makePage(size: NSSize(width: 320, height: 420))
         let annotation = makePDFFreeTextAnnotation(
             bounds: CGRect(x: 60, y: 100, width: 150, height: 58),
@@ -1246,20 +1235,15 @@ final class PDFTextMarkupGeometryTests: XCTestCase {
             CGPoint(x: originalBounds.midX, y: originalBounds.midY),
             from: page
         )
-        let selectDoubleClick = try XCTUnwrap(freeTextMouseEvent(
+        pdfView.mouseDown(with: try XCTUnwrap(freeTextMouseEvent(
             type: .leftMouseDown,
             location: start,
             clickCount: 2
-        ))
-        pdfView.mouseDown(with: selectDoubleClick)
-        pdfView.mouseUp(with: try XCTUnwrap(freeTextMouseEvent(
-            type: .leftMouseUp,
-            location: start,
-            pressure: 0,
-            clickCount: 2
         )))
-        XCTAssertFalse(pdfView.hasActiveFreeTextEditor)
+
+        XCTAssertTrue(pdfView.hasActiveFreeTextEditor)
         XCTAssertEqual(annotation.bounds.standardized, originalBounds)
+        XCTAssertTrue(pdfView.commitActiveFreeTextEdit())
 
         let end = CGPoint(x: start.x + 38, y: start.y + 22)
         pdfView.mouseDown(with: try XCTUnwrap(freeTextMouseEvent(type: .leftMouseDown, location: start)))
@@ -1274,46 +1258,11 @@ final class PDFTextMarkupGeometryTests: XCTestCase {
         XCTAssertNotEqual(movedBounds, originalBounds)
         XCTAssertEqual(page.annotations.count, 1)
         XCTAssertFalse(pdfView.hasActiveFreeTextEditor)
-
-        pdfView.annotationMode = .freeText
-        XCTAssertEqual(pdfView.freeTextSelectionOverlayShowsHandles, false)
-        let editPoint = pdfView.convert(
-            CGPoint(x: movedBounds.midX, y: movedBounds.midY),
-            from: page
-        )
-        pdfView.mouseDown(with: try XCTUnwrap(freeTextMouseEvent(
-            type: .leftMouseDown,
-            location: editPoint
-        )))
-
-        XCTAssertTrue(pdfView.hasActiveFreeTextEditor)
-        XCTAssertEqual(annotation.bounds.standardized, movedBounds)
-        XCTAssertEqual(page.annotations.count, 1)
-
-        let textOverlay = try XCTUnwrap(pdfView.freeTextSelectionOverlayGeometryInPDFView)
-        let handlePoint = textOverlay.maxXMidY
-        let draggedHandlePoint = CGPoint(x: handlePoint.x + 60, y: handlePoint.y)
-        pdfView.mouseDown(with: try XCTUnwrap(freeTextMouseEvent(
-            type: .leftMouseDown,
-            location: handlePoint
-        )))
-        pdfView.mouseDragged(with: try XCTUnwrap(freeTextMouseEvent(
-            type: .leftMouseDragged,
-            location: draggedHandlePoint
-        )))
-        pdfView.mouseUp(with: try XCTUnwrap(freeTextMouseEvent(
-            type: .leftMouseUp,
-            location: draggedHandlePoint,
-            pressure: 0
-        )))
-
-        XCTAssertFalse(pdfView.hasActiveFreeTextEditor)
-        XCTAssertEqual(page.annotations.count, 1, "Text mode must not turn a handle press into a new box")
-        XCTAssertEqual(annotation.bounds.standardized, movedBounds)
+        XCTAssertEqual(pdfView.annotationMode, .select)
     }
 
     @MainActor
-    func testTextModeDragCreatesOnEmptyPage() throws {
+    func testAddTextCommandSerialIsOneShotAndReturnsPenAndEraserToSelect() throws {
         let page = try makePage(size: NSSize(width: 320, height: 420))
         let document = PDFDocument()
         document.insert(page, at: 0)
@@ -1324,21 +1273,143 @@ final class PDFTextMarkupGeometryTests: XCTestCase {
         pdfView.document = document
         pdfView.replaceEditBaselineCapture(with: baseline, needsSnapshot: true)
         pdfView.layoutDocumentView()
+        let coordinator = PDFKitPreviewRepresentable.Coordinator()
 
-        let start = pdfView.convert(CGPoint(x: 70, y: 140), from: page)
-        let end = pdfView.convert(CGPoint(x: 210, y: 200), from: page)
-        pdfView.annotationMode = .freeText
-        pdfView.mouseDown(with: try XCTUnwrap(freeTextMouseEvent(type: .leftMouseDown, location: start)))
-        pdfView.mouseDragged(with: try XCTUnwrap(freeTextMouseEvent(type: .leftMouseDragged, location: end)))
-        pdfView.mouseUp(with: try XCTUnwrap(freeTextMouseEvent(
-            type: .leftMouseUp,
-            location: end,
-            pressure: 0
-        )))
+        pdfView.annotationMode = .pen
+        coordinator.applyAddFreeTextCommand(1, in: pdfView)
 
         XCTAssertEqual(page.annotations.count, 1)
+        XCTAssertEqual(pdfView.annotationMode, .select)
         XCTAssertTrue(pdfView.hasActiveFreeTextEditor)
-        XCTAssertEqual(pdfView.freeTextSelectionOverlayShowsHandles, false)
+        let firstEditor = try activeEditor(in: pdfView)
+
+        coordinator.applyAddFreeTextCommand(1, in: pdfView)
+
+        XCTAssertEqual(page.annotations.count, 1, "Reapplying one command serial must not add another box")
+        XCTAssertTrue(try activeEditor(in: pdfView) === firstEditor)
+        firstEditor.string = "First box"
+        pdfView.textDidChange(Notification(name: NSText.didChangeNotification, object: firstEditor))
+        XCTAssertTrue(pdfView.commitActiveFreeTextEdit())
+
+        pdfView.annotationMode = .eraser
+        coordinator.applyAddFreeTextCommand(2, in: pdfView)
+
+        XCTAssertEqual(pdfView.annotationMode, .select)
+        XCTAssertEqual(page.annotations.count, 2)
+        XCTAssertTrue(pdfView.hasActiveFreeTextEditor)
+        let secondEditor = try activeEditor(in: pdfView)
+        coordinator.applyAddFreeTextCommand(2, in: pdfView)
+        XCTAssertEqual(page.annotations.count, 2)
+        XCTAssertTrue(try activeEditor(in: pdfView) === secondEditor)
+
+        pdfView.cancelFreeTextEditingBeforeDocumentReplacement()
+        XCTAssertEqual(page.annotations.count, 1, "Cancelling the empty second box must preserve the committed first box")
+    }
+
+    @MainActor
+    func testSeededAddTextCommandSerialDoesNotReplayOnMountOrDocumentSwitch() throws {
+        let firstPage = try makePage(size: NSSize(width: 320, height: 420))
+        let firstDocument = PDFDocument()
+        firstDocument.insert(firstPage, at: 0)
+        let pdfView = AnnotatingPDFView(frame: CGRect(x: 0, y: 0, width: 720, height: 560))
+        pdfView.document = firstDocument
+        pdfView.replaceEditBaselineCapture(
+            with: try XCTUnwrap(firstDocument.dataRepresentation()),
+            needsSnapshot: true
+        )
+        pdfView.layoutDocumentView()
+        let coordinator = PDFKitPreviewRepresentable.Coordinator()
+
+        coordinator.acceptCurrentCommandSerials(
+            undoSerial: 0,
+            redoSerial: 0,
+            zoomSerial: 0,
+            addFreeTextSerial: 7
+        )
+        coordinator.applyAddFreeTextCommand(7, in: pdfView)
+        XCTAssertTrue(firstPage.annotations.isEmpty, "Mounting with an existing serial must not replay Add Text Box")
+
+        coordinator.applyAddFreeTextCommand(8, in: pdfView)
+        XCTAssertEqual(firstPage.annotations.count, 1)
+        let firstEditor = try activeEditor(in: pdfView)
+        firstEditor.string = "First document"
+        pdfView.textDidChange(Notification(name: NSText.didChangeNotification, object: firstEditor))
+        XCTAssertTrue(pdfView.commitActiveFreeTextEdit())
+
+        XCTAssertTrue(coordinator.prepareForDocument(
+            "second.pdf",
+            undoSerial: 0,
+            redoSerial: 0,
+            zoomSerial: 0,
+            addFreeTextSerial: 19,
+            in: pdfView
+        ))
+        let secondPage = try makePage(size: NSSize(width: 360, height: 480))
+        let secondDocument = PDFDocument()
+        secondDocument.insert(secondPage, at: 0)
+        pdfView.document = secondDocument
+        pdfView.replaceEditBaselineCapture(
+            with: try XCTUnwrap(secondDocument.dataRepresentation()),
+            needsSnapshot: true
+        )
+        pdfView.layoutDocumentView()
+
+        coordinator.applyAddFreeTextCommand(19, in: pdfView)
+        XCTAssertTrue(secondPage.annotations.isEmpty, "A serial seeded during document switch must not replay")
+
+        coordinator.applyAddFreeTextCommand(20, in: pdfView)
+        XCTAssertEqual(secondPage.annotations.count, 1)
+        coordinator.applyAddFreeTextCommand(20, in: pdfView)
+        XCTAssertEqual(secondPage.annotations.count, 1)
+        XCTAssertTrue(pdfView.hasActiveFreeTextEditor)
+        pdfView.cancelFreeTextEditingBeforeDocumentReplacement()
+    }
+
+    @MainActor
+    func testAddTextCommandCentersOneBoxOnTheCurrentVisibleRotatedPage() throws {
+        let firstPage = try makePage(size: NSSize(width: 320, height: 420))
+        let secondPage = try makePage(size: NSSize(width: 520, height: 360))
+        secondPage.rotation = 90
+        secondPage.setBounds(CGRect(x: 35, y: 25, width: 430, height: 290), for: .cropBox)
+        let document = PDFDocument()
+        document.insert(firstPage, at: 0)
+        document.insert(secondPage, at: 1)
+        let pdfView = AnnotatingPDFView(frame: CGRect(x: 0, y: 0, width: 720, height: 560))
+        pdfView.displayMode = .singlePage
+        pdfView.autoScales = false
+        pdfView.scaleFactor = 1
+        pdfView.document = document
+        pdfView.replaceEditBaselineCapture(
+            with: try XCTUnwrap(document.dataRepresentation()),
+            needsSnapshot: true
+        )
+        pdfView.go(to: secondPage)
+        pdfView.layoutDocumentView()
+
+        let pageBounds = secondPage.bounds(for: pdfView.displayBox).standardized
+        let convertedVisibleBounds = pdfView.convert(pdfView.visibleRect, to: secondPage).standardized
+            .intersection(pageBounds)
+        let insertionBounds = convertedVisibleBounds.isNull
+                || convertedVisibleBounds.width <= 0
+                || convertedVisibleBounds.height <= 0
+            ? pageBounds
+            : convertedVisibleBounds
+        let expectedBounds = defaultPDFFreeTextBounds(
+            at: CGPoint(x: insertionBounds.midX - 110, y: insertionBounds.midY + 36),
+            pageBounds: pageBounds
+        )
+
+        pdfView.addFreeTextBox()
+
+        XCTAssertTrue(firstPage.annotations.isEmpty)
+        let annotation = try XCTUnwrap(secondPage.annotations.first)
+        XCTAssertEqual(secondPage.annotations.count, 1)
+        XCTAssertEqual(annotation.bounds.minX, expectedBounds.minX, accuracy: 0.01)
+        XCTAssertEqual(annotation.bounds.minY, expectedBounds.minY, accuracy: 0.01)
+        XCTAssertEqual(annotation.bounds.width, expectedBounds.width, accuracy: 0.01)
+        XCTAssertEqual(annotation.bounds.height, expectedBounds.height, accuracy: 0.01)
+        XCTAssertEqual(pdfView.annotationMode, .select)
+        XCTAssertTrue(pdfView.hasActiveFreeTextEditor)
         pdfView.cancelFreeTextEditingBeforeDocumentReplacement()
     }
 
@@ -1359,19 +1430,11 @@ final class PDFTextMarkupGeometryTests: XCTestCase {
         pdfView.onEdited = { _, _, _ in editCount += 1 }
         pdfView.onError = { errors.append($0) }
 
-        let start = pdfView.convert(CGPoint(x: 70, y: 140), from: page)
-        let end = pdfView.convert(CGPoint(x: 210, y: 200), from: page)
-        pdfView.annotationMode = .freeText
-        pdfView.mouseDown(with: try XCTUnwrap(freeTextMouseEvent(type: .leftMouseDown, location: start)))
-        pdfView.mouseDragged(with: try XCTUnwrap(freeTextMouseEvent(type: .leftMouseDragged, location: end)))
-        pdfView.mouseUp(with: try XCTUnwrap(freeTextMouseEvent(
-            type: .leftMouseUp,
-            location: end,
-            pressure: 0
-        )))
+        pdfView.addFreeTextBox()
 
         let annotation = try XCTUnwrap(page.annotations.first)
         let editor = try activeEditor(in: pdfView)
+        XCTAssertEqual(pdfView.annotationMode, .select)
         XCTAssertEqual(editor.string, "")
         var formatting = PDFFreeTextFormatting(annotation: annotation)
         formatting.fontSize = 24
@@ -1398,45 +1461,17 @@ final class PDFTextMarkupGeometryTests: XCTestCase {
     }
 
     @MainActor
-    func testSelectAndTextModeTransitionPreservesSelectionAndChangesHandles() throws {
-        let page = try makePage(size: NSSize(width: 320, height: 420))
-        let annotation = makePDFFreeTextAnnotation(
-            bounds: CGRect(x: 60, y: 100, width: 150, height: 58),
-            contents: "Selected text"
-        )
-        page.addAnnotation(annotation)
-        let document = PDFDocument()
-        document.insert(page, at: 0)
-        let baseline = try XCTUnwrap(document.dataRepresentation())
-        let pdfView = AnnotatingPDFView(frame: CGRect(x: 0, y: 0, width: 720, height: 560))
-        pdfView.document = document
-        pdfView.layoutDocumentView()
-        pdfView.selectFreeTextAnnotation(annotation, on: page)
-
-        XCTAssertNotNil(pdfView.freeTextSelectionOverlayGeometryInPDFView)
-        XCTAssertEqual(pdfView.freeTextSelectionOverlayShowsHandles, true)
-
-        pdfView.annotationMode = .freeText
-        XCTAssertNotNil(pdfView.freeTextSelectionOverlayGeometryInPDFView)
-        XCTAssertEqual(pdfView.freeTextSelectionOverlayShowsHandles, false)
-
-        pdfView.beginFreeTextEditing(
-            annotation,
-            on: page,
-            isNew: false,
-            baselineData: baseline
-        )
-        XCTAssertTrue(pdfView.hasActiveFreeTextEditor)
-        pdfView.annotationMode = .select
-
-        XCTAssertFalse(pdfView.hasActiveFreeTextEditor)
-        XCTAssertTrue(annotation.shouldDisplay)
-        XCTAssertNotNil(pdfView.freeTextSelectionOverlayGeometryInPDFView)
-        XCTAssertEqual(pdfView.freeTextSelectionOverlayShowsHandles, true)
-
+    func testAddTextCommandWithoutDocumentReturnsToSelectAndReportsError() {
+        let pdfView = AnnotatingPDFView()
         pdfView.annotationMode = .pen
-        XCTAssertNil(pdfView.freeTextSelectionOverlayGeometryInPDFView)
-        XCTAssertNil(pdfView.freeTextSelectionOverlayShowsHandles)
+        var errors: [String] = []
+        pdfView.onError = { errors.append($0) }
+
+        pdfView.addFreeTextBox()
+
+        XCTAssertEqual(pdfView.annotationMode, .select)
+        XCTAssertFalse(pdfView.hasActiveFreeTextEditor)
+        XCTAssertEqual(errors, ["No PDF document is loaded."])
     }
 
     @MainActor
@@ -1457,10 +1492,6 @@ final class PDFTextMarkupGeometryTests: XCTestCase {
         )
         pdfView.selectFreeTextAnnotation(annotation, on: page)
         let backspaceEvent = try XCTUnwrap(freeTextDeleteKeyEvent())
-
-        pdfView.annotationMode = .freeText
-        pdfView.keyDown(with: backspaceEvent)
-        XCTAssertTrue(page.annotations.contains { $0 === annotation })
 
         pdfView.annotationMode = .select
         pdfView.keyDown(with: backspaceEvent)
@@ -1508,9 +1539,11 @@ final class PDFTextMarkupGeometryTests: XCTestCase {
 
         pdfView.mouseDown(with: try XCTUnwrap(freeTextMouseEvent(
             type: .leftMouseDown,
-            location: center
+            location: center,
+            clickCount: 2
         )))
         XCTAssertFalse(errors.isEmpty)
+        XCTAssertFalse(pdfView.hasActiveFreeTextEditor)
         XCTAssertEqual(annotation.bounds.standardized, originalBounds)
         XCTAssertNotNil(pdfView.freeTextSelectionOverlayGeometryInPDFView)
 
@@ -1526,6 +1559,14 @@ final class PDFTextMarkupGeometryTests: XCTestCase {
         XCTAssertGreaterThan(errors.count, errorsBeforeFormatting)
         XCTAssertEqual(try XCTUnwrap(annotation.font).pointSize, 14, accuracy: 0.01)
         XCTAssertTrue(page.annotations.contains { $0 === annotation })
+
+        let errorsBeforeAdd = errors.count
+        pdfView.annotationMode = .eraser
+        pdfView.addFreeTextBox()
+        XCTAssertEqual(pdfView.annotationMode, .select)
+        XCTAssertGreaterThan(errors.count, errorsBeforeAdd)
+        XCTAssertEqual(page.annotations.count, 1)
+        XCTAssertFalse(pdfView.hasActiveFreeTextEditor)
     }
 
     @MainActor
@@ -1899,7 +1940,7 @@ final class PDFTextMarkupGeometryTests: XCTestCase {
         let betaPointOnPage = pdfView.convert(betaPointInPDFView, to: page)
         XCTAssertTrue(pdfView.commitActiveFreeTextEdit())
 
-        pdfView.annotationMode = .freeText
+        pdfView.annotationMode = .select
         let clickPoint = pdfView.convert(betaPointOnPage, from: page)
         pdfView.mouseDown(with: try XCTUnwrap(freeTextMouseEvent(
             type: .leftMouseDown,
@@ -1928,7 +1969,7 @@ final class PDFTextMarkupGeometryTests: XCTestCase {
         document.insert(page, at: 0)
         let pdfView = AnnotatingPDFView()
         pdfView.document = document
-        pdfView.annotationMode = .freeText
+        pdfView.annotationMode = .select
         pdfView.selectFreeTextAnnotation(annotation, on: page)
         pdfView.beginFreeTextEditing(
             annotation,

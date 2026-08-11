@@ -48,6 +48,7 @@ struct PDFPreviewView: View {
     @State private var isNavigatorPresented = false
     @State private var lastNavigatorToggleCommandSerial = 0
     @State private var selectedFreeTextFormatting: PDFFreeTextFormatting?
+    @State private var addFreeTextCommandSerial = 0
     @State private var freeTextFormattingCommand: PDFFreeTextFormattingCommand?
     @State private var freeTextFormattingCommandSerial = 0
 
@@ -74,6 +75,7 @@ struct PDFPreviewView: View {
                     isNavigatorPresented: isNavigatorPresented,
                     toggleNavigator: toggleNavigator,
                     selectedFreeTextFormatting: selectedFreeTextFormatting,
+                    addFreeText: addFreeTextBox,
                     updateFreeTextFormatting: updateFreeTextFormatting(_:)
                 )
             }
@@ -119,6 +121,7 @@ struct PDFPreviewView: View {
                     annotationColor: selectedColor,
                     strokeWidth: CGFloat(strokeWidth),
                     markupCommand: markupCommand,
+                    addFreeTextCommandSerial: addFreeTextCommandSerial,
                     freeTextFormattingCommand: freeTextFormattingCommand,
                     zoomCommand: zoomCommand,
                     undoCommandSerial: externalUndoCommandSerial + undoCommandSerial,
@@ -205,6 +208,11 @@ struct PDFPreviewView: View {
             serial: freeTextFormattingCommandSerial,
             formatting: formatting
         )
+    }
+
+    private func addFreeTextBox() {
+        interactionMode = .select
+        addFreeTextCommandSerial &+= 1
     }
 
     private func updateFreeTextSelection(_ formatting: PDFFreeTextFormatting?) {
@@ -312,11 +320,9 @@ enum PDFAnnotationStyleDisclosure: Equatable {
     init(mode: PDFAnnotationInteractionMode, hasSelectedText: Bool) {
         switch mode {
         case .select:
-            self = .markupColor
+            self = hasSelectedText ? .text : .markupColor
         case .pen:
             self = .drawing
-        case .freeText:
-            self = hasSelectedText ? .text : .none
         case .eraser:
             self = .none
         }
@@ -914,6 +920,7 @@ private struct PDFAnnotationToolbar: View {
     let isNavigatorPresented: Bool
     let toggleNavigator: () -> Void
     let selectedFreeTextFormatting: PDFFreeTextFormatting?
+    let addFreeText: () -> Void
     let updateFreeTextFormatting: (PDFFreeTextFormatting) -> Void
 
     @State private var strokeWidthPopoverAnchor: PDFStrokeWidthPopoverAnchor?
@@ -949,7 +956,7 @@ private struct PDFAnnotationToolbar: View {
             if mode != .pen {
                 strokeWidthPopoverAnchor = nil
             }
-            if mode != .freeText {
+            if mode != .select {
                 isFreeTextFormattingPresented = false
             }
         }
@@ -1247,15 +1254,11 @@ private struct PDFAnnotationToolbar: View {
     private var freeTextButton: some View {
         MonknotIconButton(
             systemImage: "character.textbox",
-            label: "Text",
+            label: "Add Text Box",
             theme: theme,
             zoomScale: zoomScale,
-            isActive: interactionMode == .freeText,
             size: .compact
-        ) {
-            interactionMode = .freeText
-        }
-        .accessibilityAddTraits(interactionMode == .freeText ? .isSelected : [])
+        ) { addFreeText() }
     }
 
     @ViewBuilder
@@ -1325,14 +1328,14 @@ private struct PDFAnnotationToolbar: View {
             Button("Draw", systemImage: "pencil.tip") {
                 interactionMode = .pen
             }
-            Button("Text", systemImage: "character.textbox") {
-                interactionMode = .freeText
+            Button("Add Text Box", systemImage: "character.textbox") {
+                addFreeText()
             }
             Button("Erase Annotation", systemImage: "eraser") {
                 interactionMode = .eraser
             }
 
-            if interactionMode == .freeText, selectedFreeTextFormatting != nil {
+            if interactionMode == .select, selectedFreeTextFormatting != nil {
                 Divider()
                 Button("Text Style…", systemImage: "textformat") {
                     presentFreeTextFormatting()
@@ -1572,8 +1575,6 @@ private struct PDFAnnotationToolbar: View {
             return "cursorarrow"
         case .pen:
             return "pencil.tip"
-        case .freeText:
-            return "character.textbox"
         case .eraser:
             return "eraser"
         }
@@ -1585,8 +1586,6 @@ private struct PDFAnnotationToolbar: View {
             return "Select"
         case .pen:
             return "Draw"
-        case .freeText:
-            return "Text"
         case .eraser:
             return "Erase"
         }
@@ -2935,6 +2934,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
     fileprivate let annotationColor: PDFAnnotationPaletteColor
     let strokeWidth: CGFloat
     fileprivate let markupCommand: PDFTextMarkupCommand?
+    let addFreeTextCommandSerial: Int
     fileprivate let freeTextFormattingCommand: PDFFreeTextFormattingCommand?
     let zoomCommand: PDFZoomCommandRequest?
     let undoCommandSerial: Int
@@ -3021,7 +3021,8 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         context.coordinator.acceptCurrentCommandSerials(
             undoSerial: undoCommandSerial,
             redoSerial: redoCommandSerial,
-            zoomSerial: zoomCommand?.serial ?? 0
+            zoomSerial: zoomCommand?.serial ?? 0,
+            addFreeTextSerial: addFreeTextCommandSerial
         )
         context.coordinator.attach(to: pdfView)
         container.navigatorView.attach(to: pdfView)
@@ -3041,6 +3042,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             undoSerial: undoCommandSerial,
             redoSerial: redoCommandSerial,
             zoomSerial: zoomCommand?.serial ?? 0,
+            addFreeTextSerial: addFreeTextCommandSerial,
             in: pdfView
         )
         context.coordinator.onViewportStateChange = { state in
@@ -3148,6 +3150,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         context.coordinator.applyZoomCommand(zoomCommand, in: pdfView)
         context.coordinator.applySearch(searchState, theme: theme, in: pdfView)
         context.coordinator.applyMarkupCommand(markupCommand, in: pdfView)
+        context.coordinator.applyAddFreeTextCommand(addFreeTextCommandSerial, in: pdfView)
         context.coordinator.applyFreeTextFormattingCommand(freeTextFormattingCommand, in: pdfView)
         context.coordinator.applyUndoRedoCommands(undoSerial: undoCommandSerial, redoSerial: redoCommandSerial, in: pdfView)
     }
@@ -3182,6 +3185,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         private var currentMatchIndex = 0
         private var pendingSearchTarget: WorkspaceSearchPDFTarget?
         private var lastMarkupCommandSerial = 0
+        private var lastAddFreeTextCommandSerial = 0
         private var lastFreeTextFormattingCommandSerial = 0
         private var lastUndoCommandSerial = 0
         private var lastRedoCommandSerial = 0
@@ -3242,10 +3246,16 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             onSelectionSnapshotChange(nil)
         }
 
-        func acceptCurrentCommandSerials(undoSerial: Int, redoSerial: Int, zoomSerial: Int) {
+        func acceptCurrentCommandSerials(
+            undoSerial: Int,
+            redoSerial: Int,
+            zoomSerial: Int,
+            addFreeTextSerial: Int
+        ) {
             lastUndoCommandSerial = undoSerial
             lastRedoCommandSerial = redoSerial
             lastZoomCommandSerial = zoomSerial
+            lastAddFreeTextCommandSerial = addFreeTextSerial
         }
 
         func prepareForDocument(
@@ -3253,6 +3263,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             undoSerial: Int,
             redoSerial: Int,
             zoomSerial: Int,
+            addFreeTextSerial: Int,
             in pdfView: AnnotatingPDFView
         ) -> Bool {
             guard documentID != nextDocumentID else { return false }
@@ -3263,7 +3274,8 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             acceptCurrentCommandSerials(
                 undoSerial: undoSerial,
                 redoSerial: redoSerial,
-                zoomSerial: zoomSerial
+                zoomSerial: zoomSerial,
+                addFreeTextSerial: addFreeTextSerial
             )
             lastPublishedViewportState = nil
             lastPublishedPageStatus = nil
@@ -3410,6 +3422,12 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             guard let command, command.serial != lastMarkupCommandSerial else { return }
             lastMarkupCommandSerial = command.serial
             pdfView.addTextMarkup(kind: command.kind, color: command.color.nsColor)
+        }
+
+        func applyAddFreeTextCommand(_ serial: Int, in pdfView: AnnotatingPDFView) {
+            guard serial != lastAddFreeTextCommandSerial else { return }
+            lastAddFreeTextCommandSerial = serial
+            pdfView.addFreeTextBox()
         }
 
         fileprivate func applyFreeTextFormattingCommand(
@@ -4189,18 +4207,6 @@ func defaultPDFFreeTextBounds(at point: CGPoint, pageBounds: CGRect) -> CGRect {
     )
 }
 
-func draggedPDFFreeTextBounds(from start: CGPoint, to end: CGPoint, pageBounds: CGRect) -> CGRect {
-    clampedPDFFreeTextBounds(
-        CGRect(
-            x: start.x,
-            y: start.y,
-            width: end.x - start.x,
-            height: end.y - start.y
-        ).standardized,
-        to: pageBounds
-    )
-}
-
 func makePDFFreeTextAnnotation(
     bounds: CGRect,
     contents: String = "",
@@ -4301,7 +4307,6 @@ func resizedPDFFreeText(
 
 private final class PDFFreeTextGesture {
     enum Kind {
-        case create
         case move
         case resize(PDFFreeTextResizeHandle)
     }
@@ -4360,7 +4365,6 @@ struct PDFFreeTextOverlayAppearance {
     let borderColor: NSColor
     let handleColor: NSColor
     let handleRingColor: NSColor
-    let creationColor: NSColor
 
     init(theme: AppTheme) {
         let foreground = NSColor(hex: theme.foreground)
@@ -4372,33 +4376,28 @@ struct PDFFreeTextOverlayAppearance {
         ) ?? foreground).withAlphaComponent(0.82)
         handleColor = NSColor(hex: theme.accent)
         handleRingColor = NSColor(hex: theme.selectionForeground)
-        creationColor = handleColor.withAlphaComponent(0.72)
     }
 
     static let platformDefault = PDFFreeTextOverlayAppearance(
         borderColor: .separatorColor,
         handleColor: .selectedContentBackgroundColor,
-        handleRingColor: .windowBackgroundColor,
-        creationColor: .selectedContentBackgroundColor.withAlphaComponent(0.72)
+        handleRingColor: .windowBackgroundColor
     )
 
     private init(
         borderColor: NSColor,
         handleColor: NSColor,
-        handleRingColor: NSColor,
-        creationColor: NSColor
+        handleRingColor: NSColor
     ) {
         self.borderColor = borderColor
         self.handleColor = handleColor
         self.handleRingColor = handleRingColor
-        self.creationColor = creationColor
     }
 }
 
 struct PDFFreeTextOverlayMetrics: Equatable {
     let handleSize: CGFloat
     let handleHitSize: CGFloat
-    let creationDashLengths: [CGFloat]
 
     init(theme: AppTheme, workspaceZoomScale: Double) {
         handleSize = MonknotMetrics.interfaceDensity(
@@ -4411,13 +4410,6 @@ struct PDFFreeTextOverlayMetrics: Equatable {
             theme: theme,
             zoomScale: workspaceZoomScale
         )
-        creationDashLengths = [4, 3].map {
-            MonknotMetrics.interfaceDensity(
-                $0,
-                theme: theme,
-                zoomScale: workspaceZoomScale
-            )
-        }
     }
 
     static let standard = PDFFreeTextOverlayMetrics(
@@ -4429,7 +4421,6 @@ struct PDFFreeTextOverlayMetrics: Equatable {
 private final class PDFFreeTextSelectionOverlay: NSView {
     enum Content {
         case selection(PDFFreeTextOverlayGeometry, showsHandles: Bool)
-        case creation(start: CGPoint, end: CGPoint)
     }
 
     var content: Content? {
@@ -4469,21 +4460,6 @@ private final class PDFFreeTextSelectionOverlay: NSView {
         context.saveGState()
         context.setLineWidth(1)
         switch content {
-        case .creation(let start, let end):
-            let rect = CGRect(
-                x: start.x,
-                y: start.y,
-                width: end.x - start.x,
-                height: end.y - start.y
-            ).standardized
-            guard rect.width >= 1, rect.height >= 1 else {
-                context.restoreGState()
-                return
-            }
-            context.setStrokeColor(overlayAppearance.creationColor.cgColor)
-            context.setLineDash(phase: 0, lengths: metrics.creationDashLengths)
-            context.stroke(rect)
-
         case .selection(let geometry, let showsHandles):
             context.setStrokeColor(overlayAppearance.borderColor.cgColor)
             context.beginPath()
@@ -4524,10 +4500,10 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
                 if freeTextEditor != nil {
                     endFreeTextEditing(commit: true)
                 }
-                if annotationMode == .pen || annotationMode == .eraser {
-                    clearFreeTextSelection()
-                } else {
+                if annotationMode == .select {
                     updateFreeTextSelectionOverlay()
+                } else {
+                    clearFreeTextSelection()
                 }
                 syncToolTrackingArea()
                 window?.invalidateCursorRects(for: self)
@@ -4606,7 +4582,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         }
         updateFreeTextSelectionOverlay()
         updateFreeTextEditorFrame()
-        if annotationMode == .select || annotationMode == .freeText {
+        if annotationMode == .select {
             window?.invalidateCursorRects(for: self)
         }
     }
@@ -4710,8 +4686,6 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
                     )
                 }
             }
-        case .freeText:
-            addCursorRect(bounds, cursor: .iBeam)
         case .pen, .eraser:
             // In annotation modes Monknot owns the cursor; PDFView cursor rects otherwise compete with it.
             addCursorRect(bounds, cursor: toolCursor)
@@ -4783,8 +4757,6 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         switch annotationMode {
         case .select:
             return selectFreeTextCursor(at: viewPoint) ?? .arrow
-        case .freeText:
-            return .iBeam
         case .pen, .eraser:
             return toolCursor
         }
@@ -4798,8 +4770,6 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
             case .resize:
                 guard let annotation = gesture.annotation else { return .resizeLeftRight }
                 return freeTextResizeCursor(annotation: annotation, page: gesture.page)
-            case .create:
-                return nil
             }
         }
         if let annotation = selectedFreeTextAnnotation,
@@ -4824,7 +4794,6 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         if freeTextEditor != nil {
             endFreeTextEditing(commit: true)
             window?.makeFirstResponder(self)
-            return
         }
         window?.makeFirstResponder(self)
 
@@ -4840,8 +4809,6 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
             activeInkPoints = [target.point]
             activeInkAnnotation = nil
             activeInkBaselineData = takeEditBaselineSnapshotIfNeeded()
-        case .freeText:
-            handleFreeTextTextMouseDown(event)
         case .eraser:
             eraseAnnotation(at: event)
         }
@@ -4868,8 +4835,6 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
 
             activeInkPoints.append(target.point)
             renderActiveInkAnnotation(finalizing: false)
-        case .freeText:
-            handleFreeTextMouseDragged(event)
         case .eraser:
             eraseAnnotation(at: event)
         }
@@ -4902,8 +4867,6 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
                 discardActiveInkAnnotation()
             }
             activeInkBaselineData = nil
-        case .freeText:
-            handleFreeTextMouseUp(event)
         case .eraser:
             break
         }
@@ -4917,6 +4880,21 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         }
 
         let viewPoint = convert(event.locationInWindow, from: nil)
+        if event.clickCount >= 2,
+           let annotation = freeTextAnnotation(on: target.page, at: target.point) {
+            selectFreeTextAnnotation(annotation, on: target.page)
+            guard canAnnotate() else { return true }
+            beginFreeTextEditing(
+                annotation,
+                on: target.page,
+                isNew: false,
+                baselineData: editBaselineDataWithoutConsuming(),
+                initialSelectionPagePoint: target.point,
+                selectsWordAtInitialPoint: true
+            )
+            return true
+        }
+
         if let annotation = selectedFreeTextAnnotation,
            let page = selectedFreeTextPage,
            page === target.page,
@@ -4974,34 +4952,6 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         return false
     }
 
-    private func handleFreeTextTextMouseDown(_ event: NSEvent) {
-        guard let target = pagePoint(for: event), let document, canAnnotate() else { return }
-
-        if let annotation = freeTextAnnotation(on: target.page, at: target.point) {
-            selectFreeTextAnnotation(annotation, on: target.page)
-            beginFreeTextEditing(
-                annotation,
-                on: target.page,
-                isNew: false,
-                baselineData: editBaselineDataWithoutConsuming(),
-                initialSelectionPagePoint: target.point,
-                selectsWordAtInitialPoint: event.clickCount >= 2
-            )
-            return
-        }
-
-        clearFreeTextSelection()
-        freeTextGesture = PDFFreeTextGesture(
-            kind: .create,
-            page: target.page,
-            pageIndex: document.index(for: target.page),
-            startPoint: target.point,
-            baselineData: nil
-        )
-        NSCursor.iBeam.set()
-        updateFreeTextSelectionOverlay()
-    }
-
     private func handleFreeTextMouseDragged(_ event: NSEvent) {
         guard let gesture = freeTextGesture,
               let document,
@@ -5012,74 +4962,67 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         let currentPoint = convert(viewPoint, to: gesture.page)
         gesture.currentPoint = currentPoint
 
-        switch gesture.kind {
-        case .create:
-            updateFreeTextSelectionOverlay()
-        case .move, .resize:
-            guard let annotation = gesture.annotation,
-                  let before = gesture.beforeSnapshot,
-                  let expected = gesture.expectedSnapshot,
-                  isValidFreeTextAnnotation(annotation, on: gesture.page),
-                  PDFFreeTextAnnotationSnapshot(annotation: annotation) == expected
-            else {
-                cancelFreeTextGestureWithStaleAnnotation()
-                return
-            }
-
-            if !gesture.didCaptureBaseline {
-                gesture.baselineData = editBaselineDataWithoutConsuming()
-                gesture.didCaptureBaseline = true
-                if needsEditBaselineSnapshot, gesture.baselineData == nil {
-                    freeTextGesture = nil
-                    onError(PDFAnnotationOperationError.dataRepresentationFailed.localizedDescription)
-                    return
-                }
-            }
-
-            let pageBounds = gesture.page.bounds(for: displayBox)
-            let nextBounds: CGRect
-            var nextFormatting: PDFFreeTextFormatting?
-            switch gesture.kind {
-            case .move:
-                let delta = CGPoint(
-                    x: currentPoint.x - gesture.startPoint.x,
-                    y: currentPoint.y - gesture.startPoint.y
-                )
-                nextBounds = clampedPDFFreeTextBounds(
-                    before.bounds.offsetBy(dx: delta.x, dy: delta.y),
-                    to: pageBounds,
-                    minimumSize: before.bounds.size
-                )
-            case .resize(let handle):
-                let resize = resizedPDFFreeText(
-                    before.bounds,
-                    fontSize: before.font?.pointSize ?? before.formatting.fontSize,
-                    handle: handle,
-                    to: currentPoint,
-                    pageBounds: pageBounds,
-                    minimumSize: CGSize(width: 36, height: 24)
-                )
-                nextBounds = resize.bounds
-                var formatting = before.formatting
-                formatting.fontSize = resize.fontSize
-                nextFormatting = formatting
-            case .create:
-                return
-            }
-
-            let formattingChanged = nextFormatting.map {
-                $0 != PDFFreeTextFormatting(annotation: annotation)
-            } ?? false
-            guard nextBounds != annotation.bounds.standardized || formattingChanged else { return }
-            annotation.bounds = nextBounds
-            nextFormatting?.apply(to: annotation)
-            gesture.expectedSnapshot = PDFFreeTextAnnotationSnapshot(annotation: annotation)
-            // PDFKit owns the annotation appearance, while the lightweight AppKit
-            // overlay owns only selection chrome.
-            annotationsChanged(on: gesture.page)
-            updateFreeTextSelectionOverlay()
-            cursor(for: event).set()
+        guard let annotation = gesture.annotation,
+              let before = gesture.beforeSnapshot,
+              let expected = gesture.expectedSnapshot,
+              isValidFreeTextAnnotation(annotation, on: gesture.page),
+              PDFFreeTextAnnotationSnapshot(annotation: annotation) == expected
+        else {
+            cancelFreeTextGestureWithStaleAnnotation()
+            return
         }
+
+        if !gesture.didCaptureBaseline {
+            gesture.baselineData = editBaselineDataWithoutConsuming()
+            gesture.didCaptureBaseline = true
+            if needsEditBaselineSnapshot, gesture.baselineData == nil {
+                freeTextGesture = nil
+                onError(PDFAnnotationOperationError.dataRepresentationFailed.localizedDescription)
+                return
+            }
+        }
+
+        let pageBounds = gesture.page.bounds(for: displayBox)
+        let nextBounds: CGRect
+        var nextFormatting: PDFFreeTextFormatting?
+        switch gesture.kind {
+        case .move:
+            let delta = CGPoint(
+                x: currentPoint.x - gesture.startPoint.x,
+                y: currentPoint.y - gesture.startPoint.y
+            )
+            nextBounds = clampedPDFFreeTextBounds(
+                before.bounds.offsetBy(dx: delta.x, dy: delta.y),
+                to: pageBounds,
+                minimumSize: before.bounds.size
+            )
+        case .resize(let handle):
+            let resize = resizedPDFFreeText(
+                before.bounds,
+                fontSize: before.font?.pointSize ?? before.formatting.fontSize,
+                handle: handle,
+                to: currentPoint,
+                pageBounds: pageBounds,
+                minimumSize: CGSize(width: 36, height: 24)
+            )
+            nextBounds = resize.bounds
+            var formatting = before.formatting
+            formatting.fontSize = resize.fontSize
+            nextFormatting = formatting
+        }
+
+        let formattingChanged = nextFormatting.map {
+            $0 != PDFFreeTextFormatting(annotation: annotation)
+        } ?? false
+        guard nextBounds != annotation.bounds.standardized || formattingChanged else { return }
+        annotation.bounds = nextBounds
+        nextFormatting?.apply(to: annotation)
+        gesture.expectedSnapshot = PDFFreeTextAnnotationSnapshot(annotation: annotation)
+        // PDFKit owns the annotation appearance, while the lightweight AppKit
+        // overlay owns only selection chrome.
+        annotationsChanged(on: gesture.page)
+        updateFreeTextSelectionOverlay()
+        cursor(for: event).set()
     }
 
     private func handleFreeTextMouseUp(_ event: NSEvent) {
@@ -5091,90 +5034,93 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
             cursor(for: event).set()
         }
 
-        switch gesture.kind {
-        case .create:
-            guard let document,
-                  document.page(at: gesture.pageIndex) === gesture.page,
-                  canAnnotate()
-            else { return }
-            let startViewPoint = convert(gesture.startPoint, from: gesture.page)
-            let currentViewPoint = convert(gesture.currentPoint, from: gesture.page)
-            let distance = hypot(currentViewPoint.x - startViewPoint.x, currentViewPoint.y - startViewPoint.y)
-            let requestedBounds: CGRect
-            if distance < 4 {
-                requestedBounds = defaultPDFFreeTextBounds(
-                    at: gesture.startPoint,
-                    pageBounds: gesture.page.bounds(for: displayBox)
-                )
-            } else {
-                requestedBounds = draggedPDFFreeTextBounds(
-                    from: gesture.startPoint,
-                    to: gesture.currentPoint,
-                    pageBounds: gesture.page.bounds(for: displayBox)
-                )
-            }
-            let bounds = clampedPDFFreeTextBounds(
-                requestedBounds,
-                to: gesture.page.bounds(for: displayBox)
-            )
-            guard bounds.width > 0, bounds.height > 0 else { return }
-            let baselineData = editBaselineDataWithoutConsuming()
-            guard !needsEditBaselineSnapshot || baselineData != nil else {
-                onError(PDFAnnotationOperationError.dataRepresentationFailed.localizedDescription)
-                return
-            }
-            guard let originalData = baselineData
-                ?? lastPublishedDocumentData
-                ?? serializeDocument(document)
-            else {
-                onError(PDFAnnotationOperationError.dataRepresentationFailed.localizedDescription)
-                return
-            }
-            let annotation = makePDFFreeTextAnnotation(bounds: bounds)
-            gesture.baselineData = needsEditBaselineSnapshot ? baselineData : nil
-            gesture.didCaptureBaseline = true
-            gesture.page.addAnnotation(annotation)
-            selectFreeTextAnnotation(annotation, on: gesture.page)
-            annotationsChanged(on: gesture.page)
-            onAnnotationsChanged()
-            beginFreeTextEditing(
-                annotation,
-                on: gesture.page,
-                isNew: true,
-                baselineData: gesture.baselineData,
-                originalData: originalData
-            )
-        case .move, .resize:
-            guard let annotation = gesture.annotation,
-                  let before = gesture.beforeSnapshot,
-                  let expected = gesture.expectedSnapshot,
-                  isValidFreeTextAnnotation(annotation, on: gesture.page),
-                  PDFFreeTextAnnotationSnapshot(annotation: annotation) == expected
-            else {
-                restoreUncommittedFreeTextGestureIfSafe(gesture)
-                clearFreeTextSelection()
-                onError(PDFAnnotationOperationError.annotationChanged.localizedDescription)
-                return
-            }
-            let finalSnapshot = PDFFreeTextAnnotationSnapshot(annotation: annotation)
-            guard before != finalSnapshot else { return }
-            annotation.modificationDate = Date()
-            let after = PDFFreeTextAnnotationSnapshot(annotation: annotation)
-            registerAnnotationEdit(PDFAnnotationEditOperation(
-                added: [],
-                removed: [],
-                updated: [.init(
-                    pageIndex: gesture.pageIndex,
-                    annotation: annotation,
-                    before: before,
-                    after: after
-                )]
-            ))
-            annotationsChanged(on: gesture.page)
-            onAnnotationsChanged()
-            publishEditedDocument(previousData: gesture.baselineData)
-            publishFreeTextSelection()
+        guard let annotation = gesture.annotation,
+              let before = gesture.beforeSnapshot,
+              let expected = gesture.expectedSnapshot,
+              isValidFreeTextAnnotation(annotation, on: gesture.page),
+              PDFFreeTextAnnotationSnapshot(annotation: annotation) == expected
+        else {
+            restoreUncommittedFreeTextGestureIfSafe(gesture)
+            clearFreeTextSelection()
+            onError(PDFAnnotationOperationError.annotationChanged.localizedDescription)
+            return
         }
+        let finalSnapshot = PDFFreeTextAnnotationSnapshot(annotation: annotation)
+        guard before != finalSnapshot else { return }
+        annotation.modificationDate = Date()
+        let after = PDFFreeTextAnnotationSnapshot(annotation: annotation)
+        registerAnnotationEdit(PDFAnnotationEditOperation(
+            added: [],
+            removed: [],
+            updated: [.init(
+                pageIndex: gesture.pageIndex,
+                annotation: annotation,
+                before: before,
+                after: after
+            )]
+        ))
+        annotationsChanged(on: gesture.page)
+        onAnnotationsChanged()
+        publishEditedDocument(previousData: gesture.baselineData)
+        publishFreeTextSelection()
+    }
+
+    func addFreeTextBox() {
+        annotationMode = .select
+        guard canAnnotate(), let documentBeforeEditing = document else { return }
+
+        endFreeTextEditing(commit: true)
+        guard let document,
+              document === documentBeforeEditing,
+              canAnnotate(),
+              let page = visiblePages.first(where: { $0 === currentPage })
+                ?? visiblePages.first
+                ?? currentPage
+                ?? document.page(at: 0),
+              document.index(for: page) >= 0
+        else { return }
+
+        let pageBounds = page.bounds(for: displayBox).standardized
+        guard pageBounds.width > 0, pageBounds.height > 0 else { return }
+        let convertedVisibleBounds = convert(visibleRect, to: page).standardized
+            .intersection(pageBounds)
+        let insertionBounds = convertedVisibleBounds.isNull
+                || convertedVisibleBounds.width <= 0
+                || convertedVisibleBounds.height <= 0
+            ? pageBounds
+            : convertedVisibleBounds
+        let insertionPoint = CGPoint(
+            x: insertionBounds.midX - 110,
+            y: insertionBounds.midY + 36
+        )
+        let bounds = defaultPDFFreeTextBounds(at: insertionPoint, pageBounds: pageBounds)
+        guard bounds.width > 0, bounds.height > 0 else { return }
+
+        let baselineData = editBaselineDataWithoutConsuming()
+        guard !needsEditBaselineSnapshot || baselineData != nil else {
+            onError(PDFAnnotationOperationError.dataRepresentationFailed.localizedDescription)
+            return
+        }
+        guard let originalData = baselineData
+            ?? lastPublishedDocumentData
+            ?? serializeDocument(document)
+        else {
+            onError(PDFAnnotationOperationError.dataRepresentationFailed.localizedDescription)
+            return
+        }
+
+        let annotation = makePDFFreeTextAnnotation(bounds: bounds)
+        page.addAnnotation(annotation)
+        selectFreeTextAnnotation(annotation, on: page)
+        annotationsChanged(on: page)
+        onAnnotationsChanged()
+        beginFreeTextEditing(
+            annotation,
+            on: page,
+            isNew: true,
+            baselineData: needsEditBaselineSnapshot ? baselineData : nil,
+            originalData: originalData
+        )
     }
 
     func selectFreeTextAnnotation(_ annotation: PDFAnnotation, on page: PDFPage) {
@@ -5848,16 +5794,6 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
     }
 
     private func updateFreeTextSelectionOverlay() {
-        if let gesture = freeTextGesture,
-           case .create = gesture.kind {
-            let overlay = ensureFreeTextSelectionOverlay()
-            overlay.content = .creation(
-                start: overlay.convert(convert(gesture.startPoint, from: gesture.page), from: self),
-                end: overlay.convert(convert(gesture.currentPoint, from: gesture.page), from: self)
-            )
-            return
-        }
-
         guard let annotation = selectedFreeTextAnnotation,
               let page = selectedFreeTextPage,
               isValidFreeTextAnnotation(annotation, on: page),
@@ -6456,7 +6392,6 @@ func pdfTextMarkupQuadrilateralPoints(for size: CGSize) -> [NSValue] {
 enum PDFAnnotationInteractionMode: Equatable {
     case select
     case pen
-    case freeText
     case eraser
 }
 
@@ -6493,8 +6428,6 @@ private enum PDFAnnotationToolCursor {
             return .arrow
         case .pen:
             return pen
-        case .freeText:
-            return .iBeam
         case .eraser:
             return eraser
         }
