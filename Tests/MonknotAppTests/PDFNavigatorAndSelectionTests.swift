@@ -5,6 +5,17 @@ import SwiftUI
 import XCTest
 @testable import MonknotApp
 
+private final class PDFNavigatorReloadCountingDataSource: NSObject, NSTableViewDataSource {
+    private(set) var numberOfRowsCallCount = 0
+    var onNumberOfRows: (() -> Void)?
+
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        numberOfRowsCallCount += 1
+        onNumberOfRows?()
+        return 0
+    }
+}
+
 @MainActor
 final class PDFNavigatorAndSelectionTests: XCTestCase {
     func testDocumentLoadIdentityReloadsSameURLOnlyWhenContentVersionChanges() {
@@ -68,18 +79,21 @@ final class PDFNavigatorAndSelectionTests: XCTestCase {
     }
 
     func testNavigatorUsesTheActivePDFViewAndDetachesCompletely() throws {
-        let container = PDFPreviewContainerView()
+        let container = PDFPreviewContainerView(frame: NSRect(x: 0, y: 0, width: 1_000, height: 700))
         let document = try makeImagePDFDocument(pageCount: 2)
+        container.applyNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 1)
         container.pdfView.document = document
         container.navigatorView.attach(to: container.pdfView)
         container.setNavigatorPresented(true)
+        container.layoutSubtreeIfNeeded()
 
         XCTAssertTrue(container.navigatorView.thumbnailView.pdfView === container.pdfView)
         XCTAssertTrue(container.pdfView.document === document)
-        XCTAssertEqual(container.navigatorView.thumbnailView.thumbnailSize, NSSize(width: 132, height: 176))
+        XCTAssertEqual(container.navigatorView.thumbnailView.thumbnailSize, NSSize(width: 184, height: 260))
         XCTAssertEqual(container.navigatorView.thumbnailView.maximumNumberOfColumns, 1)
         XCTAssertEqual(container.navigatorView.outlineView.rowHeight, 30)
-        XCTAssertEqual(container.navigatorView.annotationTableView.rowHeight, 48)
+        XCTAssertEqual(container.navigatorView.annotationTableView.rowHeight, 30)
+        XCTAssertEqual(container.navigatorView.frame.width, 248, accuracy: 1)
         container.navigatorView.selectSection(.outline)
         XCTAssertNil(container.navigatorView.thumbnailView.pdfView)
         container.navigatorView.selectSection(.pages)
@@ -102,6 +116,383 @@ final class PDFNavigatorAndSelectionTests: XCTestCase {
             PDFAnnotationEditCheckpoint(operationCount: 0, lastOperationID: nil)
         )
         XCTAssertEqual(editCallbackCount, 0)
+    }
+
+    func testNavigatorMetricsScaleFromClampedBaseWidthsAtEveryWorkspaceZoomLevel() {
+        let cases: [(zoom: Double, minimum: CGFloat, preferred: CGFloat, maximum: CGFloat)] = [
+            (0.8, 176, 198, 256),
+            (0.9, 198, 223, 288),
+            (1, 220, 248, 320),
+            (1.1, 242, 273, 352),
+            (1.25, 275, 310, 400),
+            (1.5, 330, 372, 480),
+            (1.75, 385, 434, 560),
+            (2, 440, 496, 640)
+        ]
+
+        for item in cases {
+            let scale = CGFloat(item.zoom)
+            let density: (CGFloat) -> CGFloat = { ($0 * scale).rounded() }
+            let text: (CGFloat) -> CGFloat = { ($0 * scale * 2).rounded() / 2 }
+            let metrics = PDFNavigatorMetrics(
+                theme: .defaultLight,
+                workspaceZoomScale: item.zoom
+            )
+            XCTAssertEqual(metrics.minimumWidth, item.minimum, "zoom \(item.zoom)")
+            XCTAssertEqual(metrics.preferredWidth, item.preferred, "zoom \(item.zoom)")
+            XCTAssertEqual(metrics.maximumWidth, item.maximum, "zoom \(item.zoom)")
+            XCTAssertEqual(
+                metrics.renderedWidth(forBaseWidth: 100),
+                item.minimum,
+                "base width must clamp before scaling at zoom \(item.zoom)"
+            )
+            XCTAssertEqual(
+                metrics.renderedWidth(forBaseWidth: 1_000),
+                item.maximum,
+                "base width must clamp before scaling at zoom \(item.zoom)"
+            )
+            XCTAssertEqual(metrics.headerHeight, density(40))
+            XCTAssertEqual(metrics.headerInset, density(8))
+            XCTAssertEqual(metrics.segmentedHeight, density(28))
+            XCTAssertEqual(metrics.segmentedFontSize, text(12))
+            XCTAssertEqual(metrics.contentInset, density(8))
+            XCTAssertEqual(metrics.thumbnailLabelFontSize, text(12))
+            XCTAssertEqual(metrics.outlineRowHeight, density(30))
+            XCTAssertEqual(metrics.outlineIndentation, density(16))
+            XCTAssertEqual(metrics.outlineFontSize, text(13))
+            XCTAssertEqual(metrics.annotationRowHeight, density(30))
+            XCTAssertEqual(metrics.annotationFontSize, text(13))
+            XCTAssertEqual(metrics.cellInset, density(10))
+            XCTAssertEqual(metrics.selectionHorizontalInset, density(4))
+            XCTAssertEqual(metrics.selectionVerticalInset, density(2))
+            XCTAssertEqual(metrics.selectionCornerRadius, density(8))
+            XCTAssertEqual(metrics.emptyFontSize, text(12))
+            XCTAssertEqual(metrics.emptyInset, density(16))
+            let thumbnailSize = metrics.thumbnailSize(forPanelWidth: item.preferred)
+            XCTAssertEqual(thumbnailSize.width, (item.preferred * 0.74).rounded())
+            XCTAssertEqual(thumbnailSize.height, (thumbnailSize.width * sqrt(2)).rounded())
+        }
+    }
+
+    func testNavigatorAppliesThemeAndScaledNativeControlMetricsIdempotently() throws {
+        let navigator = PDFNavigatorView(frame: NSRect(x: 0, y: 0, width: 310, height: 700))
+        let theme = AppTheme.defaultDark
+        let metrics = PDFNavigatorMetrics(theme: theme, workspaceZoomScale: 1.25)
+
+        navigator.applyMetrics(metrics, theme: theme, panelWidth: 310)
+        let pdfView = AnnotatingPDFView()
+        pdfView.document = try makeImagePDFDocument(pageCount: 1)
+        navigator.attach(to: pdfView)
+        navigator.setPresented(true)
+        let firstThumbnailSize = navigator.thumbnailView.thumbnailSize
+        navigator.applyMetrics(metrics, theme: theme, panelWidth: 310)
+
+        XCTAssertEqual(navigator.metrics, metrics)
+        XCTAssertEqual(navigator.thumbnailView.thumbnailSize, firstThumbnailSize)
+        XCTAssertEqual(firstThumbnailSize, NSSize(width: 229, height: 324))
+        XCTAssertEqual(navigator.outlineView.rowHeight, 38)
+        XCTAssertEqual(navigator.outlineView.indentationPerLevel, 20)
+        XCTAssertEqual(navigator.annotationTableView.rowHeight, 38)
+        XCTAssertEqual(navigator.metrics.thumbnailLabelFontSize, 15)
+        XCTAssertTrue(navigator.foregroundColor.isEqual(NSColor(hex: theme.foreground)))
+        XCTAssertTrue(navigator.selectionColor.isEqual(NSColor(hex: theme.selectionBackground)))
+        XCTAssertTrue(
+            NSColor(cgColor: try XCTUnwrap(navigator.layer?.backgroundColor))?
+                .isEqual(NSColor(hex: theme.sidebarSurfaceHex)) == true
+        )
+        navigator.prepareForDismantle()
+        pdfView.prepareForDismantle()
+    }
+
+    func testNavigatorSkipsRedundantAppearanceReloadButStillUpdatesThumbnailWidth() {
+        let navigator = PDFNavigatorView(frame: NSRect(x: 0, y: 0, width: 248, height: 700))
+        let metrics = PDFNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 1)
+        let reloadCounter = PDFNavigatorReloadCountingDataSource()
+        navigator.annotationTableView.dataSource = reloadCounter
+
+        navigator.applyMetrics(metrics, theme: .defaultLight, panelWidth: 248)
+        let reloadsAfterInitialAppearance = reloadCounter.numberOfRowsCallCount
+        XCTAssertGreaterThan(reloadsAfterInitialAppearance, 0)
+        XCTAssertEqual(navigator.thumbnailView.thumbnailSize.width, 184)
+
+        navigator.applyMetrics(metrics, theme: .defaultLight, panelWidth: 300)
+
+        XCTAssertEqual(reloadCounter.numberOfRowsCallCount, reloadsAfterInitialAppearance)
+        XCTAssertEqual(navigator.thumbnailView.thumbnailSize.width, 222)
+
+        navigator.applyMetrics(
+            PDFNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 1.25),
+            theme: .defaultLight,
+            panelWidth: 300
+        )
+        XCTAssertGreaterThan(reloadCounter.numberOfRowsCallCount, reloadsAfterInitialAppearance)
+        navigator.prepareForDismantle()
+    }
+
+    func testNavigatorDividerWidthSurvivesIdempotentUpdatesAndScalesWithWorkspaceZoom() throws {
+        let container = PDFPreviewContainerView(frame: NSRect(x: 0, y: 0, width: 1_200, height: 700))
+        container.applyNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 1)
+        container.setNavigatorPresented(true)
+        container.layoutSubtreeIfNeeded()
+        let splitView = try XCTUnwrap(container.subviews.first as? PDFNavigatorSplitView)
+        XCTAssertFalse(container.splitView(splitView, canCollapseSubview: container.navigatorView))
+
+        splitView.setPosition(300, ofDividerAt: 0)
+        container.layoutSubtreeIfNeeded()
+        XCTAssertEqual(container.navigatorView.frame.width, 300, accuracy: 1)
+
+        container.frame.size.width = 1_400
+        container.layoutSubtreeIfNeeded()
+        container.layoutSubtreeIfNeeded()
+        XCTAssertEqual(container.navigatorView.frame.width, 300, accuracy: 1)
+
+        container.applyNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 1)
+        container.layoutSubtreeIfNeeded()
+        XCTAssertEqual(container.navigatorView.frame.width, 300, accuracy: 1)
+
+        container.applyNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 1.5)
+        container.layoutSubtreeIfNeeded()
+        XCTAssertEqual(container.navigatorView.frame.width, 450, accuracy: 1)
+        container.prepareForDismantle()
+    }
+
+    func testAccessibilitySplitterResizeRemainsAuthoritativeAcrossLayoutAndZoom() throws {
+        let container = PDFPreviewContainerView(frame: NSRect(x: 0, y: 0, width: 1_200, height: 700))
+        container.applyNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 1)
+        container.setNavigatorPresented(true)
+        container.layoutSubtreeIfNeeded()
+        let splitView = try XCTUnwrap(container.subviews.first as? PDFNavigatorSplitView)
+
+        var accessibilitySplitter: (any NSAccessibilityProtocol)?
+        for value in splitView.accessibilityChildren() ?? [] {
+            guard let element = value as? any NSAccessibilityProtocol,
+                  element.accessibilityRole() == .splitter
+            else {
+                continue
+            }
+            accessibilitySplitter = element
+            break
+        }
+        let splitter = try XCTUnwrap(accessibilitySplitter)
+
+        splitter.setAccessibilityValue(NSNumber(value: 300))
+        XCTAssertEqual(container.navigatorView.frame.width, 300, accuracy: 1)
+
+        container.frame.size.width = 1_400
+        container.layoutSubtreeIfNeeded()
+        container.layoutSubtreeIfNeeded()
+        XCTAssertEqual(container.navigatorView.frame.width, 300, accuracy: 1)
+
+        container.applyNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 1.5)
+        container.layoutSubtreeIfNeeded()
+        XCTAssertEqual(container.navigatorView.frame.width, 450, accuracy: 1)
+        container.prepareForDismantle()
+    }
+
+    func testNavigatorZoomTransitionDoesNotCaptureIntermediateRenderedWidthAsUserWidth() throws {
+        let container = PDFPreviewContainerView(frame: NSRect(x: 0, y: 0, width: 1_200, height: 700))
+        container.applyNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 2)
+        container.setNavigatorPresented(true)
+        container.layoutSubtreeIfNeeded()
+        XCTAssertEqual(container.navigatorView.frame.width, 496, accuracy: 1)
+
+        let splitView = try XCTUnwrap(container.subviews.first as? NSSplitView)
+        let resizeDuringAppearance = PDFNavigatorReloadCountingDataSource()
+        resizeDuringAppearance.onNumberOfRows = { [weak container, weak splitView] in
+            guard let container, let splitView else { return }
+            container.splitViewDidResizeSubviews(
+                Notification(name: NSSplitView.didResizeSubviewsNotification, object: splitView)
+            )
+        }
+        container.navigatorView.annotationTableView.dataSource = resizeDuringAppearance
+
+        container.applyNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 1)
+        container.layoutSubtreeIfNeeded()
+        XCTAssertEqual(container.navigatorView.frame.width, 248, accuracy: 1)
+
+        container.applyNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 2)
+        container.layoutSubtreeIfNeeded()
+
+        XCTAssertGreaterThan(resizeDuringAppearance.numberOfRowsCallCount, 0)
+        XCTAssertEqual(container.navigatorView.frame.width, 496, accuracy: 1)
+        container.prepareForDismantle()
+    }
+
+    func testHiddenNavigatorZoomRoundTripIgnoresLaterParentLayoutResize() {
+        let container = PDFPreviewContainerView(frame: NSRect(x: 0, y: 0, width: 900, height: 700))
+        container.applyNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 2)
+        container.setNavigatorPresented(false)
+        container.layoutSubtreeIfNeeded()
+        XCTAssertTrue(container.navigatorView.isHidden)
+
+        container.setNavigatorPresented(true)
+        container.layoutSubtreeIfNeeded()
+        XCTAssertEqual(container.navigatorView.frame.width, 496, accuracy: 1)
+
+        container.applyNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 1)
+        container.layoutSubtreeIfNeeded()
+        XCTAssertEqual(container.navigatorView.frame.width, 248, accuracy: 1)
+
+        // Resetting Interface Zoom also shrinks surrounding chrome, so the representable
+        // receives a later, wider parent layout after updateNSView has returned.
+        container.frame.size.width = 1_176
+        container.layoutSubtreeIfNeeded()
+        container.layoutSubtreeIfNeeded()
+        XCTAssertEqual(container.navigatorView.frame.width, 248, accuracy: 1)
+
+        container.applyNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 2)
+        container.layoutSubtreeIfNeeded()
+        XCTAssertEqual(container.navigatorView.frame.width, 496, accuracy: 1)
+
+        container.frame.size.width = 900
+        container.layoutSubtreeIfNeeded()
+        container.layoutSubtreeIfNeeded()
+        XCTAssertEqual(container.navigatorView.frame.width, 496, accuracy: 1)
+        container.prepareForDismantle()
+    }
+
+    func testNavigatorStartsCollapsedAtMaximumZoomAndRestoresAcrossShowHideShow() throws {
+        let container = PDFPreviewContainerView()
+
+        container.applyNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 2)
+        container.setNavigatorPresented(false)
+
+        XCTAssertTrue(container.navigatorView.isHidden)
+
+        container.frame = NSRect(x: 0, y: 0, width: 1_400, height: 700)
+        container.layoutSubtreeIfNeeded()
+
+        XCTAssertTrue(container.navigatorView.isHidden)
+        XCTAssertEqual(container.navigatorView.frame.width, 0, accuracy: 1)
+        XCTAssertEqual(container.pdfView.frame.width, container.bounds.width, accuracy: 1)
+
+        // Match SwiftUI's first update after the zero-frame representable is mounted.
+        container.applyNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 2)
+        container.setNavigatorPresented(false)
+        container.layoutSubtreeIfNeeded()
+
+        XCTAssertTrue(container.navigatorView.isHidden)
+        XCTAssertEqual(container.navigatorView.frame.width, 0, accuracy: 1)
+        XCTAssertNil(container.navigatorView.thumbnailView.pdfView)
+        XCTAssertEqual(container.pdfView.frame.width, container.bounds.width, accuracy: 1)
+
+        let document = try makeImagePDFDocument(pageCount: 2)
+        container.pdfView.document = document
+        container.navigatorView.attach(to: container.pdfView)
+        container.setNavigatorPresented(true)
+        XCTAssertEqual(container.navigatorView.frame.width, 496, accuracy: 1)
+        container.layoutSubtreeIfNeeded()
+
+        XCTAssertFalse(container.navigatorView.isHidden)
+        XCTAssertEqual(container.navigatorView.frame.width, 496, accuracy: 1)
+        XCTAssertTrue(container.navigatorView.thumbnailView.pdfView === container.pdfView)
+
+        container.setNavigatorPresented(false)
+        XCTAssertEqual(container.navigatorView.frame.width, 0, accuracy: 1)
+        container.layoutSubtreeIfNeeded()
+
+        XCTAssertTrue(container.navigatorView.isHidden)
+        XCTAssertEqual(container.navigatorView.frame.width, 0, accuracy: 1)
+        XCTAssertNil(container.navigatorView.thumbnailView.pdfView)
+        XCTAssertEqual(container.pdfView.frame.width, container.bounds.width, accuracy: 1)
+
+        container.setNavigatorPresented(true)
+        container.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(container.navigatorView.frame.width, 496, accuracy: 1)
+        XCTAssertTrue(container.navigatorView.thumbnailView.pdfView === container.pdfView)
+        XCTAssertTrue(container.pdfView.document === document)
+        container.setNavigatorPresented(false)
+        container.layoutSubtreeIfNeeded()
+    }
+
+    func testPDFPageZoomDoesNotChangeNavigatorMetrics() throws {
+        let container = PDFPreviewContainerView(frame: NSRect(x: 0, y: 0, width: 1_200, height: 700))
+        container.applyNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 1.25)
+        container.pdfView.document = try makeImagePDFDocument(pageCount: 2)
+        container.navigatorView.attach(to: container.pdfView)
+        container.setNavigatorPresented(true)
+        container.layoutSubtreeIfNeeded()
+        let metrics = container.navigatorMetrics
+        let thumbnailSize = container.navigatorView.thumbnailView.thumbnailSize
+
+        container.pdfView.autoScales = false
+        container.pdfView.scaleFactor = 2
+        container.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(container.navigatorMetrics, metrics)
+        XCTAssertEqual(container.navigatorView.metrics, metrics)
+        XCTAssertEqual(container.navigatorView.thumbnailView.thumbnailSize, thumbnailSize)
+        XCTAssertEqual(container.navigatorView.outlineView.rowHeight, metrics.outlineRowHeight)
+        XCTAssertEqual(container.navigatorView.annotationTableView.rowHeight, metrics.annotationRowHeight)
+        container.prepareForDismantle()
+    }
+
+    func testAnnotationNavigatorRowsAreSingleLineWithBoundedAccessibilityExcerpt() throws {
+        let document = try makeImagePDFDocument(pageCount: 1)
+        let page = try XCTUnwrap(document.page(at: 0))
+        let annotation = PDFAnnotation(
+            bounds: CGRect(x: 20, y: 20, width: 100, height: 40),
+            forType: .freeText,
+            withProperties: nil
+        )
+        let fullText = String(repeating: "Accessible annotation detail ", count: 20_000) + "far-tail words"
+        annotation.contents = "Accessible annotation\ndetail   " + fullText
+        page.addAnnotation(annotation)
+
+        let item = try XCTUnwrap(PDFNavigatorView.annotationItems(from: document).first)
+
+        XCTAssertFalse(item.label.contains("\n"))
+        XCTAssertLessThanOrEqual(item.excerpt?.count ?? 0, 140)
+        XCTAssertGreaterThan(item.accessibilityExcerpt?.count ?? 0, 140)
+        XCTAssertEqual(item.accessibilityExcerpt?.count, 500)
+        XCTAssertFalse(item.accessibilityExcerpt?.contains("far-tail words") == true)
+        XCTAssertFalse(item.accessibilityLabel.contains("far-tail words"))
+    }
+
+    func testAnnotationExcerptBoundsOneHugeCombiningGraphemeByUTF16Length() throws {
+        let document = try makeImagePDFDocument(pageCount: 1)
+        let page = try XCTUnwrap(document.page(at: 0))
+        let annotation = PDFAnnotation(
+            bounds: CGRect(x: 20, y: 20, width: 100, height: 40),
+            forType: .freeText,
+            withProperties: nil
+        )
+        annotation.contents = "A" + String(repeating: "\u{0301}", count: 100_000) + " far-tail words"
+        page.addAnnotation(annotation)
+
+        let item = try XCTUnwrap(PDFNavigatorView.annotationItems(from: document).first)
+        let accessibilityExcerpt = try XCTUnwrap(item.accessibilityExcerpt)
+
+        XCTAssertLessThanOrEqual(accessibilityExcerpt.unicodeScalars.count, 500)
+        XCTAssertLessThanOrEqual(accessibilityExcerpt.utf16.count, 500)
+        XCTAssertLessThanOrEqual(item.excerpt?.utf16.count ?? 0, 140)
+        XCTAssertFalse(accessibilityExcerpt.contains("far-tail words"))
+        XCTAssertFalse(item.accessibilityLabel.contains("far-tail words"))
+    }
+
+    func testNavigatorSelectedRowsUseScaledInsetsAndNativeInactiveColor() {
+        let metrics = PDFNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 1.5)
+        let row = PDFNavigatorTableRowView(frame: NSRect(x: 0, y: 0, width: 300, height: 45))
+        row.themedSelectionColor = .systemBlue
+        row.selectionHorizontalInset = metrics.selectionHorizontalInset
+        row.selectionVerticalInset = metrics.selectionVerticalInset
+        row.selectionCornerRadius = metrics.selectionCornerRadius
+        row.isEmphasized = true
+
+        XCTAssertEqual(row.selectionDrawingRect, NSRect(x: 6, y: 3, width: 288, height: 39))
+        XCTAssertEqual(row.selectionCornerRadius, 12)
+        XCTAssertTrue(row.resolvedSelectionColor(isKeyWindow: true).isEqual(NSColor.systemBlue))
+        XCTAssertTrue(
+            row.resolvedSelectionColor(isKeyWindow: false)
+                .isEqual(NSColor.unemphasizedSelectedContentBackgroundColor)
+        )
+
+        row.isEmphasized = false
+        XCTAssertTrue(
+            row.resolvedSelectionColor(isKeyWindow: true)
+                .isEqual(NSColor.unemphasizedSelectedContentBackgroundColor)
+        )
     }
 
     func testFinalViewportDeliveryIsSynchronousBeforePDFTeardown() throws {
