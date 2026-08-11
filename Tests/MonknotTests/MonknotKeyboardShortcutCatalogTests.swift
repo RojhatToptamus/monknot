@@ -18,4 +18,10 @@ final class MonknotKeyboardShortcutCatalogTests: XCTestCase {
             $0.title == "Paste Selection into Terminal"
         })
     }
+
+    func testHelpDoesNotAdvertiseAQuestionMarkShortcut() {
+        XCTAssertFalse(MonknotKeyboardShortcutCatalog.entries.contains {
+            $0.shortcut == "?" || $0.title == "Keyboard Shortcuts Help"
+        })
+    }
 }

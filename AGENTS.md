@@ -101,7 +101,7 @@ Prefer putting logic in `MonknotCore` when it can be tested without SwiftUI/AppK
   - `HTMLScrollSync`: proportional source-line ↔ scroll-position math for HTML split-view sync scroll.
   - `WorkspaceGitStatusService`: parses `git status --porcelain` for optional sidebar git badges. The app no longer runs git status automatically during workspace open because that background work can compete with early file switching.
   - `RecentDocumentStore`: per-workspace recent document list for the sidebar.
-  - `MonknotKeyboardShortcutCatalog`: static shortcut list for the `?` help overlay.
+  - `MonknotKeyboardShortcutCatalog`: static shortcut list for the keyboard-shortcuts help overlay.
   - `BetaFeedbackRecorder`: appends local beta feedback to Application Support JSONL (no network).
   - `WorkspaceSearchResult`: normalized result model for text and PDF matches.
   - `MarkdownOutlineParser`: extracts Markdown headings while ignoring fenced code blocks.

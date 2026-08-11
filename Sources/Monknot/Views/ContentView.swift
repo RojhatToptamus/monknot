@@ -1722,8 +1722,6 @@ struct ContentView: View {
             if let result = workspaceSearch.selectedResult {
                 openWorkspaceSearchResult(result)
             }
-        case .showKeyboardShortcutsHelp:
-            isKeyboardShortcutsHelpPresented = true
         case .dismissKeyboardShortcutsHelp:
             isKeyboardShortcutsHelpPresented = false
         case .toggleSplitView:

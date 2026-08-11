@@ -82,7 +82,6 @@ Release downloads are signed with a Developer ID certificate and notarized by Ap
 | Go to Heading | <kbd>⇧ ⌘ O</kbd> |
 | Toggle split editor | <kbd>⌘ \</kbd> |
 | Toggle terminal | <kbd>⌥ ⌘ J</kbd> |
-| Open the shortcut guide | <kbd>?</kbd> |
 
 ## License
 
