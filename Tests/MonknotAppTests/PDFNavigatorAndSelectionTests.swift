@@ -154,7 +154,6 @@ final class PDFNavigatorAndSelectionTests: XCTestCase {
             XCTAssertEqual(metrics.headerHeight, density(40))
             XCTAssertEqual(metrics.headerInset, density(8))
             XCTAssertEqual(metrics.segmentedHeight, density(28))
-            XCTAssertEqual(metrics.segmentedFontSize, text(12))
             XCTAssertEqual(metrics.contentInset, density(8))
             XCTAssertEqual(metrics.thumbnailLabelFontSize, text(12))
             XCTAssertEqual(metrics.outlineRowHeight, density(30))
@@ -174,7 +173,143 @@ final class PDFNavigatorAndSelectionTests: XCTestCase {
         }
     }
 
-    func testNavigatorAppliesThemeAndScaledNativeControlMetricsIdempotently() throws {
+    func testNavigatorSectionControlIsCenteredContentHuggedAndScaledAtOneAndTwo() {
+        let cases: [(zoom: Double, theme: AppTheme, panelWidth: CGFloat)] = [
+            (1, .defaultLight, 248),
+            (2, .defaultDark, 496)
+        ]
+
+        for item in cases {
+            let navigator = PDFNavigatorView(
+                frame: NSRect(x: 0, y: 0, width: item.panelWidth, height: 700)
+            )
+            let metrics = PDFNavigatorMetrics(theme: item.theme, workspaceZoomScale: item.zoom)
+            navigator.applyMetrics(metrics, theme: item.theme, panelWidth: item.panelWidth)
+            navigator.layoutSubtreeIfNeeded()
+            navigator.sectionControlHostingView.layoutSubtreeIfNeeded()
+
+            let scale = CGFloat(item.zoom)
+            let expectedWidth = ((28 * 3) + (2 * 2) + (2 * 2)) * scale
+            XCTAssertEqual(
+                navigator.sectionControlHostingView.frame.width,
+                expectedWidth,
+                accuracy: 1,
+                "zoom \(item.zoom)"
+            )
+            XCTAssertEqual(
+                navigator.sectionControlHostingView.frame.height,
+                metrics.segmentedHeight,
+                accuracy: 0.5,
+                "zoom \(item.zoom)"
+            )
+            XCTAssertEqual(
+                navigator.sectionControlHostingView.frame.midX,
+                navigator.bounds.midX,
+                accuracy: 0.5,
+                "zoom \(item.zoom)"
+            )
+            XCTAssertLessThan(
+                navigator.sectionControlHostingView.frame.width,
+                navigator.bounds.width - (metrics.headerInset * 2),
+                "the section control must hug its three icons rather than fill the navigator"
+            )
+            XCTAssertEqual(navigator.sectionControlHostingView.rootView.zoomScale, item.zoom)
+            XCTAssertEqual(
+                navigator.sectionControlHostingView.rootView.theme,
+                item.theme
+            )
+            navigator.prepareForDismantle()
+        }
+    }
+
+    func testSharedPDFSegmentFocusRingCoversNavigatorAndFormattingSegmentsWithoutChangingMetrics() {
+        XCTAssertTrue(MonknotSegmentButton.showsFocusRing(isFocused: true, isDisabled: false))
+        XCTAssertFalse(MonknotSegmentButton.showsFocusRing(isFocused: false, isDisabled: false))
+        XCTAssertFalse(MonknotSegmentButton.showsFocusRing(isFocused: true, isDisabled: true))
+        XCTAssertEqual(MonknotSegmentButton.focusRingLineWidth, 3)
+        XCTAssertEqual(MonknotSegmentButton.focusRingOutset, 2)
+        XCTAssertEqual(MonknotSegmentButton.focusRingOpacity, 0.35)
+
+        for zoomScale in [1.0, 2.0] {
+            let theme = AppTheme.defaultLight
+            let formattingSegment = MonknotSegmentButton(
+                systemImage: "bold",
+                accessibilityLabel: "Bold",
+                isSelected: false,
+                theme: theme,
+                zoomScale: zoomScale,
+                action: {}
+            )
+            let formattingHost = NSHostingView(rootView: formattingSegment)
+            XCTAssertEqual(
+                formattingHost.fittingSize.width,
+                MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale),
+                accuracy: 0.5
+            )
+            XCTAssertEqual(
+                formattingHost.fittingSize.height,
+                MonknotMetrics.interfaceControl(22, theme: theme, zoomScale: zoomScale),
+                accuracy: 0.5
+            )
+
+            let navigatorControl = PDFNavigatorSectionControl(
+                selection: .pages,
+                theme: theme,
+                zoomScale: zoomScale,
+                onSelect: { _ in }
+            )
+            XCTAssertEqual(
+                navigatorControl.options.map(\.accessibilityLabel),
+                ["Pages", "Outline", "Annotations"]
+            )
+        }
+    }
+
+    func testNavigatorSectionControlActivationProgrammaticSelectionAccessibilityAndTeardown() throws {
+        let navigator = PDFNavigatorView(frame: NSRect(x: 0, y: 0, width: 248, height: 700))
+        let pdfView = AnnotatingPDFView()
+        pdfView.document = try makeImagePDFDocument(pageCount: 1)
+        navigator.attach(to: pdfView)
+        navigator.setPresented(true)
+        navigator.applyMetrics(
+            PDFNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 1),
+            theme: .defaultLight,
+            panelWidth: 248
+        )
+        navigator.layoutSubtreeIfNeeded()
+        navigator.sectionControlHostingView.layoutSubtreeIfNeeded()
+
+        let rootView = navigator.sectionControlHostingView.rootView
+        XCTAssertEqual(rootView.options.map(\.accessibilityLabel), ["Pages", "Outline", "Annotations"])
+        XCTAssertEqual(navigator.sectionControlHostingView.accessibilityRole(), .group)
+        XCTAssertEqual(navigator.sectionControlHostingView.accessibilityLabel(), "PDF Navigator")
+
+        // MonknotSegmentedControl writes this binding for both pointer and keyboard activation.
+        rootView.controlSelection.wrappedValue = PDFNavigatorSection.outline.controlID
+        XCTAssertEqual(
+            navigator.sectionControlHostingView.rootView.selection.controlID,
+            PDFNavigatorSection.outline.controlID
+        )
+        XCTAssertTrue(navigator.thumbnailView.isHidden)
+        XCTAssertFalse(try XCTUnwrap(navigator.outlineView.enclosingScrollView).isHidden)
+
+        navigator.selectSection(.annotations)
+        XCTAssertEqual(
+            navigator.sectionControlHostingView.rootView.selection.controlID,
+            PDFNavigatorSection.annotations.controlID
+        )
+        XCTAssertTrue(try XCTUnwrap(navigator.outlineView.enclosingScrollView).isHidden)
+        XCTAssertFalse(try XCTUnwrap(navigator.annotationTableView.enclosingScrollView).isHidden)
+
+        let hostingView = navigator.sectionControlHostingView
+        XCTAssertNotNil(hostingView.rootView.onSelect)
+        navigator.prepareForDismantle()
+        XCTAssertNil(hostingView.rootView.onSelect)
+        XCTAssertNil(hostingView.superview)
+        pdfView.prepareForDismantle()
+    }
+
+    func testNavigatorAppliesThemeAndScaledControlMetricsIdempotently() throws {
         let navigator = PDFNavigatorView(frame: NSRect(x: 0, y: 0, width: 310, height: 700))
         let theme = AppTheme.defaultDark
         let metrics = PDFNavigatorMetrics(theme: theme, workspaceZoomScale: 1.25)

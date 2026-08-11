@@ -292,6 +292,7 @@ private enum PDFLoadState: Equatable {
 }
 
 private enum PDFStrokeWidthPopoverAnchor: Equatable {
+    case annotation
     case compact
     case minimal
 }
@@ -300,6 +301,26 @@ private enum PDFToolbarMenuHoverTarget: Equatable {
     case tool
     case style
     case more
+}
+
+enum PDFAnnotationStyleDisclosure: Equatable {
+    case markupColor
+    case drawing
+    case text
+    case none
+
+    init(mode: PDFAnnotationInteractionMode, hasSelectedText: Bool) {
+        switch mode {
+        case .select:
+            self = .markupColor
+        case .pen:
+            self = .drawing
+        case .freeText:
+            self = hasSelectedText ? .text : .none
+        case .eraser:
+            self = .none
+        }
+    }
 }
 
 enum PDFZoomCommand: Equatable {
@@ -475,6 +496,58 @@ struct PDFFreeTextFormatting: Equatable {
     }
 }
 
+struct PDFFreeTextPopoverMetrics: Equatable {
+    static let baseWidth: CGFloat = 248
+
+    let width: CGFloat
+    let padding: CGFloat
+    let rowSpacing: CGFloat
+    let itemSpacing: CGFloat
+    let controlHeight: CGFloat
+    let fontMenuWidth: CGFloat
+    let colorWellDimension: CGFloat
+    let sizeControlWidth: CGFloat
+    let segmentPadding: CGFloat
+    let segmentSpacing: CGFloat
+    let labelFontSize: CGFloat
+    let secondaryGlyphFontSize: CGFloat
+
+    init(theme: AppTheme, zoomScale: Double) {
+        width = MonknotMetrics.interfaceDensity(Self.baseWidth, theme: theme, zoomScale: zoomScale)
+        padding = MonknotMetrics.interfaceDensity(12, theme: theme, zoomScale: zoomScale)
+        rowSpacing = MonknotMetrics.interfaceDensity(10, theme: theme, zoomScale: zoomScale)
+        itemSpacing = MonknotMetrics.interfaceDensity(8, theme: theme, zoomScale: zoomScale)
+        controlHeight = MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)
+        fontMenuWidth = MonknotMetrics.interfaceDensity(188, theme: theme, zoomScale: zoomScale)
+        colorWellDimension = MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)
+        sizeControlWidth = MonknotMetrics.interfaceDensity(84, theme: theme, zoomScale: zoomScale)
+        segmentPadding = MonknotMetrics.interfaceDensity(2, theme: theme, zoomScale: zoomScale)
+        segmentSpacing = MonknotMetrics.interfaceDensity(2, theme: theme, zoomScale: zoomScale)
+        labelFontSize = MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale)
+        secondaryGlyphFontSize = MonknotMetrics.interfaceGlyph(9, theme: theme, zoomScale: zoomScale)
+    }
+
+    var contentWidth: CGFloat {
+        width - padding * 2
+    }
+}
+
+func pdfFreeTextFontFamilyOptions(
+    currentFamily: String,
+    availableFamilies: [String]
+) -> [String] {
+    var unique: [String] = []
+    for family in [currentFamily] + availableFamilies where !family.isEmpty {
+        guard !unique.contains(where: {
+            $0.caseInsensitiveCompare(family) == .orderedSame
+        }) else { continue }
+        unique.append(family)
+    }
+    return unique.sorted {
+        $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+    }
+}
+
 private struct PDFFreeTextFormattingCommand {
     let serial: Int
     let formatting: PDFFreeTextFormatting
@@ -538,135 +611,286 @@ private struct PDFFreeTextColorWell: NSViewRepresentable {
     }
 }
 
+private enum PDFFreeTextPopoverFocus: Hashable {
+    case fontFamily
+    case decreaseSize
+    case increaseSize
+}
+
 private struct PDFFreeTextFormattingPopover: View {
     let formatting: PDFFreeTextFormatting
+    let fontFamilies: [String]
     let theme: AppTheme
     let zoomScale: Double
     let update: (PDFFreeTextFormatting) -> Void
 
-    private var availableFamilies: [String] {
-        NSFontManager.shared.availableFontFamilies.sorted {
-            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
-        }
+    @State private var isFontMenuHovered = false
+    @State private var hoveredSizeStep: Int?
+    @FocusState private var focusedControl: PDFFreeTextPopoverFocus?
+
+    private var metrics: PDFFreeTextPopoverMetrics {
+        PDFFreeTextPopoverMetrics(theme: theme, zoomScale: zoomScale)
     }
 
-    private func scaled(_ value: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(value, theme: theme, zoomScale: zoomScale)
+    private var controlShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: scaled(10)) {
-            HStack(spacing: scaled(8)) {
-                Picker("Font", selection: valueBinding(\.fontFamily)) {
-                    ForEach(availableFamilies, id: \.self) { family in
-                        Text(family).tag(family)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: scaled(188))
-
-                Stepper(
-                    value: Binding(
-                        get: { Double(formatting.fontSize) },
-                        set: { value in
-                            var next = formatting
-                            next.fontSize = CGFloat(min(max(value, 6), 144))
-                            update(next)
-                        }
-                    ),
-                    in: 6...144,
-                    step: 1
-                ) {
-                    Text("\(Int(formatting.fontSize.rounded())) pt")
-                        .monospacedDigit()
-                        .frame(width: scaled(48), alignment: .trailing)
-                }
+        VStack(alignment: .leading, spacing: metrics.rowSpacing) {
+            HStack(spacing: metrics.itemSpacing) {
+                fontFamilyControl
 
                 PDFFreeTextColorWell(color: formatting.fontColor) { color in
                     var next = formatting
                     next.fontColor = color
                     update(next)
                 }
-                .frame(width: scaled(28), height: scaled(24))
+                .frame(
+                    width: metrics.colorWellDimension,
+                    height: metrics.colorWellDimension
+                )
                 .accessibilityLabel("Text Color")
             }
 
-            HStack(spacing: scaled(6)) {
-                formatToggle(
-                    title: "Bold",
-                    systemImage: "bold",
-                    isOn: formatting.isBold
-                ) {
-                    var next = formatting
-                    next.isBold.toggle()
-                    update(next)
-                }
-                formatToggle(
-                    title: "Italic",
-                    systemImage: "italic",
-                    isOn: formatting.isItalic
-                ) {
-                    var next = formatting
-                    next.isItalic.toggle()
-                    update(next)
-                }
+            HStack(spacing: metrics.itemSpacing) {
+                fontSizeControl
+                Spacer(minLength: 0)
+                emphasisControls
+            }
 
-                Divider()
-                    .frame(height: scaled(22))
-
-                alignmentButton(.left, image: "text.alignleft", label: "Align Left")
-                alignmentButton(.center, image: "text.aligncenter", label: "Align Center")
-                alignmentButton(.right, image: "text.alignright", label: "Align Right")
+            HStack(spacing: metrics.itemSpacing) {
+                Text("Alignment")
+                    .font(.system(size: metrics.labelFontSize, weight: .regular))
+                    .foregroundStyle(theme.mutedForegroundColor)
+                Spacer(minLength: 0)
+                alignmentControls
             }
         }
-        .font(.system(size: scaled(12)))
-        .foregroundStyle(theme.foregroundColor)
-        .padding(scaled(12))
-        .frame(minWidth: scaled(372))
+        .padding(metrics.padding)
+        .frame(width: metrics.width)
+        .background(theme.elevatedSurfaceColor)
     }
 
-    private func valueBinding<Value>(_ keyPath: WritableKeyPath<PDFFreeTextFormatting, Value>) -> Binding<Value> {
-        Binding(
-            get: { formatting[keyPath: keyPath] },
-            set: { value in
-                var next = formatting
-                next[keyPath: keyPath] = value
-                update(next)
+    private var fontFamilyControl: some View {
+        Menu {
+            ForEach(fontFamilies, id: \.self) { family in
+                Button {
+                    var next = formatting
+                    next.fontFamily = family
+                    update(next)
+                } label: {
+                    HStack {
+                        Text(family)
+                        if family == formatting.fontFamily {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
             }
-        )
-    }
+        } label: {
+            HStack(spacing: metrics.itemSpacing) {
+                Text(formatting.fontFamily)
+                    .font(.system(size: metrics.labelFontSize, weight: .regular))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-    private func alignmentButton(_ alignment: NSTextAlignment, image: String, label: String) -> some View {
-        formatToggle(
-            title: label,
-            systemImage: image,
-            isOn: formatting.alignment == alignment
-        ) {
-            var next = formatting
-            next.alignment = alignment
-            update(next)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: metrics.secondaryGlyphFontSize, weight: .regular))
+                    .foregroundStyle(theme.tertiaryForegroundColor)
+            }
+            .foregroundStyle(theme.foregroundColor)
+            .padding(.horizontal, metrics.itemSpacing)
+            .frame(width: metrics.fontMenuWidth, height: metrics.controlHeight)
+            .background(
+                isFontMenuHovered
+                    ? theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.055)
+                    : theme.insetFillColor,
+                in: controlShape
+            )
+            .overlay {
+                controlShape.strokeBorder(theme.borderColor, lineWidth: 1)
+            }
+            .overlay {
+                if focusedControl == .fontFamily {
+                    controlShape
+                        .stroke(theme.accentColor.opacity(0.35), lineWidth: 3)
+                        .padding(-2)
+                }
+            }
+            .contentShape(controlShape)
         }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .focusable()
+        .focused($focusedControl, equals: .fontFamily)
+        .focusEffectDisabled()
+        .onHover { isFontMenuHovered = $0 }
+        .animation(MonknotMotion.hoverAnimation, value: isFontMenuHovered)
+        .help("Font Family")
+        .accessibilityLabel("Font Family")
+        .accessibilityValue(formatting.fontFamily)
     }
 
-    private func formatToggle(
-        title: String,
-        systemImage: String,
-        isOn: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .frame(width: scaled(24), height: scaled(22))
-                .background(
-                    isOn ? theme.accentColor.opacity(theme.isDark ? 0.28 : 0.18) : Color.clear,
-                    in: RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale))
+    private var fontSizeControl: some View {
+        HStack(spacing: 0) {
+            Text("\(Int(formatting.fontSize.rounded())) pt")
+                .font(.system(size: metrics.labelFontSize, weight: .regular, design: .monospaced))
+                .foregroundStyle(theme.foregroundColor)
+                .monospacedDigit()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityHidden(true)
+
+            Rectangle()
+                .fill(theme.borderColor)
+                .frame(width: 1)
+                .accessibilityHidden(true)
+
+            VStack(spacing: 0) {
+                fontSizeStepButton(
+                    systemImage: "chevron.up",
+                    label: "Increase Font Size",
+                    delta: 1,
+                    isDisabled: formatting.fontSize >= 144,
+                    focus: .increaseSize
                 )
+
+                Rectangle()
+                    .fill(theme.borderColor)
+                    .frame(height: 1)
+                    .accessibilityHidden(true)
+
+                fontSizeStepButton(
+                    systemImage: "chevron.down",
+                    label: "Decrease Font Size",
+                    delta: -1,
+                    isDisabled: formatting.fontSize <= 6,
+                    focus: .decreaseSize
+                )
+            }
+            .frame(width: metrics.controlHeight)
+        }
+        .frame(width: metrics.sizeControlWidth, height: metrics.controlHeight)
+        .background(theme.insetFillColor, in: controlShape)
+        .clipShape(controlShape)
+        .overlay {
+            controlShape.strokeBorder(theme.borderColor, lineWidth: 1)
+        }
+        .overlay {
+            if focusedControl == .increaseSize || focusedControl == .decreaseSize {
+                controlShape
+                    .stroke(theme.accentColor.opacity(0.35), lineWidth: 3)
+                    .padding(-2)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Font Size")
+        .accessibilityValue("\(Int(formatting.fontSize.rounded())) points")
+    }
+
+    private func fontSizeStepButton(
+        systemImage: String,
+        label: String,
+        delta: CGFloat,
+        isDisabled: Bool,
+        focus: PDFFreeTextPopoverFocus
+    ) -> some View {
+        Button {
+            var next = formatting
+            next.fontSize = min(max(formatting.fontSize + delta, 6), 144)
+            update(next)
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: metrics.secondaryGlyphFontSize, weight: .regular))
+                .foregroundStyle(isDisabled ? theme.disabledForegroundColor : theme.mutedForegroundColor)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background {
+                    if hoveredSizeStep == Int(delta), !isDisabled {
+                        theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.055)
+                    }
+                }
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .help(title)
-        .accessibilityLabel(title)
-        .accessibilityAddTraits(isOn ? .isSelected : [])
+        .buttonStyle(MonknotControlPressStyle())
+        .disabled(isDisabled)
+        .focusable(!isDisabled)
+        .focused($focusedControl, equals: focus)
+        .focusEffectDisabled()
+        .onHover { isHovered in
+            if isHovered {
+                hoveredSizeStep = Int(delta)
+            } else if hoveredSizeStep == Int(delta) {
+                hoveredSizeStep = nil
+            }
+        }
+        .animation(MonknotMotion.hoverAnimation, value: hoveredSizeStep)
+        .help(label)
+        .accessibilityLabel(label)
+    }
+
+    private var emphasisControls: some View {
+        HStack(spacing: metrics.segmentSpacing) {
+            MonknotSegmentButton(
+                systemImage: "bold",
+                accessibilityLabel: "Bold",
+                isSelected: formatting.isBold,
+                theme: theme,
+                zoomScale: zoomScale
+            ) {
+                var next = formatting
+                next.isBold.toggle()
+                update(next)
+            }
+
+            MonknotSegmentButton(
+                systemImage: "italic",
+                accessibilityLabel: "Italic",
+                isSelected: formatting.isItalic,
+                theme: theme,
+                zoomScale: zoomScale
+            ) {
+                var next = formatting
+                next.isItalic.toggle()
+                update(next)
+            }
+        }
+        .padding(metrics.segmentPadding)
+        .overlay {
+            controlShape.strokeBorder(theme.borderColor, lineWidth: 1)
+        }
+    }
+
+    private var alignmentControls: some View {
+        MonknotSegmentedControl(
+            options: [
+                MonknotSegmentOption(id: "left", systemImage: "text.alignleft", accessibilityLabel: "Align Left"),
+                MonknotSegmentOption(id: "center", systemImage: "text.aligncenter", accessibilityLabel: "Align Center"),
+                MonknotSegmentOption(id: "right", systemImage: "text.alignright", accessibilityLabel: "Align Right")
+            ],
+            selection: Binding(
+                get: {
+                    switch formatting.alignment {
+                    case .left: return "left"
+                    case .center: return "center"
+                    case .right: return "right"
+                    default: return "unsupported"
+                    }
+                },
+                set: { selection in
+                    var next = formatting
+                    switch selection {
+                    case "center": next.alignment = .center
+                    case "right": next.alignment = .right
+                    default: next.alignment = .left
+                    }
+                    update(next)
+                }
+            ),
+            theme: theme,
+            zoomScale: zoomScale
+        )
     }
 }
 
@@ -695,9 +919,17 @@ private struct PDFAnnotationToolbar: View {
     @State private var strokeWidthPopoverAnchor: PDFStrokeWidthPopoverAnchor?
     @State private var hoveredMenu: PDFToolbarMenuHoverTarget?
     @State private var isFreeTextFormattingPresented = false
+    @State private var freeTextFontFamilies: [String] = []
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    private var styleDisclosure: PDFAnnotationStyleDisclosure {
+        PDFAnnotationStyleDisclosure(
+            mode: interactionMode,
+            hasSelectedText: selectedFreeTextFormatting != nil
+        )
     }
 
     var body: some View {
@@ -735,10 +967,7 @@ private struct PDFAnnotationToolbar: View {
             navigatorButton
             toolbarDivider
             toolbarContent
-            if interactionMode != .freeText {
-                toolbarDivider
-                strokeWidthControl
-            }
+            regularStyleControls
             toolbarDivider
             zoomToolbar
             saveButtonIfNeeded
@@ -779,11 +1008,7 @@ private struct PDFAnnotationToolbar: View {
             ) {
                 runMarkup(.strikeOut)
             }
-            if interactionMode == .freeText {
-                freeTextStyleButtonIfAvailable
-            } else {
-                styleMenu(anchor: .compact)
-            }
+            responsiveStyleControls(anchor: .compact)
             moreMenu
             toolbarDivider
             zoomToolbar
@@ -835,11 +1060,7 @@ private struct PDFAnnotationToolbar: View {
             penButton
             freeTextButton
             eraserButton
-            if interactionMode == .freeText {
-                freeTextStyleButtonIfAvailable
-            } else {
-                colorPalette
-            }
+            responsiveStyleControls(anchor: .annotation)
             moreMenu
             toolbarDivider
             zoomToolbar
@@ -854,11 +1075,7 @@ private struct PDFAnnotationToolbar: View {
             toolbarDivider
             navigatorButton
             toolMenu
-            if interactionMode == .freeText {
-                freeTextStyleButtonIfAvailable
-            } else {
-                styleMenu(anchor: .minimal)
-            }
+            responsiveStyleControls(anchor: .minimal)
             moreMenu
             toolbarDivider
             zoomToolbar
@@ -918,15 +1135,45 @@ private struct PDFAnnotationToolbar: View {
             penButton
             freeTextButton
             eraserButton
-
-            if interactionMode == .freeText {
-                freeTextStyleButtonIfAvailable
-            } else {
-                toolbarDivider
-                colorPalette
-            }
         }
         .fixedSize(horizontal: true, vertical: false)
+    }
+
+    @ViewBuilder
+    private var regularStyleControls: some View {
+        switch styleDisclosure {
+        case .markupColor:
+            toolbarDivider
+            colorPalette
+        case .drawing:
+            toolbarDivider
+            colorPalette
+            toolbarDivider
+            strokeWidthControl
+        case .text:
+            toolbarDivider
+            freeTextStyleButtonIfAvailable
+        case .none:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func responsiveStyleControls(anchor: PDFStrokeWidthPopoverAnchor) -> some View {
+        switch styleDisclosure {
+        case .markupColor:
+            if anchor == .annotation {
+                colorPalette
+            } else {
+                colorMenu
+            }
+        case .drawing:
+            styleMenu(anchor: anchor)
+        case .text:
+            freeTextStyleButtonIfAvailable
+        case .none:
+            EmptyView()
+        }
     }
 
     private var colorPalette: some View {
@@ -992,7 +1239,7 @@ private struct PDFAnnotationToolbar: View {
             isActive: interactionMode == .pen,
             size: .compact
         ) {
-            interactionMode = interactionMode == .pen ? .select : .pen
+            interactionMode = .pen
         }
         .accessibilityAddTraits(interactionMode == .pen ? .isSelected : [])
     }
@@ -1000,7 +1247,7 @@ private struct PDFAnnotationToolbar: View {
     private var freeTextButton: some View {
         MonknotIconButton(
             systemImage: "character.textbox",
-            label: "Free Text",
+            label: "Text",
             theme: theme,
             zoomScale: zoomScale,
             isActive: interactionMode == .freeText,
@@ -1022,13 +1269,14 @@ private struct PDFAnnotationToolbar: View {
                 isActive: isFreeTextFormattingPresented,
                 size: .compact
             ) {
-                isFreeTextFormattingPresented.toggle()
+                toggleFreeTextFormatting()
             }
             .accessibilityAddTraits(isFreeTextFormattingPresented ? .isSelected : [])
             .popover(isPresented: $isFreeTextFormattingPresented, arrowEdge: .top) {
                 if let selectedFreeTextFormatting {
                     PDFFreeTextFormattingPopover(
                         formatting: selectedFreeTextFormatting,
+                        fontFamilies: freeTextFontFamilies,
                         theme: theme,
                         zoomScale: zoomScale,
                         update: updateFreeTextFormatting
@@ -1036,6 +1284,23 @@ private struct PDFAnnotationToolbar: View {
                 }
             }
         }
+    }
+
+    private func toggleFreeTextFormatting() {
+        if isFreeTextFormattingPresented {
+            isFreeTextFormattingPresented = false
+        } else {
+            presentFreeTextFormatting()
+        }
+    }
+
+    private func presentFreeTextFormatting() {
+        guard let selectedFreeTextFormatting else { return }
+        freeTextFontFamilies = pdfFreeTextFontFamilyOptions(
+            currentFamily: selectedFreeTextFormatting.fontFamily,
+            availableFamilies: NSFontManager.shared.availableFontFamilies
+        )
+        isFreeTextFormattingPresented = true
     }
 
     private var eraserButton: some View {
@@ -1047,7 +1312,7 @@ private struct PDFAnnotationToolbar: View {
             isActive: interactionMode == .eraser,
             size: .compact
         ) {
-            interactionMode = interactionMode == .eraser ? .select : .eraser
+            interactionMode = .eraser
         }
         .accessibilityAddTraits(interactionMode == .eraser ? .isSelected : [])
     }
@@ -1060,7 +1325,7 @@ private struct PDFAnnotationToolbar: View {
             Button("Draw", systemImage: "pencil.tip") {
                 interactionMode = .pen
             }
-            Button("Free Text", systemImage: "character.textbox") {
+            Button("Text", systemImage: "character.textbox") {
                 interactionMode = .freeText
             }
             Button("Erase Annotation", systemImage: "eraser") {
@@ -1070,7 +1335,7 @@ private struct PDFAnnotationToolbar: View {
             if interactionMode == .freeText, selectedFreeTextFormatting != nil {
                 Divider()
                 Button("Text Style…", systemImage: "textformat") {
-                    isFreeTextFormattingPresented = true
+                    presentFreeTextFormatting()
                 }
             }
         } label: {
@@ -1092,18 +1357,7 @@ private struct PDFAnnotationToolbar: View {
 
     private func styleMenu(anchor: PDFStrokeWidthPopoverAnchor) -> some View {
         Menu {
-            ForEach(PDFAnnotationPaletteColor.all) { color in
-                Button {
-                    selectedColor = color
-                } label: {
-                    HStack {
-                        Text(color.name)
-                        if color == selectedColor {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
+            annotationColorCommands
 
             Divider()
 
@@ -1122,6 +1376,37 @@ private struct PDFAnnotationToolbar: View {
         .accessibilityValue("\(selectedColor.name), \(Int(strokeWidth)) point stroke")
         .popover(isPresented: popoverBinding(for: anchor), arrowEdge: .top) {
             strokeWidthPopoverContent
+        }
+    }
+
+    private var colorMenu: some View {
+        Menu {
+            annotationColorCommands
+        } label: {
+            styleMenuLabel(isHovered: hoveredMenu == .style)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { updateMenuHover(.style, isHovered: $0) }
+        .help("Markup Color")
+        .accessibilityLabel("Markup Color")
+        .accessibilityValue(selectedColor.name)
+    }
+
+    @ViewBuilder
+    private var annotationColorCommands: some View {
+        ForEach(PDFAnnotationPaletteColor.all) { color in
+            Button {
+                selectedColor = color
+            } label: {
+                HStack {
+                    Text(color.name)
+                    if color == selectedColor {
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
         }
     }
 
@@ -1210,7 +1495,11 @@ private struct PDFAnnotationToolbar: View {
                 size: buttonSize.iconSize(theme: theme, zoomScale: zoomScale),
                 weight: .regular
             ))
-            .foregroundStyle(isActive || isHovered ? theme.foregroundColor : theme.mutedForegroundColor)
+            .foregroundStyle(
+                isActive
+                    ? theme.accentColor
+                    : (isHovered ? theme.foregroundColor : theme.mutedForegroundColor)
+            )
             .frame(width: dimension, height: dimension)
             .background {
                 if isActive || isHovered {
@@ -1223,11 +1512,6 @@ private struct PDFAnnotationToolbar: View {
                                 isDark: theme.isDark
                             )
                     ))
-                }
-            }
-            .overlay {
-                if isActive {
-                    shape.strokeBorder(theme.borderColor, lineWidth: 1)
                 }
             }
             .contentShape(shape)
@@ -1252,7 +1536,7 @@ private struct PDFAnnotationToolbar: View {
             Image(systemName: "chevron.down")
                 .font(.system(
                     size: MonknotMetrics.interfaceGlyph(8, theme: theme, zoomScale: zoomScale),
-                    weight: .semibold
+                    weight: .regular
                 ))
                 .foregroundStyle(theme.mutedForegroundColor)
         }
@@ -1302,7 +1586,7 @@ private struct PDFAnnotationToolbar: View {
         case .pen:
             return "Draw"
         case .freeText:
-            return "Free Text"
+            return "Text"
         case .eraser:
             return "Erase"
         }
@@ -1322,7 +1606,7 @@ private struct PDFAnnotationToolbar: View {
                 Text("\(Int(strokeWidth)) pt")
                     .font(.system(
                         size: MonknotMetrics.interfaceText(11, theme: theme, zoomScale: zoomScale),
-                        weight: .medium,
+                        weight: .regular,
                         design: .monospaced
                     ))
                     .foregroundStyle(theme.mutedForegroundColor)
@@ -1582,6 +1866,7 @@ struct PDFNavigatorMetrics: Equatable {
     static let preferredBaseWidth: CGFloat = 248
     static let maximumBaseWidth: CGFloat = 320
 
+    let workspaceZoomScale: Double
     let densityScale: CGFloat
     let minimumWidth: CGFloat
     let preferredWidth: CGFloat
@@ -1589,7 +1874,6 @@ struct PDFNavigatorMetrics: Equatable {
     let headerHeight: CGFloat
     let headerInset: CGFloat
     let segmentedHeight: CGFloat
-    let segmentedFontSize: CGFloat
     let contentInset: CGFloat
     let thumbnailLabelFontSize: CGFloat
     let outlineRowHeight: CGFloat
@@ -1605,6 +1889,7 @@ struct PDFNavigatorMetrics: Equatable {
     let emptyInset: CGFloat
 
     init(theme: AppTheme, workspaceZoomScale: Double) {
+        self.workspaceZoomScale = workspaceZoomScale
         densityScale = theme.interfaceDensityScale(zoomScale: workspaceZoomScale)
         minimumWidth = MonknotMetrics.interfaceDensity(
             Self.minimumBaseWidth,
@@ -1624,7 +1909,6 @@ struct PDFNavigatorMetrics: Equatable {
         headerHeight = (40 * theme.interfaceRowScale(zoomScale: workspaceZoomScale)).rounded()
         headerInset = MonknotMetrics.interfaceDensity(8, theme: theme, zoomScale: workspaceZoomScale)
         segmentedHeight = MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: workspaceZoomScale)
-        segmentedFontSize = MonknotMetrics.interfaceText(12, theme: theme, zoomScale: workspaceZoomScale)
         contentInset = MonknotMetrics.interfaceDensity(8, theme: theme, zoomScale: workspaceZoomScale)
         thumbnailLabelFontSize = MonknotMetrics.interfaceText(12, theme: theme, zoomScale: workspaceZoomScale)
         outlineRowHeight = (30 * theme.interfaceRowScale(zoomScale: workspaceZoomScale)).rounded()
@@ -1892,6 +2176,72 @@ enum PDFNavigatorSection: Int {
     case pages
     case outline
     case annotations
+
+    var controlID: String {
+        switch self {
+        case .pages: "pages"
+        case .outline: "outline"
+        case .annotations: "annotations"
+        }
+    }
+
+    init?(controlID: String) {
+        switch controlID {
+        case "pages": self = .pages
+        case "outline": self = .outline
+        case "annotations": self = .annotations
+        default: return nil
+        }
+    }
+}
+
+struct PDFNavigatorSectionControl: View {
+    let selection: PDFNavigatorSection
+    let theme: AppTheme
+    let zoomScale: Double
+    let onSelect: ((PDFNavigatorSection) -> Void)?
+
+    var options: [MonknotSegmentOption] {
+        [
+            MonknotSegmentOption(
+                id: PDFNavigatorSection.pages.controlID,
+                systemImage: "rectangle.stack",
+                accessibilityLabel: "Pages"
+            ),
+            MonknotSegmentOption(
+                id: PDFNavigatorSection.outline.controlID,
+                systemImage: "list.bullet.indent",
+                accessibilityLabel: "Outline"
+            ),
+            MonknotSegmentOption(
+                id: PDFNavigatorSection.annotations.controlID,
+                systemImage: "note.text",
+                accessibilityLabel: "Annotations"
+            )
+        ]
+    }
+
+    var controlSelection: Binding<String> {
+        Binding(
+            get: { selection.controlID },
+            set: { controlID in
+                guard let section = PDFNavigatorSection(controlID: controlID) else { return }
+                onSelect?(section)
+            }
+        )
+    }
+
+    var body: some View {
+        MonknotSegmentedControl(
+            options: options,
+            selection: controlSelection,
+            theme: theme,
+            zoomScale: zoomScale,
+            isDisabled: onSelect == nil
+        )
+        .fixedSize()
+        .frame(height: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale))
+    }
 }
 
 struct PDFNavigatorAnnotationItem {
@@ -1953,11 +2303,13 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
     private(set) var annotationItems: [PDFNavigatorAnnotationItem] = []
 
     private let headerView = NSView()
-    private let segmentedControl = NSSegmentedControl(
-        labels: ["Pages", "Outline", "Annotations"],
-        trackingMode: .selectOne,
-        target: nil,
-        action: nil
+    private(set) lazy var sectionControlHostingView = NSHostingView(
+        rootView: PDFNavigatorSectionControl(
+            selection: .pages,
+            theme: .defaultLight,
+            zoomScale: 1,
+            onSelect: nil
+        )
     )
     private let headerSeparatorView = NSView()
     private let contentView = NSView()
@@ -1965,9 +2317,9 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
     private let annotationScrollView = NSScrollView()
     private let emptyLabel = NSTextField(labelWithString: "")
     private var headerHeightConstraint: NSLayoutConstraint!
-    private var segmentedHeightConstraint: NSLayoutConstraint!
-    private var segmentedLeadingConstraint: NSLayoutConstraint!
-    private var segmentedTrailingConstraint: NSLayoutConstraint!
+    private var sectionControlHeightConstraint: NSLayoutConstraint!
+    private var sectionControlLeadingConstraint: NSLayoutConstraint!
+    private var sectionControlTrailingConstraint: NSLayoutConstraint!
     private var thumbnailLeadingConstraint: NSLayoutConstraint!
     private var thumbnailTrailingConstraint: NSLayoutConstraint!
     private var thumbnailTopConstraint: NSLayoutConstraint!
@@ -2035,7 +2387,7 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
 
     func selectSection(_ section: PDFNavigatorSection) {
         selectedSection = section
-        segmentedControl.selectedSegment = section.rawValue
+        updateSectionControl()
         showSelectedSection()
     }
 
@@ -2056,11 +2408,10 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
             .withAlphaComponent(theme.isDark ? 0.09 : 0.12)
             .cgColor
         headerHeightConstraint.constant = metrics.headerHeight
-        segmentedHeightConstraint.constant = metrics.segmentedHeight
-        segmentedLeadingConstraint.constant = metrics.headerInset
-        segmentedTrailingConstraint.constant = -metrics.headerInset
-        segmentedControl.font = .systemFont(ofSize: metrics.segmentedFontSize, weight: .regular)
-        segmentedControl.selectedSegmentBezelColor = selectionColor
+        sectionControlHeightConstraint.constant = metrics.segmentedHeight
+        sectionControlLeadingConstraint.constant = metrics.headerInset
+        sectionControlTrailingConstraint.constant = -metrics.headerInset
+        updateSectionControl()
         thumbnailLeadingConstraint.constant = metrics.contentInset
         thumbnailTrailingConstraint.constant = -metrics.contentInset
         thumbnailTopConstraint.constant = metrics.contentInset
@@ -2095,8 +2446,13 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         pdfView = nil
         outlineRoot = nil
         annotationItems = []
-        segmentedControl.target = nil
-        segmentedControl.action = nil
+        sectionControlHostingView.rootView = PDFNavigatorSectionControl(
+            selection: selectedSection,
+            theme: appliedTheme ?? .defaultLight,
+            zoomScale: metrics.workspaceZoomScale,
+            onSelect: nil
+        )
+        sectionControlHostingView.removeFromSuperview()
         outlineView.delegate = nil
         outlineView.dataSource = nil
         annotationTableView.delegate = nil
@@ -2113,24 +2469,24 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         addSubview(headerSeparatorView)
         addSubview(contentView)
 
-        segmentedControl.translatesAutoresizingMaskIntoConstraints = false
-        segmentedControl.controlSize = .small
-        segmentedControl.segmentStyle = .rounded
-        segmentedControl.segmentDistribution = .fillEqually
-        segmentedControl.selectedSegment = PDFNavigatorSection.pages.rawValue
-        segmentedControl.target = self
-        segmentedControl.action = #selector(sectionChanged(_:))
-        segmentedControl.setAccessibilityLabel("PDF Navigator")
-        headerView.addSubview(segmentedControl)
+        sectionControlHostingView.translatesAutoresizingMaskIntoConstraints = false
+        sectionControlHostingView.setAccessibilityRole(.group)
+        sectionControlHostingView.setAccessibilityLabel("PDF Navigator")
+        sectionControlHostingView.setContentHuggingPriority(.required, for: .horizontal)
+        sectionControlHostingView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        headerView.addSubview(sectionControlHostingView)
+        updateSectionControl()
 
         headerHeightConstraint = headerView.heightAnchor.constraint(equalToConstant: metrics.headerHeight)
-        segmentedHeightConstraint = segmentedControl.heightAnchor.constraint(equalToConstant: metrics.segmentedHeight)
-        segmentedLeadingConstraint = segmentedControl.leadingAnchor.constraint(
-            equalTo: headerView.leadingAnchor,
+        sectionControlHeightConstraint = sectionControlHostingView.heightAnchor.constraint(
+            equalToConstant: metrics.segmentedHeight
+        )
+        sectionControlLeadingConstraint = sectionControlHostingView.leadingAnchor.constraint(
+            greaterThanOrEqualTo: headerView.leadingAnchor,
             constant: metrics.headerInset
         )
-        segmentedTrailingConstraint = segmentedControl.trailingAnchor.constraint(
-            equalTo: headerView.trailingAnchor,
+        sectionControlTrailingConstraint = sectionControlHostingView.trailingAnchor.constraint(
+            lessThanOrEqualTo: headerView.trailingAnchor,
             constant: -metrics.headerInset
         )
 
@@ -2139,10 +2495,11 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
             headerView.trailingAnchor.constraint(equalTo: trailingAnchor),
             headerView.topAnchor.constraint(equalTo: topAnchor),
             headerHeightConstraint,
-            segmentedLeadingConstraint,
-            segmentedTrailingConstraint,
-            segmentedHeightConstraint,
-            segmentedControl.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            sectionControlLeadingConstraint,
+            sectionControlTrailingConstraint,
+            sectionControlHeightConstraint,
+            sectionControlHostingView.centerXAnchor.constraint(equalTo: headerView.centerXAnchor),
+            sectionControlHostingView.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
             headerSeparatorView.leadingAnchor.constraint(equalTo: leadingAnchor),
             headerSeparatorView.trailingAnchor.constraint(equalTo: trailingAnchor),
             headerSeparatorView.topAnchor.constraint(equalTo: headerView.bottomAnchor),
@@ -2268,9 +2625,15 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         ])
     }
 
-    @objc private func sectionChanged(_ sender: NSSegmentedControl) {
-        guard let section = PDFNavigatorSection(rawValue: sender.selectedSegment) else { return }
-        selectSection(section)
+    private func updateSectionControl() {
+        sectionControlHostingView.rootView = PDFNavigatorSectionControl(
+            selection: selectedSection,
+            theme: appliedTheme ?? .defaultLight,
+            zoomScale: metrics.workspaceZoomScale,
+            onSelect: { [weak self] section in
+                self?.selectSection(section)
+            }
+        )
     }
 
     private func showSelectedSection() {
@@ -2608,7 +2971,11 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         pdfView.pageShadowsEnabled = true
         pdfView.autoScales = false
         pdfView.scaleFactor = 1
-        pdfView.backgroundColor = NSColor(hex: theme.background)
+        context.coordinator.applyAppearance(
+            theme: theme,
+            workspaceZoomScale: workspaceZoomScale,
+            in: pdfView
+        )
         container.applyNavigatorMetrics(theme: theme, workspaceZoomScale: workspaceZoomScale)
         container.setNavigatorPresented(isNavigatorPresented)
         context.coordinator.documentID = documentID
@@ -2761,7 +3128,11 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             hasDirtyData: dirtyData != nil,
             savedEditCheckpoint: savedEditCheckpoint
         )
-        context.coordinator.applyAppearance(theme: theme, in: pdfView)
+        context.coordinator.applyAppearance(
+            theme: theme,
+            workspaceZoomScale: workspaceZoomScale,
+            in: pdfView
+        )
         let hasMatchingPageRequest = pageNavigationRequest?.documentID == documentID
         context.coordinator.restoreViewportStateIfNeeded(
             viewportState,
@@ -2804,6 +3175,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         var onPageNavigationRequestConsumed: (PDFPageNavigationRequest) -> Void = { _ in }
         private var documentLoadIdentity: PDFDocumentLoadIdentity?
         private var lastAppliedTheme: AppTheme?
+        private var lastAppliedWorkspaceZoomScale: Double?
         private var lastSearchRequest: DocumentSearchRequest?
         private var lastSearchHighlightTheme: SearchHighlightTheme?
         private var matches: [PDFSelection] = []
@@ -2956,10 +3328,23 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             pendingSearchTarget = target
         }
 
-        func applyAppearance(theme: AppTheme, in pdfView: AnnotatingPDFView) {
-            guard lastAppliedTheme != theme else { return }
+        func applyAppearance(
+            theme: AppTheme,
+            workspaceZoomScale: Double,
+            in pdfView: AnnotatingPDFView
+        ) {
+            let clampedZoomScale = WorkspaceZoomPolicy.clamp(workspaceZoomScale)
+            guard lastAppliedTheme != theme
+                    || lastAppliedWorkspaceZoomScale != clampedZoomScale
+            else { return }
             lastAppliedTheme = theme
+            lastAppliedWorkspaceZoomScale = clampedZoomScale
             pdfView.backgroundColor = NSColor(hex: theme.background)
+            pdfView.freeTextOverlayAppearance = PDFFreeTextOverlayAppearance(theme: theme)
+            pdfView.freeTextOverlayMetrics = PDFFreeTextOverlayMetrics(
+                theme: theme,
+                workspaceZoomScale: clampedZoomScale
+            )
         }
 
         func applySearch(_ state: DocumentSearchState, theme: AppTheme, in pdfView: AnnotatingPDFView) {
@@ -3971,9 +4356,79 @@ private final class PDFFreeTextEditorTextView: NSTextView {
     }
 }
 
+struct PDFFreeTextOverlayAppearance {
+    let borderColor: NSColor
+    let handleColor: NSColor
+    let handleRingColor: NSColor
+    let creationColor: NSColor
+
+    init(theme: AppTheme) {
+        let foreground = NSColor(hex: theme.foreground)
+        let background = NSColor(hex: theme.background)
+        let borderBlend = theme.isDark ? 0.55 : 0.28
+        borderColor = (foreground.blended(
+            withFraction: borderBlend,
+            of: background
+        ) ?? foreground).withAlphaComponent(0.82)
+        handleColor = NSColor(hex: theme.accent)
+        handleRingColor = NSColor(hex: theme.selectionForeground)
+        creationColor = handleColor.withAlphaComponent(0.72)
+    }
+
+    static let platformDefault = PDFFreeTextOverlayAppearance(
+        borderColor: .separatorColor,
+        handleColor: .selectedContentBackgroundColor,
+        handleRingColor: .windowBackgroundColor,
+        creationColor: .selectedContentBackgroundColor.withAlphaComponent(0.72)
+    )
+
+    private init(
+        borderColor: NSColor,
+        handleColor: NSColor,
+        handleRingColor: NSColor,
+        creationColor: NSColor
+    ) {
+        self.borderColor = borderColor
+        self.handleColor = handleColor
+        self.handleRingColor = handleRingColor
+        self.creationColor = creationColor
+    }
+}
+
+struct PDFFreeTextOverlayMetrics: Equatable {
+    let handleSize: CGFloat
+    let handleHitSize: CGFloat
+    let creationDashLengths: [CGFloat]
+
+    init(theme: AppTheme, workspaceZoomScale: Double) {
+        handleSize = MonknotMetrics.interfaceDensity(
+            8,
+            theme: theme,
+            zoomScale: workspaceZoomScale
+        )
+        handleHitSize = MonknotMetrics.interfaceDensity(
+            18,
+            theme: theme,
+            zoomScale: workspaceZoomScale
+        )
+        creationDashLengths = [4, 3].map {
+            MonknotMetrics.interfaceDensity(
+                $0,
+                theme: theme,
+                zoomScale: workspaceZoomScale
+            )
+        }
+    }
+
+    static let standard = PDFFreeTextOverlayMetrics(
+        theme: .defaultLight,
+        workspaceZoomScale: 1
+    )
+}
+
 private final class PDFFreeTextSelectionOverlay: NSView {
     enum Content {
-        case selection(PDFFreeTextOverlayGeometry)
+        case selection(PDFFreeTextOverlayGeometry, showsHandles: Bool)
         case creation(start: CGPoint, end: CGPoint)
     }
 
@@ -3982,6 +4437,14 @@ private final class PDFFreeTextSelectionOverlay: NSView {
             isHidden = content == nil
             needsDisplay = true
         }
+    }
+
+    var overlayAppearance = PDFFreeTextOverlayAppearance.platformDefault {
+        didSet { needsDisplay = true }
+    }
+
+    var metrics = PDFFreeTextOverlayMetrics.standard {
+        didSet { needsDisplay = true }
     }
 
     override init(frame frameRect: NSRect) {
@@ -4017,12 +4480,12 @@ private final class PDFFreeTextSelectionOverlay: NSView {
                 context.restoreGState()
                 return
             }
-            context.setStrokeColor(NSColor.controlAccentColor.withAlphaComponent(0.72).cgColor)
-            context.setLineDash(phase: 0, lengths: [4, 3])
+            context.setStrokeColor(overlayAppearance.creationColor.cgColor)
+            context.setLineDash(phase: 0, lengths: metrics.creationDashLengths)
             context.stroke(rect)
 
-        case .selection(let geometry):
-            context.setStrokeColor(NSColor(calibratedWhite: 0.42, alpha: 0.78).cgColor)
+        case .selection(let geometry, let showsHandles):
+            context.setStrokeColor(overlayAppearance.borderColor.cgColor)
             context.beginPath()
             context.move(to: geometry.minXMinY)
             context.addLine(to: geometry.maxXMinY)
@@ -4031,15 +4494,15 @@ private final class PDFFreeTextSelectionOverlay: NSView {
             context.closePath()
             context.strokePath()
 
-            let handleSize: CGFloat = 8
-            context.setFillColor(NSColor.controlAccentColor.cgColor)
-            context.setStrokeColor(NSColor.white.cgColor)
+            guard showsHandles else { break }
+            context.setFillColor(overlayAppearance.handleColor.cgColor)
+            context.setStrokeColor(overlayAppearance.handleRingColor.cgColor)
             for point in [geometry.minXMidY, geometry.maxXMidY] {
                 let rect = CGRect(
-                    x: point.x - handleSize / 2,
-                    y: point.y - handleSize / 2,
-                    width: handleSize,
-                    height: handleSize
+                    x: point.x - metrics.handleSize / 2,
+                    y: point.y - metrics.handleSize / 2,
+                    width: metrics.handleSize,
+                    height: metrics.handleSize
                 )
                 context.fillEllipse(in: rect)
                 context.strokeEllipse(in: rect)
@@ -4054,9 +4517,17 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         didSet {
             if oldValue != annotationMode {
                 discardActiveInkAnnotation()
-                if oldValue == .freeText, annotationMode != .freeText {
+                if let freeTextGesture {
+                    restoreUncommittedFreeTextGestureIfSafe(freeTextGesture)
+                    self.freeTextGesture = nil
+                }
+                if freeTextEditor != nil {
                     endFreeTextEditing(commit: true)
+                }
+                if annotationMode == .pen || annotationMode == .eraser {
                     clearFreeTextSelection()
+                } else {
+                    updateFreeTextSelectionOverlay()
                 }
                 syncToolTrackingArea()
                 window?.invalidateCursorRects(for: self)
@@ -4066,6 +4537,15 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
     }
     var annotationColor: NSColor = PDFAnnotationPaletteColor.yellow.nsColor
     var annotationLineWidth: CGFloat = 3
+    var freeTextOverlayAppearance = PDFFreeTextOverlayAppearance.platformDefault {
+        didSet { freeTextSelectionOverlay?.overlayAppearance = freeTextOverlayAppearance }
+    }
+    var freeTextOverlayMetrics = PDFFreeTextOverlayMetrics.standard {
+        didSet {
+            freeTextSelectionOverlay?.metrics = freeTextOverlayMetrics
+            window?.invalidateCursorRects(for: self)
+        }
+    }
     var onEdited: (Data?, Data, PDFAnnotationEditCheckpoint) -> Void = { _, _, _ in }
     var onRestoreSavedEditCheckpoint: (PDFAnnotationEditCheckpoint) -> Bool = { _ in false }
     var onUndoStateChanged: (Bool, Bool) -> Void = { _, _ in }
@@ -4126,18 +4606,21 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         }
         updateFreeTextSelectionOverlay()
         updateFreeTextEditorFrame()
-        if annotationMode == .freeText {
+        if annotationMode == .select || annotationMode == .freeText {
             window?.invalidateCursorRects(for: self)
         }
     }
 
     override func keyDown(with event: NSEvent) {
-        if annotationMode == .freeText {
+        if annotationMode == .select {
             if event.keyCode == 51 || event.keyCode == 117 {
                 deleteSelectedFreeTextAnnotation()
                 return
             }
             if event.keyCode == 53 {
+                if let freeTextGesture {
+                    restoreUncommittedFreeTextGestureIfSafe(freeTextGesture)
+                }
                 clearFreeTextSelection()
                 return
             }
@@ -4207,12 +4690,19 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         switch annotationMode {
         case .select:
             super.resetCursorRects()
-        case .freeText:
-            addCursorRect(bounds, cursor: .iBeam)
-            if let annotation = selectedFreeTextAnnotation,
+            let annotationCursor: NSCursor = allowsAnnotationMutation ? .openHand : .arrow
+            for page in visiblePages {
+                for annotation in page.annotations where isFreeTextAnnotation(annotation) {
+                    addCursorRect(
+                        convert(annotation.bounds, from: page).standardized,
+                        cursor: annotationCursor
+                    )
+                }
+            }
+            if allowsAnnotationMutation,
+               let annotation = selectedFreeTextAnnotation,
                let page = selectedFreeTextPage,
                isValidFreeTextAnnotation(annotation, on: page) {
-                addCursorRect(convert(annotation.bounds, from: page).standardized, cursor: .openHand)
                 for (_, point) in freeTextHandlePoints(annotation: annotation, page: page) {
                     addCursorRect(
                         freeTextHandleHitRect(centeredAt: point),
@@ -4220,6 +4710,8 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
                     )
                 }
             }
+        case .freeText:
+            addCursorRect(bounds, cursor: .iBeam)
         case .pen, .eraser:
             // In annotation modes Monknot owns the cursor; PDFView cursor rects otherwise compete with it.
             addCursorRect(bounds, cursor: toolCursor)
@@ -4232,16 +4724,24 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
     }
 
     override func cursorUpdate(with event: NSEvent) {
-        guard annotationMode != .select else {
-            super.cursorUpdate(with: event)
-            return
+        if annotationMode == .select {
+            if let cursor = selectFreeTextCursor(at: convert(event.locationInWindow, from: nil)) {
+                cursor.set()
+            } else {
+                super.cursorUpdate(with: event)
+            }
+        } else {
+            cursor(for: event).set()
         }
-        cursor(for: event).set()
     }
 
     override func mouseMoved(with event: NSEvent) {
         if annotationMode == .select {
-            super.mouseMoved(with: event)
+            if let cursor = selectFreeTextCursor(at: convert(event.locationInWindow, from: nil)) {
+                cursor.set()
+            } else {
+                super.mouseMoved(with: event)
+            }
         } else {
             cursor(for: event).set()
         }
@@ -4280,7 +4780,17 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
     }
 
     private func cursor(at viewPoint: CGPoint) -> NSCursor {
-        guard annotationMode == .freeText else { return toolCursor }
+        switch annotationMode {
+        case .select:
+            return selectFreeTextCursor(at: viewPoint) ?? .arrow
+        case .freeText:
+            return .iBeam
+        case .pen, .eraser:
+            return toolCursor
+        }
+    }
+
+    private func selectFreeTextCursor(at viewPoint: CGPoint) -> NSCursor? {
         if let gesture = freeTextGesture {
             switch gesture.kind {
             case .move:
@@ -4289,32 +4799,40 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
                 guard let annotation = gesture.annotation else { return .resizeLeftRight }
                 return freeTextResizeCursor(annotation: annotation, page: gesture.page)
             case .create:
-                return .iBeam
+                return nil
             }
         }
         if let annotation = selectedFreeTextAnnotation,
            let page = selectedFreeTextPage,
            isValidFreeTextAnnotation(annotation, on: page) {
-            if freeTextResizeHandle(at: viewPoint, annotation: annotation, page: page) != nil {
+            if allowsAnnotationMutation,
+               freeTextResizeHandle(at: viewPoint, annotation: annotation, page: page) != nil {
                 return freeTextResizeCursor(annotation: annotation, page: page)
             }
             if convert(annotation.bounds, from: page).standardized.contains(viewPoint) {
-                return .openHand
+                return allowsAnnotationMutation ? .openHand : .arrow
             }
         }
         if let page = page(for: viewPoint, nearest: false),
            freeTextAnnotation(on: page, at: convert(viewPoint, to: page)) != nil {
-            return .openHand
+            return allowsAnnotationMutation ? .openHand : .arrow
         }
-        return .iBeam
+        return nil
     }
 
     override func mouseDown(with event: NSEvent) {
+        if freeTextEditor != nil {
+            endFreeTextEditing(commit: true)
+            window?.makeFirstResponder(self)
+            return
+        }
         window?.makeFirstResponder(self)
 
         switch annotationMode {
         case .select:
-            super.mouseDown(with: event)
+            if !handleFreeTextSelectionMouseDown(event) {
+                super.mouseDown(with: event)
+            }
         case .pen:
             guard canAnnotate() else { return }
             guard let target = pagePoint(for: event) else { return }
@@ -4323,7 +4841,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
             activeInkAnnotation = nil
             activeInkBaselineData = takeEditBaselineSnapshotIfNeeded()
         case .freeText:
-            handleFreeTextMouseDown(event)
+            handleFreeTextTextMouseDown(event)
         case .eraser:
             eraseAnnotation(at: event)
         }
@@ -4332,7 +4850,11 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
     override func mouseDragged(with event: NSEvent) {
         switch annotationMode {
         case .select:
-            super.mouseDragged(with: event)
+            if freeTextGesture != nil {
+                handleFreeTextMouseDragged(event)
+            } else {
+                super.mouseDragged(with: event)
+            }
         case .pen:
             guard let activeInkPage,
                   let target = pagePoint(for: event),
@@ -4356,7 +4878,11 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
     override func mouseUp(with event: NSEvent) {
         switch annotationMode {
         case .select:
-            super.mouseUp(with: event)
+            if freeTextGesture != nil {
+                handleFreeTextMouseUp(event)
+            } else {
+                super.mouseUp(with: event)
+            }
         case .pen:
             if activeInkPoints.count > 1 {
                 let inkPage = activeInkPage
@@ -4383,10 +4909,11 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         }
     }
 
-    private func handleFreeTextMouseDown(_ event: NSEvent) {
-        guard canAnnotate(), let target = pagePoint(for: event), let document else { return }
-        if freeTextEditor != nil {
-            endFreeTextEditing(commit: true)
+    @discardableResult
+    private func handleFreeTextSelectionMouseDown(_ event: NSEvent) -> Bool {
+        guard let target = pagePoint(for: event), let document else {
+            clearFreeTextSelection()
+            return false
         }
 
         let viewPoint = convert(event.locationInWindow, from: nil)
@@ -4394,15 +4921,9 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
            let page = selectedFreeTextPage,
            page === target.page,
            isValidFreeTextAnnotation(annotation, on: page) {
-            if beginEditingSelectedFreeTextIfDoubleClicked(
-                at: target.point,
-                on: page,
-                clickCount: event.clickCount
-            ) {
-                return
-            }
-            let before = PDFFreeTextAnnotationSnapshot(annotation: annotation)
             if let handle = freeTextResizeHandle(at: viewPoint, annotation: annotation, page: page) {
+                guard canAnnotate() else { return true }
+                let before = PDFFreeTextAnnotationSnapshot(annotation: annotation)
                 freeTextGesture = PDFFreeTextGesture(
                     kind: .resize(handle),
                     page: page,
@@ -4413,9 +4934,11 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
                     beforeSnapshot: before
                 )
                 freeTextResizeCursor(annotation: annotation, page: page).set()
-                return
+                return true
             }
             if convert(annotation.bounds, from: page).standardized.contains(viewPoint) {
+                guard canAnnotate() else { return true }
+                let before = PDFFreeTextAnnotationSnapshot(annotation: annotation)
                 freeTextGesture = PDFFreeTextGesture(
                     kind: .move,
                     page: page,
@@ -4426,34 +4949,44 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
                     beforeSnapshot: before
                 )
                 NSCursor.closedHand.set()
-                return
+                return true
             }
         }
 
         if let annotation = freeTextAnnotation(on: target.page, at: target.point) {
             selectFreeTextAnnotation(annotation, on: target.page)
-            if event.clickCount >= 2 {
-                beginFreeTextEditing(
-                    annotation,
-                    on: target.page,
-                    isNew: false,
-                    baselineData: editBaselineDataWithoutConsuming(),
-                    initialSelectionPagePoint: target.point,
-                    selectsWordAtInitialPoint: true
-                )
-            } else {
-                let before = PDFFreeTextAnnotationSnapshot(annotation: annotation)
-                freeTextGesture = PDFFreeTextGesture(
-                    kind: .move,
-                    page: target.page,
-                    pageIndex: document.index(for: target.page),
-                    startPoint: target.point,
-                    baselineData: nil,
-                    annotation: annotation,
-                    beforeSnapshot: before
-                )
-                NSCursor.closedHand.set()
-            }
+            guard allowsAnnotationMutation, canAnnotate() else { return true }
+            let before = PDFFreeTextAnnotationSnapshot(annotation: annotation)
+            freeTextGesture = PDFFreeTextGesture(
+                kind: .move,
+                page: target.page,
+                pageIndex: document.index(for: target.page),
+                startPoint: target.point,
+                baselineData: nil,
+                annotation: annotation,
+                beforeSnapshot: before
+            )
+            NSCursor.closedHand.set()
+            return true
+        }
+
+        clearFreeTextSelection()
+        return false
+    }
+
+    private func handleFreeTextTextMouseDown(_ event: NSEvent) {
+        guard let target = pagePoint(for: event), let document, canAnnotate() else { return }
+
+        if let annotation = freeTextAnnotation(on: target.page, at: target.point) {
+            selectFreeTextAnnotation(annotation, on: target.page)
+            beginFreeTextEditing(
+                annotation,
+                on: target.page,
+                isNew: false,
+                baselineData: editBaselineDataWithoutConsuming(),
+                initialSelectionPagePoint: target.point,
+                selectsWordAtInitialPoint: event.clickCount >= 2
+            )
             return
         }
 
@@ -4656,34 +5189,34 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         publishFreeTextSelection()
     }
 
-    @discardableResult
-    func beginEditingSelectedFreeTextIfDoubleClicked(
-        at pagePoint: CGPoint,
-        on page: PDFPage,
-        clickCount: Int
-    ) -> Bool {
-        guard clickCount >= 2,
-              let annotation = selectedFreeTextAnnotation,
-              selectedFreeTextPage === page,
-              isValidFreeTextAnnotation(annotation, on: page),
-              annotation.bounds.standardized.contains(pagePoint)
-        else { return false }
-        beginFreeTextEditing(
-            annotation,
-            on: page,
-            isNew: false,
-            baselineData: editBaselineDataWithoutConsuming(),
-            initialSelectionPagePoint: pagePoint,
-            selectsWordAtInitialPoint: true
-        )
-        return true
-    }
-
     func applyFreeTextFormatting(_ formatting: PDFFreeTextFormatting) {
         if let annotation = selectedFreeTextAnnotation,
            let page = selectedFreeTextPage,
            isValidFreeTextAnnotation(annotation, on: page),
            formatting == PDFFreeTextFormatting(annotation: annotation) {
+            publishFreeTextSelection()
+            return
+        }
+        guard canAnnotate() else { return }
+        if freeTextEditorIsNew,
+           let editor = freeTextEditor,
+           let annotation = selectedFreeTextAnnotation,
+           let page = selectedFreeTextPage,
+           isValidFreeTextAnnotation(annotation, on: page) {
+            let before = PDFFreeTextAnnotationSnapshot(annotation: annotation)
+            formatting.apply(to: annotation)
+            guard PDFFreeTextAnnotationSnapshot(annotation: annotation) != before else {
+                publishFreeTextSelection()
+                return
+            }
+            annotation.modificationDate = Date()
+            updateFreeTextEditorFrame()
+            annotationsChanged(on: page)
+            updateFreeTextSelectionOverlay()
+            if freeTextEditorHasPublished
+                || !editor.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                publishActiveFreeTextEdit()
+            }
             publishFreeTextSelection()
             return
         }
@@ -5151,6 +5684,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
     }
 
     func deleteSelectedFreeTextAnnotation() {
+        guard canAnnotate() else { return }
         endFreeTextEditing(commit: true)
         guard let annotation = selectedFreeTextAnnotation,
               let page = selectedFreeTextPage,
@@ -5278,12 +5812,11 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
     }
 
     private func freeTextHandleHitRect(centeredAt point: CGPoint) -> CGRect {
-        let hitSize: CGFloat = 18
         return CGRect(
-            x: point.x - hitSize / 2,
-            y: point.y - hitSize / 2,
-            width: hitSize,
-            height: hitSize
+            x: point.x - freeTextOverlayMetrics.handleHitSize / 2,
+            y: point.y - freeTextOverlayMetrics.handleHitSize / 2,
+            width: freeTextOverlayMetrics.handleHitSize,
+            height: freeTextOverlayMetrics.handleHitSize
         )
     }
 
@@ -5302,9 +5835,16 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
     var freeTextSelectionOverlayGeometryInPDFView: PDFFreeTextOverlayGeometry? {
         guard let overlay = freeTextSelectionOverlay,
               let content = overlay.content,
-              case .selection(let geometry) = content
+              case .selection(let geometry, _) = content
         else { return nil }
         return geometry.mapPoints { convert($0, from: overlay) }
+    }
+
+    var freeTextSelectionOverlayShowsHandles: Bool? {
+        guard let content = freeTextSelectionOverlay?.content,
+              case .selection(_, let showsHandles) = content
+        else { return nil }
+        return showsHandles
     }
 
     private func updateFreeTextSelectionOverlay() {
@@ -5333,7 +5873,8 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
 
         let overlay = ensureFreeTextSelectionOverlay()
         overlay.content = .selection(
-            geometry.mapPoints { overlay.convert($0, from: self) }
+            geometry.mapPoints { overlay.convert($0, from: self) },
+            showsHandles: annotationMode == .select && allowsAnnotationMutation
         )
     }
 
@@ -5343,6 +5884,8 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
             return overlay
         }
         let overlay = PDFFreeTextSelectionOverlay(frame: bounds)
+        overlay.overlayAppearance = freeTextOverlayAppearance
+        overlay.metrics = freeTextOverlayMetrics
         overlay.autoresizingMask = [.width, .height]
         addSubview(overlay, positioned: .above, relativeTo: nil)
         freeTextSelectionOverlay = overlay
@@ -5670,6 +6213,8 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
             }
         }
         refreshAnnotationDisplay()
+        updateFreeTextSelectionOverlay()
+        window?.invalidateCursorRects(for: self)
         return true
     }
 
@@ -5843,6 +6388,11 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         return true
     }
 
+    private var allowsAnnotationMutation: Bool {
+        guard let document else { return false }
+        return !document.isLocked && document.allowsCommenting
+    }
+
     private func pagePoint(for event: NSEvent) -> (page: PDFPage, point: CGPoint)? {
         let viewPoint = convert(event.locationInWindow, from: nil)
         guard let page = page(for: viewPoint, nearest: false) else {
@@ -5852,8 +6402,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
     }
 
     private func annotationForErasing(on page: PDFPage, at point: CGPoint) -> PDFAnnotation? {
-        let tolerance = max(annotationLineWidth * 2.2, 8)
-        return PDFAnnotationHitTesting.annotationForErasing(on: page, at: point, tolerance: tolerance)
+        PDFAnnotationHitTesting.annotationForErasing(on: page, at: point, tolerance: 8)
     }
 
     private func squaredDistance(from lhs: CGPoint, to rhs: CGPoint) -> CGFloat {
