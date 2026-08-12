@@ -1,4 +1,5 @@
 import XCTest
+import Combine
 import MonknotCore
 @testable import MonknotApp
 
@@ -742,11 +743,67 @@ final class WorkspaceStoreConflictTests: XCTestCase {
 
         store.resolveSelectedExternalDocumentWithoutReview(.useDisk)
         let didResolve = await waitUntil {
-            !store.selectedDocumentExternalChange && !store.hasUnsavedChanges
+            !store.selectedDocumentExternalChange &&
+                !store.hasUnsavedChanges &&
+                !store.isDocumentLoading &&
+                store.documentText == "newest disk\n"
         }
 
         XCTAssertTrue(didResolve)
         XCTAssertNil(store.externalDocumentReview)
+        XCTAssertEqual(store.documentText, "newest disk\n")
+        XCTAssertEqual(try String(contentsOf: sourceURL, encoding: .utf8), "newest disk\n")
+    }
+
+    func testExternalRefreshStartedBeforeUseDiskDoesNotReloadResolvedText() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let sourceURL = root.appendingPathComponent("Note.md")
+        try "baseline\n".write(to: sourceURL, atomically: true, encoding: .utf8)
+        let scanner = BlockingWorkspaceScanner(blockingCall: 3)
+        defer { scanner.resume() }
+        let store = WorkspaceStore(scanner: scanner)
+        store.openWorkspace(root)
+        let didOpen = await waitUntil {
+            !store.isBusy && !store.isDocumentLoading && store.documentText == "baseline\n"
+        }
+        XCTAssertTrue(didOpen)
+        store.testing_stopFileWatcher()
+
+        store.setDocumentText("local\n")
+        try "disk\n".write(to: sourceURL, atomically: false, encoding: .utf8)
+        store.refresh()
+        let didDetectConflict = await waitUntil(timeout: 8) {
+            store.selectedDocumentExternalChange
+        }
+        XCTAssertTrue(didDetectConflict)
+
+        store.refresh()
+        let didStartRefresh = await waitUntil { scanner.isBlocking }
+        XCTAssertTrue(didStartRefresh)
+        try "newest disk\n".write(to: sourceURL, atomically: false, encoding: .utf8)
+
+        var observedTexts: [String] = []
+        let observation = store.$documentText.sink { observedTexts.append($0) }
+        defer { observation.cancel() }
+        store.resolveSelectedExternalDocumentWithoutReview(.useDisk)
+        let didResolve = await waitUntil {
+            !store.selectedDocumentExternalChange &&
+                !store.hasUnsavedChanges &&
+                !store.isDocumentLoading &&
+                store.documentText == "newest disk\n"
+        }
+        XCTAssertTrue(didResolve)
+
+        observedTexts.removeAll()
+        scanner.resume()
+        let didFinishScan = await waitUntil { scanner.didCompleteBlockedCall }
+        XCTAssertTrue(didFinishScan)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertFalse(store.isDocumentLoading)
+        XCTAssertFalse(observedTexts.contains(""))
         XCTAssertEqual(store.documentText, "newest disk\n")
         XCTAssertEqual(try String(contentsOf: sourceURL, encoding: .utf8), "newest disk\n")
     }
@@ -884,5 +941,54 @@ final class WorkspaceStoreConflictTests: XCTestCase {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+}
+
+private final class BlockingWorkspaceScanner: WorkspaceDocumentScanning, @unchecked Sendable {
+    private let condition = NSCondition()
+    private let blockingCall: Int
+    private var callCount = 0
+    private var isReleased = false
+    private var blocking = false
+    private var completedBlockedCall = false
+
+    init(blockingCall: Int) {
+        self.blockingCall = blockingCall
+    }
+
+    var isBlocking: Bool {
+        condition.withLock { blocking }
+    }
+
+    var didCompleteBlockedCall: Bool {
+        condition.withLock { completedBlockedCall }
+    }
+
+    func scan(rootURL: URL) throws -> WorkspaceDocumentScanResult {
+        condition.lock()
+        callCount += 1
+        let shouldBlock = callCount == blockingCall
+        if shouldBlock {
+            blocking = true
+            while !isReleased {
+                condition.wait()
+            }
+        }
+        condition.unlock()
+
+        let result = try WorkspaceDocumentScanner().scan(rootURL: rootURL)
+        if shouldBlock {
+            condition.withLock {
+                completedBlockedCall = true
+            }
+        }
+        return result
+    }
+
+    func resume() {
+        condition.withLock {
+            isReleased = true
+            condition.broadcast()
+        }
     }
 }
