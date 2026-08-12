@@ -189,7 +189,7 @@ final class PDFNavigatorAndSelectionTests: XCTestCase {
             navigator.sectionControlHostingView.layoutSubtreeIfNeeded()
 
             let scale = CGFloat(item.zoom)
-            let expectedWidth = ((28 * 3) + (2 * 2) + (2 * 2)) * scale
+            let expectedWidth = CGFloat(92) * scale
             XCTAssertEqual(
                 navigator.sectionControlHostingView.frame.width,
                 expectedWidth,
