@@ -252,3 +252,24 @@ enum MonknotNativePasteboardCommand {
         return targetTypeName.hasPrefix("WK") || targetTypeName.contains("WKContent")
     }
 }
+
+enum MonknotNativeUndoCommand {
+    static var canUndo: Bool { currentUndoManager?.canUndo == true }
+    static var canRedo: Bool { currentUndoManager?.canRedo == true }
+
+    static func performUndoIfAvailable() -> Bool {
+        guard let undoManager = currentUndoManager, undoManager.canUndo else { return false }
+        undoManager.undo()
+        return true
+    }
+
+    static func performRedoIfAvailable() -> Bool {
+        guard let undoManager = currentUndoManager, undoManager.canRedo else { return false }
+        undoManager.redo()
+        return true
+    }
+
+    private static var currentUndoManager: UndoManager? {
+        NSApp.keyWindow?.firstResponder?.undoManager ?? NSApp.keyWindow?.undoManager
+    }
+}

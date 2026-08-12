@@ -10,6 +10,7 @@ struct NativeMarkdownEditorView: View {
     let contentWidthPercent: Double
     let fontSmoothing: Bool
     let scrollPosition: DocumentScrollPosition?
+    let textSelection: DocumentTextSelection?
     let syncScrollEnabled: Bool
     let syncScrollTargetLine: Int?
     @Binding var sourceLocation: MarkdownSourceLocation?
@@ -18,6 +19,53 @@ struct NativeMarkdownEditorView: View {
     let wikilinkDocuments: [WorkspaceDocument]
     let onScrollPositionChange: (DocumentScrollPosition) -> Void
     let onVisibleTopLineChange: ((Int) -> Void)?
+    let onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)?
+    let onOpenLink: ((MarkdownEditorLinkRequest) -> Void)?
+    let onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)?
+
+    init(
+        documentID: String,
+        text: Binding<String>,
+        theme: AppTheme,
+        fontSize: CGFloat,
+        zoomScale: Double,
+        contentWidthPercent: Double,
+        fontSmoothing: Bool,
+        scrollPosition: DocumentScrollPosition?,
+        textSelection: DocumentTextSelection? = nil,
+        syncScrollEnabled: Bool,
+        syncScrollTargetLine: Int?,
+        sourceLocation: Binding<MarkdownSourceLocation?>,
+        searchState: Binding<DocumentSearchState>,
+        commandRequest: MarkdownTextEditorCommandRequest?,
+        wikilinkDocuments: [WorkspaceDocument],
+        onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)? = nil,
+        onOpenLink: ((MarkdownEditorLinkRequest) -> Void)? = nil,
+        onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)? = nil,
+        onScrollPositionChange: @escaping (DocumentScrollPosition) -> Void,
+        onVisibleTopLineChange: ((Int) -> Void)?
+    ) {
+        self.documentID = documentID
+        self._text = text
+        self.theme = theme
+        self.fontSize = fontSize
+        self.zoomScale = zoomScale
+        self.contentWidthPercent = contentWidthPercent
+        self.fontSmoothing = fontSmoothing
+        self.scrollPosition = scrollPosition
+        self.textSelection = textSelection
+        self.syncScrollEnabled = syncScrollEnabled
+        self.syncScrollTargetLine = syncScrollTargetLine
+        self._sourceLocation = sourceLocation
+        self._searchState = searchState
+        self.commandRequest = commandRequest
+        self.wikilinkDocuments = wikilinkDocuments
+        self.onSelectionChange = onSelectionChange
+        self.onOpenLink = onOpenLink
+        self.onImagePasteRequest = onImagePasteRequest
+        self.onScrollPositionChange = onScrollPositionChange
+        self.onVisibleTopLineChange = onVisibleTopLineChange
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -31,6 +79,7 @@ struct NativeMarkdownEditorView: View {
                     contentWidthPercent: contentWidthPercent,
                     fontSmoothing: fontSmoothing,
                     scrollPosition: scrollPosition,
+                    textSelection: textSelection,
                     sourceLocation: $sourceLocation,
                     searchState: $searchState,
                     onScrollPositionChange: onScrollPositionChange,
@@ -39,7 +88,10 @@ struct NativeMarkdownEditorView: View {
                     onVisibleTopLineChange: onVisibleTopLineChange,
                     commandRequest: commandRequest,
                     markdownShortcutsEnabled: true,
-                    wikilinkDocuments: wikilinkDocuments
+                    wikilinkDocuments: wikilinkDocuments,
+                    onSelectionChange: onSelectionChange,
+                    onOpenLink: onOpenLink,
+                    onImagePasteRequest: onImagePasteRequest
                 )
 
                 if text.isEmpty {

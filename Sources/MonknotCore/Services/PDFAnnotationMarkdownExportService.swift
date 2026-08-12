@@ -1,6 +1,279 @@
 import Foundation
 import PDFKit
 
+public struct PDFSelectionSnapshot: Hashable, Identifiable, Sendable {
+    public let documentID: String
+    public let text: String
+    public let pageNumber: Int
+    public let contentVersion: Int
+    public let textRanges: [NSRange]
+
+    public init(
+        documentID: String,
+        text: String,
+        pageNumber: Int,
+        contentVersion: Int = 0,
+        textRanges: [NSRange] = []
+    ) {
+        self.documentID = documentID
+        self.text = text
+        self.pageNumber = pageNumber
+        self.contentVersion = contentVersion
+        self.textRanges = textRanges
+    }
+
+    public var id: PDFSelectionSnapshot { self }
+}
+
+public struct PDFLinkedExcerptSourceRevision: Equatable, Sendable {
+    private let fileSignature: WorkspaceFileSignature
+    private let dirtyEditVersion: Int?
+
+    private init(fileSignature: WorkspaceFileSignature, dirtyEditVersion: Int?) {
+        self.fileSignature = fileSignature
+        self.dirtyEditVersion = dirtyEditVersion
+    }
+
+    public static func capture(
+        sourceURL: URL,
+        workspaceURL: URL,
+        expectedRelativePath: String,
+        dirtyEditVersion: Int?
+    ) -> PDFLinkedExcerptSourceRevision? {
+        guard let relativePath = try? WorkspaceDocumentSupport.validatedRelativePath(
+            for: sourceURL,
+            in: workspaceURL
+        ), relativePath == expectedRelativePath else { return nil }
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: sourceURL.path),
+              attributes[.type] as? FileAttributeType == .typeRegular
+        else { return nil }
+
+        return PDFLinkedExcerptSourceRevision(
+            fileSignature: WorkspaceFileSignature(
+                modificationDate: attributes[.modificationDate] as? Date,
+                fileSize: (attributes[.size] as? NSNumber)?.int64Value
+            ),
+            dirtyEditVersion: dirtyEditVersion
+        )
+    }
+
+    public func stillMatches(
+        sourceURL: URL,
+        workspaceURL: URL,
+        expectedRelativePath: String,
+        dirtyEditVersion: Int?
+    ) -> Bool {
+        Self.capture(
+            sourceURL: sourceURL,
+            workspaceURL: workspaceURL,
+            expectedRelativePath: expectedRelativePath,
+            dirtyEditVersion: dirtyEditVersion
+        ) == self
+    }
+}
+
+public struct PDFLinkedExcerptSourceValidator {
+    public init() {}
+
+    public func validate(_ selection: PDFSelectionSnapshot, in data: Data) throws {
+        let selectedText = Self.normalizedText(selection.text)
+        guard !selectedText.isEmpty else {
+            throw PDFLinkedExcerptSourceValidationError.emptySelection
+        }
+        guard selection.pageNumber > 0 else {
+            throw PDFLinkedExcerptSourceValidationError.pageUnavailable
+        }
+        guard let document = PDFDocument(data: data), !document.isLocked else {
+            throw PDFLinkedExcerptSourceValidationError.unreadablePDF
+        }
+
+        let pageIndex = selection.pageNumber - 1
+        guard pageIndex < document.pageCount,
+              let page = document.page(at: pageIndex)
+        else {
+            throw PDFLinkedExcerptSourceValidationError.pageUnavailable
+        }
+
+        guard !selection.textRanges.isEmpty else {
+            throw PDFLinkedExcerptSourceValidationError.selectionChanged
+        }
+
+        var rangeSelections: [PDFSelection] = []
+        rangeSelections.reserveCapacity(selection.textRanges.count)
+        for range in selection.textRanges {
+            guard Self.isValid(range),
+                  let rangeSelection = page.selection(for: range),
+                  Self.textRanges(in: rangeSelection, on: page) == [range]
+            else {
+                throw PDFLinkedExcerptSourceValidationError.selectionChanged
+            }
+            rangeSelections.append(rangeSelection)
+        }
+
+        let reconstructedSelection = PDFSelection(document: document)
+        reconstructedSelection.add(rangeSelections)
+        guard Self.textRanges(in: reconstructedSelection, on: page) == selection.textRanges,
+              Self.normalizedText(reconstructedSelection.string ?? "") == selectedText
+        else {
+            throw PDFLinkedExcerptSourceValidationError.selectionChanged
+        }
+    }
+
+    private static func textRanges(in selection: PDFSelection, on page: PDFPage) -> [NSRange] {
+        let count = selection.numberOfTextRanges(on: page)
+        return (0..<count).map { selection.range(at: $0, on: page) }
+    }
+
+    private static func isValid(_ range: NSRange) -> Bool {
+        range.location != NSNotFound
+            && range.length > 0
+            && range.location <= Int.max - range.length
+    }
+
+    private static func normalizedText(_ value: String) -> String {
+        value
+            .precomposedStringWithCanonicalMapping
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+}
+
+public enum PDFLinkedExcerptSourceValidationError: LocalizedError, Equatable {
+    case emptySelection
+    case unreadablePDF
+    case pageUnavailable
+    case selectionChanged
+
+    public var errorDescription: String? {
+        switch self {
+        case .emptySelection:
+            return "The selected PDF text is empty."
+        case .unreadablePDF:
+            return "The PDF source could not be read."
+        case .pageUnavailable:
+            return "The selected PDF page is no longer available."
+        case .selectionChanged:
+            return "The original selected text is no longer present on that PDF page."
+        }
+    }
+}
+
+public struct PDFLinkedExcerptFormatter {
+    public init() {}
+
+    public func validatedMarkdown(
+        for selection: PDFSelectionSnapshot,
+        sourceRelativePath: String,
+        pdfData: Data
+    ) throws -> String {
+        try PDFLinkedExcerptSourceValidator().validate(selection, in: pdfData)
+        return try markdown(for: selection, sourceRelativePath: sourceRelativePath)
+    }
+
+    public func markdown(
+        for selection: PDFSelectionSnapshot,
+        sourceRelativePath: String
+    ) throws -> String {
+        let text = Self.normalizedExcerpt(selection.text)
+        guard !text.isEmpty else {
+            throw PDFLinkedExcerptFormatterError.emptySelection
+        }
+        guard selection.pageNumber > 0 else {
+            throw PDFLinkedExcerptFormatterError.invalidPageNumber
+        }
+
+        let sourceComponents = try Self.relativePathComponents(sourceRelativePath)
+        guard !sourceComponents.isEmpty else {
+            throw PDFLinkedExcerptFormatterError.invalidRelativePath
+        }
+
+        let wikilinkPath = try sourceComponents
+            .map(Self.percentEncodedPathComponent(_:))
+            .joined(separator: "/")
+        guard !wikilinkPath.isEmpty else {
+            throw PDFLinkedExcerptFormatterError.invalidRelativePath
+        }
+
+        let quoteLines = text.components(separatedBy: "\n").map { line in
+            line.isEmpty ? ">" : "> \(line)"
+        }
+        let sourceName = sourceComponents.last ?? sourceRelativePath
+        let unsafeAliasCharacters = CharacterSet.controlCharacters
+            .union(.newlines)
+        let labelName = sourceName.contains("]")
+            || sourceName.contains("|")
+            || sourceName.rangeOfCharacter(from: unsafeAliasCharacters) != nil
+            ? "page \(selection.pageNumber)"
+            : "\(sourceName), page \(selection.pageNumber)"
+        let label = "Source: \(labelName)"
+        let sourceLine = "> [[\(wikilinkPath)#page=\(selection.pageNumber)|\(label)]]"
+
+        return (quoteLines + [">", sourceLine]).joined(separator: "\n")
+    }
+
+    private static func normalizedExcerpt(_ value: String) -> String {
+        let normalized = value
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .newlines)
+        guard normalized.rangeOfCharacter(from: .whitespacesAndNewlines.inverted) != nil else {
+            return ""
+        }
+        return normalized
+    }
+
+    private static func relativePathComponents(_ path: String) throws -> [String] {
+        guard !path.isEmpty,
+              !path.hasPrefix("/"),
+              !path.contains("\0")
+        else {
+            throw PDFLinkedExcerptFormatterError.invalidRelativePath
+        }
+
+        var components: [String] = []
+        for component in path.split(separator: "/", omittingEmptySubsequences: true).map(String.init) {
+            switch component {
+            case ".":
+                continue
+            case "..":
+                throw PDFLinkedExcerptFormatterError.invalidRelativePath
+            default:
+                components.append(component)
+            }
+        }
+        return components
+    }
+
+    private static func percentEncodedPathComponent(_ component: String) throws -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        guard let encoded = component.addingPercentEncoding(withAllowedCharacters: allowed),
+              !encoded.isEmpty
+        else {
+            throw PDFLinkedExcerptFormatterError.invalidRelativePath
+        }
+        return encoded
+    }
+}
+
+public enum PDFLinkedExcerptFormatterError: LocalizedError, Equatable {
+    case emptySelection
+    case invalidPageNumber
+    case invalidRelativePath
+
+    public var errorDescription: String? {
+        switch self {
+        case .emptySelection:
+            return "Select PDF text before copying a linked excerpt."
+        case .invalidPageNumber:
+            return "The selected PDF page is unavailable."
+        case .invalidRelativePath:
+            return "The PDF source link could not be created safely."
+        }
+    }
+}
+
 public struct PDFAnnotationMarkdownExportItem: Sendable {
     public let data: Data
     public let documentName: String

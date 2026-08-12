@@ -53,9 +53,11 @@ struct TerminalWebView: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
+        coordinator.prepareForDismantle(webView)
         webView.navigationDelegate = nil
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.inputHandlerName)
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.resizeHandlerName)
+        coordinator.finishDismantle()
     }
 
     static func html(
@@ -142,7 +144,9 @@ struct TerminalWebView: NSViewRepresentable {
           term.loadAddon(fitAddon);
           term.open(document.getElementById('terminal'));
           let pendingResizeFrame = null;
+          let pendingResizeRequestFrame = null;
           let pendingScrollDistanceFromBottom = null;
+          let disposed = false;
 
           function applyCSSVariables(options) {
             if (!options || !options.css) return;
@@ -155,6 +159,7 @@ struct TerminalWebView: NSViewRepresentable {
           }
 
           function notifyResize() {
+            if (disposed) return;
             window.webkit.messageHandlers.\(Coordinator.resizeHandlerName).postMessage({
               cols: term.cols,
               rows: term.rows
@@ -162,6 +167,7 @@ struct TerminalWebView: NSViewRepresentable {
           }
 
           function postResize(options = {}) {
+            if (disposed) return;
             const buffer = term.buffer.active;
             if (options.preserveScroll && pendingScrollDistanceFromBottom === null) {
               pendingScrollDistanceFromBottom = buffer.baseY - buffer.viewportY;
@@ -189,7 +195,16 @@ struct TerminalWebView: NSViewRepresentable {
             });
           }
 
+          function scheduleResize(options = {}) {
+            if (disposed || pendingResizeRequestFrame !== null) return;
+            pendingResizeRequestFrame = requestAnimationFrame(() => {
+              pendingResizeRequestFrame = null;
+              postResize(options);
+            });
+          }
+
           function writeAndFollow(data) {
+            if (disposed) return;
             const buffer = term.buffer.active;
             const wasAtBottom = buffer.baseY - buffer.viewportY <= 0;
             term.write(data, () => {
@@ -201,30 +216,45 @@ struct TerminalWebView: NSViewRepresentable {
             writeAndFollow(data);
           };
           window.monknotReset = function() {
+            if (disposed) return;
             term.reset();
           };
           window.monknotFocus = function() {
+            if (disposed) return;
             term.focus();
           };
           window.monknotTheme = function(options) {
+            if (disposed) return;
             applyCSSVariables(options);
             term.options.theme = options.theme;
             term.options.fontSize = options.fontSize;
             postResize({ preserveScroll: true });
           };
 
-          term.onData(data => {
-            window.webkit.messageHandlers.\(Coordinator.inputHandlerName).postMessage(data);
+          const inputDisposable = term.onData(data => {
+            if (!disposed) {
+              window.webkit.messageHandlers.\(Coordinator.inputHandlerName).postMessage(data);
+            }
           });
-
-          window.addEventListener('resize', () => postResize({ preserveScroll: true }));
+          const resizeListener = () => scheduleResize({ preserveScroll: true });
+          window.addEventListener('resize', resizeListener);
           const resizeObserver = new ResizeObserver(() => {
-            requestAnimationFrame(() => postResize({ preserveScroll: true }));
+            scheduleResize({ preserveScroll: true });
           });
           resizeObserver.observe(document.getElementById('terminal'));
-          requestAnimationFrame(() => {
-            postResize();
-          });
+          scheduleResize();
+
+          window.monknotDispose = function() {
+            if (disposed) return;
+            disposed = true;
+            if (pendingResizeFrame !== null) cancelAnimationFrame(pendingResizeFrame);
+            if (pendingResizeRequestFrame !== null) cancelAnimationFrame(pendingResizeRequestFrame);
+            resizeObserver.disconnect();
+            window.removeEventListener('resize', resizeListener);
+            inputDisposable.dispose();
+            if (typeof fitAddon.dispose === 'function') fitAddon.dispose();
+            term.dispose();
+          };
           </script>
         </body>
         </html>
@@ -284,7 +314,6 @@ struct TerminalWebView: NSViewRepresentable {
         private var isLoaded = false
         private var renderedTranscript = ""
         private var lastAppearance: TerminalAppearance?
-
         init(session: TerminalSessionStore) {
             self.session = session
         }
@@ -324,6 +353,18 @@ struct TerminalWebView: NSViewRepresentable {
             default:
                 break
             }
+        }
+
+        func prepareForDismantle(_ webView: WKWebView) {
+            if isLoaded {
+                webView.evaluateJavaScript("window.monknotDispose && window.monknotDispose();")
+            }
+            isLoaded = false
+            webView.stopLoading()
+        }
+
+        func finishDismantle() {
+            webView = nil
         }
 
         func render(transcript: String) {

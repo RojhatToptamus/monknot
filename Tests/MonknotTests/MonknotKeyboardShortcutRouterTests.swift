@@ -226,19 +226,10 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         )
     }
 
-    func testQuickOpenAndHelpShortcutsRespectOverlayState() {
-        XCTAssertEqual(
-            action(for: "?", modifiers: [], context: shortcutContext()),
-            .showKeyboardShortcutsHelp
-        )
-        XCTAssertEqual(
-            action(for: "?", modifiers: [.shift], context: shortcutContext()),
-            .showKeyboardShortcutsHelp
-        )
-        XCTAssertEqual(
-            action(for: "/", modifiers: [.shift], context: shortcutContext()),
-            .showKeyboardShortcutsHelp
-        )
+    func testQuestionMarkTypingIsNeverConsumed() {
+        XCTAssertNil(action(for: "?", modifiers: [], context: shortcutContext()))
+        XCTAssertNil(action(for: "?", modifiers: [.shift], context: shortcutContext()))
+        XCTAssertNil(action(for: "/", modifiers: [.shift], context: shortcutContext()))
         XCTAssertNil(
             action(
                 for: "?",
@@ -246,6 +237,9 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
                 context: shortcutContext(isKeyboardShortcutsHelpPresented: true)
             )
         )
+    }
+
+    func testQuickOpenEscapeRespectsOverlayState() {
         XCTAssertEqual(
             action(
                 for: "",
@@ -254,6 +248,15 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
                 context: shortcutContext(isQuickOpenPresented: true)
             ),
             .dismissQuickOpen
+        )
+        XCTAssertEqual(
+            action(
+                for: "",
+                modifiers: [],
+                keyCode: MonknotKeyboardShortcutRouter.escapeKeyCode,
+                context: shortcutContext(isKeyboardShortcutsHelpPresented: true)
+            ),
+            .dismissKeyboardShortcutsHelp
         )
     }
 

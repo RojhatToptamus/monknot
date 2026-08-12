@@ -7,6 +7,28 @@ struct MarkdownTextEditorCommandRequest: Equatable {
     let command: MarkdownTextEditorCommand
 }
 
+@MainActor
+enum MonknotNativeMarkdownCommand {
+    static var canCopyRenderedSelection: Bool {
+        focusedMarkdownTextView?.selectedRange().length ?? 0 > 0
+    }
+
+    @discardableResult
+    static func copyRenderedSelection() -> Bool {
+        guard let textView = focusedMarkdownTextView else { return false }
+        do {
+            return try textView.copyRenderedMarkdown(to: .general)
+        } catch {
+            NSSound.beep()
+            return false
+        }
+    }
+
+    private static var focusedMarkdownTextView: MarkdownNSTextView? {
+        NSApp.keyWindow?.firstResponder as? MarkdownNSTextView
+    }
+}
+
 enum MarkdownTextEditorCommand: Equatable {
     case paragraph
     case heading(level: Int)
@@ -22,6 +44,54 @@ enum MarkdownTextEditorCommand: Equatable {
     case horizontalRule
 }
 
+struct MarkdownEditorSelectionSnapshot: Equatable {
+    let documentID: String
+    let revision: Int
+    let selectedRange: NSRange
+    let selectedMarkdown: String
+
+    var caretUTF16Offset: Int {
+        selectedRange.location + selectedRange.length
+    }
+}
+
+struct MarkdownEditorLinkRequest: Equatable {
+    let documentID: String
+    let revision: Int
+    let link: MarkdownWorkspaceLink
+}
+
+struct MarkdownImagePasteRequest {
+    let documentID: String
+    let revision: Int
+    let sourceText: String
+    let selectedRange: NSRange
+    let image: NSImage
+    private let insertion: (String) -> Bool
+
+    init(
+        documentID: String,
+        revision: Int,
+        sourceText: String,
+        selectedRange: NSRange,
+        image: NSImage,
+        insertion: @escaping (String) -> Bool
+    ) {
+        self.documentID = documentID
+        self.revision = revision
+        self.sourceText = sourceText
+        self.selectedRange = selectedRange
+        self.image = image
+        self.insertion = insertion
+    }
+
+    @MainActor
+    @discardableResult
+    func insertMarkdown(_ markdown: String) -> Bool {
+        insertion(markdown)
+    }
+}
+
 struct MarkdownTextEditor: NSViewRepresentable {
     let documentID: String
     @Binding var text: String
@@ -31,6 +101,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
     let contentWidthPercent: Double
     let fontSmoothing: Bool
     let scrollPosition: DocumentScrollPosition?
+    let textSelection: DocumentTextSelection?
     let syncScrollEnabled: Bool
     let syncScrollTargetLine: Int?
     @Binding var sourceLocation: MarkdownSourceLocation?
@@ -40,6 +111,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
     let commandRequest: MarkdownTextEditorCommandRequest?
     let markdownShortcutsEnabled: Bool
     let wikilinkDocuments: [WorkspaceDocument]
+    let onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)?
+    let onOpenLink: ((MarkdownEditorLinkRequest) -> Void)?
+    let onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)?
 
     init(
         documentID: String,
@@ -50,6 +124,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         contentWidthPercent: Double,
         fontSmoothing: Bool,
         scrollPosition: DocumentScrollPosition?,
+        textSelection: DocumentTextSelection? = nil,
         sourceLocation: Binding<MarkdownSourceLocation?>,
         searchState: Binding<DocumentSearchState>,
         onScrollPositionChange: @escaping (DocumentScrollPosition) -> Void,
@@ -58,7 +133,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
         onVisibleTopLineChange: ((Int) -> Void)? = nil,
         commandRequest: MarkdownTextEditorCommandRequest? = nil,
         markdownShortcutsEnabled: Bool = false,
-        wikilinkDocuments: [WorkspaceDocument] = []
+        wikilinkDocuments: [WorkspaceDocument] = [],
+        onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)? = nil,
+        onOpenLink: ((MarkdownEditorLinkRequest) -> Void)? = nil,
+        onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)? = nil
     ) {
         self.documentID = documentID
         self._text = text
@@ -68,6 +146,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         self.contentWidthPercent = contentWidthPercent
         self.fontSmoothing = fontSmoothing
         self.scrollPosition = scrollPosition
+        self.textSelection = textSelection
         self.syncScrollEnabled = syncScrollEnabled
         self.syncScrollTargetLine = syncScrollTargetLine
         self._sourceLocation = sourceLocation
@@ -77,6 +156,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
         self.commandRequest = commandRequest
         self.markdownShortcutsEnabled = markdownShortcutsEnabled
         self.wikilinkDocuments = wikilinkDocuments
+        self.onSelectionChange = onSelectionChange
+        self.onOpenLink = onOpenLink
+        self.onImagePasteRequest = onImagePasteRequest
     }
 
     func makeCoordinator() -> Coordinator {
@@ -99,6 +181,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.markdownShortcutsEnabled = markdownShortcutsEnabled
         textView.commandHandler = { [weak coordinator = context.coordinator] command in
             coordinator?.apply(command) ?? false
+        }
+        textView.workspaceLinkHandler = { [weak coordinator = context.coordinator] link in
+            coordinator?.open(link) ?? false
+        }
+        textView.imagePasteHandler = { [weak coordinator = context.coordinator] image in
+            coordinator?.requestImagePaste(image) ?? false
         }
         textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
@@ -123,6 +211,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.textView = textView
         context.coordinator.documentID = documentID
         context.coordinator.onScrollPositionChange = onScrollPositionChange
+        context.coordinator.onSelectionChange = onSelectionChange
+        context.coordinator.onOpenLink = onOpenLink
+        context.coordinator.onImagePasteRequest = onImagePasteRequest
         context.coordinator.attach(to: scrollView)
         applyTheme(theme, to: textView, in: scrollView)
         context.coordinator.markFontApplied(resolvedFont)
@@ -144,6 +235,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
         let didChangeDocument = context.coordinator.prepareForDocument(documentID, in: scrollView)
         context.coordinator.onScrollPositionChange = onScrollPositionChange
         context.coordinator.onVisibleTopLineChange = onVisibleTopLineChange
+        context.coordinator.onSelectionChange = onSelectionChange
+        context.coordinator.onOpenLink = onOpenLink
+        context.coordinator.onImagePasteRequest = onImagePasteRequest
         context.coordinator.syncScrollEnabled = syncScrollEnabled
         let visibleOrigin = scrollView.contentView.bounds.origin
 
@@ -155,23 +249,23 @@ struct MarkdownTextEditor: NSViewRepresentable {
             } else {
                 textView.selectedRanges = selectedRanges
             }
+            context.coordinator.externalTextDidChange()
         }
+        context.coordinator.restoreSelectionIfNeeded(textSelection, in: textView)
 
         let resolvedFont = font(for: theme, size: fontSize)
         if context.coordinator.shouldApplyFont(resolvedFont) {
             textView.font = resolvedFont
         }
-        if let textView = textView as? MarkdownNSTextView {
-            textView.zoomScale = zoomScale
-            textView.contentWidthPercent = contentWidthPercent
-            if context.coordinator.shouldApplyFontSmoothing(fontSmoothing) {
-                textView.fontSmoothingEnabled = fontSmoothing
-            }
-            if context.coordinator.shouldApplyMarkdownShortcuts(markdownShortcutsEnabled) {
-                textView.markdownShortcutsEnabled = markdownShortcutsEnabled
-            }
-            textView.wikilinkDocuments = wikilinkDocuments
+        textView.zoomScale = zoomScale
+        textView.contentWidthPercent = contentWidthPercent
+        if context.coordinator.shouldApplyFontSmoothing(fontSmoothing) {
+            textView.fontSmoothingEnabled = fontSmoothing
         }
+        if context.coordinator.shouldApplyMarkdownShortcuts(markdownShortcutsEnabled) {
+            textView.markdownShortcutsEnabled = markdownShortcutsEnabled
+        }
+        textView.wikilinkDocuments = wikilinkDocuments
         if context.coordinator.shouldApplyTheme(theme) {
             applyTheme(theme, to: textView, in: scrollView)
         }
@@ -208,11 +302,18 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 self.searchState.updateResult(searchResult)
             }
         }
+        context.coordinator.publishSelection()
     }
 
     static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
         coordinator.publishCurrentScrollPosition()
+        coordinator.publishSelection()
         coordinator.detach()
+        coordinator.textView?.delegate = nil
+        coordinator.textView?.commandHandler = nil
+        coordinator.textView?.workspaceLinkHandler = nil
+        coordinator.textView?.imagePasteHandler = nil
+        coordinator.textView = nil
     }
 
     private func applyTheme(_ theme: AppTheme, to textView: NSTextView, in scrollView: NSScrollView) {
@@ -237,10 +338,13 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         @Binding private var text: String
-        weak var textView: NSTextView?
+        weak var textView: MarkdownNSTextView?
         var documentID: String?
         var onScrollPositionChange: (DocumentScrollPosition) -> Void = { _ in }
         var onVisibleTopLineChange: ((Int) -> Void)?
+        var onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)?
+        var onOpenLink: ((MarkdownEditorLinkRequest) -> Void)?
+        var onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)?
         var syncScrollEnabled = false
         private var lastNavigatedLocation: MarkdownSourceLocation?
         private var searchMatches: [NSRange] = []
@@ -266,6 +370,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private var lastSyntaxFontName: String?
         private var lastSyntaxFontSize: CGFloat?
         private var lastSyntaxEnabled: Bool?
+        private var revision = 0
+        private var lastPublishedSelection: MarkdownEditorSelectionSnapshot?
+        private var shouldRestoreSelection = true
 
         init(text: Binding<String>) {
             self._text = text
@@ -285,6 +392,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
         func detach() {
             NotificationCenter.default.removeObserver(self)
             scrollView = nil
+            onSelectionChange = nil
+            onOpenLink = nil
+            onImagePasteRequest = nil
         }
 
         func markFontApplied(_ font: NSFont) {
@@ -335,12 +445,40 @@ struct MarkdownTextEditor: NSViewRepresentable {
             guard documentID != nextDocumentID else { return false }
 
             publishCurrentScrollPosition()
+            publishSelection()
             documentID = nextDocumentID
+            revision += 1
+            lastPublishedSelection = nil
+            shouldRestoreSelection = true
             lastPublishedScrollPosition = nil
             lastSyntaxText = nil
             return true
         }
 
+        func externalTextDidChange() {
+            revision += 1
+        }
+
+        func restoreSelectionIfNeeded(
+            _ selection: DocumentTextSelection?,
+            in textView: NSTextView
+        ) {
+            guard shouldRestoreSelection else { return }
+            shouldRestoreSelection = false
+            let requestedRange = NSRange(
+                location: selection?.location ?? 0,
+                length: selection?.length ?? 0
+            )
+            let range = Self.boundedRange(requestedRange, in: textView.string)
+            guard textView.selectedRange() != range else {
+                publishSelection()
+                return
+            }
+            textView.setSelectedRange(range)
+            textView.scrollRangeToVisible(range)
+            lastPublishedSelection = nil
+            publishSelection()
+        }
         func applySyntaxHighlighting(
             enabled: Bool,
             theme: AppTheme,
@@ -444,7 +582,98 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
+            revision += 1
             text = textView.string
+            publishSelection()
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard notification.object is NSTextView else { return }
+            publishSelection()
+        }
+
+        func publishSelection() {
+            guard let textView, let documentID, let onSelectionChange else { return }
+            let selectedRange = Self.boundedRange(textView.selectedRange(), in: textView.string)
+            let selectedMarkdown = (textView.string as NSString).substring(with: selectedRange)
+            let snapshot = MarkdownEditorSelectionSnapshot(
+                documentID: documentID,
+                revision: revision,
+                selectedRange: selectedRange,
+                selectedMarkdown: selectedMarkdown
+            )
+            guard snapshot != lastPublishedSelection else { return }
+            lastPublishedSelection = snapshot
+            onSelectionChange(snapshot)
+        }
+
+        func open(_ link: MarkdownWorkspaceLink) -> Bool {
+            guard let documentID, let onOpenLink else { return false }
+            onOpenLink(MarkdownEditorLinkRequest(
+                documentID: documentID,
+                revision: revision,
+                link: link
+            ))
+            return true
+        }
+
+        func requestImagePaste(_ image: NSImage) -> Bool {
+            guard let textView,
+                  let documentID,
+                  let onImagePasteRequest
+            else { return false }
+
+            let capturedRevision = revision
+            let capturedText = textView.string
+            let capturedRange = Self.boundedRange(textView.selectedRange(), in: capturedText)
+            let request = MarkdownImagePasteRequest(
+                documentID: documentID,
+                revision: capturedRevision,
+                sourceText: capturedText,
+                selectedRange: capturedRange,
+                image: image
+            ) { [weak self] markdown in
+                self?.insertMarkdown(
+                    markdown,
+                    documentID: documentID,
+                    expectedRevision: capturedRevision,
+                    expectedText: capturedText,
+                    expectedRange: capturedRange
+                ) ?? false
+            }
+            onImagePasteRequest(request)
+            return true
+        }
+
+        private func insertMarkdown(
+            _ markdown: String,
+            documentID: String,
+            expectedRevision: Int,
+            expectedText: String,
+            expectedRange: NSRange
+        ) -> Bool {
+            guard !markdown.isEmpty,
+                  self.documentID == documentID,
+                  revision == expectedRevision,
+                  let textView,
+                  let textStorage = textView.textStorage,
+                  textView.string == expectedText,
+                  textView.selectedRange() == expectedRange,
+                  NSMaxRange(expectedRange) <= (expectedText as NSString).length,
+                  textView.shouldChangeText(in: expectedRange, replacementString: markdown)
+            else { return false }
+
+            textView.breakUndoCoalescing()
+            textView.undoManager?.beginUndoGrouping()
+            textStorage.replaceCharacters(in: expectedRange, with: markdown)
+            textView.didChangeText()
+            let caret = expectedRange.location + (markdown as NSString).length
+            let nextRange = NSRange(location: caret, length: 0)
+            textView.setSelectedRange(nextRange)
+            textView.scrollRangeToVisible(nextRange)
+            textView.undoManager?.endUndoGrouping()
+            textView.breakUndoCoalescing()
+            return true
         }
 
         func apply(_ request: MarkdownTextEditorCommandRequest) {
@@ -698,6 +927,16 @@ struct MarkdownTextEditor: NSViewRepresentable {
             return zip(lhs, rhs).allSatisfy { left, right in
                 left.location == right.location && left.length == right.length
             }
+        }
+
+        private static func boundedRange(_ range: NSRange, in text: String) -> NSRange {
+            let length = (text as NSString).length
+            let location = max(0, min(range.location, length))
+            let requestedUpperBound = range.location > Int.max - range.length
+                ? Int.max
+                : range.location + range.length
+            let upperBound = max(location, min(requestedUpperBound, length))
+            return NSRange(location: location, length: upperBound - location)
         }
 
         private struct SearchHighlightTheme: Equatable {
@@ -1054,10 +1293,12 @@ private extension String {
     }
 }
 
-private final class MarkdownNSTextView: NSTextView {
+final class MarkdownNSTextView: NSTextView {
     var markdownShortcutsEnabled = false
     var wikilinkDocuments: [WorkspaceDocument] = []
     var commandHandler: ((MarkdownTextEditorCommand) -> Bool)?
+    var workspaceLinkHandler: ((MarkdownWorkspaceLink) -> Bool)?
+    var imagePasteHandler: ((NSImage) -> Bool)?
     var zoomScale = WorkspaceZoomPolicy.defaultValue {
         didSet {
             guard zoomScale != oldValue else { return }
@@ -1082,6 +1323,113 @@ private final class MarkdownNSTextView: NSTextView {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         refreshContentWidthLayout()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if event.clickCount == 1,
+           modifiers.contains(.command),
+           let offset = utf16Offset(at: event.locationInWindow),
+           activateMarkdownLink(atUTF16Offset: offset) {
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    @discardableResult
+    func activateMarkdownLink(atUTF16Offset offset: Int) -> Bool {
+        guard let workspaceLinkHandler,
+              let link = MarkdownWorkspaceLinkParser().link(atUTF16Offset: offset, in: string),
+              link.kind == .markdown || link.kind == .wikilink || link.kind == .referenceUsage
+        else { return false }
+        return workspaceLinkHandler(link)
+    }
+
+    @discardableResult
+    func requestImagePaste(from pasteboard: NSPasteboard) -> Bool {
+        guard let imagePasteHandler, let image = Self.image(from: pasteboard) else { return false }
+        return imagePasteHandler(image)
+    }
+
+    private static func image(from pasteboard: NSPasteboard) -> NSImage? {
+        for type in [NSPasteboard.PasteboardType.png, .tiff] {
+            if let data = pasteboard.data(forType: type), let image = NSImage(data: data) {
+                return image
+            }
+        }
+        return NSImage(pasteboard: pasteboard)
+    }
+
+    override func paste(_ sender: Any?) {
+        if requestImagePaste(from: .general) {
+            return
+        }
+        super.paste(sender)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let menu = super.menu(for: event) else { return nil }
+        guard selectedRange().length > 0,
+              menu.items.contains(where: { $0.action == #selector(copyRenderedMarkdown(_:)) }) == false
+        else { return menu }
+
+        menu.addItem(.separator())
+        let item = NSMenuItem(
+            title: "Copy Rendered",
+            action: #selector(copyRenderedMarkdown(_:)),
+            keyEquivalent: ""
+        )
+        item.target = self
+        menu.addItem(item)
+        return menu
+    }
+
+    @objc func copyRenderedMarkdown(_ sender: Any?) {
+        do {
+            _ = try copyRenderedMarkdown(to: .general)
+        } catch {
+            NSSound.beep()
+        }
+    }
+
+    @MainActor
+    @discardableResult
+    func copyRenderedMarkdown(to pasteboard: NSPasteboard) throws -> Bool {
+        guard let markdown = selectedMarkdownForRenderedCopy() else { return false }
+        return try MarkdownSemanticPasteboardExportService.copy(markdown, to: pasteboard)
+    }
+
+    func selectedMarkdownForRenderedCopy() -> String? {
+        let range = selectedRange()
+        guard range.length > 0, NSMaxRange(range) <= (string as NSString).length else { return nil }
+        return (string as NSString).substring(with: range)
+    }
+
+    private func utf16Offset(at windowPoint: NSPoint) -> Int? {
+        guard let layoutManager,
+              let textContainer,
+              layoutManager.numberOfGlyphs > 0
+        else { return nil }
+
+        let localPoint = convert(windowPoint, from: nil)
+        let containerOrigin = textContainerOrigin
+        let containerPoint = NSPoint(
+            x: localPoint.x - containerOrigin.x,
+            y: localPoint.y - containerOrigin.y
+        )
+        var fraction: CGFloat = 0
+        let glyphIndex = layoutManager.glyphIndex(
+            for: containerPoint,
+            in: textContainer,
+            fractionOfDistanceThroughGlyph: &fraction
+        )
+        guard glyphIndex < layoutManager.numberOfGlyphs else { return nil }
+        let glyphRect = layoutManager.boundingRect(
+            forGlyphRange: NSRange(location: glyphIndex, length: 1),
+            in: textContainer
+        ).insetBy(dx: -2, dy: -2)
+        guard glyphRect.contains(containerPoint) else { return nil }
+        return layoutManager.characterIndexForGlyph(at: glyphIndex)
     }
 
     func refreshContentWidthLayout() {

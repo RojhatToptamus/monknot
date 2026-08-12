@@ -119,7 +119,6 @@ public enum MonknotKeyboardShortcutAction: Equatable, Sendable {
     case workspaceSearchNext
     case workspaceSearchPrevious
     case workspaceSearchConfirm
-    case showKeyboardShortcutsHelp
     case dismissKeyboardShortcutsHelp
     case toggleSplitView
     case undoWorkspaceReplace
@@ -141,13 +140,6 @@ public enum MonknotKeyboardShortcutRouter {
             if context.isKeyboardShortcutsHelpPresented { return .dismissKeyboardShortcutsHelp }
             if context.isWorkspaceSearchPresented { return .dismissWorkspaceSearch }
             return context.isDocumentSearchPresented ? .dismissDocumentSearch : nil
-        }
-
-        let isKeyboardHelpShortcut =
-            (modifiers.isEmpty && key == "?")
-            || (modifiers == [.shift] && (key == "?" || key == "/"))
-        if isKeyboardHelpShortcut {
-            return context.isKeyboardShortcutsHelpPresented ? nil : .showKeyboardShortcutsHelp
         }
 
         if context.isWorkspaceSearchPresented, modifiers == [.command] {

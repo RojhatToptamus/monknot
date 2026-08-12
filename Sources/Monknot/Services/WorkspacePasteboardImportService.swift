@@ -292,7 +292,7 @@ enum WorkspacePasteboardImportService {
         return formatter.string(from: Date())
     }
 
-    private static func pngData(for image: NSImage) -> Data? {
+    static func pngData(for image: NSImage) -> Data? {
         if let tiffData = image.tiffRepresentation,
            let bitmap = NSBitmapImageRep(data: tiffData),
            let pngData = bitmap.representation(using: .png, properties: [:]) {
@@ -314,6 +314,136 @@ enum WorkspacePasteboardImportService {
         let directoryPath = directory.standardizedFileURL.path
         let prefix = directoryPath.hasSuffix("/") ? directoryPath : directoryPath + "/"
         return candidatePath == directoryPath || candidatePath.hasPrefix(prefix)
+    }
+}
+
+struct MarkdownImageAsset: Equatable, Sendable {
+    let fileURL: URL
+    let relativePath: String
+
+    var markdown: String {
+        "![Pasted image](\(relativePath))"
+    }
+}
+
+enum MarkdownImageAssetService {
+    static func savePNG(
+        _ data: Data,
+        workspaceURL: URL,
+        markdownDocumentURL: URL
+    ) throws -> MarkdownImageAsset {
+        guard !data.isEmpty else {
+            throw MarkdownImageAssetError.emptyImage
+        }
+
+        let root = canonical(workspaceURL)
+        let documentURL = canonical(markdownDocumentURL)
+        guard isContained(documentURL, in: root) else {
+            throw MarkdownImageAssetError.outsideWorkspace
+        }
+
+        let assetsURL = workspaceURL.appendingPathComponent("assets", isDirectory: true)
+        var isDirectory = ObjCBool(false)
+        if FileManager.default.fileExists(atPath: assetsURL.path, isDirectory: &isDirectory) {
+            guard isDirectory.boolValue else {
+                throw MarkdownImageAssetError.assetsIsNotDirectory
+            }
+        } else {
+            try FileManager.default.createDirectory(
+                at: assetsURL,
+                withIntermediateDirectories: true
+            )
+            guard FileManager.default.fileExists(atPath: assetsURL.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue
+            else { throw MarkdownImageAssetError.assetsIsNotDirectory }
+        }
+
+        let canonicalAssets = canonical(assetsURL)
+        let expectedCanonicalAssets = root.appendingPathComponent("assets", isDirectory: true)
+            .standardizedFileURL
+        guard canonicalAssets == expectedCanonicalAssets,
+              isContained(canonicalAssets, in: root)
+        else {
+            throw MarkdownImageAssetError.outsideWorkspace
+        }
+
+        let fileName = "pasted-image-\(shortTimestamp())-\(UUID().uuidString.prefix(8).lowercased()).png"
+        let destinationURL = canonicalAssets.appendingPathComponent(fileName, isDirectory: false)
+        guard isContained(destinationURL, in: root) else {
+            throw MarkdownImageAssetError.outsideWorkspace
+        }
+
+        let temporaryURL = canonicalAssets.appendingPathComponent(
+            ".monknot-paste-\(UUID().uuidString).tmp",
+            isDirectory: false
+        )
+        defer { try? FileManager.default.removeItem(at: temporaryURL) }
+        try data.write(to: temporaryURL, options: .atomic)
+        try FileManager.default.moveItem(at: temporaryURL, to: destinationURL)
+        return MarkdownImageAsset(
+            fileURL: destinationURL,
+            relativePath: relativePath(
+                from: markdownDocumentURL.deletingLastPathComponent(),
+                to: destinationURL
+            )
+        )
+    }
+
+    static func removeUncommittedAsset(_ asset: MarkdownImageAsset, workspaceURL: URL) {
+        let root = canonical(workspaceURL)
+        let fileURL = canonical(asset.fileURL)
+        guard isContained(fileURL, in: root),
+              fileURL.deletingLastPathComponent().lastPathComponent == "assets"
+        else { return }
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+
+    private static func relativePath(from sourceDirectory: URL, to target: URL) -> String {
+        let sourceComponents = sourceDirectory.standardizedFileURL.pathComponents
+        let targetComponents = target.standardizedFileURL.pathComponents
+        var commonCount = 0
+        while commonCount < min(sourceComponents.count, targetComponents.count),
+              sourceComponents[commonCount] == targetComponents[commonCount] {
+            commonCount += 1
+        }
+        let upward = Array(repeating: "..", count: sourceComponents.count - commonCount)
+        let downward = Array(targetComponents.dropFirst(commonCount))
+        return (upward + downward).joined(separator: "/")
+    }
+
+    private static func canonical(_ url: URL) -> URL {
+        url.standardizedFileURL.resolvingSymlinksInPath()
+    }
+
+    private static func isContained(_ candidate: URL, in root: URL) -> Bool {
+        let rootComponents = root.pathComponents
+        let candidateComponents = candidate.pathComponents
+        guard candidateComponents.count >= rootComponents.count else { return false }
+        return Array(candidateComponents.prefix(rootComponents.count)) == rootComponents
+    }
+
+    private static func shortTimestamp() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter.string(from: Date())
+    }
+}
+
+private enum MarkdownImageAssetError: LocalizedError {
+    case emptyImage
+    case outsideWorkspace
+    case assetsIsNotDirectory
+
+    var errorDescription: String? {
+        switch self {
+        case .emptyImage:
+            return "The pasted image is empty."
+        case .outsideWorkspace:
+            return "Images can only be saved inside the current workspace."
+        case .assetsIsNotDirectory:
+            return "The workspace assets item is not a folder."
+        }
     }
 }
 

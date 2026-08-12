@@ -1,6 +1,7 @@
 import Foundation
 import JavaScriptCore
 import XCTest
+@testable import MonknotCore
 
 final class MarkdownRendererJavaScriptTests: XCTestCase {
     func testInlineMarkdownRendersStyledText() throws {
@@ -79,6 +80,25 @@ final class MarkdownRendererJavaScriptTests: XCTestCase {
         XCTAssertTrue(html.contains(#"<span class="tok-comment">// comment</span>"#))
     }
 
+    func testShorterFenceDoesNotCloseLongerFenceOrExposeHiddenReferenceDefinition() throws {
+        let html = try renderMarkdown(
+            """
+            ````md
+            [inside][ref]
+            ```
+            [ref]: Hidden.md
+            ````
+            [visible][ref]
+
+            [ref]: Visible.md
+            """
+        )
+
+        XCTAssertTrue(html.contains("[ref]: Hidden.md"))
+        XCTAssertTrue(html.contains(#"data-monknot-destination="Visible.md">visible</a>"#))
+        XCTAssertFalse(html.contains(#"data-monknot-destination="Hidden.md""#))
+    }
+
     func testTableRendersAsScrollableHTMLTable() throws {
         let html = try renderMarkdown(
             """
@@ -96,7 +116,101 @@ final class MarkdownRendererJavaScriptTests: XCTestCase {
         XCTAssertFalse(html.contains("| --- | --- | --- |"))
     }
 
+    func testWorkspaceLinksRenderAsDelegatedActionTargets() throws {
+        let html = try renderMarkdown("See [[Daily Note#Plan|today]] and [**guide**](Folder/Guide.md#Setup).")
+
+        XCTAssertTrue(html.contains(#"class="wikilink" data-monknot-link-kind="wikilink" data-monknot-destination="Daily Note#Plan">today</a>"#))
+        XCTAssertTrue(html.contains(#"data-monknot-link-kind="markdown" data-monknot-destination="Folder/Guide.md#Setup""#))
+        XCTAssertTrue(html.contains("<strong>guide</strong></a>"))
+        XCTAssertFalse(html.contains("<span class=\"wikilink\""))
+    }
+
+    func testReferenceStyleLinksUseDefinitionsWithoutRenderingOrActivatingDefinitions() throws {
+        let html = try renderMarkdown(
+            """
+            Read [**the guide**][Guide   Ref] and [collapsed][].
+
+            [guide ref]: <Folder/Guide.md#Setup> "Setup title"
+            [collapsed]: Other.md
+
+            `[code][guide ref]`
+
+            ```md
+            [fenced][hidden]
+            [hidden]: Hidden.md
+            ```
+            """
+        )
+
+        XCTAssertTrue(html.contains(#"data-monknot-link-kind="markdown" data-monknot-destination="Folder/Guide.md#Setup" title="Setup title"><strong>the guide</strong></a>"#))
+        XCTAssertTrue(html.contains(#"data-monknot-link-kind="markdown" data-monknot-destination="Other.md">collapsed</a>"#))
+        XCTAssertFalse(html.contains("[guide ref]:"))
+        XCTAssertFalse(html.contains("[collapsed]:"))
+        XCTAssertTrue(html.contains("<code>[code][guide ref]</code>"))
+        XCTAssertTrue(html.contains("[hidden]: Hidden.md"))
+        XCTAssertFalse(html.contains(#"data-monknot-destination="Hidden.md""#))
+    }
+
+    func testTaskMetadataUsesOriginalSourceLineAfterFootnoteDefinitions() throws {
+        let html = try renderMarkdown(
+            """
+            [^note]: Footnote text
+            # Heading
+            - [ ] open
+            - [X] done
+            """
+        )
+
+        XCTAssertTrue(html.contains(#"<h1 data-source-line="2""#))
+        XCTAssertTrue(html.contains(#"data-monknot-task data-source-line="3" data-task-checked="false""#))
+        XCTAssertTrue(html.contains(#"data-monknot-task data-source-line="4" data-task-checked="true""#))
+        XCTAssertFalse(html.contains("checkbox\" disabled"))
+    }
+
+    func testQuotedTaskMetadataUsesAbsoluteSourceLine() throws {
+        let html = try renderMarkdown(
+            """
+            Intro
+
+            > Context
+            > - [ ] quoted task
+            """
+        )
+
+        XCTAssertTrue(html.contains(#"data-monknot-task data-source-line="4" data-task-checked="false""#))
+        XCTAssertTrue(html.contains(#"<li data-source-line="4" class="task-list-item">"#))
+    }
+
+    func testFencedCodeRendersCompleteSelectableBlockWithoutTerminalAction() throws {
+        let html = try renderMarkdown(
+            """
+            ```sh
+            printf 'safe'
+            ```
+            """
+        )
+
+        XCTAssertTrue(html.contains(#"<pre data-source-line="1"><code class="language-sh">printf "#))
+        XCTAssertTrue(html.contains("safe"))
+        XCTAssertFalse(html.contains("data-monknot-paste-code"))
+        XCTAssertFalse(html.contains("Paste into Terminal"))
+        XCTAssertFalse(html.contains("monknot-code-terminal-action"))
+    }
+
+    func testExportedHeadingNormalizerMatchesCoreNormalizer() throws {
+        let context = try rendererContext(markdown: "# Heading")
+        let javascriptValue = context.evaluateScript("window.monknotNormalizeHeadingFragment(' Hello, **World**! ')")?.toString()
+
+        XCTAssertEqual(javascriptValue, MarkdownHeadingFragment.normalized(" Hello, **World**! "))
+    }
+
     private func renderMarkdown(_ markdown: String) throws -> String {
+        let context = try rendererContext(markdown: markdown)
+        let target = try XCTUnwrap(context.objectForKeyedSubscript("target"))
+        return try XCTUnwrap(target.objectForKeyedSubscript("innerHTML")?.toString())
+    }
+
+    private func rendererContext(markdown: String) throws -> JSContext {
         let rendererURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Sources/MonknotCore/Resources/renderer.js")
         let renderer = try String(contentsOf: rendererURL, encoding: .utf8)
@@ -114,10 +228,16 @@ final class MarkdownRendererJavaScriptTests: XCTestCase {
             };
             var document = {
               documentElement: { dataset: {}, style: {} },
-              getElementById: function(id) { return id === "content" ? target : null; }
+              getElementById: function(id) { return id === "content" ? target : null; },
+              addEventListener: function() {},
+              removeEventListener: function() {}
             };
             var window = {
-              monknot: { markdown: \(try javascriptStringLiteral(markdown)) }
+              monknot: {
+                markdown: \(try javascriptStringLiteral(markdown)),
+                documentID: "/workspace/Note.md",
+                renderID: 1
+              }
             };
             """
         )
@@ -131,9 +251,7 @@ final class MarkdownRendererJavaScriptTests: XCTestCase {
             )
         }
 
-        let target = try XCTUnwrap(context.objectForKeyedSubscript("target"))
-        let innerHTML = try XCTUnwrap(target.objectForKeyedSubscript("innerHTML")?.toString())
-        return innerHTML
+        return context
     }
 
     private func javascriptStringLiteral(_ value: String) throws -> String {

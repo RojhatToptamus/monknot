@@ -38,6 +38,14 @@ struct MonknotSegmentedControl: View {
 }
 
 struct MonknotSegmentButton: View {
+    static let focusRingLineWidth: CGFloat = 3
+    static let focusRingOutset: CGFloat = 2
+    static let focusRingOpacity = 0.35
+
+    static func showsFocusRing(isFocused: Bool, isDisabled: Bool) -> Bool {
+        isFocused && !isDisabled
+    }
+
     let systemImage: String
     let accessibilityLabel: String
     let isSelected: Bool
@@ -70,6 +78,22 @@ struct MonknotSegmentButton: View {
                         )
                     )
                 )
+                .overlay {
+                    if Self.showsFocusRing(isFocused: isFocused, isDisabled: isDisabled) {
+                        RoundedRectangle(
+                            cornerRadius: theme.chromeRadius(
+                                6,
+                                zoomScale: zoomScale
+                            )
+                        )
+                        .stroke(
+                            theme.accentColor.opacity(Self.focusRingOpacity),
+                            lineWidth: Self.focusRingLineWidth
+                        )
+                        .padding(-Self.focusRingOutset)
+                        .allowsHitTesting(false)
+                    }
+                }
                 .contentShape(
                     RoundedRectangle(
                         cornerRadius: theme.chromeRadius(

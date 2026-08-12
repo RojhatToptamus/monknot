@@ -134,9 +134,28 @@ struct MonknotStoreSmokeTests {
         let didDetectExternalConflict = await waitUntil(8) { store.selectedDocumentExternalChange }
         expect(didDetectExternalConflict, "dirty selected document should report an external disk change conflict")
 
-        store.acknowledgeExternalChange()
-        expect(!store.selectedDocumentExternalChange, "acknowledging external change should dismiss conflict banner")
-        expect(store.documentText == "# A\ncopied dirty text\n", "acknowledging external change should keep dirty buffer")
+        store.prepareExternalDocumentReview()
+        let didPrepareExternalReview = await waitUntil { store.externalDocumentReview != nil }
+        expect(didPrepareExternalReview, "external change review should load disk and local versions")
+        let externalCopyURL = root.appendingPathComponent("Conflict Local Copy.md")
+        store.saveExternalDocumentCopy(to: externalCopyURL)
+        let didSaveExternalCopy = await waitUntil(8) {
+            store.documents.contains { $0.url == externalCopyURL.standardizedFileURL }
+        }
+        expect(didSaveExternalCopy, "saving a local conflict copy inside the workspace should refresh the tree")
+        let externalCopyText = try String(contentsOf: externalCopyURL, encoding: .utf8)
+        expect(
+            externalCopyText == "# A\ncopied dirty text\n",
+            "saving a local conflict copy should preserve the dirty buffer"
+        )
+        expect(store.selectedDocumentExternalChange, "saving a conflict copy should leave the original conflict open")
+        expect(store.externalDocumentReview != nil, "saving a conflict copy should leave the visual review open")
+        store.resolveExternalDocumentReview(.keepLocal)
+        let didKeepLocalVersion = await waitUntil {
+            store.externalDocumentReview == nil && !store.selectedDocumentExternalChange
+        }
+        expect(didKeepLocalVersion, "keeping the local version should dismiss the conflict banner")
+        expect(store.documentText == "# A\ncopied dirty text\n", "keeping the local version should preserve the dirty buffer")
 
         store.reloadSelectedDocumentFromDisk()
         _ = await waitUntil { !store.isDocumentLoading }

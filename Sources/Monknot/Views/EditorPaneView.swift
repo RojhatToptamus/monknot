@@ -1,3 +1,4 @@
+import AppKit
 import MonknotCore
 import SwiftUI
 
@@ -5,6 +6,8 @@ struct EditorPaneView: View {
     @ObservedObject var store: WorkspaceStore
     @Binding var editorMode: EditorMode
     @Binding var isSplitViewEnabled: Bool
+    @AppStorage(VisualExternalChangeReviewPreference.key)
+    private var visualExternalChangeReviewEnabled = VisualExternalChangeReviewPreference.defaultValue
     @State private var markdownCommandSerial = 0
     @State private var markdownCommandRequest: MarkdownTextEditorCommandRequest?
     @State private var splitScrollSyncLock = false
@@ -20,6 +23,7 @@ struct EditorPaneView: View {
     let usePointerCursors: Bool
     let fontSmoothing: Bool
     let activeViewportState: DocumentViewportState?
+    let pdfViewportCaptureBridge: PDFViewportCaptureBridge
     let updateViewportState: (String, DocumentViewportStateChange) -> Void
     let pdfUndoCommandSerial: Int
     let pdfRedoCommandSerial: Int
@@ -28,14 +32,25 @@ struct EditorPaneView: View {
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var previewLocation: MarkdownSourceLocation?
     @Binding var pdfSearchTarget: WorkspaceSearchPDFTarget?
+    let pdfPageNavigationRequest: PDFPageNavigationRequest?
+    let pdfNavigatorToggleCommandSerial: Int
     @Binding var documentSearch: DocumentSearchState
     let newMarkdown: () -> Void
     let bootstrapStarterWorkspace: () -> Void
     let openFolder: () -> Void
     let closeTerminal: () -> Void
+    let saveDocument: () -> Void
     let outlineItems: [MarkdownOutlineItem]
     let selectOutlineItem: (MarkdownOutlineItem) -> Void
     let onPreviewSourceJump: (MarkdownSourceLocation) -> Void
+    let copyPDFLinkedExcerpt: (PDFSelectionSnapshot) -> Void
+    let updatePDFSelectionSnapshot: (PDFSelectionSnapshot?) -> Void
+    let consumePDFPageNavigationRequest: (PDFPageNavigationRequest) -> Void
+    let onMarkdownSelectionChange: (MarkdownEditorSelectionSnapshot) -> Void
+    let onMarkdownLinkRequest: (MarkdownEditorLinkRequest) -> Void
+    let onMarkdownImagePasteRequest: (MarkdownImagePasteRequest) -> Void
+    let onMarkdownPreviewLinkRequest: (MarkdownPreviewLinkRequest) -> Void
+    let onMarkdownTaskRequest: (MarkdownPreviewTaskRequest) -> Void
 
     var body: some View {
         editorColumn
@@ -70,6 +85,21 @@ struct EditorPaneView: View {
                 } else {
                     splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
                 }
+            }
+            .sheet(item: Binding(
+                get: { store.externalDocumentReview },
+                set: { value in
+                    if value == nil {
+                        store.cancelExternalDocumentReview()
+                    }
+                }
+            )) { _ in
+                ExternalDocumentReconciliationSheet(
+                    store: store,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    saveCopy: saveExternalTextCopy
+                )
             }
     }
 
@@ -128,11 +158,28 @@ struct EditorPaneView: View {
                 ExternalDocumentChangeBanner(
                     isRemovedExternally: store.isSelectedDocumentRemovedExternally,
                     isSaving: store.isSaving,
+                    documentKind: store.selectedDocument?.kind,
+                    visualReviewEnabled: visualExternalChangeReviewEnabled,
                     theme: theme,
                     zoomScale: zoomScale,
-                    reload: { store.reloadSelectedDocumentFromDisk() },
-                    keepEditing: { store.acknowledgeExternalChange() },
-                    save: { store.saveSelectedFile() }
+                    review: { store.prepareExternalDocumentReview() },
+                    saveTextCopy: saveExternalTextCopy,
+                    keepLocalText: {
+                        store.resolveSelectedExternalDocumentWithoutReview(.keepLocal)
+                    },
+                    useDiskText: {
+                        store.resolveSelectedExternalDocumentWithoutReview(.useDisk)
+                    },
+                    reloadPDF: { store.reloadSelectedDocumentFromDisk() },
+                    savePDFCopy: {
+                        guard let document = store.selectedDocument,
+                              document.kind == .pdf
+                        else { return }
+                        pdfViewportCaptureBridge.commitActiveFreeTextEdit(
+                            documentID: document.id
+                        )
+                        store.exportAnnotatedPDFCopy(for: document)
+                    }
                 )
             }
 
@@ -161,6 +208,32 @@ struct EditorPaneView: View {
         }
     }
 
+    private func saveExternalTextCopy() {
+        guard let document = store.selectedDocument,
+              document.capabilities.canEditText
+        else { return }
+
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        let sourceURL = document.url
+        let fileExtension = sourceURL.pathExtension
+        let baseName = sourceURL.deletingPathExtension().lastPathComponent
+        panel.nameFieldStringValue = fileExtension.isEmpty
+            ? "\(baseName) Copy"
+            : "\(baseName) Copy.\(fileExtension)"
+
+        let completion: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let destinationURL = panel.url else { return }
+            store.saveExternalDocumentCopy(to: destinationURL)
+        }
+        if let window = NSApp.keyWindow {
+            panel.beginSheetModal(for: window, completionHandler: completion)
+        } else {
+            panel.begin(completionHandler: completion)
+        }
+    }
+
     @ViewBuilder
     private func editor(for selectedDocument: WorkspaceDocument) -> some View {
         switch selectedDocument.kind {
@@ -179,24 +252,39 @@ struct EditorPaneView: View {
                 zoomScale: zoomScale,
                 saveState: store.saveState(for: selectedDocument.id),
                 dirtyData: store.dirtyPDFData(for: selectedDocument.id),
+                savedEditCheckpoint: store.pdfSavedEditCheckpoint(for: selectedDocument.id),
+                contentVersion: store.pdfContentVersion(for: selectedDocument.id),
                 viewportState: activeViewportState?.pdfViewportState,
+                viewportCaptureBridge: pdfViewportCaptureBridge,
                 externalUndoCommandSerial: pdfUndoCommandSerial,
                 externalRedoCommandSerial: pdfRedoCommandSerial,
                 searchState: $documentSearch,
                 searchTarget: $pdfSearchTarget,
-                markEdited: { previousData, data in
+                markEdited: { previousData, data, editCheckpoint in
                     store.markPDFDocumentEdited(
                         id: selectedDocument.id,
                         previousData: previousData,
-                        data: data
+                        data: data,
+                        editCheckpoint: editCheckpoint
+                    )
+                },
+                restoreSavedEditCheckpoint: { checkpoint in
+                    store.restorePDFSavedEditCheckpoint(
+                        id: selectedDocument.id,
+                        checkpoint: checkpoint
                     )
                 },
                 reportError: { message in
                     store.reportPDFAnnotationError(message)
                 },
                 saveDocument: {
-                    store.saveSelectedFile()
+                    saveDocument()
                 },
+                pageNavigationRequest: pdfPageNavigationRequest,
+                externalNavigatorToggleCommandSerial: pdfNavigatorToggleCommandSerial,
+                copyLinkedExcerpt: copyPDFLinkedExcerpt,
+                onSelectionSnapshotChange: updatePDFSelectionSnapshot,
+                onPageNavigationRequestConsumed: consumePDFPageNavigationRequest,
                 onViewportStateChange: { state in
                     updateViewportState(selectedDocument.id, .pdfViewportState(state))
                 },
@@ -354,12 +442,16 @@ struct EditorPaneView: View {
             contentWidthPercent: contentWidthPercent,
             fontSmoothing: fontSmoothing,
             scrollPosition: activeViewportState?.textScrollPosition,
+            textSelection: activeViewportState?.textSelection,
             syncScrollEnabled: isSplitViewEnabled,
             syncScrollTargetLine: sourceSyncLine,
             sourceLocation: $sourceLocation,
             searchState: $documentSearch,
             commandRequest: markdownCommandRequest,
             wikilinkDocuments: store.markdownDocuments,
+            onSelectionChange: onMarkdownSelectionChange,
+            onOpenLink: onMarkdownLinkRequest,
+            onImagePasteRequest: onMarkdownImagePasteRequest,
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
             },
@@ -387,6 +479,8 @@ struct EditorPaneView: View {
             sourceLocation: $previewLocation,
             searchState: $documentSearch,
             onSourceJump: onPreviewSourceJump,
+            onLinkRequest: onMarkdownPreviewLinkRequest,
+            onTaskRequest: onMarkdownTaskRequest,
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .markdownPreviewScrollPosition(position))
             },
