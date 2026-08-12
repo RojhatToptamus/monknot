@@ -2796,6 +2796,12 @@ final class WorkspaceStore: ObservableObject {
         suppressWatcherUntil = .distantPast
     }
 
+    internal func testing_stopFileWatcher() {
+        fileWatcher.stop()
+        externalRefreshWorkItem?.cancel()
+        externalRefreshWorkItem = nil
+    }
+
     internal func testing_scheduleExternalWorkspaceRefresh(_ event: WorkspaceFileWatcher.Event) {
         scheduleExternalWorkspaceRefresh(event)
     }

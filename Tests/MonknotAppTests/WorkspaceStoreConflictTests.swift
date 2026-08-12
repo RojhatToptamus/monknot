@@ -769,6 +769,7 @@ final class WorkspaceStoreConflictTests: XCTestCase {
             !store.isBusy && !store.isDocumentLoading && store.documentText == "baseline\n"
         }
         XCTAssertTrue(didOpen)
+        store.testing_stopFileWatcher()
 
         store.setDocumentText("local\n")
         try "disk\n".write(to: sourceURL, atomically: false, encoding: .utf8)
