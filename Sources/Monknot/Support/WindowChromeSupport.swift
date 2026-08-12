@@ -25,20 +25,23 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
         )
     }
 
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView(frame: .zero)
+    func makeNSView(context: Context) -> WindowBackgroundDragAttachmentView {
+        let view = WindowBackgroundDragAttachmentView(frame: .zero)
         updateWindow(from: view, coordinator: context.coordinator)
         return view
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {
+    func updateNSView(_ nsView: WindowBackgroundDragAttachmentView, context: Context) {
         context.coordinator.trafficLightRowHeight = trafficLightRowHeight
         updateWindow(from: nsView, coordinator: context.coordinator)
     }
 
-    private func updateWindow(from view: NSView, coordinator: Coordinator) {
-        DispatchQueue.main.async {
-            guard let window = view.window else { return }
+    private func updateWindow(
+        from view: WindowBackgroundDragAttachmentView,
+        coordinator: Coordinator
+    ) {
+        let configureWindow = { [weak coordinator] (window: NSWindow) in
+            guard let coordinator else { return }
             // Deliberate title-bar gaps opt in to dragging below. Making the
             // whole background draggable lets transparent controls and editor
             // gaps accidentally move the window.
@@ -62,6 +65,10 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
 
             coordinator.observeWindow(window)
             coordinator.configureWindowChrome(in: window)
+        }
+        view.configureWindow = configureWindow
+        if let window = view.window {
+            configureWindow(window)
         }
     }
 
@@ -187,6 +194,19 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             observers.forEach(center.removeObserver(_:))
             observers.removeAll()
         }
+    }
+}
+
+/// Applies window-owned chrome only after AppKit has attached the bridge view.
+/// A one-shot queued lookup can run before `view.window` exists and leave the
+/// window unconfigured until an unrelated SwiftUI update occurs.
+final class WindowBackgroundDragAttachmentView: NSView {
+    var configureWindow: ((NSWindow) -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard let window else { return }
+        configureWindow?(window)
     }
 }
 
