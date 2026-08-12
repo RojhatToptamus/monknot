@@ -257,17 +257,15 @@ struct MarkdownTextEditor: NSViewRepresentable {
         if context.coordinator.shouldApplyFont(resolvedFont) {
             textView.font = resolvedFont
         }
-        if let textView = textView as? MarkdownNSTextView {
-            textView.zoomScale = zoomScale
-            textView.contentWidthPercent = contentWidthPercent
-            if context.coordinator.shouldApplyFontSmoothing(fontSmoothing) {
-                textView.fontSmoothingEnabled = fontSmoothing
-            }
-            if context.coordinator.shouldApplyMarkdownShortcuts(markdownShortcutsEnabled) {
-                textView.markdownShortcutsEnabled = markdownShortcutsEnabled
-            }
-            textView.wikilinkDocuments = wikilinkDocuments
+        textView.zoomScale = zoomScale
+        textView.contentWidthPercent = contentWidthPercent
+        if context.coordinator.shouldApplyFontSmoothing(fontSmoothing) {
+            textView.fontSmoothingEnabled = fontSmoothing
         }
+        if context.coordinator.shouldApplyMarkdownShortcuts(markdownShortcutsEnabled) {
+            textView.markdownShortcutsEnabled = markdownShortcutsEnabled
+        }
+        textView.wikilinkDocuments = wikilinkDocuments
         if context.coordinator.shouldApplyTheme(theme) {
             applyTheme(theme, to: textView, in: scrollView)
         }
@@ -340,7 +338,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         @Binding private var text: String
-        weak var textView: NSTextView?
+        weak var textView: MarkdownNSTextView?
         var documentID: String?
         var onScrollPositionChange: (DocumentScrollPosition) -> Void = { _ in }
         var onVisibleTopLineChange: ((Int) -> Void)?
@@ -1295,7 +1293,7 @@ private extension String {
     }
 }
 
-private final class MarkdownNSTextView: NSTextView {
+final class MarkdownNSTextView: NSTextView {
     var markdownShortcutsEnabled = false
     var wikilinkDocuments: [WorkspaceDocument] = []
     var commandHandler: ((MarkdownTextEditorCommand) -> Bool)?
