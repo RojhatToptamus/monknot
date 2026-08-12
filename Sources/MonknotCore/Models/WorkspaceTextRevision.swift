@@ -118,10 +118,10 @@ public enum WorkspaceConditionalTextWriter {
     }
 
     private static func signature(for url: URL) -> WorkspaceFileSignature {
-        let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.standardizedFileURL.path)
         return WorkspaceFileSignature(
-            modificationDate: values?.contentModificationDate,
-            fileSize: values?.fileSize.map(Int64.init)
+            modificationDate: attributes?[.modificationDate] as? Date,
+            fileSize: (attributes?[.size] as? NSNumber)?.int64Value
         )
     }
 }

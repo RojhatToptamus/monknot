@@ -345,6 +345,23 @@ final class ExternalDocumentReconciliationServiceTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "external")
     }
 
+    func testConditionalWriterReadRefreshesSignatureAfterAtomicReplacement() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let url = directory.appendingPathComponent("note.md")
+        try Data("disk\n".utf8).write(to: url)
+        let initial = try WorkspaceConditionalTextWriter.read(from: url)
+
+        let replacement = "newest disk\n"
+        try Data(replacement.utf8).write(to: url, options: .atomic)
+        let current = try WorkspaceConditionalTextWriter.read(from: url)
+
+        XCTAssertEqual(current.text, replacement)
+        XCTAssertEqual(current.signature.fileSize, Int64(replacement.utf8.count))
+        XCTAssertNotEqual(current.signature.fileSize, initial.signature.fileSize)
+    }
+
     func testConditionalWriterCreatesOnlyWhenStillAbsent() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

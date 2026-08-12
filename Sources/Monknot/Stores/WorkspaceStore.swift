@@ -2859,7 +2859,7 @@ final class WorkspaceStore: ObservableObject {
         externalRefreshWorkItem?.cancel()
         externalRefreshTask?.cancel()
         invalidateWorkspaceSearchCaches(paths: relevantPaths)
-        applyExternalWorkspaceResult(result, selectedSignature: selectedDocumentSignature)
+        applyExternalWorkspaceResult(result)
         refreshGitStatus()
         return true
     }
@@ -2914,8 +2914,6 @@ final class WorkspaceStore: ObservableObject {
         externalRefreshGeneration += 1
         let generation = externalRefreshGeneration
         let workspaceOperationGeneration = workspaceGeneration
-        let selectedSignature = selectedDocumentSignature
-
         externalRefreshTask?.cancel()
         externalRefreshTask = Task.detached(priority: .utility) { [weak self, scanner] in
             let signpostID = MonknotSignposting.externalRefresh.beginInterval("ExternalWorkspaceRefresh")
@@ -2927,7 +2925,6 @@ final class WorkspaceStore: ObservableObject {
                 await self?.finishExternalWorkspaceRefresh(
                     result: result,
                     workspaceURL: workspaceURL,
-                    selectedSignature: selectedSignature,
                     workspaceOperationGeneration: workspaceOperationGeneration,
                     generation: generation
                 )
@@ -2937,10 +2934,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func applyExternalWorkspaceResult(
-        _ result: WorkspaceDocumentScanResult,
-        selectedSignature: FileSignature?
-    ) {
+    private func applyExternalWorkspaceResult(_ result: WorkspaceDocumentScanResult) {
         let previousSelection = selectedDocumentID
         let selectionStillExists = previousSelection.map { id in result.documents.contains { $0.id == id } } ?? false
         let dirtySelectionRemoved = previousSelection != nil && !selectionStillExists && hasUnsavedChanges
@@ -2969,14 +2963,14 @@ final class WorkspaceStore: ObservableObject {
         if selectedDocument.kind == .pdf {
             if hasUnsavedChanges,
                selectionStillExists,
-               selectedSignature != nil,
-               nextSignature != selectedSignature {
+               selectedDocumentSignature != nil,
+               nextSignature != selectedDocumentSignature {
                 setSelectedDocumentExternalChangeIfChanged(true)
             } else if !hasUnsavedChanges,
                !isSaving,
                selectionStillExists,
-               selectedSignature != nil,
-               nextSignature != selectedSignature {
+               selectedDocumentSignature != nil,
+               nextSignature != selectedDocumentSignature {
                 setSelectedDocumentSignatureIfChanged(nextSignature)
                 publishPDFContentReplacement(for: selectedDocument.id)
             } else if selectedDocumentSignature == nil, !hasUnsavedChanges {
@@ -2992,7 +2986,10 @@ final class WorkspaceStore: ObservableObject {
             if !Self.revision(currentRevision, satisfies: expectation) {
                 setSelectedDocumentExternalChangeIfChanged(true)
             }
-        } else if !hasUnsavedChanges, !isSaving, selectedSignature != nil, nextSignature != selectedSignature {
+        } else if !hasUnsavedChanges,
+                  !isSaving,
+                  selectedDocumentSignature != nil,
+                  nextSignature != selectedDocumentSignature {
             loadSelectedDocument()
         } else if selectedDocumentSignature == nil {
             setSelectedDocumentSignatureIfChanged(nextSignature)
@@ -3002,7 +2999,6 @@ final class WorkspaceStore: ObservableObject {
     private func finishExternalWorkspaceRefresh(
         result: WorkspaceDocumentScanResult,
         workspaceURL: URL,
-        selectedSignature: FileSignature?,
         workspaceOperationGeneration: Int,
         generation: Int
     ) {
@@ -3010,7 +3006,7 @@ final class WorkspaceStore: ObservableObject {
         guard workspaceURL.standardizedFileURL == self.workspaceURL?.standardizedFileURL else { return }
         guard workspaceOperationGeneration == workspaceGeneration else { return }
 
-        applyExternalWorkspaceResult(result, selectedSignature: selectedSignature)
+        applyExternalWorkspaceResult(result)
         refreshGitStatus()
     }
 
@@ -3261,13 +3257,13 @@ final class WorkspaceStore: ObservableObject {
     }
 
     nonisolated private static func fileSignature(for url: URL) -> FileSignature? {
-        guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]) else {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.standardizedFileURL.path) else {
             return nil
         }
 
         return FileSignature(
-            modificationDate: values.contentModificationDate,
-            fileSize: values.fileSize.map(Int64.init)
+            modificationDate: attributes[.modificationDate] as? Date,
+            fileSize: (attributes[.size] as? NSNumber)?.int64Value
         )
     }
 
