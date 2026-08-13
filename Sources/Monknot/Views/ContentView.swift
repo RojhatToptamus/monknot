@@ -123,11 +123,13 @@ struct ContentView: View {
     @State private var isTerminalVisible = false
     @State private var terminalRevealRequest: UInt = 0
     @StateObject private var terminalFocusRestorer = TerminalFocusRestorer()
+    @StateObject private var goToLineFocusRestorer = TerminalFocusRestorer()
     @StateObject private var terminalSessions = TerminalSessionCollectionStore()
     @StateObject private var workspaceSearch = WorkspaceSearchState()
     @StateObject private var quickOpen = WorkspaceQuickOpenState()
     @StateObject private var symbolQuickOpen = MarkdownSymbolQuickOpenState()
     @StateObject private var outlineStore = MarkdownOutlineStore()
+    @State private var isGoToLinePresented = false
     @State private var pendingSourceLocation: MarkdownSourceLocation?
     @State private var pendingPreviewLocation: MarkdownSourceLocation?
     @State private var pendingPDFSearchTarget: WorkspaceSearchPDFTarget?
@@ -222,6 +224,7 @@ struct ContentView: View {
     private var lifecycleContent: AnyView {
         AnyView(chromeContent
             .onChange(of: store.selectedDocument?.id) { oldDocumentID, newDocumentID in
+                dismissGoToLine(restoreFocus: false)
                 if documentNavigationHistory.currentDocumentID != newDocumentID {
                     documentNavigationHistory.replaceCurrent(with: newDocumentID)
                 }
@@ -449,6 +452,16 @@ struct ContentView: View {
                         symbolQuickOpen.dismiss()
                         openOutlineItem(item)
                     }
+                )
+                .transition(.opacity)
+            }
+
+            if isGoToLinePresented {
+                GoToLineView(
+                    theme: activeTheme,
+                    zoomScale: zoomScale,
+                    close: { dismissGoToLine(restoreFocus: true) },
+                    go: goToLine(_:)
                 )
                 .transition(.opacity)
             }
@@ -1473,6 +1486,8 @@ struct ContentView: View {
             showWorkspaceSearch: { showWorkspaceSearch() },
             showQuickOpen: { showQuickOpen() },
             canShowQuickOpen: store.workspaceURL != nil && !store.isBusy,
+            showGoToLine: showGoToLine,
+            canShowGoToLine: canShowGoToLine,
             findNext: { documentSearch.findNext() },
             findPrevious: { documentSearch.findPrevious() },
             toggleTerminal: { toggleTerminalDrawer(animated: false) },
@@ -1492,6 +1507,7 @@ struct ContentView: View {
             canCopyPDFLinkedExcerpt: store.selectedDocument?.kind == .pdf
                 && pdfSelectionSnapshot?.documentID == store.selectedDocumentID,
             showKeyboardShortcutsHelp: {
+                dismissGoToLine(restoreFocus: false)
                 isKeyboardShortcutsHelpPresented = true
             },
             undoWorkspaceReplace: { store.undoLastWorkspaceReplace() },
@@ -1754,6 +1770,7 @@ struct ContentView: View {
     private func showQuickOpen() {
         guard store.workspaceURL != nil, !store.isBusy else { return }
         isKeyboardShortcutsHelpPresented = false
+        dismissGoToLine(restoreFocus: false)
         symbolQuickOpen.dismiss()
         workspaceSearch.dismiss()
         quickOpen.present(documents: store.documents)
@@ -1762,13 +1779,58 @@ struct ContentView: View {
     private func showGoToSymbol() {
         guard store.selectedDocument?.kind == .markdown, !outlineStore.items.isEmpty else { return }
         isKeyboardShortcutsHelpPresented = false
+        dismissGoToLine(restoreFocus: false)
         quickOpen.dismiss()
         workspaceSearch.dismiss()
         symbolQuickOpen.present(items: outlineStore.items)
     }
 
+    private func showGoToLine() {
+        guard canShowGoToLine else { return }
+        isKeyboardShortcutsHelpPresented = false
+        quickOpen.dismiss()
+        symbolQuickOpen.dismiss()
+        workspaceSearch.dismiss()
+        goToLineFocusRestorer.capture(from: NSApp.keyWindow)
+        isGoToLinePresented = true
+    }
+
+    private func dismissGoToLine(restoreFocus: Bool) {
+        guard isGoToLinePresented else { return }
+        isGoToLinePresented = false
+        if restoreFocus {
+            goToLineFocusRestorer.restore(fallbackFrom: NSApp.keyWindow)
+        } else {
+            goToLineFocusRestorer.discard()
+        }
+    }
+
+    private var canShowGoToLine: Bool {
+        store.selectedDocument?.capabilities.canEditText == true
+            && !store.isBusy
+            && !store.isDocumentLoading
+    }
+
+    private func goToLine(_ input: String) -> String? {
+        switch MarkdownSourceLocationInputParser.parse(input, in: store.documentText) {
+        case let .success(location):
+            isGoToLinePresented = false
+            goToLineFocusRestorer.discard()
+            editorMode = .source
+            pendingSourceLocation = location
+            return nil
+        case .failure(.invalidFormat):
+            return "Enter a line or line:column. Numbers start at 1."
+        case let .failure(.lineOutOfRange(maximum)):
+            return "Line must be between 1 and \(maximum)."
+        case let .failure(.columnOutOfRange(maximum)):
+            return "Column must be between 1 and \(maximum)."
+        }
+    }
+
     private func showDocumentSearch() {
         guard canShowDocumentSearch else { return }
+        dismissGoToLine(restoreFocus: false)
         documentSearch.present()
     }
 
@@ -1781,6 +1843,7 @@ struct ContentView: View {
 
     private func showWorkspaceSearch() {
         guard store.workspaceURL != nil else { return }
+        dismissGoToLine(restoreFocus: false)
         requestSidebarPresentation(true, animated: false)
         workspaceSearch.present(
             documents: store.documents,

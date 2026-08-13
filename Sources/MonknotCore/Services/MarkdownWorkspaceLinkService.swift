@@ -658,8 +658,10 @@ public enum MarkdownSourceLocationValidator {
             lineStart = next
             currentLine += 1
         }
+        let hasTrailingEmptyLine = source.length > 0
+            && [0x0A, 0x0D].contains(source.character(at: source.length - 1))
         guard currentLine == location.line,
-              location.line == 1 || lineStart < source.length
+              location.line == 1 || lineStart < source.length || hasTrailingEmptyLine
         else { return nil }
 
         let lineRange = source.lineRange(

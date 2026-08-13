@@ -421,6 +421,7 @@ APP_SOURCES=(
   "Sources/Monknot/Views/EditorPaneView.swift"
   "Sources/Monknot/Views/ExternalDocumentChangeBanner.swift"
   "Sources/Monknot/Views/GeneralSettingsView.swift"
+  "Sources/Monknot/Views/GoToLineView.swift"
   "Sources/Monknot/Views/HTMLPreviewView.swift"
   "Sources/Monknot/Views/MarkdownOutlineRail.swift"
   "Sources/Monknot/Views/MonknotCommandOverlay.swift"

@@ -42,6 +42,8 @@ struct MonknotCommandActions {
     let showWorkspaceSearch: () -> Void
     let showQuickOpen: () -> Void
     let canShowQuickOpen: Bool
+    let showGoToLine: () -> Void
+    let canShowGoToLine: Bool
     let findNext: () -> Void
     let findPrevious: () -> Void
     let toggleTerminal: () -> Void
@@ -297,6 +299,11 @@ struct MonknotCommandMenu: Commands {
             }
             .keyboardShortcut("p", modifiers: [.command])
             .disabled(actions?.canShowQuickOpen != true)
+
+            Button("Go to Line...") {
+                actions?.showGoToLine()
+            }
+            .disabled(actions?.canShowGoToLine != true)
 
             Button("Find in Document") {
                 actions?.showFind()
