@@ -117,6 +117,8 @@ struct ContentView: View {
     @State private var isMarkdownSplitViewEnabled = false
     @AppStorage("Monknot.usePointerCursors") private var usePointerCursors = false
     @AppStorage("Monknot.fontSmoothing") private var fontSmoothing = true
+    @AppStorage(TerminalWorkingDirectoryPreference.key)
+    private var terminalWorkingDirectory = TerminalWorkingDirectoryPreference.defaultValue.rawValue
     @SceneStorage("Monknot.isTerminalDrawerOpen") private var terminalPreferredVisible = false
     @State private var isTerminalVisible = false
     @State private var terminalRevealRequest: UInt = 0
@@ -220,7 +222,6 @@ struct ContentView: View {
     private var lifecycleContent: AnyView {
         AnyView(chromeContent
             .onChange(of: store.selectedDocument?.id) { oldDocumentID, newDocumentID in
-                terminalSessions.setDefaultDirectory(activeTerminalDirectory)
                 if documentNavigationHistory.currentDocumentID != newDocumentID {
                     documentNavigationHistory.replaceCurrent(with: newDocumentID)
                 }
@@ -293,7 +294,6 @@ struct ContentView: View {
                         for: URL(fileURLWithPath: previousPath, isDirectory: true)
                     )
                 }
-                terminalSessions.setDefaultDirectory(activeTerminalDirectory)
                 tabState.reset()
                 documentNavigationHistory.reset()
                 restoredTabStateWorkspacePath = nil
@@ -356,11 +356,6 @@ struct ContentView: View {
         rootContentStack
             .onAppear {
                 persistedZoomScale = WorkspaceZoomPolicy.clamp(persistedZoomScale)
-                // Preferred visibility survives pressure collapse, while the
-                // effective state comes from WorkspaceSplitView. Reappearing
-                // after Settings or another window transition must not make
-                // the chrome claim that a native-collapsed pane is visible.
-                terminalSessions.setDefaultDirectory(activeTerminalDirectory)
             }
     }
 
@@ -607,6 +602,7 @@ struct ContentView: View {
             TerminalDrawerView(
                 sessions: terminalSessions,
                 workingDirectory: activeTerminalDirectory,
+                workspaceRoot: store.workspaceURL,
                 theme: activeTheme,
                 zoomScale: zoomScale,
                 usePointerCursors: usePointerCursors,
@@ -621,6 +617,8 @@ struct ContentView: View {
 
     private var activeTerminalDirectory: URL? {
         TerminalWorkingDirectoryPolicy.directory(
+            preference: TerminalWorkingDirectoryPreference(rawValue: terminalWorkingDirectory)
+                ?? .defaultValue,
             workspaceURL: store.workspaceURL,
             selectedDocumentURL: store.selectedDocument?.url
         )

@@ -6,8 +6,6 @@ final class TerminalSessionCollectionStore: ObservableObject {
     @Published private var tabState = TerminalTabState()
     @Published private var sessionsByID: [String: TerminalSessionStore] = [:]
 
-    private var defaultDirectory: URL?
-
     var tabs: [TerminalTabItem] {
         tabState.tabs
     }
@@ -21,43 +19,23 @@ final class TerminalSessionCollectionStore: ObservableObject {
         return sessionsByID[activeTerminalID]
     }
 
-    init(initialDirectory: URL? = nil) {
-        defaultDirectory = TerminalSessionStore.resolvedDirectory(initialDirectory)
-    }
-
     func session(for terminalID: String) -> TerminalSessionStore? {
         sessionsByID[terminalID]
     }
 
-    func setDefaultDirectory(_ url: URL?) {
-        if let url,
-           let defaultDirectory,
-           url.standardizedFileURL.path == defaultDirectory.path {
-            return
-        }
-
-        let resolvedDirectory = TerminalSessionStore.resolvedDirectory(url)
-        guard resolvedDirectory?.path != defaultDirectory?.path else { return }
-
-        defaultDirectory = resolvedDirectory
-        activeSession?.setDefaultDirectory(resolvedDirectory)
-    }
-
-    func ensureActiveTerminal(in directory: URL?) {
-        guard let resolvedDirectory = resolvedDirectory(directory) else { return }
-
+    func ensureActiveTerminal(in directory: URL?, workspaceRoot: URL? = nil) {
         guard !tabState.isEmpty else {
-            createTerminal(in: resolvedDirectory)
+            createTerminal(in: directory, workspaceRoot: workspaceRoot)
             return
         }
 
         guard let activeSession else { return }
-        activeSession.startIfNeeded(in: resolvedDirectory)
+        activeSession.startIfNeeded()
     }
 
     @discardableResult
-    func createTerminal(in directory: URL?) -> TerminalSessionStore? {
-        guard let resolvedDirectory = resolvedDirectory(directory) else { return nil }
+    func createTerminal(in directory: URL?, workspaceRoot: URL? = nil) -> TerminalSessionStore? {
+        guard let resolvedDirectory = resolvedDirectory(directory, workspaceRoot: workspaceRoot) else { return nil }
         let tab = tabState.create(workingDirectoryPath: resolvedDirectory.path)
         let session = TerminalSessionStore(initialDirectory: resolvedDirectory)
         sessionsByID[tab.id] = session
@@ -101,7 +79,7 @@ final class TerminalSessionCollectionStore: ObservableObject {
         }
     }
 
-    private func resolvedDirectory(_ url: URL?) -> URL? {
-        TerminalSessionStore.resolvedDirectory(url ?? defaultDirectory)
+    private func resolvedDirectory(_ url: URL?, workspaceRoot: URL?) -> URL? {
+        TerminalSessionStore.resolvedDirectory(url, containedIn: workspaceRoot)
     }
 }

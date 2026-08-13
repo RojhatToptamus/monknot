@@ -51,6 +51,8 @@ struct GeneralSettingsView: View {
     private var visualExternalChangeReviewEnabled = VisualExternalChangeReviewPreference.defaultValue
     @AppStorage("Monknot.fontSmoothing") private var fontSmoothing = true
     @AppStorage(ContentWidthPreference.key) private var contentWidthPercent = ContentWidthPreference.initialValue()
+    @AppStorage(TerminalWorkingDirectoryPreference.key)
+    private var terminalWorkingDirectory = TerminalWorkingDirectoryPreference.defaultValue.rawValue
     @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
 
     @MainActor
@@ -137,31 +139,18 @@ struct GeneralSettingsView: View {
                 SettingsRow(
                     theme: uiTheme,
                     title: "Terminal working directory",
+                    detail: "Used when a new terminal is created",
                     showsDivider: false
                 ) {
-                    HStack(spacing: scaled(8)) {
-                        Text("Workspace root")
-                            .font(.system(size: MonknotMetrics.interfaceText(12, theme: uiTheme, zoomScale: settingsZoomScale)))
-                            .foregroundStyle(uiTheme.foregroundColor)
-
-                        Image(systemName: "chevron.down")
-                            .font(.system(
-                                size: MonknotMetrics.interfaceGlyph(9, theme: uiTheme, zoomScale: settingsZoomScale),
-                                weight: .semibold
-                            ))
-                            .foregroundStyle(uiTheme.tertiaryForegroundColor)
-                    }
-                    .padding(.horizontal, scaled(9))
-                    .frame(height: scaled(24))
-                    .background(
-                        uiTheme.insetFillColor,
-                        in: RoundedRectangle(cornerRadius: uiTheme.chromeRadius(uiTheme.settingsControlCornerRadius, zoomScale: settingsZoomScale))
+                    MonknotSettingsMenuPicker(
+                        title: "Terminal working directory",
+                        selection: $terminalWorkingDirectory,
+                        options: TerminalWorkingDirectoryPreference.allCases.map {
+                            ($0.rawValue, $0.title)
+                        },
+                        theme: uiTheme
                     )
-                    .overlay {
-                        RoundedRectangle(cornerRadius: uiTheme.chromeRadius(uiTheme.settingsControlCornerRadius, zoomScale: settingsZoomScale))
-                            .strokeBorder(uiTheme.borderColor, lineWidth: 1)
-                    }
-                    .accessibilityElement(children: .combine)
+                    .frame(minWidth: scaled(172))
                 }
             }
         }
