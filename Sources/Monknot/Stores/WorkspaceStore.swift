@@ -1023,6 +1023,7 @@ final class WorkspaceStore: ObservableObject {
         setDocumentTextIfChanged(text)
         setHasUnsavedChangesIfChanged(text != lastSavedText)
         updateSaveStateForSelectedDocument()
+        publishWorkspaceSearchContentChange()
 
         if shouldAdoptExternalDiskVersion, let selectedDocumentID {
             cancelExternalDocumentReview()
@@ -1076,6 +1077,10 @@ final class WorkspaceStore: ObservableObject {
 
     var dirtyPDFDataByDocumentID: [String: Data] {
         dirtyPDFDocumentData
+    }
+
+    var dirtyTextByDocumentID: [String: String] {
+        dirtyDocumentTexts
     }
 
     func markPDFDocumentEdited(

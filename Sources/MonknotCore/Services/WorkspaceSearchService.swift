@@ -48,6 +48,7 @@ public struct WorkspaceSearchService: Sendable {
     public func search(
         query: String,
         documents: [WorkspaceDocument],
+        dirtyTextByDocumentID: [String: String] = [:],
         dirtyPDFDataByDocumentID: [String: Data] = [:]
     ) throws -> WorkspaceSearchBatch {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -67,6 +68,16 @@ public struct WorkspaceSearchService: Sendable {
             let matches: [WorkspaceSearchResult]
             switch document.kind {
             case .markdown, .text:
+                if let dirtyText = dirtyTextByDocumentID[document.id] {
+                    matches = try textMatches(
+                        foldedNeedle: foldedNeedle,
+                        document: document,
+                        text: dirtyText,
+                        limit: maxMatchesPerFile
+                    ).results
+                    break
+                }
+
                 let isIndexed = textIndex.hasIndexedDocument(document.id)
                 let fileSize = Self.fileSize(for: document.url)
                 let canAutoIndex = !isIndexed
@@ -132,6 +143,24 @@ public struct WorkspaceSearchService: Sendable {
             )
         } catch WorkspaceTextFileGuard.Error.fileTooLarge {
             return WorkspaceSearchIndex.DocumentMatchBatch(results: [], skippedLargeFileCount: 1)
+        }
+
+        return try textMatches(
+            foldedNeedle: foldedNeedle,
+            document: document,
+            text: text,
+            limit: limit
+        )
+    }
+
+    private func textMatches(
+        foldedNeedle: String,
+        document: WorkspaceDocument,
+        text: String,
+        limit: Int
+    ) throws -> WorkspaceSearchIndex.DocumentMatchBatch {
+        guard limit > 0 else {
+            return WorkspaceSearchIndex.DocumentMatchBatch(results: [], skippedLargeFileCount: 0)
         }
 
         var results: [WorkspaceSearchResult] = []

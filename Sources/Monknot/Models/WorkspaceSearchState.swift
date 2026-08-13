@@ -50,10 +50,18 @@ final class WorkspaceSearchState: ObservableObject {
     private var searchTask: Task<Void, Never>?
     private var searchGeneration = 0
 
-    func present(documents: [WorkspaceDocument]) {
+    func present(
+        documents: [WorkspaceDocument],
+        dirtyTextByDocumentID: [String: String] = [:],
+        dirtyPDFDataByDocumentID: [String: Data] = [:]
+    ) {
         isPresented = true
         focusSerial += 1
-        search(documents: documents)
+        search(
+            documents: documents,
+            dirtyTextByDocumentID: dirtyTextByDocumentID,
+            dirtyPDFDataByDocumentID: dirtyPDFDataByDocumentID
+        )
     }
 
     func dismiss() {
@@ -97,22 +105,45 @@ final class WorkspaceSearchState: ObservableObject {
         return results[index]
     }
 
-    func setQuery(_ query: String, documents: [WorkspaceDocument]) {
+    func setQuery(
+        _ query: String,
+        documents: [WorkspaceDocument],
+        dirtyTextByDocumentID: [String: String] = [:],
+        dirtyPDFDataByDocumentID: [String: Data] = [:]
+    ) {
         guard query != self.query else { return }
         self.query = query
-        search(documents: documents)
+        search(
+            documents: documents,
+            dirtyTextByDocumentID: dirtyTextByDocumentID,
+            dirtyPDFDataByDocumentID: dirtyPDFDataByDocumentID
+        )
     }
 
-    func refresh(documents: [WorkspaceDocument]) {
+    func refresh(
+        documents: [WorkspaceDocument],
+        dirtyTextByDocumentID: [String: String] = [:],
+        dirtyPDFDataByDocumentID: [String: Data] = [:]
+    ) {
         guard isPresented else { return }
-        search(documents: documents)
+        search(
+            documents: documents,
+            dirtyTextByDocumentID: dirtyTextByDocumentID,
+            dirtyPDFDataByDocumentID: dirtyPDFDataByDocumentID
+        )
     }
 
-    private func search(documents: [WorkspaceDocument]) {
+    private func search(
+        documents: [WorkspaceDocument],
+        dirtyTextByDocumentID: [String: String],
+        dirtyPDFDataByDocumentID: [String: Data]
+    ) {
         searchGeneration += 1
         let generation = searchGeneration
         let query = query
         let snapshot = documents
+        let dirtyTextSnapshot = dirtyTextByDocumentID
+        let dirtyPDFDataSnapshot = dirtyPDFDataByDocumentID
 
         searchTask?.cancel()
         errorMessage = nil
@@ -136,7 +167,12 @@ final class WorkspaceSearchState: ObservableObject {
             do {
                 try await Task.sleep(nanoseconds: 220_000_000)
                 let worker = Task.detached(priority: .utility) {
-                    try service.search(query: query, documents: snapshot)
+                    try service.search(
+                        query: query,
+                        documents: snapshot,
+                        dirtyTextByDocumentID: dirtyTextSnapshot,
+                        dirtyPDFDataByDocumentID: dirtyPDFDataSnapshot
+                    )
                 }
                 let batch = try await withTaskCancellationHandler {
                     try await worker.value

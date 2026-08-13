@@ -271,12 +271,20 @@ struct ContentView: View {
                 fulfillDeferredWorkspaceHeadingJump()
             }
             .onChange(of: store.documents) { _, documents in
-                workspaceSearch.refresh(documents: documents)
+                workspaceSearch.refresh(
+                    documents: documents,
+                    dirtyTextByDocumentID: store.dirtyTextByDocumentID,
+                    dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
+                )
                 quickOpen.refresh(documents: documents)
                 reconcileTabsWithStore()
             }
             .onChange(of: store.workspaceSearchContentChangeSerial) { _, _ in
-                workspaceSearch.refresh(documents: store.documents)
+                workspaceSearch.refresh(
+                    documents: store.documents,
+                    dirtyTextByDocumentID: store.dirtyTextByDocumentID,
+                    dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
+                )
             }
             .onChange(of: store.workspaceURL?.standardizedFileURL.path ?? "") { previousPath, _ in
                 cancelPDFExcerptCopy()
@@ -1776,7 +1784,11 @@ struct ContentView: View {
     private func showWorkspaceSearch() {
         guard store.workspaceURL != nil else { return }
         requestSidebarPresentation(true, animated: false)
-        workspaceSearch.present(documents: store.documents)
+        workspaceSearch.present(
+            documents: store.documents,
+            dirtyTextByDocumentID: store.dirtyTextByDocumentID,
+            dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
+        )
     }
 
     private func openWorkspaceSearchResult(_ result: WorkspaceSearchResult) {

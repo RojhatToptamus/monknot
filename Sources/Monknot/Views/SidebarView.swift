@@ -69,7 +69,7 @@ struct SidebarView: View {
                         zoomScale: zoomScale,
                         createMarkdown: newMarkdown,
                         showWorkspaceSearch: {
-                            workspaceSearch.present(documents: store.documents)
+                            presentWorkspaceSearch()
                         }
                     )
                 }
@@ -165,6 +165,8 @@ struct SidebarView: View {
             WorkspaceSearchView(
                 state: workspaceSearch,
                 documents: store.documents,
+                dirtyTextByDocumentID: store.dirtyTextByDocumentID,
+                dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID,
                 theme: theme,
                 zoomScale: zoomScale,
                 close: { workspaceSearch.dismiss() },
@@ -188,7 +190,7 @@ struct SidebarView: View {
             .onChange(of: store.workspaceReplaceSummary) { _, summary in
                 workspaceSearch.setReplaceStatusMessage(summary)
                 if summary != nil {
-                    workspaceSearch.refresh(documents: store.documents)
+                    refreshWorkspaceSearch()
                 }
             }
         } else {
@@ -282,6 +284,22 @@ struct SidebarView: View {
                     }
             }
         }
+    }
+
+    private func presentWorkspaceSearch() {
+        workspaceSearch.present(
+            documents: store.documents,
+            dirtyTextByDocumentID: store.dirtyTextByDocumentID,
+            dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
+        )
+    }
+
+    private func refreshWorkspaceSearch() {
+        workspaceSearch.refresh(
+            documents: store.documents,
+            dirtyTextByDocumentID: store.dirtyTextByDocumentID,
+            dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
+        )
     }
 
     private func refreshVisibleNodes() {

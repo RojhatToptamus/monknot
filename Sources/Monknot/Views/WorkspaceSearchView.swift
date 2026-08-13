@@ -20,6 +20,8 @@ enum WorkspaceSearchLayoutPolicy {
 struct WorkspaceSearchView: View {
     @ObservedObject var state: WorkspaceSearchState
     let documents: [WorkspaceDocument]
+    let dirtyTextByDocumentID: [String: String]
+    let dirtyPDFDataByDocumentID: [String: Data]
     let theme: AppTheme
     let zoomScale: Double
     let close: () -> Void
@@ -162,7 +164,14 @@ struct WorkspaceSearchView: View {
                 "Search workspace",
                 text: Binding(
                     get: { state.query },
-                    set: { state.setQuery($0, documents: documents) }
+                    set: {
+                        state.setQuery(
+                            $0,
+                            documents: documents,
+                            dirtyTextByDocumentID: dirtyTextByDocumentID,
+                            dirtyPDFDataByDocumentID: dirtyPDFDataByDocumentID
+                        )
+                    }
                 )
             )
             .textFieldStyle(.plain)
@@ -184,7 +193,12 @@ struct WorkspaceSearchView: View {
                 size: .compact
             ) {
                 if !state.query.isEmpty {
-                    state.setQuery("", documents: documents)
+                    state.setQuery(
+                        "",
+                        documents: documents,
+                        dirtyTextByDocumentID: dirtyTextByDocumentID,
+                        dirtyPDFDataByDocumentID: dirtyPDFDataByDocumentID
+                    )
                     focusSearchField()
                 }
             }
@@ -616,7 +630,11 @@ struct WorkspaceSearchView: View {
                 theme: theme,
                 zoomScale: zoomScale
             ) {
-                state.refresh(documents: documents)
+                state.refresh(
+                    documents: documents,
+                    dirtyTextByDocumentID: dirtyTextByDocumentID,
+                    dirtyPDFDataByDocumentID: dirtyPDFDataByDocumentID
+                )
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)

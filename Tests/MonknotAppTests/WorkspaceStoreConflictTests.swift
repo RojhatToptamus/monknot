@@ -109,6 +109,41 @@ final class WorkspaceStoreConflictTests: XCTestCase {
         XCTAssertFalse(WorkspaceSearchIndex.shared.hasIndexedDocument(fileURL.standardizedFileURL.path))
     }
 
+    func testWorkspaceSearchSnapshotsIncludeActiveAndInactiveDirtyBuffersUntilSave() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let firstURL = root.appendingPathComponent("A.md")
+        let secondURL = root.appendingPathComponent("B.md")
+        try "# A\n".write(to: firstURL, atomically: true, encoding: .utf8)
+        try "# B\n".write(to: secondURL, atomically: true, encoding: .utf8)
+
+        let store = WorkspaceStore()
+        store.openWorkspace(root)
+        let didLoadWorkspace = await waitUntil { !store.isBusy && store.documents.count == 2 }
+        XCTAssertTrue(didLoadWorkspace)
+        let first = try XCTUnwrap(store.documents.first { $0.url == firstURL.standardizedFileURL })
+        let second = try XCTUnwrap(store.documents.first { $0.url == secondURL.standardizedFileURL })
+        store.setOpenDocumentIDs([first.id, second.id])
+
+        store.selectDocument(id: first.id)
+        let didLoadFirst = await waitUntil { !store.isDocumentLoading && store.selectedDocumentID == first.id }
+        XCTAssertTrue(didLoadFirst)
+        store.setDocumentText("# A\nactive unsaved\n")
+
+        store.selectDocument(id: second.id)
+        let didLoadSecond = await waitUntil { !store.isDocumentLoading && store.selectedDocumentID == second.id }
+        XCTAssertTrue(didLoadSecond)
+        store.setDocumentText("# B\ninactive later\n")
+
+        XCTAssertEqual(store.dirtyTextByDocumentID[first.id], "# A\nactive unsaved\n")
+        XCTAssertEqual(store.dirtyTextByDocumentID[second.id], "# B\ninactive later\n")
+
+        let didSaveFirst = await store.saveDocument(id: first.id)
+        XCTAssertTrue(didSaveFirst)
+        XCTAssertNil(store.dirtyTextByDocumentID[first.id])
+        XCTAssertEqual(store.dirtyTextByDocumentID[second.id], "# B\ninactive later\n")
+    }
+
     func testReselectingCachedCleanTextDocumentDoesNotEnterLoadingState() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
