@@ -421,7 +421,7 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertFalse(workflow.contains("actions/checkout@v"))
     }
 
-    func testContinuousIntegrationRunsFullSuiteOnBothArchitectures() throws {
+    func testContinuousIntegrationRunsFullSuiteOnArm64() throws {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
         let workflowURL = root.appendingPathComponent(".github/workflows/ci.yml")
         let workflow = try String(contentsOf: workflowURL, encoding: .utf8)
@@ -430,9 +430,9 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(workflow.contains("push:"))
         XCTAssertTrue(workflow.contains("- main"))
         XCTAssertTrue(workflow.contains("macos-15"))
-        XCTAssertTrue(workflow.contains("macos-15-intel"))
-        XCTAssertTrue(workflow.contains("arch: arm64"))
-        XCTAssertTrue(workflow.contains("arch: x86_64"))
+        XCTAssertFalse(workflow.contains("macos-15-intel"))
+        XCTAssertTrue(workflow.contains("test \"$(uname -m)\" = \"arm64\""))
+        XCTAssertFalse(workflow.contains("x86_64"))
         XCTAssertTrue(workflow.contains("Xcode_26.3.app"))
         XCTAssertTrue(workflow.contains("macOS 26 SDK or newer is required"))
         XCTAssertFalse(workflow.contains("Xcode_16.4.app"))

@@ -226,7 +226,7 @@ When adding a Swift source file to the app or core target, update `script/build_
 
 The full app target requires Xcode 26 or newer because
 `WindowChromeSupport.swift` conditionally references `NSGlassEffectView`.
-GitHub Actions pins Xcode 26.3 on both macOS runner architectures. This build
+GitHub Actions pins Xcode 26.3 on its arm64 macOS runner. This build
 SDK requirement is separate from the macOS 14.0 deployment target, which the
 release scripts and artifact verifier enforce.
 

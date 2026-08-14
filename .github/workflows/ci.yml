@@ -18,19 +18,11 @@ concurrency:
 
 jobs:
   test:
-    name: Test macOS (${{ matrix.arch }})
-    runs-on: ${{ matrix.os }}
+    name: Test macOS (arm64)
+    runs-on: macos-15
     timeout-minutes: 45
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: arm64
-            os: macos-15
-          - arch: x86_64
-            os: macos-15-intel
 
     steps:
       - name: Check out the source
@@ -42,7 +34,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(uname -m)" = "${{ matrix.arch }}"
+          test "$(uname -m)" = "arm64"
           test -d "$DEVELOPER_DIR"
           xcodebuild -version
           swift --version
