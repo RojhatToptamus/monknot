@@ -40,6 +40,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
     let syncScrollTargetLine: Int?
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var searchState: DocumentSearchState
+    let searchOptions: MonknotSearchOptions
     let onSourceJump: (MarkdownSourceLocation) -> Void
     let onScrollPositionChange: (DocumentScrollPosition) -> Void
     let onVisibleSourceLineChange: ((Int) -> Void)?
@@ -61,6 +62,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         syncScrollTargetLine: Int?,
         sourceLocation: Binding<MarkdownSourceLocation?>,
         searchState: Binding<DocumentSearchState>,
+        searchOptions: MonknotSearchOptions = MonknotSearchOptions(),
         onSourceJump: @escaping (MarkdownSourceLocation) -> Void,
         onLinkRequest: @escaping (MarkdownPreviewLinkRequest) -> Void = { _ in },
         onTaskRequest: @escaping (MarkdownPreviewTaskRequest) -> Void = { _ in },
@@ -81,6 +83,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         self.syncScrollTargetLine = syncScrollTargetLine
         self._sourceLocation = sourceLocation
         self._searchState = searchState
+        self.searchOptions = searchOptions
         self.onSourceJump = onSourceJump
         self.onLinkRequest = onLinkRequest
         self.onTaskRequest = onTaskRequest
@@ -132,6 +135,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 self.sourceLocation = nil
             }
         }
+        context.coordinator.setPendingSearchOptions(searchOptions)
         context.coordinator.setPendingSourceReveal(sourceLocation)
         context.coordinator.setPendingScrollPosition(scrollPosition, force: didChangeDocument)
         context.coordinator.applySyncScrollTargetLine(syncScrollTargetLine, in: webView)
@@ -198,7 +202,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         applyAppearance(appearanceRequest, in: webView, coordinator: context.coordinator)
 
         guard context.coordinator.shouldRenderContent(contentRequest) else {
-            applySearch(searchState, in: webView, coordinator: context.coordinator)
+            applySearch(searchState, options: searchOptions, in: webView, coordinator: context.coordinator)
             applySourceReveal(in: webView, coordinator: context.coordinator)
             applyScrollPositionIfNeeded(in: webView, coordinator: context.coordinator)
             return
@@ -244,9 +248,14 @@ struct MarkdownPreviewView: NSViewRepresentable {
         }
     }
 
-    private func applySearch(_ state: DocumentSearchState, in webView: WKWebView, coordinator: Coordinator) {
+    private func applySearch(
+        _ state: DocumentSearchState,
+        options: MonknotSearchOptions,
+        in webView: WKWebView,
+        coordinator: Coordinator
+    ) {
         guard coordinator.isShellLoaded else { return }
-        coordinator.applySearch(state, in: webView)
+        coordinator.applySearch(state, options: options, in: webView)
     }
 
     private func applySourceReveal(in webView: WKWebView, coordinator: Coordinator) {
@@ -376,6 +385,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         private var pendingAppearance: PreviewAppearanceRequest?
         private var pendingContent: PreviewContentRequest?
         private var pendingSearch: DocumentSearchState?
+        private var pendingSearchOptions = MonknotSearchOptions()
         private var pendingSourceReveal: MarkdownSourceLocation?
         private var pendingScrollPosition: DocumentScrollPosition?
         private var shouldRestorePendingScrollPosition = false
@@ -541,9 +551,14 @@ struct MarkdownPreviewView: NSViewRepresentable {
             }
         }
 
-        fileprivate func applySearch(_ state: DocumentSearchState, in webView: WKWebView) {
+        fileprivate func applySearch(
+            _ state: DocumentSearchState,
+            options: MonknotSearchOptions = MonknotSearchOptions(),
+            in webView: WKWebView
+        ) {
             pendingSearch = state
-            let request = DocumentSearchRequest(state)
+            pendingSearchOptions = options
+            let request = DocumentSearchRequest(state, options: options)
             guard request != lastSearchRequest else { return }
             lastSearchRequest = request
 
@@ -551,7 +566,9 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 "query": request.query,
                 "direction": request.navigationDirection.rawValue,
                 "navigationSerial": request.navigationSerial,
-                "isPresented": request.isPresented
+                "isPresented": request.isPresented,
+                "isCaseSensitive": request.options.isCaseSensitive,
+                "isWholeWord": request.options.isWholeWord
             ]
 
             do {
@@ -625,7 +642,11 @@ struct MarkdownPreviewView: NSViewRepresentable {
                         }
 
                         self.markRenderedContent(request, renderID: serial)
-                        self.applySearch(self.pendingSearch ?? searchState, in: webView)
+                        self.applySearch(
+                            self.pendingSearch ?? searchState,
+                            options: self.pendingSearchOptions,
+                            in: webView
+                        )
                         self.setPendingSourceReveal(sourceLocation)
                         let isRevealingSource = sourceLocation != nil
                         self.applyPendingSourceReveal(in: webView, onConsumed: onSourceRevealConsumed)
@@ -635,6 +656,10 @@ struct MarkdownPreviewView: NSViewRepresentable {
                     }
                 }
             }
+        }
+
+        fileprivate func setPendingSearchOptions(_ options: MonknotSearchOptions) {
+            pendingSearchOptions = options
         }
 
         private static func renderDebounceNanoseconds(

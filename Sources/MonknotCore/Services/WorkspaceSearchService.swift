@@ -47,13 +47,13 @@ public struct WorkspaceSearchService: Sendable {
 
     public func search(
         query: String,
+        options: MonknotSearchOptions = MonknotSearchOptions(),
         documents: [WorkspaceDocument],
+        dirtyTextByDocumentID: [String: String] = [:],
         dirtyPDFDataByDocumentID: [String: Data] = [:]
     ) throws -> WorkspaceSearchBatch {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return WorkspaceSearchBatch(results: []) }
-        let foldedNeedle = needle.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
-
         let signpostID = MonknotSignposting.workspaceSearch.beginInterval("WorkspaceSearch")
         defer { MonknotSignposting.workspaceSearch.endInterval("WorkspaceSearch", signpostID) }
 
@@ -67,6 +67,17 @@ public struct WorkspaceSearchService: Sendable {
             let matches: [WorkspaceSearchResult]
             switch document.kind {
             case .markdown, .text:
+                if let dirtyText = dirtyTextByDocumentID[document.id] {
+                    matches = try textMatches(
+                        query: needle,
+                        options: options,
+                        document: document,
+                        text: dirtyText,
+                        limit: maxMatchesPerFile
+                    ).results
+                    break
+                }
+
                 let isIndexed = textIndex.hasIndexedDocument(document.id)
                 let fileSize = Self.fileSize(for: document.url)
                 let canAutoIndex = !isIndexed
@@ -79,13 +90,15 @@ public struct WorkspaceSearchService: Sendable {
 
                 let batch = try isIndexed || canAutoIndex
                     ? textIndex.matches(
-                        foldedNeedle: foldedNeedle,
+                        query: needle,
+                        options: options,
                         document: document,
                         limit: maxMatchesPerFile,
                         maxBytes: maxTextFileBytes
                     )
                     : uncachedTextMatches(
-                        foldedNeedle: foldedNeedle,
+                        query: needle,
+                        options: options,
                         document: document,
                         limit: maxMatchesPerFile
                     )
@@ -93,7 +106,8 @@ public struct WorkspaceSearchService: Sendable {
                 matches = batch.results
             case .pdf:
                 matches = try pdfMatches(
-                    foldedNeedle: foldedNeedle,
+                    query: needle,
+                    options: options,
                     document: document,
                     limit: maxMatchesPerFile,
                     pdfData: dirtyPDFDataByDocumentID[document.id]
@@ -115,7 +129,8 @@ public struct WorkspaceSearchService: Sendable {
     }
 
     private func uncachedTextMatches(
-        foldedNeedle: String,
+        query: String,
+        options: MonknotSearchOptions,
         document: WorkspaceDocument,
         limit: Int
     ) throws -> WorkspaceSearchIndex.DocumentMatchBatch {
@@ -134,8 +149,27 @@ public struct WorkspaceSearchService: Sendable {
             return WorkspaceSearchIndex.DocumentMatchBatch(results: [], skippedLargeFileCount: 1)
         }
 
+        return try textMatches(
+            query: query,
+            options: options,
+            document: document,
+            text: text,
+            limit: limit
+        )
+    }
+
+    private func textMatches(
+        query: String,
+        options: MonknotSearchOptions,
+        document: WorkspaceDocument,
+        text: String,
+        limit: Int
+    ) throws -> WorkspaceSearchIndex.DocumentMatchBatch {
+        guard limit > 0 else {
+            return WorkspaceSearchIndex.DocumentMatchBatch(results: [], skippedLargeFileCount: 0)
+        }
+
         var results: [WorkspaceSearchResult] = []
-        let nsNeedle = foldedNeedle as NSString
         var lineNumber = 1
         var cancelled = false
 
@@ -146,14 +180,7 @@ public struct WorkspaceSearchService: Sendable {
                 return
             }
 
-            let foldedLine = line.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
-            let nsLine = foldedLine as NSString
-            var searchRange = NSRange(location: 0, length: nsLine.length)
-
-            while searchRange.length > 0 {
-                let found = nsLine.range(of: nsNeedle as String, options: [], range: searchRange)
-                guard found.location != NSNotFound, found.length > 0 else { break }
-
+            for found in MonknotTextSearch.matchingRanges(of: query, in: line, options: options) {
                 let preview = line.trimmingCharacters(in: .whitespacesAndNewlines)
                 results.append(WorkspaceSearchResult(
                     id: "\(document.id):\(lineNumber):\(found.location)",
@@ -170,10 +197,6 @@ public struct WorkspaceSearchService: Sendable {
                     stop = true
                     return
                 }
-
-                let nextLocation = found.location + found.length
-                guard nextLocation < nsLine.length else { break }
-                searchRange = NSRange(location: nextLocation, length: nsLine.length - nextLocation)
             }
 
             lineNumber += 1
@@ -191,7 +214,8 @@ public struct WorkspaceSearchService: Sendable {
     }
 
     private func pdfMatches(
-        foldedNeedle: String,
+        query: String,
+        options: MonknotSearchOptions,
         document: WorkspaceDocument,
         limit: Int,
         pdfData: Data?
@@ -201,7 +225,8 @@ public struct WorkspaceSearchService: Sendable {
 
         try Task.checkCancellation()
         return try pdfIndex.matches(
-            foldedNeedle: foldedNeedle,
+            query: query,
+            options: options,
             document: document,
             limit: limit,
             pdfData: pdfData

@@ -5,7 +5,6 @@ public final class WorkspacePDFSearchIndex: @unchecked Sendable {
 
     private struct SearchLine {
         let text: String
-        let foldedText: String
     }
 
     private struct IndexedPage {
@@ -69,7 +68,8 @@ public final class WorkspacePDFSearchIndex: @unchecked Sendable {
     }
 
     func matches(
-        foldedNeedle: String,
+        query: String,
+        options: MonknotSearchOptions,
         document: WorkspaceDocument,
         limit: Int,
         pdfData: Data? = nil
@@ -84,7 +84,8 @@ public final class WorkspacePDFSearchIndex: @unchecked Sendable {
                 )
             }
             return Self.matches(
-                foldedNeedle: foldedNeedle,
+                query: query,
+                options: options,
                 pages: pages,
                 document: document,
                 limit: limit
@@ -93,7 +94,8 @@ public final class WorkspacePDFSearchIndex: @unchecked Sendable {
 
         let entry = try entry(for: document)
         return Self.matches(
-            foldedNeedle: foldedNeedle,
+            query: query,
+            options: options,
             pages: entry.pages,
             document: document,
             limit: limit
@@ -153,7 +155,8 @@ public final class WorkspacePDFSearchIndex: @unchecked Sendable {
     }
 
     private static func matches(
-        foldedNeedle: String,
+        query: String,
+        options: MonknotSearchOptions,
         pages: [IndexedPage],
         document: WorkspaceDocument,
         limit: Int
@@ -161,17 +164,9 @@ public final class WorkspacePDFSearchIndex: @unchecked Sendable {
         guard limit > 0 else { return [] }
 
         var results: [WorkspaceSearchResult] = []
-        let nsNeedle = foldedNeedle as NSString
-
         for page in pages {
             for line in page.lines {
-                let nsLine = line.foldedText as NSString
-                var searchRange = NSRange(location: 0, length: nsLine.length)
-
-                while searchRange.length > 0 {
-                    let found = nsLine.range(of: nsNeedle as String, options: [], range: searchRange)
-                    guard found.location != NSNotFound, found.length > 0 else { break }
-
+                for found in MonknotTextSearch.matchingRanges(of: query, in: line.text, options: options) {
                     let matchIndex = results.count
                     let preview = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
                     results.append(WorkspaceSearchResult(
@@ -189,10 +184,6 @@ public final class WorkspacePDFSearchIndex: @unchecked Sendable {
                     if results.count >= limit {
                         return results
                     }
-
-                    let nextLocation = found.location + found.length
-                    guard nextLocation < nsLine.length else { break }
-                    searchRange = NSRange(location: nextLocation, length: nsLine.length - nextLocation)
                 }
             }
         }
@@ -204,8 +195,7 @@ public final class WorkspacePDFSearchIndex: @unchecked Sendable {
         var lines: [SearchLine] = []
         text.enumerateLines { line, _ in
             lines.append(SearchLine(
-                text: line,
-                foldedText: line.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+                text: line
             ))
         }
         return lines

@@ -14,6 +14,8 @@ struct MonknotCommandActions {
     let exportAnnotatedPDFCopy: () -> Void
     let canExportAnnotatedPDFCopy: Bool
     let saveDocument: () -> Void
+    let saveAllDocuments: () -> Void
+    let canSaveAllDocuments: Bool
     let undoPDFAnnotation: () -> Void
     let canUndoPDFAnnotation: Bool
     let redoPDFAnnotation: () -> Void
@@ -32,6 +34,8 @@ struct MonknotCommandActions {
     let canNavigateForward: Bool
     let closeTab: () -> Void
     let canCloseTab: Bool
+    let reopenClosedTab: () -> Void
+    let canReopenClosedTab: Bool
     let togglePinTab: () -> Void
     let canTogglePinTab: Bool
     let zoomIn: () -> Void
@@ -42,8 +46,17 @@ struct MonknotCommandActions {
     let showWorkspaceSearch: () -> Void
     let showQuickOpen: () -> Void
     let canShowQuickOpen: Bool
+    let showGoToLine: () -> Void
+    let canShowGoToLine: Bool
+    let toggleLinkInspection: () -> Void
+    let canInspectLinks: Bool
     let findNext: () -> Void
     let findPrevious: () -> Void
+    let isSearchCaseSensitive: Bool
+    let setSearchCaseSensitive: (Bool) -> Void
+    let isSearchWholeWord: Bool
+    let setSearchWholeWord: (Bool) -> Void
+    let canConfigureSearch: Bool
     let toggleTerminal: () -> Void
     let toggleSidebar: () -> Void
     let toggleSplitView: () -> Void
@@ -70,6 +83,10 @@ extension FocusedValues {
 
 struct MonknotCommandMenu: Commands {
     @FocusedValue(\.monknotCommandActions) private var actions
+    @AppStorage(EditorTextCheckingOptions.spellingPreferenceKey)
+    private var checksSpelling = EditorTextCheckingOptions.defaultChecksSpelling
+    @AppStorage(EditorTextCheckingOptions.grammarPreferenceKey)
+    private var checksGrammar = EditorTextCheckingOptions.defaultChecksGrammar
 
     private var undoDestination: MonknotUndoCommandDestination {
         monknotUndoCommandDestination(
@@ -148,11 +165,23 @@ struct MonknotCommandMenu: Commands {
             .keyboardShortcut("w", modifiers: [.command])
             .disabled(actions?.canCloseTab != true)
 
+            Button("Reopen Closed Tab") {
+                actions?.reopenClosedTab()
+            }
+            .keyboardShortcut("t", modifiers: [.command, .shift])
+            .disabled(actions?.canReopenClosedTab != true)
+
             Button("Save") {
                 actions?.saveDocument()
             }
             .keyboardShortcut("s", modifiers: [.command])
             .disabled(actions == nil)
+
+            Button("Save All") {
+                actions?.saveAllDocuments()
+            }
+            .keyboardShortcut("s", modifiers: [.command, .option])
+            .disabled(actions?.canSaveAllDocuments != true)
         }
 
         CommandGroup(replacing: .undoRedo) {
@@ -242,6 +271,27 @@ struct MonknotCommandMenu: Commands {
             .disabled(actions == nil && !MonknotNativePasteboardCommand.hasNativeEditingFocus)
         }
 
+        CommandGroup(after: .pasteboard) {
+            Menu("Spelling and Grammar") {
+                Button("Show Spelling and Grammar") {
+                    _ = MonknotNativeSpellingCommand.showSpellingAndGrammar()
+                }
+                .keyboardShortcut(";", modifiers: [.command, .shift])
+                .disabled(!MonknotNativeSpellingCommand.hasDocumentEditingFocus)
+
+                Button("Check Document Now") {
+                    _ = MonknotNativeSpellingCommand.checkSpelling()
+                }
+                .keyboardShortcut(";", modifiers: [.command])
+                .disabled(!MonknotNativeSpellingCommand.hasDocumentEditingFocus)
+
+                Divider()
+
+                Toggle("Check Spelling While Typing", isOn: $checksSpelling)
+                Toggle("Check Grammar While Typing", isOn: $checksGrammar)
+            }
+        }
+
         CommandGroup(replacing: .printItem) {
             Button("Export PDF...") {
                 actions?.exportPDF()
@@ -298,11 +348,27 @@ struct MonknotCommandMenu: Commands {
             .keyboardShortcut("p", modifiers: [.command])
             .disabled(actions?.canShowQuickOpen != true)
 
-            Button("Find in Document") {
-                actions?.showFind()
+            Button("Go to Line...") {
+                actions?.showGoToLine()
+            }
+            .disabled(actions?.canShowGoToLine != true)
+
+            Button("Inspect Links") {
+                actions?.toggleLinkInspection()
+            }
+            .keyboardShortcut("l", modifiers: [.command, .option])
+            .disabled(actions?.canInspectLinks != true)
+
+            Button("Find") {
+                if !MonknotNativeTerminalSearchCommand.performIfFocused(.show) {
+                    actions?.showFind()
+                }
             }
             .keyboardShortcut("f", modifiers: [.command])
-            .disabled(actions?.canShowFind != true)
+            .disabled(
+                actions?.canShowFind != true
+                    && !MonknotNativeTerminalSearchCommand.hasTerminalFocus
+            )
 
             Button("Find in Workspace") {
                 actions?.showWorkspaceSearch()
@@ -311,16 +377,38 @@ struct MonknotCommandMenu: Commands {
             .disabled(actions == nil)
 
             Button("Find Next") {
-                actions?.findNext()
+                if !MonknotNativeTerminalSearchCommand.performIfFocused(.next) {
+                    actions?.findNext()
+                }
             }
             .keyboardShortcut("g", modifiers: [.command])
             .disabled(actions == nil)
 
             Button("Find Previous") {
-                actions?.findPrevious()
+                if !MonknotNativeTerminalSearchCommand.performIfFocused(.previous) {
+                    actions?.findPrevious()
+                }
             }
             .keyboardShortcut("g", modifiers: [.command, .shift])
             .disabled(actions == nil)
+
+            Toggle(
+                "Match Case",
+                isOn: Binding(
+                    get: { actions?.isSearchCaseSensitive == true },
+                    set: { actions?.setSearchCaseSensitive($0) }
+                )
+            )
+            .disabled(actions?.canConfigureSearch != true)
+
+            Toggle(
+                "Match Whole Word",
+                isOn: Binding(
+                    get: { actions?.isSearchWholeWord == true },
+                    set: { actions?.setSearchWholeWord($0) }
+                )
+            )
+            .disabled(actions?.canConfigureSearch != true)
 
             Divider()
 

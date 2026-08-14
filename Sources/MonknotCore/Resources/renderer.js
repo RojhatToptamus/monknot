@@ -3,6 +3,7 @@
 
   let markdown = "";
   let searchQuery = "";
+  let searchOptions = { isCaseSensitive: false, isWholeWord: false };
   let searchNavigationSerial = -1;
   let searchMatches = [];
   let searchCurrentIndex = 0;
@@ -49,6 +50,7 @@
     if (searchQuery) {
       searchDocument({
         query: searchQuery,
+        ...searchOptions,
         navigationSerial: searchNavigationSerial,
         direction: "current",
         isPresented: true
@@ -143,10 +145,17 @@
       ? Number(nextState.navigationSerial)
       : searchNavigationSerial;
     const direction = nextState.direction === "previous" ? "previous" : nextState.direction === "next" ? "next" : "current";
-    const queryChanged = requestedQuery !== searchQuery;
+    const requestedOptions = {
+      isCaseSensitive: nextState.isCaseSensitive === true,
+      isWholeWord: nextState.isWholeWord === true
+    };
+    const queryChanged = requestedQuery !== searchQuery
+      || requestedOptions.isCaseSensitive !== searchOptions.isCaseSensitive
+      || requestedOptions.isWholeWord !== searchOptions.isWholeWord;
     const navigationChanged = navigationSerial !== searchNavigationSerial;
 
     searchQuery = requestedQuery;
+    searchOptions = requestedOptions;
     removeSearchHighlights();
 
     if (!searchQuery) {
@@ -156,7 +165,7 @@
       return searchResult();
     }
 
-    searchMatches = highlightSearchMatches(searchQuery);
+    searchMatches = highlightSearchMatches(searchQuery, searchOptions);
 
     if (searchMatches.length === 0) {
       searchCurrentIndex = 0;
@@ -195,32 +204,29 @@
     parents.forEach((parent) => parent.normalize());
   }
 
-  function highlightSearchMatches(query) {
+  function highlightSearchMatches(query, options) {
     const matches = [];
-    const queryLower = query.toLocaleLowerCase();
     const nodes = textNodesForSearch();
 
     for (const node of nodes) {
       const value = node.nodeValue || "";
-      const valueLower = value.toLocaleLowerCase();
+      const ranges = matchingSearchRanges(value, query, options);
+      if (ranges.length === 0) continue;
       let cursor = 0;
-      let matchIndex = valueLower.indexOf(queryLower);
-      if (matchIndex < 0) continue;
 
       const fragment = document.createDocumentFragment();
-      while (matchIndex >= 0) {
-        if (matchIndex > cursor) {
-          fragment.appendChild(document.createTextNode(value.slice(cursor, matchIndex)));
+      for (const range of ranges) {
+        if (range.start > cursor) {
+          fragment.appendChild(document.createTextNode(value.slice(cursor, range.start)));
         }
 
         const mark = document.createElement("mark");
         mark.className = "monknot-search-match";
-        mark.textContent = value.slice(matchIndex, matchIndex + query.length);
+        mark.textContent = value.slice(range.start, range.end);
         fragment.appendChild(mark);
         matches.push(mark);
 
-        cursor = matchIndex + query.length;
-        matchIndex = valueLower.indexOf(queryLower, cursor);
+        cursor = range.end;
       }
 
       if (cursor < value.length) {
@@ -231,6 +237,91 @@
     }
 
     return matches;
+  }
+
+  function matchingSearchRanges(value, query, options) {
+    const source = foldSearchText(value, options.isCaseSensitive);
+    const needle = foldSearchText(query, options.isCaseSensitive).text;
+    if (!needle) return [];
+
+    const ranges = [];
+    let cursor = 0;
+    let index = source.text.indexOf(needle, cursor);
+    while (index >= 0) {
+      const lastFoldedIndex = index + needle.length - 1;
+      const start = source.starts[index];
+      const end = source.ends[lastFoldedIndex];
+      if (Number.isSafeInteger(start)
+          && Number.isSafeInteger(end)
+          && end > start
+          && (!options.isWholeWord || isWholeWordRange(value, start, end))) {
+        const previous = ranges[ranges.length - 1];
+        if (!previous || previous.start !== start || previous.end !== end) {
+          ranges.push({ start, end });
+        }
+      }
+      cursor = index + needle.length;
+      index = source.text.indexOf(needle, cursor);
+    }
+    return ranges;
+  }
+
+  function foldSearchText(value, isCaseSensitive) {
+    const text = typeof value === "string" ? value : "";
+    const starts = [];
+    const ends = [];
+    let folded = "";
+    let segments;
+    if (typeof Intl.Segmenter === "function") {
+      segments = Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text));
+    } else {
+      segments = [];
+      let index = 0;
+      for (const segment of text) {
+        segments.push({ segment, index });
+        index += segment.length;
+      }
+    }
+
+    for (const item of segments) {
+      const start = item.index;
+      const end = start + item.segment.length;
+      let token = item.segment.normalize("NFD").replace(/\p{M}/gu, "");
+      if (!isCaseSensitive) token = token.toLocaleLowerCase();
+      folded += token;
+      for (let offset = 0; offset < token.length; offset += 1) {
+        starts.push(start);
+        ends.push(end);
+      }
+    }
+    return { text: folded, starts, ends };
+  }
+
+  function isWholeWordRange(value, start, end) {
+    return !isWordCharacter(previousScalar(value, start))
+      && !isWordCharacter(nextScalar(value, end));
+  }
+
+  function previousScalar(value, index) {
+    if (index <= 0) return "";
+    let start = index - 1;
+    const unit = value.charCodeAt(start);
+    if (unit >= 0xDC00 && unit <= 0xDFFF && start > 0) {
+      const previous = value.charCodeAt(start - 1);
+      if (previous >= 0xD800 && previous <= 0xDBFF) start -= 1;
+    }
+    return value.slice(start, index);
+  }
+
+  function nextScalar(value, index) {
+    if (index >= value.length) return "";
+    const first = value.charCodeAt(index);
+    const length = first >= 0xD800 && first <= 0xDBFF ? 2 : 1;
+    return value.slice(index, index + length);
+  }
+
+  function isWordCharacter(value) {
+    return typeof value === "string" && /[\p{L}\p{N}\p{M}\p{Pc}]/u.test(value);
   }
 
   function textNodesForSearch() {

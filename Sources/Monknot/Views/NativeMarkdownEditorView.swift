@@ -9,19 +9,23 @@ struct NativeMarkdownEditorView: View {
     let zoomScale: Double
     let contentWidthPercent: Double
     let fontSmoothing: Bool
+    let textCheckingOptions: EditorTextCheckingOptions
     let scrollPosition: DocumentScrollPosition?
     let textSelection: DocumentTextSelection?
     let syncScrollEnabled: Bool
     let syncScrollTargetLine: Int?
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var searchState: DocumentSearchState
+    let searchOptions: MonknotSearchOptions
     let commandRequest: MarkdownTextEditorCommandRequest?
     let wikilinkDocuments: [WorkspaceDocument]
     let onScrollPositionChange: (DocumentScrollPosition) -> Void
     let onVisibleTopLineChange: ((Int) -> Void)?
     let onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)?
     let onOpenLink: ((MarkdownEditorLinkRequest) -> Void)?
+    let onInspectLinks: (() -> Void)?
     let onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)?
+    let onFileDropRequest: ((MarkdownFileDropRequest) -> Void)?
 
     init(
         documentID: String,
@@ -31,17 +35,21 @@ struct NativeMarkdownEditorView: View {
         zoomScale: Double,
         contentWidthPercent: Double,
         fontSmoothing: Bool,
+        textCheckingOptions: EditorTextCheckingOptions = .defaultValue,
         scrollPosition: DocumentScrollPosition?,
         textSelection: DocumentTextSelection? = nil,
         syncScrollEnabled: Bool,
         syncScrollTargetLine: Int?,
         sourceLocation: Binding<MarkdownSourceLocation?>,
         searchState: Binding<DocumentSearchState>,
+        searchOptions: MonknotSearchOptions = MonknotSearchOptions(),
         commandRequest: MarkdownTextEditorCommandRequest?,
         wikilinkDocuments: [WorkspaceDocument],
         onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)? = nil,
         onOpenLink: ((MarkdownEditorLinkRequest) -> Void)? = nil,
+        onInspectLinks: (() -> Void)? = nil,
         onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)? = nil,
+        onFileDropRequest: ((MarkdownFileDropRequest) -> Void)? = nil,
         onScrollPositionChange: @escaping (DocumentScrollPosition) -> Void,
         onVisibleTopLineChange: ((Int) -> Void)?
     ) {
@@ -52,17 +60,21 @@ struct NativeMarkdownEditorView: View {
         self.zoomScale = zoomScale
         self.contentWidthPercent = contentWidthPercent
         self.fontSmoothing = fontSmoothing
+        self.textCheckingOptions = textCheckingOptions
         self.scrollPosition = scrollPosition
         self.textSelection = textSelection
         self.syncScrollEnabled = syncScrollEnabled
         self.syncScrollTargetLine = syncScrollTargetLine
         self._sourceLocation = sourceLocation
         self._searchState = searchState
+        self.searchOptions = searchOptions
         self.commandRequest = commandRequest
         self.wikilinkDocuments = wikilinkDocuments
         self.onSelectionChange = onSelectionChange
         self.onOpenLink = onOpenLink
+        self.onInspectLinks = onInspectLinks
         self.onImagePasteRequest = onImagePasteRequest
+        self.onFileDropRequest = onFileDropRequest
         self.onScrollPositionChange = onScrollPositionChange
         self.onVisibleTopLineChange = onVisibleTopLineChange
     }
@@ -78,10 +90,12 @@ struct NativeMarkdownEditorView: View {
                     zoomScale: zoomScale,
                     contentWidthPercent: contentWidthPercent,
                     fontSmoothing: fontSmoothing,
+                    textCheckingOptions: textCheckingOptions,
                     scrollPosition: scrollPosition,
                     textSelection: textSelection,
                     sourceLocation: $sourceLocation,
                     searchState: $searchState,
+                    searchOptions: searchOptions,
                     onScrollPositionChange: onScrollPositionChange,
                     syncScrollEnabled: syncScrollEnabled,
                     syncScrollTargetLine: syncScrollTargetLine,
@@ -91,7 +105,9 @@ struct NativeMarkdownEditorView: View {
                     wikilinkDocuments: wikilinkDocuments,
                     onSelectionChange: onSelectionChange,
                     onOpenLink: onOpenLink,
-                    onImagePasteRequest: onImagePasteRequest
+                    onInspectLinks: onInspectLinks,
+                    onImagePasteRequest: onImagePasteRequest,
+                    onFileDropRequest: onFileDropRequest
                 )
 
                 if text.isEmpty {

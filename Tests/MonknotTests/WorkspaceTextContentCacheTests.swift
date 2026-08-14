@@ -67,7 +67,7 @@ final class WorkspaceTextContentCacheTests: XCTestCase {
         XCTAssertEqual(text, "updated")
     }
 
-    func testSearchLinesAreFoldedAndInvalidatedWithTextCache() throws {
+    func testSearchLinesAreCachedAndInvalidatedWithTextCache() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -80,7 +80,6 @@ final class WorkspaceTextContentCacheTests: XCTestCase {
 
         XCTAssertEqual(firstLines.map(\.number), [1, 2])
         XCTAssertEqual(firstLines[0].text, "Résumé")
-        XCTAssertEqual(firstLines[0].foldedText, "resume")
 
         try "Changed".write(to: file, atomically: true, encoding: .utf8)
         cache.invalidate(paths: [file.path])

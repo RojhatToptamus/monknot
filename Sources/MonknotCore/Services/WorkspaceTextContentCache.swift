@@ -6,7 +6,6 @@ public final class WorkspaceTextContentCache: @unchecked Sendable {
     struct SearchLine {
         let number: Int
         let text: String
-        let foldedText: String
     }
 
     struct Revision: Equatable {
@@ -150,8 +149,7 @@ public final class WorkspaceTextContentCache: @unchecked Sendable {
         text.enumerateLines { line, _ in
             lines.append(SearchLine(
                 number: lineNumber,
-                text: line,
-                foldedText: line.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+                text: line
             ))
             lineNumber += 1
         }

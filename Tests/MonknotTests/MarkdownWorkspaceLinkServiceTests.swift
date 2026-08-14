@@ -285,6 +285,53 @@ final class MarkdownWorkspaceLinkServiceTests: XCTestCase {
         )
     }
 
+    func testMissingWikilinkCreationURLUsesResolverAndSourceRelativeMarkdownPath() throws {
+        let root = URL(fileURLWithPath: "/tmp/monknot-missing-link-target", isDirectory: true)
+        let source = WorkspaceDocument(url: root.appendingPathComponent("Notes/Source.md"), rootURL: root)
+        let documents = [source]
+
+        XCTAssertEqual(
+            creationURL("[[New Note#Plan]]", source: source, root: root, documents: documents),
+            root.appendingPathComponent("Notes/New Note.md").standardizedFileURL
+        )
+        XCTAssertEqual(
+            creationURL("[[/Reference/Guide.markdown]]", source: source, root: root, documents: documents),
+            root.appendingPathComponent("Reference/Guide.markdown").standardizedFileURL
+        )
+        XCTAssertEqual(
+            creationURL("[[./Local]]", source: source, root: root, documents: documents),
+            root.appendingPathComponent("Notes/Local.md").standardizedFileURL
+        )
+    }
+
+    func testMissingWikilinkCreationURLRefusesNonMissingAmbiguousAndUnsafeTargets() throws {
+        let root = URL(fileURLWithPath: "/tmp/monknot-missing-link-refusal", isDirectory: true)
+        let source = WorkspaceDocument(url: root.appendingPathComponent("Notes/Source.md"), rootURL: root)
+        let existing = WorkspaceDocument(url: root.appendingPathComponent("Notes/Existing.md"), rootURL: root)
+        let first = WorkspaceDocument(url: root.appendingPathComponent("One/Daily.md"), rootURL: root)
+        let second = WorkspaceDocument(url: root.appendingPathComponent("Two/Daily.md"), rootURL: root)
+        let documents = [source, existing, first, second]
+
+        for markdown in [
+            "[[Existing]]",
+            "[[Daily]]",
+            "[[../Escape]]",
+            "[[Folder/../../Escape]]",
+            "[[https://example.com/note]]",
+            "[new](New.md)",
+            "[[New.txt]]",
+            "[[.hidden]]",
+            "[[Folder//New]]",
+            "[[New?mode=edit]]",
+            "[[Bad%ZZ]]",
+        ] {
+            XCTAssertNil(
+                creationURL(markdown, source: source, root: root, documents: documents),
+                markdown
+            )
+        }
+    }
+
     func testHeadingNormalizationMatchesRendererRulesAndFindsFirstHeading() {
         XCTAssertEqual(MarkdownHeadingFragment.normalized("  Hello, **World**!  "), "hello-world")
         XCTAssertEqual(MarkdownHeadingFragment.normalized("日本語"), "section")
@@ -302,6 +349,21 @@ final class MarkdownWorkspaceLinkServiceTests: XCTestCase {
             MarkdownSourceLocation(line: 4, offset: 0)
         )
         XCTAssertNil(MarkdownHeadingFragment.sourceLocation(for: "hidden-heading", in: markdown))
+    }
+
+    private func creationURL(
+        _ markdown: String,
+        source: WorkspaceDocument,
+        root: URL,
+        documents: [WorkspaceDocument]
+    ) -> URL? {
+        guard let link = parser.links(in: markdown).first else { return nil }
+        return resolver.missingWikilinkCreationURL(
+            link,
+            sourceDocument: source,
+            workspaceRootURL: root,
+            documents: documents
+        )
     }
 
     func testSourceLocationValidationRejectsStaleLinesAndOffsets() {
@@ -326,6 +388,52 @@ final class MarkdownWorkspaceLinkServiceTests: XCTestCase {
             MarkdownSourceLocation(line: 0, offset: 0),
             in: text
         ))
+    }
+
+    func testGoToLineInputParsesUnicodeCRLFAndTrailingEmptyLine() throws {
+        let markdown = "alpha\r\n😀café\r\n"
+
+        XCTAssertEqual(
+            try MarkdownSourceLocationInputParser.parse("2:2", in: markdown).get(),
+            MarkdownSourceLocation(line: 2, offset: 2),
+            "the second visible column follows the emoji's UTF-16 surrogate pair"
+        )
+        XCTAssertEqual(
+            try MarkdownSourceLocationInputParser.parse(" 3 ", in: markdown).get(),
+            MarkdownSourceLocation(line: 3, offset: 0)
+        )
+        XCTAssertEqual(
+            MarkdownSourceLocationValidator.validated(
+                MarkdownSourceLocation(line: 3, offset: 0),
+                in: markdown
+            ),
+            MarkdownSourceLocation(line: 3, offset: 0)
+        )
+    }
+
+    func testGoToLineInputReportsInvalidAndOutOfRangePositions() throws {
+        let markdown = "one\ntwo"
+
+        XCTAssertEqual(
+            MarkdownSourceLocationInputParser.parse("", in: markdown),
+            .failure(.invalidFormat)
+        )
+        XCTAssertEqual(
+            MarkdownSourceLocationInputParser.parse("1:0", in: markdown),
+            .failure(.invalidFormat)
+        )
+        XCTAssertEqual(
+            MarkdownSourceLocationInputParser.parse("3", in: markdown),
+            .failure(.lineOutOfRange(maximum: 2))
+        )
+        XCTAssertEqual(
+            try MarkdownSourceLocationInputParser.parse("2:4", in: markdown).get(),
+            MarkdownSourceLocation(line: 2, offset: 3)
+        )
+        XCTAssertEqual(
+            MarkdownSourceLocationInputParser.parse("2:5", in: markdown),
+            .failure(.columnOutOfRange(maximum: 4))
+        )
     }
 
     func testTaskReplacementRevalidatesLineAndExpectedStateWhilePreservingCRLF() throws {

@@ -1,5 +1,7 @@
 import AppKit
 import Foundation
+import MonknotCore
+import UniformTypeIdentifiers
 
 struct WorkspacePasteboardImportItem: Equatable, Sendable {
     enum Payload: Equatable, Sendable {
@@ -136,7 +138,7 @@ enum WorkspacePasteboardImportService {
         }
     }
 
-    private static func uniqueURL(for proposedName: String, in directoryURL: URL) -> URL {
+    fileprivate static func uniqueURL(for proposedName: String, in directoryURL: URL) -> URL {
         let fileManager = FileManager.default
         let proposedURL = URL(fileURLWithPath: proposedName)
         let sourceExtension = proposedURL.pathExtension
@@ -160,7 +162,7 @@ enum WorkspacePasteboardImportService {
         return candidate
     }
 
-    private static func sanitizedFileName(_ name: String, fallback: String) -> String {
+    fileprivate static func sanitizedFileName(_ name: String, fallback: String) -> String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               trimmed != ".",
@@ -326,7 +328,56 @@ struct MarkdownImageAsset: Equatable, Sendable {
     }
 }
 
+struct MarkdownFileDropPlan: Equatable, Sendable {
+    struct Item: Equatable, Sendable {
+        let sourceURL: URL
+        let isExternal: Bool
+        let isImage: Bool
+    }
+
+    let workspaceURL: URL
+    let markdownDocumentURL: URL
+    let items: [Item]
+
+    var requiresImportConfirmation: Bool {
+        items.contains(where: \.isExternal)
+    }
+
+    var externalItemNames: [String] {
+        items.filter(\.isExternal).map(\.sourceURL.lastPathComponent)
+    }
+}
+
+struct MarkdownFileDropAsset: Equatable, Sendable {
+    let fileURL: URL
+    let relativePath: String
+    let displayName: String
+    let isImage: Bool
+    let wasImported: Bool
+
+    var markdown: String {
+        let label = MarkdownImageAssetService.escapeMarkdownLabel(displayName)
+        let destination = MarkdownImageAssetService.percentEncodedMarkdownPath(relativePath)
+        return isImage ? "![\(label)](\(destination))" : "[\(label)](\(destination))"
+    }
+}
+
+struct MarkdownFileDropResult: Equatable, Sendable {
+    let assets: [MarkdownFileDropAsset]
+
+    var importedAssets: [MarkdownFileDropAsset] {
+        assets.filter(\.wasImported)
+    }
+
+    var markdown: String {
+        assets.map(\.markdown).joined(separator: "\n")
+    }
+}
+
 enum MarkdownImageAssetService {
+    private static let maximumDropItemCount = 32
+    private static let maximumExternalFileBytes = 64 * 1_024 * 1_024
+
     static func savePNG(
         _ data: Data,
         workspaceURL: URL,
@@ -342,30 +393,7 @@ enum MarkdownImageAssetService {
             throw MarkdownImageAssetError.outsideWorkspace
         }
 
-        let assetsURL = workspaceURL.appendingPathComponent("assets", isDirectory: true)
-        var isDirectory = ObjCBool(false)
-        if FileManager.default.fileExists(atPath: assetsURL.path, isDirectory: &isDirectory) {
-            guard isDirectory.boolValue else {
-                throw MarkdownImageAssetError.assetsIsNotDirectory
-            }
-        } else {
-            try FileManager.default.createDirectory(
-                at: assetsURL,
-                withIntermediateDirectories: true
-            )
-            guard FileManager.default.fileExists(atPath: assetsURL.path, isDirectory: &isDirectory),
-                  isDirectory.boolValue
-            else { throw MarkdownImageAssetError.assetsIsNotDirectory }
-        }
-
-        let canonicalAssets = canonical(assetsURL)
-        let expectedCanonicalAssets = root.appendingPathComponent("assets", isDirectory: true)
-            .standardizedFileURL
-        guard canonicalAssets == expectedCanonicalAssets,
-              isContained(canonicalAssets, in: root)
-        else {
-            throw MarkdownImageAssetError.outsideWorkspace
-        }
+        let canonicalAssets = try validatedAssetsDirectory(workspaceURL: workspaceURL, root: root)
 
         let fileName = "pasted-image-\(shortTimestamp())-\(UUID().uuidString.prefix(8).lowercased()).png"
         let destinationURL = canonicalAssets.appendingPathComponent(fileName, isDirectory: false)
@@ -389,6 +417,109 @@ enum MarkdownImageAssetService {
         )
     }
 
+    static func planFileDrop(
+        _ urls: [URL],
+        workspaceURL: URL,
+        markdownDocumentURL: URL
+    ) throws -> MarkdownFileDropPlan {
+        guard !urls.isEmpty, urls.count <= maximumDropItemCount else {
+            throw MarkdownImageAssetError.invalidDropCount(maximumDropItemCount)
+        }
+
+        let root = canonical(workspaceURL)
+        let documentURL = canonical(markdownDocumentURL)
+        guard isContained(documentURL, in: root) else {
+            throw MarkdownImageAssetError.outsideWorkspace
+        }
+
+        var seenPaths = Set<String>()
+        var items: [MarkdownFileDropPlan.Item] = []
+        for originalURL in urls {
+            try Task.checkCancellation()
+            let sourceURL = originalURL.standardizedFileURL
+            let values = try sourceURL.resourceValues(forKeys: [
+                .isRegularFileKey,
+                .isDirectoryKey,
+                .isSymbolicLinkKey,
+                .fileSizeKey,
+                .contentTypeKey,
+            ])
+            guard values.isRegularFile == true,
+                  values.isDirectory != true,
+                  values.isSymbolicLink != true
+            else {
+                throw MarkdownImageAssetError.unsupportedDroppedFile(sourceURL.lastPathComponent)
+            }
+
+            let resolvedURL = canonical(sourceURL)
+            guard seenPaths.insert(resolvedURL.path).inserted else { continue }
+            let isExternal = !isContained(resolvedURL, in: root)
+            let isImage = values.contentType?.conforms(to: .image) == true ||
+                UTType(filenameExtension: sourceURL.pathExtension)?.conforms(to: .image) == true
+            guard !isExternal || isImage || WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(sourceURL) else {
+                throw MarkdownImageAssetError.unsupportedDroppedFile(sourceURL.lastPathComponent)
+            }
+            if isExternal, (values.fileSize ?? 0) > maximumExternalFileBytes {
+                throw MarkdownImageAssetError.droppedFileTooLarge(sourceURL.lastPathComponent)
+            }
+            items.append(MarkdownFileDropPlan.Item(
+                sourceURL: sourceURL,
+                isExternal: isExternal,
+                isImage: isImage
+            ))
+        }
+
+        guard !items.isEmpty else {
+            throw MarkdownImageAssetError.noDroppedFiles
+        }
+        return MarkdownFileDropPlan(
+            workspaceURL: root,
+            markdownDocumentURL: documentURL,
+            items: items
+        )
+    }
+
+    static func importFileDrop(_ originalPlan: MarkdownFileDropPlan) throws -> MarkdownFileDropResult {
+        let plan = try planFileDrop(
+            originalPlan.items.map(\.sourceURL),
+            workspaceURL: originalPlan.workspaceURL,
+            markdownDocumentURL: originalPlan.markdownDocumentURL
+        )
+        guard plan == originalPlan else {
+            throw MarkdownImageAssetError.droppedFilesChanged
+        }
+
+        let documentDirectory = plan.markdownDocumentURL.deletingLastPathComponent()
+        var completed: [MarkdownFileDropAsset] = []
+        do {
+            for item in plan.items {
+                try Task.checkCancellation()
+                if item.isExternal {
+                    let asset = try importExternalDropItem(
+                        item,
+                        workspaceURL: plan.workspaceURL,
+                        markdownDocumentURL: plan.markdownDocumentURL
+                    )
+                    completed.append(asset)
+                } else {
+                    let relativePath = relativePath(from: documentDirectory, to: canonical(item.sourceURL))
+                    completed.append(MarkdownFileDropAsset(
+                        fileURL: canonical(item.sourceURL),
+                        relativePath: relativePath,
+                        displayName: displayName(for: item.sourceURL),
+                        isImage: item.isImage,
+                        wasImported: false
+                    ))
+                }
+            }
+            try Task.checkCancellation()
+            return MarkdownFileDropResult(assets: completed)
+        } catch {
+            removeUncommittedAssets(completed, workspaceURL: plan.workspaceURL)
+            throw error
+        }
+    }
+
     static func removeUncommittedAsset(_ asset: MarkdownImageAsset, workspaceURL: URL) {
         let root = canonical(workspaceURL)
         let fileURL = canonical(asset.fileURL)
@@ -396,6 +527,110 @@ enum MarkdownImageAssetService {
               fileURL.deletingLastPathComponent().lastPathComponent == "assets"
         else { return }
         try? FileManager.default.removeItem(at: fileURL)
+    }
+
+    static func removeUncommittedAssets(_ assets: [MarkdownFileDropAsset], workspaceURL: URL) {
+        let root = canonical(workspaceURL)
+        for asset in assets where asset.wasImported {
+            let fileURL = canonical(asset.fileURL)
+            guard isContained(fileURL, in: root),
+                  fileURL.deletingLastPathComponent().lastPathComponent == "assets"
+            else { continue }
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+    }
+
+    fileprivate static func escapeMarkdownLabel(_ value: String) -> String {
+        var escaped = value.replacingOccurrences(of: "\\", with: "\\\\")
+        for character in ["[", "]", "(", ")"] {
+            escaped = escaped.replacingOccurrences(of: character, with: "\\\(character)")
+        }
+        return escaped
+    }
+
+    fileprivate static func percentEncodedMarkdownPath(_ path: String) -> String {
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        return path.precomposedStringWithCanonicalMapping
+            .split(separator: "/", omittingEmptySubsequences: false)
+            .map { String($0).addingPercentEncoding(withAllowedCharacters: allowed) ?? String($0) }
+            .joined(separator: "/")
+    }
+
+    private static func importExternalDropItem(
+        _ item: MarkdownFileDropPlan.Item,
+        workspaceURL: URL,
+        markdownDocumentURL: URL
+    ) throws -> MarkdownFileDropAsset {
+        let root = canonical(workspaceURL)
+        let assetsURL = try validatedAssetsDirectory(workspaceURL: workspaceURL, root: root)
+        let originalName = WorkspacePasteboardImportService.sanitizedFileName(
+            item.sourceURL.lastPathComponent,
+            fallback: item.isImage ? "Dropped Image.png" : "Dropped File"
+        )
+        let proposedName: String
+        if item.isImage {
+            let baseName = URL(fileURLWithPath: originalName).deletingPathExtension().lastPathComponent
+            proposedName = "\(baseName).png"
+        } else {
+            proposedName = originalName
+        }
+        let destinationURL = WorkspacePasteboardImportService.uniqueURL(for: proposedName, in: assetsURL)
+        guard isContained(destinationURL, in: root) else {
+            throw MarkdownImageAssetError.outsideWorkspace
+        }
+
+        let temporaryURL = assetsURL.appendingPathComponent(".monknot-drop-\(UUID().uuidString).tmp")
+        defer { try? FileManager.default.removeItem(at: temporaryURL) }
+        if item.isImage {
+            guard let image = NSImage(contentsOf: item.sourceURL),
+                  let data = WorkspacePasteboardImportService.pngData(for: image)
+            else {
+                throw MarkdownImageAssetError.couldNotReadDroppedImage(item.sourceURL.lastPathComponent)
+            }
+            try data.write(to: temporaryURL, options: .atomic)
+        } else {
+            try FileManager.default.copyItem(at: item.sourceURL, to: temporaryURL)
+        }
+        try FileManager.default.moveItem(at: temporaryURL, to: destinationURL)
+
+        return MarkdownFileDropAsset(
+            fileURL: destinationURL,
+            relativePath: relativePath(
+                from: markdownDocumentURL.deletingLastPathComponent(),
+                to: destinationURL
+            ),
+            displayName: displayName(for: destinationURL),
+            isImage: item.isImage,
+            wasImported: true
+        )
+    }
+
+    private static func validatedAssetsDirectory(workspaceURL: URL, root: URL) throws -> URL {
+        let assetsURL = workspaceURL.appendingPathComponent("assets", isDirectory: true)
+        var isDirectory = ObjCBool(false)
+        if FileManager.default.fileExists(atPath: assetsURL.path, isDirectory: &isDirectory) {
+            guard isDirectory.boolValue else {
+                throw MarkdownImageAssetError.assetsIsNotDirectory
+            }
+        } else {
+            try FileManager.default.createDirectory(at: assetsURL, withIntermediateDirectories: true)
+            guard FileManager.default.fileExists(atPath: assetsURL.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue
+            else { throw MarkdownImageAssetError.assetsIsNotDirectory }
+        }
+
+        let canonicalAssets = canonical(assetsURL)
+        let expectedAssets = root.appendingPathComponent("assets", isDirectory: true).standardizedFileURL
+        guard canonicalAssets == expectedAssets, isContained(canonicalAssets, in: root) else {
+            throw MarkdownImageAssetError.outsideWorkspace
+        }
+        return canonicalAssets
+    }
+
+    private static func displayName(for url: URL) -> String {
+        let withoutExtension = url.deletingPathExtension().lastPathComponent
+        return (withoutExtension.isEmpty ? url.lastPathComponent : withoutExtension)
+            .precomposedStringWithCanonicalMapping
     }
 
     private static func relativePath(from sourceDirectory: URL, to target: URL) -> String {
@@ -434,6 +669,12 @@ private enum MarkdownImageAssetError: LocalizedError {
     case emptyImage
     case outsideWorkspace
     case assetsIsNotDirectory
+    case invalidDropCount(Int)
+    case noDroppedFiles
+    case unsupportedDroppedFile(String)
+    case droppedFileTooLarge(String)
+    case droppedFilesChanged
+    case couldNotReadDroppedImage(String)
 
     var errorDescription: String? {
         switch self {
@@ -443,6 +684,18 @@ private enum MarkdownImageAssetError: LocalizedError {
             return "Images can only be saved inside the current workspace."
         case .assetsIsNotDirectory:
             return "The workspace assets item is not a folder."
+        case .invalidDropCount(let maximum):
+            return "Drop between 1 and \(maximum) files at a time."
+        case .noDroppedFiles:
+            return "The drop does not contain any new files."
+        case .unsupportedDroppedFile(let name):
+            return "\(name) is not a supported file. Folders, aliases, and binary files cannot be inserted."
+        case .droppedFileTooLarge(let name):
+            return "\(name) is too large to import."
+        case .droppedFilesChanged:
+            return "The dropped files changed before they could be imported."
+        case .couldNotReadDroppedImage(let name):
+            return "\(name) could not be read as an image."
         }
     }
 }

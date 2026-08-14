@@ -30,6 +30,9 @@ struct TopNavigationBar: View {
     let toggleSidebar: () -> Void
     let toggleSplitView: () -> Void
     @Binding var documentSearch: DocumentSearchState
+    @Binding var searchOptions: MonknotSearchOptions
+    let dismissDocumentSearch: () -> Void
+    let documentSearchFocusChanged: (Bool) -> Void
     let tabs: [WorkspaceTabItem]
     let activeTabID: String?
     let missingTabIDs: Set<String>
@@ -118,8 +121,7 @@ struct TopNavigationBar: View {
             isSearchFocused = documentSearch.isPresented
         }
         .onChange(of: documentSearch.isPresented) { _, isPresented in
-            guard isPresented else { return }
-            isSearchFocused = true
+            isSearchFocused = isPresented
         }
     }
 
@@ -235,11 +237,27 @@ struct TopNavigationBar: View {
             .focused($isSearchFocused)
             .font(.system(size: textScaled(13), weight: .regular))
             .foregroundStyle(theme.foregroundColor)
-            .frame(width: scaled(190))
+            .frame(width: scaled(150))
             .onSubmit {
                 documentSearch.findNext()
             }
             .accessibilityLabel("Search in document")
+
+            searchOptionButton(
+                systemImage: "textformat",
+                label: "Match Case",
+                isActive: searchOptions.isCaseSensitive
+            ) {
+                searchOptions.isCaseSensitive.toggle()
+            }
+
+            searchOptionButton(
+                systemImage: "character.cursor.ibeam",
+                label: "Match Whole Word",
+                isActive: searchOptions.isWholeWord
+            ) {
+                searchOptions.isWholeWord.toggle()
+            }
 
             Text(documentSearch.countText)
                 .font(.system(size: textScaled(11), weight: .medium, design: .rounded))
@@ -269,9 +287,8 @@ struct TopNavigationBar: View {
             }
 
             findBarButton(systemImage: "xmark", label: "Close Search") {
-                documentSearch.dismiss()
+                dismissDocumentSearch()
             }
-            .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, scaled(MonknotMetrics.Spacing.l))
         .frame(height: scaled(32))
@@ -286,6 +303,13 @@ struct TopNavigationBar: View {
         .onAppear {
             isSearchFocused = true
         }
+        .onChange(of: isSearchFocused) { _, isFocused in
+            documentSearchFocusChanged(isFocused)
+        }
+        .onDisappear {
+            documentSearchFocusChanged(false)
+        }
+        .onExitCommand(perform: dismissDocumentSearch)
     }
 
     private func findBarButton(
@@ -301,8 +325,30 @@ struct TopNavigationBar: View {
             zoomScale: zoomScale,
             isDisabled: isDisabled,
             size: .findBar,
+            focusRingPlacement: .contained,
             action: action
         )
+    }
+
+    private func searchOptionButton(
+        systemImage: String,
+        label: String,
+        isActive: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        MonknotIconButton(
+            systemImage: systemImage,
+            label: label,
+            theme: theme,
+            zoomScale: zoomScale,
+            isActive: isActive,
+            size: .findBar,
+            drawsActiveBackground: false,
+            focusRingPlacement: .contained,
+            action: action
+        )
+        .accessibilityValue(isActive ? "On" : "Off")
+        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 
 }

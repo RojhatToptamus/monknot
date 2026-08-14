@@ -210,10 +210,12 @@ The script also manually copies these runtime resources into the app bundle:
 - `Sources/Monknot/Resources/xterm.css`
 - `Sources/Monknot/Resources/xterm.js`
 - `Sources/Monknot/Resources/xterm-addon-fit.js`
+- `Sources/Monknot/Resources/xterm-addon-search.js`
 - `LICENSE`
 - `THIRD_PARTY_NOTICES.md`
 - `ThirdPartyLicenses/xterm-MIT.txt`
 - `ThirdPartyLicenses/xterm-addon-fit-MIT.txt`
+- `ThirdPartyLicenses/xterm-addon-search-MIT.txt`
 - `ThirdPartyLicenses/sparkle-MIT.txt`
 - Verified theme MIT texts listed by `THEME_LICENSE_FILES` in
   `script/build_and_run.sh`

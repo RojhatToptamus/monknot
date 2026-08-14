@@ -490,6 +490,64 @@ public struct MarkdownWorkspaceLinkResolver: Sendable {
         return .missing
     }
 
+    public func missingWikilinkCreationURL(
+        _ link: MarkdownWorkspaceLink,
+        sourceDocument: WorkspaceDocument,
+        workspaceRootURL: URL,
+        documents: [WorkspaceDocument]
+    ) -> URL? {
+        guard link.kind == .wikilink,
+              case .missing = resolve(
+                  link,
+                  sourceDocument: sourceDocument,
+                  workspaceRootURL: workspaceRootURL,
+                  documents: documents
+              )
+        else {
+            return nil
+        }
+
+        let rawDestination = link.destination.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Self.explicitScheme(in: rawDestination) == nil else { return nil }
+        let destination = MarkdownLinkDestinationComponents(rawDestination)
+        guard destination.query == nil,
+              let decodedPath = Self.decodePercentEscapes(destination.path),
+              !decodedPath.isEmpty,
+              !decodedPath.contains("\0")
+        else {
+            return nil
+        }
+
+        let isRooted = decodedPath.hasPrefix("/")
+        let relativePath = isRooted
+            ? String(decodedPath.drop(while: { $0 == "/" }))
+            : decodedPath
+        let components = relativePath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard !components.isEmpty,
+              components.allSatisfy({ component in
+                  !component.isEmpty
+                      && component != ".."
+                      && (component == "." || !component.hasPrefix("."))
+                      && component.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+              })
+        else {
+            return nil
+        }
+
+        let pathExtension = (relativePath as NSString).pathExtension.lowercased()
+        guard pathExtension.isEmpty || WorkspaceDocumentSupport.markdownExtensions.contains(pathExtension) else {
+            return nil
+        }
+        let targetPath = pathExtension.isEmpty ? relativePath + ".md" : relativePath
+        let root = workspaceRootURL.standardizedFileURL
+        let source = sourceDocument.url.standardizedFileURL
+        guard Self.isContained(source, in: root) else { return nil }
+        let baseURL = isRooted ? root : source.deletingLastPathComponent()
+        let target = baseURL.appendingPathComponent(targetPath).standardizedFileURL
+        guard Self.isContained(target, in: root), target != root else { return nil }
+        return target
+    }
+
     private func resolveFileURL(
         _ url: URL,
         fragment: String?,
@@ -658,8 +716,10 @@ public enum MarkdownSourceLocationValidator {
             lineStart = next
             currentLine += 1
         }
+        let hasTrailingEmptyLine = source.length > 0
+            && [0x0A, 0x0D].contains(source.character(at: source.length - 1))
         guard currentLine == location.line,
-              location.line == 1 || lineStart < source.length
+              location.line == 1 || lineStart < source.length || hasTrailingEmptyLine
         else { return nil }
 
         let lineRange = source.lineRange(

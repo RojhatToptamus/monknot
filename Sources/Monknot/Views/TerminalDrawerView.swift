@@ -7,6 +7,7 @@ struct TerminalDrawerView: View {
 
     @ObservedObject var sessions: TerminalSessionCollectionStore
     let workingDirectory: URL?
+    var workspaceRoot: URL? = nil
     let theme: AppTheme
     let zoomScale: Double
     let usePointerCursors: Bool
@@ -33,6 +34,7 @@ struct TerminalDrawerView: View {
                     TerminalDrawerChromeRow(
                         sessions: sessions,
                         workingDirectory: workingDirectory,
+                        workspaceRoot: workspaceRoot,
                         theme: theme,
                         zoomScale: zoomScale,
                         close: close
@@ -48,10 +50,7 @@ struct TerminalDrawerView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Terminal panel")
         .onAppear {
-            sessions.ensureActiveTerminal(in: workingDirectory)
-        }
-        .onChange(of: workingDirectory?.standardizedFileURL.path ?? "") { _, _ in
-            sessions.setDefaultDirectory(workingDirectory)
+            sessions.ensureActiveTerminal(in: workingDirectory, workspaceRoot: workspaceRoot)
         }
     }
 
@@ -71,7 +70,7 @@ struct TerminalDrawerView: View {
                 theme: theme,
                 zoomScale: zoomScale,
                 createTerminal: {
-                    sessions.createTerminal(in: workingDirectory)
+                    sessions.createTerminal(in: workingDirectory, workspaceRoot: workspaceRoot)
                 }
             )
         }
@@ -81,6 +80,7 @@ struct TerminalDrawerView: View {
 struct TerminalDrawerChromeRow: View {
     @ObservedObject var sessions: TerminalSessionCollectionStore
     let workingDirectory: URL?
+    var workspaceRoot: URL? = nil
     let theme: AppTheme
     let zoomScale: Double
     let close: () -> Void
@@ -94,6 +94,7 @@ struct TerminalDrawerChromeRow: View {
             TerminalDrawerTabGroup(
                 sessions: sessions,
                 workingDirectory: workingDirectory,
+                workspaceRoot: workspaceRoot,
                 theme: theme,
                 zoomScale: zoomScale
             )
@@ -108,7 +109,6 @@ struct TerminalDrawerChromeRow: View {
                 size: .compact,
                 action: close
             )
-            .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, scaled(8))
         .frame(height: MonknotMetrics.interfaceControl(36, theme: theme, zoomScale: zoomScale))
@@ -122,6 +122,7 @@ struct TerminalDrawerChromeRow: View {
 private struct TerminalDrawerTabGroup: View {
     @ObservedObject var sessions: TerminalSessionCollectionStore
     let workingDirectory: URL?
+    var workspaceRoot: URL? = nil
     let theme: AppTheme
     let zoomScale: Double
 
@@ -220,7 +221,7 @@ private struct TerminalDrawerTabGroup: View {
                     zoomScale: zoomScale,
                     size: .compact,
                     action: {
-                        sessions.createTerminal(in: workingDirectory)
+                        sessions.createTerminal(in: workingDirectory, workspaceRoot: workspaceRoot)
                     }
                 )
             }
@@ -409,7 +410,8 @@ private struct TerminalEmptySurface: View {
             detail: "⌃⌘T",
             theme: theme,
             zoomScale: zoomScale,
-            iconSize: 34
+            iconSize: 34,
+            detailIsShortcut: true
         ) {
             MonknotActionButton(
                 title: "New Session",

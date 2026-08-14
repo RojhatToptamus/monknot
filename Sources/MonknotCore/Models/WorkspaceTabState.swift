@@ -40,6 +40,94 @@ public struct WorkspaceTabItem: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
+/// Per-window metadata for tabs the user explicitly closed.
+///
+/// This history is intentionally not Codable: reopening a tab must use the current
+/// workspace document and reload its content rather than restore an old buffer.
+public struct WorkspaceClosedTabHistory: Equatable, Sendable {
+    public static let defaultCapacity = 20
+
+    public private(set) var tabs: [WorkspaceTabItem] = []
+    private let capacity: Int
+
+    public init(capacity: Int = defaultCapacity) {
+        self.capacity = max(1, capacity)
+    }
+
+    public func hasAvailableTab(documentIDs: Set<String>) -> Bool {
+        tabs.contains { documentIDs.contains($0.documentID) }
+    }
+
+    public mutating func record(_ tab: WorkspaceTabItem) {
+        tabs.removeAll { $0.documentID == tab.documentID }
+        tabs.append(tab)
+        if tabs.count > capacity {
+            tabs.removeFirst(tabs.count - capacity)
+        }
+    }
+
+    public mutating func discard(documentID: String) {
+        tabs.removeAll { $0.documentID == documentID }
+    }
+
+    public mutating func takeMostRecent(
+        availableDocumentIDs: Set<String>
+    ) -> WorkspaceTabItem? {
+        while let tab = tabs.popLast() {
+            if availableDocumentIDs.contains(tab.documentID) {
+                return tab
+            }
+        }
+        return nil
+    }
+
+    public mutating func remapDocumentID(
+        from sourceID: String,
+        to destinationID: String,
+        document: WorkspaceDocument? = nil
+    ) {
+        guard sourceID != destinationID else {
+            if let document,
+               let index = tabs.firstIndex(where: { $0.documentID == destinationID }) {
+                tabs[index].updateSnapshot(from: document)
+            }
+            return
+        }
+
+        guard tabs.contains(where: {
+            $0.documentID == sourceID || $0.documentID == destinationID
+        }) else {
+            return
+        }
+
+        for index in tabs.indices where tabs[index].documentID == sourceID {
+            tabs[index].documentID = destinationID
+        }
+
+        var newestByDocumentID: [String: WorkspaceTabItem] = [:]
+        var newestFirstIDs: [String] = []
+        for tab in tabs.reversed() {
+            if var newest = newestByDocumentID[tab.documentID] {
+                newest.isPinned = newest.isPinned || tab.isPinned
+                newestByDocumentID[tab.documentID] = newest
+            } else {
+                newestByDocumentID[tab.documentID] = tab
+                newestFirstIDs.append(tab.documentID)
+            }
+        }
+        tabs = newestFirstIDs.reversed().compactMap { newestByDocumentID[$0] }
+
+        if let document,
+           let index = tabs.firstIndex(where: { $0.documentID == destinationID }) {
+            tabs[index].updateSnapshot(from: document)
+        }
+    }
+
+    public mutating func reset() {
+        tabs.removeAll()
+    }
+}
+
 public struct WorkspaceTabState: Codable, Equatable, Sendable {
     public private(set) var tabs: [WorkspaceTabItem]
     public private(set) var selectedDocumentID: String?

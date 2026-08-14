@@ -3,16 +3,19 @@ import SwiftUI
 
 extension NSUserInterfaceItemIdentifier {
     static let monknotDocumentFocusTarget = Self("Monknot.DocumentFocusTarget")
+    static let monknotSidebarFocusRegion = Self("Monknot.SidebarFocusRegion")
+    static let monknotTerminalFocusRegion = Self("Monknot.TerminalFocusRegion")
 }
 
 /// Aligns the NSWindow's appearance with our SwiftUI surface and suppresses
 /// the AppKit-injected `.toolbarButton`, which duplicates our sidebar toggle.
 /// AppKit remains the owner of the native traffic-light controls and their
-/// horizontal placement, targets, accessibility, and window behavior.
+/// inter-button spacing, targets, accessibility, and window behavior.
 struct WindowBackgroundDragEnabler: NSViewRepresentable {
     var surfaceColor: Color
     var suppressToolbarButton: Bool = true
     var trafficLightRowHeight: CGFloat?
+    var trafficLightLeadingInset: CGFloat?
     var usesDarkAppearance: Bool?
     var windowTitle: String?
     var enablesStandardWindowControls = false
@@ -21,6 +24,7 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
         Coordinator(
             suppressToolbarButton: suppressToolbarButton,
             trafficLightRowHeight: trafficLightRowHeight,
+            trafficLightLeadingInset: trafficLightLeadingInset,
             enablesStandardWindowControls: enablesStandardWindowControls
         )
     }
@@ -33,6 +37,7 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
 
     func updateNSView(_ nsView: WindowBackgroundDragAttachmentView, context: Context) {
         context.coordinator.trafficLightRowHeight = trafficLightRowHeight
+        context.coordinator.trafficLightLeadingInset = trafficLightLeadingInset
         updateWindow(from: nsView, coordinator: context.coordinator)
     }
 
@@ -67,9 +72,7 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             coordinator.configureWindowChrome(in: window)
         }
         view.configureWindow = configureWindow
-        if let window = view.window {
-            configureWindow(window)
-        }
+        view.configureAttachedWindow()
     }
 
     /// AppKit reinstalls `.toolbarButton` whenever the window changes state.
@@ -84,6 +87,7 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
     final class Coordinator {
         let suppressToolbarButton: Bool
         var trafficLightRowHeight: CGFloat?
+        var trafficLightLeadingInset: CGFloat?
         let enablesStandardWindowControls: Bool
         private weak var observedWindow: NSWindow?
         private var observers: [NSObjectProtocol] = []
@@ -91,10 +95,12 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
         init(
             suppressToolbarButton: Bool,
             trafficLightRowHeight: CGFloat? = nil,
+            trafficLightLeadingInset: CGFloat? = nil,
             enablesStandardWindowControls: Bool = false
         ) {
             self.suppressToolbarButton = suppressToolbarButton
             self.trafficLightRowHeight = trafficLightRowHeight
+            self.trafficLightLeadingInset = trafficLightLeadingInset
             self.enablesStandardWindowControls = enablesStandardWindowControls
         }
 
@@ -144,18 +150,58 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
                 .miniaturizeButton,
                 .zoomButton,
             ].forEach { buttonType in
-                window.standardWindowButton(buttonType)?.isEnabled = true
+                guard let button = window.standardWindowButton(buttonType) else { return }
+                button.isHidden = false
+                button.isEnabled = true
             }
         }
 
         /// Keeps AppKit's real window buttons on the same optical centerline as
-        /// Monknot's primary chrome row. Their horizontal positions, targets,
+        /// Monknot's primary chrome row. Their relative spacing, targets,
         /// accessibility, and native window behavior remain AppKit-owned.
         private func alignTrafficLights(in window: NSWindow) {
             guard let trafficLightRowHeight,
-                  trafficLightRowHeight > 0
+                  trafficLightRowHeight > 0,
+                  let referenceButton = window.standardWindowButton(.closeButton),
+                  !referenceButton.isHidden,
+                  let titlebarView = referenceButton.superview,
+                  let titlebarContainer = titlebarView.superview,
+                  let themeFrame = titlebarContainer.superview
             else {
                 return
+            }
+
+            // Full-size content lets the custom chrome extend below AppKit's
+            // default title-bar bounds. Keep the native title-bar hierarchy as
+            // tall as that chrome so its real buttons remain hit-testable at
+            // the same centerline where AppKit draws them.
+            var containerFrame = titlebarContainer.frame
+            let containerOriginY = themeFrame.isFlipped
+                ? themeFrame.bounds.minY
+                : themeFrame.bounds.maxY - trafficLightRowHeight
+            if abs(containerFrame.minY - containerOriginY) > 0.25
+                || abs(containerFrame.height - trafficLightRowHeight) > 0.25
+            {
+                containerFrame.origin.y = containerOriginY
+                containerFrame.size.height = trafficLightRowHeight
+                titlebarContainer.frame = containerFrame
+            }
+            if titlebarView.frame != titlebarContainer.bounds {
+                titlebarView.frame = titlebarContainer.bounds
+            }
+
+            let horizontalOffset: CGFloat
+            if let trafficLightLeadingInset {
+                let nativeOpticalInset = max(
+                    0,
+                    (referenceButton.frame.width
+                        - NativeWindowChromeGeometry.trafficLightDiameter) / 2
+                )
+                horizontalOffset = trafficLightLeadingInset
+                    - nativeOpticalInset
+                    - referenceButton.frame.minX
+            } else {
+                horizontalOffset = 0
             }
 
             let buttonTypes: [NSWindow.ButtonType] = [
@@ -166,26 +212,29 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             for buttonType in buttonTypes {
                 guard let button = window.standardWindowButton(buttonType),
                       !button.isHidden,
-                      let titlebarContainer = button.superview
+                      button.superview === titlebarView
                 else {
                     continue
                 }
 
-                let titlebarTopY = titlebarContainer.isFlipped
-                    ? titlebarContainer.bounds.minY
-                    : titlebarContainer.bounds.maxY
+                let titlebarTopY = titlebarView.isFlipped
+                    ? titlebarView.bounds.minY
+                    : titlebarView.bounds.maxY
                 let originY = NativeWindowChromeGeometry.centeredButtonOriginY(
                     buttonHeight: button.frame.height,
                     chromeHeight: trafficLightRowHeight,
                     contentTopY: titlebarTopY,
-                    isFlipped: titlebarContainer.isFlipped
+                    isFlipped: titlebarView.isFlipped
                 )
 
-                // Full-size content can make Monknot's chrome taller than
-                // AppKit's standard titlebar container at larger zoom levels.
-                titlebarContainer.clipsToBounds = false
-                guard abs(button.frame.minY - originY) > 0.25 else { continue }
-                button.setFrameOrigin(NSPoint(x: button.frame.minX, y: originY))
+                titlebarView.clipsToBounds = false
+                let originX = button.frame.minX + horizontalOffset
+                guard abs(button.frame.minX - originX) > 0.25
+                    || abs(button.frame.minY - originY) > 0.25
+                else {
+                    continue
+                }
+                button.setFrameOrigin(NSPoint(x: originX, y: originY))
             }
         }
 
@@ -205,12 +254,21 @@ final class WindowBackgroundDragAttachmentView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        configureAttachedWindow()
+    }
+
+    func configureAttachedWindow() {
         guard let window else { return }
-        configureWindow?(window)
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window, self.window === window else { return }
+            self.configureWindow?(window)
+        }
     }
 }
 
 enum NativeWindowChromeGeometry {
+    static let trafficLightDiameter: CGFloat = 12
+
     static func centeredButtonOriginY(
         buttonHeight: CGFloat,
         chromeHeight: CGFloat,

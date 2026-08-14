@@ -69,19 +69,55 @@ struct MonknotCommandOverlayEmptyState: View {
 
 struct MonknotCommandOverlayEscapeButton: View {
     let theme: AppTheme
+    let zoomScale: Double
     let close: () -> Void
+
+    @State private var isHovered = false
+    @FocusState private var isFocused: Bool
+
+    private var dimension: CGFloat {
+        MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)
+    }
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+    }
 
     var body: some View {
         Button(action: close) {
-            Text("esc")
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(theme.tertiaryForegroundColor)
-                .frame(minWidth: 26, minHeight: 22)
-                .contentShape(Rectangle())
+            MonknotShortcutLabel(
+                shortcut: "Esc",
+                theme: theme,
+                zoomScale: zoomScale
+            )
+            .frame(minWidth: dimension, minHeight: dimension)
+            .background {
+                if isHovered {
+                    shape.fill(theme.foregroundColor.opacity(theme.isDark ? 0.06 : 0.055))
+                }
+            }
+            .overlay {
+                if isFocused {
+                    shape
+                        .stroke(
+                            theme.accentColor.opacity(MonknotIconButton.focusRingOpacity),
+                            lineWidth: MonknotIconButton.focusRingLineWidth
+                        )
+                        .padding(-MonknotIconButton.focusRingOutset)
+                        .allowsHitTesting(false)
+                }
+            }
+            .contentShape(shape)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MonknotControlPressStyle())
+        .focusable()
+        .focused($isFocused)
+        .focusEffectDisabled()
+        .onHover { isHovered = $0 }
+        .animation(MonknotMotion.hoverAnimation, value: isHovered)
         .keyboardShortcut(.cancelAction)
         .help("Close")
         .accessibilityLabel("Close")
+        .monknotPointerCursor()
     }
 }

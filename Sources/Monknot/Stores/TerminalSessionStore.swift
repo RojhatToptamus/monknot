@@ -30,13 +30,6 @@ final class TerminalSessionStore: ObservableObject {
         workingDirectory = Self.resolvedDirectory(initialDirectory) ?? Self.homeDirectory
     }
 
-    func setDefaultDirectory(_ url: URL?) {
-        guard ptySession == nil, status == .idle else { return }
-        guard let directory = Self.resolvedDirectory(url) else { return }
-        guard directory.path != workingDirectory.path else { return }
-        workingDirectory = directory
-    }
-
     func startIfNeeded() {
         startIfNeeded(in: nil)
     }
@@ -181,23 +174,44 @@ final class TerminalSessionStore: ObservableObject {
         ptySession?.stop()
     }
 
-    static func resolvedDirectory(_ url: URL?) -> URL? {
+    static func resolvedDirectory(_ url: URL?, containedIn workspaceRoot: URL? = nil) -> URL? {
         guard let url else { return nil }
 
         let standardizedURL = url.standardizedFileURL
         var isDirectory = ObjCBool(false)
 
+        let resolvedDirectory: URL
         if FileManager.default.fileExists(atPath: standardizedURL.path, isDirectory: &isDirectory) {
-            return isDirectory.boolValue ? standardizedURL : standardizedURL.deletingLastPathComponent()
+            resolvedDirectory = isDirectory.boolValue ? standardizedURL : standardizedURL.deletingLastPathComponent()
+        } else {
+            let parentURL = standardizedURL.deletingLastPathComponent()
+            var parentIsDirectory = ObjCBool(false)
+            guard FileManager.default.fileExists(atPath: parentURL.path, isDirectory: &parentIsDirectory),
+                  parentIsDirectory.boolValue
+            else {
+                return Self.resolvedDirectory(workspaceRoot)
+            }
+            resolvedDirectory = parentURL
         }
 
-        let parentURL = standardizedURL.deletingLastPathComponent()
-        var parentIsDirectory = ObjCBool(false)
-        if FileManager.default.fileExists(atPath: parentURL.path, isDirectory: &parentIsDirectory),
-           parentIsDirectory.boolValue {
-            return parentURL
+        guard let workspaceRoot else { return resolvedDirectory }
+        let resolvedRoot = workspaceRoot.standardizedFileURL
+        var rootIsDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(
+            atPath: resolvedRoot.path,
+            isDirectory: &rootIsDirectory
+        ), rootIsDirectory.boolValue else {
+            return nil
         }
-
-        return nil
+        let canonicalDirectory = resolvedDirectory.resolvingSymlinksInPath()
+        let canonicalRoot = resolvedRoot.resolvingSymlinksInPath()
+        let rootComponents = canonicalRoot.pathComponents
+        let directoryComponents = canonicalDirectory.pathComponents
+        guard directoryComponents.count >= rootComponents.count,
+              Array(directoryComponents.prefix(rootComponents.count)) == rootComponents
+        else {
+            return resolvedRoot
+        }
+        return resolvedDirectory
     }
 }

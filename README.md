@@ -54,8 +54,8 @@ lists, code blocks, links, and images.
 **PDF** — Search documents and add highlights, underlines, strike-throughs, and
 freehand marks. Markdown exports to PDF.
 
-**Terminal** — Run several shell sessions beside the active document and switch
-between them without leaving Monknot.
+**Terminal** — Run several shell sessions beside the active document, switch
+between them, and search bounded scrollback without leaving Monknot.
 
 <p align="center">
   <img src="app-store/screenshots/macos/en-US/03-pdf-dark.png" width="49%" alt="Monknot PDF reader with annotation tools">

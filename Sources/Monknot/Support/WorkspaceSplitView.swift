@@ -443,6 +443,8 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         sidebarHostingController.sizingOptions = []
         detailHostingController.sizingOptions = []
         terminalHostingController.sizingOptions = []
+        sidebarHostingController.view.identifier = .monknotSidebarFocusRegion
+        terminalHostingController.view.identifier = .monknotTerminalFocusRegion
 
         workspaceSplitView.isVertical = true
         workspaceSplitView.dividerStyle = .thin

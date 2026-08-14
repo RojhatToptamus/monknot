@@ -176,6 +176,10 @@ private struct EditorSettingsView: View {
     let uiTheme: AppTheme
     @AppStorage("Monknot.zoomScale") private var persistedZoomScale = WorkspaceZoomPolicy.defaultValue
     @AppStorage("Monknot.showDocumentOutline") private var showContentMapper = true
+    @AppStorage(EditorTextCheckingOptions.spellingPreferenceKey)
+    private var checksSpelling = EditorTextCheckingOptions.defaultChecksSpelling
+    @AppStorage(EditorTextCheckingOptions.grammarPreferenceKey)
+    private var checksGrammar = EditorTextCheckingOptions.defaultChecksGrammar
 
     var body: some View {
         SettingsPage(theme: uiTheme) {
@@ -186,6 +190,20 @@ private struct EditorSettingsView: View {
                     title: "Content mapper",
                     detail: "Show heading markers in Markdown",
                     isOn: $showContentMapper
+                )
+
+                SettingsToggleRow(
+                    theme: uiTheme,
+                    title: "Check spelling while typing",
+                    detail: "Underline possible mistakes using macOS",
+                    isOn: $checksSpelling
+                )
+
+                SettingsToggleRow(
+                    theme: uiTheme,
+                    title: "Check grammar while typing",
+                    detail: "Use native language-aware grammar checking",
+                    isOn: $checksGrammar
                 )
 
                 SettingsWorkspaceZoomRow(
@@ -319,16 +337,12 @@ private struct ShortcutSettingsView: View {
                         title: entry.title,
                         showsDivider: index < MonknotKeyboardShortcutCatalog.entries.count - 1
                     ) {
-                        Text(entry.shortcut)
-                            .font(.system(
-                                size: MonknotMetrics.interfaceText(12, theme: uiTheme, zoomScale: settingsZoomScale),
-                                weight: .medium,
-                                design: .rounded
-                            ))
-                            .foregroundStyle(uiTheme.mutedForegroundColor)
-                            .padding(.horizontal, scaled(9))
-                            .padding(.vertical, scaled(4))
-                            .background(uiTheme.insetFillColor, in: RoundedRectangle(cornerRadius: scaled(6)))
+                        MonknotShortcutLabel(
+                            shortcut: entry.shortcut,
+                            theme: uiTheme,
+                            zoomScale: settingsZoomScale,
+                            presentation: .keyCap
+                        )
                     }
                 }
             }

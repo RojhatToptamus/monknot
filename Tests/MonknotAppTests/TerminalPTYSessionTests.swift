@@ -147,6 +147,106 @@ final class TerminalPTYSessionTests: XCTestCase {
     }
 }
 
+@MainActor
+final class TerminalWorkingDirectoryTests: XCTestCase {
+    func testPreferenceDefaultsToActiveDocumentFolderAndSupportsWorkspaceRoot() throws {
+        let root = try makeDirectory(named: "MonknotTerminalDirectory")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let notes = root.appendingPathComponent("Notes", isDirectory: true)
+        try FileManager.default.createDirectory(at: notes, withIntermediateDirectories: true)
+        let document = notes.appendingPathComponent("Note.md")
+        try "# Note\n".write(to: document, atomically: true, encoding: .utf8)
+
+        XCTAssertEqual(
+            TerminalWorkingDirectoryPreference.defaultValue,
+            .activeDocumentFolder
+        )
+        XCTAssertEqual(
+            TerminalWorkingDirectoryPolicy.directory(
+                preference: .activeDocumentFolder,
+                workspaceURL: root,
+                selectedDocumentURL: document
+            ),
+            notes.standardizedFileURL
+        )
+        XCTAssertEqual(
+            TerminalWorkingDirectoryPolicy.directory(
+                preference: .workspaceRoot,
+                workspaceURL: root,
+                selectedDocumentURL: document
+            ),
+            root.standardizedFileURL
+        )
+    }
+
+    func testMissingExternalAndSymlinkEscapingLocationsFallBackSafely() throws {
+        let root = try makeDirectory(named: "MonknotTerminalContainment")
+        let external = try makeDirectory(named: "MonknotTerminalExternal")
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: external)
+        }
+
+        let externalDocument = external.appendingPathComponent("External.md")
+        XCTAssertEqual(
+            TerminalWorkingDirectoryPolicy.directory(
+                preference: .activeDocumentFolder,
+                workspaceURL: root,
+                selectedDocumentURL: externalDocument
+            ),
+            root.standardizedFileURL
+        )
+
+        let missingDocument = root
+            .appendingPathComponent("Deleted", isDirectory: true)
+            .appendingPathComponent("Note.md")
+        let missingCandidate = TerminalWorkingDirectoryPolicy.directory(
+            preference: .activeDocumentFolder,
+            workspaceURL: root,
+            selectedDocumentURL: missingDocument
+        )
+        XCTAssertEqual(
+            TerminalSessionStore.resolvedDirectory(missingCandidate, containedIn: root),
+            root.standardizedFileURL
+        )
+
+        let symlink = root.appendingPathComponent("Escape", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: external)
+        XCTAssertEqual(
+            TerminalSessionStore.resolvedDirectory(symlink, containedIn: root),
+            root.standardizedFileURL
+        )
+    }
+
+    func testNewSessionsUseCurrentWorkspaceWithoutMovingExistingSession() throws {
+        let firstRoot = try makeDirectory(named: "MonknotTerminalFirst")
+        let secondRoot = try makeDirectory(named: "MonknotTerminalSecond")
+        defer {
+            try? FileManager.default.removeItem(at: firstRoot)
+            try? FileManager.default.removeItem(at: secondRoot)
+        }
+        let sessions = TerminalSessionCollectionStore()
+        defer { sessions.stopAll() }
+
+        let first = try XCTUnwrap(
+            sessions.createTerminal(in: firstRoot, workspaceRoot: firstRoot)
+        )
+        let second = try XCTUnwrap(
+            sessions.createTerminal(in: secondRoot, workspaceRoot: secondRoot)
+        )
+
+        XCTAssertEqual(second.workingDirectory, secondRoot.standardizedFileURL)
+        XCTAssertEqual(first.workingDirectory, firstRoot.standardizedFileURL)
+    }
+
+    private func makeDirectory(named prefix: String) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+}
+
 private func canonicalPath(_ url: URL) -> String {
     guard let resolved = realpath(url.path, nil) else { return url.path }
     defer { free(resolved) }

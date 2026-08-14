@@ -29,6 +29,55 @@ enum MonknotNativeMarkdownCommand {
     }
 }
 
+@MainActor
+enum MonknotNativeSpellingCommand {
+    static var hasDocumentEditingFocus: Bool {
+        focusedTextView != nil
+    }
+
+    @discardableResult
+    static func showSpellingAndGrammar() -> Bool {
+        guard let textView = focusedTextView else { return false }
+        textView.showGuessPanel(nil)
+        NSSpellChecker.shared.spellingPanel.makeKeyAndOrderFront(nil)
+        return true
+    }
+
+    @discardableResult
+    static func checkSpelling() -> Bool {
+        guard let textView = focusedTextView else { return false }
+        textView.checkSpelling(nil)
+        return true
+    }
+
+    private static var focusedTextView: MarkdownNSTextView? {
+        // A menu or the shared spelling panel can become the key window while the
+        // document window remains main. Keep command validation anchored to the
+        // document responder in that state.
+        // https://developer.apple.com/documentation/appkit/nsapplication/mainwindow
+        for window in [NSApp.mainWindow, NSApp.keyWindow].compactMap({ $0 }) {
+            if let textView = window.firstResponder as? MarkdownNSTextView {
+                return textView
+            }
+        }
+        return nil
+    }
+}
+
+struct EditorTextCheckingOptions: Equatable {
+    static let spellingPreferenceKey = "Monknot.checkSpellingWhileTyping"
+    static let grammarPreferenceKey = "Monknot.checkGrammarWhileTyping"
+    static let defaultChecksSpelling = true
+    static let defaultChecksGrammar = false
+    static let defaultValue = EditorTextCheckingOptions(
+        checksSpelling: defaultChecksSpelling,
+        checksGrammar: defaultChecksGrammar
+    )
+
+    let checksSpelling: Bool
+    let checksGrammar: Bool
+}
+
 enum MarkdownTextEditorCommand: Equatable {
     case paragraph
     case heading(level: Int)
@@ -92,6 +141,37 @@ struct MarkdownImagePasteRequest {
     }
 }
 
+struct MarkdownFileDropRequest {
+    let documentID: String
+    let revision: Int
+    let sourceText: String
+    let insertionRange: NSRange
+    let urls: [URL]
+    private let insertion: (String) -> Bool
+
+    init(
+        documentID: String,
+        revision: Int,
+        sourceText: String,
+        insertionRange: NSRange,
+        urls: [URL],
+        insertion: @escaping (String) -> Bool
+    ) {
+        self.documentID = documentID
+        self.revision = revision
+        self.sourceText = sourceText
+        self.insertionRange = insertionRange
+        self.urls = urls
+        self.insertion = insertion
+    }
+
+    @MainActor
+    @discardableResult
+    func insertMarkdown(_ markdown: String) -> Bool {
+        insertion(markdown)
+    }
+}
+
 struct MarkdownTextEditor: NSViewRepresentable {
     let documentID: String
     @Binding var text: String
@@ -100,12 +180,14 @@ struct MarkdownTextEditor: NSViewRepresentable {
     let zoomScale: Double
     let contentWidthPercent: Double
     let fontSmoothing: Bool
+    let textCheckingOptions: EditorTextCheckingOptions
     let scrollPosition: DocumentScrollPosition?
     let textSelection: DocumentTextSelection?
     let syncScrollEnabled: Bool
     let syncScrollTargetLine: Int?
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var searchState: DocumentSearchState
+    let searchOptions: MonknotSearchOptions
     let onScrollPositionChange: (DocumentScrollPosition) -> Void
     let onVisibleTopLineChange: ((Int) -> Void)?
     let commandRequest: MarkdownTextEditorCommandRequest?
@@ -113,7 +195,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
     let wikilinkDocuments: [WorkspaceDocument]
     let onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)?
     let onOpenLink: ((MarkdownEditorLinkRequest) -> Void)?
+    let onInspectLinks: (() -> Void)?
     let onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)?
+    let onFileDropRequest: ((MarkdownFileDropRequest) -> Void)?
 
     init(
         documentID: String,
@@ -123,10 +207,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
         zoomScale: Double,
         contentWidthPercent: Double,
         fontSmoothing: Bool,
+        textCheckingOptions: EditorTextCheckingOptions = .defaultValue,
         scrollPosition: DocumentScrollPosition?,
         textSelection: DocumentTextSelection? = nil,
         sourceLocation: Binding<MarkdownSourceLocation?>,
         searchState: Binding<DocumentSearchState>,
+        searchOptions: MonknotSearchOptions = MonknotSearchOptions(),
         onScrollPositionChange: @escaping (DocumentScrollPosition) -> Void,
         syncScrollEnabled: Bool = false,
         syncScrollTargetLine: Int? = nil,
@@ -136,7 +222,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
         wikilinkDocuments: [WorkspaceDocument] = [],
         onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)? = nil,
         onOpenLink: ((MarkdownEditorLinkRequest) -> Void)? = nil,
-        onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)? = nil
+        onInspectLinks: (() -> Void)? = nil,
+        onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)? = nil,
+        onFileDropRequest: ((MarkdownFileDropRequest) -> Void)? = nil
     ) {
         self.documentID = documentID
         self._text = text
@@ -145,12 +233,14 @@ struct MarkdownTextEditor: NSViewRepresentable {
         self.zoomScale = zoomScale
         self.contentWidthPercent = contentWidthPercent
         self.fontSmoothing = fontSmoothing
+        self.textCheckingOptions = textCheckingOptions
         self.scrollPosition = scrollPosition
         self.textSelection = textSelection
         self.syncScrollEnabled = syncScrollEnabled
         self.syncScrollTargetLine = syncScrollTargetLine
         self._sourceLocation = sourceLocation
         self._searchState = searchState
+        self.searchOptions = searchOptions
         self.onScrollPositionChange = onScrollPositionChange
         self.onVisibleTopLineChange = onVisibleTopLineChange
         self.commandRequest = commandRequest
@@ -158,7 +248,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
         self.wikilinkDocuments = wikilinkDocuments
         self.onSelectionChange = onSelectionChange
         self.onOpenLink = onOpenLink
+        self.onInspectLinks = onInspectLinks
         self.onImagePasteRequest = onImagePasteRequest
+        self.onFileDropRequest = onFileDropRequest
     }
 
     func makeCoordinator() -> Coordinator {
@@ -185,14 +277,20 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.workspaceLinkHandler = { [weak coordinator = context.coordinator] link in
             coordinator?.open(link) ?? false
         }
+        textView.inspectLinksHandler = onInspectLinks
         textView.imagePasteHandler = { [weak coordinator = context.coordinator] image in
             coordinator?.requestImagePaste(image) ?? false
         }
+        textView.fileDropHandler = onFileDropRequest == nil ? nil : { [weak coordinator = context.coordinator] urls, offset in
+            coordinator?.requestFileDrop(urls, atUTF16Offset: offset) ?? false
+        }
+        textView.updateDragTypeRegistration()
         textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.applyTextChecking(textCheckingOptions)
         textView.allowsUndo = true
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
@@ -214,6 +312,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.onSelectionChange = onSelectionChange
         context.coordinator.onOpenLink = onOpenLink
         context.coordinator.onImagePasteRequest = onImagePasteRequest
+        context.coordinator.onFileDropRequest = onFileDropRequest
         context.coordinator.attach(to: scrollView)
         applyTheme(theme, to: textView, in: scrollView)
         context.coordinator.markFontApplied(resolvedFont)
@@ -238,6 +337,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.onSelectionChange = onSelectionChange
         context.coordinator.onOpenLink = onOpenLink
         context.coordinator.onImagePasteRequest = onImagePasteRequest
+        context.coordinator.onFileDropRequest = onFileDropRequest
+        textView.inspectLinksHandler = onInspectLinks
+        textView.fileDropHandler = onFileDropRequest == nil ? nil : { [weak coordinator = context.coordinator] urls, offset in
+            coordinator?.requestFileDrop(urls, atUTF16Offset: offset) ?? false
+        }
+        textView.updateDragTypeRegistration()
         context.coordinator.syncScrollEnabled = syncScrollEnabled
         let visibleOrigin = scrollView.contentView.bounds.origin
 
@@ -262,6 +367,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         if context.coordinator.shouldApplyFontSmoothing(fontSmoothing) {
             textView.fontSmoothingEnabled = fontSmoothing
         }
+        textView.applyTextChecking(textCheckingOptions)
         if context.coordinator.shouldApplyMarkdownShortcuts(markdownShortcutsEnabled) {
             textView.markdownShortcutsEnabled = markdownShortcutsEnabled
         }
@@ -296,8 +402,16 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         context.coordinator.applySyncScrollTargetLine(syncScrollTargetLine, in: textView, scrollView: scrollView)
 
-        let searchResult = context.coordinator.applySearch(searchState, theme: theme, in: textView)
-        if DocumentSearchResult(currentIndex: searchState.currentIndex, totalCount: searchState.totalCount) != searchResult {
+        let searchResult = context.coordinator.applySearch(
+            searchState,
+            options: searchOptions,
+            theme: theme,
+            in: textView
+        )
+        if DocumentSearchResult(
+            currentIndex: searchState.currentIndex,
+            totalCount: searchState.totalCount
+        ) != searchResult {
             DispatchQueue.main.async {
                 self.searchState.updateResult(searchResult)
             }
@@ -312,7 +426,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
         coordinator.textView?.delegate = nil
         coordinator.textView?.commandHandler = nil
         coordinator.textView?.workspaceLinkHandler = nil
+        coordinator.textView?.inspectLinksHandler = nil
         coordinator.textView?.imagePasteHandler = nil
+        coordinator.textView?.fileDropHandler = nil
         coordinator.textView = nil
     }
 
@@ -345,11 +461,13 @@ struct MarkdownTextEditor: NSViewRepresentable {
         var onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)?
         var onOpenLink: ((MarkdownEditorLinkRequest) -> Void)?
         var onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)?
+        var onFileDropRequest: ((MarkdownFileDropRequest) -> Void)?
         var syncScrollEnabled = false
         private var lastNavigatedLocation: MarkdownSourceLocation?
         private var searchMatches: [NSRange] = []
         private var highlightedRanges: [NSRange] = []
         private var lastSearchQuery = ""
+        private var lastSearchOptions = MonknotSearchOptions()
         private var lastSearchedText = ""
         private var lastNavigationSerial = 0
         private var currentMatchIndex = 0
@@ -395,6 +513,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             onSelectionChange = nil
             onOpenLink = nil
             onImagePasteRequest = nil
+            onFileDropRequest = nil
         }
 
         func markFontApplied(_ font: NSFont) {
@@ -645,12 +764,44 @@ struct MarkdownTextEditor: NSViewRepresentable {
             return true
         }
 
+        func requestFileDrop(_ urls: [URL], atUTF16Offset offset: Int) -> Bool {
+            guard !urls.isEmpty,
+                  let textView,
+                  let documentID,
+                  let onFileDropRequest
+            else { return false }
+
+            let capturedRevision = revision
+            let capturedText = textView.string
+            let boundedOffset = min(max(0, offset), (capturedText as NSString).length)
+            let capturedRange = NSRange(location: boundedOffset, length: 0)
+            let request = MarkdownFileDropRequest(
+                documentID: documentID,
+                revision: capturedRevision,
+                sourceText: capturedText,
+                insertionRange: capturedRange,
+                urls: urls
+            ) { [weak self] markdown in
+                self?.insertMarkdown(
+                    markdown,
+                    documentID: documentID,
+                    expectedRevision: capturedRevision,
+                    expectedText: capturedText,
+                    expectedRange: capturedRange,
+                    requiresSelectionMatch: false
+                ) ?? false
+            }
+            onFileDropRequest(request)
+            return true
+        }
+
         private func insertMarkdown(
             _ markdown: String,
             documentID: String,
             expectedRevision: Int,
             expectedText: String,
-            expectedRange: NSRange
+            expectedRange: NSRange,
+            requiresSelectionMatch: Bool = true
         ) -> Bool {
             guard !markdown.isEmpty,
                   self.documentID == documentID,
@@ -658,7 +809,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                   let textView,
                   let textStorage = textView.textStorage,
                   textView.string == expectedText,
-                  textView.selectedRange() == expectedRange,
+                  (!requiresSelectionMatch || textView.selectedRange() == expectedRange),
                   NSMaxRange(expectedRange) <= (expectedText as NSString).length,
                   textView.shouldChangeText(in: expectedRange, replacementString: markdown)
             else { return false }
@@ -746,14 +897,16 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         func applySearch(
             _ state: DocumentSearchState,
+            options: MonknotSearchOptions = MonknotSearchOptions(),
             theme: AppTheme,
             in textView: NSTextView
         ) -> DocumentSearchResult {
-            let request = DocumentSearchRequest(state)
+            let request = DocumentSearchRequest(state, options: options)
             let query = request.query.trimmingCharacters(in: .whitespacesAndNewlines)
             guard state.isPresented, !query.isEmpty else {
                 clearSearchHighlights(in: textView)
                 lastSearchQuery = ""
+                lastSearchOptions = options
                 lastSearchedText = textView.string
                 currentMatchIndex = 0
                 lastNavigationSerial = request.navigationSerial
@@ -761,19 +914,20 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
 
             let text = textView.string
-            let queryChanged = query != lastSearchQuery
+            let queryChanged = query != lastSearchQuery || options != lastSearchOptions
             let textChanged = text != lastSearchedText
             let navigationChanged = request.navigationSerial != lastNavigationSerial
             let highlightTheme = SearchHighlightTheme(theme: theme)
 
             if queryChanged || textChanged {
-                searchMatches = matchRanges(for: query, in: text)
+                searchMatches = matchRanges(for: query, options: options, in: text)
             }
 
             let matches = searchMatches
             guard !matches.isEmpty else {
                 clearSearchHighlights(in: textView)
                 lastSearchQuery = query
+                lastSearchOptions = options
                 lastSearchedText = text
                 currentMatchIndex = 0
                 lastNavigationSerial = request.navigationSerial
@@ -816,32 +970,22 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
 
             lastSearchQuery = query
+            lastSearchOptions = options
             lastSearchedText = text
             lastNavigationSerial = request.navigationSerial
 
-            return DocumentSearchResult(currentIndex: currentMatchIndex + 1, totalCount: matches.count)
+            return DocumentSearchResult(
+                currentIndex: currentMatchIndex + 1,
+                totalCount: matches.count
+            )
         }
 
-        private func matchRanges(for query: String, in text: String) -> [NSRange] {
-            let nsText = text as NSString
-            var ranges: [NSRange] = []
-            var searchRange = NSRange(location: 0, length: nsText.length)
-
-            while searchRange.length > 0 {
-                let found = nsText.range(
-                    of: query,
-                    options: [.caseInsensitive, .diacriticInsensitive],
-                    range: searchRange
-                )
-                guard found.location != NSNotFound, found.length > 0 else { break }
-
-                ranges.append(found)
-                let nextLocation = found.location + found.length
-                guard nextLocation < nsText.length else { break }
-                searchRange = NSRange(location: nextLocation, length: nsText.length - nextLocation)
-            }
-
-            return ranges
+        private func matchRanges(
+            for query: String,
+            options: MonknotSearchOptions,
+            in text: String
+        ) -> [NSRange] {
+            MonknotTextSearch.matchingRanges(of: query, in: text, options: options)
         }
 
         private func firstMatchIndex(atOrAfter location: Int, in matches: [NSRange]) -> Int {
@@ -1298,7 +1442,18 @@ final class MarkdownNSTextView: NSTextView {
     var wikilinkDocuments: [WorkspaceDocument] = []
     var commandHandler: ((MarkdownTextEditorCommand) -> Bool)?
     var workspaceLinkHandler: ((MarkdownWorkspaceLink) -> Bool)?
+    var inspectLinksHandler: (() -> Void)?
     var imagePasteHandler: ((NSImage) -> Bool)?
+    var fileDropHandler: (([URL], Int) -> Bool)?
+
+    // AppKit's text dragging contract uses acceptableDragTypes and the NSDraggingDestination
+    // lifecycle. See https://developer.apple.com/documentation/appkit/nstextview/acceptabledragtypes
+    // and https://developer.apple.com/documentation/appkit/nsdraggingdestination.
+    override var acceptableDragTypes: [NSPasteboard.PasteboardType] {
+        let inherited = super.acceptableDragTypes
+        guard fileDropHandler != nil else { return inherited }
+        return inherited.contains(.fileURL) ? inherited : inherited + [.fileURL]
+    }
     var zoomScale = WorkspaceZoomPolicy.defaultValue {
         didSet {
             guard zoomScale != oldValue else { return }
@@ -1318,6 +1473,19 @@ final class MarkdownNSTextView: NSTextView {
             guard fontSmoothingEnabled != oldValue else { return }
             needsDisplay = true
         }
+    }
+
+    func applyTextChecking(_ options: EditorTextCheckingOptions) {
+        // NSTextView owns native spelling and grammar state. These are the only enabled
+        // text-checking behaviors; Monknot never rewrites Markdown automatically.
+        // https://developer.apple.com/documentation/appkit/nstextview/iscontinuousspellcheckingenabled
+        // https://developer.apple.com/documentation/appkit/nstextview/isgrammarcheckingenabled
+        isContinuousSpellCheckingEnabled = options.checksSpelling
+        isGrammarCheckingEnabled = options.checksGrammar
+        isAutomaticSpellingCorrectionEnabled = false
+        isAutomaticQuoteSubstitutionEnabled = false
+        isAutomaticDashSubstitutionEnabled = false
+        isAutomaticTextReplacementEnabled = false
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -1367,21 +1535,82 @@ final class MarkdownNSTextView: NSTextView {
         super.paste(sender)
     }
 
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        droppedFileURLs(from: sender).isEmpty == false && fileDropHandler != nil
+            ? .copy
+            : super.draggingEntered(sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        droppedFileURLs(from: sender).isEmpty == false && fileDropHandler != nil
+            ? .copy
+            : super.draggingUpdated(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        droppedFileURLs(from: sender).isEmpty == false && fileDropHandler != nil
+            ? true
+            : super.prepareForDragOperation(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = droppedFileURLs(from: sender)
+        guard !urls.isEmpty, let fileDropHandler else {
+            return super.performDragOperation(sender)
+        }
+        let point = convert(sender.draggingLocation, from: nil)
+        // NSTextView defines this API as the insertion position for a point in view coordinates.
+        // https://developer.apple.com/documentation/appkit/nstextview/characterindexforinsertion(at:)
+        let offset = characterIndexForInsertion(at: point)
+        return fileDropHandler(urls, offset)
+    }
+
+    private func droppedFileURLs(from sender: NSDraggingInfo) -> [URL] {
+        let objects = sender.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) ?? []
+        return objects.compactMap { ($0 as? NSURL).map { $0 as URL } }
+    }
+
     override func menu(for event: NSEvent) -> NSMenu? {
         guard let menu = super.menu(for: event) else { return nil }
-        guard selectedRange().length > 0,
-              menu.items.contains(where: { $0.action == #selector(copyRenderedMarkdown(_:)) }) == false
-        else { return menu }
+        var addedCustomItem = false
 
-        menu.addItem(.separator())
-        let item = NSMenuItem(
-            title: "Copy Rendered",
-            action: #selector(copyRenderedMarkdown(_:)),
-            keyEquivalent: ""
-        )
-        item.target = self
-        menu.addItem(item)
+        func addSeparatorIfNeeded() {
+            guard !addedCustomItem else { return }
+            menu.addItem(.separator())
+            addedCustomItem = true
+        }
+
+        if inspectLinksHandler != nil,
+           menu.items.contains(where: { $0.action == #selector(inspectLinks(_:)) }) == false {
+            addSeparatorIfNeeded()
+            let item = NSMenuItem(
+                title: "Inspect Links",
+                action: #selector(inspectLinks(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            menu.addItem(item)
+        }
+
+        if selectedRange().length > 0,
+           menu.items.contains(where: { $0.action == #selector(copyRenderedMarkdown(_:)) }) == false {
+            addSeparatorIfNeeded()
+            let item = NSMenuItem(
+                title: "Copy Rendered",
+                action: #selector(copyRenderedMarkdown(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            menu.addItem(item)
+        }
         return menu
+    }
+
+    @objc func inspectLinks(_ sender: Any?) {
+        inspectLinksHandler?()
     }
 
     @objc func copyRenderedMarkdown(_ sender: Any?) {
@@ -1453,6 +1682,12 @@ final class MarkdownNSTextView: NSTextView {
             return
         }
 
+        if markdownShortcutsEnabled,
+           let listCommand = markdownListCommand(for: event),
+           performMarkdownListEdit(listCommand) {
+            return
+        }
+
         guard markdownShortcutsEnabled,
               let command = markdownCommand(for: event),
               commandHandler?(command) == true
@@ -1460,6 +1695,30 @@ final class MarkdownNSTextView: NSTextView {
             super.keyDown(with: event)
             return
         }
+    }
+
+    @discardableResult
+    func performMarkdownListEdit(_ command: MarkdownListEditCommand) -> Bool {
+        guard isEditable,
+              let textStorage,
+              let plan = MarkdownListEditPlanner.plan(
+                command,
+                in: string,
+                selectedRange: selectedRange()
+              ),
+              shouldChangeText(in: plan.replacementRange, replacementString: plan.replacementText)
+        else { return false }
+
+        breakUndoCoalescing()
+        undoManager?.beginUndoGrouping()
+        textStorage.replaceCharacters(in: plan.replacementRange, with: plan.replacementText)
+        didChangeText()
+        setSelectedRange(plan.selectedRange)
+        scrollRangeToVisible(plan.selectedRange)
+        undoManager?.endUndoGrouping()
+        undoManager?.setActionName(listActionName(command))
+        breakUndoCoalescing()
+        return true
     }
 
     @discardableResult
@@ -1503,6 +1762,27 @@ final class MarkdownNSTextView: NSTextView {
     private func resetWikilinkSuggestionCycle() {
         wikilinkSuggestionIndex = 0
         lastWikilinkPartial = ""
+    }
+
+    private func markdownListCommand(for event: NSEvent) -> MarkdownListEditCommand? {
+        let modifiers = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock])
+        if (event.keyCode == 36 || event.keyCode == 76), modifiers.isEmpty {
+            return .newline
+        }
+        guard event.keyCode == 48 else { return nil }
+        if modifiers.isEmpty { return .indent }
+        if modifiers == [.shift] { return .outdent }
+        return nil
+    }
+
+    private func listActionName(_ command: MarkdownListEditCommand) -> String {
+        switch command {
+        case .newline: return "Continue List"
+        case .indent: return "Indent List"
+        case .outdent: return "Outdent List"
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {

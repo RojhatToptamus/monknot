@@ -35,6 +35,7 @@ struct MonknotEmptyState<Actions: View>: View {
     let theme: AppTheme
     let zoomScale: Double
     var iconSize: CGFloat = 28
+    var detailIsShortcut = false
     @ViewBuilder let actions: () -> Actions
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -56,11 +57,19 @@ struct MonknotEmptyState<Actions: View>: View {
                     .multilineTextAlignment(.center)
 
                 if let detail {
-                    Text(detail)
-                        .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
-                        .foregroundStyle(theme.mutedForegroundColor)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(3)
+                    if detailIsShortcut {
+                        MonknotShortcutLabel(
+                            shortcut: detail,
+                            theme: theme,
+                            zoomScale: zoomScale
+                        )
+                    } else {
+                        Text(detail)
+                            .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
+                            .foregroundStyle(theme.mutedForegroundColor)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(3)
+                    }
                 }
             }
             .accessibilityElement(children: .combine)

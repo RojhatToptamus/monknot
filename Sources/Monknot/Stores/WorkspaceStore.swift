@@ -159,6 +159,7 @@ final class WorkspaceStore: ObservableObject {
     func replaceInWorkspace(
         find: String,
         replacement: String,
+        options: MonknotSearchOptions = MonknotSearchOptions(),
         scope: WorkspaceReplaceScope = .entireWorkspace,
         searchResultDocumentIDs: Set<String> = []
     ) {
@@ -191,6 +192,7 @@ final class WorkspaceStore: ObservableObject {
                 let batch = try WorkspaceReplaceService().replaceAndWrite(
                     find: needle,
                     replacement: replacement,
+                    options: options,
                     documents: snapshot,
                     skipDocumentIDs: skipDocumentIDs,
                     limitToDocumentIDs: limitToDocumentIDs
@@ -341,6 +343,57 @@ final class WorkspaceStore: ObservableObject {
                 )
             } catch {
                 await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not create a Markdown file")
+            }
+        }
+    }
+
+    func createMarkdownFile(at proposedURL: URL) {
+        guard let workspaceURL else {
+            errorMessage = "Open a workspace before creating a Markdown file."
+            return
+        }
+        guard !isBusy else { return }
+
+        let fileURL: URL
+        do {
+            fileURL = try Self.validatedMissingWikilinkCreationURL(
+                proposedURL,
+                workspaceURL: workspaceURL
+            )
+        } catch {
+            errorMessage = "Could not create note: \(error.localizedDescription)"
+            return
+        }
+
+        let title = fileURL.deletingPathExtension().lastPathComponent
+        let initialText = "# \(title)\n\n"
+        noteInternalFileMutation()
+        let generation = beginWorkspaceOperation()
+
+        workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
+            do {
+                try Task.checkCancellation()
+                let revalidatedURL = try Self.validatedMissingWikilinkCreationURL(
+                    fileURL,
+                    workspaceURL: workspaceURL
+                )
+                try Task.checkCancellation()
+                try Data(initialText.utf8).write(to: revalidatedURL, options: .withoutOverwriting)
+                let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
+                guard !Task.isCancelled else { return }
+                await self?.finishCreatedFile(
+                    result: result,
+                    fileURL: revalidatedURL,
+                    workspaceURL: workspaceURL,
+                    initialText: initialText,
+                    generation: generation
+                )
+            } catch {
+                await self?.finishWorkspaceFailure(
+                    error,
+                    generation: generation,
+                    message: "Could not create note"
+                )
             }
         }
     }
@@ -765,6 +818,73 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    func createMarkdownFileDropAssets(
+        plan: MarkdownFileDropPlan,
+        documentID: String,
+        commitInsertion: @escaping @MainActor (MarkdownFileDropResult) -> Bool
+    ) {
+        guard let workspaceURL,
+              let document = document(id: documentID),
+              document.kind == .markdown,
+              plan.workspaceURL.standardizedFileURL.resolvingSymlinksInPath() ==
+                workspaceURL.standardizedFileURL.resolvingSymlinksInPath(),
+              plan.markdownDocumentURL.standardizedFileURL.resolvingSymlinksInPath() ==
+                document.url.standardizedFileURL.resolvingSymlinksInPath()
+        else {
+            errorMessage = "Open the original Markdown document before inserting dropped files."
+            return
+        }
+
+        markdownImageAssetTask?.cancel()
+        if plan.requiresImportConfirmation {
+            noteInternalFileMutation()
+        }
+        let workspacePath = workspaceURL.standardizedFileURL.path
+        markdownImageAssetTask = Task { @MainActor [weak self] in
+            do {
+                let worker = Task.detached(priority: .userInitiated) {
+                    try MarkdownImageAssetService.importFileDrop(plan)
+                }
+                let result = try await withTaskCancellationHandler {
+                    try await worker.value
+                } onCancel: {
+                    worker.cancel()
+                }
+                guard !Task.isCancelled,
+                      let self,
+                      self.workspaceURL?.standardizedFileURL.path == workspacePath,
+                      self.document(id: documentID) != nil
+                else {
+                    await Task.detached(priority: .utility) {
+                        MarkdownImageAssetService.removeUncommittedAssets(
+                            result.importedAssets,
+                            workspaceURL: workspaceURL
+                        )
+                    }.value
+                    return
+                }
+
+                guard commitInsertion(result) else {
+                    await Task.detached(priority: .utility) {
+                        MarkdownImageAssetService.removeUncommittedAssets(
+                            result.importedAssets,
+                            workspaceURL: workspaceURL
+                        )
+                    }.value
+                    return
+                }
+                if !result.importedAssets.isEmpty {
+                    self.noteInternalFileMutation()
+                    self.refresh()
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.errorMessage = "Could not insert the dropped files: \(error.localizedDescription)"
+            }
+        }
+    }
+
     func deleteDocument(_ document: WorkspaceDocument) {
         guard let workspaceURL, documents.contains(where: { $0.id == document.id }) else { return }
 
@@ -1023,6 +1143,7 @@ final class WorkspaceStore: ObservableObject {
         setDocumentTextIfChanged(text)
         setHasUnsavedChangesIfChanged(text != lastSavedText)
         updateSaveStateForSelectedDocument()
+        publishWorkspaceSearchContentChange()
 
         if shouldAdoptExternalDiskVersion, let selectedDocumentID {
             cancelExternalDocumentReview()
@@ -1076,6 +1197,10 @@ final class WorkspaceStore: ObservableObject {
 
     var dirtyPDFDataByDocumentID: [String: Data] {
         dirtyPDFDocumentData
+    }
+
+    var dirtyTextByDocumentID: [String: String] {
+        dirtyDocumentTexts
     }
 
     func markPDFDocumentEdited(
@@ -1370,6 +1495,25 @@ final class WorkspaceStore: ObservableObject {
             finishSaveFailure(error, file: file, generation: generation)
             return false
         }
+    }
+
+    /// Saves dirty documents sequentially in the caller's stable order.
+    /// Returns the first document that could not be saved; earlier saves stay
+    /// committed and later documents remain untouched.
+    func saveDocumentsInOrder(_ documentIDs: [String]) async -> String? {
+        for documentID in documentIDs where !saveState(for: documentID).isClean {
+            guard let file = document(id: documentID) else {
+                errorMessage = "Could not save \(URL(fileURLWithPath: documentID).lastPathComponent): the document is no longer available."
+                return documentID
+            }
+            guard await saveDocument(id: documentID) else {
+                if errorMessage == nil {
+                    errorMessage = "Could not save \(file.displayName). It remains unsaved."
+                }
+                return documentID
+            }
+        }
+        return nil
     }
 
     var isSelectedDocumentRemovedExternally: Bool {
@@ -3336,6 +3480,55 @@ final class WorkspaceStore: ObservableObject {
         return destinationURL
     }
 
+    nonisolated private static func validatedMissingWikilinkCreationURL(
+        _ proposedURL: URL,
+        workspaceURL: URL
+    ) throws -> URL {
+        let workspaceURL = workspaceURL.standardizedFileURL
+        let fileURL = proposedURL.standardizedFileURL
+        guard fileURL != workspaceURL, isURL(fileURL, containedIn: workspaceURL) else {
+            throw WorkspaceDocumentOperationError.invalidCreation("The note must be inside the workspace.")
+        }
+
+        let relativeComponents = Array(fileURL.pathComponents.dropFirst(workspaceURL.pathComponents.count))
+        guard !relativeComponents.isEmpty,
+              relativeComponents.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") })
+        else {
+            throw WorkspaceDocumentOperationError.invalidCreation("Hidden and invalid paths are not supported.")
+        }
+
+        let fileExtension = fileURL.pathExtension.lowercased()
+        guard WorkspaceDocumentSupport.markdownExtensions.contains(fileExtension) else {
+            throw WorkspaceDocumentOperationError.invalidCreation("The destination must be a Markdown file.")
+        }
+
+        let parentURL = fileURL.deletingLastPathComponent().standardizedFileURL
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: parentURL.path, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else {
+            throw WorkspaceDocumentOperationError.notDirectory(parentURL.lastPathComponent)
+        }
+
+        let relativeParentComponents = relativeComponents.dropLast()
+        let expectedCanonicalParent = relativeParentComponents.reduce(
+            workspaceURL.resolvingSymlinksInPath()
+        ) { partialURL, component in
+            partialURL.appendingPathComponent(component, isDirectory: true)
+        }.standardizedFileURL
+        guard parentURL.resolvingSymlinksInPath().standardizedFileURL == expectedCanonicalParent else {
+            throw WorkspaceDocumentOperationError.invalidCreation("The destination cannot pass through a symbolic link.")
+        }
+
+        let validatedChild = try childURL(in: parentURL, proposedName: fileURL.lastPathComponent)
+        guard validatedChild.standardizedFileURL == fileURL,
+              (try? FileManager.default.destinationOfSymbolicLink(atPath: fileURL.path)) == nil
+        else {
+            throw WorkspaceDocumentOperationError.destinationExists(fileURL.lastPathComponent)
+        }
+        return fileURL
+    }
+
     nonisolated private static func childName(baseName: String, pathExtension: String?) -> String {
         guard let pathExtension, !pathExtension.isEmpty else {
             return baseName
@@ -3665,6 +3858,7 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
     case unsupportedPDFAnnotationExport(String)
     case destinationExists(String)
     case invalidMove(String)
+    case invalidCreation(String)
     case notDirectory(String)
 
     var errorDescription: String? {
@@ -3684,6 +3878,8 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
         case .destinationExists(let name):
             return "An item named \(name) already exists."
         case .invalidMove(let message):
+            return message
+        case .invalidCreation(let message):
             return message
         case .notDirectory(let name):
             return "\(name) is not a folder."

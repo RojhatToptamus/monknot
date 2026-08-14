@@ -46,17 +46,28 @@ struct MonknotTerminalSmokeTests {
         )
         expect(
             TerminalWorkingDirectoryPolicy.directory(
+                preference: .activeDocumentFolder,
                 workspaceURL: root,
                 selectedDocumentURL: note
-            )?.standardizedFileURL == root.standardizedFileURL,
-            "app-level terminal policy should prefer the workspace root over the selected file's folder"
+            )?.standardizedFileURL == docs.standardizedFileURL,
+            "the default terminal policy should use the selected file's folder"
         )
         expect(
             TerminalWorkingDirectoryPolicy.directory(
-                workspaceURL: nil,
+                preference: .workspaceRoot,
+                workspaceURL: root,
                 selectedDocumentURL: note
-            )?.standardizedFileURL == docs.standardizedFileURL,
-            "app-level terminal policy should use the selected file parent only without a workspace root"
+            )?.standardizedFileURL == root.standardizedFileURL,
+            "the workspace-root terminal policy should use the workspace root"
+        )
+        let external = fileManager.temporaryDirectory.appendingPathComponent("External.md")
+        expect(
+            TerminalWorkingDirectoryPolicy.directory(
+                preference: .activeDocumentFolder,
+                workspaceURL: root,
+                selectedDocumentURL: external
+            )?.standardizedFileURL == root.standardizedFileURL,
+            "external documents should fall back to the workspace root"
         )
 
         let collection = TerminalSessionCollectionStore()
@@ -66,8 +77,7 @@ struct MonknotTerminalSmokeTests {
             "terminal collection should not create a home-directory session before an app directory is known"
         )
 
-        collection.setDefaultDirectory(note)
-        collection.ensureActiveTerminal(in: nil)
+        collection.ensureActiveTerminal(in: docs, workspaceRoot: root)
         guard let session = collection.activeSession else {
             fputs("FAIL: terminal collection should create a session once a default directory is known\n", stderr)
             exit(1)
@@ -75,6 +85,21 @@ struct MonknotTerminalSmokeTests {
         expect(
             session.workingDirectory.standardizedFileURL == docs.standardizedFileURL,
             "terminal collection should create sessions in the selected file's parent directory"
+        )
+
+        let otherRoot = root.appendingPathComponent("Other", isDirectory: true)
+        try? fileManager.createDirectory(at: otherRoot, withIntermediateDirectories: true)
+        guard let secondSession = collection.createTerminal(in: otherRoot, workspaceRoot: otherRoot) else {
+            fputs("FAIL: terminal collection should create a second session in a new workspace\n", stderr)
+            exit(1)
+        }
+        expect(
+            session.workingDirectory.standardizedFileURL == docs.standardizedFileURL,
+            "changing workspaces must not move an existing terminal"
+        )
+        expect(
+            secondSession.workingDirectory.standardizedFileURL == otherRoot.standardizedFileURL,
+            "a new terminal should use the new workspace directory"
         )
         collection.stopAll()
 

@@ -24,4 +24,26 @@ final class MonknotKeyboardShortcutCatalogTests: XCTestCase {
             $0.shortcut == "?" || $0.title == "Keyboard Shortcuts Help"
         })
     }
+
+    func testLinkInspectionShortcutIsListed() {
+        XCTAssertEqual(
+            MonknotKeyboardShortcutCatalog.entries.first { $0.title == "Inspect Links" }?.shortcut,
+            "⌥⌘L"
+        )
+    }
+
+    func testReopenClosedTabShortcutIsListed() {
+        XCTAssertEqual(
+            MonknotKeyboardShortcutCatalog.entries.first { $0.title == "Reopen Closed Tab" }?.shortcut,
+            "⇧⌘T"
+        )
+    }
+
+    func testWikilinkCompletionKeepsContextOutOfTheKeyCap() {
+        let entry = MonknotKeyboardShortcutCatalog.entries.first {
+            $0.title == "Complete Wikilink after [["
+        }
+
+        XCTAssertEqual(entry?.shortcut, "Tab")
+    }
 }

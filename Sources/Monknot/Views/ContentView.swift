@@ -16,6 +16,48 @@ final class TerminalFocusRestorer: ObservableObject {
         responder = Self.preferredResponder(in: window)
     }
 
+    /// Search surfaces call this as focus moves. A newly selected editor or
+    /// terminal replaces the saved target; search chrome never does.
+    func capturePrimaryInput(from window: NSWindow?) {
+        if let primaryResponder = Self.currentPrimaryInputResponder(in: window) {
+            guard self.window !== window || responder !== primaryResponder else { return }
+            generation &+= 1
+            self.window = window
+            responder = primaryResponder
+            return
+        }
+        guard !hasValidSavedTarget else { return }
+        generation &+= 1
+        self.window = window
+        responder = Self.fallbackDocumentFocusTarget(in: window)
+    }
+
+    static func firstResponder(
+        in window: NSWindow?,
+        isInside regionIdentifier: NSUserInterfaceItemIdentifier
+    ) -> Bool {
+        guard let view = focusOwningView(for: window?.firstResponder) else { return false }
+        var candidate: NSView? = view
+        while let current = candidate {
+            if current.identifier == regionIdentifier {
+                return true
+            }
+            candidate = current.superview
+        }
+        return false
+    }
+
+    static func hasVisibleContentResponder(in window: NSWindow?) -> Bool {
+        guard let window,
+              let root = window.contentView,
+              let view = focusOwningView(for: window.firstResponder),
+              view.window === window
+        else {
+            return false
+        }
+        return isVisible(view, within: root)
+    }
+
     func restore(fallbackFrom fallbackWindow: NSWindow? = nil) {
         if !hasValidSavedTarget {
             generation &+= 1
@@ -34,7 +76,12 @@ final class TerminalFocusRestorer: ObservableObject {
             defer { self.clear() }
             guard let window, let responder else { return }
             if let view = responder as? NSView {
-                guard view.window === window else { return }
+                guard view.window === window, let root = window.contentView else { return }
+                if !Self.isVisible(view, within: root) {
+                    guard let fallback = Self.fallbackDocumentFocusTarget(in: window) else { return }
+                    window.makeFirstResponder(fallback)
+                    return
+                }
             }
             window.makeFirstResponder(responder)
         }
@@ -48,7 +95,8 @@ final class TerminalFocusRestorer: ObservableObject {
     private var hasValidSavedTarget: Bool {
         guard let window, let responder else { return false }
         guard let view = responder as? NSView else { return true }
-        return view.window === window
+        guard view.window === window, let root = window.contentView else { return false }
+        return Self.isVisible(view, within: root)
     }
 
     private static func preferredResponder(in window: NSWindow?) -> NSResponder? {
@@ -57,6 +105,44 @@ final class TerminalFocusRestorer: ObservableObject {
             return view
         }
         return fallbackDocumentFocusTarget(in: window)
+    }
+
+    private static func currentPrimaryInputResponder(in window: NSWindow?) -> NSResponder? {
+        guard let responder = window?.firstResponder else { return nil }
+        var current: NSResponder? = responder
+        while let candidate = current {
+            if candidate is TerminalWKWebView {
+                return responder
+            }
+            if let view = candidate as? NSView {
+                var ancestor: NSView? = view
+                while let currentView = ancestor {
+                    if currentView.identifier == .monknotDocumentFocusTarget
+                        || currentView is TerminalWKWebView {
+                        return responder
+                    }
+                    ancestor = currentView.superview
+                }
+            }
+            current = candidate.nextResponder
+        }
+        return nil
+    }
+
+    private static func focusOwningView(for responder: NSResponder?) -> NSView? {
+        var candidate = responder
+        while let current = candidate {
+            if let fieldEditor = current as? NSTextView,
+               fieldEditor.isFieldEditor,
+               let owner = fieldEditor.delegate as? NSView {
+                return owner
+            }
+            if let view = current as? NSView {
+                return view
+            }
+            candidate = current.nextResponder
+        }
+        return nil
     }
 
     private static func fallbackDocumentFocusTarget(in window: NSWindow?) -> NSResponder? {
@@ -117,15 +203,21 @@ struct ContentView: View {
     @State private var isMarkdownSplitViewEnabled = false
     @AppStorage("Monknot.usePointerCursors") private var usePointerCursors = false
     @AppStorage("Monknot.fontSmoothing") private var fontSmoothing = true
+    @AppStorage(TerminalWorkingDirectoryPreference.key)
+    private var terminalWorkingDirectory = TerminalWorkingDirectoryPreference.defaultValue.rawValue
     @SceneStorage("Monknot.isTerminalDrawerOpen") private var terminalPreferredVisible = false
     @State private var isTerminalVisible = false
     @State private var terminalRevealRequest: UInt = 0
     @StateObject private var terminalFocusRestorer = TerminalFocusRestorer()
+    @StateObject private var goToLineFocusRestorer = TerminalFocusRestorer()
+    @StateObject private var searchFocusRestorer = TerminalFocusRestorer()
     @StateObject private var terminalSessions = TerminalSessionCollectionStore()
     @StateObject private var workspaceSearch = WorkspaceSearchState()
     @StateObject private var quickOpen = WorkspaceQuickOpenState()
     @StateObject private var symbolQuickOpen = MarkdownSymbolQuickOpenState()
     @StateObject private var outlineStore = MarkdownOutlineStore()
+    @StateObject private var linkInspection = MarkdownLinkInspectionState()
+    @State private var isGoToLinePresented = false
     @State private var pendingSourceLocation: MarkdownSourceLocation?
     @State private var pendingPreviewLocation: MarkdownSourceLocation?
     @State private var pendingPDFSearchTarget: WorkspaceSearchPDFTarget?
@@ -137,8 +229,11 @@ struct ContentView: View {
     @State private var markdownEditorSelection: MarkdownEditorSelectionSnapshot?
     @State private var deferredWorkspaceHeadingJump: DeferredWorkspaceHeadingJump?
     @State private var ambiguousMarkdownLinkRequest: AmbiguousMarkdownLinkRequest?
+    @State private var missingWikilinkCreationRequest: MissingWikilinkCreationRequest?
+    @State private var pendingMarkdownFileDropConfirmation: PendingMarkdownFileDropConfirmation?
     @State private var deferredWorkspaceSourceJump: DeferredWorkspaceSourceJump?
     @State private var tabState = WorkspaceTabState()
+    @State private var closedTabHistory = WorkspaceClosedTabHistory()
     @State private var documentNavigationHistory = DocumentNavigationHistory()
     @State private var restoredTabStateWorkspacePath: String?
     @State private var pendingTabStatePersistenceTask: Task<Void, Never>?
@@ -151,6 +246,7 @@ struct ContentView: View {
     @State private var canUndoPDFAnnotation = false
     @State private var canRedoPDFAnnotation = false
     @State private var documentSearch = DocumentSearchState()
+    @State private var searchOptions = MonknotSearchOptions()
     @State private var isSidebarVisible = true
     @SceneStorage("Monknot.sidebarPreferredVisible") private var sidebarPreferredVisible = true
     @State private var sidebarRevealRequest: UInt = 0
@@ -205,7 +301,12 @@ struct ContentView: View {
                     theme: activeTheme,
                     zoomScale: zoomScale
                 ),
-                usesDarkAppearance: activeTheme.isDark
+                trafficLightLeadingInset: MonknotMetrics.chromeHorizontalPadding(
+                    theme: activeTheme,
+                    zoomScale: zoomScale
+                ),
+                usesDarkAppearance: activeTheme.isDark,
+                enablesStandardWindowControls: true
             ))
             .background(WindowCloseGuard(
                 terminationCoordinator: terminationCoordinator,
@@ -220,7 +321,10 @@ struct ContentView: View {
     private var lifecycleContent: AnyView {
         AnyView(chromeContent
             .onChange(of: store.selectedDocument?.id) { oldDocumentID, newDocumentID in
-                terminalSessions.setDefaultDirectory(activeTerminalDirectory)
+                dismissGoToLine(restoreFocus: false)
+                linkInspection.dismiss()
+                missingWikilinkCreationRequest = nil
+                pendingMarkdownFileDropConfirmation = nil
                 if documentNavigationHistory.currentDocumentID != newDocumentID {
                     documentNavigationHistory.replaceCurrent(with: newDocumentID)
                 }
@@ -242,7 +346,7 @@ struct ContentView: View {
                 }
                 syncSelectedTabWithStore()
                 if !canShowDocumentSearch {
-                    documentSearch.dismiss()
+                    dismissDocumentSearch(restoreFocus: false)
                 } else if documentSearch.currentIndex != 0 || documentSearch.totalCount != 0 {
                     documentSearch.updateResult(.init())
                 }
@@ -260,6 +364,7 @@ struct ContentView: View {
             }
             .onChange(of: store.documentText) { _, _ in
                 updateOutline()
+                refreshLinkInspection()
                 fulfillDeferredWorkspaceSourceJump()
                 fulfillDeferredWorkspaceHeadingJump()
             }
@@ -271,27 +376,40 @@ struct ContentView: View {
                 fulfillDeferredWorkspaceHeadingJump()
             }
             .onChange(of: store.documents) { _, documents in
-                workspaceSearch.refresh(documents: documents)
+                workspaceSearch.refresh(
+                    options: searchOptions,
+                    documents: documents,
+                    dirtyTextByDocumentID: store.dirtyTextByDocumentID,
+                    dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
+                )
                 quickOpen.refresh(documents: documents)
                 reconcileTabsWithStore()
+                refreshLinkInspection()
             }
             .onChange(of: store.workspaceSearchContentChangeSerial) { _, _ in
-                workspaceSearch.refresh(documents: store.documents)
+                workspaceSearch.refresh(
+                    options: searchOptions,
+                    documents: store.documents,
+                    dirtyTextByDocumentID: store.dirtyTextByDocumentID,
+                    dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
+                )
             }
             .onChange(of: store.workspaceURL?.standardizedFileURL.path ?? "") { previousPath, _ in
                 cancelPDFExcerptCopy()
+                linkInspection.dismiss()
                 if !previousPath.isEmpty {
                     flushPendingViewportStatePersistence(
                         for: URL(fileURLWithPath: previousPath, isDirectory: true)
                     )
                 }
-                terminalSessions.setDefaultDirectory(activeTerminalDirectory)
                 tabState.reset()
+                closedTabHistory.reset()
                 documentNavigationHistory.reset()
                 restoredTabStateWorkspacePath = nil
                 restoredViewportStateWorkspacePath = nil
                 pendingViewportStatePersistenceTask?.cancel()
                 pendingViewportStatePersistenceTask = nil
+                pendingMarkdownFileDropConfirmation = nil
                 documentViewportStates.removeAll()
                 publishOpenTabIDs(persistTabs: false)
             }
@@ -326,6 +444,43 @@ struct ContentView: View {
             } message: {
                 Text(store.errorMessage ?? "")
             }
+            .alert(
+                "Create Note?",
+                isPresented: Binding(
+                    get: { missingWikilinkCreationRequest != nil },
+                    set: { if !$0 { missingWikilinkCreationRequest = nil } }
+                ),
+                presenting: missingWikilinkCreationRequest
+            ) { request in
+                Button("Create Note") {
+                    createMissingWikilink(request)
+                }
+                .keyboardShortcut(.defaultAction)
+                Button("Cancel", role: .cancel) {
+                    missingWikilinkCreationRequest = nil
+                }
+            } message: { request in
+                Text("Create “\(request.fileName)” at \(request.relativePath)?")
+            }
+            .confirmationDialog(
+                "Import Files?",
+                isPresented: Binding(
+                    get: { pendingMarkdownFileDropConfirmation != nil },
+                    set: { if !$0 { pendingMarkdownFileDropConfirmation = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: pendingMarkdownFileDropConfirmation
+            ) { pending in
+                Button("Import and Insert") {
+                    commitMarkdownFileDrop(pending)
+                }
+                .keyboardShortcut(.defaultAction)
+                Button("Cancel", role: .cancel) {
+                    pendingMarkdownFileDropConfirmation = nil
+                }
+            } message: { pending in
+                Text(pending.confirmationMessage)
+            }
             .sheet(item: $pendingPDFExportDocument) { document in
                 MarkdownPDFExportOptionsSheet(
                     document: document,
@@ -348,11 +503,6 @@ struct ContentView: View {
         rootContentStack
             .onAppear {
                 persistedZoomScale = WorkspaceZoomPolicy.clamp(persistedZoomScale)
-                // Preferred visibility survives pressure collapse, while the
-                // effective state comes from WorkspaceSplitView. Reappearing
-                // after Settings or another window transition must not make
-                // the chrome claim that a native-collapsed pane is visible.
-                terminalSessions.setDefaultDirectory(activeTerminalDirectory)
             }
     }
 
@@ -450,6 +600,16 @@ struct ContentView: View {
                 .transition(.opacity)
             }
 
+            if isGoToLinePresented {
+                GoToLineView(
+                    theme: activeTheme,
+                    zoomScale: zoomScale,
+                    close: { dismissGoToLine(restoreFocus: true) },
+                    go: goToLine(_:)
+                )
+                .transition(.opacity)
+            }
+
             if let ambiguousMarkdownLinkRequest {
                 AmbiguousMarkdownLinkPicker(
                     documents: ambiguousMarkdownLinkRequest.documentIDs.compactMap(store.document(id:)),
@@ -501,6 +661,9 @@ struct ContentView: View {
             toggleSidebar: { toggleSidebar(animated: true) },
             toggleSplitView: toggleMarkdownSplitView,
             documentSearch: $documentSearch,
+            searchOptions: $searchOptions,
+            dismissDocumentSearch: { dismissDocumentSearch(restoreFocus: true) },
+            documentSearchFocusChanged: searchFieldFocusChanged,
             tabs: tabState.tabs,
             activeTabID: tabState.selectedDocumentID,
             missingTabIDs: store.removedDirtyOpenDocumentIDs,
@@ -525,6 +688,7 @@ struct ContentView: View {
         SidebarView(
             store: store,
             workspaceSearch: workspaceSearch,
+            searchOptions: $searchOptions,
             theme: activeTheme,
             zoomScale: zoomScale,
             openFolder: openFolderPanel,
@@ -533,63 +697,84 @@ struct ContentView: View {
             exportPDF: exportMarkdownPDF(_:),
             openDocument: openDocumentTab(id:),
             openWorkspaceSearchResult: openWorkspaceSearchResult(_:),
+            showWorkspaceSearch: showWorkspaceSearch,
+            dismissWorkspaceSearch: { dismissWorkspaceSearch(restoreFocus: true) },
+            workspaceSearchFocusChanged: searchFieldFocusChanged,
             copyRelativePath: copyRelativePath(_:)
         )
         .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
     }
 
     private var detailContent: some View {
-        EditorPaneView(
-            store: store,
-            editorMode: Binding(
-                get: { editorMode },
-                set: { editorMode = $0 }
-            ),
-            isSplitViewEnabled: $isMarkdownSplitViewEnabled,
-            theme: activeTheme,
-            zoomScale: zoomScale,
-            codeFontSize: CGFloat(activeTheme.codeFontSize),
-            contentWidthPercent: contentWidthPercent,
-            showsDocumentOutline: showDocumentOutline,
-            usePointerCursors: usePointerCursors,
-            fontSmoothing: fontSmoothing,
-            activeViewportState: activeDocumentViewportState,
-            pdfViewportCaptureBridge: pdfViewportCaptureBridge,
-            updateViewportState: updateDocumentViewportState(documentID:change:),
-            pdfUndoCommandSerial: pdfUndoCommandSerial,
-            pdfRedoCommandSerial: pdfRedoCommandSerial,
-            updatePDFAnnotationUndoState: updatePDFAnnotationShortcutState(canUndo:canRedo:),
-            isTerminalPresented: isTerminalVisible,
-            sourceLocation: $pendingSourceLocation,
-            previewLocation: $pendingPreviewLocation,
-            pdfSearchTarget: $pendingPDFSearchTarget,
-            pdfPageNavigationRequest: pendingPDFPageNavigationRequest,
-            pdfNavigatorToggleCommandSerial: pdfNavigatorToggleCommandSerial,
-            documentSearch: $documentSearch,
-            newMarkdown: { store.createMarkdownFile() },
-            bootstrapStarterWorkspace: { store.bootstrapStarterWorkspace() },
-            openFolder: openFolderPanel,
-            closeTerminal: { setTerminalDrawerPresented(false, animated: true) },
-            saveDocument: saveSelectedDocument,
-            outlineItems: outlineStore.items,
-            selectOutlineItem: openOutlineItem(_:),
-            onPreviewSourceJump: openSourceFromPreview(location:),
-            copyPDFLinkedExcerpt: { selection in
-                updatePDFSelectionSnapshot(selection)
-                copyPDFLinkedExcerpt(selection)
-            },
-            updatePDFSelectionSnapshot: updatePDFSelectionSnapshot(_:),
-            consumePDFPageNavigationRequest: { request in
-                if pendingPDFPageNavigationRequest == request {
-                    pendingPDFPageNavigationRequest = nil
-                }
-            },
-            onMarkdownSelectionChange: handleMarkdownEditorSelection(_:),
-            onMarkdownLinkRequest: handleMarkdownEditorLink(_:),
-            onMarkdownImagePasteRequest: handleMarkdownImagePaste(_:),
-            onMarkdownPreviewLinkRequest: handleMarkdownPreviewLink(_:),
-            onMarkdownTaskRequest: handleMarkdownTaskRequest(_:)
-        )
+        HStack(spacing: 0) {
+            EditorPaneView(
+                store: store,
+                editorMode: Binding(
+                    get: { editorMode },
+                    set: { editorMode = $0 }
+                ),
+                isSplitViewEnabled: $isMarkdownSplitViewEnabled,
+                theme: activeTheme,
+                zoomScale: zoomScale,
+                codeFontSize: CGFloat(activeTheme.codeFontSize),
+                contentWidthPercent: contentWidthPercent,
+                showsDocumentOutline: showDocumentOutline,
+                usePointerCursors: usePointerCursors,
+                fontSmoothing: fontSmoothing,
+                activeViewportState: activeDocumentViewportState,
+                pdfViewportCaptureBridge: pdfViewportCaptureBridge,
+                updateViewportState: updateDocumentViewportState(documentID:change:),
+                pdfUndoCommandSerial: pdfUndoCommandSerial,
+                pdfRedoCommandSerial: pdfRedoCommandSerial,
+                updatePDFAnnotationUndoState: updatePDFAnnotationShortcutState(canUndo:canRedo:),
+                sourceLocation: $pendingSourceLocation,
+                previewLocation: $pendingPreviewLocation,
+                pdfSearchTarget: $pendingPDFSearchTarget,
+                pdfPageNavigationRequest: pendingPDFPageNavigationRequest,
+                pdfNavigatorToggleCommandSerial: pdfNavigatorToggleCommandSerial,
+                documentSearch: $documentSearch,
+                searchOptions: searchOptions,
+                newMarkdown: { store.createMarkdownFile() },
+                bootstrapStarterWorkspace: { store.bootstrapStarterWorkspace() },
+                openFolder: openFolderPanel,
+                saveDocument: saveSelectedDocument,
+                outlineItems: outlineStore.items,
+                selectOutlineItem: openOutlineItem(_:),
+                onPreviewSourceJump: openSourceFromPreview(location:),
+                copyPDFLinkedExcerpt: { selection in
+                    updatePDFSelectionSnapshot(selection)
+                    copyPDFLinkedExcerpt(selection)
+                },
+                updatePDFSelectionSnapshot: updatePDFSelectionSnapshot(_:),
+                consumePDFPageNavigationRequest: { request in
+                    if pendingPDFPageNavigationRequest == request {
+                        pendingPDFPageNavigationRequest = nil
+                    }
+                },
+                onMarkdownSelectionChange: handleMarkdownEditorSelection(_:),
+                onMarkdownLinkRequest: handleMarkdownEditorLink(_:),
+                onInspectLinks: canInspectLinks ? { toggleLinkInspection() } : nil,
+                onMarkdownImagePasteRequest: handleMarkdownImagePaste(_:),
+                onMarkdownFileDropRequest: handleMarkdownFileDrop(_:),
+                onMarkdownPreviewLinkRequest: handleMarkdownPreviewLink(_:),
+                onMarkdownTaskRequest: handleMarkdownTaskRequest(_:)
+            )
+            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
+
+            if linkInspection.isPresented, let document = store.selectedDocument, document.kind == .markdown {
+                MarkdownLinkInspectionPanel(
+                    state: linkInspection,
+                    document: document,
+                    documentsByID: Dictionary(uniqueKeysWithValues: store.documents.map { ($0.id, $0) }),
+                    theme: activeTheme,
+                    zoomScale: zoomScale,
+                    refresh: { refreshLinkInspection(debounce: false) },
+                    close: { linkInspection.dismiss() },
+                    openSource: openLinkInspectionSource(documentID:location:),
+                    openTarget: openLinkInspectionTarget(documentID:)
+                )
+            }
+        }
         .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
     }
 
@@ -599,6 +784,7 @@ struct ContentView: View {
             TerminalDrawerView(
                 sessions: terminalSessions,
                 workingDirectory: activeTerminalDirectory,
+                workspaceRoot: store.workspaceURL,
                 theme: activeTheme,
                 zoomScale: zoomScale,
                 usePointerCursors: usePointerCursors,
@@ -613,6 +799,8 @@ struct ContentView: View {
 
     private var activeTerminalDirectory: URL? {
         TerminalWorkingDirectoryPolicy.directory(
+            preference: TerminalWorkingDirectoryPreference(rawValue: terminalWorkingDirectory)
+                ?? .defaultValue,
             workspaceURL: store.workspaceURL,
             selectedDocumentURL: store.selectedDocument?.url
         )
@@ -870,6 +1058,7 @@ struct ContentView: View {
         guard store.selectDocument(id: documentID) else { return }
         recordDocumentNavigation(from: previousDocumentID, to: documentID)
         tabState.open(document)
+        closedTabHistory.discard(documentID: documentID)
         publishOpenTabIDs()
     }
 
@@ -901,8 +1090,12 @@ struct ContentView: View {
     }
 
     private func closeResolvedTab(id documentID: String) {
+        let closedTab = tabState.tab(for: documentID)
         let wasActive = tabState.selectedDocumentID == documentID
         let nextDocumentID = tabState.close(documentID: documentID)
+        if let closedTab {
+            closedTabHistory.record(closedTab)
+        }
         documentNavigationHistory.remove(documentID: documentID)
         documentViewportStates.removeValue(forKey: documentID)
         persistViewportStates()
@@ -911,6 +1104,33 @@ struct ContentView: View {
         if wasActive || store.selectedDocumentID == documentID {
             _ = store.selectDocument(id: nextDocumentID)
             documentNavigationHistory.replaceCurrent(with: nextDocumentID)
+        }
+    }
+
+    private var canReopenClosedTab: Bool {
+        !store.isBusy && closedTabHistory.hasAvailableTab(
+            documentIDs: Set(store.documents.map(\.id))
+        )
+    }
+
+    private func reopenClosedTab() {
+        guard !store.isBusy else { return }
+        let availableDocumentIDs = Set(store.documents.map(\.id))
+        guard let closedTab = closedTabHistory.takeMostRecent(
+            availableDocumentIDs: availableDocumentIDs
+        ) else {
+            return
+        }
+
+        openDocumentTab(id: closedTab.documentID)
+        guard tabState.contains(documentID: closedTab.documentID) else {
+            closedTabHistory.record(closedTab)
+            return
+        }
+        if closedTab.isPinned,
+           tabState.tab(for: closedTab.documentID)?.isPinned == false {
+            tabState.togglePin(documentID: closedTab.documentID)
+            persistTabState()
         }
     }
 
@@ -1013,6 +1233,11 @@ struct ContentView: View {
             tabState.remapDocumentID(
                 sourceID: mapping.sourceID,
                 destinationID: mapping.destinationID,
+                document: store.document(id: mapping.destinationID)
+            )
+            closedTabHistory.remapDocumentID(
+                from: mapping.sourceID,
+                to: mapping.destinationID,
                 document: store.document(id: mapping.destinationID)
             )
             if let viewportState = documentViewportStates.removeValue(forKey: mapping.sourceID) {
@@ -1162,6 +1387,27 @@ struct ContentView: View {
         store.saveSelectedFile()
     }
 
+    private func saveAllDocuments() {
+        guard canSaveAllDocuments else { return }
+        let documentIDs = tabState.tabs.map(\.documentID)
+        if let document = store.selectedDocument, document.kind == .pdf {
+            commitActiveFreeTextEdit(for: document.id)
+        }
+        store.errorMessage = nil
+        Task {
+            _ = await store.saveDocumentsInOrder(documentIDs)
+        }
+    }
+
+    private var canSaveAllDocuments: Bool {
+        guard !store.isBusy, !store.isSaving else { return false }
+        if let documentID = store.selectedDocumentID,
+           pdfViewportCaptureBridge.hasActiveFreeTextEditor(documentID: documentID) {
+            return true
+        }
+        return tabState.tabs.contains { !store.saveState(for: $0.documentID).isClean }
+    }
+
     private func saveDocument(id documentID: String) async -> Bool {
         if store.document(id: documentID)?.kind == .pdf {
             commitActiveFreeTextEdit(for: documentID)
@@ -1298,9 +1544,60 @@ struct ContentView: View {
                 preferredMode: preferredMode
             )
         case .missing:
-            store.errorMessage = "No workspace document matches this link."
+            guard let currentLink = currentWikilink(
+                matching: link,
+                sourceDocumentID: sourceDocumentID
+            ),
+                  let targetURL = MarkdownWorkspaceLinkResolver().missingWikilinkCreationURL(
+                      currentLink,
+                      sourceDocument: sourceDocument,
+                      workspaceRootURL: workspaceURL,
+                      documents: store.documents
+                  )
+            else {
+                store.errorMessage = "No workspace document matches this link."
+                return
+            }
+            missingWikilinkCreationRequest = MissingWikilinkCreationRequest(
+                sourceDocumentID: sourceDocumentID,
+                destination: currentLink.destination,
+                targetURL: targetURL,
+                relativePath: WorkspaceDocumentSupport.relativePath(for: targetURL, in: workspaceURL)
+            )
         case .invalid:
             store.errorMessage = "This link is not a safe workspace or web destination."
+        }
+    }
+
+    private func createMissingWikilink(_ request: MissingWikilinkCreationRequest) {
+        missingWikilinkCreationRequest = nil
+        guard let workspaceURL = store.workspaceURL,
+              store.selectedDocumentID == request.sourceDocumentID,
+              let sourceDocument = store.document(id: request.sourceDocumentID),
+              let link = MarkdownWorkspaceLinkParser().links(in: store.documentText).first(where: {
+                  $0.kind == .wikilink && $0.destination == request.destination
+              }),
+              let currentTarget = MarkdownWorkspaceLinkResolver().missingWikilinkCreationURL(
+                  link,
+                  sourceDocument: sourceDocument,
+                  workspaceRootURL: workspaceURL,
+                  documents: store.documents
+              ),
+              currentTarget.standardizedFileURL == request.targetURL.standardizedFileURL
+        else {
+            store.errorMessage = "The link target changed before the note could be created."
+            return
+        }
+        store.createMarkdownFile(at: currentTarget)
+    }
+
+    private func currentWikilink(
+        matching link: MarkdownWorkspaceLink,
+        sourceDocumentID: String
+    ) -> MarkdownWorkspaceLink? {
+        guard store.selectedDocumentID == sourceDocumentID else { return nil }
+        return MarkdownWorkspaceLinkParser().links(in: store.documentText).first {
+            $0.kind == .wikilink && $0.destination == link.destination
         }
     }
 
@@ -1404,6 +1701,44 @@ struct ContentView: View {
         }
     }
 
+    private func handleMarkdownFileDrop(_ request: MarkdownFileDropRequest) {
+        guard request.documentID == store.selectedDocumentID,
+              request.sourceText == store.documentText,
+              let workspaceURL = store.workspaceURL,
+              let document = store.document(id: request.documentID),
+              document.kind == .markdown
+        else {
+            store.errorMessage = "The files or insertion point are no longer available."
+            return
+        }
+
+        do {
+            let plan = try MarkdownImageAssetService.planFileDrop(
+                request.urls,
+                workspaceURL: workspaceURL,
+                markdownDocumentURL: document.url
+            )
+            let pending = PendingMarkdownFileDropConfirmation(request: request, plan: plan)
+            if plan.requiresImportConfirmation {
+                pendingMarkdownFileDropConfirmation = pending
+            } else {
+                commitMarkdownFileDrop(pending)
+            }
+        } catch {
+            store.errorMessage = "Could not insert the dropped files: \(error.localizedDescription)"
+        }
+    }
+
+    private func commitMarkdownFileDrop(_ pending: PendingMarkdownFileDropConfirmation) {
+        pendingMarkdownFileDropConfirmation = nil
+        store.createMarkdownFileDropAssets(
+            plan: pending.plan,
+            documentID: pending.request.documentID
+        ) { result in
+            pending.request.insertMarkdown(result.markdown)
+        }
+    }
+
     private var commandActions: MonknotCommandActions {
         MonknotCommandActions(
             newMarkdown: { store.createMarkdownFile() },
@@ -1437,6 +1772,8 @@ struct ContentView: View {
             },
             canExportAnnotatedPDFCopy: store.selectedDocument?.kind == .pdf,
             saveDocument: saveSelectedDocument,
+            saveAllDocuments: saveAllDocuments,
+            canSaveAllDocuments: canSaveAllDocuments,
             undoPDFAnnotation: { pdfUndoCommandSerial &+= 1 },
             canUndoPDFAnnotation: store.selectedDocument?.kind == .pdf && canUndoPDFAnnotation,
             redoPDFAnnotation: { pdfRedoCommandSerial &+= 1 },
@@ -1457,6 +1794,8 @@ struct ContentView: View {
             canNavigateForward: canNavigateForward,
             closeTab: { closeActiveTab() },
             canCloseTab: tabState.selectedDocumentID != nil && !store.isBusy,
+            reopenClosedTab: reopenClosedTab,
+            canReopenClosedTab: canReopenClosedTab,
             togglePinTab: { toggleActiveTabPin() },
             canTogglePinTab: tabState.selectedDocumentID != nil && !store.isBusy,
             zoomIn: { adjustZoom(by: WorkspaceZoomPolicy.step) },
@@ -1467,8 +1806,17 @@ struct ContentView: View {
             showWorkspaceSearch: { showWorkspaceSearch() },
             showQuickOpen: { showQuickOpen() },
             canShowQuickOpen: store.workspaceURL != nil && !store.isBusy,
-            findNext: { documentSearch.findNext() },
-            findPrevious: { documentSearch.findPrevious() },
+            showGoToLine: showGoToLine,
+            canShowGoToLine: canShowGoToLine,
+            toggleLinkInspection: toggleLinkInspection,
+            canInspectLinks: canInspectLinks,
+            findNext: { findInFocusedSearch(previous: false) },
+            findPrevious: { findInFocusedSearch(previous: true) },
+            isSearchCaseSensitive: searchOptions.isCaseSensitive,
+            setSearchCaseSensitive: { searchOptions.isCaseSensitive = $0 },
+            isSearchWholeWord: searchOptions.isWholeWord,
+            setSearchWholeWord: { searchOptions.isWholeWord = $0 },
+            canConfigureSearch: documentSearch.isPresented || workspaceSearch.isPresented,
             toggleTerminal: { toggleTerminalDrawer(animated: false) },
             toggleSidebar: { toggleSidebar(animated: false) },
             toggleSplitView: { toggleMarkdownSplitView() },
@@ -1486,6 +1834,7 @@ struct ContentView: View {
             canCopyPDFLinkedExcerpt: store.selectedDocument?.kind == .pdf
                 && pdfSelectionSnapshot?.documentID == store.selectedDocumentID,
             showKeyboardShortcutsHelp: {
+                dismissGoToLine(restoreFocus: false)
                 isKeyboardShortcutsHelpPresented = true
             },
             undoWorkspaceReplace: { store.undoLastWorkspaceReplace() },
@@ -1519,7 +1868,74 @@ struct ContentView: View {
         isMarkdownSplitViewEnabled.toggle()
     }
 
+    private var canInspectLinks: Bool {
+        store.workspaceURL != nil
+            && store.selectedDocument?.kind == .markdown
+            && !store.isBusy
+            && !store.isDocumentLoading
+    }
+
+    private var linkInspectionTextSnapshot: [String: String] {
+        var texts = store.dirtyTextByDocumentID
+        if let documentID = store.selectedDocumentID {
+            texts[documentID] = store.documentText
+        }
+        return texts
+    }
+
+    private func toggleLinkInspection() {
+        if linkInspection.isPresented {
+            linkInspection.dismiss()
+            return
+        }
+        guard canInspectLinks,
+              let document = store.selectedDocument,
+              let workspaceURL = store.workspaceURL
+        else { return }
+        linkInspection.present(
+            document: document,
+            workspaceRootURL: workspaceURL,
+            documents: store.documents,
+            textByDocumentID: linkInspectionTextSnapshot
+        )
+    }
+
+    private func refreshLinkInspection(debounce: Bool = true) {
+        guard linkInspection.isPresented,
+              let document = store.selectedDocument,
+              document.kind == .markdown,
+              let workspaceURL = store.workspaceURL
+        else { return }
+        linkInspection.refresh(
+            document: document,
+            workspaceRootURL: workspaceURL,
+            documents: store.documents,
+            textByDocumentID: linkInspectionTextSnapshot,
+            debounce: debounce
+        )
+    }
+
+    private func openLinkInspectionSource(
+        documentID: String,
+        location: MarkdownSourceLocation
+    ) {
+        linkInspection.dismiss()
+        editorMode = .source
+        deferredWorkspaceSourceJump = DeferredWorkspaceSourceJump(
+            documentID: documentID,
+            location: location
+        )
+        openDocumentTab(id: documentID)
+        fulfillDeferredWorkspaceSourceJump()
+    }
+
+    private func openLinkInspectionTarget(documentID: String) {
+        linkInspection.dismiss()
+        openDocumentTab(id: documentID)
+    }
+
     private func handleKeyDown(_ event: NSEvent) -> Bool {
+        captureSearchFocusRestorationTargets()
         guard let shortcutEvent = event.monknotKeyboardShortcutEvent,
               let action = MonknotKeyboardShortcutRouter.action(
                 for: shortcutEvent,
@@ -1636,6 +2052,7 @@ struct ContentView: View {
             hasSelectedDocument: selectedDocument != nil,
             selectedDocumentKind: selectedDocument?.kind,
             canCloseTab: tabState.selectedDocumentID != nil && !store.isBusy,
+            canReopenClosedTab: canReopenClosedTab,
             canTogglePinTab: tabState.selectedDocumentID != nil && !store.isBusy,
             canExportPDF: selectedDocument?.capabilities.canExportPDF == true,
             canUndoPDFAnnotation: selectedDocument?.kind == .pdf && canUndoPDFAnnotation,
@@ -1644,9 +2061,12 @@ struct ContentView: View {
             isQuickOpenPresented: quickOpen.isPresented,
             isKeyboardShortcutsHelpPresented: isKeyboardShortcutsHelpPresented,
             isWorkspaceSearchPresented: workspaceSearch.isPresented,
+            isWorkspaceSearchFocused: workspaceSearchOwnsFocus,
             isSymbolQuickOpenPresented: symbolQuickOpen.isPresented,
+            isLinkInspectionPresented: linkInspection.isPresented,
             hasMarkdownOutline: store.selectedDocument?.kind == .markdown && !outlineStore.items.isEmpty,
             canToggleSplitView: canToggleMarkdownSplitView,
+            canInspectLinks: canInspectLinks,
             canUndoWorkspaceReplace: store.canUndoWorkspaceReplace && !store.isBusy,
             isBusy: store.isBusy
         )
@@ -1670,24 +2090,20 @@ struct ContentView: View {
             store.refresh()
         case .closeTab:
             closeActiveTab()
+        case .reopenClosedTab:
+            reopenClosedTab()
         case .togglePinTab:
             toggleActiveTabPin()
         case .exportPDF:
             exportSelectedMarkdownPDF()
         case .showWorkspaceSearch:
             showWorkspaceSearch()
-        case .dismissWorkspaceSearch:
-            workspaceSearch.dismiss()
         case .showDocumentSearch:
             showDocumentSearch()
         case .findNext:
-            if canShowDocumentSearch {
-                documentSearch.findNext()
-            }
+            navigateDocumentSearch(previous: false)
         case .findPrevious:
-            if canShowDocumentSearch {
-                documentSearch.findPrevious()
-            }
+            navigateDocumentSearch(previous: true)
         case .zoomIn:
             adjustZoom(by: WorkspaceZoomPolicy.step)
         case .zoomOut:
@@ -1704,8 +2120,6 @@ struct ContentView: View {
             pdfUndoCommandSerial += 1
         case .redoPDFAnnotation:
             pdfRedoCommandSerial += 1
-        case .dismissDocumentSearch:
-            documentSearch.dismiss()
         case .showQuickOpen:
             showQuickOpen()
         case .dismissQuickOpen:
@@ -1718,14 +2132,12 @@ struct ContentView: View {
             workspaceSearch.selectNextResult()
         case .workspaceSearchPrevious:
             workspaceSearch.selectPreviousResult()
-        case .workspaceSearchConfirm:
-            if let result = workspaceSearch.selectedResult {
-                openWorkspaceSearchResult(result)
-            }
         case .dismissKeyboardShortcutsHelp:
             isKeyboardShortcutsHelpPresented = false
         case .toggleSplitView:
             toggleMarkdownSplitView()
+        case .toggleLinkInspection:
+            toggleLinkInspection()
         case .undoWorkspaceReplace:
             store.undoLastWorkspaceReplace()
         }
@@ -1748,22 +2160,82 @@ struct ContentView: View {
     private func showQuickOpen() {
         guard store.workspaceURL != nil, !store.isBusy else { return }
         isKeyboardShortcutsHelpPresented = false
+        dismissGoToLine(restoreFocus: false)
         symbolQuickOpen.dismiss()
-        workspaceSearch.dismiss()
+        dismissWorkspaceSearch(restoreFocus: false)
         quickOpen.present(documents: store.documents)
     }
 
     private func showGoToSymbol() {
         guard store.selectedDocument?.kind == .markdown, !outlineStore.items.isEmpty else { return }
         isKeyboardShortcutsHelpPresented = false
+        dismissGoToLine(restoreFocus: false)
         quickOpen.dismiss()
-        workspaceSearch.dismiss()
+        dismissWorkspaceSearch(restoreFocus: false)
         symbolQuickOpen.present(items: outlineStore.items)
+    }
+
+    private func showGoToLine() {
+        guard canShowGoToLine else { return }
+        isKeyboardShortcutsHelpPresented = false
+        quickOpen.dismiss()
+        symbolQuickOpen.dismiss()
+        dismissWorkspaceSearch(restoreFocus: false)
+        goToLineFocusRestorer.capture(from: NSApp.keyWindow)
+        isGoToLinePresented = true
+    }
+
+    private func dismissGoToLine(restoreFocus: Bool) {
+        guard isGoToLinePresented else { return }
+        isGoToLinePresented = false
+        if restoreFocus {
+            goToLineFocusRestorer.restore(fallbackFrom: NSApp.keyWindow)
+        } else {
+            goToLineFocusRestorer.discard()
+        }
+    }
+
+    private var canShowGoToLine: Bool {
+        store.selectedDocument?.capabilities.canEditText == true
+            && !store.isBusy
+            && !store.isDocumentLoading
+    }
+
+    private func goToLine(_ input: String) -> String? {
+        switch MarkdownSourceLocationInputParser.parse(input, in: store.documentText) {
+        case let .success(location):
+            isGoToLinePresented = false
+            goToLineFocusRestorer.discard()
+            editorMode = .source
+            pendingSourceLocation = location
+            return nil
+        case .failure(.invalidFormat):
+            return "Enter a line or line:column. Numbers start at 1."
+        case let .failure(.lineOutOfRange(maximum)):
+            return "Line must be between 1 and \(maximum)."
+        case let .failure(.columnOutOfRange(maximum)):
+            return "Column must be between 1 and \(maximum)."
+        }
     }
 
     private func showDocumentSearch() {
         guard canShowDocumentSearch else { return }
+        dismissGoToLine(restoreFocus: false)
+        searchFocusRestorer.capturePrimaryInput(from: responderWindow)
         documentSearch.present()
+    }
+
+    private func dismissDocumentSearch(restoreFocus: Bool) {
+        guard documentSearch.isPresented else { return }
+        if restoreFocus {
+            searchFocusRestorer.capturePrimaryInput(from: responderWindow)
+        }
+        documentSearch.dismiss()
+        if restoreFocus {
+            searchFocusRestorer.restore(fallbackFrom: responderWindow)
+        } else if !workspaceSearch.isPresented {
+            searchFocusRestorer.discard()
+        }
     }
 
     private var canShowDocumentSearch: Bool {
@@ -1775,8 +2247,84 @@ struct ContentView: View {
 
     private func showWorkspaceSearch() {
         guard store.workspaceURL != nil else { return }
+        dismissGoToLine(restoreFocus: false)
+        searchFocusRestorer.capturePrimaryInput(from: responderWindow)
         requestSidebarPresentation(true, animated: false)
-        workspaceSearch.present(documents: store.documents)
+        workspaceSearch.present(
+            options: searchOptions,
+            documents: store.documents,
+            dirtyTextByDocumentID: store.dirtyTextByDocumentID,
+            dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
+        )
+    }
+
+    private func dismissWorkspaceSearch(restoreFocus: Bool) {
+        guard workspaceSearch.isPresented else { return }
+        if restoreFocus {
+            searchFocusRestorer.capturePrimaryInput(from: responderWindow)
+        }
+        workspaceSearch.dismiss()
+        if restoreFocus {
+            searchFocusRestorer.restore(fallbackFrom: responderWindow)
+        } else if !documentSearch.isPresented {
+            searchFocusRestorer.discard()
+        }
+    }
+
+    private var responderWindow: NSWindow? {
+        NSApp.mainWindow ?? NSApp.keyWindow
+    }
+
+    private var workspaceSearchOwnsFocus: Bool {
+        workspaceSearch.isPresented
+            && TerminalFocusRestorer.firstResponder(
+                in: responderWindow,
+                isInside: .monknotSidebarFocusRegion
+            )
+    }
+
+    private var terminalPanelOwnsFocus: Bool {
+        TerminalFocusRestorer.firstResponder(
+            in: responderWindow,
+            isInside: .monknotTerminalFocusRegion
+        )
+    }
+
+    private func captureSearchFocusRestorationTargets() {
+        if workspaceSearch.isPresented || documentSearch.isPresented {
+            searchFocusRestorer.capturePrimaryInput(from: responderWindow)
+        }
+    }
+
+    private func searchFieldFocusChanged(_ isFocused: Bool) {
+        guard !isFocused else { return }
+        DispatchQueue.main.async {
+            captureSearchFocusRestorationTargets()
+        }
+    }
+
+    private func findInFocusedSearch(previous: Bool) {
+        if workspaceSearchOwnsFocus {
+            if previous {
+                workspaceSearch.selectPreviousResult()
+            } else {
+                workspaceSearch.selectNextResult()
+            }
+            return
+        }
+        navigateDocumentSearch(previous: previous)
+    }
+
+    private func navigateDocumentSearch(previous: Bool) {
+        guard canShowDocumentSearch else { return }
+        if !documentSearch.isPresented {
+            searchFocusRestorer.capturePrimaryInput(from: responderWindow)
+        }
+        if previous {
+            documentSearch.findPrevious()
+        } else {
+            documentSearch.findNext()
+        }
     }
 
     private func openWorkspaceSearchResult(_ result: WorkspaceSearchResult) {
@@ -1962,8 +2510,9 @@ struct ContentView: View {
         guard terminalPreferredVisible != isPresented || isTerminalVisible != isPresented else { return }
         let wasEffectivelyVisible = isTerminalVisible
         if isPresented {
-            terminalFocusRestorer.capture(from: NSApp.keyWindow)
+            terminalFocusRestorer.capture(from: responderWindow)
         }
+        let terminalOwnedFocus = terminalPanelOwnsFocus
         updateChromeState(animated: animated) {
             terminalPreferredVisible = isPresented
             if isPresented {
@@ -1973,8 +2522,8 @@ struct ContentView: View {
             }
         }
         if !isPresented {
-            if wasEffectivelyVisible {
-                terminalFocusRestorer.restore(fallbackFrom: NSApp.keyWindow)
+            if wasEffectivelyVisible, terminalOwnedFocus {
+                terminalFocusRestorer.restore(fallbackFrom: responderWindow)
             } else {
                 terminalFocusRestorer.discard()
             }
@@ -1997,10 +2546,12 @@ struct ContentView: View {
         }
 
         if userInitiated, isPresented {
-            terminalFocusRestorer.capture(from: NSApp.keyWindow)
+            terminalFocusRestorer.capture(from: responderWindow)
         }
 
         let shouldRestoreDocumentFocus = isTerminalVisible && !isPresented
+            && (terminalPanelOwnsFocus
+                || !TerminalFocusRestorer.hasVisibleContentResponder(in: responderWindow))
         updateChromeState(animated: false) {
             if userInitiated {
                 terminalPreferredVisible = isPresented
@@ -2008,7 +2559,9 @@ struct ContentView: View {
             isTerminalVisible = isPresented
         }
         if shouldRestoreDocumentFocus {
-            terminalFocusRestorer.restore(fallbackFrom: NSApp.keyWindow)
+            terminalFocusRestorer.restore(fallbackFrom: responderWindow)
+        } else if !isPresented {
+            terminalFocusRestorer.discard()
         }
     }
 
@@ -2232,6 +2785,30 @@ private struct AmbiguousMarkdownLinkRequest: Equatable {
     let preferredMode: EditorMode
 }
 
+private struct MissingWikilinkCreationRequest: Equatable {
+    let sourceDocumentID: String
+    let destination: String
+    let targetURL: URL
+    let relativePath: String
+
+    var fileName: String {
+        targetURL.lastPathComponent
+    }
+}
+
+private struct PendingMarkdownFileDropConfirmation {
+    let request: MarkdownFileDropRequest
+    let plan: MarkdownFileDropPlan
+
+    var confirmationMessage: String {
+        let names = plan.externalItemNames
+        let preview = names.prefix(3).joined(separator: ", ")
+        let remainder = names.count > 3 ? " and \(names.count - 3) more" : ""
+        let noun = names.count == 1 ? "file" : "files"
+        return "Copy \(names.count) \(noun) into this workspace and insert Markdown links?\n\(preview)\(remainder)"
+    }
+}
+
 private struct AmbiguousMarkdownLinkPicker: View {
     let documents: [WorkspaceDocument]
     let theme: AppTheme
@@ -2257,7 +2834,11 @@ private struct AmbiguousMarkdownLinkPicker: View {
                         .font(.system(size: scaled(13), weight: .medium))
                         .foregroundStyle(theme.foregroundColor)
                     Spacer()
-                    MonknotCommandOverlayEscapeButton(theme: theme, close: close)
+                    MonknotCommandOverlayEscapeButton(
+                        theme: theme,
+                        zoomScale: zoomScale,
+                        close: close
+                    )
                 }
                 .padding(.horizontal, scaled(14))
                 .frame(height: scaled(44))

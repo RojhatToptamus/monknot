@@ -8,6 +8,10 @@ struct EditorPaneView: View {
     @Binding var isSplitViewEnabled: Bool
     @AppStorage(VisualExternalChangeReviewPreference.key)
     private var visualExternalChangeReviewEnabled = VisualExternalChangeReviewPreference.defaultValue
+    @AppStorage(EditorTextCheckingOptions.spellingPreferenceKey)
+    private var checksSpelling = EditorTextCheckingOptions.defaultChecksSpelling
+    @AppStorage(EditorTextCheckingOptions.grammarPreferenceKey)
+    private var checksGrammar = EditorTextCheckingOptions.defaultChecksGrammar
     @State private var markdownCommandSerial = 0
     @State private var markdownCommandRequest: MarkdownTextEditorCommandRequest?
     @State private var splitScrollSyncLock = false
@@ -28,17 +32,16 @@ struct EditorPaneView: View {
     let pdfUndoCommandSerial: Int
     let pdfRedoCommandSerial: Int
     let updatePDFAnnotationUndoState: (Bool, Bool) -> Void
-    let isTerminalPresented: Bool
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var previewLocation: MarkdownSourceLocation?
     @Binding var pdfSearchTarget: WorkspaceSearchPDFTarget?
     let pdfPageNavigationRequest: PDFPageNavigationRequest?
     let pdfNavigatorToggleCommandSerial: Int
     @Binding var documentSearch: DocumentSearchState
+    let searchOptions: MonknotSearchOptions
     let newMarkdown: () -> Void
     let bootstrapStarterWorkspace: () -> Void
     let openFolder: () -> Void
-    let closeTerminal: () -> Void
     let saveDocument: () -> Void
     let outlineItems: [MarkdownOutlineItem]
     let selectOutlineItem: (MarkdownOutlineItem) -> Void
@@ -48,22 +51,23 @@ struct EditorPaneView: View {
     let consumePDFPageNavigationRequest: (PDFPageNavigationRequest) -> Void
     let onMarkdownSelectionChange: (MarkdownEditorSelectionSnapshot) -> Void
     let onMarkdownLinkRequest: (MarkdownEditorLinkRequest) -> Void
+    let onInspectLinks: (() -> Void)?
     let onMarkdownImagePasteRequest: (MarkdownImagePasteRequest) -> Void
+    let onMarkdownFileDropRequest: (MarkdownFileDropRequest) -> Void
     let onMarkdownPreviewLinkRequest: (MarkdownPreviewLinkRequest) -> Void
     let onMarkdownTaskRequest: (MarkdownPreviewTaskRequest) -> Void
+
+    private var textCheckingOptions: EditorTextCheckingOptions {
+        EditorTextCheckingOptions(
+            checksSpelling: checksSpelling,
+            checksGrammar: checksGrammar
+        )
+    }
 
     var body: some View {
         editorColumn
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(theme.surfaceColor)
-            .onExitCommand {
-                if documentSearch.isPresented {
-                    documentSearch.dismiss()
-                    return
-                }
-                guard isTerminalPresented else { return }
-                closeTerminal()
-            }
             .onAppear {
                 if let documentID = store.selectedDocument?.id,
                    supportsSplitViewRatioPersistence(forDocumentID: documentID) {
@@ -259,6 +263,7 @@ struct EditorPaneView: View {
                 externalUndoCommandSerial: pdfUndoCommandSerial,
                 externalRedoCommandSerial: pdfRedoCommandSerial,
                 searchState: $documentSearch,
+                searchOptions: searchOptions,
                 searchTarget: $pdfSearchTarget,
                 markEdited: { previousData, data, editCheckpoint in
                     store.markPDFDocumentEdited(
@@ -333,9 +338,11 @@ struct EditorPaneView: View {
             zoomScale: zoomScale,
             contentWidthPercent: contentWidthPercent,
             fontSmoothing: fontSmoothing,
+            textCheckingOptions: textCheckingOptions,
             scrollPosition: activeViewportState?.textScrollPosition,
             sourceLocation: $sourceLocation,
             searchState: $documentSearch,
+            searchOptions: searchOptions,
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
             },
@@ -360,6 +367,7 @@ struct EditorPaneView: View {
             syncScrollTargetLine: previewSyncLine,
             sourceLineCount: HTMLScrollSync.totalLines(in: store.documentText),
             searchState: $documentSearch,
+            searchOptions: searchOptions,
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .htmlPreviewScrollPosition(position))
             },
@@ -381,9 +389,11 @@ struct EditorPaneView: View {
             zoomScale: zoomScale,
             contentWidthPercent: contentWidthPercent,
             fontSmoothing: fontSmoothing,
+            textCheckingOptions: textCheckingOptions,
             scrollPosition: activeViewportState?.textScrollPosition,
             sourceLocation: $sourceLocation,
             searchState: $documentSearch,
+            searchOptions: searchOptions,
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
             }
@@ -441,17 +451,21 @@ struct EditorPaneView: View {
             zoomScale: zoomScale,
             contentWidthPercent: contentWidthPercent,
             fontSmoothing: fontSmoothing,
+            textCheckingOptions: textCheckingOptions,
             scrollPosition: activeViewportState?.textScrollPosition,
             textSelection: activeViewportState?.textSelection,
             syncScrollEnabled: isSplitViewEnabled,
             syncScrollTargetLine: sourceSyncLine,
             sourceLocation: $sourceLocation,
             searchState: $documentSearch,
+            searchOptions: searchOptions,
             commandRequest: markdownCommandRequest,
             wikilinkDocuments: store.markdownDocuments,
             onSelectionChange: onMarkdownSelectionChange,
             onOpenLink: onMarkdownLinkRequest,
+            onInspectLinks: onInspectLinks,
             onImagePasteRequest: onMarkdownImagePasteRequest,
+            onFileDropRequest: onMarkdownFileDropRequest,
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
             },
@@ -478,6 +492,7 @@ struct EditorPaneView: View {
             syncScrollTargetLine: previewSyncLine,
             sourceLocation: $previewLocation,
             searchState: $documentSearch,
+            searchOptions: searchOptions,
             onSourceJump: onPreviewSourceJump,
             onLinkRequest: onMarkdownPreviewLinkRequest,
             onTaskRequest: onMarkdownTaskRequest,

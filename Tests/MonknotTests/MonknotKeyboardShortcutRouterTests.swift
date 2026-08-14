@@ -72,6 +72,32 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         )
     }
 
+    func testLinkInspectionShortcutRespectsEligibilityWithoutClaimingEscape() {
+        XCTAssertEqual(
+            action(
+                for: "l",
+                modifiers: [.command, .option],
+                context: shortcutContext(selectedDocumentKind: .markdown, canInspectLinks: true)
+            ),
+            .toggleLinkInspection
+        )
+        XCTAssertNil(
+            action(
+                for: "l",
+                modifiers: [.command, .option],
+                context: shortcutContext(selectedDocumentKind: .pdf, canInspectLinks: false)
+            )
+        )
+        XCTAssertNil(
+            action(
+                for: "",
+                modifiers: [],
+                keyCode: MonknotKeyboardShortcutRouter.escapeKeyCode,
+                context: shortcutContext(isLinkInspectionPresented: true)
+            )
+        )
+    }
+
     func testPDFUndoRedoShortcutsDoNotStealTextUndo() {
         XCTAssertEqual(
             action(
@@ -136,6 +162,14 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         )
 
         XCTAssertEqual(
+            action(for: "t", modifiers: [.command, .shift], context: shortcutContext(canReopenClosedTab: true)),
+            .reopenClosedTab
+        )
+        XCTAssertNil(
+            action(for: "t", modifiers: [.command, .shift], context: shortcutContext(canReopenClosedTab: false))
+        )
+
+        XCTAssertEqual(
             action(for: "p", modifiers: [.command, .shift], context: shortcutContext(canTogglePinTab: true)),
             .togglePinTab
         )
@@ -157,7 +191,7 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         )
     }
 
-    func testFindSearchAndEscapeShortcutsRespectContext() {
+    func testFindSearchShortcutsRespectContext() {
         XCTAssertEqual(
             action(for: "f", modifiers: [.command], context: shortcutContext(selectedDocumentKind: .markdown)),
             .showDocumentSearch
@@ -189,21 +223,12 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
             action(for: "g", modifiers: [.command, .shift], context: shortcutContext(selectedDocumentKind: .markdown)),
             .findPrevious
         )
-        XCTAssertEqual(
-            action(
-                for: "",
-                modifiers: [],
-                keyCode: MonknotKeyboardShortcutRouter.escapeKeyCode,
-                context: shortcutContext(isDocumentSearchPresented: true)
-            ),
-            .dismissDocumentSearch
-        )
         XCTAssertNil(
             action(
                 for: "",
                 modifiers: [],
                 keyCode: MonknotKeyboardShortcutRouter.escapeKeyCode,
-                context: shortcutContext(isDocumentSearchPresented: false)
+                context: shortcutContext(isDocumentSearchPresented: true)
             )
         )
     }
@@ -273,19 +298,74 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
             action(
                 for: "g",
                 modifiers: [.command],
-                context: shortcutContext(selectedDocumentKind: .markdown, isWorkspaceSearchPresented: true)
+                context: shortcutContext(
+                    selectedDocumentKind: .markdown,
+                    isWorkspaceSearchPresented: true,
+                    isWorkspaceSearchFocused: true
+                )
             ),
             .workspaceSearchNext
         )
-        XCTAssertEqual(
+        XCTAssertNil(
             action(
                 for: "",
                 modifiers: [],
                 keyCode: MonknotKeyboardShortcutRouter.escapeKeyCode,
                 context: shortcutContext(isWorkspaceSearchPresented: true)
-            ),
-            .dismissWorkspaceSearch
+            )
         )
+    }
+
+    func testOpenWorkspaceSearchDoesNotClaimOrdinaryResponderKeys() {
+        let context = shortcutContext(
+            selectedDocumentKind: .markdown,
+            isWorkspaceSearchPresented: true
+        )
+        let ordinaryEvents: [(key: String, keyCode: UInt16?)] = [
+            ("\r", 36),
+            ("\t", 48),
+            ("\u{7f}", 51),
+            ("\u{F702}", 123),
+            ("x", 7),
+            ("", MonknotKeyboardShortcutRouter.escapeKeyCode),
+        ]
+
+        for event in ordinaryEvents {
+            XCTAssertNil(
+                action(
+                    for: event.key,
+                    modifiers: [],
+                    keyCode: event.keyCode,
+                    context: context
+                ),
+                "An open workspace search must not intercept ordinary key \(event.keyCode.map(String.init) ?? event.key.debugDescription)"
+            )
+        }
+    }
+
+    func testWorkspaceSearchNavigationFollowsTheFocusedOwner() {
+        let workspaceSearchContext = shortcutContext(
+            selectedDocumentKind: .markdown,
+            isWorkspaceSearchPresented: true,
+            isWorkspaceSearchFocused: true
+        )
+        XCTAssertEqual(
+            action(for: "g", modifiers: [.command], context: workspaceSearchContext),
+            .workspaceSearchNext
+        )
+        XCTAssertEqual(
+            action(for: "g", modifiers: [.command, .shift], context: workspaceSearchContext),
+            .workspaceSearchPrevious
+        )
+
+        let editorContext = shortcutContext(
+            selectedDocumentKind: .markdown,
+            isDocumentSearchPresented: true,
+            isWorkspaceSearchPresented: true,
+            isWorkspaceSearchFocused: false
+        )
+        XCTAssertEqual(action(for: "g", modifiers: [.command], context: editorContext), .findNext)
+        XCTAssertEqual(action(for: "g", modifiers: [.command, .shift], context: editorContext), .findPrevious)
     }
 
     func testStandardTextEditingShortcutsAreNotConsumedByRouter() {
@@ -310,6 +390,7 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         hasWorkspace: Bool = true,
         selectedDocumentKind: WorkspaceDocumentKind? = nil,
         canCloseTab: Bool = false,
+        canReopenClosedTab: Bool = false,
         canTogglePinTab: Bool = false,
         canExportPDF: Bool = false,
         canUndoPDFAnnotation: Bool = false,
@@ -318,9 +399,12 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         isQuickOpenPresented: Bool = false,
         isKeyboardShortcutsHelpPresented: Bool = false,
         isWorkspaceSearchPresented: Bool = false,
+        isWorkspaceSearchFocused: Bool = false,
         isSymbolQuickOpenPresented: Bool = false,
+        isLinkInspectionPresented: Bool = false,
         hasMarkdownOutline: Bool = false,
         canToggleSplitView: Bool = false,
+        canInspectLinks: Bool = false,
         canUndoWorkspaceReplace: Bool = false,
         isBusy: Bool = false
     ) -> MonknotKeyboardShortcutContext {
@@ -329,6 +413,7 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
             hasSelectedDocument: selectedDocumentKind != nil,
             selectedDocumentKind: selectedDocumentKind,
             canCloseTab: canCloseTab,
+            canReopenClosedTab: canReopenClosedTab,
             canTogglePinTab: canTogglePinTab,
             canExportPDF: canExportPDF,
             canUndoPDFAnnotation: canUndoPDFAnnotation,
@@ -337,9 +422,12 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
             isQuickOpenPresented: isQuickOpenPresented,
             isKeyboardShortcutsHelpPresented: isKeyboardShortcutsHelpPresented,
             isWorkspaceSearchPresented: isWorkspaceSearchPresented,
+            isWorkspaceSearchFocused: isWorkspaceSearchFocused,
             isSymbolQuickOpenPresented: isSymbolQuickOpenPresented,
+            isLinkInspectionPresented: isLinkInspectionPresented,
             hasMarkdownOutline: hasMarkdownOutline,
             canToggleSplitView: canToggleSplitView,
+            canInspectLinks: canInspectLinks,
             canUndoWorkspaceReplace: canUndoWorkspaceReplace,
             isBusy: isBusy
         )

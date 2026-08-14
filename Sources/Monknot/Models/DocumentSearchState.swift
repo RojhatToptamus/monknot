@@ -1,4 +1,5 @@
 import Foundation
+import MonknotCore
 
 enum DocumentSearchDirection: String, Equatable {
     case next
@@ -85,11 +86,16 @@ struct DocumentSearchRequest: Equatable {
     let query: String
     let navigationSerial: Int
     let navigationDirection: DocumentSearchDirection
+    let options: MonknotSearchOptions
 
-    init(_ state: DocumentSearchState) {
+    init(
+        _ state: DocumentSearchState,
+        options: MonknotSearchOptions = MonknotSearchOptions()
+    ) {
         isPresented = state.isPresented
         query = state.effectiveQuery
         navigationSerial = state.navigationSerial
         navigationDirection = state.navigationDirection
+        self.options = options
     }
 }

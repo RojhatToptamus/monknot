@@ -16,6 +16,14 @@ extension View {
 
 /// Shared chrome/toolbar icon button used across sidebar, top bar, PDF, and find UI.
 struct MonknotIconButton: View {
+    static let focusRingLineWidth: CGFloat = 3
+    static let focusRingOutset: CGFloat = 2
+    static let focusRingOpacity = 0.35
+
+    static func showsFocusRing(isFocused: Bool, isDisabled: Bool) -> Bool {
+        isFocused && !isDisabled
+    }
+
     let systemImage: String
     let label: String
     let theme: AppTheme
@@ -24,10 +32,17 @@ struct MonknotIconButton: View {
     var isDisabled: Bool = false
     var size: IconButtonSize = .chrome
     var drawsBorder = false
+    var drawsActiveBackground = true
+    var focusRingPlacement: FocusRingPlacement = .outside
     let action: () -> Void
 
     @State private var isHovered = false
     @FocusState private var isFocused: Bool
+
+    enum FocusRingPlacement {
+        case outside
+        case contained
+    }
 
     enum IconButtonSize {
         case chrome
@@ -74,8 +89,10 @@ struct MonknotIconButton: View {
                 return MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale)
             case .sidebarHeader:
                 return MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale)
-            case .compact, .findBar:
+            case .compact:
                 return MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale)
+            case .findBar:
+                return MonknotMetrics.interfaceGlyph(17, theme: theme, zoomScale: zoomScale)
             case .editorToolbar:
                 return MonknotMetrics.interfaceGlyph(18, theme: theme, zoomScale: zoomScale)
             case .segmented:
@@ -113,9 +130,21 @@ struct MonknotIconButton: View {
             isDark ? 0.18 : 0.14
         }
 
-        func backgroundOpacity(isHovered: Bool, isDisabled: Bool, isDark: Bool) -> Double? {
-            guard isHovered, !isDisabled else { return nil }
-            return hoverBackgroundOpacity(isDark: isDark)
+        func backgroundOpacity(
+            isActive: Bool = false,
+            drawsActiveBackground: Bool = true,
+            isHovered: Bool,
+            isDisabled: Bool,
+            isDark: Bool
+        ) -> Double? {
+            guard !isDisabled else { return nil }
+            if isActive, drawsActiveBackground {
+                return activeBackgroundOpacity(isDark: isDark)
+            }
+            if isHovered {
+                return hoverBackgroundOpacity(isDark: isDark)
+            }
+            return nil
         }
 
         var disabledControlOpacity: Double {
@@ -143,16 +172,20 @@ struct MonknotIconButton: View {
                     height: size.height(theme: theme, zoomScale: zoomScale)
                 )
                 .background {
-                    if isActive, !isDisabled {
-                        RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
-                            .fill(theme.foregroundColor.opacity(size.activeBackgroundOpacity(isDark: theme.isDark)))
-                    } else if let opacity = size.backgroundOpacity(
-                        isHovered: isHovered || isFocused,
+                    if let opacity = size.backgroundOpacity(
+                        isActive: isActive,
+                        drawsActiveBackground: drawsActiveBackground,
+                        isHovered: isHovered,
                         isDisabled: isDisabled,
                         isDark: theme.isDark
                     ) {
                         RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
                             .fill(theme.foregroundColor.opacity(opacity))
+                    }
+                }
+                .overlay {
+                    if Self.showsFocusRing(isFocused: isFocused, isDisabled: isDisabled) {
+                        focusRing
                     }
                 }
                 .contentShape(RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale)))
@@ -198,6 +231,27 @@ struct MonknotIconButton: View {
             return theme.foregroundColor.opacity(0.92)
         }
         return theme.mutedForegroundColor
+    }
+
+    @ViewBuilder
+    private var focusRing: some View {
+        switch focusRingPlacement {
+        case .outside:
+            RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
+                .stroke(
+                    theme.accentColor.opacity(Self.focusRingOpacity),
+                    lineWidth: Self.focusRingLineWidth
+                )
+                .padding(-Self.focusRingOutset)
+                .allowsHitTesting(false)
+        case .contained:
+            RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
+                .strokeBorder(
+                    theme.accentColor.opacity(Self.focusRingOpacity),
+                    lineWidth: Self.focusRingLineWidth
+                )
+                .allowsHitTesting(false)
+        }
     }
 }
 

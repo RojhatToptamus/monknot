@@ -14,6 +14,39 @@ final class WorkspaceSplitViewTests: XCTestCase {
         XCTAssertTrue(controller.terminalHostingController.sizingOptions.isEmpty)
     }
 
+    func testNativePaneHostsExposeStableResponderRegions() {
+        let controller = makeController()
+
+        XCTAssertEqual(
+            controller.sidebarHostingController.view.identifier,
+            .monknotSidebarFocusRegion
+        )
+        XCTAssertEqual(
+            controller.terminalHostingController.view.identifier,
+            .monknotTerminalFocusRegion
+        )
+    }
+
+    func testCollapsedTerminalPaneHasNoVisibleContentResponder() {
+        let controller = makeController(terminalPresented: true)
+        let window = mount(controller, width: 1_400)
+        defer {
+            window.orderOut(nil)
+            window.contentViewController = nil
+        }
+        let terminalResponder = NSTextView(
+            frame: NSRect(x: 0, y: 0, width: 120, height: 28)
+        )
+        controller.terminalHostingController.view.addSubview(terminalResponder)
+        XCTAssertTrue(window.makeFirstResponder(terminalResponder))
+        XCTAssertTrue(TerminalFocusRestorer.hasVisibleContentResponder(in: window))
+
+        controller.terminalItem.isCollapsed = true
+        layout(window, controller)
+
+        XCTAssertFalse(TerminalFocusRestorer.hasVisibleContentResponder(in: window))
+    }
+
     func testNativeSplitDelegateExposesOnlyOuterPanesAsCollapsible() {
         let controller = makeController()
         _ = controller.view

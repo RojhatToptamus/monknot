@@ -5,6 +5,7 @@ import SwiftUI
 struct SidebarView: View {
     @ObservedObject var store: WorkspaceStore
     @ObservedObject var workspaceSearch: WorkspaceSearchState
+    @Binding var searchOptions: MonknotSearchOptions
     let theme: AppTheme
     let zoomScale: Double
     let openFolder: () -> Void
@@ -13,6 +14,9 @@ struct SidebarView: View {
     let exportPDF: (WorkspaceDocument) -> Void
     let openDocument: (String) -> Void
     let openWorkspaceSearchResult: (WorkspaceSearchResult) -> Void
+    let showWorkspaceSearch: () -> Void
+    let dismissWorkspaceSearch: () -> Void
+    let workspaceSearchFocusChanged: (Bool) -> Void
     let copyRelativePath: (URL) -> Void
     @State private var isDropTargeted = false
     @State private var expandedFolderIDs: Set<String> = []
@@ -68,9 +72,7 @@ struct SidebarView: View {
                         theme: theme,
                         zoomScale: zoomScale,
                         createMarkdown: newMarkdown,
-                        showWorkspaceSearch: {
-                            workspaceSearch.present(documents: store.documents)
-                        }
+                        showWorkspaceSearch: showWorkspaceSearch
                     )
                 }
 
@@ -165,15 +167,20 @@ struct SidebarView: View {
             WorkspaceSearchView(
                 state: workspaceSearch,
                 documents: store.documents,
+                dirtyTextByDocumentID: store.dirtyTextByDocumentID,
+                dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID,
+                searchOptions: $searchOptions,
                 theme: theme,
                 zoomScale: zoomScale,
-                close: { workspaceSearch.dismiss() },
+                close: dismissWorkspaceSearch,
+                workspaceSearchFocusChanged: workspaceSearchFocusChanged,
                 openResult: openWorkspaceSearchResult,
                 replaceAll: {
                     workspaceSearch.clearReplaceStatus()
                     store.replaceInWorkspace(
                         find: workspaceSearch.query,
                         replacement: workspaceSearch.replaceText,
+                        options: searchOptions,
                         scope: workspaceSearch.replaceScope,
                         searchResultDocumentIDs: workspaceSearch.replaceScopeDocumentIDs
                     )
@@ -188,7 +195,7 @@ struct SidebarView: View {
             .onChange(of: store.workspaceReplaceSummary) { _, summary in
                 workspaceSearch.setReplaceStatusMessage(summary)
                 if summary != nil {
-                    workspaceSearch.refresh(documents: store.documents)
+                    refreshWorkspaceSearch()
                 }
             }
         } else {
@@ -284,6 +291,15 @@ struct SidebarView: View {
         }
     }
 
+    private func refreshWorkspaceSearch() {
+        workspaceSearch.refresh(
+            options: searchOptions,
+            documents: store.documents,
+            dirtyTextByDocumentID: store.dirtyTextByDocumentID,
+            dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
+        )
+    }
+
     private func refreshVisibleNodes() {
         visibleNodes = SidebarTreePresentation.visibleNodes(
             from: store.rootNode?.children ?? [],
@@ -353,6 +369,7 @@ struct SidebarView: View {
         return try? WorkspaceReplaceService().preview(
             find: needle,
             replacement: workspaceSearch.replaceText,
+            options: searchOptions,
             documents: store.documents,
             skipDocumentIDs: skipDocumentIDs,
             limitToDocumentIDs: limitToDocumentIDs
@@ -1353,9 +1370,11 @@ private struct SidebarSettingsButton: View {
 
                 Spacer()
 
-                Text("⌘,")
-                    .font(.system(size: textScaled(11), weight: .regular, design: .monospaced))
-                    .foregroundStyle(theme.tertiaryForegroundColor)
+                MonknotShortcutLabel(
+                    shortcut: "⌘,",
+                    theme: theme,
+                    zoomScale: zoomScale
+                )
             }
             .padding(.horizontal, scaled(10))
             .padding(.vertical, scaled(8))

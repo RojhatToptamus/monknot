@@ -4,6 +4,8 @@ import SwiftUI
 
 /// Workspace search uses the same zoom factor as the rest of the workspace.
 enum WorkspaceSearchLayoutPolicy {
+    static let fieldBorderWidth: CGFloat = 1
+
     static func densityZoomScale(_ zoomScale: Double) -> Double {
         WorkspaceZoomPolicy.clamp(zoomScale)
     }
@@ -20,9 +22,13 @@ enum WorkspaceSearchLayoutPolicy {
 struct WorkspaceSearchView: View {
     @ObservedObject var state: WorkspaceSearchState
     let documents: [WorkspaceDocument]
+    let dirtyTextByDocumentID: [String: String]
+    let dirtyPDFDataByDocumentID: [String: Data]
+    @Binding var searchOptions: MonknotSearchOptions
     let theme: AppTheme
     let zoomScale: Double
     let close: () -> Void
+    let workspaceSearchFocusChanged: (Bool) -> Void
     let openResult: (WorkspaceSearchResult) -> Void
     let replaceAll: () -> Void
     let makeReplacePreview: () -> WorkspaceReplacePreview?
@@ -34,7 +40,12 @@ struct WorkspaceSearchView: View {
     @State private var isReplaceExpanded = false
     @State private var didCopyResults = false
     @State private var copyFeedbackTask: Task<Void, Never>?
-    @FocusState private var isSearchFocused: Bool
+    @FocusState private var focusedField: FocusedField?
+
+    private enum FocusedField: Hashable {
+        case query
+        case replacement
+    }
 
     private var densityZoomScale: Double {
         WorkspaceSearchLayoutPolicy.densityZoomScale(zoomScale)
@@ -73,8 +84,24 @@ struct WorkspaceSearchView: View {
         .onChange(of: state.focusSerial) { _, _ in
             focusSearchField()
         }
+        .onChange(of: focusedField) { previousField, currentField in
+            let wasFocused = previousField != nil
+            let isFocused = currentField != nil
+            if wasFocused != isFocused {
+                workspaceSearchFocusChanged(isFocused)
+            }
+        }
+        .onChange(of: searchOptions) { _, options in
+            state.refresh(
+                options: options,
+                documents: documents,
+                dirtyTextByDocumentID: dirtyTextByDocumentID,
+                dirtyPDFDataByDocumentID: dirtyPDFDataByDocumentID
+            )
+        }
         .onExitCommand(perform: close)
         .onDisappear {
+            workspaceSearchFocusChanged(false)
             copyFeedbackTask?.cancel()
             copyFeedbackTask = nil
         }
@@ -124,10 +151,11 @@ struct WorkspaceSearchView: View {
             Spacer(minLength: scaled(MonknotMetrics.Spacing.xs))
 
             if showsShortcut {
-                Text("⇧⌘F")
-                    .font(.system(size: textScaled(10), weight: .medium, design: .monospaced))
-                    .foregroundStyle(theme.sidebarMutedColor(prominence: 0.72))
-                    .fixedSize()
+                MonknotShortcutLabel(
+                    shortcut: "⇧⌘F",
+                    theme: theme,
+                    zoomScale: zoomScale
+                )
             }
 
             MonknotIconButton(
@@ -162,11 +190,19 @@ struct WorkspaceSearchView: View {
                 "Search workspace",
                 text: Binding(
                     get: { state.query },
-                    set: { state.setQuery($0, documents: documents) }
+                    set: {
+                        state.setQuery(
+                            $0,
+                            options: searchOptions,
+                            documents: documents,
+                            dirtyTextByDocumentID: dirtyTextByDocumentID,
+                            dirtyPDFDataByDocumentID: dirtyPDFDataByDocumentID
+                        )
+                    }
                 )
             )
             .textFieldStyle(.plain)
-            .focused($isSearchFocused)
+            .focused($focusedField, equals: .query)
             .font(.system(size: textScaled(13)))
             .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
             .onSubmit {
@@ -181,19 +217,56 @@ struct WorkspaceSearchView: View {
                 theme: theme,
                 zoomScale: zoomScale,
                 isDisabled: state.query.isEmpty,
-                size: .compact
+                size: .compact,
+                focusRingPlacement: .contained
             ) {
                 if !state.query.isEmpty {
-                    state.setQuery("", documents: documents)
+                    state.setQuery(
+                        "",
+                        options: searchOptions,
+                        documents: documents,
+                        dirtyTextByDocumentID: dirtyTextByDocumentID,
+                        dirtyPDFDataByDocumentID: dirtyPDFDataByDocumentID
+                    )
                     focusSearchField()
                 }
             }
             .opacity(state.query.isEmpty ? 0 : 1)
             .accessibilityHidden(state.query.isEmpty)
+
+            MonknotIconButton(
+                systemImage: "textformat",
+                label: "Match Case",
+                theme: theme,
+                zoomScale: zoomScale,
+                isActive: searchOptions.isCaseSensitive,
+                size: .findBar,
+                drawsActiveBackground: false,
+                focusRingPlacement: .contained
+            ) {
+                searchOptions.isCaseSensitive.toggle()
+            }
+            .accessibilityValue(searchOptions.isCaseSensitive ? "On" : "Off")
+            .accessibilityAddTraits(searchOptions.isCaseSensitive ? .isSelected : [])
+
+            MonknotIconButton(
+                systemImage: "character.cursor.ibeam",
+                label: "Match Whole Word",
+                theme: theme,
+                zoomScale: zoomScale,
+                isActive: searchOptions.isWholeWord,
+                size: .findBar,
+                drawsActiveBackground: false,
+                focusRingPlacement: .contained
+            ) {
+                searchOptions.isWholeWord.toggle()
+            }
+            .accessibilityValue(searchOptions.isWholeWord ? "On" : "Off")
+            .accessibilityAddTraits(searchOptions.isWholeWord ? .isSelected : [])
         }
         .padding(.horizontal, scaled(MonknotMetrics.Spacing.m))
         .frame(
-            minHeight: WorkspaceSearchLayoutPolicy.fieldHeight(
+            height: WorkspaceSearchLayoutPolicy.fieldHeight(
                 theme: theme,
                 zoomScale: zoomScale
             )
@@ -205,11 +278,11 @@ struct WorkspaceSearchView: View {
         .overlay {
             RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
                 .strokeBorder(
-                    isSearchFocused ? theme.accentColor.opacity(0.86) : theme.borderColor,
-                    lineWidth: isSearchFocused ? 1.5 : 1
+                    focusedField == .query ? theme.accentColor.opacity(0.86) : theme.borderColor,
+                    lineWidth: WorkspaceSearchLayoutPolicy.fieldBorderWidth
                 )
         }
-        .animation(MonknotMotion.hoverAnimation, value: isSearchFocused)
+        .animation(MonknotMotion.hoverAnimation, value: focusedField == .query)
     }
 
     private var replaceDisclosure: some View {
@@ -255,6 +328,7 @@ struct WorkspaceSearchView: View {
                 )
             )
             .textFieldStyle(.plain)
+            .focused($focusedField, equals: .replacement)
             .font(.system(size: textScaled(13)))
             .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
             .disabled(!canConfigureReplace)
@@ -265,7 +339,8 @@ struct WorkspaceSearchView: View {
                 theme: theme,
                 zoomScale: zoomScale,
                 isDisabled: !canConfigureReplace || state.replaceText.isEmpty,
-                size: .compact
+                size: .compact,
+                focusRingPlacement: .contained
             ) {
                 if !state.replaceText.isEmpty {
                     state.setReplaceText("")
@@ -537,23 +612,10 @@ struct WorkspaceSearchView: View {
             return AttributedString(attributed)
         }
 
-        let nsText = text as NSString
-        var searchRange = NSRange(location: 0, length: nsText.length)
         let highlightColor = NSColor(hex: theme.accent).withAlphaComponent(theme.isDark ? 0.32 : 0.22)
 
-        while searchRange.length > 0 {
-            let found = nsText.range(
-                of: query,
-                options: [.caseInsensitive, .diacriticInsensitive],
-                range: searchRange
-            )
-
-            guard found.location != NSNotFound, found.length > 0 else { break }
+        for found in MonknotTextSearch.matchingRanges(of: query, in: text, options: searchOptions) {
             attributed.addAttribute(.backgroundColor, value: highlightColor, range: found)
-
-            let nextLocation = found.location + found.length
-            guard nextLocation < nsText.length else { break }
-            searchRange = NSRange(location: nextLocation, length: nsText.length - nextLocation)
         }
 
         return AttributedString(attributed)
@@ -616,7 +678,12 @@ struct WorkspaceSearchView: View {
                 theme: theme,
                 zoomScale: zoomScale
             ) {
-                state.refresh(documents: documents)
+                state.refresh(
+                    options: searchOptions,
+                    documents: documents,
+                    dirtyTextByDocumentID: dirtyTextByDocumentID,
+                    dirtyPDFDataByDocumentID: dirtyPDFDataByDocumentID
+                )
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -649,7 +716,7 @@ struct WorkspaceSearchView: View {
 
     private func focusSearchField() {
         DispatchQueue.main.async {
-            isSearchFocused = true
+            focusedField = .query
         }
     }
 
