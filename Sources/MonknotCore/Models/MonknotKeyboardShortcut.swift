@@ -34,6 +34,7 @@ public struct MonknotKeyboardShortcutContext: Equatable, Sendable {
     public var hasSelectedDocument: Bool
     public var selectedDocumentKind: WorkspaceDocumentKind?
     public var canCloseTab: Bool
+    public var canReopenClosedTab: Bool
     public var canTogglePinTab: Bool
     public var canExportPDF: Bool
     public var canUndoPDFAnnotation: Bool
@@ -55,6 +56,7 @@ public struct MonknotKeyboardShortcutContext: Equatable, Sendable {
         hasSelectedDocument: Bool,
         selectedDocumentKind: WorkspaceDocumentKind?,
         canCloseTab: Bool,
+        canReopenClosedTab: Bool = false,
         canTogglePinTab: Bool,
         canExportPDF: Bool,
         canUndoPDFAnnotation: Bool,
@@ -75,6 +77,7 @@ public struct MonknotKeyboardShortcutContext: Equatable, Sendable {
         self.hasSelectedDocument = hasSelectedDocument
         self.selectedDocumentKind = selectedDocumentKind
         self.canCloseTab = canCloseTab
+        self.canReopenClosedTab = canReopenClosedTab
         self.canTogglePinTab = canTogglePinTab
         self.canExportPDF = canExportPDF
         self.canUndoPDFAnnotation = canUndoPDFAnnotation
@@ -102,6 +105,7 @@ public enum MonknotKeyboardShortcutAction: Equatable, Sendable {
     case copyDocument
     case refreshWorkspace
     case closeTab
+    case reopenClosedTab
     case togglePinTab
     case exportPDF
     case showWorkspaceSearch
@@ -233,6 +237,8 @@ public enum MonknotKeyboardShortcutRouter {
                 return context.hasSelectedDocument ? .findPrevious : nil
             case "p":
                 return context.canTogglePinTab ? .togglePinTab : nil
+            case "t":
+                return context.canReopenClosedTab ? .reopenClosedTab : nil
             case "z":
                 return context.selectedDocumentKind == .pdf && context.canRedoPDFAnnotation ? .redoPDFAnnotation : nil
             default:

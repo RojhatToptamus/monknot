@@ -145,6 +145,7 @@ struct ContentView: View {
     @State private var missingWikilinkCreationRequest: MissingWikilinkCreationRequest?
     @State private var deferredWorkspaceSourceJump: DeferredWorkspaceSourceJump?
     @State private var tabState = WorkspaceTabState()
+    @State private var closedTabHistory = WorkspaceClosedTabHistory()
     @State private var documentNavigationHistory = DocumentNavigationHistory()
     @State private var restoredTabStateWorkspacePath: String?
     @State private var pendingTabStatePersistenceTask: Task<Void, Never>?
@@ -305,6 +306,7 @@ struct ContentView: View {
                     )
                 }
                 tabState.reset()
+                closedTabHistory.reset()
                 documentNavigationHistory.reset()
                 restoredTabStateWorkspacePath = nil
                 restoredViewportStateWorkspacePath = nil
@@ -933,6 +935,7 @@ struct ContentView: View {
         guard store.selectDocument(id: documentID) else { return }
         recordDocumentNavigation(from: previousDocumentID, to: documentID)
         tabState.open(document)
+        closedTabHistory.discard(documentID: documentID)
         publishOpenTabIDs()
     }
 
@@ -964,8 +967,12 @@ struct ContentView: View {
     }
 
     private func closeResolvedTab(id documentID: String) {
+        let closedTab = tabState.tab(for: documentID)
         let wasActive = tabState.selectedDocumentID == documentID
         let nextDocumentID = tabState.close(documentID: documentID)
+        if let closedTab {
+            closedTabHistory.record(closedTab)
+        }
         documentNavigationHistory.remove(documentID: documentID)
         documentViewportStates.removeValue(forKey: documentID)
         persistViewportStates()
@@ -974,6 +981,33 @@ struct ContentView: View {
         if wasActive || store.selectedDocumentID == documentID {
             _ = store.selectDocument(id: nextDocumentID)
             documentNavigationHistory.replaceCurrent(with: nextDocumentID)
+        }
+    }
+
+    private var canReopenClosedTab: Bool {
+        !store.isBusy && closedTabHistory.hasAvailableTab(
+            documentIDs: Set(store.documents.map(\.id))
+        )
+    }
+
+    private func reopenClosedTab() {
+        guard !store.isBusy else { return }
+        let availableDocumentIDs = Set(store.documents.map(\.id))
+        guard let closedTab = closedTabHistory.takeMostRecent(
+            availableDocumentIDs: availableDocumentIDs
+        ) else {
+            return
+        }
+
+        openDocumentTab(id: closedTab.documentID)
+        guard tabState.contains(documentID: closedTab.documentID) else {
+            closedTabHistory.record(closedTab)
+            return
+        }
+        if closedTab.isPinned,
+           tabState.tab(for: closedTab.documentID)?.isPinned == false {
+            tabState.togglePin(documentID: closedTab.documentID)
+            persistTabState()
         }
     }
 
@@ -1076,6 +1110,11 @@ struct ContentView: View {
             tabState.remapDocumentID(
                 sourceID: mapping.sourceID,
                 destinationID: mapping.destinationID,
+                document: store.document(id: mapping.destinationID)
+            )
+            closedTabHistory.remapDocumentID(
+                from: mapping.sourceID,
+                to: mapping.destinationID,
                 document: store.document(id: mapping.destinationID)
             )
             if let viewportState = documentViewportStates.removeValue(forKey: mapping.sourceID) {
@@ -1594,6 +1633,8 @@ struct ContentView: View {
             canNavigateForward: canNavigateForward,
             closeTab: { closeActiveTab() },
             canCloseTab: tabState.selectedDocumentID != nil && !store.isBusy,
+            reopenClosedTab: reopenClosedTab,
+            canReopenClosedTab: canReopenClosedTab,
             togglePinTab: { toggleActiveTabPin() },
             canTogglePinTab: tabState.selectedDocumentID != nil && !store.isBusy,
             zoomIn: { adjustZoom(by: WorkspaceZoomPolicy.step) },
@@ -1844,6 +1885,7 @@ struct ContentView: View {
             hasSelectedDocument: selectedDocument != nil,
             selectedDocumentKind: selectedDocument?.kind,
             canCloseTab: tabState.selectedDocumentID != nil && !store.isBusy,
+            canReopenClosedTab: canReopenClosedTab,
             canTogglePinTab: tabState.selectedDocumentID != nil && !store.isBusy,
             canExportPDF: selectedDocument?.capabilities.canExportPDF == true,
             canUndoPDFAnnotation: selectedDocument?.kind == .pdf && canUndoPDFAnnotation,
@@ -1880,6 +1922,8 @@ struct ContentView: View {
             store.refresh()
         case .closeTab:
             closeActiveTab()
+        case .reopenClosedTab:
+            reopenClosedTab()
         case .togglePinTab:
             toggleActiveTabPin()
         case .exportPDF:

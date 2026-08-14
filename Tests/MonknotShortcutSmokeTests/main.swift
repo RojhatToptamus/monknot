@@ -12,6 +12,7 @@ private func context(
     hasWorkspace: Bool = true,
     selectedDocumentKind: WorkspaceDocumentKind? = nil,
     canCloseTab: Bool = false,
+    canReopenClosedTab: Bool = false,
     canTogglePinTab: Bool = false,
     canExportPDF: Bool = false,
     canUndoPDFAnnotation: Bool = false,
@@ -24,6 +25,7 @@ private func context(
         hasSelectedDocument: selectedDocumentKind != nil,
         selectedDocumentKind: selectedDocumentKind,
         canCloseTab: canCloseTab,
+        canReopenClosedTab: canReopenClosedTab,
         canTogglePinTab: canTogglePinTab,
         canExportPDF: canExportPDF,
         canUndoPDFAnnotation: canUndoPDFAnnotation,
@@ -108,6 +110,10 @@ expect(
 expect(
     action("w", [.command], context: context(canCloseTab: true)) == .closeTab,
     "Command-W should close the active tab when one can be closed"
+)
+expect(
+    action("t", [.command, .shift], context: context(canReopenClosedTab: true)) == .reopenClosedTab,
+    "Shift-Command-T should reopen the most recently closed available tab"
 )
 expect(
     action("n", [.command], context: context(hasWorkspace: true, isBusy: true)) == nil,

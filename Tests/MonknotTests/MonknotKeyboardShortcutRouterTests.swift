@@ -163,6 +163,14 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         )
 
         XCTAssertEqual(
+            action(for: "t", modifiers: [.command, .shift], context: shortcutContext(canReopenClosedTab: true)),
+            .reopenClosedTab
+        )
+        XCTAssertNil(
+            action(for: "t", modifiers: [.command, .shift], context: shortcutContext(canReopenClosedTab: false))
+        )
+
+        XCTAssertEqual(
             action(for: "p", modifiers: [.command, .shift], context: shortcutContext(canTogglePinTab: true)),
             .togglePinTab
         )
@@ -337,6 +345,7 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         hasWorkspace: Bool = true,
         selectedDocumentKind: WorkspaceDocumentKind? = nil,
         canCloseTab: Bool = false,
+        canReopenClosedTab: Bool = false,
         canTogglePinTab: Bool = false,
         canExportPDF: Bool = false,
         canUndoPDFAnnotation: Bool = false,
@@ -358,6 +367,7 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
             hasSelectedDocument: selectedDocumentKind != nil,
             selectedDocumentKind: selectedDocumentKind,
             canCloseTab: canCloseTab,
+            canReopenClosedTab: canReopenClosedTab,
             canTogglePinTab: canTogglePinTab,
             canExportPDF: canExportPDF,
             canUndoPDFAnnotation: canUndoPDFAnnotation,

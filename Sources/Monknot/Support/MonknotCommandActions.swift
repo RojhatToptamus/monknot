@@ -34,6 +34,8 @@ struct MonknotCommandActions {
     let canNavigateForward: Bool
     let closeTab: () -> Void
     let canCloseTab: Bool
+    let reopenClosedTab: () -> Void
+    let canReopenClosedTab: Bool
     let togglePinTab: () -> Void
     let canTogglePinTab: Bool
     let zoomIn: () -> Void
@@ -153,6 +155,12 @@ struct MonknotCommandMenu: Commands {
             }
             .keyboardShortcut("w", modifiers: [.command])
             .disabled(actions?.canCloseTab != true)
+
+            Button("Reopen Closed Tab") {
+                actions?.reopenClosedTab()
+            }
+            .keyboardShortcut("t", modifiers: [.command, .shift])
+            .disabled(actions?.canReopenClosedTab != true)
 
             Button("Save") {
                 actions?.saveDocument()

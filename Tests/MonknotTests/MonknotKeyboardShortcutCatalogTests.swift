@@ -31,4 +31,11 @@ final class MonknotKeyboardShortcutCatalogTests: XCTestCase {
             "⌥⌘L"
         )
     }
+
+    func testReopenClosedTabShortcutIsListed() {
+        XCTAssertEqual(
+            MonknotKeyboardShortcutCatalog.entries.first { $0.title == "Reopen Closed Tab" }?.shortcut,
+            "⇧⌘T"
+        )
+    }
 }
