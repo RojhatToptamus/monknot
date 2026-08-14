@@ -70,6 +70,7 @@ struct MarkdownSymbolQuickOpenView: View {
 
             MonknotCommandOverlayEscapeButton(
                 theme: theme,
+                zoomScale: zoomScale,
                 close: close
             )
         }

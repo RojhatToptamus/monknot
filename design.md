@@ -173,7 +173,7 @@ ring per boundary** — never `e3` and `frame` together, which gives a 2px rim.
 | `frame` | ink 14% dark / 9% light | Window rim, one per window, inside `win`. |
 | elevation rings | inside `e1`/`e2`/`e3` | Part of the elevation token; must never be paired with a separate border. |
 | accent stroke | 1px `accent` | **Only** a focused field. Not active buttons — see §5.2. |
-| focus ring | 3px `accent` @ 35%, outside the box | In addition to the control's own border, never replacing it. Drawn outside the layout box so nothing moves when focus lands. |
+| focus ring | 3px `accent` @ 35%, outside the box by default | In addition to the control's own border, never replacing it. Icon buttons nested in a fixed-height search shell contain the ring inside their box; every other control draws it outside the layout box. Neither treatment participates in layout. |
 
 **Never use `line2` for a structural edge.** A docked pane earns no shadow, so its hairline is the
 only seam it has; substituting the fainter divider token makes the sidebar edge disappear.
@@ -226,6 +226,17 @@ takes a fill plus one step up the ink ladder — fill is a far louder signal tha
 | Eyebrow / group header | 10 / 1, tracking 0.09em, uppercase, weight 600 |
 | Code, session numbers | 13 / 1.65 SF Mono (12 in pills) |
 
+### 4.4 Shortcut labels
+
+Standalone keyboard-shortcut metadata uses one shared **12/400 rounded system** label everywhere.
+The rounded design keeps modifier symbols such as ⇧, ⌘, ⌥ and ⌃ at one optical height. Do not use
+the monospaced code face or a smaller local font for these labels. The component has exactly two
+presentations. A **quiet hint** uses `ink3` with no fill, border or padding. A **reference key cap**
+in Settings or the Keyboard Shortcuts reference uses `ink2`, 9 horizontal and 4 vertical padding,
+radius 6 and `surf3`/inset fill. A key cap contains only the key or modifier sequence; trigger
+context such as “after [[” belongs in the action label. Shortcut text embedded in prose, help
+strings, tooltips and native menu items keeps the surrounding native text treatment.
+
 ---
 
 ## 5. Controls
@@ -247,8 +258,9 @@ The 28 is the **outer** dimension including the 1px border; a 28 content box plu
 **Search option exception.** Match Case and Match Whole Word use the same standard `28 × 28` box
 and 17pt symbol in both search surfaces, but stay transparent at rest whether off or on. On uses an
 `accent` glyph. Hover alone adds the standard full-box `hover` fill; pressed uses `press`. Keyboard
-focus uses the standard outside focus ring, never the hover fill. Keep the native selected
-accessibility state in sync with the icon.
+focus uses the standard ring, never the hover fill. As with every icon button nested in a
+fixed-height search shell, contain that ring inside its 28-point box so focus cannot enlarge the
+shell's visual envelope. Keep the native selected accessibility state in sync with the icon.
 
 ### 5.2 No double edge on active
 
@@ -494,6 +506,10 @@ Everything else zooms with the workspace — including **every page of Settings*
 
 Left to right: traffic lights + sidebar toggle + back/forward │ **tab strip** │ flexible gap │ view
 mode │ terminal toggle.
+
+The coloured leading edge of the close traffic light and the trailing edge of the terminal toggle
+use the same titlebar horizontal padding. Move the native traffic-light trio as one group so its
+macOS inter-button spacing remains unchanged.
 
 Navigation leading, document actions trailing — the split Finder, Safari and Xcode use. **Exactly
 two affordances right of the gap.** There is no ⋯ overflow: anything that would land in one belongs

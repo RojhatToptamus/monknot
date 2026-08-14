@@ -47,7 +47,11 @@ struct GoToLineView: View {
                         action: submit
                     )
 
-                    MonknotCommandOverlayEscapeButton(theme: theme, close: close)
+                    MonknotCommandOverlayEscapeButton(
+                        theme: theme,
+                        zoomScale: zoomScale,
+                        close: close
+                    )
                 }
                 .padding(.horizontal, scaled(14))
                 .frame(height: scaled(54))

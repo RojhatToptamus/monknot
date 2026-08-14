@@ -43,6 +43,7 @@ public struct MonknotKeyboardShortcutContext: Equatable, Sendable {
     public var isQuickOpenPresented: Bool
     public var isKeyboardShortcutsHelpPresented: Bool
     public var isWorkspaceSearchPresented: Bool
+    public var isWorkspaceSearchFocused: Bool
     public var isSymbolQuickOpenPresented: Bool
     public var isLinkInspectionPresented: Bool
     public var hasMarkdownOutline: Bool
@@ -65,6 +66,7 @@ public struct MonknotKeyboardShortcutContext: Equatable, Sendable {
         isQuickOpenPresented: Bool = false,
         isKeyboardShortcutsHelpPresented: Bool = false,
         isWorkspaceSearchPresented: Bool = false,
+        isWorkspaceSearchFocused: Bool = false,
         isSymbolQuickOpenPresented: Bool = false,
         isLinkInspectionPresented: Bool = false,
         hasMarkdownOutline: Bool = false,
@@ -86,6 +88,7 @@ public struct MonknotKeyboardShortcutContext: Equatable, Sendable {
         self.isQuickOpenPresented = isQuickOpenPresented
         self.isKeyboardShortcutsHelpPresented = isKeyboardShortcutsHelpPresented
         self.isWorkspaceSearchPresented = isWorkspaceSearchPresented
+        self.isWorkspaceSearchFocused = isWorkspaceSearchFocused
         self.isSymbolQuickOpenPresented = isSymbolQuickOpenPresented
         self.isLinkInspectionPresented = isLinkInspectionPresented
         self.hasMarkdownOutline = hasMarkdownOutline
@@ -109,7 +112,6 @@ public enum MonknotKeyboardShortcutAction: Equatable, Sendable {
     case togglePinTab
     case exportPDF
     case showWorkspaceSearch
-    case dismissWorkspaceSearch
     case showDocumentSearch
     case findNext
     case findPrevious
@@ -121,18 +123,15 @@ public enum MonknotKeyboardShortcutAction: Equatable, Sendable {
     case toggleSidebar
     case undoPDFAnnotation
     case redoPDFAnnotation
-    case dismissDocumentSearch
     case showQuickOpen
     case dismissQuickOpen
     case showGoToSymbol
     case dismissGoToSymbol
     case workspaceSearchNext
     case workspaceSearchPrevious
-    case workspaceSearchConfirm
     case dismissKeyboardShortcutsHelp
     case toggleSplitView
     case toggleLinkInspection
-    case dismissLinkInspection
     case undoWorkspaceReplace
 }
 
@@ -150,31 +149,7 @@ public enum MonknotKeyboardShortcutRouter {
             if context.isQuickOpenPresented { return .dismissQuickOpen }
             if context.isSymbolQuickOpenPresented { return .dismissGoToSymbol }
             if context.isKeyboardShortcutsHelpPresented { return .dismissKeyboardShortcutsHelp }
-            if context.isWorkspaceSearchPresented { return .dismissWorkspaceSearch }
-            if context.isLinkInspectionPresented { return .dismissLinkInspection }
-            return context.isDocumentSearchPresented ? .dismissDocumentSearch : nil
-        }
-
-        if context.isWorkspaceSearchPresented, modifiers == [.command] {
-            switch key {
-            case "g":
-                return .workspaceSearchNext
-            default:
-                break
-            }
-        }
-
-        if context.isWorkspaceSearchPresented, modifiers == [.command, .shift] {
-            switch key {
-            case "g":
-                return .workspaceSearchPrevious
-            default:
-                break
-            }
-        }
-
-        if context.isWorkspaceSearchPresented, modifiers.isEmpty, key == "\r" {
-            return .workspaceSearchConfirm
+            return nil
         }
 
         if modifiers == [.command] {
@@ -196,7 +171,9 @@ public enum MonknotKeyboardShortcutRouter {
             case "f":
                 return context.hasSelectedDocument ? .showDocumentSearch : nil
             case "g":
-                if context.isWorkspaceSearchPresented { return .workspaceSearchNext }
+                if context.isWorkspaceSearchPresented, context.isWorkspaceSearchFocused {
+                    return .workspaceSearchNext
+                }
                 return context.hasSelectedDocument ? .findNext : nil
             case "p":
                 if context.isQuickOpenPresented { return .dismissQuickOpen }
@@ -233,7 +210,9 @@ public enum MonknotKeyboardShortcutRouter {
             case "f":
                 return context.hasWorkspace ? .showWorkspaceSearch : nil
             case "g":
-                if context.isWorkspaceSearchPresented { return .workspaceSearchPrevious }
+                if context.isWorkspaceSearchPresented, context.isWorkspaceSearchFocused {
+                    return .workspaceSearchPrevious
+                }
                 return context.hasSelectedDocument ? .findPrevious : nil
             case "p":
                 return context.canTogglePinTab ? .togglePinTab : nil

@@ -136,8 +136,8 @@ expect(
         [],
         keyCode: MonknotKeyboardShortcutRouter.escapeKeyCode,
         context: context(isDocumentSearchPresented: true)
-    ) == .dismissDocumentSearch,
-    "Escape should dismiss document search when it is presented"
+    ) == nil,
+    "Nonmodal document search must not globally claim Escape"
 )
 
 if failures.isEmpty {

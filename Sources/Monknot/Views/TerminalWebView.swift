@@ -150,6 +150,9 @@ struct TerminalWebView: NSViewRepresentable {
         webView.setValue(false, forKey: "drawsBackground")
         Self.configureBackground(of: webView, theme: theme)
         context.coordinator.webView = webView
+        context.coordinator.requestFocusOnLoad(
+            from: (NSApp.mainWindow ?? NSApp.keyWindow)?.firstResponder
+        )
         webView.loadHTMLString(
             Self.html(
                 theme: theme,
@@ -698,8 +701,15 @@ struct TerminalWebView: NSViewRepresentable {
         private var isLoaded = false
         private var renderedTranscript = ""
         private var lastAppearance: TerminalAppearance?
+        private weak var focusOwnerAtLoadRequest: NSResponder?
+        private var shouldFocusWhenLoaded = false
         init(session: TerminalSessionStore) {
             self.session = session
+        }
+
+        func requestFocusOnLoad(from responder: NSResponder?) {
+            focusOwnerAtLoadRequest = Self.stableFocusOwner(for: responder)
+            shouldFocusWhenLoaded = true
         }
 
         func switchSession(to session: TerminalSessionStore) {
@@ -714,12 +724,63 @@ struct TerminalWebView: NSViewRepresentable {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             isLoaded = true
             render(transcript: session.transcript)
-            DispatchQueue.main.async {
-                guard !webView.isHiddenOrHasHiddenAncestor,
+            let requestedFocusOwner = focusOwnerAtLoadRequest
+            let shouldFocus = shouldFocusWhenLoaded
+            shouldFocusWhenLoaded = false
+            focusOwnerAtLoadRequest = nil
+            DispatchQueue.main.async { [weak self, weak webView, weak requestedFocusOwner] in
+                guard let self, let webView, shouldFocus,
                       let window = webView.window,
+                      Self.focusHasNotMoved(
+                        in: window,
+                        from: requestedFocusOwner,
+                        to: webView
+                      ),
+                      !webView.isHiddenOrHasHiddenAncestor,
                       window.makeFirstResponder(webView) else { return }
                 self.focus()
             }
+        }
+
+        private static func focusHasNotMoved(
+            in window: NSWindow,
+            from requestedFocusOwner: NSResponder?,
+            to webView: WKWebView
+        ) -> Bool {
+            guard let currentResponder = window.firstResponder else {
+                return requestedFocusOwner == nil
+            }
+            var current: NSResponder? = currentResponder
+            while let candidate = current {
+                if candidate === webView {
+                    return true
+                }
+                if let view = candidate as? NSView, view.isDescendant(of: webView) {
+                    return true
+                }
+                current = candidate.nextResponder
+            }
+            let currentFocusOwner = stableFocusOwner(for: currentResponder)
+            switch (currentFocusOwner, requestedFocusOwner) {
+            case (nil, nil):
+                return true
+            case let (current?, requested?):
+                return current === requested
+            default:
+                return false
+            }
+        }
+
+        /// AppKit reuses one field-editor NSTextView across every NSTextField in
+        /// a window. The field's delegate is the stable owner that distinguishes
+        /// a real focus transfer between search controls.
+        private static func stableFocusOwner(for responder: NSResponder?) -> NSResponder? {
+            guard let fieldEditor = responder as? NSTextView,
+                  fieldEditor.isFieldEditor,
+                  let owner = fieldEditor.delegate as? NSResponder else {
+                return responder
+            }
+            return owner
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {

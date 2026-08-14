@@ -43,10 +43,12 @@ struct MonknotKeyboardShortcutsHelpView: View {
                                     .foregroundStyle(theme.foregroundColor)
                                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                                Text(entry.shortcut)
-                                    .font(.system(size: scaled(12), weight: .medium, design: .rounded))
-                                    .foregroundStyle(theme.mutedForegroundColor)
-                                    .monospacedDigit()
+                                MonknotShortcutLabel(
+                                    shortcut: entry.shortcut,
+                                    theme: theme,
+                                    zoomScale: zoomScale,
+                                    presentation: .keyCap
+                                )
                             }
                             .padding(.horizontal, scaled(10))
                             .padding(.vertical, scaled(6))

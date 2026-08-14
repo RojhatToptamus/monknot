@@ -109,7 +109,6 @@ struct TerminalDrawerChromeRow: View {
                 size: .compact,
                 action: close
             )
-            .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, scaled(8))
         .frame(height: MonknotMetrics.interfaceControl(36, theme: theme, zoomScale: zoomScale))
@@ -411,7 +410,8 @@ private struct TerminalEmptySurface: View {
             detail: "⌃⌘T",
             theme: theme,
             zoomScale: zoomScale,
-            iconSize: 34
+            iconSize: 34,
+            detailIsShortcut: true
         ) {
             MonknotActionButton(
                 title: "New Session",

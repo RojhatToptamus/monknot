@@ -38,4 +38,12 @@ final class MonknotKeyboardShortcutCatalogTests: XCTestCase {
             "⇧⌘T"
         )
     }
+
+    func testWikilinkCompletionKeepsContextOutOfTheKeyCap() {
+        let entry = MonknotKeyboardShortcutCatalog.entries.first {
+            $0.title == "Complete Wikilink after [["
+        }
+
+        XCTAssertEqual(entry?.shortcut, "Tab")
+    }
 }

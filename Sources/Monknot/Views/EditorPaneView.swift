@@ -32,7 +32,6 @@ struct EditorPaneView: View {
     let pdfUndoCommandSerial: Int
     let pdfRedoCommandSerial: Int
     let updatePDFAnnotationUndoState: (Bool, Bool) -> Void
-    let isTerminalPresented: Bool
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var previewLocation: MarkdownSourceLocation?
     @Binding var pdfSearchTarget: WorkspaceSearchPDFTarget?
@@ -43,7 +42,6 @@ struct EditorPaneView: View {
     let newMarkdown: () -> Void
     let bootstrapStarterWorkspace: () -> Void
     let openFolder: () -> Void
-    let closeTerminal: () -> Void
     let saveDocument: () -> Void
     let outlineItems: [MarkdownOutlineItem]
     let selectOutlineItem: (MarkdownOutlineItem) -> Void
@@ -70,14 +68,6 @@ struct EditorPaneView: View {
         editorColumn
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(theme.surfaceColor)
-            .onExitCommand {
-                if documentSearch.isPresented {
-                    documentSearch.dismiss()
-                    return
-                }
-                guard isTerminalPresented else { return }
-                closeTerminal()
-            }
             .onAppear {
                 if let documentID = store.selectedDocument?.id,
                    supportsSplitViewRatioPersistence(forDocumentID: documentID) {

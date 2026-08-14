@@ -76,6 +76,161 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertTrue(window.firstResponder === documentEditor)
     }
 
+    func testSearchFocusRestorerReturnsKeyboardFocusToTheTerminal() async {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let terminal = TerminalWKWebView(
+            frame: NSRect(x: 320, y: 0, width: 320, height: 480),
+            configuration: WKWebViewConfiguration()
+        )
+        let searchField = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 28))
+        window.contentView?.addSubview(terminal)
+        window.contentView?.addSubview(searchField)
+        XCTAssertTrue(window.makeFirstResponder(terminal))
+
+        let restorer = TerminalFocusRestorer()
+        restorer.capturePrimaryInput(from: window)
+        XCTAssertTrue(window.makeFirstResponder(searchField))
+
+        restorer.restore(fallbackFrom: window)
+        await Task.yield()
+
+        XCTAssertTrue(window.firstResponder === terminal)
+    }
+
+    func testSearchFocusRestorerTracksANewEditorOwner() async {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let originalEditor = NSTextView(frame: NSRect(x: 0, y: 0, width: 240, height: 480))
+        originalEditor.identifier = .monknotDocumentFocusTarget
+        let newEditor = NSTextView(frame: NSRect(x: 240, y: 0, width: 240, height: 480))
+        newEditor.identifier = .monknotDocumentFocusTarget
+        let searchField = NSTextField(frame: NSRect(x: 480, y: 0, width: 160, height: 28))
+        window.contentView?.addSubview(originalEditor)
+        window.contentView?.addSubview(newEditor)
+        window.contentView?.addSubview(searchField)
+        XCTAssertTrue(window.makeFirstResponder(originalEditor))
+
+        let restorer = TerminalFocusRestorer()
+        restorer.capturePrimaryInput(from: window)
+        XCTAssertTrue(window.makeFirstResponder(searchField))
+        XCTAssertTrue(window.makeFirstResponder(newEditor))
+        restorer.capturePrimaryInput(from: window)
+        XCTAssertTrue(window.makeFirstResponder(searchField))
+
+        restorer.restore(fallbackFrom: window)
+        await Task.yield()
+
+        XCTAssertTrue(window.firstResponder === newEditor)
+    }
+
+    func testSearchFocusRestorerFallsBackWhenSavedTerminalBecomesHidden() async {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let documentEditor = NSTextView(frame: NSRect(x: 0, y: 0, width: 240, height: 480))
+        documentEditor.identifier = .monknotDocumentFocusTarget
+        let terminalContainer = NSView(frame: NSRect(x: 240, y: 0, width: 240, height: 480))
+        let terminal = TerminalWKWebView(
+            frame: terminalContainer.bounds,
+            configuration: WKWebViewConfiguration()
+        )
+        let searchField = NSTextField(frame: NSRect(x: 480, y: 0, width: 160, height: 28))
+        terminalContainer.addSubview(terminal)
+        window.contentView?.addSubview(documentEditor)
+        window.contentView?.addSubview(terminalContainer)
+        window.contentView?.addSubview(searchField)
+        XCTAssertTrue(window.makeFirstResponder(terminal))
+
+        let restorer = TerminalFocusRestorer()
+        restorer.capturePrimaryInput(from: window)
+        XCTAssertTrue(window.makeFirstResponder(searchField))
+        terminalContainer.isHidden = true
+
+        restorer.restore(fallbackFrom: window)
+        await Task.yield()
+
+        XCTAssertTrue(window.firstResponder === documentEditor)
+    }
+
+    func testSearchFocusRestorerKeepsAQueuedRestoreAcrossSearchChromeUpdates() async {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let documentEditor = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 480))
+        documentEditor.identifier = .monknotDocumentFocusTarget
+        let searchField = NSTextField(frame: NSRect(x: 400, y: 0, width: 240, height: 28))
+        window.contentView?.addSubview(documentEditor)
+        window.contentView?.addSubview(searchField)
+        XCTAssertTrue(window.makeFirstResponder(documentEditor))
+
+        let restorer = TerminalFocusRestorer()
+        restorer.capturePrimaryInput(from: window)
+        XCTAssertTrue(window.makeFirstResponder(searchField))
+        restorer.restore(fallbackFrom: window)
+        restorer.capturePrimaryInput(from: window)
+        await Task.yield()
+
+        XCTAssertTrue(window.firstResponder === documentEditor)
+    }
+
+    func testResponderRegionClassificationTracksFieldEditorsAndTerminalChrome() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let sidebarRegion = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 480))
+        sidebarRegion.identifier = .monknotSidebarFocusRegion
+        let searchField = NSTextField(frame: NSRect(x: 20, y: 20, width: 200, height: 28))
+        sidebarRegion.addSubview(searchField)
+
+        let terminalRegion = NSView(frame: NSRect(x: 240, y: 0, width: 400, height: 480))
+        terminalRegion.identifier = .monknotTerminalFocusRegion
+        let terminalChromeControl = NSTextView(frame: NSRect(x: 0, y: 0, width: 40, height: 28))
+        terminalRegion.addSubview(terminalChromeControl)
+
+        window.contentView?.addSubview(sidebarRegion)
+        window.contentView?.addSubview(terminalRegion)
+        XCTAssertTrue(window.makeFirstResponder(searchField))
+        searchField.selectText(nil)
+        XCTAssertTrue(
+            TerminalFocusRestorer.firstResponder(
+                in: window,
+                isInside: .monknotSidebarFocusRegion
+            )
+        )
+        XCTAssertFalse(
+            TerminalFocusRestorer.firstResponder(
+                in: window,
+                isInside: .monknotTerminalFocusRegion
+            )
+        )
+
+        XCTAssertTrue(window.makeFirstResponder(terminalChromeControl))
+        XCTAssertTrue(
+            TerminalFocusRestorer.firstResponder(
+                in: window,
+                isInside: .monknotTerminalFocusRegion
+            )
+        )
+    }
+
     func testTerminalFocusRestorerSurvivesRapidCloseAndReopen() async {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
@@ -203,6 +358,7 @@ final class ChromeAlignmentTests: XCTestCase {
 
         let coordinator = TerminalWebView.Coordinator(session: TerminalSessionStore())
         coordinator.webView = terminalWebView
+        coordinator.requestFocusOnLoad(from: documentEditor)
         coordinator.webView(terminalWebView, didFinish: nil)
         await Task.yield()
 
@@ -226,10 +382,42 @@ final class ChromeAlignmentTests: XCTestCase {
 
         let coordinator = TerminalWebView.Coordinator(session: TerminalSessionStore())
         coordinator.webView = terminalWebView
+        coordinator.requestFocusOnLoad(from: documentEditor)
         coordinator.webView(terminalWebView, didFinish: nil)
         await Task.yield()
 
         XCTAssertTrue(window.firstResponder === terminalWebView)
+    }
+
+    func testVisibleTerminalLoadDoesNotStealNewSearchFocus() async {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let workspaceSearchField = NSTextField(
+            frame: NSRect(x: 0, y: 0, width: 160, height: 28)
+        )
+        let documentSearchField = NSTextField(
+            frame: NSRect(x: 160, y: 0, width: 160, height: 28)
+        )
+        let terminalWebView = WKWebView(
+            frame: NSRect(x: 320, y: 0, width: 320, height: 480)
+        )
+        window.contentView?.addSubview(workspaceSearchField)
+        window.contentView?.addSubview(documentSearchField)
+        window.contentView?.addSubview(terminalWebView)
+        XCTAssertTrue(window.makeFirstResponder(workspaceSearchField))
+
+        let coordinator = TerminalWebView.Coordinator(session: TerminalSessionStore())
+        coordinator.webView = terminalWebView
+        coordinator.requestFocusOnLoad(from: window.firstResponder)
+        XCTAssertTrue(window.makeFirstResponder(documentSearchField))
+        coordinator.webView(terminalWebView, didFinish: nil)
+        await Task.yield()
+
+        XCTAssertTrue(documentSearchField.currentEditor() === window.firstResponder)
     }
 
     func testThemeEditComparisonIgnoresHexLetterCase() {
@@ -792,14 +980,25 @@ final class ChromeAlignmentTests: XCTestCase {
     func testWorkspaceWindowChromePreservesNativeWindowControlsAndToolbarOwnership() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 620),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
         let toolbar = NSToolbar(identifier: "MonknotChromeRegressionToolbar")
         window.toolbar = toolbar
+        window.standardWindowButton(.closeButton)?.isHidden = true
+        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        window.standardWindowButton(.zoomButton)?.isHidden = true
+        window.standardWindowButton(.closeButton)?.isEnabled = false
+        window.standardWindowButton(.miniaturizeButton)?.isEnabled = false
+        window.standardWindowButton(.zoomButton)?.isEnabled = false
 
-        let coordinator = WindowBackgroundDragEnabler.Coordinator(suppressToolbarButton: true)
+        let coordinator = WindowBackgroundDragEnabler.Coordinator(
+            suppressToolbarButton: true,
+            enablesStandardWindowControls: true
+        )
         coordinator.configureWindowChrome(in: window)
 
         XCTAssertTrue(
@@ -812,6 +1011,12 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertNotNil(window.standardWindowButton(.closeButton))
         XCTAssertNotNil(window.standardWindowButton(.miniaturizeButton))
         XCTAssertNotNil(window.standardWindowButton(.zoomButton))
+        XCTAssertEqual(window.standardWindowButton(.closeButton)?.isHidden, false)
+        XCTAssertEqual(window.standardWindowButton(.miniaturizeButton)?.isHidden, false)
+        XCTAssertEqual(window.standardWindowButton(.zoomButton)?.isHidden, false)
+        XCTAssertEqual(window.standardWindowButton(.closeButton)?.isEnabled, true)
+        XCTAssertEqual(window.standardWindowButton(.miniaturizeButton)?.isEnabled, true)
+        XCTAssertEqual(window.standardWindowButton(.zoomButton)?.isEnabled, true)
     }
 
     func testWindowBackgroundDoesNotTurnTopBarControlsIntoDragOrZoomTargets() {
@@ -879,12 +1084,16 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertGreaterThan(maximumHeight, normalHeight * 1.75)
     }
 
-    func testNativeTrafficLightsCenterVerticallyInTheAdaptiveWorkspaceChromeBand() {
-        for chromeHeight in [
-            MonknotMetrics.chromeHeight(theme: .defaultLight, zoomScale: WorkspaceZoomPolicy.minimum),
-            MonknotMetrics.chromeHeight(theme: .defaultLight, zoomScale: 1),
-            MonknotMetrics.chromeHeight(theme: .defaultLight, zoomScale: WorkspaceZoomPolicy.maximum),
-        ] {
+    func testNativeTrafficLightsStayCenteredAndHitTestableInTheAdaptiveWorkspaceChromeBand() {
+        for zoomScale in WorkspaceZoomPolicy.supportedLevels {
+            let chromeHeight = MonknotMetrics.chromeHeight(
+                theme: .defaultLight,
+                zoomScale: zoomScale
+            )
+            let leadingInset = MonknotMetrics.chromeHorizontalPadding(
+                theme: .defaultLight,
+                zoomScale: zoomScale
+            )
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 900, height: 620),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -894,12 +1103,19 @@ final class ChromeAlignmentTests: XCTestCase {
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
 
+            let originalButtonOrigins = [
+                window.standardWindowButton(.closeButton),
+                window.standardWindowButton(.miniaturizeButton),
+                window.standardWindowButton(.zoomButton),
+            ].compactMap { $0?.frame.minX }
+
             let coordinator = WindowBackgroundDragEnabler.Coordinator(
                 suppressToolbarButton: true,
-                trafficLightRowHeight: chromeHeight
+                trafficLightRowHeight: chromeHeight,
+                trafficLightLeadingInset: leadingInset
             )
-            coordinator.configureWindowChrome(in: window)
             window.layoutIfNeeded()
+            coordinator.configureWindowChrome(in: window)
 
             XCTAssertNil(
                 window.toolbar,
@@ -907,11 +1123,16 @@ final class ChromeAlignmentTests: XCTestCase {
             )
 
             guard let closeButton = window.standardWindowButton(.closeButton),
-                  let titlebarContainer = closeButton.superview
+                  let titlebarView = closeButton.superview,
+                  let titlebarContainer = titlebarView.superview,
+                  let themeFrame = titlebarContainer.superview
             else {
                 XCTFail("Missing AppKit-owned native close button")
                 continue
             }
+
+            XCTAssertEqual(titlebarView.bounds.height, chromeHeight, accuracy: 0.001)
+            XCTAssertEqual(titlebarContainer.bounds.height, chromeHeight, accuracy: 0.001)
 
             let buttons = [
                 window.standardWindowButton(.closeButton),
@@ -919,21 +1140,49 @@ final class ChromeAlignmentTests: XCTestCase {
                 window.standardWindowButton(.zoomButton),
             ].compactMap { $0 }
 
+            let closeOpticalLeadingEdge = closeButton.frame.minX
+                + (closeButton.frame.width - NativeWindowChromeGeometry.trafficLightDiameter) / 2
+            XCTAssertEqual(
+                closeOpticalLeadingEdge,
+                leadingInset,
+                accuracy: 0.001,
+                "The native traffic lights and trailing chrome control must share one edge inset"
+            )
+            let shiftedButtonOrigins = buttons.map(\.frame.minX)
+            XCTAssertEqual(shiftedButtonOrigins.count, originalButtonOrigins.count)
+            for index in 1..<min(shiftedButtonOrigins.count, originalButtonOrigins.count) {
+                XCTAssertEqual(
+                    shiftedButtonOrigins[index] - shiftedButtonOrigins[index - 1],
+                    originalButtonOrigins[index] - originalButtonOrigins[index - 1],
+                    accuracy: 0.001,
+                    "Horizontal balancing must retain AppKit's native inter-button spacing"
+                )
+            }
+
             for button in buttons {
-                XCTAssertTrue(button.superview === titlebarContainer)
-                let centerFromTop = titlebarContainer.isFlipped
-                    ? button.frame.midY - titlebarContainer.bounds.minY
-                    : titlebarContainer.bounds.maxY - button.frame.midY
+                XCTAssertTrue(button.superview === titlebarView)
+                let centerFromTop = titlebarView.isFlipped
+                    ? button.frame.midY - titlebarView.bounds.minY
+                    : titlebarView.bounds.maxY - button.frame.midY
                 XCTAssertEqual(
                     centerFromTop,
                     chromeHeight / 2,
                     accuracy: 0.001,
                     "Every native traffic light must share Monknot's primary chrome centerline"
                 )
+
+                let centerInThemeFrame = button.convert(
+                    NSPoint(x: button.bounds.midX, y: button.bounds.midY),
+                    to: themeFrame
+                )
+                XCTAssertTrue(
+                    themeFrame.hitTest(centerInThemeFrame) === button,
+                    "The visible native traffic light must receive its own pointer events"
+                )
             }
             XCTAssertFalse(
-                titlebarContainer.clipsToBounds,
-                "The native controls must remain visible when adaptive chrome extends below AppKit's titlebar container"
+                titlebarView.clipsToBounds,
+                "AppKit's native controls must remain visible throughout the adaptive chrome row"
             )
         }
     }
@@ -1352,6 +1601,78 @@ final class ChromeAlignmentTests: XCTestCase {
         }
     }
 
+    func testSharedShortcutLabelKeepsModifierClustersAtOneReadableHeight() {
+        let shortcuts = ["⇧⌘F", "⌘,", "⌃⌘T"]
+
+        XCTAssertEqual(MonknotShortcutLabel.fontSizeBase, 12)
+        XCTAssertEqual(MonknotShortcutLabel.fontWeight, .regular)
+        XCTAssertEqual(MonknotShortcutLabel.fontDesign, .rounded)
+
+        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
+            for zoomScale in [1.0, WorkspaceZoomPolicy.maximum] {
+                let heights = shortcuts.map { shortcut in
+                    NSHostingView(rootView: MonknotShortcutLabel(
+                        shortcut: shortcut,
+                        theme: theme,
+                        zoomScale: zoomScale
+                    )).fittingSize.height
+                }
+                let minimumHeight = MonknotMetrics.interfaceText(
+                    MonknotShortcutLabel.fontSizeBase,
+                    theme: theme,
+                    zoomScale: zoomScale
+                )
+
+                XCTAssertEqual(
+                    heights.max() ?? 0,
+                    heights.min() ?? 0,
+                    accuracy: 0.01
+                )
+                XCTAssertGreaterThanOrEqual(heights[0], minimumHeight)
+            }
+        }
+    }
+
+    func testShortcutReferenceKeyCapAddsOnlyTheSharedInsetGeometry() {
+        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
+            let hint = NSHostingView(rootView: MonknotShortcutLabel(
+                shortcut: "⇧⌘F",
+                theme: theme,
+                zoomScale: 1
+            )).fittingSize
+            let keyCap = NSHostingView(rootView: MonknotShortcutLabel(
+                shortcut: "⇧⌘F",
+                theme: theme,
+                zoomScale: 1,
+                presentation: .keyCap
+            )).fittingSize
+
+            XCTAssertEqual(
+                keyCap.width,
+                hint.width + 2 * MonknotShortcutLabel.keyCapHorizontalPaddingBase,
+                accuracy: 0.01
+            )
+            XCTAssertEqual(
+                keyCap.height,
+                hint.height + 2 * MonknotShortcutLabel.keyCapVerticalPaddingBase,
+                accuracy: 0.01
+            )
+        }
+    }
+
+    func testCommandOverlayEscapeHintUsesStandardControlHeight() {
+        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
+            let size = NSHostingView(rootView: MonknotCommandOverlayEscapeButton(
+                theme: theme,
+                zoomScale: 1,
+                close: {}
+            )).fittingSize
+
+            XCTAssertGreaterThanOrEqual(size.width, 28)
+            XCTAssertEqual(size.height, 28, accuracy: 0.01)
+        }
+    }
+
     func testSegmentedIconButtonsScaleFromTheThirtyPointEditorReferenceBox() {
         let size = MonknotIconButton.IconButtonSize.segmented
 
@@ -1493,6 +1814,8 @@ final class ChromeAlignmentTests: XCTestCase {
             toggleSplitView: {},
             documentSearch: .constant(DocumentSearchState()),
             searchOptions: .constant(MonknotSearchOptions()),
+            dismissDocumentSearch: {},
+            documentSearchFocusChanged: { _ in },
             tabs: [],
             activeTabID: nil,
             missingTabIDs: [],
@@ -1684,6 +2007,8 @@ final class ChromeAlignmentTests: XCTestCase {
                     toggleSplitView: {},
                     documentSearch: .constant(DocumentSearchState()),
                     searchOptions: .constant(MonknotSearchOptions()),
+                    dismissDocumentSearch: {},
+                    documentSearchFocusChanged: { _ in },
                     tabs: [],
                     activeTabID: nil,
                     missingTabIDs: [],
@@ -1733,6 +2058,8 @@ final class ChromeAlignmentTests: XCTestCase {
             toggleSplitView: {},
             documentSearch: .constant(DocumentSearchState()),
             searchOptions: .constant(MonknotSearchOptions()),
+            dismissDocumentSearch: {},
+            documentSearchFocusChanged: { _ in },
             tabs: [tab],
             activeTabID: tab.documentID,
             missingTabIDs: [],
@@ -1788,6 +2115,8 @@ final class ChromeAlignmentTests: XCTestCase {
             toggleSplitView: {},
             documentSearch: .constant(search),
             searchOptions: .constant(MonknotSearchOptions()),
+            dismissDocumentSearch: {},
+            documentSearchFocusChanged: { _ in },
             tabs: [tab],
             activeTabID: tab.documentID,
             missingTabIDs: [],

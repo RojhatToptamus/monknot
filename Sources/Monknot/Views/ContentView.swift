@@ -16,6 +16,48 @@ final class TerminalFocusRestorer: ObservableObject {
         responder = Self.preferredResponder(in: window)
     }
 
+    /// Search surfaces call this as focus moves. A newly selected editor or
+    /// terminal replaces the saved target; search chrome never does.
+    func capturePrimaryInput(from window: NSWindow?) {
+        if let primaryResponder = Self.currentPrimaryInputResponder(in: window) {
+            guard self.window !== window || responder !== primaryResponder else { return }
+            generation &+= 1
+            self.window = window
+            responder = primaryResponder
+            return
+        }
+        guard !hasValidSavedTarget else { return }
+        generation &+= 1
+        self.window = window
+        responder = Self.fallbackDocumentFocusTarget(in: window)
+    }
+
+    static func firstResponder(
+        in window: NSWindow?,
+        isInside regionIdentifier: NSUserInterfaceItemIdentifier
+    ) -> Bool {
+        guard let view = focusOwningView(for: window?.firstResponder) else { return false }
+        var candidate: NSView? = view
+        while let current = candidate {
+            if current.identifier == regionIdentifier {
+                return true
+            }
+            candidate = current.superview
+        }
+        return false
+    }
+
+    static func hasVisibleContentResponder(in window: NSWindow?) -> Bool {
+        guard let window,
+              let root = window.contentView,
+              let view = focusOwningView(for: window.firstResponder),
+              view.window === window
+        else {
+            return false
+        }
+        return isVisible(view, within: root)
+    }
+
     func restore(fallbackFrom fallbackWindow: NSWindow? = nil) {
         if !hasValidSavedTarget {
             generation &+= 1
@@ -34,7 +76,12 @@ final class TerminalFocusRestorer: ObservableObject {
             defer { self.clear() }
             guard let window, let responder else { return }
             if let view = responder as? NSView {
-                guard view.window === window else { return }
+                guard view.window === window, let root = window.contentView else { return }
+                if !Self.isVisible(view, within: root) {
+                    guard let fallback = Self.fallbackDocumentFocusTarget(in: window) else { return }
+                    window.makeFirstResponder(fallback)
+                    return
+                }
             }
             window.makeFirstResponder(responder)
         }
@@ -48,7 +95,8 @@ final class TerminalFocusRestorer: ObservableObject {
     private var hasValidSavedTarget: Bool {
         guard let window, let responder else { return false }
         guard let view = responder as? NSView else { return true }
-        return view.window === window
+        guard view.window === window, let root = window.contentView else { return false }
+        return Self.isVisible(view, within: root)
     }
 
     private static func preferredResponder(in window: NSWindow?) -> NSResponder? {
@@ -57,6 +105,44 @@ final class TerminalFocusRestorer: ObservableObject {
             return view
         }
         return fallbackDocumentFocusTarget(in: window)
+    }
+
+    private static func currentPrimaryInputResponder(in window: NSWindow?) -> NSResponder? {
+        guard let responder = window?.firstResponder else { return nil }
+        var current: NSResponder? = responder
+        while let candidate = current {
+            if candidate is TerminalWKWebView {
+                return responder
+            }
+            if let view = candidate as? NSView {
+                var ancestor: NSView? = view
+                while let currentView = ancestor {
+                    if currentView.identifier == .monknotDocumentFocusTarget
+                        || currentView is TerminalWKWebView {
+                        return responder
+                    }
+                    ancestor = currentView.superview
+                }
+            }
+            current = candidate.nextResponder
+        }
+        return nil
+    }
+
+    private static func focusOwningView(for responder: NSResponder?) -> NSView? {
+        var candidate = responder
+        while let current = candidate {
+            if let fieldEditor = current as? NSTextView,
+               fieldEditor.isFieldEditor,
+               let owner = fieldEditor.delegate as? NSView {
+                return owner
+            }
+            if let view = current as? NSView {
+                return view
+            }
+            candidate = current.nextResponder
+        }
+        return nil
     }
 
     private static func fallbackDocumentFocusTarget(in window: NSWindow?) -> NSResponder? {
@@ -124,6 +210,7 @@ struct ContentView: View {
     @State private var terminalRevealRequest: UInt = 0
     @StateObject private var terminalFocusRestorer = TerminalFocusRestorer()
     @StateObject private var goToLineFocusRestorer = TerminalFocusRestorer()
+    @StateObject private var searchFocusRestorer = TerminalFocusRestorer()
     @StateObject private var terminalSessions = TerminalSessionCollectionStore()
     @StateObject private var workspaceSearch = WorkspaceSearchState()
     @StateObject private var quickOpen = WorkspaceQuickOpenState()
@@ -214,7 +301,12 @@ struct ContentView: View {
                     theme: activeTheme,
                     zoomScale: zoomScale
                 ),
-                usesDarkAppearance: activeTheme.isDark
+                trafficLightLeadingInset: MonknotMetrics.chromeHorizontalPadding(
+                    theme: activeTheme,
+                    zoomScale: zoomScale
+                ),
+                usesDarkAppearance: activeTheme.isDark,
+                enablesStandardWindowControls: true
             ))
             .background(WindowCloseGuard(
                 terminationCoordinator: terminationCoordinator,
@@ -254,7 +346,7 @@ struct ContentView: View {
                 }
                 syncSelectedTabWithStore()
                 if !canShowDocumentSearch {
-                    documentSearch.dismiss()
+                    dismissDocumentSearch(restoreFocus: false)
                 } else if documentSearch.currentIndex != 0 || documentSearch.totalCount != 0 {
                     documentSearch.updateResult(.init())
                 }
@@ -570,6 +662,8 @@ struct ContentView: View {
             toggleSplitView: toggleMarkdownSplitView,
             documentSearch: $documentSearch,
             searchOptions: $searchOptions,
+            dismissDocumentSearch: { dismissDocumentSearch(restoreFocus: true) },
+            documentSearchFocusChanged: searchFieldFocusChanged,
             tabs: tabState.tabs,
             activeTabID: tabState.selectedDocumentID,
             missingTabIDs: store.removedDirtyOpenDocumentIDs,
@@ -603,6 +697,9 @@ struct ContentView: View {
             exportPDF: exportMarkdownPDF(_:),
             openDocument: openDocumentTab(id:),
             openWorkspaceSearchResult: openWorkspaceSearchResult(_:),
+            showWorkspaceSearch: showWorkspaceSearch,
+            dismissWorkspaceSearch: { dismissWorkspaceSearch(restoreFocus: true) },
+            workspaceSearchFocusChanged: searchFieldFocusChanged,
             copyRelativePath: copyRelativePath(_:)
         )
         .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
@@ -630,7 +727,6 @@ struct ContentView: View {
                 pdfUndoCommandSerial: pdfUndoCommandSerial,
                 pdfRedoCommandSerial: pdfRedoCommandSerial,
                 updatePDFAnnotationUndoState: updatePDFAnnotationShortcutState(canUndo:canRedo:),
-                isTerminalPresented: isTerminalVisible,
                 sourceLocation: $pendingSourceLocation,
                 previewLocation: $pendingPreviewLocation,
                 pdfSearchTarget: $pendingPDFSearchTarget,
@@ -641,7 +737,6 @@ struct ContentView: View {
                 newMarkdown: { store.createMarkdownFile() },
                 bootstrapStarterWorkspace: { store.bootstrapStarterWorkspace() },
                 openFolder: openFolderPanel,
-                closeTerminal: { setTerminalDrawerPresented(false, animated: true) },
                 saveDocument: saveSelectedDocument,
                 outlineItems: outlineStore.items,
                 selectOutlineItem: openOutlineItem(_:),
@@ -1715,8 +1810,8 @@ struct ContentView: View {
             canShowGoToLine: canShowGoToLine,
             toggleLinkInspection: toggleLinkInspection,
             canInspectLinks: canInspectLinks,
-            findNext: { documentSearch.findNext() },
-            findPrevious: { documentSearch.findPrevious() },
+            findNext: { findInFocusedSearch(previous: false) },
+            findPrevious: { findInFocusedSearch(previous: true) },
             isSearchCaseSensitive: searchOptions.isCaseSensitive,
             setSearchCaseSensitive: { searchOptions.isCaseSensitive = $0 },
             isSearchWholeWord: searchOptions.isWholeWord,
@@ -1840,6 +1935,7 @@ struct ContentView: View {
     }
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
+        captureSearchFocusRestorationTargets()
         guard let shortcutEvent = event.monknotKeyboardShortcutEvent,
               let action = MonknotKeyboardShortcutRouter.action(
                 for: shortcutEvent,
@@ -1965,6 +2061,7 @@ struct ContentView: View {
             isQuickOpenPresented: quickOpen.isPresented,
             isKeyboardShortcutsHelpPresented: isKeyboardShortcutsHelpPresented,
             isWorkspaceSearchPresented: workspaceSearch.isPresented,
+            isWorkspaceSearchFocused: workspaceSearchOwnsFocus,
             isSymbolQuickOpenPresented: symbolQuickOpen.isPresented,
             isLinkInspectionPresented: linkInspection.isPresented,
             hasMarkdownOutline: store.selectedDocument?.kind == .markdown && !outlineStore.items.isEmpty,
@@ -2001,18 +2098,12 @@ struct ContentView: View {
             exportSelectedMarkdownPDF()
         case .showWorkspaceSearch:
             showWorkspaceSearch()
-        case .dismissWorkspaceSearch:
-            workspaceSearch.dismiss()
         case .showDocumentSearch:
             showDocumentSearch()
         case .findNext:
-            if canShowDocumentSearch {
-                documentSearch.findNext()
-            }
+            navigateDocumentSearch(previous: false)
         case .findPrevious:
-            if canShowDocumentSearch {
-                documentSearch.findPrevious()
-            }
+            navigateDocumentSearch(previous: true)
         case .zoomIn:
             adjustZoom(by: WorkspaceZoomPolicy.step)
         case .zoomOut:
@@ -2029,8 +2120,6 @@ struct ContentView: View {
             pdfUndoCommandSerial += 1
         case .redoPDFAnnotation:
             pdfRedoCommandSerial += 1
-        case .dismissDocumentSearch:
-            documentSearch.dismiss()
         case .showQuickOpen:
             showQuickOpen()
         case .dismissQuickOpen:
@@ -2043,18 +2132,12 @@ struct ContentView: View {
             workspaceSearch.selectNextResult()
         case .workspaceSearchPrevious:
             workspaceSearch.selectPreviousResult()
-        case .workspaceSearchConfirm:
-            if let result = workspaceSearch.selectedResult {
-                openWorkspaceSearchResult(result)
-            }
         case .dismissKeyboardShortcutsHelp:
             isKeyboardShortcutsHelpPresented = false
         case .toggleSplitView:
             toggleMarkdownSplitView()
         case .toggleLinkInspection:
             toggleLinkInspection()
-        case .dismissLinkInspection:
-            linkInspection.dismiss()
         case .undoWorkspaceReplace:
             store.undoLastWorkspaceReplace()
         }
@@ -2079,7 +2162,7 @@ struct ContentView: View {
         isKeyboardShortcutsHelpPresented = false
         dismissGoToLine(restoreFocus: false)
         symbolQuickOpen.dismiss()
-        workspaceSearch.dismiss()
+        dismissWorkspaceSearch(restoreFocus: false)
         quickOpen.present(documents: store.documents)
     }
 
@@ -2088,7 +2171,7 @@ struct ContentView: View {
         isKeyboardShortcutsHelpPresented = false
         dismissGoToLine(restoreFocus: false)
         quickOpen.dismiss()
-        workspaceSearch.dismiss()
+        dismissWorkspaceSearch(restoreFocus: false)
         symbolQuickOpen.present(items: outlineStore.items)
     }
 
@@ -2097,7 +2180,7 @@ struct ContentView: View {
         isKeyboardShortcutsHelpPresented = false
         quickOpen.dismiss()
         symbolQuickOpen.dismiss()
-        workspaceSearch.dismiss()
+        dismissWorkspaceSearch(restoreFocus: false)
         goToLineFocusRestorer.capture(from: NSApp.keyWindow)
         isGoToLinePresented = true
     }
@@ -2138,7 +2221,21 @@ struct ContentView: View {
     private func showDocumentSearch() {
         guard canShowDocumentSearch else { return }
         dismissGoToLine(restoreFocus: false)
+        searchFocusRestorer.capturePrimaryInput(from: responderWindow)
         documentSearch.present()
+    }
+
+    private func dismissDocumentSearch(restoreFocus: Bool) {
+        guard documentSearch.isPresented else { return }
+        if restoreFocus {
+            searchFocusRestorer.capturePrimaryInput(from: responderWindow)
+        }
+        documentSearch.dismiss()
+        if restoreFocus {
+            searchFocusRestorer.restore(fallbackFrom: responderWindow)
+        } else if !workspaceSearch.isPresented {
+            searchFocusRestorer.discard()
+        }
     }
 
     private var canShowDocumentSearch: Bool {
@@ -2151,6 +2248,7 @@ struct ContentView: View {
     private func showWorkspaceSearch() {
         guard store.workspaceURL != nil else { return }
         dismissGoToLine(restoreFocus: false)
+        searchFocusRestorer.capturePrimaryInput(from: responderWindow)
         requestSidebarPresentation(true, animated: false)
         workspaceSearch.present(
             options: searchOptions,
@@ -2158,6 +2256,75 @@ struct ContentView: View {
             dirtyTextByDocumentID: store.dirtyTextByDocumentID,
             dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
         )
+    }
+
+    private func dismissWorkspaceSearch(restoreFocus: Bool) {
+        guard workspaceSearch.isPresented else { return }
+        if restoreFocus {
+            searchFocusRestorer.capturePrimaryInput(from: responderWindow)
+        }
+        workspaceSearch.dismiss()
+        if restoreFocus {
+            searchFocusRestorer.restore(fallbackFrom: responderWindow)
+        } else if !documentSearch.isPresented {
+            searchFocusRestorer.discard()
+        }
+    }
+
+    private var responderWindow: NSWindow? {
+        NSApp.mainWindow ?? NSApp.keyWindow
+    }
+
+    private var workspaceSearchOwnsFocus: Bool {
+        workspaceSearch.isPresented
+            && TerminalFocusRestorer.firstResponder(
+                in: responderWindow,
+                isInside: .monknotSidebarFocusRegion
+            )
+    }
+
+    private var terminalPanelOwnsFocus: Bool {
+        TerminalFocusRestorer.firstResponder(
+            in: responderWindow,
+            isInside: .monknotTerminalFocusRegion
+        )
+    }
+
+    private func captureSearchFocusRestorationTargets() {
+        if workspaceSearch.isPresented || documentSearch.isPresented {
+            searchFocusRestorer.capturePrimaryInput(from: responderWindow)
+        }
+    }
+
+    private func searchFieldFocusChanged(_ isFocused: Bool) {
+        guard !isFocused else { return }
+        DispatchQueue.main.async {
+            captureSearchFocusRestorationTargets()
+        }
+    }
+
+    private func findInFocusedSearch(previous: Bool) {
+        if workspaceSearchOwnsFocus {
+            if previous {
+                workspaceSearch.selectPreviousResult()
+            } else {
+                workspaceSearch.selectNextResult()
+            }
+            return
+        }
+        navigateDocumentSearch(previous: previous)
+    }
+
+    private func navigateDocumentSearch(previous: Bool) {
+        guard canShowDocumentSearch else { return }
+        if !documentSearch.isPresented {
+            searchFocusRestorer.capturePrimaryInput(from: responderWindow)
+        }
+        if previous {
+            documentSearch.findPrevious()
+        } else {
+            documentSearch.findNext()
+        }
     }
 
     private func openWorkspaceSearchResult(_ result: WorkspaceSearchResult) {
@@ -2343,8 +2510,9 @@ struct ContentView: View {
         guard terminalPreferredVisible != isPresented || isTerminalVisible != isPresented else { return }
         let wasEffectivelyVisible = isTerminalVisible
         if isPresented {
-            terminalFocusRestorer.capture(from: NSApp.keyWindow)
+            terminalFocusRestorer.capture(from: responderWindow)
         }
+        let terminalOwnedFocus = terminalPanelOwnsFocus
         updateChromeState(animated: animated) {
             terminalPreferredVisible = isPresented
             if isPresented {
@@ -2354,8 +2522,8 @@ struct ContentView: View {
             }
         }
         if !isPresented {
-            if wasEffectivelyVisible {
-                terminalFocusRestorer.restore(fallbackFrom: NSApp.keyWindow)
+            if wasEffectivelyVisible, terminalOwnedFocus {
+                terminalFocusRestorer.restore(fallbackFrom: responderWindow)
             } else {
                 terminalFocusRestorer.discard()
             }
@@ -2378,10 +2546,12 @@ struct ContentView: View {
         }
 
         if userInitiated, isPresented {
-            terminalFocusRestorer.capture(from: NSApp.keyWindow)
+            terminalFocusRestorer.capture(from: responderWindow)
         }
 
         let shouldRestoreDocumentFocus = isTerminalVisible && !isPresented
+            && (terminalPanelOwnsFocus
+                || !TerminalFocusRestorer.hasVisibleContentResponder(in: responderWindow))
         updateChromeState(animated: false) {
             if userInitiated {
                 terminalPreferredVisible = isPresented
@@ -2389,7 +2559,9 @@ struct ContentView: View {
             isTerminalVisible = isPresented
         }
         if shouldRestoreDocumentFocus {
-            terminalFocusRestorer.restore(fallbackFrom: NSApp.keyWindow)
+            terminalFocusRestorer.restore(fallbackFrom: responderWindow)
+        } else if !isPresented {
+            terminalFocusRestorer.discard()
         }
     }
 
@@ -2662,7 +2834,11 @@ private struct AmbiguousMarkdownLinkPicker: View {
                         .font(.system(size: scaled(13), weight: .medium))
                         .foregroundStyle(theme.foregroundColor)
                     Spacer()
-                    MonknotCommandOverlayEscapeButton(theme: theme, close: close)
+                    MonknotCommandOverlayEscapeButton(
+                        theme: theme,
+                        zoomScale: zoomScale,
+                        close: close
+                    )
                 }
                 .padding(.horizontal, scaled(14))
                 .frame(height: scaled(44))

@@ -31,6 +31,8 @@ struct TopNavigationBar: View {
     let toggleSplitView: () -> Void
     @Binding var documentSearch: DocumentSearchState
     @Binding var searchOptions: MonknotSearchOptions
+    let dismissDocumentSearch: () -> Void
+    let documentSearchFocusChanged: (Bool) -> Void
     let tabs: [WorkspaceTabItem]
     let activeTabID: String?
     let missingTabIDs: Set<String>
@@ -285,9 +287,8 @@ struct TopNavigationBar: View {
             }
 
             findBarButton(systemImage: "xmark", label: "Close Search") {
-                documentSearch.dismiss()
+                dismissDocumentSearch()
             }
-            .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, scaled(MonknotMetrics.Spacing.l))
         .frame(height: scaled(32))
@@ -302,6 +303,13 @@ struct TopNavigationBar: View {
         .onAppear {
             isSearchFocused = true
         }
+        .onChange(of: isSearchFocused) { _, isFocused in
+            documentSearchFocusChanged(isFocused)
+        }
+        .onDisappear {
+            documentSearchFocusChanged(false)
+        }
+        .onExitCommand(perform: dismissDocumentSearch)
     }
 
     private func findBarButton(
@@ -317,6 +325,7 @@ struct TopNavigationBar: View {
             zoomScale: zoomScale,
             isDisabled: isDisabled,
             size: .findBar,
+            focusRingPlacement: .contained,
             action: action
         )
     }
@@ -335,6 +344,7 @@ struct TopNavigationBar: View {
             isActive: isActive,
             size: .findBar,
             drawsActiveBackground: false,
+            focusRingPlacement: .contained,
             action: action
         )
         .accessibilityValue(isActive ? "On" : "Off")

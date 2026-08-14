@@ -73,6 +73,7 @@ struct WorkspaceQuickOpenView: View {
 
             MonknotCommandOverlayEscapeButton(
                 theme: theme,
+                zoomScale: zoomScale,
                 close: close
             )
         }
@@ -138,13 +139,21 @@ struct WorkspaceQuickOpenView: View {
 
     private var resultFooter: some View {
         HStack(spacing: scaled(14)) {
-            Text("↑↓ navigate")
-            Text("↩ open")
+            MonknotShortcutLabel(
+                shortcut: "↑↓ Navigate",
+                theme: theme,
+                zoomScale: zoomScale
+            )
+            MonknotShortcutLabel(
+                shortcut: "↩ Open",
+                theme: theme,
+                zoomScale: zoomScale
+            )
             Spacer(minLength: 0)
             Text("\(state.matches.count) of \(documents.count) files")
+                .font(.system(size: scaled(10.5), weight: .regular))
+                .foregroundStyle(theme.tertiaryForegroundColor)
         }
-        .font(.system(size: scaled(10.5), weight: .regular))
-        .foregroundStyle(theme.tertiaryForegroundColor)
         .padding(.horizontal, scaled(14))
         .frame(height: scaled(28))
         .background(theme.contentSurfaceColor)

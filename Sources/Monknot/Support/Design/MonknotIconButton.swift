@@ -33,10 +33,16 @@ struct MonknotIconButton: View {
     var size: IconButtonSize = .chrome
     var drawsBorder = false
     var drawsActiveBackground = true
+    var focusRingPlacement: FocusRingPlacement = .outside
     let action: () -> Void
 
     @State private var isHovered = false
     @FocusState private var isFocused: Bool
+
+    enum FocusRingPlacement {
+        case outside
+        case contained
+    }
 
     enum IconButtonSize {
         case chrome
@@ -179,13 +185,7 @@ struct MonknotIconButton: View {
                 }
                 .overlay {
                     if Self.showsFocusRing(isFocused: isFocused, isDisabled: isDisabled) {
-                        RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
-                            .stroke(
-                                theme.accentColor.opacity(Self.focusRingOpacity),
-                                lineWidth: Self.focusRingLineWidth
-                            )
-                            .padding(-Self.focusRingOutset)
-                            .allowsHitTesting(false)
+                        focusRing
                     }
                 }
                 .contentShape(RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale)))
@@ -231,6 +231,27 @@ struct MonknotIconButton: View {
             return theme.foregroundColor.opacity(0.92)
         }
         return theme.mutedForegroundColor
+    }
+
+    @ViewBuilder
+    private var focusRing: some View {
+        switch focusRingPlacement {
+        case .outside:
+            RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
+                .stroke(
+                    theme.accentColor.opacity(Self.focusRingOpacity),
+                    lineWidth: Self.focusRingLineWidth
+                )
+                .padding(-Self.focusRingOutset)
+                .allowsHitTesting(false)
+        case .contained:
+            RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
+                .strokeBorder(
+                    theme.accentColor.opacity(Self.focusRingOpacity),
+                    lineWidth: Self.focusRingLineWidth
+                )
+                .allowsHitTesting(false)
+        }
     }
 }
 

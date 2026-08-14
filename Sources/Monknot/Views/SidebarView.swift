@@ -14,6 +14,9 @@ struct SidebarView: View {
     let exportPDF: (WorkspaceDocument) -> Void
     let openDocument: (String) -> Void
     let openWorkspaceSearchResult: (WorkspaceSearchResult) -> Void
+    let showWorkspaceSearch: () -> Void
+    let dismissWorkspaceSearch: () -> Void
+    let workspaceSearchFocusChanged: (Bool) -> Void
     let copyRelativePath: (URL) -> Void
     @State private var isDropTargeted = false
     @State private var expandedFolderIDs: Set<String> = []
@@ -69,9 +72,7 @@ struct SidebarView: View {
                         theme: theme,
                         zoomScale: zoomScale,
                         createMarkdown: newMarkdown,
-                        showWorkspaceSearch: {
-                            presentWorkspaceSearch()
-                        }
+                        showWorkspaceSearch: showWorkspaceSearch
                     )
                 }
 
@@ -171,7 +172,8 @@ struct SidebarView: View {
                 searchOptions: $searchOptions,
                 theme: theme,
                 zoomScale: zoomScale,
-                close: { workspaceSearch.dismiss() },
+                close: dismissWorkspaceSearch,
+                workspaceSearchFocusChanged: workspaceSearchFocusChanged,
                 openResult: openWorkspaceSearchResult,
                 replaceAll: {
                     workspaceSearch.clearReplaceStatus()
@@ -287,15 +289,6 @@ struct SidebarView: View {
                     }
             }
         }
-    }
-
-    private func presentWorkspaceSearch() {
-        workspaceSearch.present(
-            options: searchOptions,
-            documents: store.documents,
-            dirtyTextByDocumentID: store.dirtyTextByDocumentID,
-            dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
-        )
     }
 
     private func refreshWorkspaceSearch() {
@@ -1377,9 +1370,11 @@ private struct SidebarSettingsButton: View {
 
                 Spacer()
 
-                Text("⌘,")
-                    .font(.system(size: textScaled(11), weight: .regular, design: .monospaced))
-                    .foregroundStyle(theme.tertiaryForegroundColor)
+                MonknotShortcutLabel(
+                    shortcut: "⌘,",
+                    theme: theme,
+                    zoomScale: zoomScale
+                )
             }
             .padding(.horizontal, scaled(10))
             .padding(.vertical, scaled(8))

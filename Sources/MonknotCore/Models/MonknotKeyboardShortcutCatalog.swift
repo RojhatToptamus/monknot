@@ -24,7 +24,7 @@ public enum MonknotKeyboardShortcutCatalog {
         MonknotKeyboardShortcutHelpEntry(title: "Refresh Workspace", shortcut: "⌘R"),
         MonknotKeyboardShortcutHelpEntry(title: "Find in Document or Terminal", shortcut: "⌘F"),
         MonknotKeyboardShortcutHelpEntry(title: "Find in Workspace", shortcut: "⇧⌘F"),
-        MonknotKeyboardShortcutHelpEntry(title: "Wikilink Autocomplete", shortcut: "Tab in [["),
+        MonknotKeyboardShortcutHelpEntry(title: "Complete Wikilink after [[", shortcut: "Tab"),
         MonknotKeyboardShortcutHelpEntry(title: "Find Next", shortcut: "⌘G"),
         MonknotKeyboardShortcutHelpEntry(title: "Find Previous", shortcut: "⇧⌘G"),
         MonknotKeyboardShortcutHelpEntry(title: "Pin or Unpin Tab", shortcut: "⇧⌘P"),
