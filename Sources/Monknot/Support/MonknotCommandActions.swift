@@ -359,11 +359,16 @@ struct MonknotCommandMenu: Commands {
             .keyboardShortcut("l", modifiers: [.command, .option])
             .disabled(actions?.canInspectLinks != true)
 
-            Button("Find in Document") {
-                actions?.showFind()
+            Button("Find") {
+                if !MonknotNativeTerminalSearchCommand.performIfFocused(.show) {
+                    actions?.showFind()
+                }
             }
             .keyboardShortcut("f", modifiers: [.command])
-            .disabled(actions?.canShowFind != true)
+            .disabled(
+                actions?.canShowFind != true
+                    && !MonknotNativeTerminalSearchCommand.hasTerminalFocus
+            )
 
             Button("Find in Workspace") {
                 actions?.showWorkspaceSearch()
@@ -372,13 +377,17 @@ struct MonknotCommandMenu: Commands {
             .disabled(actions == nil)
 
             Button("Find Next") {
-                actions?.findNext()
+                if !MonknotNativeTerminalSearchCommand.performIfFocused(.next) {
+                    actions?.findNext()
+                }
             }
             .keyboardShortcut("g", modifiers: [.command])
             .disabled(actions == nil)
 
             Button("Find Previous") {
-                actions?.findPrevious()
+                if !MonknotNativeTerminalSearchCommand.performIfFocused(.previous) {
+                    actions?.findPrevious()
+                }
             }
             .keyboardShortcut("g", modifiers: [.command, .shift])
             .disabled(actions == nil)

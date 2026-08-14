@@ -53,6 +53,14 @@ struct KeyboardShortcutMonitor: NSViewRepresentable {
                     return nil
                 }
 
+                // AppKit calls local event-monitor handlers on the main thread.
+                // https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/EventOverview/MonitoringEvents/MonitoringEvents.html
+                if MainActor.assumeIsolated({
+                    MonknotNativeTerminalSearchCommand.performIfFocused(for: event)
+                }) {
+                    return nil
+                }
+
                 guard self.handler(event) else { return event }
                 return nil
             }

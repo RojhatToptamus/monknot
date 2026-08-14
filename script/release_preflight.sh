@@ -317,6 +317,7 @@ else
     "$APP_RESOURCES/Legal/THIRD_PARTY_NOTICES.md"
     "$APP_RESOURCES/Legal/ThirdParty/xterm-MIT.txt"
     "$APP_RESOURCES/Legal/ThirdParty/xterm-addon-fit-MIT.txt"
+    "$APP_RESOURCES/Legal/ThirdParty/xterm-addon-search-MIT.txt"
     "$APP_RESOURCES/Legal/ThirdParty/sparkle-MIT.txt"
   )
   for LEGAL_FILE in "${REQUIRED_LEGAL_FILES[@]}"; do
@@ -384,6 +385,9 @@ else
   verify_bundled_resource_hash \
     "$APP_RESOURCES/xterm-addon-fit.js" \
     "bdaefa370b1bfc42ee88d46fe6072400902a4d4b2d45cd93438dda9b23c97089"
+  verify_bundled_resource_hash \
+    "$APP_RESOURCES/xterm-addon-search.js" \
+    "3cf52d71d9deb4ba60125087434c53e3fb35bb2249db9b13987991fd2db1c7bd"
 
   if [[ -f "$SPARKLE_INFO_PLIST" ]]; then
     ACTUAL_SPARKLE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$SPARKLE_INFO_PLIST" 2>/dev/null || true)"

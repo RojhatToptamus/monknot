@@ -335,6 +335,7 @@ REQUIRED_LEGAL_FILES=(
   "Legal/THIRD_PARTY_NOTICES.md"
   "Legal/ThirdParty/xterm-MIT.txt"
   "Legal/ThirdParty/xterm-addon-fit-MIT.txt"
+  "Legal/ThirdParty/xterm-addon-search-MIT.txt"
   "Legal/ThirdParty/sparkle-MIT.txt"
 )
 for LICENSE_FILE in "${THEME_LICENSE_FILES[@]}"; do
@@ -351,6 +352,7 @@ cmp "$ROOT_DIR/LICENSE" "$RESOURCES/Legal/LICENSE"
 cmp "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$RESOURCES/Legal/THIRD_PARTY_NOTICES.md"
 cmp "$ROOT_DIR/ThirdPartyLicenses/xterm-MIT.txt" "$RESOURCES/Legal/ThirdParty/xterm-MIT.txt"
 cmp "$ROOT_DIR/ThirdPartyLicenses/xterm-addon-fit-MIT.txt" "$RESOURCES/Legal/ThirdParty/xterm-addon-fit-MIT.txt"
+cmp "$ROOT_DIR/ThirdPartyLicenses/xterm-addon-search-MIT.txt" "$RESOURCES/Legal/ThirdParty/xterm-addon-search-MIT.txt"
 cmp "$ROOT_DIR/ThirdPartyLicenses/sparkle-MIT.txt" "$RESOURCES/Legal/ThirdParty/sparkle-MIT.txt"
 for LICENSE_FILE in "${THEME_LICENSE_FILES[@]}"; do
   cmp "$ROOT_DIR/ThirdPartyLicenses/$LICENSE_FILE" "$RESOURCES/Legal/ThirdParty/$LICENSE_FILE"
@@ -377,6 +379,9 @@ verify_resource_hash \
 verify_resource_hash \
   "$RESOURCES/xterm-addon-fit.js" \
   "bdaefa370b1bfc42ee88d46fe6072400902a4d4b2d45cd93438dda9b23c97089"
+verify_resource_hash \
+  "$RESOURCES/xterm-addon-search.js" \
+  "3cf52d71d9deb4ba60125087434c53e3fb35bb2249db9b13987991fd2db1c7bd"
 
 SENSITIVE_PAYLOAD="$(
   find "$APP_BUNDLE" -type f \

@@ -500,10 +500,12 @@ cp "$ROOT_DIR/Sources/MonknotCore/Resources/renderer.js" "$APP_RESOURCES/rendere
 cp "$ROOT_DIR/Sources/Monknot/Resources/xterm.css" "$APP_RESOURCES/xterm.css"
 cp "$ROOT_DIR/Sources/Monknot/Resources/xterm.js" "$APP_RESOURCES/xterm.js"
 cp "$ROOT_DIR/Sources/Monknot/Resources/xterm-addon-fit.js" "$APP_RESOURCES/xterm-addon-fit.js"
+cp "$ROOT_DIR/Sources/Monknot/Resources/xterm-addon-search.js" "$APP_RESOURCES/xterm-addon-search.js"
 cp "$ROOT_DIR/LICENSE" "$APP_LEGAL_RESOURCES/LICENSE"
 cp "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$APP_LEGAL_RESOURCES/THIRD_PARTY_NOTICES.md"
 cp "$ROOT_DIR/ThirdPartyLicenses/xterm-MIT.txt" "$APP_THIRD_PARTY_RESOURCES/xterm-MIT.txt"
 cp "$ROOT_DIR/ThirdPartyLicenses/xterm-addon-fit-MIT.txt" "$APP_THIRD_PARTY_RESOURCES/xterm-addon-fit-MIT.txt"
+cp "$ROOT_DIR/ThirdPartyLicenses/xterm-addon-search-MIT.txt" "$APP_THIRD_PARTY_RESOURCES/xterm-addon-search-MIT.txt"
 cp "$ROOT_DIR/ThirdPartyLicenses/sparkle-MIT.txt" "$APP_THIRD_PARTY_RESOURCES/sparkle-MIT.txt"
 for LICENSE_FILE in "${THEME_LICENSE_FILES[@]}"; do
   cp "$ROOT_DIR/ThirdPartyLicenses/$LICENSE_FILE" "$APP_THIRD_PARTY_RESOURCES/$LICENSE_FILE"

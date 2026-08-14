@@ -56,6 +56,19 @@ in the bundled file.
 
 Copyright (c) 2019, The xterm.js authors.
 
+## xterm.js search addon
+
+- `@xterm/addon-search` 0.15.0
+- Official package: <https://www.npmjs.com/package/@xterm/addon-search/v/0.15.0>
+- Source repository: <https://github.com/xtermjs/xterm.js>
+- Package source revision: `9ba6c00a195c95fcf8292a2b9084d91450e5daae`
+- License: MIT
+- Complete license: `ThirdPartyLicenses/xterm-addon-search-MIT.txt`
+- Bundled file:
+  - `xterm-addon-search.js` — SHA-256 `3cf52d71d9deb4ba60125087434c53e3fb35bb2249db9b13987991fd2db1c7bd`
+
+Copyright (c) 2017, The xterm.js authors.
+
 ## Theme palettes
 
 Each entry below identifies the canonical palette source used by Monknot. Monknot

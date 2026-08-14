@@ -31,10 +31,12 @@ final class BuildScriptSyncTests: XCTestCase {
             "Sources/Monknot/Resources/xterm.css",
             "Sources/Monknot/Resources/xterm.js",
             "Sources/Monknot/Resources/xterm-addon-fit.js",
+            "Sources/Monknot/Resources/xterm-addon-search.js",
             "LICENSE",
             "THIRD_PARTY_NOTICES.md",
             "ThirdPartyLicenses/xterm-MIT.txt",
             "ThirdPartyLicenses/xterm-addon-fit-MIT.txt",
+            "ThirdPartyLicenses/xterm-addon-search-MIT.txt",
             "ThirdPartyLicenses/sparkle-MIT.txt",
         ]
         let themeLicenseFiles = [
@@ -75,6 +77,10 @@ final class BuildScriptSyncTests: XCTestCase {
             contentsOf: root.appendingPathComponent("ThirdPartyLicenses/xterm-addon-fit-MIT.txt"),
             encoding: .utf8
         )
+        let searchAddonLicense = try String(
+            contentsOf: root.appendingPathComponent("ThirdPartyLicenses/xterm-addon-search-MIT.txt"),
+            encoding: .utf8
+        )
         let sparkleLicense = try String(
             contentsOf: root.appendingPathComponent("ThirdPartyLicenses/sparkle-MIT.txt"),
             encoding: .utf8
@@ -97,11 +103,13 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(readme.contains("[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)"))
         XCTAssertTrue(notices.contains("@xterm/xterm` 5.5.0"))
         XCTAssertTrue(notices.contains("@xterm/addon-fit` 0.10.0"))
+        XCTAssertTrue(notices.contains("@xterm/addon-search` 0.15.0"))
         XCTAssertTrue(notices.contains("Sparkle 2.9.5"))
         XCTAssertTrue(notices.contains("79bc9e872948e47877e76f194cb0c8e0412b0b90"))
         XCTAssertTrue(notices.contains("9ba6c00a195c95fcf8292a2b9084d91450e5daae"))
         XCTAssertTrue(xtermLicense.contains("Permission is hereby granted, free of charge"))
         XCTAssertTrue(addonLicense.contains("Permission is hereby granted, free of charge"))
+        XCTAssertTrue(searchAddonLicense.contains("Permission is hereby granted, free of charge"))
         XCTAssertTrue(sparkleLicense.contains("Copyright (c) 2006-2013 Andy Matuschak"))
         XCTAssertTrue(sparkleLicense.contains("EXTERNAL LICENSES"))
         XCTAssertTrue(audit.contains("Cleared for the direct-distribution application bundle"))
@@ -288,6 +296,7 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(script.contains("Contents/Resources"))
         XCTAssertTrue(script.contains("Legal/ThirdParty/xterm-MIT.txt"))
         XCTAssertTrue(script.contains("Legal/ThirdParty/xterm-addon-fit-MIT.txt"))
+        XCTAssertTrue(script.contains("Legal/ThirdParty/xterm-addon-search-MIT.txt"))
         XCTAssertTrue(script.contains("Legal/ThirdParty/sparkle-MIT.txt"))
         XCTAssertTrue(script.contains("theme-ayu-MIT.txt"))
         XCTAssertTrue(script.contains("theme-tokyo-night-MIT.txt"))
