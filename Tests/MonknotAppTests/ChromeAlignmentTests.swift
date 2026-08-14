@@ -1707,6 +1707,7 @@ final class ChromeAlignmentTests: XCTestCase {
         let theme = AppTheme.defaultDark
         var search = DocumentSearchState()
         search.present()
+        search.toggleReplace()
         let tab = WorkspaceTabItem(
             documentID: "/README.md",
             displayName: "README.md",
@@ -1745,9 +1746,10 @@ final class ChromeAlignmentTests: XCTestCase {
             host.allDescendantsForTesting().contains { $0 is NSScrollView },
             "File tabs must retain horizontal scrolling while document search is visible"
         )
-        XCTAssertTrue(
-            host.allDescendantsForTesting().contains { $0 is NSTextField },
-            "The search field and file tabs should coexist in the same primary row"
+        XCTAssertGreaterThanOrEqual(
+            host.allDescendantsForTesting().filter { $0 is NSTextField }.count,
+            2,
+            "Find, replace, and file tabs should coexist in the same primary row"
         )
         XCTAssertEqual(
             host.fittingSize.height,

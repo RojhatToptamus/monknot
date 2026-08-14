@@ -296,10 +296,18 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         context.coordinator.applySyncScrollTargetLine(syncScrollTargetLine, in: textView, scrollView: scrollView)
 
-        let searchResult = context.coordinator.applySearch(searchState, theme: theme, in: textView)
-        if DocumentSearchResult(currentIndex: searchState.currentIndex, totalCount: searchState.totalCount) != searchResult {
+        let searchApplication = context.coordinator.applySearch(searchState, theme: theme, in: textView)
+        let currentSearchResult = DocumentSearchResult(
+            currentIndex: searchState.currentIndex,
+            totalCount: searchState.totalCount
+        )
+        if currentSearchResult != searchApplication.searchResult ||
+            searchApplication.consumedReplacementSerial != nil {
             DispatchQueue.main.async {
-                self.searchState.updateResult(searchResult)
+                if let serial = searchApplication.consumedReplacementSerial {
+                    self.searchState.consumeReplacement(serial: serial)
+                }
+                self.searchState.updateResult(searchApplication.searchResult)
             }
         }
         context.coordinator.publishSelection()
@@ -352,6 +360,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private var lastSearchQuery = ""
         private var lastSearchedText = ""
         private var lastNavigationSerial = 0
+        private var lastReplacementSerial = 0
         private var currentMatchIndex = 0
         private var lastHighlightTheme: SearchHighlightTheme?
         private weak var scrollView: NSScrollView?
@@ -748,7 +757,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
             _ state: DocumentSearchState,
             theme: AppTheme,
             in textView: NSTextView
-        ) -> DocumentSearchResult {
+        ) -> DocumentSearchApplicationResult {
+            let consumedReplacementSerial = applyReplacementIfNeeded(
+                state.replacementRequest,
+                in: textView
+            )
             let request = DocumentSearchRequest(state)
             let query = request.query.trimmingCharacters(in: .whitespacesAndNewlines)
             guard state.isPresented, !query.isEmpty else {
@@ -757,7 +770,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 lastSearchedText = textView.string
                 currentMatchIndex = 0
                 lastNavigationSerial = request.navigationSerial
-                return .init()
+                return DocumentSearchApplicationResult(
+                    searchResult: .init(),
+                    consumedReplacementSerial: consumedReplacementSerial
+                )
             }
 
             let text = textView.string
@@ -777,7 +793,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 lastSearchedText = text
                 currentMatchIndex = 0
                 lastNavigationSerial = request.navigationSerial
-                return .init()
+                return DocumentSearchApplicationResult(
+                    searchResult: .init(),
+                    consumedReplacementSerial: consumedReplacementSerial
+                )
             }
 
             let previousMatchIndex = currentMatchIndex
@@ -819,7 +838,204 @@ struct MarkdownTextEditor: NSViewRepresentable {
             lastSearchedText = text
             lastNavigationSerial = request.navigationSerial
 
-            return DocumentSearchResult(currentIndex: currentMatchIndex + 1, totalCount: matches.count)
+            return DocumentSearchApplicationResult(
+                searchResult: DocumentSearchResult(
+                    currentIndex: currentMatchIndex + 1,
+                    totalCount: matches.count
+                ),
+                consumedReplacementSerial: consumedReplacementSerial
+            )
+        }
+
+        private func applyReplacementIfNeeded(
+            _ request: DocumentReplacementRequest?,
+            in textView: NSTextView
+        ) -> Int? {
+            guard let request, request.serial != lastReplacementSerial else { return nil }
+            lastReplacementSerial = request.serial
+
+            guard request.documentID == documentID,
+                  textView.isEditable,
+                  let textStorage = textView.textStorage
+            else { return request.serial }
+
+            let source = textView.string
+            let matches = matchRanges(for: request.query, in: source)
+            guard !matches.isEmpty else { return request.serial }
+
+            switch request.action {
+            case .current:
+                replaceCurrentMatch(
+                    in: matches,
+                    replacement: request.replacement,
+                    query: request.query,
+                    requestedMatchIndex: request.matchIndex,
+                    textStorage: textStorage,
+                    textView: textView
+                )
+            case .all:
+                replaceAllMatches(
+                    matches,
+                    replacement: request.replacement,
+                    textStorage: textStorage,
+                    textView: textView
+                )
+            }
+            return request.serial
+        }
+
+        private func replaceCurrentMatch(
+            in matches: [NSRange],
+            replacement: String,
+            query: String,
+            requestedMatchIndex: Int,
+            textStorage: NSTextStorage,
+            textView: NSTextView
+        ) {
+            let selectedRange = textView.selectedRange()
+            let selectedMatchIndex = matches.firstIndex { $0 == selectedRange }
+            let targetIndex = selectedMatchIndex ?? min(requestedMatchIndex, matches.count - 1)
+            let targetRange = matches[targetIndex]
+            guard textView.shouldChangeText(in: targetRange, replacementString: replacement) else { return }
+
+            textView.breakUndoCoalescing()
+            textView.undoManager?.beginUndoGrouping()
+            textStorage.replaceCharacters(in: targetRange, with: replacement)
+            textView.didChangeText()
+
+            let replacementEnd = targetRange.location + (replacement as NSString).length
+            let updatedMatches = matchRanges(for: query, in: textView.string)
+            if let nextIndex = updatedMatches.firstIndex(where: { $0.location >= replacementEnd }) {
+                currentMatchIndex = nextIndex
+                textView.setSelectedRange(updatedMatches[nextIndex])
+                textView.scrollRangeToVisible(updatedMatches[nextIndex])
+            } else if let firstMatch = updatedMatches.first {
+                currentMatchIndex = 0
+                textView.setSelectedRange(firstMatch)
+                textView.scrollRangeToVisible(firstMatch)
+            } else {
+                currentMatchIndex = 0
+                let caretRange = NSRange(
+                    location: min(replacementEnd, (textView.string as NSString).length),
+                    length: 0
+                )
+                textView.setSelectedRange(caretRange)
+                textView.scrollRangeToVisible(caretRange)
+            }
+
+            textView.undoManager?.endUndoGrouping()
+            textView.undoManager?.setActionName("Replace")
+            textView.breakUndoCoalescing()
+            textView.window?.makeFirstResponder(textView)
+        }
+
+        private func replaceAllMatches(
+            _ matches: [NSRange],
+            replacement: String,
+            textStorage: NSTextStorage,
+            textView: NSTextView
+        ) {
+            let replacementStrings = Array(repeating: replacement, count: matches.count)
+            guard textView.shouldChangeText(
+                inRanges: matches.map { NSValue(range: $0) },
+                replacementStrings: replacementStrings
+            ) else { return }
+
+            let selectedRange = textView.selectedRange()
+            let visibleOrigin = scrollView?.contentView.bounds.origin
+            let replacementLength = (replacement as NSString).length
+
+            textView.breakUndoCoalescing()
+            textView.undoManager?.beginUndoGrouping()
+            textStorage.beginEditing()
+            for range in matches.reversed() {
+                textStorage.replaceCharacters(in: range, with: replacement)
+            }
+            textStorage.endEditing()
+            textView.didChangeText()
+
+            let nextSelection = transformedSelection(
+                selectedRange,
+                replacing: matches,
+                withLength: replacementLength,
+                in: textView.string
+            )
+            textView.setSelectedRange(nextSelection)
+            if let visibleOrigin, let scrollView {
+                restoreScrollPosition(visibleOrigin, in: scrollView, shouldPublish: false)
+            }
+            currentMatchIndex = 0
+
+            textView.undoManager?.endUndoGrouping()
+            textView.undoManager?.setActionName("Replace All")
+            textView.breakUndoCoalescing()
+            textView.window?.makeFirstResponder(textView)
+        }
+
+        private func transformedSelection(
+            _ selection: NSRange,
+            replacing matches: [NSRange],
+            withLength replacementLength: Int,
+            in updatedText: String
+        ) -> NSRange {
+            if selection.length == 0 {
+                let caret = transformedCaret(
+                    selection.location,
+                    replacing: matches,
+                    withLength: replacementLength
+                )
+                return Self.boundedRange(NSRange(location: caret, length: 0), in: updatedText)
+            }
+
+            let start = transformedBoundary(
+                selection.location,
+                replacing: matches,
+                withLength: replacementLength,
+                prefersReplacementEnd: false
+            )
+            let end = transformedBoundary(
+                NSMaxRange(selection),
+                replacing: matches,
+                withLength: replacementLength,
+                prefersReplacementEnd: true
+            )
+            return Self.boundedRange(
+                NSRange(location: start, length: max(0, end - start)),
+                in: updatedText
+            )
+        }
+
+        private func transformedCaret(
+            _ offset: Int,
+            replacing matches: [NSRange],
+            withLength replacementLength: Int
+        ) -> Int {
+            var delta = 0
+            for match in matches {
+                if offset < match.location { break }
+                if offset <= NSMaxRange(match) {
+                    return match.location + delta + replacementLength
+                }
+                delta += replacementLength - match.length
+            }
+            return offset + delta
+        }
+
+        private func transformedBoundary(
+            _ offset: Int,
+            replacing matches: [NSRange],
+            withLength replacementLength: Int,
+            prefersReplacementEnd: Bool
+        ) -> Int {
+            var delta = 0
+            for match in matches {
+                if offset <= match.location { break }
+                if offset < NSMaxRange(match) {
+                    return match.location + delta + (prefersReplacementEnd ? replacementLength : 0)
+                }
+                delta += replacementLength - match.length
+            }
+            return offset + delta
         }
 
         private func matchRanges(for query: String, in text: String) -> [NSRange] {

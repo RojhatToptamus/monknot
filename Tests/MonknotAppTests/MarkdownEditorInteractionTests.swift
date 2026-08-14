@@ -122,6 +122,132 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         withExtendedLifetime(window) {}
     }
 
+    func testCurrentDocumentReplaceRevalidatesLiveBufferAndUsesNativeUndoRedo() throws {
+        let source = "cat cat"
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        var search = DocumentSearchState()
+        search.present()
+        search.setQuery("cat")
+        search.updateResult(coordinator.applySearch(search, theme: .defaultDark, in: textView).searchResult)
+
+        let firstMatch = (textView.string as NSString).range(of: "cat")
+        textView.insertText("dog", replacementRange: firstMatch)
+        textView.undoManager?.removeAllActions()
+        search.setReplacement("fox")
+        search.replaceCurrent(in: "note.md")
+
+        let application = coordinator.applySearch(search, theme: .defaultDark, in: textView)
+        let consumedSerial = try XCTUnwrap(application.consumedReplacementSerial)
+        search.consumeReplacement(serial: consumedSerial)
+        XCTAssertEqual(textView.string, "dog fox")
+        XCTAssertEqual(box.value, "dog fox")
+
+        textView.undoManager?.undo()
+        XCTAssertEqual(textView.string, "dog cat")
+        textView.undoManager?.redo()
+        XCTAssertEqual(textView.string, "dog fox")
+        withExtendedLifetime(window) {}
+    }
+
+    func testCurrentReplaceUsesVisibleMatchIndexWhenSourceEditorMountsFromPreview() {
+        let source = "cat cat"
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        var search = DocumentSearchState()
+        search.present()
+        search.setQuery("cat")
+        search.updateResult(.init(currentIndex: 2, totalCount: 2))
+        search.setReplacement("dog")
+        search.replaceCurrent(in: "note.md")
+
+        _ = coordinator.applySearch(search, theme: .defaultDark, in: textView)
+
+        XCTAssertEqual(textView.string, "cat dog")
+        withExtendedLifetime(window) {}
+    }
+
+    func testReplaceAllIsOneUndoStepAndPreservesUnicodeCRLFAndSelection() throws {
+        let source = "naïve\r\nNAIVE\r\nend"
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        var search = DocumentSearchState()
+        search.present()
+        search.setQuery("naive")
+        search.updateResult(coordinator.applySearch(search, theme: .defaultDark, in: textView).searchResult)
+        textView.setSelectedRange((source as NSString).range(of: "end"))
+        textView.undoManager?.removeAllActions()
+        search.setReplacement("🧭")
+        search.replaceAll(in: "note.md")
+
+        let application = coordinator.applySearch(search, theme: .defaultDark, in: textView)
+        XCTAssertEqual(application.searchResult.totalCount, 0)
+        XCTAssertEqual(textView.string, "🧭\r\n🧭\r\nend")
+        XCTAssertEqual(
+            (textView.string as NSString).substring(with: textView.selectedRange()),
+            "end"
+        )
+
+        textView.undoManager?.undo()
+        XCTAssertEqual(textView.string, source)
+        XCTAssertFalse(textView.undoManager?.canUndo == true)
+        textView.undoManager?.redo()
+        XCTAssertEqual(textView.string, "🧭\r\n🧭\r\nend")
+        withExtendedLifetime(window) {}
+    }
+
+    func testReplaceAllUsesNonoverlappingCandidatesAndAllowsEmptyReplacement() {
+        let source = "banana\r\nana"
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        var search = DocumentSearchState()
+        search.present()
+        search.setQuery("ana")
+        search.updateResult(coordinator.applySearch(search, theme: .defaultDark, in: textView).searchResult)
+        XCTAssertEqual(search.totalCount, 2)
+        search.setReplacement("")
+        search.replaceAll(in: "note.md")
+
+        _ = coordinator.applySearch(search, theme: .defaultDark, in: textView)
+        XCTAssertEqual(textView.string, "bna\r\n")
+        textView.undoManager?.undo()
+        XCTAssertEqual(textView.string, source)
+        withExtendedLifetime(window) {}
+    }
+
+    func testReplacementRequestDoesNotEditReadOnlyOrDifferentDocument() throws {
+        let source = "cat"
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        var search = DocumentSearchState()
+        search.present()
+        search.setQuery("cat")
+        search.setReplacement("dog")
+        search.replaceAll(in: "different.md")
+
+        let staleApplication = coordinator.applySearch(search, theme: .defaultDark, in: textView)
+        XCTAssertNotNil(staleApplication.consumedReplacementSerial)
+        XCTAssertEqual(textView.string, source)
+        search.consumeReplacement(serial: try XCTUnwrap(staleApplication.consumedReplacementSerial))
+
+        textView.isEditable = false
+        search.replaceAll(in: "note.md")
+        let readOnlyApplication = coordinator.applySearch(search, theme: .defaultDark, in: textView)
+        XCTAssertNotNil(readOnlyApplication.consumedReplacementSerial)
+        XCTAssertEqual(textView.string, source)
+        withExtendedLifetime(window) {}
+    }
+
     private func makeCoordinator(_ box: EditorTextBox) -> MarkdownTextEditor.Coordinator {
         MarkdownTextEditor.Coordinator(
             text: Binding(

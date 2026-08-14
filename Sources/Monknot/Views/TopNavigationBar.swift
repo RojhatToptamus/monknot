@@ -2,6 +2,11 @@ import MonknotCore
 import SwiftUI
 
 struct TopNavigationBar: View {
+    private enum DocumentSearchFocusField: Hashable {
+        case query
+        case replacement
+    }
+
     static let markdownViewModeOptions = [
         MonknotSegmentOption(
             id: EditorMode.source.rawValue,
@@ -42,10 +47,14 @@ struct TopNavigationBar: View {
     var navigateForward: () -> Void = {}
     var canNavigateBack = false
     var canNavigateForward = false
-    @FocusState private var isSearchFocused: Bool
+    @FocusState private var focusedSearchField: DocumentSearchFocusField?
 
     private var showsMarkdownViewControls: Bool {
         selectedDocument?.kind == .markdown
+    }
+
+    private var canReplaceSelectedDocument: Bool {
+        selectedDocument?.capabilities.canEditText == true && !isBusy && !isDocumentLoading
     }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -115,11 +124,14 @@ struct TopNavigationBar: View {
         }
         .monknotChromeRowLayout(theme: theme, zoomScale: zoomScale)
         .onChange(of: documentSearch.focusSerial) { _, _ in
-            isSearchFocused = documentSearch.isPresented
+            focusedSearchField = documentSearch.isPresented ? .query : nil
         }
         .onChange(of: documentSearch.isPresented) { _, isPresented in
-            guard isPresented else { return }
-            isSearchFocused = true
+            focusedSearchField = isPresented ? .query : nil
+        }
+        .onChange(of: documentSearch.isReplacePresented) { _, isPresented in
+            guard documentSearch.isPresented else { return }
+            focusedSearchField = isPresented ? .replacement : .query
         }
     }
 
@@ -232,10 +244,10 @@ struct TopNavigationBar: View {
                 )
             )
             .textFieldStyle(.plain)
-            .focused($isSearchFocused)
+            .focused($focusedSearchField, equals: .query)
             .font(.system(size: textScaled(13), weight: .regular))
             .foregroundStyle(theme.foregroundColor)
-            .frame(width: scaled(190))
+            .frame(width: scaled(documentSearch.isReplacePresented ? 150 : 190))
             .onSubmit {
                 documentSearch.findNext()
             }
@@ -268,6 +280,46 @@ struct TopNavigationBar: View {
                 documentSearch.findNext()
             }
 
+            findBarButton(
+                systemImage: "arrow.left.arrow.right",
+                label: documentSearch.isReplacePresented ? "Hide Replace" : "Show Replace",
+                isDisabled: !canReplaceSelectedDocument
+            ) {
+                documentSearch.toggleReplace()
+            }
+
+            if documentSearch.isReplacePresented {
+                Rectangle()
+                    .fill(theme.borderColor)
+                    .frame(width: 1, height: scaled(20))
+
+                TextField(
+                    "Replace with...",
+                    text: Binding(
+                        get: { documentSearch.replacement },
+                        set: { documentSearch.setReplacement($0) }
+                    )
+                )
+                .textFieldStyle(.plain)
+                .focused($focusedSearchField, equals: .replacement)
+                .font(.system(size: textScaled(13), weight: .regular))
+                .foregroundStyle(theme.foregroundColor)
+                .frame(width: scaled(130))
+                .disabled(!canReplaceSelectedDocument)
+                .onSubmit {
+                    replaceCurrentMatch()
+                }
+                .accessibilityLabel("Replacement text")
+
+                replacementBarButton("Replace", label: "Replace Current Match") {
+                    replaceCurrentMatch()
+                }
+
+                replacementBarButton("Replace All", label: "Replace All Matches") {
+                    replaceAllMatches()
+                }
+            }
+
             findBarButton(systemImage: "xmark", label: "Close Search") {
                 documentSearch.dismiss()
             }
@@ -284,8 +336,46 @@ struct TopNavigationBar: View {
                 }
         )
         .onAppear {
-            isSearchFocused = true
+            focusedSearchField = .query
         }
+    }
+
+    private func replaceCurrentMatch() {
+        guard let document = prepareEditableSourceForReplacement() else { return }
+        documentSearch.replaceCurrent(in: document.id)
+    }
+
+    private func replaceAllMatches() {
+        guard let document = prepareEditableSourceForReplacement() else { return }
+        documentSearch.replaceAll(in: document.id)
+    }
+
+    private func prepareEditableSourceForReplacement() -> WorkspaceDocument? {
+        guard canReplaceSelectedDocument, let document = selectedDocument else { return nil }
+        if !isSplitViewEnabled,
+           editorMode == .preview,
+           document.kind == .markdown || document.capabilities.canPreviewHTML {
+            editorMode = .source
+        }
+        return document
+    }
+
+    private func replacementBarButton(
+        _ title: String,
+        label: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(title, action: action)
+            .buttonStyle(.plain)
+            .font(.system(size: textScaled(11), weight: .semibold))
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundStyle(
+                canReplaceSelectedDocument && documentSearch.totalCount > 0
+                    ? theme.accentColor
+                    : theme.mutedForegroundColor
+            )
+            .disabled(!canReplaceSelectedDocument || documentSearch.totalCount == 0)
+            .accessibilityLabel(label)
     }
 
     private func findBarButton(
