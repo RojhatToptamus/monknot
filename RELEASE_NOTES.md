@@ -1,15 +1,13 @@
-# Monknot 0.1.3
+# Monknot 0.1.4
 
-This release refines Monknot's document interactions, conflict review, clipboard workflows, terminal integration, and PDF tools.
+This release expands Monknot's editing, search, navigation, link, and terminal workflows while refining keyboard focus and window chrome.
 
-- Makes Markdown links, reference links, wikilinks, and heading destinations behave consistently between source and preview.
-- Adds safe link-aware file moves with review, stale-change validation, backlink rewriting, and same-document anchor preservation.
-- Replaces the external-change review with a compact, theme-aware unified diff whose blank and long lines remain readable.
-- Adds safe multi-hunk merging and Save a Copy while preserving disk revalidation and conflict protections.
-- Adds validated Copy Relative Path actions and guarded semantic clipboard import and export.
-- Adds Copy Linked Excerpt for exact PDF selections with workspace-root page backlinks.
-- Adds native PDF Free Text annotations with editing, formatting, moving, resizing, deletion, undo, save, and external-change protection.
-- Makes Add Text Box a one-shot command while Select remains the normal mode for manipulating existing text boxes.
-- Improves the PDF Pages, Outline, and Annotations navigator, accessible resizing, workspace scaling, and page/zoom restoration.
-- Keeps shared action-button hover feedback stable and consistent with Monknot's other controls.
-- Stops intercepting typed question marks; keyboard-shortcut help remains available from the Help menu.
+- Searches unsaved workspace buffers and adds shared Match Case and Match Whole Word options.
+- Adds find-and-replace for the current document while keeping workspace replacement in the sidebar.
+- Adds Go to Line, Save All, reopen-closed-tab history, and structural Markdown list editing.
+- Adds native spelling and grammar controls plus Markdown file imports through drag and drop.
+- Adds exact Markdown link inspection and creates notes directly from missing wikilinks.
+- Adds terminal scrollback search and honors the configured terminal working directory.
+- Routes ordinary keyboard input to the active editor, search field, or terminal and restores focus when panels close.
+- Uses one restrained shortcut-hint style throughout the app and aligns search controls with Monknot's design language.
+- Restores clickable native close, minimize, and zoom controls with balanced titlebar spacing.
