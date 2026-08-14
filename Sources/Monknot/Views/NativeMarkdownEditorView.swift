@@ -10,6 +10,7 @@ struct NativeMarkdownEditorView: View {
     let contentWidthPercent: Double
     let fontSmoothing: Bool
     let textCheckingOptions: EditorTextCheckingOptions
+    let flowSourceMode: FlowSourceMode?
     let scrollPosition: DocumentScrollPosition?
     let textSelection: DocumentTextSelection?
     let syncScrollEnabled: Bool
@@ -26,6 +27,8 @@ struct NativeMarkdownEditorView: View {
     let onInspectLinks: (() -> Void)?
     let onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)?
     let onFileDropRequest: ((MarkdownFileDropRequest) -> Void)?
+    let onWritingToolsTextCommit: ((String, String) -> Void)?
+    let onWritingToolsStateChange: ((String, Bool) -> Bool)?
 
     init(
         documentID: String,
@@ -36,6 +39,7 @@ struct NativeMarkdownEditorView: View {
         contentWidthPercent: Double,
         fontSmoothing: Bool,
         textCheckingOptions: EditorTextCheckingOptions = .defaultValue,
+        flowSourceMode: FlowSourceMode? = .markdown,
         scrollPosition: DocumentScrollPosition?,
         textSelection: DocumentTextSelection? = nil,
         syncScrollEnabled: Bool,
@@ -50,6 +54,8 @@ struct NativeMarkdownEditorView: View {
         onInspectLinks: (() -> Void)? = nil,
         onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)? = nil,
         onFileDropRequest: ((MarkdownFileDropRequest) -> Void)? = nil,
+        onWritingToolsTextCommit: ((String, String) -> Void)? = nil,
+        onWritingToolsStateChange: ((String, Bool) -> Bool)? = nil,
         onScrollPositionChange: @escaping (DocumentScrollPosition) -> Void,
         onVisibleTopLineChange: ((Int) -> Void)?
     ) {
@@ -61,6 +67,7 @@ struct NativeMarkdownEditorView: View {
         self.contentWidthPercent = contentWidthPercent
         self.fontSmoothing = fontSmoothing
         self.textCheckingOptions = textCheckingOptions
+        self.flowSourceMode = flowSourceMode
         self.scrollPosition = scrollPosition
         self.textSelection = textSelection
         self.syncScrollEnabled = syncScrollEnabled
@@ -75,6 +82,8 @@ struct NativeMarkdownEditorView: View {
         self.onInspectLinks = onInspectLinks
         self.onImagePasteRequest = onImagePasteRequest
         self.onFileDropRequest = onFileDropRequest
+        self.onWritingToolsTextCommit = onWritingToolsTextCommit
+        self.onWritingToolsStateChange = onWritingToolsStateChange
         self.onScrollPositionChange = onScrollPositionChange
         self.onVisibleTopLineChange = onVisibleTopLineChange
     }
@@ -102,12 +111,15 @@ struct NativeMarkdownEditorView: View {
                     onVisibleTopLineChange: onVisibleTopLineChange,
                     commandRequest: commandRequest,
                     markdownShortcutsEnabled: true,
+                    flowSourceMode: flowSourceMode,
                     wikilinkDocuments: wikilinkDocuments,
                     onSelectionChange: onSelectionChange,
                     onOpenLink: onOpenLink,
                     onInspectLinks: onInspectLinks,
                     onImagePasteRequest: onImagePasteRequest,
-                    onFileDropRequest: onFileDropRequest
+                    onFileDropRequest: onFileDropRequest,
+                    onWritingToolsTextCommit: onWritingToolsTextCommit,
+                    onWritingToolsStateChange: onWritingToolsStateChange
                 )
 
                 if text.isEmpty {

@@ -180,6 +180,8 @@ private struct EditorSettingsView: View {
     private var checksSpelling = EditorTextCheckingOptions.defaultChecksSpelling
     @AppStorage(EditorTextCheckingOptions.grammarPreferenceKey)
     private var checksGrammar = EditorTextCheckingOptions.defaultChecksGrammar
+    @AppStorage(EditorTextCheckingOptions.inlinePredictionsPreferenceKey)
+    private var inlinePredictions = EditorTextCheckingOptions.defaultInlinePredictions
 
     var body: some View {
         SettingsPage(theme: uiTheme) {
@@ -204,6 +206,13 @@ private struct EditorSettingsView: View {
                     title: "Check grammar while typing",
                     detail: "Use native language-aware grammar checking",
                     isOn: $checksGrammar
+                )
+
+                SettingsToggleRow(
+                    theme: uiTheme,
+                    title: "Inline predictions",
+                    detail: "Show system predictive text from macOS",
+                    isOn: $inlinePredictions
                 )
 
                 SettingsWorkspaceZoomRow(

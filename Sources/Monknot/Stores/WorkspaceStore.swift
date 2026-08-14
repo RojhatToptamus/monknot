@@ -58,6 +58,8 @@ final class WorkspaceStore: ObservableObject {
     private var externalRefreshGeneration = 0
     private var externalReviewGeneration = 0
     private var suppressWatcherUntil = Date.distantPast
+    private var writingToolsDocumentID: String?
+    private var deferredWritingToolsRefreshNeeded = false
     private var securityScopedURL: URL?
     private var workspaceTask: Task<Void, Never>?
     private var documentTask: Task<Void, Never>?
@@ -99,6 +101,10 @@ final class WorkspaceStore: ObservableObject {
 
     func saveState(for documentID: String) -> DocumentSaveState {
         documentSaveStates[documentID] ?? .clean
+    }
+
+    var activeWritingToolsDocumentID: String? {
+        writingToolsDocumentID
     }
 
     func restoreWorkspace() {
@@ -152,6 +158,11 @@ final class WorkspaceStore: ObservableObject {
     func refresh() {
         guard workspaceURL != nil else { return }
 
+        guard writingToolsDocumentID == nil else {
+            deferExternalRefreshUntilWritingToolsEnd()
+            return
+        }
+
         runExternalWorkspaceRefresh()
         refreshGitStatus()
     }
@@ -163,6 +174,7 @@ final class WorkspaceStore: ObservableObject {
         scope: WorkspaceReplaceScope = .entireWorkspace,
         searchResultDocumentIDs: Set<String> = []
     ) {
+        guard ensureWritingToolsInactive(for: "replacing workspace text") else { return }
         guard workspaceURL != nil else {
             errorMessage = "Open a workspace before replacing text."
             return
@@ -206,6 +218,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func undoLastWorkspaceReplace() {
+        guard ensureWritingToolsInactive(for: "undoing workspace replace") else { return }
         guard let snapshot = replaceUndoSnapshot, workspaceURL != nil else { return }
         guard !isBusy else { return }
 
@@ -301,6 +314,7 @@ final class WorkspaceStore: ObservableObject {
     func selectDocument(id: String?) -> Bool {
         guard !isBusy else { return false }
         guard id != selectedDocumentID else { return true }
+        guard ensureWritingToolsInactive(for: "switching documents") else { return false }
 
         let signpostID = MonknotSignposting.documentSelection.beginInterval("SelectDocument")
         defer { MonknotSignposting.documentSelection.endInterval("SelectDocument", signpostID) }
@@ -319,7 +333,9 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        guard !isBusy else { return }
+        guard !isBusy,
+              ensureWritingToolsInactive(for: "changing the workspace")
+        else { return }
 
         noteInternalFileMutation()
 
@@ -352,7 +368,9 @@ final class WorkspaceStore: ObservableObject {
             errorMessage = "Open a workspace before creating a Markdown file."
             return
         }
-        guard !isBusy else { return }
+        guard !isBusy,
+              ensureWritingToolsInactive(for: "changing the workspace")
+        else { return }
 
         let fileURL: URL
         do {
@@ -404,7 +422,9 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        guard !isBusy else { return }
+        guard !isBusy,
+              ensureWritingToolsInactive(for: "changing the workspace")
+        else { return }
 
         let inboxURL = DailyNotePlanner.inboxDirectoryURL(workspaceURL: workspaceURL)
         let fileURL = DailyNotePlanner.dailyNoteURL(workspaceURL: workspaceURL, date: date)
@@ -464,7 +484,9 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        guard !isBusy else { return }
+        guard !isBusy,
+              ensureWritingToolsInactive(for: "changing the workspace")
+        else { return }
 
         noteInternalFileMutation()
         let generation = beginWorkspaceOperation()
@@ -502,7 +524,9 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        guard !isBusy else { return }
+        guard !isBusy,
+              ensureWritingToolsInactive(for: "changing the workspace")
+        else { return }
 
         let targetDirectory = directoryURL ?? workspaceURL
         let fileURL: URL
@@ -543,7 +567,9 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        guard !isBusy else { return }
+        guard !isBusy,
+              ensureWritingToolsInactive(for: "changing the workspace")
+        else { return }
 
         let targetDirectory = directoryURL ?? workspaceURL
         let folderURL: URL
@@ -674,6 +700,7 @@ final class WorkspaceStore: ObservableObject {
 
     func pasteDocumentTransfer(into directoryURL: URL? = nil) {
         guard let workspaceURL, !isBusy, let transfer = pendingDocumentTransfer else { return }
+        guard ensureWritingToolsInactive(for: "changing the workspace") else { return }
 
         let targetDirectory = directoryURL ?? workspaceURL
         let sourceURL = transfer.document.url
@@ -733,7 +760,9 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        guard !isBusy, !items.isEmpty else { return }
+        guard !isBusy, !items.isEmpty,
+              ensureWritingToolsInactive(for: "changing the workspace")
+        else { return }
 
         let targetDirectory = directoryURL ?? workspaceURL
         guard Self.isURL(targetDirectory, containedIn: workspaceURL) else {
@@ -771,6 +800,7 @@ final class WorkspaceStore: ObservableObject {
         documentID: String,
         commitInsertion: @escaping @MainActor (MarkdownImageAsset) -> Bool
     ) {
+        guard ensureWritingToolsInactive(for: "inserting an image") else { return }
         guard let workspaceURL,
               let document = document(id: documentID),
               document.kind == .markdown
@@ -793,6 +823,7 @@ final class WorkspaceStore: ObservableObject {
                 }.value
                 guard !Task.isCancelled,
                       let self,
+                      self.writingToolsDocumentID == nil,
                       self.workspaceURL?.standardizedFileURL.path == workspacePath,
                       self.document(id: documentID) != nil
                 else {
@@ -823,6 +854,7 @@ final class WorkspaceStore: ObservableObject {
         documentID: String,
         commitInsertion: @escaping @MainActor (MarkdownFileDropResult) -> Bool
     ) {
+        guard ensureWritingToolsInactive(for: "inserting dropped files") else { return }
         guard let workspaceURL,
               let document = document(id: documentID),
               document.kind == .markdown,
@@ -852,6 +884,7 @@ final class WorkspaceStore: ObservableObject {
                 }
                 guard !Task.isCancelled,
                       let self,
+                      self.writingToolsDocumentID == nil,
                       self.workspaceURL?.standardizedFileURL.path == workspacePath,
                       self.document(id: documentID) != nil
                 else {
@@ -887,6 +920,7 @@ final class WorkspaceStore: ObservableObject {
 
     func deleteDocument(_ document: WorkspaceDocument) {
         guard let workspaceURL, documents.contains(where: { $0.id == document.id }) else { return }
+        guard ensureWritingToolsInactive(for: "deleting a document") else { return }
 
         if openDocumentIDs.contains(document.id), saveState(for: document.id).isClean == false {
             errorMessage = "Save or close \(document.displayName) before deleting it."
@@ -928,6 +962,7 @@ final class WorkspaceStore: ObservableObject {
         clearDocumentTransferOnSuccess: Bool = false
     ) {
         guard !isBusy else { return }
+        guard ensureWritingToolsInactive(for: "renaming or moving files") else { return }
         guard !hasDirtyMarkdownDocuments else {
             errorMessage = WorkspaceMarkdownLinkMoveError.unsavedMarkdown.errorDescription
             return
@@ -1009,6 +1044,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func startMarkdownLinkMoveCommit(_ review: MarkdownLinkMoveReviewState) {
+        guard writingToolsDocumentID == nil else {
+            errorMessage = "Finish Writing Tools before confirming this move."
+            return
+        }
         guard workspaceURL?.standardizedFileURL == review.request.workspaceURL else {
             pendingMarkdownLinkMoveReview = nil
             isBusy = false
@@ -1147,8 +1186,64 @@ final class WorkspaceStore: ObservableObject {
 
         if shouldAdoptExternalDiskVersion, let selectedDocumentID {
             cancelExternalDocumentReview()
-            discardUnsavedChanges(for: selectedDocumentID)
+            discardUnsavedChangesWithoutWritingToolsGuard(for: selectedDocumentID)
         }
+    }
+
+    @discardableResult
+    func setWritingToolsActive(_ isActive: Bool, documentID: String) -> Bool {
+        if isActive {
+            guard writingToolsDocumentID == nil,
+                  !isBusy,
+                  selectedDocumentID == documentID,
+                  selectedDocument?.capabilities.canEditText == true
+            else { return false }
+
+            objectWillChange.send()
+            writingToolsDocumentID = documentID
+            if externalRefreshWorkItem != nil || externalRefreshTask != nil {
+                deferExternalRefreshUntilWritingToolsEnd()
+            }
+            externalRefreshGeneration &+= 1
+            externalRefreshWorkItem?.cancel()
+            externalRefreshWorkItem = nil
+            externalRefreshTask?.cancel()
+            externalRefreshTask = nil
+            markdownImageAssetTask?.cancel()
+            markdownImageAssetTask = nil
+            cancelExternalDocumentReview()
+            return true
+        }
+
+        guard writingToolsDocumentID == documentID else { return false }
+        objectWillChange.send()
+        writingToolsDocumentID = nil
+        guard deferredWritingToolsRefreshNeeded else { return true }
+        guard let workspaceURL else { return true }
+        scheduleExternalWorkspaceRefresh(.init(
+            changedPaths: [workspaceURL.path],
+            modifiedOnlyPaths: [],
+            requiresFullRescan: true
+        ), bypassingSuppression: true)
+        return true
+    }
+
+    func commitWritingToolsText(_ text: String, documentID: String) {
+        guard writingToolsDocumentID == documentID,
+              selectedDocumentID == documentID,
+              let document = document(id: documentID),
+              document.capabilities.canEditText
+        else { return }
+        guard text != documentText else { return }
+
+        if Self.fileSignature(for: document.url) != selectedDocumentSignature {
+            setSelectedDocumentExternalChangeIfChanged(true)
+        }
+        clearReplaceUndoSnapshot()
+        setDocumentTextIfChanged(text)
+        setHasUnsavedChangesIfChanged(text != lastSavedText || selectedDocumentExternalChange)
+        updateSaveStateForSelectedDocument()
+        publishWorkspaceSearchContentChange()
     }
 
     @discardableResult
@@ -1158,6 +1253,7 @@ final class WorkspaceStore: ObservableObject {
         expectedText: String,
         replacement: String
     ) -> WorkspaceTextMutation? {
+        guard writingToolsDocumentID != documentID else { return nil }
         guard selectedDocumentID == documentID,
               selectedDocument?.capabilities.canEditText == true
         else { return nil }
@@ -1305,6 +1401,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func exportAllPDFAnnotationsToMarkdown() {
+        guard ensureWritingToolsInactive(for: "exporting PDF annotations") else { return }
         guard let workspaceURL else {
             errorMessage = "Open a workspace before exporting PDF annotations."
             return
@@ -1409,6 +1506,11 @@ final class WorkspaceStore: ObservableObject {
     func saveSelectedFile() {
         guard let selectedDocument else { return }
 
+        guard writingToolsDocumentID != selectedDocument.id else {
+            errorMessage = "Finish Writing Tools before saving \(selectedDocument.displayName)."
+            return
+        }
+
         if selectedDocument.kind == .pdf {
             saveSelectedPDF(selectedDocument)
             return
@@ -1452,6 +1554,10 @@ final class WorkspaceStore: ObservableObject {
     @discardableResult
     func saveDocument(id documentID: String) async -> Bool {
         guard let file = document(id: documentID) else { return false }
+        guard writingToolsDocumentID != documentID else {
+            errorMessage = "Finish Writing Tools before saving \(file.displayName)."
+            return false
+        }
         guard !saveState(for: documentID).isClean else { return true }
 
         if file.kind == .pdf {
@@ -1523,6 +1629,7 @@ final class WorkspaceStore: ObservableObject {
 
     func prepareExternalDocumentReview() {
         guard let document = selectedDocument,
+              writingToolsDocumentID != document.id,
               document.capabilities.canEditText,
               let localText = dirtyDocumentTexts[document.id] ?? (hasUnsavedChanges ? documentText : nil)
         else { return }
@@ -1577,7 +1684,8 @@ final class WorkspaceStore: ObservableObject {
 
     func resolveExternalDocumentReview(_ resolution: ExternalDocumentResolution) {
         guard let state = externalDocumentReview,
-              let document = document(id: state.documentID)
+              let document = document(id: state.documentID),
+              writingToolsDocumentID != state.documentID
         else { return }
 
         let expectedDiskRevision = state.review.diskRevision
@@ -1622,6 +1730,7 @@ final class WorkspaceStore: ObservableObject {
               externalDocumentReview == nil,
               selectedDocumentExternalChange,
               let document = selectedDocument,
+              writingToolsDocumentID != document.id,
               document.capabilities.canEditText,
               let localText = dirtyDocumentTexts[document.id] ?? (hasUnsavedChanges ? documentText : nil)
         else { return }
@@ -1667,6 +1776,7 @@ final class WorkspaceStore: ObservableObject {
     func saveExternalDocumentCopy(to destinationURL: URL) {
         guard selectedDocumentExternalChange,
               let document = selectedDocument,
+              writingToolsDocumentID != document.id,
               document.capabilities.canEditText,
               let localText = dirtyDocumentTexts[document.id] ?? (hasUnsavedChanges ? documentText : nil)
         else { return }
@@ -1777,6 +1887,14 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func discardUnsavedChanges(for documentID: String) {
+        guard writingToolsDocumentID != documentID else {
+            errorMessage = "Finish Writing Tools before discarding changes."
+            return
+        }
+        discardUnsavedChangesWithoutWritingToolsGuard(for: documentID)
+    }
+
+    private func discardUnsavedChangesWithoutWritingToolsGuard(for documentID: String) {
         let isPDF = document(id: documentID)?.kind == .pdf
         let hadSearchablePDFDirtyData = dirtyPDFDocumentData[documentID] != nil
         dirtyDocumentTexts.removeValue(forKey: documentID)
@@ -1947,6 +2065,9 @@ final class WorkspaceStore: ObservableObject {
         guard document.kind == .markdown else {
             throw WorkspaceDocumentOperationError.unsupportedPDFExport(document.displayName)
         }
+        guard writingToolsDocumentID != document.id else {
+            throw WorkspaceDocumentOperationError.writingToolsActive(document.displayName)
+        }
 
         if selectedDocumentID == document.id, !isDocumentLoading {
             return documentText
@@ -1967,6 +2088,10 @@ final class WorkspaceStore: ObservableObject {
         reloadSelection: Bool,
         recordRecentWorkspace: Bool = true
     ) {
+        guard writingToolsDocumentID == nil else {
+            errorMessage = "Finish Writing Tools before opening another workspace."
+            return
+        }
         let standardizedURL = url.standardizedFileURL
         cancelExternalDocumentReview()
         updateSecurityScope(for: standardizedURL)
@@ -2234,7 +2359,9 @@ final class WorkspaceStore: ObservableObject {
 
         fileWatcher.stop()
         externalRefreshWorkItem?.cancel()
+        externalRefreshWorkItem = nil
         externalRefreshTask?.cancel()
+        externalRefreshTask = nil
         externalReviewTask?.cancel()
 
         if let securityScopedURL {
@@ -2640,7 +2767,6 @@ final class WorkspaceStore: ObservableObject {
         if let url = document(id: fileID)?.url {
             invalidateWorkspaceSearchCaches(paths: [url.path])
         }
-
         guard selectedDocumentID == fileID else {
             if dirtyDocumentTexts[fileID] == nil || dirtyDocumentTexts[fileID] == text {
                 dirtyDocumentTexts.removeValue(forKey: fileID)
@@ -2935,6 +3061,10 @@ final class WorkspaceStore: ObservableObject {
     // MARK: - Testing Support
 
     internal var suppressWatcherInterval: TimeInterval { 1.2 }
+    internal var testing_isWritingToolsActive: Bool { writingToolsDocumentID != nil }
+    internal var testing_hasDeferredWritingToolsRefresh: Bool {
+        deferredWritingToolsRefreshNeeded
+    }
 
     internal func testing_clearWatcherSuppression() {
         suppressWatcherUntil = .distantPast
@@ -2944,6 +3074,8 @@ final class WorkspaceStore: ObservableObject {
         fileWatcher.stop()
         externalRefreshWorkItem?.cancel()
         externalRefreshWorkItem = nil
+        externalRefreshTask?.cancel()
+        externalRefreshTask = nil
     }
 
     internal func testing_scheduleExternalWorkspaceRefresh(_ event: WorkspaceFileWatcher.Event) {
@@ -2958,25 +3090,34 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func scheduleExternalWorkspaceRefresh(_ event: WorkspaceFileWatcher.Event) {
+    private func scheduleExternalWorkspaceRefresh(
+        _ event: WorkspaceFileWatcher.Event,
+        bypassingSuppression: Bool = false
+    ) {
         guard workspaceURL != nil else { return }
-        guard Date() >= suppressWatcherUntil else { return }
         guard event.requiresFullRescan || event.changedPaths.contains(where: { Self.isRelevantExternalChange(path: $0) }) else {
             return
         }
+        guard writingToolsDocumentID == nil else {
+            deferExternalRefreshUntilWritingToolsEnd()
+            return
+        }
+        guard bypassingSuppression || Date() >= suppressWatcherUntil else { return }
 
-        if !event.requiresFullRescan,
+        let requiresFullRescan = event.requiresFullRescan || deferredWritingToolsRefreshNeeded
+
+        if !requiresFullRescan,
            event.modifiedOnlyPaths.contains(where: { Self.isRelevantExternalChange(path: $0) }),
            event.changedPaths.isSubset(of: event.modifiedOnlyPaths) {
             applyIncrementalFileModifications(paths: event.modifiedOnlyPaths)
             return
         }
 
-        if !event.requiresFullRescan, applyIncrementalFileChanges(paths: event.changedPaths) {
+        if !requiresFullRescan, applyIncrementalFileChanges(paths: event.changedPaths) {
             return
         }
 
-        if event.requiresFullRescan {
+        if requiresFullRescan {
             invalidateAllWorkspaceSearchCaches()
         } else {
             invalidateWorkspaceSearchCaches(paths: event.changedPaths)
@@ -2985,6 +3126,7 @@ final class WorkspaceStore: ObservableObject {
         externalRefreshWorkItem?.cancel()
         let item = DispatchWorkItem { [weak self] in
             Task { @MainActor in
+                self?.externalRefreshWorkItem = nil
                 self?.runExternalWorkspaceRefresh()
             }
         }
@@ -3007,7 +3149,9 @@ final class WorkspaceStore: ObservableObject {
         }
 
         externalRefreshWorkItem?.cancel()
+        externalRefreshWorkItem = nil
         externalRefreshTask?.cancel()
+        externalRefreshTask = nil
         invalidateWorkspaceSearchCaches(paths: relevantPaths)
         applyExternalWorkspaceResult(result)
         refreshGitStatus()
@@ -3052,12 +3196,16 @@ final class WorkspaceStore: ObservableObject {
 
     private func runExternalWorkspaceRefresh() {
         guard let workspaceURL else { return }
+        guard writingToolsDocumentID == nil else {
+            deferExternalRefreshUntilWritingToolsEnd()
+            return
+        }
         guard !isBusy else {
             scheduleExternalWorkspaceRefresh(.init(
                 changedPaths: [workspaceURL.path],
                 modifiedOnlyPaths: [],
                 requiresFullRescan: true
-            ))
+            ), bypassingSuppression: deferredWritingToolsRefreshNeeded)
             return
         }
 
@@ -3082,6 +3230,10 @@ final class WorkspaceStore: ObservableObject {
                 await self?.finishExternalWorkspaceFailure(error, generation: generation)
             }
         }
+    }
+
+    private func deferExternalRefreshUntilWritingToolsEnd() {
+        deferredWritingToolsRefreshNeeded = true
     }
 
     private func applyExternalWorkspaceResult(_ result: WorkspaceDocumentScanResult) {
@@ -3153,21 +3305,41 @@ final class WorkspaceStore: ObservableObject {
         generation: Int
     ) {
         guard generation == externalRefreshGeneration else { return }
+        externalRefreshTask = nil
         guard workspaceURL.standardizedFileURL == self.workspaceURL?.standardizedFileURL else { return }
         guard workspaceOperationGeneration == workspaceGeneration else { return }
+        guard writingToolsDocumentID == nil else {
+            deferExternalRefreshUntilWritingToolsEnd()
+            return
+        }
 
         applyExternalWorkspaceResult(result)
+        deferredWritingToolsRefreshNeeded = false
         refreshGitStatus()
     }
 
     private func finishExternalWorkspaceFailure(_ error: Error, generation: Int) {
         guard generation == externalRefreshGeneration else { return }
+        externalRefreshTask = nil
+        if writingToolsDocumentID != nil {
+            deferExternalRefreshUntilWritingToolsEnd()
+            return
+        }
         errorMessage = "Could not refresh workspace changes: \(error.localizedDescription)"
     }
 
     private func refreshGitStatus() {
         guard !gitStatusByRelativePath.isEmpty else { return }
         gitStatusByRelativePath = [:]
+    }
+
+    @discardableResult
+    private func ensureWritingToolsInactive(for action: String) -> Bool {
+        guard writingToolsDocumentID == nil else {
+            errorMessage = "Finish Writing Tools before \(action)."
+            return false
+        }
+        return true
     }
 
     private static func isRelevantExternalChange(path: String) -> Bool {
@@ -3855,6 +4027,7 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
     case invalidName(String)
     case couldNotCreateFile(String)
     case unsupportedPDFExport(String)
+    case writingToolsActive(String)
     case unsupportedPDFAnnotationExport(String)
     case destinationExists(String)
     case invalidMove(String)
@@ -3873,6 +4046,8 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
             return "Could not create \(name)."
         case .unsupportedPDFExport(let name):
             return "\(name) is not a Markdown file."
+        case .writingToolsActive(let name):
+            return "Finish Writing Tools before exporting \(name)."
         case .unsupportedPDFAnnotationExport(let name):
             return "\(name) is not a PDF file."
         case .destinationExists(let name):

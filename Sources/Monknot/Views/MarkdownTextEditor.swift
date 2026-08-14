@@ -55,7 +55,7 @@ enum MonknotNativeSpellingCommand {
         // document window remains main. Keep command validation anchored to the
         // document responder in that state.
         // https://developer.apple.com/documentation/appkit/nsapplication/mainwindow
-        for window in [NSApp.mainWindow, NSApp.keyWindow].compactMap({ $0 }) {
+        for window in [NSApp.keyWindow, NSApp.mainWindow].compactMap({ $0 }) {
             if let textView = window.firstResponder as? MarkdownNSTextView {
                 return textView
             }
@@ -67,15 +67,246 @@ enum MonknotNativeSpellingCommand {
 struct EditorTextCheckingOptions: Equatable {
     static let spellingPreferenceKey = "Monknot.checkSpellingWhileTyping"
     static let grammarPreferenceKey = "Monknot.checkGrammarWhileTyping"
+    static let inlinePredictionsPreferenceKey = "Monknot.inlinePredictions"
     static let defaultChecksSpelling = true
     static let defaultChecksGrammar = false
+    static let defaultInlinePredictions = false
     static let defaultValue = EditorTextCheckingOptions(
         checksSpelling: defaultChecksSpelling,
-        checksGrammar: defaultChecksGrammar
+        checksGrammar: defaultChecksGrammar,
+        inlinePredictions: defaultInlinePredictions
     )
 
     let checksSpelling: Bool
     let checksGrammar: Bool
+    let inlinePredictions: Bool
+
+    init(
+        checksSpelling: Bool,
+        checksGrammar: Bool,
+        inlinePredictions: Bool = defaultInlinePredictions
+    ) {
+        self.checksSpelling = checksSpelling
+        self.checksGrammar = checksGrammar
+        self.inlinePredictions = inlinePredictions
+    }
+}
+
+enum EditorFlowCheckingTypes {
+    static func value(for options: EditorTextCheckingOptions) -> NSTextCheckingTypes {
+        var types = NSTextCheckingResult.CheckingType.orthography.rawValue
+        if options.checksSpelling {
+            types |= NSTextCheckingResult.CheckingType.spelling.rawValue
+            types |= NSTextCheckingResult.CheckingType.correction.rawValue
+        }
+        if options.checksGrammar {
+            types |= NSTextCheckingResult.CheckingType.grammar.rawValue
+        }
+        return types
+    }
+}
+
+enum EditorFlowCorrectionKind: Equatable {
+    case spelling
+    case grammar
+}
+
+struct EditorFlowSuggestion: Equatable {
+    let documentID: String
+    let revision: Int
+    let checkedRange: NSRange
+    let selectedRange: NSRange
+    let caretUTF16Offset: Int
+    let checkedText: String
+    let replacementText: String
+    let kind: EditorFlowCorrectionKind
+
+    func matches(
+        documentID: String?,
+        revision: Int,
+        text: String,
+        selectedRange: NSRange
+    ) -> Bool {
+        guard self.documentID == documentID,
+              self.revision == revision,
+              self.selectedRange == selectedRange,
+              caretUTF16Offset == selectedRange.location + selectedRange.length,
+              checkedRange.location != NSNotFound,
+              checkedRange.location >= 0,
+              checkedRange.length > 0,
+              NSMaxRange(checkedRange) <= (text as NSString).length
+        else { return false }
+        return (text as NSString).substring(with: checkedRange) == checkedText
+    }
+}
+
+struct EditorFlowCheckSnapshot: Equatable {
+    let documentID: String
+    let revision: Int
+    let sourceText: String
+    let checkedRange: NSRange
+    let selectedRange: NSRange
+    let caretUTF16Offset: Int
+    let options: EditorTextCheckingOptions
+    let sourceMode: FlowSourceMode
+}
+
+struct EditorFlowCorrectionCandidate: Equatable {
+    let range: NSRange
+    let replacementText: String
+    let kind: EditorFlowCorrectionKind
+}
+
+enum EditorFlowCorrectionResolver {
+    typealias SpellingCorrection = (_ range: NSRange, _ orthography: NSOrthography?) -> String?
+
+    static func nearestConcreteCorrection(
+        in text: String,
+        caretUTF16Offset: Int,
+        results: [NSTextCheckingResult],
+        orthography: NSOrthography?,
+        spellingCorrection: SpellingCorrection
+    ) -> EditorFlowCorrectionCandidate? {
+        let sourceLength = (text as NSString).length
+        let candidates = results.flatMap { result -> [EditorFlowCorrectionCandidate] in
+            guard result.range.location != NSNotFound,
+                  result.range.location >= 0,
+                  result.range.length > 0,
+                  NSMaxRange(result.range) <= sourceLength,
+                  NSMaxRange(result.range) <= caretUTF16Offset
+            else { return [] }
+
+            switch result.resultType {
+            case .correction:
+                guard let replacement = concreteReplacement(result.replacementString) else { return [] }
+                return [.init(range: result.range, replacementText: replacement, kind: .spelling)]
+            case .spelling:
+                guard let replacement = concreteReplacement(
+                    spellingCorrection(result.range, orthography)
+                ) else { return [] }
+                return [.init(range: result.range, replacementText: replacement, kind: .spelling)]
+            case .grammar:
+                return grammarCandidates(from: result, sourceLength: sourceLength)
+            default:
+                return []
+            }
+        }
+
+        return candidates
+            .filter { candidate in
+                let original = (text as NSString).substring(with: candidate.range)
+                return original != candidate.replacementText
+            }
+            .min { left, right in
+                let leftDistance = caretUTF16Offset - NSMaxRange(left.range)
+                let rightDistance = caretUTF16Offset - NSMaxRange(right.range)
+                if leftDistance == rightDistance {
+                    return left.range.location > right.range.location
+                }
+                return leftDistance < rightDistance
+            }
+    }
+
+    private static func grammarCandidates(
+        from result: NSTextCheckingResult,
+        sourceLength: Int
+    ) -> [EditorFlowCorrectionCandidate] {
+        (result.grammarDetails ?? []).compactMap { detail in
+            guard let corrections = detail[NSGrammarCorrections] as? [String],
+                  corrections.count == 1,
+                  let replacement = concreteReplacement(corrections[0])
+            else { return nil }
+
+            let range: NSRange
+            if let value = detail[NSGrammarRange] as? NSValue {
+                let relativeRange = value.rangeValue
+                guard relativeRange.location != NSNotFound,
+                      relativeRange.location >= 0,
+                      relativeRange.length > 0,
+                      NSMaxRange(relativeRange) <= result.range.length
+                else { return nil }
+                range = NSRange(
+                    location: result.range.location + relativeRange.location,
+                    length: relativeRange.length
+                )
+            } else {
+                range = result.range
+            }
+
+            guard range.location >= 0,
+                  range.length > 0,
+                  NSMaxRange(range) <= sourceLength
+            else { return nil }
+            return .init(range: range, replacementText: replacement, kind: .grammar)
+        }
+    }
+
+    private static func concreteReplacement(_ replacement: String?) -> String? {
+        guard let replacement, !replacement.isEmpty else { return nil }
+        return replacement
+    }
+}
+
+enum EditorFlowCheckPlanner {
+    static let boundaryDelayNanoseconds: UInt64 = 260_000_000
+    static let idleDelayNanoseconds: UInt64 = 560_000_000
+    private static let maximumCheckedUTF16Length = 900
+
+    struct Plan: Equatable {
+        let range: NSRange
+        let delayNanoseconds: UInt64
+    }
+
+    static func plan(in text: String, selectedRange: NSRange) -> Plan? {
+        let source = text as NSString
+        let caret = selectedRange.location + selectedRange.length
+        guard selectedRange.length == 0,
+              caret > 0,
+              caret <= source.length
+        else { return nil }
+
+        let paragraphRange = source.paragraphRange(for: NSRange(location: caret - 1, length: 0))
+        let candidateStart = max(paragraphRange.location, caret - maximumCheckedUTF16Length)
+        let composedRange = source.rangeOfComposedCharacterSequence(at: candidateStart)
+        let start = composedRange.location < candidateStart
+            ? NSMaxRange(composedRange)
+            : candidateStart
+        let range = NSRange(location: start, length: caret - start)
+        guard range.length > 0 else { return nil }
+
+        let precedingCharacter = UnicodeScalar(source.character(at: caret - 1))
+        let isBoundary = precedingCharacter.map {
+            CharacterSet.whitespacesAndNewlines.contains($0) ||
+                CharacterSet.punctuationCharacters.contains($0)
+        } ?? false
+        return Plan(
+            range: range,
+            delayNanoseconds: isBoundary ? boundaryDelayNanoseconds : idleDelayNanoseconds
+        )
+    }
+}
+
+struct EditorFlowCheckingClient {
+    typealias Completion = ([NSTextCheckingResult], NSOrthography?) -> Void
+    let request: (
+        _ text: String,
+        _ range: NSRange,
+        _ checkingTypes: NSTextCheckingTypes,
+        _ documentTag: Int,
+        _ completion: @escaping Completion
+    ) -> Void
+
+    static let system = EditorFlowCheckingClient { text, range, checkingTypes, documentTag, completion in
+        NSSpellChecker.shared.requestChecking(
+            of: text,
+            range: range,
+            types: checkingTypes,
+            options: nil,
+            inSpellDocumentWithTag: documentTag
+        ) { _, results, orthography, _ in
+            completion(results, orthography)
+        }
+    }
 }
 
 enum MarkdownTextEditorCommand: Equatable {
@@ -192,12 +423,15 @@ struct MarkdownTextEditor: NSViewRepresentable {
     let onVisibleTopLineChange: ((Int) -> Void)?
     let commandRequest: MarkdownTextEditorCommandRequest?
     let markdownShortcutsEnabled: Bool
+    let flowSourceMode: FlowSourceMode?
     let wikilinkDocuments: [WorkspaceDocument]
     let onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)?
     let onOpenLink: ((MarkdownEditorLinkRequest) -> Void)?
     let onInspectLinks: (() -> Void)?
     let onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)?
     let onFileDropRequest: ((MarkdownFileDropRequest) -> Void)?
+    let onWritingToolsTextCommit: ((String, String) -> Void)?
+    let onWritingToolsStateChange: ((String, Bool) -> Bool)?
 
     init(
         documentID: String,
@@ -219,12 +453,15 @@ struct MarkdownTextEditor: NSViewRepresentable {
         onVisibleTopLineChange: ((Int) -> Void)? = nil,
         commandRequest: MarkdownTextEditorCommandRequest? = nil,
         markdownShortcutsEnabled: Bool = false,
+        flowSourceMode: FlowSourceMode? = nil,
         wikilinkDocuments: [WorkspaceDocument] = [],
         onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)? = nil,
         onOpenLink: ((MarkdownEditorLinkRequest) -> Void)? = nil,
         onInspectLinks: (() -> Void)? = nil,
         onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)? = nil,
-        onFileDropRequest: ((MarkdownFileDropRequest) -> Void)? = nil
+        onFileDropRequest: ((MarkdownFileDropRequest) -> Void)? = nil,
+        onWritingToolsTextCommit: ((String, String) -> Void)? = nil,
+        onWritingToolsStateChange: ((String, Bool) -> Bool)? = nil
     ) {
         self.documentID = documentID
         self._text = text
@@ -245,12 +482,15 @@ struct MarkdownTextEditor: NSViewRepresentable {
         self.onVisibleTopLineChange = onVisibleTopLineChange
         self.commandRequest = commandRequest
         self.markdownShortcutsEnabled = markdownShortcutsEnabled
+        self.flowSourceMode = flowSourceMode
         self.wikilinkDocuments = wikilinkDocuments
         self.onSelectionChange = onSelectionChange
         self.onOpenLink = onOpenLink
         self.onInspectLinks = onInspectLinks
         self.onImagePasteRequest = onImagePasteRequest
         self.onFileDropRequest = onFileDropRequest
+        self.onWritingToolsTextCommit = onWritingToolsTextCommit
+        self.onWritingToolsStateChange = onWritingToolsStateChange
     }
 
     func makeCoordinator() -> Coordinator {
@@ -271,6 +511,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.fontSmoothingEnabled = fontSmoothing
         textView.delegate = context.coordinator
         textView.markdownShortcutsEnabled = markdownShortcutsEnabled
+        textView.flowSourceMode = flowSourceMode
         textView.commandHandler = { [weak coordinator = context.coordinator] command in
             coordinator?.apply(command) ?? false
         }
@@ -284,6 +525,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.fileDropHandler = onFileDropRequest == nil ? nil : { [weak coordinator = context.coordinator] urls, offset in
             coordinator?.requestFileDrop(urls, atUTF16Offset: offset) ?? false
         }
+        textView.flowSuggestionAcceptanceHandler = { [weak coordinator = context.coordinator] suggestion in
+            coordinator?.acceptFlowSuggestion(suggestion) ?? false
+        }
+        textView.flowSuggestionDismissalHandler = { [weak coordinator = context.coordinator] in
+            coordinator?.cancelFlowSuggestion()
+        }
         textView.updateDragTypeRegistration()
         textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
@@ -291,6 +538,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.isAutomaticTextReplacementEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
         textView.applyTextChecking(textCheckingOptions)
+        textView.applyWritingTools(flowSourceMode, protectedRangesReady: false)
         textView.allowsUndo = true
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
@@ -313,6 +561,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.onOpenLink = onOpenLink
         context.coordinator.onImagePasteRequest = onImagePasteRequest
         context.coordinator.onFileDropRequest = onFileDropRequest
+        context.coordinator.onWritingToolsTextCommit = onWritingToolsTextCommit
+        context.coordinator.onWritingToolsStateChange = onWritingToolsStateChange
+        context.coordinator.configureFlow(mode: flowSourceMode, options: textCheckingOptions)
         context.coordinator.attach(to: scrollView)
         applyTheme(theme, to: textView, in: scrollView)
         context.coordinator.markFontApplied(resolvedFont)
@@ -338,6 +589,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.onOpenLink = onOpenLink
         context.coordinator.onImagePasteRequest = onImagePasteRequest
         context.coordinator.onFileDropRequest = onFileDropRequest
+        context.coordinator.onWritingToolsTextCommit = onWritingToolsTextCommit
+        context.coordinator.onWritingToolsStateChange = onWritingToolsStateChange
+        textView.flowSourceMode = flowSourceMode
+        context.coordinator.configureFlow(mode: flowSourceMode, options: textCheckingOptions)
         textView.inspectLinksHandler = onInspectLinks
         textView.fileDropHandler = onFileDropRequest == nil ? nil : { [weak coordinator = context.coordinator] urls, offset in
             coordinator?.requestFileDrop(urls, atUTF16Offset: offset) ?? false
@@ -346,7 +601,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.syncScrollEnabled = syncScrollEnabled
         let visibleOrigin = scrollView.contentView.bounds.origin
 
-        if textView.string != text {
+        if !context.coordinator.isWritingToolsActive, textView.string != text {
             let selectedRanges = didChangeDocument ? [] : textView.selectedRanges
             textView.string = text
             if selectedRanges.isEmpty {
@@ -355,6 +610,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 textView.selectedRanges = selectedRanges
             }
             context.coordinator.externalTextDidChange()
+        }
+        if context.coordinator.isWritingToolsActive {
+            if let commandRequest {
+                context.coordinator.apply(commandRequest)
+            }
+            return
         }
         context.coordinator.restoreSelectionIfNeeded(textSelection, in: textView)
 
@@ -368,6 +629,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             textView.fontSmoothingEnabled = fontSmoothing
         }
         textView.applyTextChecking(textCheckingOptions)
+        context.coordinator.refreshNativeFlowAvailability()
         if context.coordinator.shouldApplyMarkdownShortcuts(markdownShortcutsEnabled) {
             textView.markdownShortcutsEnabled = markdownShortcutsEnabled
         }
@@ -429,15 +691,19 @@ struct MarkdownTextEditor: NSViewRepresentable {
         coordinator.textView?.inspectLinksHandler = nil
         coordinator.textView?.imagePasteHandler = nil
         coordinator.textView?.fileDropHandler = nil
+        coordinator.textView?.flowSuggestionAcceptanceHandler = nil
+        coordinator.textView?.flowSuggestionDismissalHandler = nil
+        coordinator.cancelFlowSuggestion()
         coordinator.textView = nil
     }
 
-    private func applyTheme(_ theme: AppTheme, to textView: NSTextView, in scrollView: NSScrollView) {
+    private func applyTheme(_ theme: AppTheme, to textView: MarkdownNSTextView, in scrollView: NSScrollView) {
         let background = NSColor(hex: theme.background)
         textView.backgroundColor = background
         scrollView.backgroundColor = background
         textView.textColor = NSColor(hex: theme.foreground)
         textView.insertionPointColor = NSColor(hex: theme.cursor)
+        textView.flowGhostColor = NSColor(hex: theme.foreground).withAlphaComponent(0.40)
         textView.selectedTextAttributes = [
             .backgroundColor: NSColor(hex: theme.selectionBackground),
             .foregroundColor: NSColor(hex: theme.selectionForeground)
@@ -454,6 +720,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         @Binding private var text: String
+        private let flowCheckingClient: EditorFlowCheckingClient
+        private let flowFocusValidator: (MarkdownNSTextView) -> Bool
+        private let protectedRangeProvider: @Sendable (String, FlowSourceMode) -> [NSRange]
         weak var textView: MarkdownNSTextView?
         var documentID: String?
         var onScrollPositionChange: (DocumentScrollPosition) -> Void = { _ in }
@@ -462,6 +731,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         var onOpenLink: ((MarkdownEditorLinkRequest) -> Void)?
         var onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)?
         var onFileDropRequest: ((MarkdownFileDropRequest) -> Void)?
+        var onWritingToolsTextCommit: ((String, String) -> Void)?
+        var onWritingToolsStateChange: ((String, Bool) -> Bool)?
         var syncScrollEnabled = false
         private var lastNavigatedLocation: MarkdownSourceLocation?
         private var searchMatches: [NSRange] = []
@@ -488,12 +759,62 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private var lastSyntaxFontName: String?
         private var lastSyntaxFontSize: CGFloat?
         private var lastSyntaxEnabled: Bool?
-        private var revision = 0
+        private(set) var revision = 0
         private var lastPublishedSelection: MarkdownEditorSelectionSnapshot?
         private var shouldRestoreSelection = true
+        private var flowSourceMode: FlowSourceMode?
+        private var flowCheckingOptions = EditorTextCheckingOptions.defaultValue
+        private var flowCheckTask: Task<Void, Never>?
+        private var flowRequestToken = 0
+        private struct ProtectedRangesSnapshot {
+            let revision: Int
+            let text: String
+            let mode: FlowSourceMode
+            let ranges: [NSRange]
+        }
+        private struct InlinePredictionEditCandidate {
+            let sourceRevision: Int
+            let sourceUTF16Length: Int
+            let insertedRange: NSRange
+            let insertedText: String
+            let precedingContext: String
+            let followingContext: String
+            let resultingSelection: NSRange
+        }
+        private struct InlinePredictionContinuation {
+            let revision: Int
+            let utf16Length: Int
+            let selection: NSRange
+        }
+        private struct PendingWritingToolsRangeUpdate {
+            let expectedUTF16Length: Int
+            let ranges: [NSRange]?
+        }
+        private var protectedRangesSnapshot: ProtectedRangesSnapshot?
+        private var protectedRangesTask: Task<Void, Never>?
+        private var protectedRangesGeneration = 0
+        private var pendingInlinePredictionEdit: InlinePredictionEditCandidate?
+        private var inlinePredictionContinuation: InlinePredictionContinuation?
+        private var writingToolsDocumentID: String?
+        private var writingToolsProtectedRanges: [NSRange]?
+        private var pendingWritingToolsRangeUpdate: PendingWritingToolsRangeUpdate?
+        var isWritingToolsActive: Bool { writingToolsDocumentID != nil }
 
-        init(text: Binding<String>) {
+        init(
+            text: Binding<String>,
+            flowCheckingClient: EditorFlowCheckingClient = .system,
+            protectedRangeProvider: @escaping @Sendable (String, FlowSourceMode) -> [NSRange] = { text, mode in
+                FlowProtectedRangeService().protectedRanges(in: text, mode: mode)
+            },
+            flowFocusValidator: @escaping (MarkdownNSTextView) -> Bool = { textView in
+                guard let window = textView.window else { return false }
+                return window.isKeyWindow && window.firstResponder === textView
+            }
+        ) {
             self._text = text
+            self.flowCheckingClient = flowCheckingClient
+            self.protectedRangeProvider = protectedRangeProvider
+            self.flowFocusValidator = flowFocusValidator
         }
 
         func attach(to scrollView: NSScrollView) {
@@ -505,15 +826,53 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 name: NSView.boundsDidChangeNotification,
                 object: scrollView.contentView
             )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(windowDidResignKey(_:)),
+                name: NSWindow.didResignKeyNotification,
+                object: nil
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(applicationDidResignActive(_:)),
+                name: NSApplication.didResignActiveNotification,
+                object: NSApp
+            )
         }
 
         func detach() {
+            finishWritingToolsSessionIfNeeded()
+            cancelFlowSuggestion()
+            protectedRangesTask?.cancel()
+            protectedRangesTask = nil
+            protectedRangesSnapshot = nil
+            pendingInlinePredictionEdit = nil
+            inlinePredictionContinuation = nil
             NotificationCenter.default.removeObserver(self)
             scrollView = nil
             onSelectionChange = nil
             onOpenLink = nil
             onImagePasteRequest = nil
             onFileDropRequest = nil
+            onWritingToolsTextCommit = nil
+            onWritingToolsStateChange = nil
+        }
+
+        func configureFlow(mode: FlowSourceMode?, options: EditorTextCheckingOptions) {
+            guard flowSourceMode != mode || flowCheckingOptions != options else {
+                refreshNativeFlowAvailability()
+                return
+            }
+            pendingInlinePredictionEdit = nil
+            inlinePredictionContinuation = nil
+            flowSourceMode = mode
+            flowCheckingOptions = options
+            cancelFlowSuggestion()
+            scheduleProtectedRangesRefresh(delayNanoseconds: 0)
+            refreshNativeFlowAvailability()
+            if mode == nil {
+                finishWritingToolsSessionIfNeeded()
+            }
         }
 
         func markFontApplied(_ font: NSFont) {
@@ -563,10 +922,15 @@ struct MarkdownTextEditor: NSViewRepresentable {
             self.scrollView = scrollView
             guard documentID != nextDocumentID else { return false }
 
+            finishWritingToolsSessionIfNeeded()
+            cancelFlowSuggestion()
             publishCurrentScrollPosition()
             publishSelection()
             documentID = nextDocumentID
             revision += 1
+            pendingInlinePredictionEdit = nil
+            inlinePredictionContinuation = nil
+            scheduleProtectedRangesRefresh(delayNanoseconds: 0)
             lastPublishedSelection = nil
             shouldRestoreSelection = true
             lastPublishedScrollPosition = nil
@@ -575,14 +939,19 @@ struct MarkdownTextEditor: NSViewRepresentable {
         }
 
         func externalTextDidChange() {
+            cancelFlowSuggestion()
             revision += 1
+            pendingInlinePredictionEdit = nil
+            inlinePredictionContinuation = nil
+            scheduleProtectedRangesRefresh()
+            refreshNativeFlowAvailability()
         }
 
         func restoreSelectionIfNeeded(
             _ selection: DocumentTextSelection?,
             in textView: NSTextView
         ) {
-            guard shouldRestoreSelection else { return }
+            guard !isWritingToolsActive, shouldRestoreSelection else { return }
             shouldRestoreSelection = false
             let requestedRange = NSRange(
                 location: selection?.location ?? 0,
@@ -604,6 +973,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             font: NSFont,
             in textView: NSTextView
         ) {
+            guard !isWritingToolsActive else { return }
             let source = textView.string
             guard lastSyntaxText != source ||
                     lastSyntaxTheme != theme ||
@@ -627,7 +997,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
         }
 
         func applySyncScrollTargetLine(_ line: Int?, in textView: NSTextView, scrollView: NSScrollView) {
-            guard syncScrollEnabled, let line, line > 0, line != lastAppliedSyncScrollLine else { return }
+            guard !isWritingToolsActive,
+                  syncScrollEnabled,
+                  let line,
+                  line > 0,
+                  line != lastAppliedSyncScrollLine
+            else { return }
 
             lastAppliedSyncScrollLine = line
             let offset = MarkdownScrollSync.characterOffset(forLine: line, in: textView.string)
@@ -673,6 +1048,17 @@ struct MarkdownTextEditor: NSViewRepresentable {
             publishCurrentScrollPosition()
         }
 
+        @objc private func windowDidResignKey(_ notification: Notification) {
+            guard let window = notification.object as? NSWindow,
+                  window === textView?.window
+            else { return }
+            cancelFlowSuggestion()
+        }
+
+        @objc private func applicationDidResignActive(_ notification: Notification) {
+            cancelFlowSuggestion()
+        }
+
         private func publishVisibleTopLineIfNeeded(in textView: NSTextView, scrollView: NSScrollView) {
             guard !isRestoringScrollPosition else { return }
             let line = visibleTopLine(in: textView, scrollView: scrollView)
@@ -682,7 +1068,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         }
 
         private func publish(_ position: DocumentScrollPosition) {
-            guard documentID != nil,
+            guard !isWritingToolsActive,
+                  documentID != nil,
                   position.isMeaningfullyDifferent(from: lastPublishedScrollPosition)
             else {
                 if let textView, let scrollView {
@@ -699,20 +1086,205 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
         }
 
+        func textView(
+            _ nativeTextView: NSTextView,
+            shouldChangeTextIn affectedCharRange: NSRange,
+            replacementString: String?
+        ) -> Bool {
+            guard let textView = nativeTextView as? MarkdownNSTextView else { return true }
+            guard let replacementString else { return true }
+            if isWritingToolsActive {
+                return prepareWritingToolsRangeUpdate(
+                    replacing: affectedCharRange,
+                    with: replacementString,
+                    in: textView
+                )
+            }
+            pendingInlinePredictionEdit = nil
+            let source = textView.string as NSString
+            guard let mode = flowSourceMode,
+                  affectedCharRange.location != NSNotFound,
+                  affectedCharRange.length == 0,
+                  NSMaxRange(affectedCharRange) <= source.length,
+                  Self.isOrdinaryProseInsertion(
+                      replacementString,
+                      in: source,
+                      at: affectedCharRange.location,
+                      mode: mode
+                  ),
+                  textView.selectedRange() == affectedCharRange,
+                  !textView.hasMarkedText(),
+                  textView.inlinePredictionType == .yes,
+                  hasTrustedInlinePredictionEligibility(in: textView)
+            else {
+                inlinePredictionContinuation = nil
+                textView.applyInlinePredictionEligibility(false)
+                return true
+            }
+
+            let replacementLength = (replacementString as NSString).length
+            let resultingSelection = NSRange(
+                location: affectedCharRange.location + replacementLength,
+                length: 0
+            )
+            guard Self.insertionRemainsOutsideProtectedSyntax(
+                in: source,
+                insertionLocation: affectedCharRange.location,
+                replacement: replacementString,
+                mode: mode
+            ) else {
+                inlinePredictionContinuation = nil
+                textView.applyInlinePredictionEligibility(false)
+                return true
+            }
+            let contextLength = 32
+            let precedingContextRange = NSRange(
+                location: max(0, affectedCharRange.location - contextLength),
+                length: min(contextLength, affectedCharRange.location)
+            )
+            let followingContextRange = NSRange(
+                location: affectedCharRange.location,
+                length: min(contextLength, source.length - affectedCharRange.location)
+            )
+            pendingInlinePredictionEdit = InlinePredictionEditCandidate(
+                sourceRevision: revision,
+                sourceUTF16Length: source.length,
+                insertedRange: NSRange(
+                    location: affectedCharRange.location,
+                    length: replacementLength
+                ),
+                insertedText: replacementString,
+                precedingContext: source.substring(with: precedingContextRange),
+                followingContext: source.substring(with: followingContextRange),
+                resultingSelection: resultingSelection
+            )
+            return true
+        }
+
+        private func prepareWritingToolsRangeUpdate(
+            replacing affectedRange: NSRange,
+            with replacement: String,
+            in textView: NSTextView
+        ) -> Bool {
+            let sourceLength = (textView.string as NSString).length
+            guard affectedRange.location != NSNotFound,
+                  affectedRange.location >= 0,
+                  affectedRange.length >= 0,
+                  NSMaxRange(affectedRange) <= sourceLength
+            else {
+                pendingWritingToolsRangeUpdate = nil
+                writingToolsProtectedRanges = nil
+                return false
+            }
+
+            let replacementLength = (replacement as NSString).length
+            let expectedLength = sourceLength - affectedRange.length + replacementLength
+            guard let protectedRanges = writingToolsProtectedRanges else {
+                pendingWritingToolsRangeUpdate = nil
+                return false
+            }
+
+            let affectedUpperBound = NSMaxRange(affectedRange)
+            let delta = replacementLength - affectedRange.length
+            var rebasedRanges: [NSRange] = []
+            rebasedRanges.reserveCapacity(protectedRanges.count)
+            for protectedRange in protectedRanges {
+                let protectedUpperBound = NSMaxRange(protectedRange)
+                if affectedRange.length == 0 {
+                    if affectedRange.location <= protectedRange.location {
+                        rebasedRanges.append(NSRange(
+                            location: protectedRange.location + delta,
+                            length: protectedRange.length
+                        ))
+                    } else if affectedRange.location < protectedUpperBound {
+                        pendingWritingToolsRangeUpdate = nil
+                        return false
+                    } else {
+                        rebasedRanges.append(protectedRange)
+                    }
+                } else if affectedUpperBound <= protectedRange.location {
+                    rebasedRanges.append(NSRange(
+                        location: protectedRange.location + delta,
+                        length: protectedRange.length
+                    ))
+                } else if affectedRange.location >= protectedUpperBound {
+                    rebasedRanges.append(protectedRange)
+                } else {
+                    pendingWritingToolsRangeUpdate = nil
+                    return false
+                }
+            }
+            pendingWritingToolsRangeUpdate = PendingWritingToolsRangeUpdate(
+                expectedUTF16Length: expectedLength,
+                ranges: rebasedRanges
+            )
+            return true
+        }
+
         func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
+            guard let textView = notification.object as? MarkdownNSTextView else { return }
+            cancelFlowSuggestion()
             revision += 1
+            if isWritingToolsActive {
+                let currentLength = (textView.string as NSString).length
+                if let pendingWritingToolsRangeUpdate,
+                   pendingWritingToolsRangeUpdate.expectedUTF16Length == currentLength {
+                    writingToolsProtectedRanges = pendingWritingToolsRangeUpdate.ranges
+                } else {
+                    // An edit bypassed the delegate seam or did not match its announced
+                    // replacement. Ignore the full enclosing range for the rest of the
+                    // session instead of returning stale Markdown offsets.
+                    writingToolsProtectedRanges = nil
+                }
+                pendingWritingToolsRangeUpdate = nil
+            }
+            if let candidate = pendingInlinePredictionEdit,
+               candidate.sourceRevision == revision - 1,
+               inlinePredictionEditCandidateMatchesCurrentState(candidate, in: textView),
+               !textView.hasMarkedText(),
+               !isWritingToolsActive {
+                inlinePredictionContinuation = InlinePredictionContinuation(
+                    revision: revision,
+                    utf16Length: (textView.string as NSString).length,
+                    selection: textView.selectedRange()
+                )
+            } else {
+                inlinePredictionContinuation = nil
+            }
+            pendingInlinePredictionEdit = nil
+            if !isWritingToolsActive {
+                scheduleProtectedRangesRefresh()
+            }
+            refreshNativeFlowAvailability()
+            guard !isWritingToolsActive else { return }
             text = textView.string
             publishSelection()
+            scheduleFlowCheck()
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
-            guard notification.object is NSTextView else { return }
+            guard let textView = notification.object as? MarkdownNSTextView else { return }
+            cancelFlowSuggestion()
+            if pendingInlinePredictionEdit.map({
+                !inlinePredictionEditCandidateMatchesCurrentState($0, in: textView)
+            }) == true {
+                pendingInlinePredictionEdit = nil
+            }
+            if !inlinePredictionContinuationMatchesCurrentState(in: textView) {
+                inlinePredictionContinuation = nil
+            }
+            refreshNativeFlowAvailability()
+            guard !isWritingToolsActive else { return }
             publishSelection()
+            scheduleFlowCheck()
         }
 
         func publishSelection() {
-            guard let textView, let documentID, let onSelectionChange else { return }
+            guard !isWritingToolsActive,
+                  let textView,
+                  let documentID,
+                  let onSelectionChange
+            else { return }
             let selectedRange = Self.boundedRange(textView.selectedRange(), in: textView.string)
             let selectedMarkdown = (textView.string as NSString).substring(with: selectedRange)
             let snapshot = MarkdownEditorSelectionSnapshot(
@@ -726,6 +1298,553 @@ struct MarkdownTextEditor: NSViewRepresentable {
             onSelectionChange(snapshot)
         }
 
+        func cancelFlowSuggestion() {
+            flowRequestToken &+= 1
+            flowCheckTask?.cancel()
+            flowCheckTask = nil
+            textView?.flowSuggestion = nil
+        }
+
+        private var currentProtectedRanges: [NSRange]? {
+            guard let mode = flowSourceMode,
+                  let textView,
+                  let snapshot = protectedRangesSnapshot,
+                  snapshot.revision == revision,
+                  snapshot.text == textView.string,
+                  snapshot.mode == mode
+            else { return nil }
+            return snapshot.ranges
+        }
+
+        func refreshNativeFlowAvailability() {
+            guard let textView else { return }
+            let ranges = currentProtectedRanges
+            let authoritativeEligibility = ranges.map {
+                caretIsOutsideProtectedRanges($0, in: textView)
+            } == true
+            let continuedEligibility = ranges == nil
+                && (
+                    inlinePredictionContinuationMatchesCurrentState(in: textView)
+                        || pendingInlinePredictionEditMatchesCurrentState(in: textView)
+                )
+            let inlinePredictionsAllowed = !isWritingToolsActive
+                && !textView.hasMarkedText()
+                && (authoritativeEligibility || continuedEligibility)
+            textView.applyInlinePredictionEligibility(inlinePredictionsAllowed)
+            textView.applyWritingTools(
+                flowSourceMode,
+                protectedRangesReady: isWritingToolsActive || ranges != nil
+            )
+        }
+
+        private func caretIsOutsideProtectedRanges(
+            _ ranges: [NSRange],
+            in textView: NSTextView
+        ) -> Bool {
+            let selectedRange = textView.selectedRange()
+            guard selectedRange.length == 0 else { return false }
+            let sourceLength = (textView.string as NSString).length
+            guard sourceLength > 0 else { return true }
+
+            let caret = min(max(0, selectedRange.location), sourceLength)
+            let probe = caret < sourceLength
+                ? NSRange(location: caret, length: 1)
+                : NSRange(location: sourceLength - 1, length: 1)
+            return !ranges.contains {
+                NSIntersectionRange($0, probe).length > 0
+            }
+        }
+
+        private func hasTrustedInlinePredictionEligibility(in textView: NSTextView) -> Bool {
+            if let ranges = currentProtectedRanges {
+                return caretIsOutsideProtectedRanges(ranges, in: textView)
+            }
+            return inlinePredictionContinuationMatchesCurrentState(in: textView)
+        }
+
+        private func inlinePredictionContinuationMatchesCurrentState(
+            in textView: NSTextView
+        ) -> Bool {
+            guard let continuation = inlinePredictionContinuation else { return false }
+            return continuation.revision == revision
+                && continuation.utf16Length == (textView.string as NSString).length
+                && continuation.selection == textView.selectedRange()
+                && continuation.selection.length == 0
+                && !textView.hasMarkedText()
+        }
+
+        private func pendingInlinePredictionEditMatchesCurrentState(
+            in textView: NSTextView
+        ) -> Bool {
+            guard let candidate = pendingInlinePredictionEdit else { return false }
+            return candidate.sourceRevision == revision
+                && inlinePredictionEditCandidateMatchesCurrentState(candidate, in: textView)
+                && !textView.hasMarkedText()
+        }
+
+        private func inlinePredictionEditCandidateMatchesCurrentState(
+            _ candidate: InlinePredictionEditCandidate,
+            in textView: NSTextView
+        ) -> Bool {
+            let current = textView.string as NSString
+            let precedingLength = (candidate.precedingContext as NSString).length
+            let followingLength = (candidate.followingContext as NSString).length
+            guard candidate.resultingSelection == textView.selectedRange(),
+                  candidate.resultingSelection.length == 0,
+                  current.length == candidate.sourceUTF16Length + candidate.insertedRange.length,
+                  candidate.insertedRange.location >= precedingLength,
+                  NSMaxRange(candidate.insertedRange) + followingLength <= current.length,
+                  current.substring(with: candidate.insertedRange) == candidate.insertedText
+            else { return false }
+            let precedingRange = NSRange(
+                location: candidate.insertedRange.location - precedingLength,
+                length: precedingLength
+            )
+            let followingRange = NSRange(
+                location: NSMaxRange(candidate.insertedRange),
+                length: followingLength
+            )
+            return current.substring(with: precedingRange) == candidate.precedingContext
+                && current.substring(with: followingRange) == candidate.followingContext
+        }
+
+        private static func isOrdinaryProseInsertion(
+            _ replacement: String,
+            in source: NSString,
+            at insertionLocation: Int,
+            mode: FlowSourceMode
+        ) -> Bool {
+            guard replacement.count == 1 else { return false }
+            if replacement == " " {
+                guard mode == .markdown else { return true }
+                let precedingRange = NSRange(location: 0, length: insertionLocation)
+                let newlineRange = source.range(
+                    of: "\n",
+                    options: .backwards,
+                    range: precedingRange
+                )
+                let lineStart = newlineRange.location == NSNotFound ? 0 : NSMaxRange(newlineRange)
+                let linePrefix = source.substring(with: NSRange(
+                    location: lineStart,
+                    length: insertionLocation - lineStart
+                ))
+                return linePrefix.unicodeScalars.contains {
+                    !CharacterSet.whitespacesAndNewlines.contains($0)
+                }
+            }
+            let scalars = replacement.unicodeScalars
+            let isProseScalar: (Unicode.Scalar) -> Bool = {
+                CharacterSet.letters.contains($0) || CharacterSet.decimalDigits.contains($0)
+            }
+            return scalars.contains(where: isProseScalar)
+                && scalars.allSatisfy {
+                    isProseScalar($0) || CharacterSet.nonBaseCharacters.contains($0)
+                }
+        }
+
+        private static func insertionRemainsOutsideProtectedSyntax(
+            in source: NSString,
+            insertionLocation: Int,
+            replacement: String,
+            mode: FlowSourceMode
+        ) -> Bool {
+            let maximumExcerptLength = 2_048
+            let replacementLength = (replacement as NSString).length
+            let maximumSourceLength = maximumExcerptLength - replacementLength
+            let tentativeStart = max(0, insertionLocation - maximumSourceLength / 2)
+            let precedingNewline = source.range(
+                of: "\n",
+                options: .backwards,
+                range: NSRange(
+                    location: tentativeStart,
+                    length: insertionLocation - tentativeStart
+                )
+            )
+            let excerptStart = precedingNewline.location == NSNotFound
+                ? tentativeStart
+                : NSMaxRange(precedingNewline)
+            let maximumEnd = min(source.length, excerptStart + maximumSourceLength)
+            let followingNewline = source.range(
+                of: "\n",
+                range: NSRange(
+                    location: insertionLocation,
+                    length: maximumEnd - insertionLocation
+                )
+            )
+            let excerptEnd = followingNewline.location == NSNotFound
+                ? maximumEnd
+                : NSMaxRange(followingNewline)
+            let excerptRange = NSRange(
+                location: excerptStart,
+                length: excerptEnd - excerptStart
+            )
+            guard insertionLocation >= excerptStart,
+                  insertionLocation <= excerptEnd
+            else { return false }
+            let sourceExcerpt = source.substring(with: excerptRange) as NSString
+            let localInsertedRange = NSRange(
+                location: insertionLocation - excerptStart,
+                length: replacementLength
+            )
+            let excerpt = sourceExcerpt.replacingCharacters(
+                in: NSRange(location: localInsertedRange.location, length: 0),
+                with: replacement
+            )
+            let excerptLength = (excerpt as NSString).length
+            let localCaret = NSMaxRange(localInsertedRange)
+            let caretProbe: NSRange?
+            if localCaret < excerptLength {
+                caretProbe = NSRange(location: localCaret, length: 1)
+            } else if localCaret > 0 {
+                caretProbe = NSRange(location: localCaret - 1, length: 1)
+            } else {
+                caretProbe = nil
+            }
+            let ranges = FlowProtectedRangeService().protectedRanges(
+                in: excerpt,
+                mode: mode
+            )
+            return !ranges.contains { protectedRange in
+                NSIntersectionRange(protectedRange, localInsertedRange).length > 0
+                    || caretProbe.map {
+                        NSIntersectionRange(protectedRange, $0).length > 0
+                    } == true
+            }
+        }
+
+        private func scheduleFlowCheck() {
+            guard !isWritingToolsActive,
+                  let mode = flowSourceMode,
+                  flowCheckingOptions.checksSpelling || flowCheckingOptions.checksGrammar,
+                  let textView,
+                  flowFocusValidator(textView),
+                  !textView.hasMarkedText(),
+                  let documentID,
+                  let plan = EditorFlowCheckPlanner.plan(
+                    in: textView.string,
+                    selectedRange: textView.selectedRange()
+                  )
+            else { return }
+
+            let caret = textView.selectedRange().location + textView.selectedRange().length
+            let token = flowRequestToken
+            let snapshot = EditorFlowCheckSnapshot(
+                documentID: documentID,
+                revision: revision,
+                sourceText: textView.string,
+                checkedRange: plan.range,
+                selectedRange: textView.selectedRange(),
+                caretUTF16Offset: caret,
+                options: flowCheckingOptions,
+                sourceMode: mode
+            )
+            flowCheckTask = Task { @MainActor [weak self] in
+                do {
+                    try await Task.sleep(nanoseconds: plan.delayNanoseconds)
+                } catch {
+                    return
+                }
+                guard let self, self.isCurrentFlowSnapshot(snapshot, token: token) else { return }
+                self.requestFlowCorrection(for: snapshot, token: token)
+            }
+        }
+
+        private func requestFlowCorrection(
+            for snapshot: EditorFlowCheckSnapshot,
+            token: Int
+        ) {
+            guard isCurrentFlowSnapshot(snapshot, token: token), let textView else { return }
+
+            let documentTag = textView.spellCheckerDocumentTag
+            flowCheckingClient.request(
+                snapshot.sourceText,
+                snapshot.checkedRange,
+                EditorFlowCheckingTypes.value(for: snapshot.options),
+                documentTag
+            ) { [weak self] results, orthography in
+                DispatchQueue.main.async { [weak self] in
+                    self?.receiveFlowResults(
+                        results,
+                        orthography: orthography,
+                        snapshot: snapshot,
+                        token: token,
+                        documentTag: documentTag
+                    )
+                }
+            }
+        }
+
+        private func receiveFlowResults(
+            _ results: [NSTextCheckingResult],
+            orthography: NSOrthography?,
+            snapshot: EditorFlowCheckSnapshot,
+            token: Int,
+            documentTag: Int
+        ) {
+            guard isCurrentFlowSnapshot(snapshot, token: token) else { return }
+            let checker = NSSpellChecker.shared
+            guard let candidate = EditorFlowCorrectionResolver.nearestConcreteCorrection(
+                in: snapshot.sourceText,
+                caretUTF16Offset: snapshot.caretUTF16Offset,
+                results: results,
+                orthography: orthography,
+                spellingCorrection: { range, orthography in
+                    guard let language = checker.language(
+                        forWordRange: range,
+                        in: snapshot.sourceText,
+                        orthography: orthography
+                    ) ?? orthography?.dominantLanguage else { return nil }
+                    return checker.correction(
+                        forWordRange: range,
+                        in: snapshot.sourceText,
+                        language: language,
+                        inSpellDocumentWithTag: documentTag
+                    )
+                }
+            ) else { return }
+
+            guard (candidate.kind == .spelling && snapshot.options.checksSpelling) ||
+                    (candidate.kind == .grammar && snapshot.options.checksGrammar),
+                  NSIntersectionRange(candidate.range, snapshot.checkedRange).length == candidate.range.length,
+                  textView != nil
+            else { return }
+
+            let checkedText = (snapshot.sourceText as NSString).substring(with: candidate.range)
+            guard let ranges = protectedRangesSnapshot.flatMap({ protectedSnapshot -> [NSRange]? in
+                guard protectedSnapshot.revision == snapshot.revision,
+                      protectedSnapshot.text == snapshot.sourceText,
+                      protectedSnapshot.mode == snapshot.sourceMode
+                else { return nil }
+                return protectedSnapshot.ranges
+            }) else { return }
+            let sourceLength = (snapshot.sourceText as NSString).length
+            let caretProbe: NSRange?
+            if snapshot.caretUTF16Offset < sourceLength {
+                caretProbe = NSRange(location: snapshot.caretUTF16Offset, length: 1)
+            } else if snapshot.caretUTF16Offset > 0 {
+                caretProbe = NSRange(location: snapshot.caretUTF16Offset - 1, length: 1)
+            } else {
+                caretProbe = nil
+            }
+            let intersectsProtectedContent = ranges.contains { range in
+                NSIntersectionRange(range, candidate.range).length > 0 ||
+                    caretProbe.map { NSIntersectionRange(range, $0).length > 0 } == true
+            }
+
+            guard !intersectsProtectedContent,
+                  isCurrentFlowSnapshot(snapshot, token: token),
+                  let textView
+            else { return }
+            textView.flowSuggestion = EditorFlowSuggestion(
+                documentID: snapshot.documentID,
+                revision: snapshot.revision,
+                checkedRange: candidate.range,
+                selectedRange: snapshot.selectedRange,
+                caretUTF16Offset: snapshot.caretUTF16Offset,
+                checkedText: checkedText,
+                replacementText: candidate.replacementText,
+                kind: candidate.kind
+            )
+        }
+
+        func isCurrentFlowSnapshot(_ snapshot: EditorFlowCheckSnapshot, token: Int) -> Bool {
+            guard token == flowRequestToken,
+                  !isWritingToolsActive,
+                  flowSourceMode == snapshot.sourceMode,
+                  flowCheckingOptions == snapshot.options,
+                  documentID == snapshot.documentID,
+                  revision == snapshot.revision,
+                  let textView,
+                  textView.string == snapshot.sourceText,
+                  textView.selectedRange() == snapshot.selectedRange,
+                  snapshot.caretUTF16Offset == snapshot.selectedRange.location + snapshot.selectedRange.length,
+                  flowFocusValidator(textView),
+                  !textView.hasMarkedText()
+            else { return false }
+            return true
+        }
+
+        @discardableResult
+        func acceptFlowSuggestion(_ suggestion: EditorFlowSuggestion) -> Bool {
+            guard let textView,
+                  let textStorage = textView.textStorage,
+                  textView.flowSuggestion == suggestion,
+                  suggestion.matches(
+                    documentID: documentID,
+                    revision: revision,
+                    text: textView.string,
+                    selectedRange: textView.selectedRange()
+                  ),
+                  textView.shouldChangeText(
+                    in: suggestion.checkedRange,
+                    replacementString: suggestion.replacementText
+                  )
+            else {
+                cancelFlowSuggestion()
+                return false
+            }
+
+            let caretDelta = (suggestion.replacementText as NSString).length - suggestion.checkedRange.length
+            cancelFlowSuggestion()
+            textView.breakUndoCoalescing()
+            textView.undoManager?.beginUndoGrouping()
+            textStorage.replaceCharacters(
+                in: suggestion.checkedRange,
+                with: suggestion.replacementText
+            )
+            textView.didChangeText()
+            let nextRange = NSRange(
+                location: max(0, suggestion.caretUTF16Offset + caretDelta),
+                length: 0
+            )
+            textView.setSelectedRange(nextRange)
+            textView.scrollRangeToVisible(nextRange)
+            textView.undoManager?.endUndoGrouping()
+            textView.undoManager?.setActionName("Accept Flow Correction")
+            textView.breakUndoCoalescing()
+            return true
+        }
+
+        @available(macOS 15.0, *)
+        func textViewWritingToolsWillBegin(_ textView: NSTextView) {
+            guard flowSourceMode != nil,
+                  !isWritingToolsActive,
+                  let documentID
+            else { return }
+            cancelFlowSuggestion()
+            guard let protectedRanges = currentProtectedRanges else {
+                rejectWritingToolsStart(in: textView)
+                return
+            }
+            guard onWritingToolsStateChange?(documentID, true) ?? true else {
+                rejectWritingToolsStart(in: textView)
+                return
+            }
+            writingToolsDocumentID = documentID
+            writingToolsProtectedRanges = protectedRanges
+            pendingWritingToolsRangeUpdate = nil
+            refreshNativeFlowAvailability()
+        }
+
+        @available(macOS 15.0, *)
+        private func rejectWritingToolsStart(in textView: NSTextView) {
+            if #available(macOS 15.2, *) {
+                textView.writingToolsCoordinator?.stopWritingTools()
+            } else {
+                textView.writingToolsBehavior = .none
+            }
+        }
+
+        @available(macOS 15.0, *)
+        func textViewWritingToolsDidEnd(_ textView: NSTextView) {
+            finishWritingToolsSessionIfNeeded()
+        }
+
+        @available(macOS 15.0, *)
+        func textView(
+            _ textView: NSTextView,
+            writingToolsIgnoredRangesInEnclosingRange enclosingRange: NSRange
+        ) -> [NSValue] {
+            guard flowSourceMode != nil else { return [] }
+            let ranges = currentProtectedRanges ?? (isWritingToolsActive ? writingToolsProtectedRanges : nil)
+            guard let ranges else {
+                guard enclosingRange.location != NSNotFound, enclosingRange.length > 0 else { return [] }
+                return [NSValue(range: NSRange(location: 0, length: enclosingRange.length))]
+            }
+            return ranges.compactMap { absoluteRange in
+                let intersection = NSIntersectionRange(absoluteRange, enclosingRange)
+                guard intersection.length > 0 else { return nil }
+                return NSValue(range: NSRange(
+                    location: intersection.location - enclosingRange.location,
+                    length: intersection.length
+                ))
+            }
+        }
+
+        private func scheduleProtectedRangesRefresh(
+            delayNanoseconds: UInt64 = 140_000_000
+        ) {
+            protectedRangesGeneration &+= 1
+            let generation = protectedRangesGeneration
+            let previousTask = protectedRangesTask
+            previousTask?.cancel()
+            protectedRangesSnapshot = nil
+            refreshNativeFlowAvailability()
+            guard !isWritingToolsActive,
+                  flowSourceMode != nil,
+                  textView != nil
+            else { return }
+
+            let provider = protectedRangeProvider
+            protectedRangesTask = Task { @MainActor [weak self] in
+                await previousTask?.value
+                guard !Task.isCancelled else { return }
+                if delayNanoseconds > 0 {
+                    do {
+                        try await Task.sleep(nanoseconds: delayNanoseconds)
+                    } catch {
+                        return
+                    }
+                }
+                guard !Task.isCancelled,
+                      let self,
+                      generation == self.protectedRangesGeneration,
+                      !self.isWritingToolsActive,
+                      let mode = self.flowSourceMode,
+                      let textView = self.textView
+                else { return }
+                let text = textView.string
+                let capturedRevision = self.revision
+                let worker = Task.detached(priority: .utility) {
+                    provider(text, mode)
+                }
+                let ranges = await withTaskCancellationHandler {
+                    await worker.value
+                } onCancel: {
+                    worker.cancel()
+                }
+                guard !Task.isCancelled,
+                      generation == self.protectedRangesGeneration,
+                      capturedRevision == self.revision,
+                      self.flowSourceMode == mode,
+                      self.textView?.string == text
+                else { return }
+                self.protectedRangesSnapshot = ProtectedRangesSnapshot(
+                    revision: capturedRevision,
+                    text: text,
+                    mode: mode,
+                    ranges: ranges
+                )
+                self.inlinePredictionContinuation = nil
+                self.protectedRangesTask = nil
+                self.refreshNativeFlowAvailability()
+            }
+        }
+
+        private func finishWritingToolsSessionIfNeeded() {
+            guard isWritingToolsActive, let activeDocumentID = writingToolsDocumentID else { return }
+            let finalText = textView?.string
+            writingToolsDocumentID = nil
+            writingToolsProtectedRanges = nil
+            pendingWritingToolsRangeUpdate = nil
+            pendingInlinePredictionEdit = nil
+            inlinePredictionContinuation = nil
+            cancelFlowSuggestion()
+            lastSyntaxText = nil
+            lastPublishedSelection = nil
+            scheduleProtectedRangesRefresh(delayNanoseconds: 0)
+
+            if let finalText {
+                if let onWritingToolsTextCommit {
+                    onWritingToolsTextCommit(activeDocumentID, finalText)
+                } else if documentID == activeDocumentID {
+                    text = finalText
+                }
+            }
+            publishSelection()
+            _ = onWritingToolsStateChange?(activeDocumentID, false)
+        }
+
         func open(_ link: MarkdownWorkspaceLink) -> Bool {
             guard let documentID, let onOpenLink else { return false }
             onOpenLink(MarkdownEditorLinkRequest(
@@ -737,7 +1856,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         }
 
         func requestImagePaste(_ image: NSImage) -> Bool {
-            guard let textView,
+            guard !isWritingToolsActive,
+                  let textView,
                   let documentID,
                   let onImagePasteRequest
             else { return false }
@@ -765,7 +1885,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         }
 
         func requestFileDrop(_ urls: [URL], atUTF16Offset offset: Int) -> Bool {
-            guard !urls.isEmpty,
+            guard !isWritingToolsActive,
+                  !urls.isEmpty,
                   let textView,
                   let documentID,
                   let onFileDropRequest
@@ -803,7 +1924,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
             expectedRange: NSRange,
             requiresSelectionMatch: Bool = true
         ) -> Bool {
-            guard !markdown.isEmpty,
+            guard !isWritingToolsActive,
+                  !markdown.isEmpty,
                   self.documentID == documentID,
                   revision == expectedRevision,
                   let textView,
@@ -834,7 +1956,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
         }
 
         func apply(_ command: MarkdownTextEditorCommand) -> Bool {
-            guard let textView, let textStorage = textView.textStorage else { return false }
+            guard !isWritingToolsActive,
+                  let textView,
+                  let textStorage = textView.textStorage
+            else { return false }
             let selectedRange = textView.selectedRange()
             let result = MarkdownTextCommandApplier.apply(
                 command,
@@ -860,7 +1985,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
         }
 
         func navigate(to location: MarkdownSourceLocation, in textView: NSTextView) {
-            guard lastNavigatedLocation != location || textView.window?.firstResponder !== textView else { return }
+            guard !isWritingToolsActive,
+                  lastNavigatedLocation != location || textView.window?.firstResponder !== textView
+            else { return }
 
             let offset = characterOffset(for: location, in: textView.string)
             let range = NSRange(location: offset, length: 0)
@@ -901,6 +2028,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
             theme: AppTheme,
             in textView: NSTextView
         ) -> DocumentSearchResult {
+            guard !isWritingToolsActive else {
+                return DocumentSearchResult(
+                    currentIndex: state.currentIndex,
+                    totalCount: state.totalCount
+                )
+            }
             let request = DocumentSearchRequest(state, options: options)
             let query = request.query.trimmingCharacters(in: .whitespacesAndNewlines)
             guard state.isPresented, !query.isEmpty else {
@@ -1437,14 +2570,38 @@ private extension String {
     }
 }
 
-final class MarkdownNSTextView: NSTextView {
+class MarkdownNSTextView: NSTextView {
     var markdownShortcutsEnabled = false
+    var flowSourceMode: FlowSourceMode?
+    private var inlinePredictionsPreferenceEnabled = false
+    private(set) var flowWritingToolsReady = false
     var wikilinkDocuments: [WorkspaceDocument] = []
     var commandHandler: ((MarkdownTextEditorCommand) -> Bool)?
     var workspaceLinkHandler: ((MarkdownWorkspaceLink) -> Bool)?
     var inspectLinksHandler: (() -> Void)?
     var imagePasteHandler: ((NSImage) -> Bool)?
     var fileDropHandler: (([URL], Int) -> Bool)?
+    var flowSuggestionAcceptanceHandler: ((EditorFlowSuggestion) -> Bool)?
+    var flowSuggestionDismissalHandler: (() -> Void)?
+    var flowSuggestion: EditorFlowSuggestion? {
+        didSet {
+            guard flowSuggestion != oldValue else { return }
+            needsDisplay = true
+            if let flowSuggestion {
+                NSAccessibility.post(
+                    element: self,
+                    notification: .announcementRequested,
+                    userInfo: [
+                        .announcement: "Suggestion: \(flowSuggestion.replacementText). Tab to accept.",
+                        .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+                    ]
+                )
+            }
+        }
+    }
+    var flowGhostColor = NSColor.secondaryLabelColor.withAlphaComponent(0.55) {
+        didSet { needsDisplay = true }
+    }
 
     // AppKit's text dragging contract uses acceptableDragTypes and the NSDraggingDestination
     // lifecycle. See https://developer.apple.com/documentation/appkit/nstextview/acceptabledragtypes
@@ -1486,6 +2643,29 @@ final class MarkdownNSTextView: NSTextView {
         isAutomaticQuoteSubstitutionEnabled = false
         isAutomaticDashSubstitutionEnabled = false
         isAutomaticTextReplacementEnabled = false
+        inlinePredictionsPreferenceEnabled = options.inlinePredictions
+        if flowSourceMode == nil || !options.inlinePredictions {
+            inlinePredictionType = .no
+        }
+    }
+
+    func applyInlinePredictionEligibility(_ isEligible: Bool) {
+        inlinePredictionType = flowSourceMode != nil
+            && inlinePredictionsPreferenceEnabled
+            && isEligible
+            ? .yes
+            : .no
+    }
+
+    func applyWritingTools(
+        _ mode: FlowSourceMode?,
+        protectedRangesReady: Bool
+    ) {
+        flowWritingToolsReady = mode != nil && protectedRangesReady
+        if #available(macOS 15.0, *) {
+            writingToolsBehavior = flowWritingToolsReady ? .limited : .none
+            allowedWritingToolsResultOptions = [.plainText]
+        }
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -1575,6 +2755,9 @@ final class MarkdownNSTextView: NSTextView {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         guard let menu = super.menu(for: event) else { return nil }
+        if #available(macOS 15.2, *) {
+            menu.automaticallyInsertsWritingToolsItems = flowSourceMode != nil
+        }
         var addedCustomItem = false
 
         func addSeparatorIfNeeded() {
@@ -1676,10 +2859,26 @@ final class MarkdownNSTextView: NSTextView {
     }
 
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 48,
-           event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock]).isEmpty,
-           completeActiveWikilink() {
+        if #available(macOS 15.0, *), isWritingToolsActive {
+            super.keyDown(with: event)
             return
+        }
+        let modifiers = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock])
+        if event.keyCode == 48, modifiers.isEmpty {
+            if completeActiveWikilink() {
+                return
+            }
+            if let flowSuggestion,
+               flowSuggestionAcceptanceHandler?(flowSuggestion) == true {
+                return
+            }
+        } else if event.keyCode == 53, modifiers.isEmpty, flowSuggestion != nil {
+            flowSuggestionDismissalHandler?()
+            return
+        } else {
+            flowSuggestionDismissalHandler?()
         }
 
         if markdownShortcutsEnabled,
@@ -1794,7 +2993,81 @@ final class MarkdownNSTextView: NSTextView {
         let previousAntialiasing = context.shouldAntialias
         context.shouldAntialias = fontSmoothingEnabled
         super.draw(dirtyRect)
+        drawFlowSuggestionIfNeeded(in: dirtyRect)
         context.shouldAntialias = previousAntialiasing
+    }
+
+    override func resignFirstResponder() -> Bool {
+        flowSuggestionDismissalHandler?()
+        return super.resignFirstResponder()
+    }
+
+    private func drawFlowSuggestionIfNeeded(in dirtyRect: NSRect) {
+        guard let suggestion = flowSuggestion,
+              window?.firstResponder === self,
+              selectedRange() == suggestion.selectedRange,
+              suggestion.caretUTF16Offset <= (string as NSString).length,
+              let origin = flowSuggestionOrigin(atUTF16Offset: suggestion.caretUTF16Offset)
+        else { return }
+
+        let editorFont = font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        let rendered = NSMutableAttributedString(
+            string: suggestion.replacementText,
+            attributes: [
+                .font: editorFont,
+                .foregroundColor: flowGhostColor,
+            ]
+        )
+        let baseCueFont = NSFont.systemFont(ofSize: 12, weight: .regular)
+        let cueFont = baseCueFont.fontDescriptor.withDesign(.rounded).flatMap {
+            NSFont(descriptor: $0, size: 12)
+        } ?? baseCueFont
+        rendered.append(NSAttributedString(
+            string: "  Tab",
+            attributes: [
+                .font: cueFont,
+                .foregroundColor: flowGhostColor.withAlphaComponent(flowGhostColor.alphaComponent * 0.86),
+            ]
+        ))
+
+        let size = rendered.size()
+        let horizontalInset: CGFloat = 4
+        let maximumX = max(visibleRect.minX + horizontalInset, visibleRect.maxX - size.width - horizontalInset)
+        let drawOrigin = NSPoint(
+            x: min(max(origin.x, visibleRect.minX + horizontalInset), maximumX),
+            y: origin.y
+        )
+        let drawRect = NSRect(origin: drawOrigin, size: size)
+        guard drawRect.intersects(dirtyRect) else { return }
+        rendered.draw(at: drawOrigin)
+    }
+
+    private func flowSuggestionOrigin(atUTF16Offset offset: Int) -> NSPoint? {
+        guard let window else { return nil }
+        var actualRange = NSRange(location: NSNotFound, length: 0)
+        let screenRect = firstRect(
+            forCharacterRange: NSRange(location: offset, length: 0),
+            actualRange: &actualRange
+        )
+        guard screenRect.height > 0 else { return nil }
+        let windowRect = window.convertFromScreen(screenRect)
+        let localRect = convert(windowRect, from: nil)
+        let editorFont = font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        let fontHeight = editorFont.boundingRectForFont.height
+        let baselineY = localRect.minY + max(0, (localRect.height - fontHeight) / 2)
+        let y: CGFloat
+        if inlinePredictionType == .yes {
+            let belowCaret = localRect.maxY + 2
+            y = belowCaret + fontHeight <= visibleRect.maxY
+                ? belowCaret
+                : max(visibleRect.minY, localRect.minY - fontHeight - 2)
+        } else {
+            y = baselineY
+        }
+        return NSPoint(
+            x: localRect.maxX + 4,
+            y: y
+        )
     }
 
     private func markdownCommand(for event: NSEvent) -> MarkdownTextEditorCommand? {

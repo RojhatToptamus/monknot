@@ -327,6 +327,7 @@ CORE_SOURCES=(
   "Sources/MonknotCore/Services/DailyNotePlanner.swift"
   "Sources/MonknotCore/Services/DocumentSplitViewPersistence.swift"
   "Sources/MonknotCore/Services/ExternalDocumentReconciliationService.swift"
+  "Sources/MonknotCore/Services/FlowProtectedRangeService.swift"
   "Sources/MonknotCore/Services/HTMLScrollSync.swift"
   "Sources/MonknotCore/Services/MonknotCaptureURLBuilder.swift"
   "Sources/MonknotCore/Services/MarkdownOutlineParser.swift"
