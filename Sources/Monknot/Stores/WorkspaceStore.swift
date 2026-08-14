@@ -345,6 +345,57 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    func createMarkdownFile(at proposedURL: URL) {
+        guard let workspaceURL else {
+            errorMessage = "Open a workspace before creating a Markdown file."
+            return
+        }
+        guard !isBusy else { return }
+
+        let fileURL: URL
+        do {
+            fileURL = try Self.validatedMissingWikilinkCreationURL(
+                proposedURL,
+                workspaceURL: workspaceURL
+            )
+        } catch {
+            errorMessage = "Could not create note: \(error.localizedDescription)"
+            return
+        }
+
+        let title = fileURL.deletingPathExtension().lastPathComponent
+        let initialText = "# \(title)\n\n"
+        noteInternalFileMutation()
+        let generation = beginWorkspaceOperation()
+
+        workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
+            do {
+                try Task.checkCancellation()
+                let revalidatedURL = try Self.validatedMissingWikilinkCreationURL(
+                    fileURL,
+                    workspaceURL: workspaceURL
+                )
+                try Task.checkCancellation()
+                try Data(initialText.utf8).write(to: revalidatedURL, options: .withoutOverwriting)
+                let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
+                guard !Task.isCancelled else { return }
+                await self?.finishCreatedFile(
+                    result: result,
+                    fileURL: revalidatedURL,
+                    workspaceURL: workspaceURL,
+                    initialText: initialText,
+                    generation: generation
+                )
+            } catch {
+                await self?.finishWorkspaceFailure(
+                    error,
+                    generation: generation,
+                    message: "Could not create note"
+                )
+            }
+        }
+    }
+
     func createDailyNote(on date: Date = Date()) {
         guard let workspaceURL else {
             errorMessage = "Open a workspace before creating a daily note."
@@ -3360,6 +3411,55 @@ final class WorkspaceStore: ObservableObject {
         return destinationURL
     }
 
+    nonisolated private static func validatedMissingWikilinkCreationURL(
+        _ proposedURL: URL,
+        workspaceURL: URL
+    ) throws -> URL {
+        let workspaceURL = workspaceURL.standardizedFileURL
+        let fileURL = proposedURL.standardizedFileURL
+        guard fileURL != workspaceURL, isURL(fileURL, containedIn: workspaceURL) else {
+            throw WorkspaceDocumentOperationError.invalidCreation("The note must be inside the workspace.")
+        }
+
+        let relativeComponents = Array(fileURL.pathComponents.dropFirst(workspaceURL.pathComponents.count))
+        guard !relativeComponents.isEmpty,
+              relativeComponents.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") })
+        else {
+            throw WorkspaceDocumentOperationError.invalidCreation("Hidden and invalid paths are not supported.")
+        }
+
+        let fileExtension = fileURL.pathExtension.lowercased()
+        guard WorkspaceDocumentSupport.markdownExtensions.contains(fileExtension) else {
+            throw WorkspaceDocumentOperationError.invalidCreation("The destination must be a Markdown file.")
+        }
+
+        let parentURL = fileURL.deletingLastPathComponent().standardizedFileURL
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: parentURL.path, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else {
+            throw WorkspaceDocumentOperationError.notDirectory(parentURL.lastPathComponent)
+        }
+
+        let relativeParentComponents = relativeComponents.dropLast()
+        let expectedCanonicalParent = relativeParentComponents.reduce(
+            workspaceURL.resolvingSymlinksInPath()
+        ) { partialURL, component in
+            partialURL.appendingPathComponent(component, isDirectory: true)
+        }.standardizedFileURL
+        guard parentURL.resolvingSymlinksInPath().standardizedFileURL == expectedCanonicalParent else {
+            throw WorkspaceDocumentOperationError.invalidCreation("The destination cannot pass through a symbolic link.")
+        }
+
+        let validatedChild = try childURL(in: parentURL, proposedName: fileURL.lastPathComponent)
+        guard validatedChild.standardizedFileURL == fileURL,
+              (try? FileManager.default.destinationOfSymbolicLink(atPath: fileURL.path)) == nil
+        else {
+            throw WorkspaceDocumentOperationError.destinationExists(fileURL.lastPathComponent)
+        }
+        return fileURL
+    }
+
     nonisolated private static func childName(baseName: String, pathExtension: String?) -> String {
         guard let pathExtension, !pathExtension.isEmpty else {
             return baseName
@@ -3689,6 +3789,7 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
     case unsupportedPDFAnnotationExport(String)
     case destinationExists(String)
     case invalidMove(String)
+    case invalidCreation(String)
     case notDirectory(String)
 
     var errorDescription: String? {
@@ -3708,6 +3809,8 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
         case .destinationExists(let name):
             return "An item named \(name) already exists."
         case .invalidMove(let message):
+            return message
+        case .invalidCreation(let message):
             return message
         case .notDirectory(let name):
             return "\(name) is not a folder."

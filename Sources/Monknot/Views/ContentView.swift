@@ -141,6 +141,7 @@ struct ContentView: View {
     @State private var markdownEditorSelection: MarkdownEditorSelectionSnapshot?
     @State private var deferredWorkspaceHeadingJump: DeferredWorkspaceHeadingJump?
     @State private var ambiguousMarkdownLinkRequest: AmbiguousMarkdownLinkRequest?
+    @State private var missingWikilinkCreationRequest: MissingWikilinkCreationRequest?
     @State private var deferredWorkspaceSourceJump: DeferredWorkspaceSourceJump?
     @State private var tabState = WorkspaceTabState()
     @State private var documentNavigationHistory = DocumentNavigationHistory()
@@ -225,6 +226,7 @@ struct ContentView: View {
         AnyView(chromeContent
             .onChange(of: store.selectedDocument?.id) { oldDocumentID, newDocumentID in
                 dismissGoToLine(restoreFocus: false)
+                missingWikilinkCreationRequest = nil
                 if documentNavigationHistory.currentDocumentID != newDocumentID {
                     documentNavigationHistory.replaceCurrent(with: newDocumentID)
                 }
@@ -336,6 +338,24 @@ struct ContentView: View {
                 }
             } message: {
                 Text(store.errorMessage ?? "")
+            }
+            .alert(
+                "Create Note?",
+                isPresented: Binding(
+                    get: { missingWikilinkCreationRequest != nil },
+                    set: { if !$0 { missingWikilinkCreationRequest = nil } }
+                ),
+                presenting: missingWikilinkCreationRequest
+            ) { request in
+                Button("Create Note") {
+                    createMissingWikilink(request)
+                }
+                .keyboardShortcut(.defaultAction)
+                Button("Cancel", role: .cancel) {
+                    missingWikilinkCreationRequest = nil
+                }
+            } message: { request in
+                Text("Create “\(request.fileName)” at \(request.relativePath)?")
             }
             .sheet(item: $pendingPDFExportDocument) { document in
                 MarkdownPDFExportOptionsSheet(
@@ -1338,9 +1358,60 @@ struct ContentView: View {
                 preferredMode: preferredMode
             )
         case .missing:
-            store.errorMessage = "No workspace document matches this link."
+            guard let currentLink = currentWikilink(
+                matching: link,
+                sourceDocumentID: sourceDocumentID
+            ),
+                  let targetURL = MarkdownWorkspaceLinkResolver().missingWikilinkCreationURL(
+                      currentLink,
+                      sourceDocument: sourceDocument,
+                      workspaceRootURL: workspaceURL,
+                      documents: store.documents
+                  )
+            else {
+                store.errorMessage = "No workspace document matches this link."
+                return
+            }
+            missingWikilinkCreationRequest = MissingWikilinkCreationRequest(
+                sourceDocumentID: sourceDocumentID,
+                destination: currentLink.destination,
+                targetURL: targetURL,
+                relativePath: WorkspaceDocumentSupport.relativePath(for: targetURL, in: workspaceURL)
+            )
         case .invalid:
             store.errorMessage = "This link is not a safe workspace or web destination."
+        }
+    }
+
+    private func createMissingWikilink(_ request: MissingWikilinkCreationRequest) {
+        missingWikilinkCreationRequest = nil
+        guard let workspaceURL = store.workspaceURL,
+              store.selectedDocumentID == request.sourceDocumentID,
+              let sourceDocument = store.document(id: request.sourceDocumentID),
+              let link = MarkdownWorkspaceLinkParser().links(in: store.documentText).first(where: {
+                  $0.kind == .wikilink && $0.destination == request.destination
+              }),
+              let currentTarget = MarkdownWorkspaceLinkResolver().missingWikilinkCreationURL(
+                  link,
+                  sourceDocument: sourceDocument,
+                  workspaceRootURL: workspaceURL,
+                  documents: store.documents
+              ),
+              currentTarget.standardizedFileURL == request.targetURL.standardizedFileURL
+        else {
+            store.errorMessage = "The link target changed before the note could be created."
+            return
+        }
+        store.createMarkdownFile(at: currentTarget)
+    }
+
+    private func currentWikilink(
+        matching link: MarkdownWorkspaceLink,
+        sourceDocumentID: String
+    ) -> MarkdownWorkspaceLink? {
+        guard store.selectedDocumentID == sourceDocumentID else { return nil }
+        return MarkdownWorkspaceLinkParser().links(in: store.documentText).first {
+            $0.kind == .wikilink && $0.destination == link.destination
         }
     }
 
@@ -2326,6 +2397,17 @@ private struct AmbiguousMarkdownLinkRequest: Equatable {
     let normalizedFragment: String?
     let rawFragment: String?
     let preferredMode: EditorMode
+}
+
+private struct MissingWikilinkCreationRequest: Equatable {
+    let sourceDocumentID: String
+    let destination: String
+    let targetURL: URL
+    let relativePath: String
+
+    var fileName: String {
+        targetURL.lastPathComponent
+    }
 }
 
 private struct AmbiguousMarkdownLinkPicker: View {
