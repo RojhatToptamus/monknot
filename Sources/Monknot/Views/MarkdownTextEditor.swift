@@ -1669,6 +1669,12 @@ final class MarkdownNSTextView: NSTextView {
             return
         }
 
+        if markdownShortcutsEnabled,
+           let listCommand = markdownListCommand(for: event),
+           performMarkdownListEdit(listCommand) {
+            return
+        }
+
         guard markdownShortcutsEnabled,
               let command = markdownCommand(for: event),
               commandHandler?(command) == true
@@ -1676,6 +1682,30 @@ final class MarkdownNSTextView: NSTextView {
             super.keyDown(with: event)
             return
         }
+    }
+
+    @discardableResult
+    func performMarkdownListEdit(_ command: MarkdownListEditCommand) -> Bool {
+        guard isEditable,
+              let textStorage,
+              let plan = MarkdownListEditPlanner.plan(
+                command,
+                in: string,
+                selectedRange: selectedRange()
+              ),
+              shouldChangeText(in: plan.replacementRange, replacementString: plan.replacementText)
+        else { return false }
+
+        breakUndoCoalescing()
+        undoManager?.beginUndoGrouping()
+        textStorage.replaceCharacters(in: plan.replacementRange, with: plan.replacementText)
+        didChangeText()
+        setSelectedRange(plan.selectedRange)
+        scrollRangeToVisible(plan.selectedRange)
+        undoManager?.endUndoGrouping()
+        undoManager?.setActionName(listActionName(command))
+        breakUndoCoalescing()
+        return true
     }
 
     @discardableResult
@@ -1719,6 +1749,27 @@ final class MarkdownNSTextView: NSTextView {
     private func resetWikilinkSuggestionCycle() {
         wikilinkSuggestionIndex = 0
         lastWikilinkPartial = ""
+    }
+
+    private func markdownListCommand(for event: NSEvent) -> MarkdownListEditCommand? {
+        let modifiers = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock])
+        if (event.keyCode == 36 || event.keyCode == 76), modifiers.isEmpty {
+            return .newline
+        }
+        guard event.keyCode == 48 else { return nil }
+        if modifiers.isEmpty { return .indent }
+        if modifiers == [.shift] { return .outdent }
+        return nil
+    }
+
+    private func listActionName(_ command: MarkdownListEditCommand) -> String {
+        switch command {
+        case .newline: return "Continue List"
+        case .indent: return "Indent List"
+        case .outdent: return "Outdent List"
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {

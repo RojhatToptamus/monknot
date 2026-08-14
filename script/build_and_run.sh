@@ -339,6 +339,7 @@ CORE_SOURCES=(
   "Sources/MonknotCore/Services/RecentDocumentStore.swift"
   "Sources/MonknotCore/Services/RecentWorkspaceStore.swift"
   "Sources/MonknotCore/Services/MarkdownLinkInspectionService.swift"
+  "Sources/MonknotCore/Services/MarkdownListEditPlanner.swift"
   "Sources/MonknotCore/Services/WikilinkAutocompleteService.swift"
   "Sources/MonknotCore/Services/WorkspaceContextAssembler.swift"
   "Sources/MonknotCore/Services/WorkspaceDocumentScanner.swift"

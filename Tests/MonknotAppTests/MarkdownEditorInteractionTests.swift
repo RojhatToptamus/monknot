@@ -1,4 +1,5 @@
 import AppKit
+import MonknotCore
 import SwiftUI
 import XCTest
 @testable import MonknotApp
@@ -248,6 +249,54 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         withExtendedLifetime(window) {}
     }
 
+    func testStructuralListCommandUsesOneNativeUndoGroup() {
+        let source = "- first"
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        textView.markdownShortcutsEnabled = true
+        textView.undoManager?.removeAllActions()
+
+        XCTAssertTrue(textView.performMarkdownListEdit(.newline))
+        XCTAssertEqual(textView.string, "- first\n- ")
+        XCTAssertEqual(box.value, "- first\n- ")
+        XCTAssertTrue(textView.undoManager?.canUndo == true)
+
+        textView.undoManager?.undo()
+        XCTAssertEqual(textView.string, source)
+        XCTAssertEqual(box.value, source)
+        XCTAssertFalse(textView.undoManager?.canUndo == true)
+        textView.undoManager?.redo()
+        XCTAssertEqual(textView.string, "- first\n- ")
+        XCTAssertEqual(box.value, "- first\n- ")
+        withExtendedLifetime(window) {}
+    }
+
+    func testWikilinkCompletionKeepsPriorityOverListIndentationOnTab() throws {
+        let source = "- [[Al"
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let root = URL(fileURLWithPath: "/tmp/monknot-list-wikilink", isDirectory: true)
+        textView.markdownShortcutsEnabled = true
+        textView.wikilinkDocuments = [
+            WorkspaceDocument(url: root.appendingPathComponent("Alpha.md"), rootURL: root)
+        ]
+
+        textView.keyDown(with: try XCTUnwrap(keyEvent(
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
+            windowNumber: window.windowNumber
+        )))
+
+        XCTAssertEqual(textView.string, "- [[Alpha]]")
+        XCTAssertEqual(box.value, "- [[Alpha]]")
+        withExtendedLifetime(window) {}
+    }
+
     private func makeCoordinator(_ box: EditorTextBox) -> MarkdownTextEditor.Coordinator {
         MarkdownTextEditor.Coordinator(
             text: Binding(
@@ -304,6 +353,26 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         NSRect(x: 0, y: 0, width: 2, height: 2).fill()
         image.unlockFocus()
         return image
+    }
+
+    private func keyEvent(
+        characters: String,
+        modifiers: NSEvent.ModifierFlags,
+        keyCode: UInt16,
+        windowNumber: Int
+    ) -> NSEvent? {
+        NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: modifiers,
+            timestamp: 0,
+            windowNumber: windowNumber,
+            context: nil,
+            characters: characters,
+            charactersIgnoringModifiers: characters,
+            isARepeat: false,
+            keyCode: keyCode
+        )
     }
 }
 
