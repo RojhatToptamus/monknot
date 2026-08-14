@@ -53,6 +53,7 @@ struct EditorPaneView: View {
     let consumePDFPageNavigationRequest: (PDFPageNavigationRequest) -> Void
     let onMarkdownSelectionChange: (MarkdownEditorSelectionSnapshot) -> Void
     let onMarkdownLinkRequest: (MarkdownEditorLinkRequest) -> Void
+    let onInspectLinks: (() -> Void)?
     let onMarkdownImagePasteRequest: (MarkdownImagePasteRequest) -> Void
     let onMarkdownFileDropRequest: (MarkdownFileDropRequest) -> Void
     let onMarkdownPreviewLinkRequest: (MarkdownPreviewLinkRequest) -> Void
@@ -472,6 +473,7 @@ struct EditorPaneView: View {
             wikilinkDocuments: store.markdownDocuments,
             onSelectionChange: onMarkdownSelectionChange,
             onOpenLink: onMarkdownLinkRequest,
+            onInspectLinks: onInspectLinks,
             onImagePasteRequest: onMarkdownImagePasteRequest,
             onFileDropRequest: onMarkdownFileDropRequest,
             onScrollPositionChange: { position in

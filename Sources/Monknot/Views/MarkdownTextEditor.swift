@@ -195,6 +195,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
     let wikilinkDocuments: [WorkspaceDocument]
     let onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)?
     let onOpenLink: ((MarkdownEditorLinkRequest) -> Void)?
+    let onInspectLinks: (() -> Void)?
     let onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)?
     let onFileDropRequest: ((MarkdownFileDropRequest) -> Void)?
 
@@ -221,6 +222,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         wikilinkDocuments: [WorkspaceDocument] = [],
         onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)? = nil,
         onOpenLink: ((MarkdownEditorLinkRequest) -> Void)? = nil,
+        onInspectLinks: (() -> Void)? = nil,
         onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)? = nil,
         onFileDropRequest: ((MarkdownFileDropRequest) -> Void)? = nil
     ) {
@@ -246,6 +248,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         self.wikilinkDocuments = wikilinkDocuments
         self.onSelectionChange = onSelectionChange
         self.onOpenLink = onOpenLink
+        self.onInspectLinks = onInspectLinks
         self.onImagePasteRequest = onImagePasteRequest
         self.onFileDropRequest = onFileDropRequest
     }
@@ -274,6 +277,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.workspaceLinkHandler = { [weak coordinator = context.coordinator] link in
             coordinator?.open(link) ?? false
         }
+        textView.inspectLinksHandler = onInspectLinks
         textView.imagePasteHandler = { [weak coordinator = context.coordinator] image in
             coordinator?.requestImagePaste(image) ?? false
         }
@@ -334,6 +338,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.onOpenLink = onOpenLink
         context.coordinator.onImagePasteRequest = onImagePasteRequest
         context.coordinator.onFileDropRequest = onFileDropRequest
+        textView.inspectLinksHandler = onInspectLinks
         textView.fileDropHandler = onFileDropRequest == nil ? nil : { [weak coordinator = context.coordinator] urls, offset in
             coordinator?.requestFileDrop(urls, atUTF16Offset: offset) ?? false
         }
@@ -397,23 +402,18 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         context.coordinator.applySyncScrollTargetLine(syncScrollTargetLine, in: textView, scrollView: scrollView)
 
-        let searchApplication = context.coordinator.applySearch(
+        let searchResult = context.coordinator.applySearch(
             searchState,
             options: searchOptions,
             theme: theme,
             in: textView
         )
-        let currentSearchResult = DocumentSearchResult(
+        if DocumentSearchResult(
             currentIndex: searchState.currentIndex,
             totalCount: searchState.totalCount
-        )
-        if currentSearchResult != searchApplication.searchResult ||
-            searchApplication.consumedReplacementSerial != nil {
+        ) != searchResult {
             DispatchQueue.main.async {
-                if let serial = searchApplication.consumedReplacementSerial {
-                    self.searchState.consumeReplacement(serial: serial)
-                }
-                self.searchState.updateResult(searchApplication.searchResult)
+                self.searchState.updateResult(searchResult)
             }
         }
         context.coordinator.publishSelection()
@@ -426,6 +426,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         coordinator.textView?.delegate = nil
         coordinator.textView?.commandHandler = nil
         coordinator.textView?.workspaceLinkHandler = nil
+        coordinator.textView?.inspectLinksHandler = nil
         coordinator.textView?.imagePasteHandler = nil
         coordinator.textView?.fileDropHandler = nil
         coordinator.textView = nil
@@ -469,7 +470,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private var lastSearchOptions = MonknotSearchOptions()
         private var lastSearchedText = ""
         private var lastNavigationSerial = 0
-        private var lastReplacementSerial = 0
         private var currentMatchIndex = 0
         private var lastHighlightTheme: SearchHighlightTheme?
         private weak var scrollView: NSScrollView?
@@ -900,11 +900,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             options: MonknotSearchOptions = MonknotSearchOptions(),
             theme: AppTheme,
             in textView: NSTextView
-        ) -> DocumentSearchApplicationResult {
-            let consumedReplacementSerial = applyReplacementIfNeeded(
-                state.replacementRequest,
-                in: textView
-            )
+        ) -> DocumentSearchResult {
             let request = DocumentSearchRequest(state, options: options)
             let query = request.query.trimmingCharacters(in: .whitespacesAndNewlines)
             guard state.isPresented, !query.isEmpty else {
@@ -914,10 +910,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 lastSearchedText = textView.string
                 currentMatchIndex = 0
                 lastNavigationSerial = request.navigationSerial
-                return DocumentSearchApplicationResult(
-                    searchResult: .init(),
-                    consumedReplacementSerial: consumedReplacementSerial
-                )
+                return .init()
             }
 
             let text = textView.string
@@ -938,10 +931,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 lastSearchedText = text
                 currentMatchIndex = 0
                 lastNavigationSerial = request.navigationSerial
-                return DocumentSearchApplicationResult(
-                    searchResult: .init(),
-                    consumedReplacementSerial: consumedReplacementSerial
-                )
+                return .init()
             }
 
             let previousMatchIndex = currentMatchIndex
@@ -984,206 +974,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
             lastSearchedText = text
             lastNavigationSerial = request.navigationSerial
 
-            return DocumentSearchApplicationResult(
-                searchResult: DocumentSearchResult(
-                    currentIndex: currentMatchIndex + 1,
-                    totalCount: matches.count
-                ),
-                consumedReplacementSerial: consumedReplacementSerial
+            return DocumentSearchResult(
+                currentIndex: currentMatchIndex + 1,
+                totalCount: matches.count
             )
-        }
-
-        private func applyReplacementIfNeeded(
-            _ request: DocumentReplacementRequest?,
-            in textView: NSTextView
-        ) -> Int? {
-            guard let request, request.serial != lastReplacementSerial else { return nil }
-            lastReplacementSerial = request.serial
-
-            guard request.documentID == documentID,
-                  textView.isEditable,
-                  let textStorage = textView.textStorage
-            else { return request.serial }
-
-            let source = textView.string
-            let matches = matchRanges(for: request.query, options: request.options, in: source)
-            guard !matches.isEmpty else { return request.serial }
-
-            switch request.action {
-            case .current:
-                replaceCurrentMatch(
-                    in: matches,
-                    replacement: request.replacement,
-                    query: request.query,
-                    options: request.options,
-                    requestedMatchIndex: request.matchIndex,
-                    textStorage: textStorage,
-                    textView: textView
-                )
-            case .all:
-                replaceAllMatches(
-                    matches,
-                    replacement: request.replacement,
-                    textStorage: textStorage,
-                    textView: textView
-                )
-            }
-            return request.serial
-        }
-
-        private func replaceCurrentMatch(
-            in matches: [NSRange],
-            replacement: String,
-            query: String,
-            options: MonknotSearchOptions,
-            requestedMatchIndex: Int,
-            textStorage: NSTextStorage,
-            textView: NSTextView
-        ) {
-            let selectedRange = textView.selectedRange()
-            let selectedMatchIndex = matches.firstIndex { $0 == selectedRange }
-            let targetIndex = selectedMatchIndex ?? min(requestedMatchIndex, matches.count - 1)
-            let targetRange = matches[targetIndex]
-            guard textView.shouldChangeText(in: targetRange, replacementString: replacement) else { return }
-
-            textView.breakUndoCoalescing()
-            textView.undoManager?.beginUndoGrouping()
-            textStorage.replaceCharacters(in: targetRange, with: replacement)
-            textView.didChangeText()
-
-            let replacementEnd = targetRange.location + (replacement as NSString).length
-            let updatedMatches = matchRanges(for: query, options: options, in: textView.string)
-            if let nextIndex = updatedMatches.firstIndex(where: { $0.location >= replacementEnd }) {
-                currentMatchIndex = nextIndex
-                textView.setSelectedRange(updatedMatches[nextIndex])
-                textView.scrollRangeToVisible(updatedMatches[nextIndex])
-            } else if let firstMatch = updatedMatches.first {
-                currentMatchIndex = 0
-                textView.setSelectedRange(firstMatch)
-                textView.scrollRangeToVisible(firstMatch)
-            } else {
-                currentMatchIndex = 0
-                let caretRange = NSRange(
-                    location: min(replacementEnd, (textView.string as NSString).length),
-                    length: 0
-                )
-                textView.setSelectedRange(caretRange)
-                textView.scrollRangeToVisible(caretRange)
-            }
-
-            textView.undoManager?.endUndoGrouping()
-            textView.undoManager?.setActionName("Replace")
-            textView.breakUndoCoalescing()
-            textView.window?.makeFirstResponder(textView)
-        }
-
-        private func replaceAllMatches(
-            _ matches: [NSRange],
-            replacement: String,
-            textStorage: NSTextStorage,
-            textView: NSTextView
-        ) {
-            let replacementStrings = Array(repeating: replacement, count: matches.count)
-            guard textView.shouldChangeText(
-                inRanges: matches.map { NSValue(range: $0) },
-                replacementStrings: replacementStrings
-            ) else { return }
-
-            let selectedRange = textView.selectedRange()
-            let visibleOrigin = scrollView?.contentView.bounds.origin
-            let replacementLength = (replacement as NSString).length
-
-            textView.breakUndoCoalescing()
-            textView.undoManager?.beginUndoGrouping()
-            textStorage.beginEditing()
-            for range in matches.reversed() {
-                textStorage.replaceCharacters(in: range, with: replacement)
-            }
-            textStorage.endEditing()
-            textView.didChangeText()
-
-            let nextSelection = transformedSelection(
-                selectedRange,
-                replacing: matches,
-                withLength: replacementLength,
-                in: textView.string
-            )
-            textView.setSelectedRange(nextSelection)
-            if let visibleOrigin, let scrollView {
-                restoreScrollPosition(visibleOrigin, in: scrollView, shouldPublish: false)
-            }
-            currentMatchIndex = 0
-
-            textView.undoManager?.endUndoGrouping()
-            textView.undoManager?.setActionName("Replace All")
-            textView.breakUndoCoalescing()
-            textView.window?.makeFirstResponder(textView)
-        }
-
-        private func transformedSelection(
-            _ selection: NSRange,
-            replacing matches: [NSRange],
-            withLength replacementLength: Int,
-            in updatedText: String
-        ) -> NSRange {
-            if selection.length == 0 {
-                let caret = transformedCaret(
-                    selection.location,
-                    replacing: matches,
-                    withLength: replacementLength
-                )
-                return Self.boundedRange(NSRange(location: caret, length: 0), in: updatedText)
-            }
-
-            let start = transformedBoundary(
-                selection.location,
-                replacing: matches,
-                withLength: replacementLength,
-                prefersReplacementEnd: false
-            )
-            let end = transformedBoundary(
-                NSMaxRange(selection),
-                replacing: matches,
-                withLength: replacementLength,
-                prefersReplacementEnd: true
-            )
-            return Self.boundedRange(
-                NSRange(location: start, length: max(0, end - start)),
-                in: updatedText
-            )
-        }
-
-        private func transformedCaret(
-            _ offset: Int,
-            replacing matches: [NSRange],
-            withLength replacementLength: Int
-        ) -> Int {
-            var delta = 0
-            for match in matches {
-                if offset < match.location { break }
-                if offset <= NSMaxRange(match) {
-                    return match.location + delta + replacementLength
-                }
-                delta += replacementLength - match.length
-            }
-            return offset + delta
-        }
-
-        private func transformedBoundary(
-            _ offset: Int,
-            replacing matches: [NSRange],
-            withLength replacementLength: Int,
-            prefersReplacementEnd: Bool
-        ) -> Int {
-            var delta = 0
-            for match in matches {
-                if offset <= match.location { break }
-                if offset < NSMaxRange(match) {
-                    return match.location + delta + (prefersReplacementEnd ? replacementLength : 0)
-                }
-                delta += replacementLength - match.length
-            }
-            return offset + delta
         }
 
         private func matchRanges(
@@ -1648,6 +1442,7 @@ final class MarkdownNSTextView: NSTextView {
     var wikilinkDocuments: [WorkspaceDocument] = []
     var commandHandler: ((MarkdownTextEditorCommand) -> Bool)?
     var workspaceLinkHandler: ((MarkdownWorkspaceLink) -> Bool)?
+    var inspectLinksHandler: (() -> Void)?
     var imagePasteHandler: ((NSImage) -> Bool)?
     var fileDropHandler: (([URL], Int) -> Bool)?
 
@@ -1780,19 +1575,42 @@ final class MarkdownNSTextView: NSTextView {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         guard let menu = super.menu(for: event) else { return nil }
-        guard selectedRange().length > 0,
-              menu.items.contains(where: { $0.action == #selector(copyRenderedMarkdown(_:)) }) == false
-        else { return menu }
+        var addedCustomItem = false
 
-        menu.addItem(.separator())
-        let item = NSMenuItem(
-            title: "Copy Rendered",
-            action: #selector(copyRenderedMarkdown(_:)),
-            keyEquivalent: ""
-        )
-        item.target = self
-        menu.addItem(item)
+        func addSeparatorIfNeeded() {
+            guard !addedCustomItem else { return }
+            menu.addItem(.separator())
+            addedCustomItem = true
+        }
+
+        if inspectLinksHandler != nil,
+           menu.items.contains(where: { $0.action == #selector(inspectLinks(_:)) }) == false {
+            addSeparatorIfNeeded()
+            let item = NSMenuItem(
+                title: "Inspect Links",
+                action: #selector(inspectLinks(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            menu.addItem(item)
+        }
+
+        if selectedRange().length > 0,
+           menu.items.contains(where: { $0.action == #selector(copyRenderedMarkdown(_:)) }) == false {
+            addSeparatorIfNeeded()
+            let item = NSMenuItem(
+                title: "Copy Rendered",
+                action: #selector(copyRenderedMarkdown(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            menu.addItem(item)
+        }
         return menu
+    }
+
+    @objc func inspectLinks(_ sender: Any?) {
+        inspectLinksHandler?()
     }
 
     @objc func copyRenderedMarkdown(_ sender: Any?) {

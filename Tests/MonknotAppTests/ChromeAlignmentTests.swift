@@ -1297,6 +1297,61 @@ final class ChromeAlignmentTests: XCTestCase {
         }
     }
 
+    func testSearchOptionButtonsUseAccentOnlyActiveAppearance() {
+        let size = MonknotIconButton.IconButtonSize.findBar
+
+        for isDark in [false, true] {
+            XCTAssertNil(
+                size.backgroundOpacity(
+                    isActive: true,
+                    drawsActiveBackground: false,
+                    isHovered: false,
+                    isDisabled: false,
+                    isDark: isDark
+                ),
+                "An active search option must remain unfilled at rest"
+            )
+            XCTAssertEqual(
+                size.backgroundOpacity(
+                    isActive: true,
+                    drawsActiveBackground: false,
+                    isHovered: true,
+                    isDisabled: false,
+                    isDark: isDark
+                ),
+                size.hoverBackgroundOpacity(isDark: isDark),
+                "An active search option must use the standard hover surface"
+            )
+            XCTAssertEqual(
+                size.backgroundOpacity(
+                    isActive: true,
+                    drawsActiveBackground: true,
+                    isHovered: false,
+                    isDisabled: false,
+                    isDark: isDark
+                ),
+                size.activeBackgroundOpacity(isDark: isDark),
+                "Panel toggles must retain their filled active appearance"
+            )
+        }
+    }
+
+    func testIconButtonFocusRingRemainsVisibleWithoutUsingTheHoverFill() {
+        XCTAssertTrue(MonknotIconButton.showsFocusRing(isFocused: true, isDisabled: false))
+        XCTAssertFalse(MonknotIconButton.showsFocusRing(isFocused: false, isDisabled: false))
+        XCTAssertFalse(MonknotIconButton.showsFocusRing(isFocused: true, isDisabled: true))
+    }
+
+    func testSearchOptionButtonsUseTheStandardSharedMetrics() {
+        let size = MonknotIconButton.IconButtonSize.findBar
+
+        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
+            XCTAssertEqual(size.dimension(theme: theme, zoomScale: 1), 28)
+            XCTAssertEqual(size.height(theme: theme, zoomScale: 1), 28)
+            XCTAssertEqual(size.iconSize(theme: theme, zoomScale: 1), 17)
+        }
+    }
+
     func testSegmentedIconButtonsScaleFromTheThirtyPointEditorReferenceBox() {
         let size = MonknotIconButton.IconButtonSize.segmented
 
@@ -1706,11 +1761,10 @@ final class ChromeAlignmentTests: XCTestCase {
         XCTAssertEqual(host.fittingSize.height, chromeHeight, accuracy: 0.01)
     }
 
-    func testDocumentSearchKeepsScrollableFileTabsMountedInThePrimaryRow() {
+    func testDocumentSearchIsFindOnlyAndKeepsScrollableFileTabsMountedInThePrimaryRow() {
         let theme = AppTheme.defaultDark
         var search = DocumentSearchState()
         search.present()
-        search.toggleReplace()
         let tab = WorkspaceTabItem(
             documentID: "/README.md",
             displayName: "README.md",
@@ -1750,10 +1804,10 @@ final class ChromeAlignmentTests: XCTestCase {
             host.allDescendantsForTesting().contains { $0 is NSScrollView },
             "File tabs must retain horizontal scrolling while document search is visible"
         )
-        XCTAssertGreaterThanOrEqual(
+        XCTAssertEqual(
             host.allDescendantsForTesting().filter { $0 is NSTextField }.count,
-            2,
-            "Find, replace, and file tabs should coexist in the same primary row"
+            1,
+            "The in-document search bar must expose only its find field"
         )
         XCTAssertEqual(
             host.fittingSize.height,

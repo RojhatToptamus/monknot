@@ -23,6 +23,7 @@ struct NativeMarkdownEditorView: View {
     let onVisibleTopLineChange: ((Int) -> Void)?
     let onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)?
     let onOpenLink: ((MarkdownEditorLinkRequest) -> Void)?
+    let onInspectLinks: (() -> Void)?
     let onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)?
     let onFileDropRequest: ((MarkdownFileDropRequest) -> Void)?
 
@@ -46,6 +47,7 @@ struct NativeMarkdownEditorView: View {
         wikilinkDocuments: [WorkspaceDocument],
         onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)? = nil,
         onOpenLink: ((MarkdownEditorLinkRequest) -> Void)? = nil,
+        onInspectLinks: (() -> Void)? = nil,
         onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)? = nil,
         onFileDropRequest: ((MarkdownFileDropRequest) -> Void)? = nil,
         onScrollPositionChange: @escaping (DocumentScrollPosition) -> Void,
@@ -70,6 +72,7 @@ struct NativeMarkdownEditorView: View {
         self.wikilinkDocuments = wikilinkDocuments
         self.onSelectionChange = onSelectionChange
         self.onOpenLink = onOpenLink
+        self.onInspectLinks = onInspectLinks
         self.onImagePasteRequest = onImagePasteRequest
         self.onFileDropRequest = onFileDropRequest
         self.onScrollPositionChange = onScrollPositionChange
@@ -102,6 +105,7 @@ struct NativeMarkdownEditorView: View {
                     wikilinkDocuments: wikilinkDocuments,
                     onSelectionChange: onSelectionChange,
                     onOpenLink: onOpenLink,
+                    onInspectLinks: onInspectLinks,
                     onImagePasteRequest: onImagePasteRequest,
                     onFileDropRequest: onFileDropRequest
                 )

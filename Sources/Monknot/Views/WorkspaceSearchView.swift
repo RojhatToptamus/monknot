@@ -222,7 +222,8 @@ struct WorkspaceSearchView: View {
                 theme: theme,
                 zoomScale: zoomScale,
                 isActive: searchOptions.isCaseSensitive,
-                size: .compact
+                size: .findBar,
+                drawsActiveBackground: false
             ) {
                 searchOptions.isCaseSensitive.toggle()
             }
@@ -235,7 +236,8 @@ struct WorkspaceSearchView: View {
                 theme: theme,
                 zoomScale: zoomScale,
                 isActive: searchOptions.isWholeWord,
-                size: .compact
+                size: .findBar,
+                drawsActiveBackground: false
             ) {
                 searchOptions.isWholeWord.toggle()
             }

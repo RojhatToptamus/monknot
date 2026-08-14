@@ -2,11 +2,6 @@ import MonknotCore
 import SwiftUI
 
 struct TopNavigationBar: View {
-    private enum DocumentSearchFocusField: Hashable {
-        case query
-        case replacement
-    }
-
     static let markdownViewModeOptions = [
         MonknotSegmentOption(
             id: EditorMode.source.rawValue,
@@ -31,11 +26,9 @@ struct TopNavigationBar: View {
     let zoomScale: Double
     let isTerminalPresented: Bool
     let isSidebarVisible: Bool
-    var isLinkInspectionPresented = false
     let toggleTerminal: () -> Void
     let toggleSidebar: () -> Void
     let toggleSplitView: () -> Void
-    var toggleLinkInspection: () -> Void = {}
     @Binding var documentSearch: DocumentSearchState
     @Binding var searchOptions: MonknotSearchOptions
     let tabs: [WorkspaceTabItem]
@@ -50,14 +43,10 @@ struct TopNavigationBar: View {
     var navigateForward: () -> Void = {}
     var canNavigateBack = false
     var canNavigateForward = false
-    @FocusState private var focusedSearchField: DocumentSearchFocusField?
+    @FocusState private var isSearchFocused: Bool
 
     private var showsMarkdownViewControls: Bool {
         selectedDocument?.kind == .markdown
-    }
-
-    private var canReplaceSelectedDocument: Bool {
-        selectedDocument?.capabilities.canEditText == true && !isBusy && !isDocumentLoading
     }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -116,11 +105,6 @@ struct TopNavigationBar: View {
                 viewModeControl
                     .allowsTopBarWindowActivationEvents()
 
-                if showsMarkdownViewControls {
-                    linkInspectionButton
-                        .allowsTopBarWindowActivationEvents()
-                }
-
                 Rectangle()
                     .fill(theme.separatorColor)
                     .frame(width: 1, height: scaled(16))
@@ -132,14 +116,10 @@ struct TopNavigationBar: View {
         }
         .monknotChromeRowLayout(theme: theme, zoomScale: zoomScale)
         .onChange(of: documentSearch.focusSerial) { _, _ in
-            focusedSearchField = documentSearch.isPresented ? .query : nil
+            isSearchFocused = documentSearch.isPresented
         }
         .onChange(of: documentSearch.isPresented) { _, isPresented in
-            focusedSearchField = isPresented ? .query : nil
-        }
-        .onChange(of: documentSearch.isReplacePresented) { _, isPresented in
-            guard documentSearch.isPresented else { return }
-            focusedSearchField = isPresented ? .replacement : .query
+            isSearchFocused = isPresented
         }
     }
 
@@ -166,20 +146,6 @@ struct TopNavigationBar: View {
             action: toggleTerminal
         )
         .accessibilityValue(isTerminalPresented ? "Open" : "Closed")
-    }
-
-    private var linkInspectionButton: some View {
-        MonknotIconButton(
-            systemImage: "link",
-            label: isLinkInspectionPresented ? "Close Link Inspection" : "Inspect Links",
-            theme: theme,
-            zoomScale: zoomScale,
-            isActive: isLinkInspectionPresented,
-            isDisabled: isBusy || isDocumentLoading,
-            drawsBorder: true,
-            action: toggleLinkInspection
-        )
-        .accessibilityValue(isLinkInspectionPresented ? "Open" : "Closed")
     }
 
     private var viewModeControl: some View {
@@ -266,10 +232,10 @@ struct TopNavigationBar: View {
                 )
             )
             .textFieldStyle(.plain)
-            .focused($focusedSearchField, equals: .query)
+            .focused($isSearchFocused)
             .font(.system(size: textScaled(13), weight: .regular))
             .foregroundStyle(theme.foregroundColor)
-            .frame(width: scaled(documentSearch.isReplacePresented ? 120 : 150))
+            .frame(width: scaled(150))
             .onSubmit {
                 documentSearch.findNext()
             }
@@ -318,46 +284,6 @@ struct TopNavigationBar: View {
                 documentSearch.findNext()
             }
 
-            findBarButton(
-                systemImage: "arrow.left.arrow.right",
-                label: documentSearch.isReplacePresented ? "Hide Replace" : "Show Replace",
-                isDisabled: !canReplaceSelectedDocument
-            ) {
-                documentSearch.toggleReplace()
-            }
-
-            if documentSearch.isReplacePresented {
-                Rectangle()
-                    .fill(theme.borderColor)
-                    .frame(width: 1, height: scaled(20))
-
-                TextField(
-                    "Replace with...",
-                    text: Binding(
-                        get: { documentSearch.replacement },
-                        set: { documentSearch.setReplacement($0) }
-                    )
-                )
-                .textFieldStyle(.plain)
-                .focused($focusedSearchField, equals: .replacement)
-                .font(.system(size: textScaled(13), weight: .regular))
-                .foregroundStyle(theme.foregroundColor)
-                .frame(width: scaled(130))
-                .disabled(!canReplaceSelectedDocument)
-                .onSubmit {
-                    replaceCurrentMatch()
-                }
-                .accessibilityLabel("Replacement text")
-
-                replacementBarButton("Replace", label: "Replace Current Match") {
-                    replaceCurrentMatch()
-                }
-
-                replacementBarButton("Replace All", label: "Replace All Matches") {
-                    replaceAllMatches()
-                }
-            }
-
             findBarButton(systemImage: "xmark", label: "Close Search") {
                 documentSearch.dismiss()
             }
@@ -374,46 +300,8 @@ struct TopNavigationBar: View {
                 }
         )
         .onAppear {
-            focusedSearchField = .query
+            isSearchFocused = true
         }
-    }
-
-    private func replaceCurrentMatch() {
-        guard let document = prepareEditableSourceForReplacement() else { return }
-        documentSearch.replaceCurrent(in: document.id, options: searchOptions)
-    }
-
-    private func replaceAllMatches() {
-        guard let document = prepareEditableSourceForReplacement() else { return }
-        documentSearch.replaceAll(in: document.id, options: searchOptions)
-    }
-
-    private func prepareEditableSourceForReplacement() -> WorkspaceDocument? {
-        guard canReplaceSelectedDocument, let document = selectedDocument else { return nil }
-        if !isSplitViewEnabled,
-           editorMode == .preview,
-           document.kind == .markdown || document.capabilities.canPreviewHTML {
-            editorMode = .source
-        }
-        return document
-    }
-
-    private func replacementBarButton(
-        _ title: String,
-        label: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(title, action: action)
-            .buttonStyle(.plain)
-            .font(.system(size: textScaled(11), weight: .semibold))
-            .fixedSize(horizontal: true, vertical: false)
-            .foregroundStyle(
-                canReplaceSelectedDocument && documentSearch.totalCount > 0
-                    ? theme.accentColor
-                    : theme.mutedForegroundColor
-            )
-            .disabled(!canReplaceSelectedDocument || documentSearch.totalCount == 0)
-            .accessibilityLabel(label)
     }
 
     private func findBarButton(
@@ -446,6 +334,7 @@ struct TopNavigationBar: View {
             zoomScale: zoomScale,
             isActive: isActive,
             size: .findBar,
+            drawsActiveBackground: false,
             action: action
         )
         .accessibilityValue(isActive ? "On" : "Off")
