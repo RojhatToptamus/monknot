@@ -24,4 +24,11 @@ final class MonknotKeyboardShortcutCatalogTests: XCTestCase {
             $0.shortcut == "?" || $0.title == "Keyboard Shortcuts Help"
         })
     }
+
+    func testLinkInspectionShortcutIsListed() {
+        XCTAssertEqual(
+            MonknotKeyboardShortcutCatalog.entries.first { $0.title == "Inspect Links" }?.shortcut,
+            "⌥⌘L"
+        )
+    }
 }

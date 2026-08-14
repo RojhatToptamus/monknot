@@ -31,9 +31,11 @@ struct TopNavigationBar: View {
     let zoomScale: Double
     let isTerminalPresented: Bool
     let isSidebarVisible: Bool
+    var isLinkInspectionPresented = false
     let toggleTerminal: () -> Void
     let toggleSidebar: () -> Void
     let toggleSplitView: () -> Void
+    var toggleLinkInspection: () -> Void = {}
     @Binding var documentSearch: DocumentSearchState
     let tabs: [WorkspaceTabItem]
     let activeTabID: String?
@@ -113,6 +115,11 @@ struct TopNavigationBar: View {
                 viewModeControl
                     .allowsTopBarWindowActivationEvents()
 
+                if showsMarkdownViewControls {
+                    linkInspectionButton
+                        .allowsTopBarWindowActivationEvents()
+                }
+
                 Rectangle()
                     .fill(theme.separatorColor)
                     .frame(width: 1, height: scaled(16))
@@ -158,6 +165,20 @@ struct TopNavigationBar: View {
             action: toggleTerminal
         )
         .accessibilityValue(isTerminalPresented ? "Open" : "Closed")
+    }
+
+    private var linkInspectionButton: some View {
+        MonknotIconButton(
+            systemImage: "link",
+            label: isLinkInspectionPresented ? "Close Link Inspection" : "Inspect Links",
+            theme: theme,
+            zoomScale: zoomScale,
+            isActive: isLinkInspectionPresented,
+            isDisabled: isBusy || isDocumentLoading,
+            drawsBorder: true,
+            action: toggleLinkInspection
+        )
+        .accessibilityValue(isLinkInspectionPresented ? "Open" : "Closed")
     }
 
     private var viewModeControl: some View {

@@ -129,6 +129,7 @@ struct ContentView: View {
     @StateObject private var quickOpen = WorkspaceQuickOpenState()
     @StateObject private var symbolQuickOpen = MarkdownSymbolQuickOpenState()
     @StateObject private var outlineStore = MarkdownOutlineStore()
+    @StateObject private var linkInspection = MarkdownLinkInspectionState()
     @State private var isGoToLinePresented = false
     @State private var pendingSourceLocation: MarkdownSourceLocation?
     @State private var pendingPreviewLocation: MarkdownSourceLocation?
@@ -226,6 +227,7 @@ struct ContentView: View {
         AnyView(chromeContent
             .onChange(of: store.selectedDocument?.id) { oldDocumentID, newDocumentID in
                 dismissGoToLine(restoreFocus: false)
+                linkInspection.dismiss()
                 missingWikilinkCreationRequest = nil
                 if documentNavigationHistory.currentDocumentID != newDocumentID {
                     documentNavigationHistory.replaceCurrent(with: newDocumentID)
@@ -266,6 +268,7 @@ struct ContentView: View {
             }
             .onChange(of: store.documentText) { _, _ in
                 updateOutline()
+                refreshLinkInspection()
                 fulfillDeferredWorkspaceSourceJump()
                 fulfillDeferredWorkspaceHeadingJump()
             }
@@ -284,6 +287,7 @@ struct ContentView: View {
                 )
                 quickOpen.refresh(documents: documents)
                 reconcileTabsWithStore()
+                refreshLinkInspection()
             }
             .onChange(of: store.workspaceSearchContentChangeSerial) { _, _ in
                 workspaceSearch.refresh(
@@ -294,6 +298,7 @@ struct ContentView: View {
             }
             .onChange(of: store.workspaceURL?.standardizedFileURL.path ?? "") { previousPath, _ in
                 cancelPDFExcerptCopy()
+                linkInspection.dismiss()
                 if !previousPath.isEmpty {
                     flushPendingViewportStatePersistence(
                         for: URL(fileURLWithPath: previousPath, isDirectory: true)
@@ -533,9 +538,11 @@ struct ContentView: View {
             zoomScale: zoomScale,
             isTerminalPresented: isTerminalVisible,
             isSidebarVisible: isSidebarVisible,
+            isLinkInspectionPresented: linkInspection.isPresented,
             toggleTerminal: { toggleTerminalDrawer(animated: true) },
             toggleSidebar: { toggleSidebar(animated: true) },
             toggleSplitView: toggleMarkdownSplitView,
+            toggleLinkInspection: toggleLinkInspection,
             documentSearch: $documentSearch,
             tabs: tabState.tabs,
             activeTabID: tabState.selectedDocumentID,
@@ -575,57 +582,74 @@ struct ContentView: View {
     }
 
     private var detailContent: some View {
-        EditorPaneView(
-            store: store,
-            editorMode: Binding(
-                get: { editorMode },
-                set: { editorMode = $0 }
-            ),
-            isSplitViewEnabled: $isMarkdownSplitViewEnabled,
-            theme: activeTheme,
-            zoomScale: zoomScale,
-            codeFontSize: CGFloat(activeTheme.codeFontSize),
-            contentWidthPercent: contentWidthPercent,
-            showsDocumentOutline: showDocumentOutline,
-            usePointerCursors: usePointerCursors,
-            fontSmoothing: fontSmoothing,
-            activeViewportState: activeDocumentViewportState,
-            pdfViewportCaptureBridge: pdfViewportCaptureBridge,
-            updateViewportState: updateDocumentViewportState(documentID:change:),
-            pdfUndoCommandSerial: pdfUndoCommandSerial,
-            pdfRedoCommandSerial: pdfRedoCommandSerial,
-            updatePDFAnnotationUndoState: updatePDFAnnotationShortcutState(canUndo:canRedo:),
-            isTerminalPresented: isTerminalVisible,
-            sourceLocation: $pendingSourceLocation,
-            previewLocation: $pendingPreviewLocation,
-            pdfSearchTarget: $pendingPDFSearchTarget,
-            pdfPageNavigationRequest: pendingPDFPageNavigationRequest,
-            pdfNavigatorToggleCommandSerial: pdfNavigatorToggleCommandSerial,
-            documentSearch: $documentSearch,
-            newMarkdown: { store.createMarkdownFile() },
-            bootstrapStarterWorkspace: { store.bootstrapStarterWorkspace() },
-            openFolder: openFolderPanel,
-            closeTerminal: { setTerminalDrawerPresented(false, animated: true) },
-            saveDocument: saveSelectedDocument,
-            outlineItems: outlineStore.items,
-            selectOutlineItem: openOutlineItem(_:),
-            onPreviewSourceJump: openSourceFromPreview(location:),
-            copyPDFLinkedExcerpt: { selection in
-                updatePDFSelectionSnapshot(selection)
-                copyPDFLinkedExcerpt(selection)
-            },
-            updatePDFSelectionSnapshot: updatePDFSelectionSnapshot(_:),
-            consumePDFPageNavigationRequest: { request in
-                if pendingPDFPageNavigationRequest == request {
-                    pendingPDFPageNavigationRequest = nil
-                }
-            },
-            onMarkdownSelectionChange: handleMarkdownEditorSelection(_:),
-            onMarkdownLinkRequest: handleMarkdownEditorLink(_:),
-            onMarkdownImagePasteRequest: handleMarkdownImagePaste(_:),
-            onMarkdownPreviewLinkRequest: handleMarkdownPreviewLink(_:),
-            onMarkdownTaskRequest: handleMarkdownTaskRequest(_:)
-        )
+        HStack(spacing: 0) {
+            EditorPaneView(
+                store: store,
+                editorMode: Binding(
+                    get: { editorMode },
+                    set: { editorMode = $0 }
+                ),
+                isSplitViewEnabled: $isMarkdownSplitViewEnabled,
+                theme: activeTheme,
+                zoomScale: zoomScale,
+                codeFontSize: CGFloat(activeTheme.codeFontSize),
+                contentWidthPercent: contentWidthPercent,
+                showsDocumentOutline: showDocumentOutline,
+                usePointerCursors: usePointerCursors,
+                fontSmoothing: fontSmoothing,
+                activeViewportState: activeDocumentViewportState,
+                pdfViewportCaptureBridge: pdfViewportCaptureBridge,
+                updateViewportState: updateDocumentViewportState(documentID:change:),
+                pdfUndoCommandSerial: pdfUndoCommandSerial,
+                pdfRedoCommandSerial: pdfRedoCommandSerial,
+                updatePDFAnnotationUndoState: updatePDFAnnotationShortcutState(canUndo:canRedo:),
+                isTerminalPresented: isTerminalVisible,
+                sourceLocation: $pendingSourceLocation,
+                previewLocation: $pendingPreviewLocation,
+                pdfSearchTarget: $pendingPDFSearchTarget,
+                pdfPageNavigationRequest: pendingPDFPageNavigationRequest,
+                pdfNavigatorToggleCommandSerial: pdfNavigatorToggleCommandSerial,
+                documentSearch: $documentSearch,
+                newMarkdown: { store.createMarkdownFile() },
+                bootstrapStarterWorkspace: { store.bootstrapStarterWorkspace() },
+                openFolder: openFolderPanel,
+                closeTerminal: { setTerminalDrawerPresented(false, animated: true) },
+                saveDocument: saveSelectedDocument,
+                outlineItems: outlineStore.items,
+                selectOutlineItem: openOutlineItem(_:),
+                onPreviewSourceJump: openSourceFromPreview(location:),
+                copyPDFLinkedExcerpt: { selection in
+                    updatePDFSelectionSnapshot(selection)
+                    copyPDFLinkedExcerpt(selection)
+                },
+                updatePDFSelectionSnapshot: updatePDFSelectionSnapshot(_:),
+                consumePDFPageNavigationRequest: { request in
+                    if pendingPDFPageNavigationRequest == request {
+                        pendingPDFPageNavigationRequest = nil
+                    }
+                },
+                onMarkdownSelectionChange: handleMarkdownEditorSelection(_:),
+                onMarkdownLinkRequest: handleMarkdownEditorLink(_:),
+                onMarkdownImagePasteRequest: handleMarkdownImagePaste(_:),
+                onMarkdownPreviewLinkRequest: handleMarkdownPreviewLink(_:),
+                onMarkdownTaskRequest: handleMarkdownTaskRequest(_:)
+            )
+            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
+
+            if linkInspection.isPresented, let document = store.selectedDocument, document.kind == .markdown {
+                MarkdownLinkInspectionPanel(
+                    state: linkInspection,
+                    document: document,
+                    documentsByID: Dictionary(uniqueKeysWithValues: store.documents.map { ($0.id, $0) }),
+                    theme: activeTheme,
+                    zoomScale: zoomScale,
+                    refresh: { refreshLinkInspection(debounce: false) },
+                    close: { linkInspection.dismiss() },
+                    openSource: openLinkInspectionSource(documentID:location:),
+                    openTarget: openLinkInspectionTarget(documentID:)
+                )
+            }
+        }
         .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
     }
 
@@ -1582,6 +1606,8 @@ struct ContentView: View {
             canShowQuickOpen: store.workspaceURL != nil && !store.isBusy,
             showGoToLine: showGoToLine,
             canShowGoToLine: canShowGoToLine,
+            toggleLinkInspection: toggleLinkInspection,
+            canInspectLinks: canInspectLinks,
             findNext: { documentSearch.findNext() },
             findPrevious: { documentSearch.findPrevious() },
             toggleTerminal: { toggleTerminalDrawer(animated: false) },
@@ -1633,6 +1659,72 @@ struct ContentView: View {
     private func toggleMarkdownSplitView() {
         guard canToggleMarkdownSplitView else { return }
         isMarkdownSplitViewEnabled.toggle()
+    }
+
+    private var canInspectLinks: Bool {
+        store.workspaceURL != nil
+            && store.selectedDocument?.kind == .markdown
+            && !store.isBusy
+            && !store.isDocumentLoading
+    }
+
+    private var linkInspectionTextSnapshot: [String: String] {
+        var texts = store.dirtyTextByDocumentID
+        if let documentID = store.selectedDocumentID {
+            texts[documentID] = store.documentText
+        }
+        return texts
+    }
+
+    private func toggleLinkInspection() {
+        if linkInspection.isPresented {
+            linkInspection.dismiss()
+            return
+        }
+        guard canInspectLinks,
+              let document = store.selectedDocument,
+              let workspaceURL = store.workspaceURL
+        else { return }
+        linkInspection.present(
+            document: document,
+            workspaceRootURL: workspaceURL,
+            documents: store.documents,
+            textByDocumentID: linkInspectionTextSnapshot
+        )
+    }
+
+    private func refreshLinkInspection(debounce: Bool = true) {
+        guard linkInspection.isPresented,
+              let document = store.selectedDocument,
+              document.kind == .markdown,
+              let workspaceURL = store.workspaceURL
+        else { return }
+        linkInspection.refresh(
+            document: document,
+            workspaceRootURL: workspaceURL,
+            documents: store.documents,
+            textByDocumentID: linkInspectionTextSnapshot,
+            debounce: debounce
+        )
+    }
+
+    private func openLinkInspectionSource(
+        documentID: String,
+        location: MarkdownSourceLocation
+    ) {
+        linkInspection.dismiss()
+        editorMode = .source
+        deferredWorkspaceSourceJump = DeferredWorkspaceSourceJump(
+            documentID: documentID,
+            location: location
+        )
+        openDocumentTab(id: documentID)
+        fulfillDeferredWorkspaceSourceJump()
+    }
+
+    private func openLinkInspectionTarget(documentID: String) {
+        linkInspection.dismiss()
+        openDocumentTab(id: documentID)
     }
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
@@ -1761,8 +1853,10 @@ struct ContentView: View {
             isKeyboardShortcutsHelpPresented: isKeyboardShortcutsHelpPresented,
             isWorkspaceSearchPresented: workspaceSearch.isPresented,
             isSymbolQuickOpenPresented: symbolQuickOpen.isPresented,
+            isLinkInspectionPresented: linkInspection.isPresented,
             hasMarkdownOutline: store.selectedDocument?.kind == .markdown && !outlineStore.items.isEmpty,
             canToggleSplitView: canToggleMarkdownSplitView,
+            canInspectLinks: canInspectLinks,
             canUndoWorkspaceReplace: store.canUndoWorkspaceReplace && !store.isBusy,
             isBusy: store.isBusy
         )
@@ -1842,6 +1936,10 @@ struct ContentView: View {
             isKeyboardShortcutsHelpPresented = false
         case .toggleSplitView:
             toggleMarkdownSplitView()
+        case .toggleLinkInspection:
+            toggleLinkInspection()
+        case .dismissLinkInspection:
+            linkInspection.dismiss()
         case .undoWorkspaceReplace:
             store.undoLastWorkspaceReplace()
         }

@@ -46,6 +46,8 @@ struct MonknotCommandActions {
     let canShowQuickOpen: Bool
     let showGoToLine: () -> Void
     let canShowGoToLine: Bool
+    let toggleLinkInspection: () -> Void
+    let canInspectLinks: Bool
     let findNext: () -> Void
     let findPrevious: () -> Void
     let toggleTerminal: () -> Void
@@ -312,6 +314,12 @@ struct MonknotCommandMenu: Commands {
                 actions?.showGoToLine()
             }
             .disabled(actions?.canShowGoToLine != true)
+
+            Button("Inspect Links") {
+                actions?.toggleLinkInspection()
+            }
+            .keyboardShortcut("l", modifiers: [.command, .option])
+            .disabled(actions?.canInspectLinks != true)
 
             Button("Find in Document") {
                 actions?.showFind()

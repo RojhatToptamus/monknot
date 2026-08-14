@@ -43,8 +43,10 @@ public struct MonknotKeyboardShortcutContext: Equatable, Sendable {
     public var isKeyboardShortcutsHelpPresented: Bool
     public var isWorkspaceSearchPresented: Bool
     public var isSymbolQuickOpenPresented: Bool
+    public var isLinkInspectionPresented: Bool
     public var hasMarkdownOutline: Bool
     public var canToggleSplitView: Bool
+    public var canInspectLinks: Bool
     public var canUndoWorkspaceReplace: Bool
     public var isBusy: Bool
 
@@ -62,8 +64,10 @@ public struct MonknotKeyboardShortcutContext: Equatable, Sendable {
         isKeyboardShortcutsHelpPresented: Bool = false,
         isWorkspaceSearchPresented: Bool = false,
         isSymbolQuickOpenPresented: Bool = false,
+        isLinkInspectionPresented: Bool = false,
         hasMarkdownOutline: Bool = false,
         canToggleSplitView: Bool = false,
+        canInspectLinks: Bool = false,
         canUndoWorkspaceReplace: Bool = false,
         isBusy: Bool
     ) {
@@ -80,8 +84,10 @@ public struct MonknotKeyboardShortcutContext: Equatable, Sendable {
         self.isKeyboardShortcutsHelpPresented = isKeyboardShortcutsHelpPresented
         self.isWorkspaceSearchPresented = isWorkspaceSearchPresented
         self.isSymbolQuickOpenPresented = isSymbolQuickOpenPresented
+        self.isLinkInspectionPresented = isLinkInspectionPresented
         self.hasMarkdownOutline = hasMarkdownOutline
         self.canToggleSplitView = canToggleSplitView
+        self.canInspectLinks = canInspectLinks
         self.canUndoWorkspaceReplace = canUndoWorkspaceReplace
         self.isBusy = isBusy
     }
@@ -121,6 +127,8 @@ public enum MonknotKeyboardShortcutAction: Equatable, Sendable {
     case workspaceSearchConfirm
     case dismissKeyboardShortcutsHelp
     case toggleSplitView
+    case toggleLinkInspection
+    case dismissLinkInspection
     case undoWorkspaceReplace
 }
 
@@ -139,6 +147,7 @@ public enum MonknotKeyboardShortcutRouter {
             if context.isSymbolQuickOpenPresented { return .dismissGoToSymbol }
             if context.isKeyboardShortcutsHelpPresented { return .dismissKeyboardShortcutsHelp }
             if context.isWorkspaceSearchPresented { return .dismissWorkspaceSearch }
+            if context.isLinkInspectionPresented { return .dismissLinkInspection }
             return context.isDocumentSearchPresented ? .dismissDocumentSearch : nil
         }
 
@@ -233,6 +242,10 @@ public enum MonknotKeyboardShortcutRouter {
 
         if modifiers == [.command, .option], key == "j" {
             return .toggleTerminal
+        }
+
+        if modifiers == [.command, .option], key == "l" {
+            return context.canInspectLinks ? .toggleLinkInspection : nil
         }
 
         if modifiers == [.command, .control], key == "s" {

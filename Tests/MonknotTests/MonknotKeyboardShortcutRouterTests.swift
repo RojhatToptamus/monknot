@@ -72,6 +72,33 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         )
     }
 
+    func testLinkInspectionShortcutAndEscapeRespectPresentationState() {
+        XCTAssertEqual(
+            action(
+                for: "l",
+                modifiers: [.command, .option],
+                context: shortcutContext(selectedDocumentKind: .markdown, canInspectLinks: true)
+            ),
+            .toggleLinkInspection
+        )
+        XCTAssertNil(
+            action(
+                for: "l",
+                modifiers: [.command, .option],
+                context: shortcutContext(selectedDocumentKind: .pdf, canInspectLinks: false)
+            )
+        )
+        XCTAssertEqual(
+            action(
+                for: "",
+                modifiers: [],
+                keyCode: MonknotKeyboardShortcutRouter.escapeKeyCode,
+                context: shortcutContext(isLinkInspectionPresented: true)
+            ),
+            .dismissLinkInspection
+        )
+    }
+
     func testPDFUndoRedoShortcutsDoNotStealTextUndo() {
         XCTAssertEqual(
             action(
@@ -319,8 +346,10 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         isKeyboardShortcutsHelpPresented: Bool = false,
         isWorkspaceSearchPresented: Bool = false,
         isSymbolQuickOpenPresented: Bool = false,
+        isLinkInspectionPresented: Bool = false,
         hasMarkdownOutline: Bool = false,
         canToggleSplitView: Bool = false,
+        canInspectLinks: Bool = false,
         canUndoWorkspaceReplace: Bool = false,
         isBusy: Bool = false
     ) -> MonknotKeyboardShortcutContext {
@@ -338,8 +367,10 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
             isKeyboardShortcutsHelpPresented: isKeyboardShortcutsHelpPresented,
             isWorkspaceSearchPresented: isWorkspaceSearchPresented,
             isSymbolQuickOpenPresented: isSymbolQuickOpenPresented,
+            isLinkInspectionPresented: isLinkInspectionPresented,
             hasMarkdownOutline: hasMarkdownOutline,
             canToggleSplitView: canToggleSplitView,
+            canInspectLinks: canInspectLinks,
             canUndoWorkspaceReplace: canUndoWorkspaceReplace,
             isBusy: isBusy
         )
