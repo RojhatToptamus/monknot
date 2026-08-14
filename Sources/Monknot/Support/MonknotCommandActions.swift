@@ -83,6 +83,10 @@ extension FocusedValues {
 
 struct MonknotCommandMenu: Commands {
     @FocusedValue(\.monknotCommandActions) private var actions
+    @AppStorage(EditorTextCheckingOptions.spellingPreferenceKey)
+    private var checksSpelling = EditorTextCheckingOptions.defaultChecksSpelling
+    @AppStorage(EditorTextCheckingOptions.grammarPreferenceKey)
+    private var checksGrammar = EditorTextCheckingOptions.defaultChecksGrammar
 
     private var undoDestination: MonknotUndoCommandDestination {
         monknotUndoCommandDestination(
@@ -265,6 +269,27 @@ struct MonknotCommandMenu: Commands {
             }
             .keyboardShortcut("a", modifiers: [.command])
             .disabled(actions == nil && !MonknotNativePasteboardCommand.hasNativeEditingFocus)
+        }
+
+        CommandGroup(after: .pasteboard) {
+            Menu("Spelling and Grammar") {
+                Button("Show Spelling and Grammar") {
+                    _ = MonknotNativeSpellingCommand.showSpellingAndGrammar()
+                }
+                .keyboardShortcut(";", modifiers: [.command, .shift])
+                .disabled(!MonknotNativeSpellingCommand.hasDocumentEditingFocus)
+
+                Button("Check Document Now") {
+                    _ = MonknotNativeSpellingCommand.checkSpelling()
+                }
+                .keyboardShortcut(";", modifiers: [.command])
+                .disabled(!MonknotNativeSpellingCommand.hasDocumentEditingFocus)
+
+                Divider()
+
+                Toggle("Check Spelling While Typing", isOn: $checksSpelling)
+                Toggle("Check Grammar While Typing", isOn: $checksGrammar)
+            }
         }
 
         CommandGroup(replacing: .printItem) {

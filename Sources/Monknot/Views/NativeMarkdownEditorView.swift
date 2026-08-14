@@ -9,6 +9,7 @@ struct NativeMarkdownEditorView: View {
     let zoomScale: Double
     let contentWidthPercent: Double
     let fontSmoothing: Bool
+    let textCheckingOptions: EditorTextCheckingOptions
     let scrollPosition: DocumentScrollPosition?
     let textSelection: DocumentTextSelection?
     let syncScrollEnabled: Bool
@@ -33,6 +34,7 @@ struct NativeMarkdownEditorView: View {
         zoomScale: Double,
         contentWidthPercent: Double,
         fontSmoothing: Bool,
+        textCheckingOptions: EditorTextCheckingOptions = .defaultValue,
         scrollPosition: DocumentScrollPosition?,
         textSelection: DocumentTextSelection? = nil,
         syncScrollEnabled: Bool,
@@ -56,6 +58,7 @@ struct NativeMarkdownEditorView: View {
         self.zoomScale = zoomScale
         self.contentWidthPercent = contentWidthPercent
         self.fontSmoothing = fontSmoothing
+        self.textCheckingOptions = textCheckingOptions
         self.scrollPosition = scrollPosition
         self.textSelection = textSelection
         self.syncScrollEnabled = syncScrollEnabled
@@ -84,6 +87,7 @@ struct NativeMarkdownEditorView: View {
                     zoomScale: zoomScale,
                     contentWidthPercent: contentWidthPercent,
                     fontSmoothing: fontSmoothing,
+                    textCheckingOptions: textCheckingOptions,
                     scrollPosition: scrollPosition,
                     textSelection: textSelection,
                     sourceLocation: $sourceLocation,

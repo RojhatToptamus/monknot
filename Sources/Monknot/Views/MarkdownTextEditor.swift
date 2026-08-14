@@ -29,6 +29,55 @@ enum MonknotNativeMarkdownCommand {
     }
 }
 
+@MainActor
+enum MonknotNativeSpellingCommand {
+    static var hasDocumentEditingFocus: Bool {
+        focusedTextView != nil
+    }
+
+    @discardableResult
+    static func showSpellingAndGrammar() -> Bool {
+        guard let textView = focusedTextView else { return false }
+        textView.showGuessPanel(nil)
+        NSSpellChecker.shared.spellingPanel.makeKeyAndOrderFront(nil)
+        return true
+    }
+
+    @discardableResult
+    static func checkSpelling() -> Bool {
+        guard let textView = focusedTextView else { return false }
+        textView.checkSpelling(nil)
+        return true
+    }
+
+    private static var focusedTextView: MarkdownNSTextView? {
+        // A menu or the shared spelling panel can become the key window while the
+        // document window remains main. Keep command validation anchored to the
+        // document responder in that state.
+        // https://developer.apple.com/documentation/appkit/nsapplication/mainwindow
+        for window in [NSApp.mainWindow, NSApp.keyWindow].compactMap({ $0 }) {
+            if let textView = window.firstResponder as? MarkdownNSTextView {
+                return textView
+            }
+        }
+        return nil
+    }
+}
+
+struct EditorTextCheckingOptions: Equatable {
+    static let spellingPreferenceKey = "Monknot.checkSpellingWhileTyping"
+    static let grammarPreferenceKey = "Monknot.checkGrammarWhileTyping"
+    static let defaultChecksSpelling = true
+    static let defaultChecksGrammar = false
+    static let defaultValue = EditorTextCheckingOptions(
+        checksSpelling: defaultChecksSpelling,
+        checksGrammar: defaultChecksGrammar
+    )
+
+    let checksSpelling: Bool
+    let checksGrammar: Bool
+}
+
 enum MarkdownTextEditorCommand: Equatable {
     case paragraph
     case heading(level: Int)
@@ -131,6 +180,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
     let zoomScale: Double
     let contentWidthPercent: Double
     let fontSmoothing: Bool
+    let textCheckingOptions: EditorTextCheckingOptions
     let scrollPosition: DocumentScrollPosition?
     let textSelection: DocumentTextSelection?
     let syncScrollEnabled: Bool
@@ -156,6 +206,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         zoomScale: Double,
         contentWidthPercent: Double,
         fontSmoothing: Bool,
+        textCheckingOptions: EditorTextCheckingOptions = .defaultValue,
         scrollPosition: DocumentScrollPosition?,
         textSelection: DocumentTextSelection? = nil,
         sourceLocation: Binding<MarkdownSourceLocation?>,
@@ -180,6 +231,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         self.zoomScale = zoomScale
         self.contentWidthPercent = contentWidthPercent
         self.fontSmoothing = fontSmoothing
+        self.textCheckingOptions = textCheckingOptions
         self.scrollPosition = scrollPosition
         self.textSelection = textSelection
         self.syncScrollEnabled = syncScrollEnabled
@@ -234,6 +286,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.applyTextChecking(textCheckingOptions)
         textView.allowsUndo = true
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
@@ -309,6 +362,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         if context.coordinator.shouldApplyFontSmoothing(fontSmoothing) {
             textView.fontSmoothingEnabled = fontSmoothing
         }
+        textView.applyTextChecking(textCheckingOptions)
         if context.coordinator.shouldApplyMarkdownShortcuts(markdownShortcutsEnabled) {
             textView.markdownShortcutsEnabled = markdownShortcutsEnabled
         }
@@ -1624,6 +1678,19 @@ final class MarkdownNSTextView: NSTextView {
             guard fontSmoothingEnabled != oldValue else { return }
             needsDisplay = true
         }
+    }
+
+    func applyTextChecking(_ options: EditorTextCheckingOptions) {
+        // NSTextView owns native spelling and grammar state. These are the only enabled
+        // text-checking behaviors; Monknot never rewrites Markdown automatically.
+        // https://developer.apple.com/documentation/appkit/nstextview/iscontinuousspellcheckingenabled
+        // https://developer.apple.com/documentation/appkit/nstextview/isgrammarcheckingenabled
+        isContinuousSpellCheckingEnabled = options.checksSpelling
+        isGrammarCheckingEnabled = options.checksGrammar
+        isAutomaticSpellingCorrectionEnabled = false
+        isAutomaticQuoteSubstitutionEnabled = false
+        isAutomaticDashSubstitutionEnabled = false
+        isAutomaticTextReplacementEnabled = false
     }
 
     override func setFrameSize(_ newSize: NSSize) {

@@ -6,6 +6,76 @@ import XCTest
 
 @MainActor
 final class MarkdownEditorInteractionTests: XCTestCase {
+    func testNativeTextCheckingPreferencesNeverEnableAutomaticRewriting() {
+        let textView = MarkdownNSTextView()
+        textView.isAutomaticSpellingCorrectionEnabled = true
+        textView.isAutomaticQuoteSubstitutionEnabled = true
+        textView.isAutomaticDashSubstitutionEnabled = true
+        textView.isAutomaticTextReplacementEnabled = true
+
+        textView.applyTextChecking(EditorTextCheckingOptions(
+            checksSpelling: true,
+            checksGrammar: true
+        ))
+
+        XCTAssertTrue(textView.isContinuousSpellCheckingEnabled)
+        XCTAssertTrue(textView.isGrammarCheckingEnabled)
+        XCTAssertFalse(textView.isAutomaticSpellingCorrectionEnabled)
+        XCTAssertFalse(textView.isAutomaticQuoteSubstitutionEnabled)
+        XCTAssertFalse(textView.isAutomaticDashSubstitutionEnabled)
+        XCTAssertFalse(textView.isAutomaticTextReplacementEnabled)
+
+        textView.applyTextChecking(EditorTextCheckingOptions(
+            checksSpelling: false,
+            checksGrammar: false
+        ))
+        XCTAssertFalse(textView.isContinuousSpellCheckingEnabled)
+        XCTAssertFalse(textView.isGrammarCheckingEnabled)
+    }
+
+    func testDocumentEditorSupportsNativeSpellingActions() {
+        let source = "A misspeled sentence."
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+
+        XCTAssertTrue(textView.responds(to: #selector(NSText.checkSpelling(_:))))
+        XCTAssertTrue(textView.responds(to: #selector(NSText.showGuessPanel(_:))))
+        textView.checkSpelling(nil)
+        XCTAssertEqual(textView.string, source)
+        withExtendedLifetime(window) {}
+    }
+
+    func testNativeSpellCheckerCanCheckMultipleInstalledLanguages() throws {
+        let checker = NSSpellChecker.shared
+        let cases = [
+            (prefix: "en", misspelling: "helllo"),
+            (prefix: "de", misspelling: "Hauus"),
+        ]
+        let installed = cases.compactMap { item -> (String, String)? in
+            guard let language = checker.availableLanguages.first(where: {
+                $0.lowercased().hasPrefix(item.prefix)
+            }) else { return nil }
+            return (language, item.misspelling)
+        }
+        guard installed.count == cases.count else {
+            throw XCTSkip("English and German spell-check dictionaries are not both installed.")
+        }
+
+        for (language, misspelling) in installed {
+            let range = checker.checkSpelling(
+                of: misspelling,
+                startingAt: 0,
+                language: language,
+                wrap: false,
+                inSpellDocumentWithTag: 0,
+                wordCount: nil
+            )
+            XCTAssertNotEqual(range.location, NSNotFound, "Expected \(language) to check \(misspelling)")
+        }
+    }
+
     func testCommandLinkActivationUsesSharedParserAndLeavesNormalTextUntouched() {
         let source = """
         See [[Daily Note#Plan]], [guide](Guide.md#Setup), and [reference][guide ref].

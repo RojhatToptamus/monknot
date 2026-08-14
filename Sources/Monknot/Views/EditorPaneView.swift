@@ -8,6 +8,10 @@ struct EditorPaneView: View {
     @Binding var isSplitViewEnabled: Bool
     @AppStorage(VisualExternalChangeReviewPreference.key)
     private var visualExternalChangeReviewEnabled = VisualExternalChangeReviewPreference.defaultValue
+    @AppStorage(EditorTextCheckingOptions.spellingPreferenceKey)
+    private var checksSpelling = EditorTextCheckingOptions.defaultChecksSpelling
+    @AppStorage(EditorTextCheckingOptions.grammarPreferenceKey)
+    private var checksGrammar = EditorTextCheckingOptions.defaultChecksGrammar
     @State private var markdownCommandSerial = 0
     @State private var markdownCommandRequest: MarkdownTextEditorCommandRequest?
     @State private var splitScrollSyncLock = false
@@ -53,6 +57,13 @@ struct EditorPaneView: View {
     let onMarkdownFileDropRequest: (MarkdownFileDropRequest) -> Void
     let onMarkdownPreviewLinkRequest: (MarkdownPreviewLinkRequest) -> Void
     let onMarkdownTaskRequest: (MarkdownPreviewTaskRequest) -> Void
+
+    private var textCheckingOptions: EditorTextCheckingOptions {
+        EditorTextCheckingOptions(
+            checksSpelling: checksSpelling,
+            checksGrammar: checksGrammar
+        )
+    }
 
     var body: some View {
         editorColumn
@@ -336,6 +347,7 @@ struct EditorPaneView: View {
             zoomScale: zoomScale,
             contentWidthPercent: contentWidthPercent,
             fontSmoothing: fontSmoothing,
+            textCheckingOptions: textCheckingOptions,
             scrollPosition: activeViewportState?.textScrollPosition,
             sourceLocation: $sourceLocation,
             searchState: $documentSearch,
@@ -386,6 +398,7 @@ struct EditorPaneView: View {
             zoomScale: zoomScale,
             contentWidthPercent: contentWidthPercent,
             fontSmoothing: fontSmoothing,
+            textCheckingOptions: textCheckingOptions,
             scrollPosition: activeViewportState?.textScrollPosition,
             sourceLocation: $sourceLocation,
             searchState: $documentSearch,
@@ -447,6 +460,7 @@ struct EditorPaneView: View {
             zoomScale: zoomScale,
             contentWidthPercent: contentWidthPercent,
             fontSmoothing: fontSmoothing,
+            textCheckingOptions: textCheckingOptions,
             scrollPosition: activeViewportState?.textScrollPosition,
             textSelection: activeViewportState?.textSelection,
             syncScrollEnabled: isSplitViewEnabled,

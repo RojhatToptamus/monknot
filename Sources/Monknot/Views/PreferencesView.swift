@@ -176,6 +176,10 @@ private struct EditorSettingsView: View {
     let uiTheme: AppTheme
     @AppStorage("Monknot.zoomScale") private var persistedZoomScale = WorkspaceZoomPolicy.defaultValue
     @AppStorage("Monknot.showDocumentOutline") private var showContentMapper = true
+    @AppStorage(EditorTextCheckingOptions.spellingPreferenceKey)
+    private var checksSpelling = EditorTextCheckingOptions.defaultChecksSpelling
+    @AppStorage(EditorTextCheckingOptions.grammarPreferenceKey)
+    private var checksGrammar = EditorTextCheckingOptions.defaultChecksGrammar
 
     var body: some View {
         SettingsPage(theme: uiTheme) {
@@ -186,6 +190,20 @@ private struct EditorSettingsView: View {
                     title: "Content mapper",
                     detail: "Show heading markers in Markdown",
                     isOn: $showContentMapper
+                )
+
+                SettingsToggleRow(
+                    theme: uiTheme,
+                    title: "Check spelling while typing",
+                    detail: "Underline possible mistakes using macOS",
+                    isOn: $checksSpelling
+                )
+
+                SettingsToggleRow(
+                    theme: uiTheme,
+                    title: "Check grammar while typing",
+                    detail: "Use native language-aware grammar checking",
+                    isOn: $checksGrammar
                 )
 
                 SettingsWorkspaceZoomRow(
