@@ -106,6 +106,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
     let syncScrollTargetLine: Int?
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var searchState: DocumentSearchState
+    let searchOptions: MonknotSearchOptions
     let onScrollPositionChange: (DocumentScrollPosition) -> Void
     let onVisibleTopLineChange: ((Int) -> Void)?
     let commandRequest: MarkdownTextEditorCommandRequest?
@@ -127,6 +128,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textSelection: DocumentTextSelection? = nil,
         sourceLocation: Binding<MarkdownSourceLocation?>,
         searchState: Binding<DocumentSearchState>,
+        searchOptions: MonknotSearchOptions = MonknotSearchOptions(),
         onScrollPositionChange: @escaping (DocumentScrollPosition) -> Void,
         syncScrollEnabled: Bool = false,
         syncScrollTargetLine: Int? = nil,
@@ -151,6 +153,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         self.syncScrollTargetLine = syncScrollTargetLine
         self._sourceLocation = sourceLocation
         self._searchState = searchState
+        self.searchOptions = searchOptions
         self.onScrollPositionChange = onScrollPositionChange
         self.onVisibleTopLineChange = onVisibleTopLineChange
         self.commandRequest = commandRequest
@@ -296,7 +299,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         context.coordinator.applySyncScrollTargetLine(syncScrollTargetLine, in: textView, scrollView: scrollView)
 
-        let searchApplication = context.coordinator.applySearch(searchState, theme: theme, in: textView)
+        let searchApplication = context.coordinator.applySearch(
+            searchState,
+            options: searchOptions,
+            theme: theme,
+            in: textView
+        )
         let currentSearchResult = DocumentSearchResult(
             currentIndex: searchState.currentIndex,
             totalCount: searchState.totalCount
@@ -358,6 +366,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private var searchMatches: [NSRange] = []
         private var highlightedRanges: [NSRange] = []
         private var lastSearchQuery = ""
+        private var lastSearchOptions = MonknotSearchOptions()
         private var lastSearchedText = ""
         private var lastNavigationSerial = 0
         private var lastReplacementSerial = 0
@@ -755,6 +764,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         func applySearch(
             _ state: DocumentSearchState,
+            options: MonknotSearchOptions = MonknotSearchOptions(),
             theme: AppTheme,
             in textView: NSTextView
         ) -> DocumentSearchApplicationResult {
@@ -762,11 +772,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 state.replacementRequest,
                 in: textView
             )
-            let request = DocumentSearchRequest(state)
+            let request = DocumentSearchRequest(state, options: options)
             let query = request.query.trimmingCharacters(in: .whitespacesAndNewlines)
             guard state.isPresented, !query.isEmpty else {
                 clearSearchHighlights(in: textView)
                 lastSearchQuery = ""
+                lastSearchOptions = options
                 lastSearchedText = textView.string
                 currentMatchIndex = 0
                 lastNavigationSerial = request.navigationSerial
@@ -777,19 +788,20 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
 
             let text = textView.string
-            let queryChanged = query != lastSearchQuery
+            let queryChanged = query != lastSearchQuery || options != lastSearchOptions
             let textChanged = text != lastSearchedText
             let navigationChanged = request.navigationSerial != lastNavigationSerial
             let highlightTheme = SearchHighlightTheme(theme: theme)
 
             if queryChanged || textChanged {
-                searchMatches = matchRanges(for: query, in: text)
+                searchMatches = matchRanges(for: query, options: options, in: text)
             }
 
             let matches = searchMatches
             guard !matches.isEmpty else {
                 clearSearchHighlights(in: textView)
                 lastSearchQuery = query
+                lastSearchOptions = options
                 lastSearchedText = text
                 currentMatchIndex = 0
                 lastNavigationSerial = request.navigationSerial
@@ -835,6 +847,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
 
             lastSearchQuery = query
+            lastSearchOptions = options
             lastSearchedText = text
             lastNavigationSerial = request.navigationSerial
 
@@ -860,7 +873,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             else { return request.serial }
 
             let source = textView.string
-            let matches = matchRanges(for: request.query, in: source)
+            let matches = matchRanges(for: request.query, options: request.options, in: source)
             guard !matches.isEmpty else { return request.serial }
 
             switch request.action {
@@ -869,6 +882,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     in: matches,
                     replacement: request.replacement,
                     query: request.query,
+                    options: request.options,
                     requestedMatchIndex: request.matchIndex,
                     textStorage: textStorage,
                     textView: textView
@@ -888,6 +902,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             in matches: [NSRange],
             replacement: String,
             query: String,
+            options: MonknotSearchOptions,
             requestedMatchIndex: Int,
             textStorage: NSTextStorage,
             textView: NSTextView
@@ -904,7 +919,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             textView.didChangeText()
 
             let replacementEnd = targetRange.location + (replacement as NSString).length
-            let updatedMatches = matchRanges(for: query, in: textView.string)
+            let updatedMatches = matchRanges(for: query, options: options, in: textView.string)
             if let nextIndex = updatedMatches.firstIndex(where: { $0.location >= replacementEnd }) {
                 currentMatchIndex = nextIndex
                 textView.setSelectedRange(updatedMatches[nextIndex])
@@ -1038,26 +1053,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
             return offset + delta
         }
 
-        private func matchRanges(for query: String, in text: String) -> [NSRange] {
-            let nsText = text as NSString
-            var ranges: [NSRange] = []
-            var searchRange = NSRange(location: 0, length: nsText.length)
-
-            while searchRange.length > 0 {
-                let found = nsText.range(
-                    of: query,
-                    options: [.caseInsensitive, .diacriticInsensitive],
-                    range: searchRange
-                )
-                guard found.location != NSNotFound, found.length > 0 else { break }
-
-                ranges.append(found)
-                let nextLocation = found.location + found.length
-                guard nextLocation < nsText.length else { break }
-                searchRange = NSRange(location: nextLocation, length: nsText.length - nextLocation)
-            }
-
-            return ranges
+        private func matchRanges(
+            for query: String,
+            options: MonknotSearchOptions,
+            in text: String
+        ) -> [NSRange] {
+            MonknotTextSearch.matchingRanges(of: query, in: text, options: options)
         }
 
         private func firstMatchIndex(atOrAfter location: Int, in matches: [NSRange]) -> Int {

@@ -110,6 +110,34 @@ final class WorkspaceSearchPresentationTests: XCTestCase {
         XCTAssertEqual(state.results.first?.preview, "snapshot-token")
     }
 
+    func testChangingOptionsCancelsAndRejectsThePreviousSearchGeneration() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let noteURL = root.appendingPathComponent("Note.md")
+        try "disk value\n".write(to: noteURL, atomically: true, encoding: .utf8)
+        let document = WorkspaceDocument(url: noteURL, rootURL: root)
+        let state = WorkspaceSearchState()
+
+        state.present(documents: [document])
+        state.setQuery(
+            "token",
+            options: .init(),
+            documents: [document],
+            dirtyTextByDocumentID: [document.id: "TOKEN\n"]
+        )
+        state.refresh(
+            options: MonknotSearchOptions(isCaseSensitive: true),
+            documents: [document],
+            dirtyTextByDocumentID: [document.id: "TOKEN\n"]
+        )
+
+        let didFinish = await waitUntil { !state.isSearching }
+        XCTAssertTrue(didFinish)
+        XCTAssertTrue(state.results.isEmpty)
+    }
+
     private func waitUntil(
         timeout: TimeInterval = 3,
         condition: @escaping @MainActor () -> Bool

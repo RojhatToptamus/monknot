@@ -85,6 +85,7 @@ public final class WorkspaceSearchIndex: @unchecked Sendable {
 
     public func search(
         query: String,
+        options: MonknotSearchOptions = MonknotSearchOptions(),
         documents: [WorkspaceDocument],
         maxMatches: Int = 500,
         maxMatchesPerFile: Int = 50,
@@ -92,15 +93,14 @@ public final class WorkspaceSearchIndex: @unchecked Sendable {
     ) throws -> WorkspaceSearchBatch {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return WorkspaceSearchBatch(results: []) }
-        let foldedNeedle = Self.folded(needle)
-
         var results: [WorkspaceSearchResult] = []
         var skippedLargeFileCount = 0
 
         for document in documents where document.kind == .markdown || document.kind == .text {
             try Task.checkCancellation()
             let batch = try matches(
-                foldedNeedle: foldedNeedle,
+                query: needle,
+                options: options,
                 document: document,
                 limit: maxMatchesPerFile,
                 maxBytes: maxTextFileBytes
@@ -120,7 +120,8 @@ public final class WorkspaceSearchIndex: @unchecked Sendable {
     }
 
     func matches(
-        foldedNeedle: String,
+        query: String,
+        options: MonknotSearchOptions,
         document: WorkspaceDocument,
         limit: Int,
         maxBytes: Int64
@@ -136,7 +137,8 @@ public final class WorkspaceSearchIndex: @unchecked Sendable {
         case .indexed(let searchLines):
             return DocumentMatchBatch(
                 results: Self.matches(
-                    foldedNeedle: foldedNeedle,
+                    query: query,
+                    options: options,
                     searchLines: searchLines,
                     document: document,
                     limit: limit
@@ -206,7 +208,8 @@ public final class WorkspaceSearchIndex: @unchecked Sendable {
     }
 
     private static func matches(
-        foldedNeedle: String,
+        query: String,
+        options: MonknotSearchOptions,
         searchLines: [WorkspaceTextContentCache.SearchLine],
         document: WorkspaceDocument,
         limit: Int
@@ -214,16 +217,8 @@ public final class WorkspaceSearchIndex: @unchecked Sendable {
         guard limit > 0 else { return [] }
 
         var results: [WorkspaceSearchResult] = []
-        let nsNeedle = foldedNeedle as NSString
-
         for line in searchLines {
-            let nsLine = line.foldedText as NSString
-            var searchRange = NSRange(location: 0, length: nsLine.length)
-
-            while searchRange.length > 0 {
-                let found = nsLine.range(of: nsNeedle as String, options: [], range: searchRange)
-                guard found.location != NSNotFound, found.length > 0 else { break }
-
+            for found in MonknotTextSearch.matchingRanges(of: query, in: line.text, options: options) {
                 let preview = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 results.append(WorkspaceSearchResult(
                     id: "\(document.id):\(line.number):\(found.location)",
@@ -239,18 +234,10 @@ public final class WorkspaceSearchIndex: @unchecked Sendable {
                 if results.count >= limit {
                     return results
                 }
-
-                let nextLocation = found.location + found.length
-                guard nextLocation < nsLine.length else { break }
-                searchRange = NSRange(location: nextLocation, length: nsLine.length - nextLocation)
             }
         }
 
         return results
-    }
-
-    private static func folded(_ value: String) -> String {
-        value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
     }
 
     private static func signature(for url: URL) -> (modificationDate: Date?, fileSize: Int64?) {

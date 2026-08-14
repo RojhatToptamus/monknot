@@ -158,6 +158,7 @@ struct ContentView: View {
     @State private var canUndoPDFAnnotation = false
     @State private var canRedoPDFAnnotation = false
     @State private var documentSearch = DocumentSearchState()
+    @State private var searchOptions = MonknotSearchOptions()
     @State private var isSidebarVisible = true
     @SceneStorage("Monknot.sidebarPreferredVisible") private var sidebarPreferredVisible = true
     @State private var sidebarRevealRequest: UInt = 0
@@ -282,6 +283,7 @@ struct ContentView: View {
             }
             .onChange(of: store.documents) { _, documents in
                 workspaceSearch.refresh(
+                    options: searchOptions,
                     documents: documents,
                     dirtyTextByDocumentID: store.dirtyTextByDocumentID,
                     dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
@@ -292,6 +294,7 @@ struct ContentView: View {
             }
             .onChange(of: store.workspaceSearchContentChangeSerial) { _, _ in
                 workspaceSearch.refresh(
+                    options: searchOptions,
                     documents: store.documents,
                     dirtyTextByDocumentID: store.dirtyTextByDocumentID,
                     dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
@@ -546,6 +549,7 @@ struct ContentView: View {
             toggleSplitView: toggleMarkdownSplitView,
             toggleLinkInspection: toggleLinkInspection,
             documentSearch: $documentSearch,
+            searchOptions: $searchOptions,
             tabs: tabState.tabs,
             activeTabID: tabState.selectedDocumentID,
             missingTabIDs: store.removedDirtyOpenDocumentIDs,
@@ -570,6 +574,7 @@ struct ContentView: View {
         SidebarView(
             store: store,
             workspaceSearch: workspaceSearch,
+            searchOptions: $searchOptions,
             theme: activeTheme,
             zoomScale: zoomScale,
             openFolder: openFolderPanel,
@@ -612,6 +617,7 @@ struct ContentView: View {
                 pdfPageNavigationRequest: pendingPDFPageNavigationRequest,
                 pdfNavigatorToggleCommandSerial: pdfNavigatorToggleCommandSerial,
                 documentSearch: $documentSearch,
+                searchOptions: searchOptions,
                 newMarkdown: { store.createMarkdownFile() },
                 bootstrapStarterWorkspace: { store.bootstrapStarterWorkspace() },
                 openFolder: openFolderPanel,
@@ -1651,6 +1657,11 @@ struct ContentView: View {
             canInspectLinks: canInspectLinks,
             findNext: { documentSearch.findNext() },
             findPrevious: { documentSearch.findPrevious() },
+            isSearchCaseSensitive: searchOptions.isCaseSensitive,
+            setSearchCaseSensitive: { searchOptions.isCaseSensitive = $0 },
+            isSearchWholeWord: searchOptions.isWholeWord,
+            setSearchWholeWord: { searchOptions.isWholeWord = $0 },
+            canConfigureSearch: documentSearch.isPresented || workspaceSearch.isPresented,
             toggleTerminal: { toggleTerminalDrawer(animated: false) },
             toggleSidebar: { toggleSidebar(animated: false) },
             toggleSplitView: { toggleMarkdownSplitView() },
@@ -2082,6 +2093,7 @@ struct ContentView: View {
         dismissGoToLine(restoreFocus: false)
         requestSidebarPresentation(true, animated: false)
         workspaceSearch.present(
+            options: searchOptions,
             documents: store.documents,
             dirtyTextByDocumentID: store.dirtyTextByDocumentID,
             dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID

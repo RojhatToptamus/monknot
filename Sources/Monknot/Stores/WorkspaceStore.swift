@@ -159,6 +159,7 @@ final class WorkspaceStore: ObservableObject {
     func replaceInWorkspace(
         find: String,
         replacement: String,
+        options: MonknotSearchOptions = MonknotSearchOptions(),
         scope: WorkspaceReplaceScope = .entireWorkspace,
         searchResultDocumentIDs: Set<String> = []
     ) {
@@ -191,6 +192,7 @@ final class WorkspaceStore: ObservableObject {
                 let batch = try WorkspaceReplaceService().replaceAndWrite(
                     find: needle,
                     replacement: replacement,
+                    options: options,
                     documents: snapshot,
                     skipDocumentIDs: skipDocumentIDs,
                     limitToDocumentIDs: limitToDocumentIDs

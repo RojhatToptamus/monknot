@@ -13,6 +13,28 @@ final class WorkspaceReplaceServiceTests: XCTestCase {
         XCTAssertEqual(result.text, "pin here and another pin")
     }
 
+    func testReplacedTextHonorsCaseSensitiveAndWholeWordOptions() {
+        let source = "Cat cat scatter cat_2 cat-café"
+
+        let sensitive = WorkspaceReplaceService.replacedText(
+            find: "cat",
+            replacement: "dog",
+            options: MonknotSearchOptions(isCaseSensitive: true),
+            in: source
+        )
+        let wholeWord = WorkspaceReplaceService.replacedText(
+            find: "cat",
+            replacement: "dog",
+            options: MonknotSearchOptions(isWholeWord: true),
+            in: source
+        )
+
+        XCTAssertEqual(sensitive.text, "Cat dog sdogter dog_2 dog-café")
+        XCTAssertEqual(sensitive.count, 4)
+        XCTAssertEqual(wholeWord.text, "dog dog scatter cat_2 dog-café")
+        XCTAssertEqual(wholeWord.count, 3)
+    }
+
     func testReplaceAndWriteUpdatesFilesOnDisk() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

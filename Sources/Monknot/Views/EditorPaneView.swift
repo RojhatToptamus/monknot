@@ -35,6 +35,7 @@ struct EditorPaneView: View {
     let pdfPageNavigationRequest: PDFPageNavigationRequest?
     let pdfNavigatorToggleCommandSerial: Int
     @Binding var documentSearch: DocumentSearchState
+    let searchOptions: MonknotSearchOptions
     let newMarkdown: () -> Void
     let bootstrapStarterWorkspace: () -> Void
     let openFolder: () -> Void
@@ -259,6 +260,7 @@ struct EditorPaneView: View {
                 externalUndoCommandSerial: pdfUndoCommandSerial,
                 externalRedoCommandSerial: pdfRedoCommandSerial,
                 searchState: $documentSearch,
+                searchOptions: searchOptions,
                 searchTarget: $pdfSearchTarget,
                 markEdited: { previousData, data, editCheckpoint in
                     store.markPDFDocumentEdited(
@@ -336,6 +338,7 @@ struct EditorPaneView: View {
             scrollPosition: activeViewportState?.textScrollPosition,
             sourceLocation: $sourceLocation,
             searchState: $documentSearch,
+            searchOptions: searchOptions,
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
             },
@@ -360,6 +363,7 @@ struct EditorPaneView: View {
             syncScrollTargetLine: previewSyncLine,
             sourceLineCount: HTMLScrollSync.totalLines(in: store.documentText),
             searchState: $documentSearch,
+            searchOptions: searchOptions,
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .htmlPreviewScrollPosition(position))
             },
@@ -384,6 +388,7 @@ struct EditorPaneView: View {
             scrollPosition: activeViewportState?.textScrollPosition,
             sourceLocation: $sourceLocation,
             searchState: $documentSearch,
+            searchOptions: searchOptions,
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
             }
@@ -447,6 +452,7 @@ struct EditorPaneView: View {
             syncScrollTargetLine: sourceSyncLine,
             sourceLocation: $sourceLocation,
             searchState: $documentSearch,
+            searchOptions: searchOptions,
             commandRequest: markdownCommandRequest,
             wikilinkDocuments: store.markdownDocuments,
             onSelectionChange: onMarkdownSelectionChange,
@@ -478,6 +484,7 @@ struct EditorPaneView: View {
             syncScrollTargetLine: previewSyncLine,
             sourceLocation: $previewLocation,
             searchState: $documentSearch,
+            searchOptions: searchOptions,
             onSourceJump: onPreviewSourceJump,
             onLinkRequest: onMarkdownPreviewLinkRequest,
             onTaskRequest: onMarkdownTaskRequest,

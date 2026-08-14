@@ -37,6 +37,7 @@ struct TopNavigationBar: View {
     let toggleSplitView: () -> Void
     var toggleLinkInspection: () -> Void = {}
     @Binding var documentSearch: DocumentSearchState
+    @Binding var searchOptions: MonknotSearchOptions
     let tabs: [WorkspaceTabItem]
     let activeTabID: String?
     let missingTabIDs: Set<String>
@@ -268,11 +269,27 @@ struct TopNavigationBar: View {
             .focused($focusedSearchField, equals: .query)
             .font(.system(size: textScaled(13), weight: .regular))
             .foregroundStyle(theme.foregroundColor)
-            .frame(width: scaled(documentSearch.isReplacePresented ? 150 : 190))
+            .frame(width: scaled(documentSearch.isReplacePresented ? 120 : 150))
             .onSubmit {
                 documentSearch.findNext()
             }
             .accessibilityLabel("Search in document")
+
+            searchOptionButton(
+                systemImage: "textformat",
+                label: "Match Case",
+                isActive: searchOptions.isCaseSensitive
+            ) {
+                searchOptions.isCaseSensitive.toggle()
+            }
+
+            searchOptionButton(
+                systemImage: "character.cursor.ibeam",
+                label: "Match Whole Word",
+                isActive: searchOptions.isWholeWord
+            ) {
+                searchOptions.isWholeWord.toggle()
+            }
 
             Text(documentSearch.countText)
                 .font(.system(size: textScaled(11), weight: .medium, design: .rounded))
@@ -363,12 +380,12 @@ struct TopNavigationBar: View {
 
     private func replaceCurrentMatch() {
         guard let document = prepareEditableSourceForReplacement() else { return }
-        documentSearch.replaceCurrent(in: document.id)
+        documentSearch.replaceCurrent(in: document.id, options: searchOptions)
     }
 
     private func replaceAllMatches() {
         guard let document = prepareEditableSourceForReplacement() else { return }
-        documentSearch.replaceAll(in: document.id)
+        documentSearch.replaceAll(in: document.id, options: searchOptions)
     }
 
     private func prepareEditableSourceForReplacement() -> WorkspaceDocument? {
@@ -414,6 +431,25 @@ struct TopNavigationBar: View {
             size: .findBar,
             action: action
         )
+    }
+
+    private func searchOptionButton(
+        systemImage: String,
+        label: String,
+        isActive: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        MonknotIconButton(
+            systemImage: systemImage,
+            label: label,
+            theme: theme,
+            zoomScale: zoomScale,
+            isActive: isActive,
+            size: .findBar,
+            action: action
+        )
+        .accessibilityValue(isActive ? "On" : "Off")
+        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 
 }

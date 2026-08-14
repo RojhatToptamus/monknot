@@ -1,4 +1,5 @@
 import Foundation
+import MonknotCore
 
 enum DocumentSearchDirection: String, Equatable {
     case next
@@ -17,6 +18,7 @@ struct DocumentReplacementRequest: Equatable {
     let replacement: String
     let action: DocumentReplacementAction
     let matchIndex: Int
+    let options: MonknotSearchOptions
 }
 
 struct DocumentSearchResult: Equatable {
@@ -76,12 +78,18 @@ struct DocumentSearchState: Equatable {
         isReplacePresented.toggle()
     }
 
-    mutating func replaceCurrent(in documentID: String) {
-        enqueueReplacement(.current, in: documentID)
+    mutating func replaceCurrent(
+        in documentID: String,
+        options: MonknotSearchOptions = MonknotSearchOptions()
+    ) {
+        enqueueReplacement(.current, in: documentID, options: options)
     }
 
-    mutating func replaceAll(in documentID: String) {
-        enqueueReplacement(.all, in: documentID)
+    mutating func replaceAll(
+        in documentID: String,
+        options: MonknotSearchOptions = MonknotSearchOptions()
+    ) {
+        enqueueReplacement(.all, in: documentID, options: options)
     }
 
     mutating func consumeReplacement(serial: Int) {
@@ -127,7 +135,8 @@ struct DocumentSearchState: Equatable {
 
     private mutating func enqueueReplacement(
         _ action: DocumentReplacementAction,
-        in documentID: String
+        in documentID: String,
+        options: MonknotSearchOptions
     ) {
         let effectiveQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isPresented, !effectiveQuery.isEmpty else { return }
@@ -138,7 +147,8 @@ struct DocumentSearchState: Equatable {
             query: effectiveQuery,
             replacement: replacement,
             action: action,
-            matchIndex: max(0, currentIndex - 1)
+            matchIndex: max(0, currentIndex - 1),
+            options: options
         )
     }
 }
@@ -148,11 +158,16 @@ struct DocumentSearchRequest: Equatable {
     let query: String
     let navigationSerial: Int
     let navigationDirection: DocumentSearchDirection
+    let options: MonknotSearchOptions
 
-    init(_ state: DocumentSearchState) {
+    init(
+        _ state: DocumentSearchState,
+        options: MonknotSearchOptions = MonknotSearchOptions()
+    ) {
         isPresented = state.isPresented
         query = state.effectiveQuery
         navigationSerial = state.navigationSerial
         navigationDirection = state.navigationDirection
+        self.options = options
     }
 }

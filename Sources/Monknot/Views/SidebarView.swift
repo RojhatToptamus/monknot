@@ -5,6 +5,7 @@ import SwiftUI
 struct SidebarView: View {
     @ObservedObject var store: WorkspaceStore
     @ObservedObject var workspaceSearch: WorkspaceSearchState
+    @Binding var searchOptions: MonknotSearchOptions
     let theme: AppTheme
     let zoomScale: Double
     let openFolder: () -> Void
@@ -167,6 +168,7 @@ struct SidebarView: View {
                 documents: store.documents,
                 dirtyTextByDocumentID: store.dirtyTextByDocumentID,
                 dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID,
+                searchOptions: $searchOptions,
                 theme: theme,
                 zoomScale: zoomScale,
                 close: { workspaceSearch.dismiss() },
@@ -176,6 +178,7 @@ struct SidebarView: View {
                     store.replaceInWorkspace(
                         find: workspaceSearch.query,
                         replacement: workspaceSearch.replaceText,
+                        options: searchOptions,
                         scope: workspaceSearch.replaceScope,
                         searchResultDocumentIDs: workspaceSearch.replaceScopeDocumentIDs
                     )
@@ -288,6 +291,7 @@ struct SidebarView: View {
 
     private func presentWorkspaceSearch() {
         workspaceSearch.present(
+            options: searchOptions,
             documents: store.documents,
             dirtyTextByDocumentID: store.dirtyTextByDocumentID,
             dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
@@ -296,6 +300,7 @@ struct SidebarView: View {
 
     private func refreshWorkspaceSearch() {
         workspaceSearch.refresh(
+            options: searchOptions,
             documents: store.documents,
             dirtyTextByDocumentID: store.dirtyTextByDocumentID,
             dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
@@ -371,6 +376,7 @@ struct SidebarView: View {
         return try? WorkspaceReplaceService().preview(
             find: needle,
             replacement: workspaceSearch.replaceText,
+            options: searchOptions,
             documents: store.documents,
             skipDocumentIDs: skipDocumentIDs,
             limitToDocumentIDs: limitToDocumentIDs

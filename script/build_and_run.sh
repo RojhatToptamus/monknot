@@ -333,6 +333,7 @@ CORE_SOURCES=(
   "Sources/MonknotCore/Services/MarkdownRenderService.swift"
   "Sources/MonknotCore/Services/MarkdownLinkMovePlanner.swift"
   "Sources/MonknotCore/Services/MarkdownScrollSync.swift"
+  "Sources/MonknotCore/Services/MonknotTextSearch.swift"
   "Sources/MonknotCore/Services/MarkdownSymbolQuickOpenMatcher.swift"
   "Sources/MonknotCore/Services/MarkdownWorkspaceLinkService.swift"
   "Sources/MonknotCore/Services/PDFAnnotationMarkdownExportService.swift"

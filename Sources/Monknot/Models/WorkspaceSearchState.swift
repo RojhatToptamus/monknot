@@ -51,6 +51,7 @@ final class WorkspaceSearchState: ObservableObject {
     private var searchGeneration = 0
 
     func present(
+        options: MonknotSearchOptions = MonknotSearchOptions(),
         documents: [WorkspaceDocument],
         dirtyTextByDocumentID: [String: String] = [:],
         dirtyPDFDataByDocumentID: [String: Data] = [:]
@@ -58,6 +59,7 @@ final class WorkspaceSearchState: ObservableObject {
         isPresented = true
         focusSerial += 1
         search(
+            options: options,
             documents: documents,
             dirtyTextByDocumentID: dirtyTextByDocumentID,
             dirtyPDFDataByDocumentID: dirtyPDFDataByDocumentID
@@ -107,6 +109,7 @@ final class WorkspaceSearchState: ObservableObject {
 
     func setQuery(
         _ query: String,
+        options: MonknotSearchOptions = MonknotSearchOptions(),
         documents: [WorkspaceDocument],
         dirtyTextByDocumentID: [String: String] = [:],
         dirtyPDFDataByDocumentID: [String: Data] = [:]
@@ -114,6 +117,7 @@ final class WorkspaceSearchState: ObservableObject {
         guard query != self.query else { return }
         self.query = query
         search(
+            options: options,
             documents: documents,
             dirtyTextByDocumentID: dirtyTextByDocumentID,
             dirtyPDFDataByDocumentID: dirtyPDFDataByDocumentID
@@ -121,12 +125,14 @@ final class WorkspaceSearchState: ObservableObject {
     }
 
     func refresh(
+        options: MonknotSearchOptions = MonknotSearchOptions(),
         documents: [WorkspaceDocument],
         dirtyTextByDocumentID: [String: String] = [:],
         dirtyPDFDataByDocumentID: [String: Data] = [:]
     ) {
         guard isPresented else { return }
         search(
+            options: options,
             documents: documents,
             dirtyTextByDocumentID: dirtyTextByDocumentID,
             dirtyPDFDataByDocumentID: dirtyPDFDataByDocumentID
@@ -134,6 +140,7 @@ final class WorkspaceSearchState: ObservableObject {
     }
 
     private func search(
+        options: MonknotSearchOptions,
         documents: [WorkspaceDocument],
         dirtyTextByDocumentID: [String: String],
         dirtyPDFDataByDocumentID: [String: Data]
@@ -142,6 +149,7 @@ final class WorkspaceSearchState: ObservableObject {
         let generation = searchGeneration
         let query = query
         let snapshot = documents
+        let optionsSnapshot = options
         let dirtyTextSnapshot = dirtyTextByDocumentID
         let dirtyPDFDataSnapshot = dirtyPDFDataByDocumentID
 
@@ -169,6 +177,7 @@ final class WorkspaceSearchState: ObservableObject {
                 let worker = Task.detached(priority: .utility) {
                     try service.search(
                         query: query,
+                        options: optionsSnapshot,
                         documents: snapshot,
                         dirtyTextByDocumentID: dirtyTextSnapshot,
                         dirtyPDFDataByDocumentID: dirtyPDFDataSnapshot

@@ -224,6 +224,33 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         withExtendedLifetime(window) {}
     }
 
+    func testCurrentDocumentSearchAndReplaceShareCaseAndWholeWordOptions() {
+        let source = "Cat cat scatter cat_2 cat-café"
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        var search = DocumentSearchState()
+        search.present()
+        search.setQuery("cat")
+        let options = MonknotSearchOptions(isCaseSensitive: true, isWholeWord: true)
+
+        let result = coordinator.applySearch(
+            search,
+            options: options,
+            theme: .defaultDark,
+            in: textView
+        )
+        search.updateResult(result.searchResult)
+        search.setReplacement("dog")
+        search.replaceAll(in: "note.md", options: options)
+        _ = coordinator.applySearch(search, options: options, theme: .defaultDark, in: textView)
+
+        XCTAssertEqual(result.searchResult.totalCount, 2)
+        XCTAssertEqual(textView.string, "Cat dog scatter cat_2 dog-café")
+        withExtendedLifetime(window) {}
+    }
+
     func testReplacementRequestDoesNotEditReadOnlyOrDifferentDocument() throws {
         let source = "cat"
         let box = EditorTextBox(source)

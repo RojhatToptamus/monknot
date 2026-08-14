@@ -52,6 +52,11 @@ struct MonknotCommandActions {
     let canInspectLinks: Bool
     let findNext: () -> Void
     let findPrevious: () -> Void
+    let isSearchCaseSensitive: Bool
+    let setSearchCaseSensitive: (Bool) -> Void
+    let isSearchWholeWord: Bool
+    let setSearchWholeWord: (Bool) -> Void
+    let canConfigureSearch: Bool
     let toggleTerminal: () -> Void
     let toggleSidebar: () -> Void
     let toggleSplitView: () -> Void
@@ -352,6 +357,24 @@ struct MonknotCommandMenu: Commands {
             }
             .keyboardShortcut("g", modifiers: [.command, .shift])
             .disabled(actions == nil)
+
+            Toggle(
+                "Match Case",
+                isOn: Binding(
+                    get: { actions?.isSearchCaseSensitive == true },
+                    set: { actions?.setSearchCaseSensitive($0) }
+                )
+            )
+            .disabled(actions?.canConfigureSearch != true)
+
+            Toggle(
+                "Match Whole Word",
+                isOn: Binding(
+                    get: { actions?.isSearchWholeWord == true },
+                    set: { actions?.setSearchWholeWord($0) }
+                )
+            )
+            .disabled(actions?.canConfigureSearch != true)
 
             Divider()
 

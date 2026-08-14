@@ -16,6 +16,7 @@ struct PDFPreviewView: View {
     let externalUndoCommandSerial: Int
     let externalRedoCommandSerial: Int
     @Binding var searchState: DocumentSearchState
+    var searchOptions = MonknotSearchOptions()
     @Binding var searchTarget: WorkspaceSearchPDFTarget?
     let markEdited: (Data?, Data, PDFAnnotationEditCheckpoint) -> Void
     let restoreSavedEditCheckpoint: (PDFAnnotationEditCheckpoint) -> Bool
@@ -130,6 +131,7 @@ struct PDFPreviewView: View {
                     isNavigatorPresented: isNavigatorPresented,
                     workspaceZoomScale: zoomScale,
                     searchState: $searchState,
+                    searchOptions: searchOptions,
                     searchTarget: $searchTarget,
                     markEdited: markEdited,
                     restoreSavedEditCheckpoint: restoreSavedEditCheckpoint,
@@ -2943,6 +2945,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
     let isNavigatorPresented: Bool
     let workspaceZoomScale: Double
     @Binding var searchState: DocumentSearchState
+    var searchOptions = MonknotSearchOptions()
     @Binding var searchTarget: WorkspaceSearchPDFTarget?
     let markEdited: (Data?, Data, PDFAnnotationEditCheckpoint) -> Void
     let restoreSavedEditCheckpoint: (PDFAnnotationEditCheckpoint) -> Bool
@@ -3148,7 +3151,12 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             reportError: reportError
         )
         context.coordinator.applyZoomCommand(zoomCommand, in: pdfView)
-        context.coordinator.applySearch(searchState, theme: theme, in: pdfView)
+        context.coordinator.applySearch(
+            searchState,
+            options: searchOptions,
+            theme: theme,
+            in: pdfView
+        )
         context.coordinator.applyMarkupCommand(markupCommand, in: pdfView)
         context.coordinator.applyAddFreeTextCommand(addFreeTextCommandSerial, in: pdfView)
         context.coordinator.applyFreeTextFormattingCommand(freeTextFormattingCommand, in: pdfView)
@@ -3359,8 +3367,13 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             )
         }
 
-        func applySearch(_ state: DocumentSearchState, theme: AppTheme, in pdfView: AnnotatingPDFView) {
-            let request = DocumentSearchRequest(state)
+        func applySearch(
+            _ state: DocumentSearchState,
+            options: MonknotSearchOptions = MonknotSearchOptions(),
+            theme: AppTheme,
+            in pdfView: AnnotatingPDFView
+        ) {
+            let request = DocumentSearchRequest(state, options: options)
             guard request.isPresented, !request.query.isEmpty, let document = pdfView.document else {
                 if shouldClearSearch(for: request) {
                     clearSearch(in: pdfView)
@@ -3370,9 +3383,16 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             }
 
             let queryDidChange = request.query != lastSearchRequest?.query
+                || request.options != lastSearchRequest?.options
             let navigationDidChange = request.navigationSerial != lastSearchRequest?.navigationSerial
             if queryDidChange {
-                matches = document.findString(request.query, withOptions: [.caseInsensitive, .diacriticInsensitive])
+                matches = document.findString(
+                    request.query,
+                    withOptions: request.options.comparisonOptions
+                )
+                if request.options.isWholeWord {
+                    matches = matches.filter(Self.isWholeWordSelection)
+                }
                 currentMatchIndex = matches.isEmpty ? 0 : 0
                 lastSearchHighlightTheme = nil
             } else if navigationDidChange, !matches.isEmpty {
@@ -3416,6 +3436,22 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             }
 
             lastSearchRequest = request
+        }
+
+        private static func isWholeWordSelection(_ selection: PDFSelection) -> Bool {
+            for page in selection.pages {
+                guard let text = page.string else { return false }
+                let rangeCount = selection.numberOfTextRanges(on: page)
+                guard rangeCount > 0 else { return false }
+
+                for index in 0..<rangeCount {
+                    let range = selection.range(at: index, on: page)
+                    guard MonknotTextSearch.rangeIsWholeWord(range, in: text) else {
+                        return false
+                    }
+                }
+            }
+            return !selection.pages.isEmpty
         }
 
         fileprivate func applyMarkupCommand(_ command: PDFTextMarkupCommand?, in pdfView: AnnotatingPDFView) {

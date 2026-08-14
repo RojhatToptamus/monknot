@@ -22,6 +22,7 @@ struct WorkspaceSearchView: View {
     let documents: [WorkspaceDocument]
     let dirtyTextByDocumentID: [String: String]
     let dirtyPDFDataByDocumentID: [String: Data]
+    @Binding var searchOptions: MonknotSearchOptions
     let theme: AppTheme
     let zoomScale: Double
     let close: () -> Void
@@ -74,6 +75,14 @@ struct WorkspaceSearchView: View {
         }
         .onChange(of: state.focusSerial) { _, _ in
             focusSearchField()
+        }
+        .onChange(of: searchOptions) { _, options in
+            state.refresh(
+                options: options,
+                documents: documents,
+                dirtyTextByDocumentID: dirtyTextByDocumentID,
+                dirtyPDFDataByDocumentID: dirtyPDFDataByDocumentID
+            )
         }
         .onExitCommand(perform: close)
         .onDisappear {
@@ -167,6 +176,7 @@ struct WorkspaceSearchView: View {
                     set: {
                         state.setQuery(
                             $0,
+                            options: searchOptions,
                             documents: documents,
                             dirtyTextByDocumentID: dirtyTextByDocumentID,
                             dirtyPDFDataByDocumentID: dirtyPDFDataByDocumentID
@@ -195,6 +205,7 @@ struct WorkspaceSearchView: View {
                 if !state.query.isEmpty {
                     state.setQuery(
                         "",
+                        options: searchOptions,
                         documents: documents,
                         dirtyTextByDocumentID: dirtyTextByDocumentID,
                         dirtyPDFDataByDocumentID: dirtyPDFDataByDocumentID
@@ -204,6 +215,32 @@ struct WorkspaceSearchView: View {
             }
             .opacity(state.query.isEmpty ? 0 : 1)
             .accessibilityHidden(state.query.isEmpty)
+
+            MonknotIconButton(
+                systemImage: "textformat",
+                label: "Match Case",
+                theme: theme,
+                zoomScale: zoomScale,
+                isActive: searchOptions.isCaseSensitive,
+                size: .compact
+            ) {
+                searchOptions.isCaseSensitive.toggle()
+            }
+            .accessibilityValue(searchOptions.isCaseSensitive ? "On" : "Off")
+            .accessibilityAddTraits(searchOptions.isCaseSensitive ? .isSelected : [])
+
+            MonknotIconButton(
+                systemImage: "character.cursor.ibeam",
+                label: "Match Whole Word",
+                theme: theme,
+                zoomScale: zoomScale,
+                isActive: searchOptions.isWholeWord,
+                size: .compact
+            ) {
+                searchOptions.isWholeWord.toggle()
+            }
+            .accessibilityValue(searchOptions.isWholeWord ? "On" : "Off")
+            .accessibilityAddTraits(searchOptions.isWholeWord ? .isSelected : [])
         }
         .padding(.horizontal, scaled(MonknotMetrics.Spacing.m))
         .frame(
@@ -551,23 +588,10 @@ struct WorkspaceSearchView: View {
             return AttributedString(attributed)
         }
 
-        let nsText = text as NSString
-        var searchRange = NSRange(location: 0, length: nsText.length)
         let highlightColor = NSColor(hex: theme.accent).withAlphaComponent(theme.isDark ? 0.32 : 0.22)
 
-        while searchRange.length > 0 {
-            let found = nsText.range(
-                of: query,
-                options: [.caseInsensitive, .diacriticInsensitive],
-                range: searchRange
-            )
-
-            guard found.location != NSNotFound, found.length > 0 else { break }
+        for found in MonknotTextSearch.matchingRanges(of: query, in: text, options: searchOptions) {
             attributed.addAttribute(.backgroundColor, value: highlightColor, range: found)
-
-            let nextLocation = found.location + found.length
-            guard nextLocation < nsText.length else { break }
-            searchRange = NSRange(location: nextLocation, length: nsText.length - nextLocation)
         }
 
         return AttributedString(attributed)
@@ -631,6 +655,7 @@ struct WorkspaceSearchView: View {
                 zoomScale: zoomScale
             ) {
                 state.refresh(
+                    options: searchOptions,
                     documents: documents,
                     dirtyTextByDocumentID: dirtyTextByDocumentID,
                     dirtyPDFDataByDocumentID: dirtyPDFDataByDocumentID

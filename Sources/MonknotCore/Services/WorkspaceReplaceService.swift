@@ -59,6 +59,7 @@ public struct WorkspaceReplaceService: Sendable {
     public func replaceAndWrite(
         find: String,
         replacement: String,
+        options: MonknotSearchOptions = MonknotSearchOptions(),
         documents: [WorkspaceDocument],
         skipDocumentIDs: Set<String> = [],
         limitToDocumentIDs: Set<String>? = nil
@@ -66,6 +67,7 @@ public struct WorkspaceReplaceService: Sendable {
         let plan = try planReplacements(
             find: find,
             replacement: replacement,
+            options: options,
             documents: documents,
             skipDocumentIDs: skipDocumentIDs,
             limitToDocumentIDs: limitToDocumentIDs
@@ -91,6 +93,7 @@ public struct WorkspaceReplaceService: Sendable {
     public func preview(
         find: String,
         replacement: String,
+        options: MonknotSearchOptions = MonknotSearchOptions(),
         documents: [WorkspaceDocument],
         skipDocumentIDs: Set<String> = [],
         limitToDocumentIDs: Set<String>? = nil
@@ -98,6 +101,7 @@ public struct WorkspaceReplaceService: Sendable {
         let plan = try planReplacements(
             find: find,
             replacement: replacement,
+            options: options,
             documents: documents,
             skipDocumentIDs: skipDocumentIDs,
             limitToDocumentIDs: limitToDocumentIDs
@@ -123,6 +127,7 @@ public struct WorkspaceReplaceService: Sendable {
     private func planReplacements(
         find: String,
         replacement: String,
+        options: MonknotSearchOptions,
         documents: [WorkspaceDocument],
         skipDocumentIDs: Set<String>,
         limitToDocumentIDs: Set<String>?
@@ -173,7 +178,12 @@ public struct WorkspaceReplaceService: Sendable {
                 continue
             }
 
-            let replaced = Self.replacedText(find: needle, replacement: replacement, in: text)
+            let replaced = Self.replacedText(
+                find: needle,
+                replacement: replacement,
+                options: options,
+                in: text
+            )
             guard replaced.count > 0 else { continue }
 
             previousTexts[document.id] = text
@@ -227,39 +237,19 @@ public struct WorkspaceReplaceService: Sendable {
         )
     }
 
-    static func replacedText(find: String, replacement: String, in text: String) -> (text: String, count: Int) {
-        let nsText = text as NSString
-        guard nsText.length > 0 else { return (text, 0) }
+    static func replacedText(
+        find: String,
+        replacement: String,
+        options: MonknotSearchOptions = MonknotSearchOptions(),
+        in text: String
+    ) -> (text: String, count: Int) {
+        let matches = MonknotTextSearch.matchingRanges(of: find, in: text, options: options)
+        guard !matches.isEmpty else { return (text, 0) }
 
-        var result = ""
-        var count = 0
-        var searchRange = NSRange(location: 0, length: nsText.length)
-
-        while searchRange.length > 0 {
-            let found = nsText.range(
-                of: find,
-                options: [.caseInsensitive, .diacriticInsensitive],
-                range: searchRange
-            )
-
-            if found.location == NSNotFound {
-                result += nsText.substring(with: searchRange)
-                break
-            }
-
-            let prefixLength = found.location - searchRange.location
-            if prefixLength > 0 {
-                result += nsText.substring(with: NSRange(location: searchRange.location, length: prefixLength))
-            }
-
-            result += replacement
-            count += 1
-
-            let nextLocation = found.location + found.length
-            guard nextLocation < nsText.length else { break }
-            searchRange = NSRange(location: nextLocation, length: nsText.length - nextLocation)
+        let result = NSMutableString(string: text)
+        for range in matches.reversed() {
+            result.replaceCharacters(in: range, with: replacement)
         }
-
-        return (result, count)
+        return (result as String, matches.count)
     }
 }

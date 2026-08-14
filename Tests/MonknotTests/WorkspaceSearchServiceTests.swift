@@ -65,6 +65,33 @@ final class WorkspaceSearchServiceTests: XCTestCase {
         XCTAssertEqual(results.map(\.line), [1, 2])
     }
 
+    func testSearchAppliesCaseSensitiveAndWholeWordOptionsWithoutAnotherIndex() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let note = root.appendingPathComponent("notes.md")
+        try "Needle needle needler\nRésumé resume\n".write(to: note, atomically: true, encoding: .utf8)
+
+        let document = WorkspaceDocument(url: note, rootURL: root)
+        let cache = WorkspaceTextContentCache()
+        let index = WorkspaceSearchIndex(textCache: cache)
+        let service = WorkspaceSearchService(textCache: cache, textIndex: index)
+
+        let sensitive = try service.search(
+            query: "needle",
+            options: MonknotSearchOptions(isCaseSensitive: true),
+            documents: [document]
+        ).results
+        let wholeWord = try service.search(
+            query: "needle",
+            options: MonknotSearchOptions(isWholeWord: true),
+            documents: [document]
+        ).results
+
+        XCTAssertEqual(sensitive.count, 2)
+        XCTAssertEqual(wholeWord.count, 2)
+        XCTAssertTrue(index.hasIndexedDocument(document.id))
+    }
+
     func testSearchUsesDirtyTextOverrideWithoutUpdatingDiskIndex() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
