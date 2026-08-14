@@ -1377,6 +1377,25 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    /// Saves dirty documents sequentially in the caller's stable order.
+    /// Returns the first document that could not be saved; earlier saves stay
+    /// committed and later documents remain untouched.
+    func saveDocumentsInOrder(_ documentIDs: [String]) async -> String? {
+        for documentID in documentIDs where !saveState(for: documentID).isClean {
+            guard let file = document(id: documentID) else {
+                errorMessage = "Could not save \(URL(fileURLWithPath: documentID).lastPathComponent): the document is no longer available."
+                return documentID
+            }
+            guard await saveDocument(id: documentID) else {
+                if errorMessage == nil {
+                    errorMessage = "Could not save \(file.displayName). It remains unsaved."
+                }
+                return documentID
+            }
+        }
+        return nil
+    }
+
     var isSelectedDocumentRemovedExternally: Bool {
         guard let selectedDocumentID else { return false }
         return removedDirtyOpenDocumentIDs.contains(selectedDocumentID)

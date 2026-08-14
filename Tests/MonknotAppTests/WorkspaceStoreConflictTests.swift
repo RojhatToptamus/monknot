@@ -144,6 +144,51 @@ final class WorkspaceStoreConflictTests: XCTestCase {
         XCTAssertEqual(store.dirtyTextByDocumentID[second.id], "# B\ninactive later\n")
     }
 
+    func testSaveDocumentsInOrderStopsAtFirstConflictAndKeepsRemainingDocumentsDirty() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let firstURL = root.appendingPathComponent("A.md")
+        let secondURL = root.appendingPathComponent("B.md")
+        let thirdURL = root.appendingPathComponent("C.md")
+        try "A disk\n".write(to: firstURL, atomically: true, encoding: .utf8)
+        try "B disk\n".write(to: secondURL, atomically: true, encoding: .utf8)
+        try "C disk\n".write(to: thirdURL, atomically: true, encoding: .utf8)
+
+        let store = WorkspaceStore()
+        store.openWorkspace(root)
+        let didLoadWorkspace = await waitUntil { !store.isBusy && store.documents.count == 3 }
+        XCTAssertTrue(didLoadWorkspace)
+        let first = try XCTUnwrap(store.documents.first { $0.url == firstURL.standardizedFileURL })
+        let second = try XCTUnwrap(store.documents.first { $0.url == secondURL.standardizedFileURL })
+        let third = try XCTUnwrap(store.documents.first { $0.url == thirdURL.standardizedFileURL })
+        store.setOpenDocumentIDs([first.id, second.id, third.id])
+
+        for (document, text) in [
+            (first, "A local\n"),
+            (second, "B local\n"),
+            (third, "C local\n")
+        ] {
+            store.selectDocument(id: document.id)
+            let didLoad = await waitUntil {
+                !store.isDocumentLoading && store.selectedDocumentID == document.id
+            }
+            XCTAssertTrue(didLoad)
+            store.setDocumentText(text)
+        }
+
+        try "B external\n".write(to: secondURL, atomically: true, encoding: .utf8)
+        let failedDocumentID = await store.saveDocumentsInOrder([first.id, second.id, third.id])
+
+        XCTAssertEqual(failedDocumentID, second.id)
+        XCTAssertEqual(try String(contentsOf: firstURL, encoding: .utf8), "A local\n")
+        XCTAssertEqual(try String(contentsOf: secondURL, encoding: .utf8), "B external\n")
+        XCTAssertEqual(try String(contentsOf: thirdURL, encoding: .utf8), "C disk\n")
+        XCTAssertTrue(store.saveState(for: first.id).isClean)
+        XCTAssertFalse(store.saveState(for: second.id).isClean)
+        XCTAssertFalse(store.saveState(for: third.id).isClean)
+        XCTAssertTrue(store.errorMessage?.contains("B.md") == true)
+    }
+
     func testReselectingCachedCleanTextDocumentDoesNotEnterLoadingState() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

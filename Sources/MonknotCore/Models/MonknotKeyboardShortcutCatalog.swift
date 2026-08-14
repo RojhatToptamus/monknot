@@ -18,6 +18,7 @@ public enum MonknotKeyboardShortcutCatalog {
         MonknotKeyboardShortcutHelpEntry(title: "Open Folder", shortcut: "⌘O"),
         MonknotKeyboardShortcutHelpEntry(title: "New Markdown", shortcut: "⌘N"),
         MonknotKeyboardShortcutHelpEntry(title: "Save", shortcut: "⌘S"),
+        MonknotKeyboardShortcutHelpEntry(title: "Save All", shortcut: "⌥⌘S"),
         MonknotKeyboardShortcutHelpEntry(title: "Close Tab", shortcut: "⌘W"),
         MonknotKeyboardShortcutHelpEntry(title: "Refresh Workspace", shortcut: "⌘R"),
         MonknotKeyboardShortcutHelpEntry(title: "Find in Document", shortcut: "⌘F"),

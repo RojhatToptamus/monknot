@@ -14,6 +14,8 @@ struct MonknotCommandActions {
     let exportAnnotatedPDFCopy: () -> Void
     let canExportAnnotatedPDFCopy: Bool
     let saveDocument: () -> Void
+    let saveAllDocuments: () -> Void
+    let canSaveAllDocuments: Bool
     let undoPDFAnnotation: () -> Void
     let canUndoPDFAnnotation: Bool
     let redoPDFAnnotation: () -> Void
@@ -155,6 +157,12 @@ struct MonknotCommandMenu: Commands {
             }
             .keyboardShortcut("s", modifiers: [.command])
             .disabled(actions == nil)
+
+            Button("Save All") {
+                actions?.saveAllDocuments()
+            }
+            .keyboardShortcut("s", modifiers: [.command, .option])
+            .disabled(actions?.canSaveAllDocuments != true)
         }
 
         CommandGroup(replacing: .undoRedo) {

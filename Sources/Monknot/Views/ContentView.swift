@@ -1181,6 +1181,27 @@ struct ContentView: View {
         store.saveSelectedFile()
     }
 
+    private func saveAllDocuments() {
+        guard canSaveAllDocuments else { return }
+        let documentIDs = tabState.tabs.map(\.documentID)
+        if let document = store.selectedDocument, document.kind == .pdf {
+            commitActiveFreeTextEdit(for: document.id)
+        }
+        store.errorMessage = nil
+        Task {
+            _ = await store.saveDocumentsInOrder(documentIDs)
+        }
+    }
+
+    private var canSaveAllDocuments: Bool {
+        guard !store.isBusy, !store.isSaving else { return false }
+        if let documentID = store.selectedDocumentID,
+           pdfViewportCaptureBridge.hasActiveFreeTextEditor(documentID: documentID) {
+            return true
+        }
+        return tabState.tabs.contains { !store.saveState(for: $0.documentID).isClean }
+    }
+
     private func saveDocument(id documentID: String) async -> Bool {
         if store.document(id: documentID)?.kind == .pdf {
             commitActiveFreeTextEdit(for: documentID)
@@ -1456,6 +1477,8 @@ struct ContentView: View {
             },
             canExportAnnotatedPDFCopy: store.selectedDocument?.kind == .pdf,
             saveDocument: saveSelectedDocument,
+            saveAllDocuments: saveAllDocuments,
+            canSaveAllDocuments: canSaveAllDocuments,
             undoPDFAnnotation: { pdfUndoCommandSerial &+= 1 },
             canUndoPDFAnnotation: store.selectedDocument?.kind == .pdf && canUndoPDFAnnotation,
             redoPDFAnnotation: { pdfRedoCommandSerial &+= 1 },
