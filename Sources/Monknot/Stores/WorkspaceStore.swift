@@ -818,6 +818,73 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    func createMarkdownFileDropAssets(
+        plan: MarkdownFileDropPlan,
+        documentID: String,
+        commitInsertion: @escaping @MainActor (MarkdownFileDropResult) -> Bool
+    ) {
+        guard let workspaceURL,
+              let document = document(id: documentID),
+              document.kind == .markdown,
+              plan.workspaceURL.standardizedFileURL.resolvingSymlinksInPath() ==
+                workspaceURL.standardizedFileURL.resolvingSymlinksInPath(),
+              plan.markdownDocumentURL.standardizedFileURL.resolvingSymlinksInPath() ==
+                document.url.standardizedFileURL.resolvingSymlinksInPath()
+        else {
+            errorMessage = "Open the original Markdown document before inserting dropped files."
+            return
+        }
+
+        markdownImageAssetTask?.cancel()
+        if plan.requiresImportConfirmation {
+            noteInternalFileMutation()
+        }
+        let workspacePath = workspaceURL.standardizedFileURL.path
+        markdownImageAssetTask = Task { @MainActor [weak self] in
+            do {
+                let worker = Task.detached(priority: .userInitiated) {
+                    try MarkdownImageAssetService.importFileDrop(plan)
+                }
+                let result = try await withTaskCancellationHandler {
+                    try await worker.value
+                } onCancel: {
+                    worker.cancel()
+                }
+                guard !Task.isCancelled,
+                      let self,
+                      self.workspaceURL?.standardizedFileURL.path == workspacePath,
+                      self.document(id: documentID) != nil
+                else {
+                    await Task.detached(priority: .utility) {
+                        MarkdownImageAssetService.removeUncommittedAssets(
+                            result.importedAssets,
+                            workspaceURL: workspaceURL
+                        )
+                    }.value
+                    return
+                }
+
+                guard commitInsertion(result) else {
+                    await Task.detached(priority: .utility) {
+                        MarkdownImageAssetService.removeUncommittedAssets(
+                            result.importedAssets,
+                            workspaceURL: workspaceURL
+                        )
+                    }.value
+                    return
+                }
+                if !result.importedAssets.isEmpty {
+                    self.noteInternalFileMutation()
+                    self.refresh()
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.errorMessage = "Could not insert the dropped files: \(error.localizedDescription)"
+            }
+        }
+    }
+
     func deleteDocument(_ document: WorkspaceDocument) {
         guard let workspaceURL, documents.contains(where: { $0.id == document.id }) else { return }
 

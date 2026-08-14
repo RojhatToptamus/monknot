@@ -50,6 +50,7 @@ struct EditorPaneView: View {
     let onMarkdownSelectionChange: (MarkdownEditorSelectionSnapshot) -> Void
     let onMarkdownLinkRequest: (MarkdownEditorLinkRequest) -> Void
     let onMarkdownImagePasteRequest: (MarkdownImagePasteRequest) -> Void
+    let onMarkdownFileDropRequest: (MarkdownFileDropRequest) -> Void
     let onMarkdownPreviewLinkRequest: (MarkdownPreviewLinkRequest) -> Void
     let onMarkdownTaskRequest: (MarkdownPreviewTaskRequest) -> Void
 
@@ -458,6 +459,7 @@ struct EditorPaneView: View {
             onSelectionChange: onMarkdownSelectionChange,
             onOpenLink: onMarkdownLinkRequest,
             onImagePasteRequest: onMarkdownImagePasteRequest,
+            onFileDropRequest: onMarkdownFileDropRequest,
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
             },

@@ -143,6 +143,7 @@ struct ContentView: View {
     @State private var deferredWorkspaceHeadingJump: DeferredWorkspaceHeadingJump?
     @State private var ambiguousMarkdownLinkRequest: AmbiguousMarkdownLinkRequest?
     @State private var missingWikilinkCreationRequest: MissingWikilinkCreationRequest?
+    @State private var pendingMarkdownFileDropConfirmation: PendingMarkdownFileDropConfirmation?
     @State private var deferredWorkspaceSourceJump: DeferredWorkspaceSourceJump?
     @State private var tabState = WorkspaceTabState()
     @State private var closedTabHistory = WorkspaceClosedTabHistory()
@@ -231,6 +232,7 @@ struct ContentView: View {
                 dismissGoToLine(restoreFocus: false)
                 linkInspection.dismiss()
                 missingWikilinkCreationRequest = nil
+                pendingMarkdownFileDropConfirmation = nil
                 if documentNavigationHistory.currentDocumentID != newDocumentID {
                     documentNavigationHistory.replaceCurrent(with: newDocumentID)
                 }
@@ -315,6 +317,7 @@ struct ContentView: View {
                 restoredViewportStateWorkspacePath = nil
                 pendingViewportStatePersistenceTask?.cancel()
                 pendingViewportStatePersistenceTask = nil
+                pendingMarkdownFileDropConfirmation = nil
                 documentViewportStates.removeAll()
                 publishOpenTabIDs(persistTabs: false)
             }
@@ -366,6 +369,25 @@ struct ContentView: View {
                 }
             } message: { request in
                 Text("Create “\(request.fileName)” at \(request.relativePath)?")
+            }
+            .confirmationDialog(
+                "Import Files?",
+                isPresented: Binding(
+                    get: { pendingMarkdownFileDropConfirmation != nil },
+                    set: { if !$0 { pendingMarkdownFileDropConfirmation = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: pendingMarkdownFileDropConfirmation
+            ) { pending in
+                Button("Import and Insert") {
+                    commitMarkdownFileDrop(pending)
+                }
+                .keyboardShortcut(.defaultAction)
+                Button("Cancel", role: .cancel) {
+                    pendingMarkdownFileDropConfirmation = nil
+                }
+            } message: { pending in
+                Text(pending.confirmationMessage)
             }
             .sheet(item: $pendingPDFExportDocument) { document in
                 MarkdownPDFExportOptionsSheet(
@@ -639,6 +661,7 @@ struct ContentView: View {
                 onMarkdownSelectionChange: handleMarkdownEditorSelection(_:),
                 onMarkdownLinkRequest: handleMarkdownEditorLink(_:),
                 onMarkdownImagePasteRequest: handleMarkdownImagePaste(_:),
+                onMarkdownFileDropRequest: handleMarkdownFileDrop(_:),
                 onMarkdownPreviewLinkRequest: handleMarkdownPreviewLink(_:),
                 onMarkdownTaskRequest: handleMarkdownTaskRequest(_:)
             )
@@ -1581,6 +1604,44 @@ struct ContentView: View {
             documentID: request.documentID
         ) { asset in
             request.insertMarkdown(asset.markdown)
+        }
+    }
+
+    private func handleMarkdownFileDrop(_ request: MarkdownFileDropRequest) {
+        guard request.documentID == store.selectedDocumentID,
+              request.sourceText == store.documentText,
+              let workspaceURL = store.workspaceURL,
+              let document = store.document(id: request.documentID),
+              document.kind == .markdown
+        else {
+            store.errorMessage = "The files or insertion point are no longer available."
+            return
+        }
+
+        do {
+            let plan = try MarkdownImageAssetService.planFileDrop(
+                request.urls,
+                workspaceURL: workspaceURL,
+                markdownDocumentURL: document.url
+            )
+            let pending = PendingMarkdownFileDropConfirmation(request: request, plan: plan)
+            if plan.requiresImportConfirmation {
+                pendingMarkdownFileDropConfirmation = pending
+            } else {
+                commitMarkdownFileDrop(pending)
+            }
+        } catch {
+            store.errorMessage = "Could not insert the dropped files: \(error.localizedDescription)"
+        }
+    }
+
+    private func commitMarkdownFileDrop(_ pending: PendingMarkdownFileDropConfirmation) {
+        pendingMarkdownFileDropConfirmation = nil
+        store.createMarkdownFileDropAssets(
+            plan: pending.plan,
+            documentID: pending.request.documentID
+        ) { result in
+            pending.request.insertMarkdown(result.markdown)
         }
     }
 
@@ -2561,6 +2622,19 @@ private struct MissingWikilinkCreationRequest: Equatable {
 
     var fileName: String {
         targetURL.lastPathComponent
+    }
+}
+
+private struct PendingMarkdownFileDropConfirmation {
+    let request: MarkdownFileDropRequest
+    let plan: MarkdownFileDropPlan
+
+    var confirmationMessage: String {
+        let names = plan.externalItemNames
+        let preview = names.prefix(3).joined(separator: ", ")
+        let remainder = names.count > 3 ? " and \(names.count - 3) more" : ""
+        let noun = names.count == 1 ? "file" : "files"
+        return "Copy \(names.count) \(noun) into this workspace and insert Markdown links?\n\(preview)\(remainder)"
     }
 }
 

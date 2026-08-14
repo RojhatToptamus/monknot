@@ -123,6 +123,48 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         withExtendedLifetime(window) {}
     }
 
+    func testFileDropCapturesInsertionOffsetAndCommitsOneUndoableChange() throws {
+        let source = "before after"
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        var request: MarkdownFileDropRequest?
+        coordinator.onFileDropRequest = { request = $0 }
+        let urls = [URL(fileURLWithPath: "/tmp/Guide.md"), URL(fileURLWithPath: "/tmp/Map.png")]
+
+        XCTAssertTrue(coordinator.requestFileDrop(urls, atUTF16Offset: 7))
+        XCTAssertEqual(textView.string, source)
+        let captured = try XCTUnwrap(request)
+        XCTAssertEqual(captured.urls, urls)
+        XCTAssertEqual(captured.insertionRange, NSRange(location: 7, length: 0))
+
+        XCTAssertTrue(captured.insertMarkdown("[Guide](Guide.md)\n![Map](Map.png)"))
+        XCTAssertEqual(textView.string, "before [Guide](Guide.md)\n![Map](Map.png)after")
+        textView.undoManager?.undo()
+        XCTAssertEqual(textView.string, source)
+        withExtendedLifetime(window) {}
+    }
+
+    func testFileDropInsertionRejectsStaleEditorRevision() throws {
+        let source = "draft"
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        var request: MarkdownFileDropRequest?
+        coordinator.onFileDropRequest = { request = $0 }
+
+        XCTAssertTrue(coordinator.requestFileDrop([URL(fileURLWithPath: "/tmp/Guide.md")], atUTF16Offset: 2))
+        let captured = try XCTUnwrap(request)
+        textView.insertText(" changed", replacementRange: textView.selectedRange())
+
+        XCTAssertFalse(captured.insertMarkdown("[Guide](Guide.md)"))
+        XCTAssertEqual(textView.string, "draft changed")
+        withExtendedLifetime(window) {}
+    }
+
     func testCurrentDocumentReplaceRevalidatesLiveBufferAndUsesNativeUndoRedo() throws {
         let source = "cat cat"
         let box = EditorTextBox(source)

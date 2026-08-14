@@ -23,6 +23,7 @@ struct NativeMarkdownEditorView: View {
     let onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)?
     let onOpenLink: ((MarkdownEditorLinkRequest) -> Void)?
     let onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)?
+    let onFileDropRequest: ((MarkdownFileDropRequest) -> Void)?
 
     init(
         documentID: String,
@@ -44,6 +45,7 @@ struct NativeMarkdownEditorView: View {
         onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)? = nil,
         onOpenLink: ((MarkdownEditorLinkRequest) -> Void)? = nil,
         onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)? = nil,
+        onFileDropRequest: ((MarkdownFileDropRequest) -> Void)? = nil,
         onScrollPositionChange: @escaping (DocumentScrollPosition) -> Void,
         onVisibleTopLineChange: ((Int) -> Void)?
     ) {
@@ -66,6 +68,7 @@ struct NativeMarkdownEditorView: View {
         self.onSelectionChange = onSelectionChange
         self.onOpenLink = onOpenLink
         self.onImagePasteRequest = onImagePasteRequest
+        self.onFileDropRequest = onFileDropRequest
         self.onScrollPositionChange = onScrollPositionChange
         self.onVisibleTopLineChange = onVisibleTopLineChange
     }
@@ -95,7 +98,8 @@ struct NativeMarkdownEditorView: View {
                     wikilinkDocuments: wikilinkDocuments,
                     onSelectionChange: onSelectionChange,
                     onOpenLink: onOpenLink,
-                    onImagePasteRequest: onImagePasteRequest
+                    onImagePasteRequest: onImagePasteRequest,
+                    onFileDropRequest: onFileDropRequest
                 )
 
                 if text.isEmpty {

@@ -92,6 +92,37 @@ struct MarkdownImagePasteRequest {
     }
 }
 
+struct MarkdownFileDropRequest {
+    let documentID: String
+    let revision: Int
+    let sourceText: String
+    let insertionRange: NSRange
+    let urls: [URL]
+    private let insertion: (String) -> Bool
+
+    init(
+        documentID: String,
+        revision: Int,
+        sourceText: String,
+        insertionRange: NSRange,
+        urls: [URL],
+        insertion: @escaping (String) -> Bool
+    ) {
+        self.documentID = documentID
+        self.revision = revision
+        self.sourceText = sourceText
+        self.insertionRange = insertionRange
+        self.urls = urls
+        self.insertion = insertion
+    }
+
+    @MainActor
+    @discardableResult
+    func insertMarkdown(_ markdown: String) -> Bool {
+        insertion(markdown)
+    }
+}
+
 struct MarkdownTextEditor: NSViewRepresentable {
     let documentID: String
     @Binding var text: String
@@ -115,6 +146,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
     let onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)?
     let onOpenLink: ((MarkdownEditorLinkRequest) -> Void)?
     let onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)?
+    let onFileDropRequest: ((MarkdownFileDropRequest) -> Void)?
 
     init(
         documentID: String,
@@ -138,7 +170,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         wikilinkDocuments: [WorkspaceDocument] = [],
         onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)? = nil,
         onOpenLink: ((MarkdownEditorLinkRequest) -> Void)? = nil,
-        onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)? = nil
+        onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)? = nil,
+        onFileDropRequest: ((MarkdownFileDropRequest) -> Void)? = nil
     ) {
         self.documentID = documentID
         self._text = text
@@ -162,6 +195,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         self.onSelectionChange = onSelectionChange
         self.onOpenLink = onOpenLink
         self.onImagePasteRequest = onImagePasteRequest
+        self.onFileDropRequest = onFileDropRequest
     }
 
     func makeCoordinator() -> Coordinator {
@@ -191,6 +225,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.imagePasteHandler = { [weak coordinator = context.coordinator] image in
             coordinator?.requestImagePaste(image) ?? false
         }
+        textView.fileDropHandler = onFileDropRequest == nil ? nil : { [weak coordinator = context.coordinator] urls, offset in
+            coordinator?.requestFileDrop(urls, atUTF16Offset: offset) ?? false
+        }
+        textView.updateDragTypeRegistration()
         textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
@@ -217,6 +255,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.onSelectionChange = onSelectionChange
         context.coordinator.onOpenLink = onOpenLink
         context.coordinator.onImagePasteRequest = onImagePasteRequest
+        context.coordinator.onFileDropRequest = onFileDropRequest
         context.coordinator.attach(to: scrollView)
         applyTheme(theme, to: textView, in: scrollView)
         context.coordinator.markFontApplied(resolvedFont)
@@ -241,6 +280,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.onSelectionChange = onSelectionChange
         context.coordinator.onOpenLink = onOpenLink
         context.coordinator.onImagePasteRequest = onImagePasteRequest
+        context.coordinator.onFileDropRequest = onFileDropRequest
+        textView.fileDropHandler = onFileDropRequest == nil ? nil : { [weak coordinator = context.coordinator] urls, offset in
+            coordinator?.requestFileDrop(urls, atUTF16Offset: offset) ?? false
+        }
+        textView.updateDragTypeRegistration()
         context.coordinator.syncScrollEnabled = syncScrollEnabled
         let visibleOrigin = scrollView.contentView.bounds.origin
 
@@ -329,6 +373,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         coordinator.textView?.commandHandler = nil
         coordinator.textView?.workspaceLinkHandler = nil
         coordinator.textView?.imagePasteHandler = nil
+        coordinator.textView?.fileDropHandler = nil
         coordinator.textView = nil
     }
 
@@ -361,6 +406,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         var onSelectionChange: ((MarkdownEditorSelectionSnapshot) -> Void)?
         var onOpenLink: ((MarkdownEditorLinkRequest) -> Void)?
         var onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)?
+        var onFileDropRequest: ((MarkdownFileDropRequest) -> Void)?
         var syncScrollEnabled = false
         private var lastNavigatedLocation: MarkdownSourceLocation?
         private var searchMatches: [NSRange] = []
@@ -413,6 +459,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             onSelectionChange = nil
             onOpenLink = nil
             onImagePasteRequest = nil
+            onFileDropRequest = nil
         }
 
         func markFontApplied(_ font: NSFont) {
@@ -663,12 +710,44 @@ struct MarkdownTextEditor: NSViewRepresentable {
             return true
         }
 
+        func requestFileDrop(_ urls: [URL], atUTF16Offset offset: Int) -> Bool {
+            guard !urls.isEmpty,
+                  let textView,
+                  let documentID,
+                  let onFileDropRequest
+            else { return false }
+
+            let capturedRevision = revision
+            let capturedText = textView.string
+            let boundedOffset = min(max(0, offset), (capturedText as NSString).length)
+            let capturedRange = NSRange(location: boundedOffset, length: 0)
+            let request = MarkdownFileDropRequest(
+                documentID: documentID,
+                revision: capturedRevision,
+                sourceText: capturedText,
+                insertionRange: capturedRange,
+                urls: urls
+            ) { [weak self] markdown in
+                self?.insertMarkdown(
+                    markdown,
+                    documentID: documentID,
+                    expectedRevision: capturedRevision,
+                    expectedText: capturedText,
+                    expectedRange: capturedRange,
+                    requiresSelectionMatch: false
+                ) ?? false
+            }
+            onFileDropRequest(request)
+            return true
+        }
+
         private func insertMarkdown(
             _ markdown: String,
             documentID: String,
             expectedRevision: Int,
             expectedText: String,
-            expectedRange: NSRange
+            expectedRange: NSRange,
+            requiresSelectionMatch: Bool = true
         ) -> Bool {
             guard !markdown.isEmpty,
                   self.documentID == documentID,
@@ -676,7 +755,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                   let textView,
                   let textStorage = textView.textStorage,
                   textView.string == expectedText,
-                  textView.selectedRange() == expectedRange,
+                  (!requiresSelectionMatch || textView.selectedRange() == expectedRange),
                   NSMaxRange(expectedRange) <= (expectedText as NSString).length,
                   textView.shouldChangeText(in: expectedRange, replacementString: markdown)
             else { return false }
@@ -1516,6 +1595,16 @@ final class MarkdownNSTextView: NSTextView {
     var commandHandler: ((MarkdownTextEditorCommand) -> Bool)?
     var workspaceLinkHandler: ((MarkdownWorkspaceLink) -> Bool)?
     var imagePasteHandler: ((NSImage) -> Bool)?
+    var fileDropHandler: (([URL], Int) -> Bool)?
+
+    // AppKit's text dragging contract uses acceptableDragTypes and the NSDraggingDestination
+    // lifecycle. See https://developer.apple.com/documentation/appkit/nstextview/acceptabledragtypes
+    // and https://developer.apple.com/documentation/appkit/nsdraggingdestination.
+    override var acceptableDragTypes: [NSPasteboard.PasteboardType] {
+        let inherited = super.acceptableDragTypes
+        guard fileDropHandler != nil else { return inherited }
+        return inherited.contains(.fileURL) ? inherited : inherited + [.fileURL]
+    }
     var zoomScale = WorkspaceZoomPolicy.defaultValue {
         didSet {
             guard zoomScale != oldValue else { return }
@@ -1582,6 +1671,44 @@ final class MarkdownNSTextView: NSTextView {
             return
         }
         super.paste(sender)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        droppedFileURLs(from: sender).isEmpty == false && fileDropHandler != nil
+            ? .copy
+            : super.draggingEntered(sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        droppedFileURLs(from: sender).isEmpty == false && fileDropHandler != nil
+            ? .copy
+            : super.draggingUpdated(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        droppedFileURLs(from: sender).isEmpty == false && fileDropHandler != nil
+            ? true
+            : super.prepareForDragOperation(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = droppedFileURLs(from: sender)
+        guard !urls.isEmpty, let fileDropHandler else {
+            return super.performDragOperation(sender)
+        }
+        let point = convert(sender.draggingLocation, from: nil)
+        // NSTextView defines this API as the insertion position for a point in view coordinates.
+        // https://developer.apple.com/documentation/appkit/nstextview/characterindexforinsertion(at:)
+        let offset = characterIndexForInsertion(at: point)
+        return fileDropHandler(urls, offset)
+    }
+
+    private func droppedFileURLs(from sender: NSDraggingInfo) -> [URL] {
+        let objects = sender.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) ?? []
+        return objects.compactMap { ($0 as? NSURL).map { $0 as URL } }
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
