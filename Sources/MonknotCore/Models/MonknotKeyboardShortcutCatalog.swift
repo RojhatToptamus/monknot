@@ -31,6 +31,7 @@ public enum MonknotKeyboardShortcutCatalog {
         MonknotKeyboardShortcutHelpEntry(title: "Toggle Terminal", shortcut: "⌥⌘J"),
         MonknotKeyboardShortcutHelpEntry(title: "Toggle Sidebar", shortcut: "⌃⌘S"),
         MonknotKeyboardShortcutHelpEntry(title: "Toggle Split Editor", shortcut: "⌘\\"),
+        MonknotKeyboardShortcutHelpEntry(title: "Show Writing Tools (macOS 15.2+)", shortcut: "⌃⌘R"),
         MonknotKeyboardShortcutHelpEntry(title: "Inspect Links", shortcut: "⌥⌘L"),
         MonknotKeyboardShortcutHelpEntry(title: "Copy Rendered Markdown", shortcut: "⌥⌘C"),
         MonknotKeyboardShortcutHelpEntry(title: "Undo Workspace Replace", shortcut: "⌘Z"),

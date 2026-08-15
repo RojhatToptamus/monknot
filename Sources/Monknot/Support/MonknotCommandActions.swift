@@ -272,18 +272,22 @@ struct MonknotCommandMenu: Commands {
         }
 
         CommandGroup(after: .pasteboard) {
-            Menu("Spelling and Grammar") {
-                Button("Show Spelling and Grammar") {
-                    _ = MonknotNativeSpellingCommand.showSpellingAndGrammar()
+            if #available(macOS 15.2, *) {
+                Button("Show Writing Tools…") {
+                    _ = MonknotNativeWritingToolsCommand.showWritingTools()
                 }
-                .keyboardShortcut(";", modifiers: [.command, .shift])
-                .disabled(!MonknotNativeSpellingCommand.hasDocumentEditingFocus)
+                .keyboardShortcut("r", modifiers: [.command, .control])
+                .disabled(!MonknotNativeWritingToolsCommand.canShowWritingTools)
 
+                Divider()
+            }
+
+            Menu("Spelling and Grammar") {
                 Button("Check Document Now") {
                     _ = MonknotNativeSpellingCommand.checkSpelling()
                 }
                 .keyboardShortcut(";", modifiers: [.command])
-                .disabled(!MonknotNativeSpellingCommand.hasDocumentEditingFocus)
+                .disabled(!MonknotNativeSpellingCommand.canCheckDocument)
 
                 Divider()
 
