@@ -182,6 +182,8 @@ private struct EditorSettingsView: View {
     private var checksGrammar = EditorTextCheckingOptions.defaultChecksGrammar
     @AppStorage(EditorTextCheckingOptions.inlinePredictionsPreferenceKey)
     private var inlinePredictions = EditorTextCheckingOptions.defaultInlinePredictions
+    @AppStorage(EditorTextCheckingOptions.onDeviceProseCompletionsPreferenceKey)
+    private var onDeviceProseCompletions = EditorTextCheckingOptions.defaultOnDeviceProseCompletions
 
     var body: some View {
         SettingsPage(theme: uiTheme) {
@@ -214,6 +216,16 @@ private struct EditorSettingsView: View {
                     detail: "Show system predictive text from macOS",
                     isOn: $inlinePredictions
                 )
+
+                if #available(macOS 26.0, *) {
+                    SettingsToggleRow(
+                        theme: uiTheme,
+                        title: "On-device prose completions (Beta)",
+                        detail: "When available, replace system predictions with short Apple Intelligence continuations",
+                        isOn: $onDeviceProseCompletions
+                    )
+                    .disabled(!inlinePredictions)
+                }
 
                 SettingsWorkspaceZoomRow(
                     theme: uiTheme,

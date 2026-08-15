@@ -130,6 +130,529 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertTrue(EditorTextCheckingOptions.defaultValue.checksSpelling)
         XCTAssertTrue(EditorTextCheckingOptions.defaultValue.checksGrammar)
         XCTAssertTrue(EditorTextCheckingOptions.defaultValue.inlinePredictions)
+        XCTAssertFalse(EditorTextCheckingOptions.defaultValue.onDeviceProseCompletions)
+    }
+
+    func testUnavailableOnDeviceCompletionKeepsNativePredictionAndNeverCallsClient() async {
+        let source = "We can write"
+        let box = EditorTextBox(source)
+        let prose = FlowProseCompletionSpy(isAvailable: false, result: "clearer prose.")
+        let coordinator = makeCoordinator(box, proseCompletion: prose.service)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let rangesReady = await prepareProseCompletion(coordinator, textView: textView)
+        XCTAssertTrue(rangesReady)
+
+        textView.insertText(" ", replacementRange: textView.selectedRange())
+        try? await Task.sleep(nanoseconds: 80_000_000)
+
+        XCTAssertEqual(prose.requestCount, 0)
+        XCTAssertNil(textView.flowProseSuggestion)
+        XCTAssertEqual(textView.inlinePredictionType, .default)
+    }
+
+    func testOnDeviceCompletionTabAcceptsOnlyVisibleTextAndUndoIsOneStep() async throws {
+        let source = "We can write"
+        let box = EditorTextBox(source)
+        let prose = FlowProseCompletionSpy(result: "clearer prose.")
+        let coordinator = makeCoordinator(box, proseCompletion: prose.service)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let rangesReady = await prepareProseCompletion(coordinator, textView: textView)
+        XCTAssertTrue(rangesReady)
+
+        textView.insertText(" ", replacementRange: textView.selectedRange())
+        let suggestionReady = await waitUntil { textView.flowProseSuggestion != nil }
+        XCTAssertTrue(suggestionReady)
+        XCTAssertEqual(textView.flowProseSuggestion?.continuation, "clearer prose.")
+        XCTAssertEqual(textView.inlinePredictionType, .no)
+        XCTAssertEqual(prose.requests.map(\.context), ["We can write "])
+
+        textView.keyDown(with: try XCTUnwrap(keyEvent(
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
+            windowNumber: window.windowNumber
+        )))
+        XCTAssertEqual(textView.string, "We can write clearer prose.")
+        XCTAssertEqual(box.value, "We can write clearer prose.")
+        XCTAssertNil(textView.flowProseSuggestion)
+
+        textView.undoManager?.undo()
+        XCTAssertEqual(textView.string, "We can write ")
+        XCTAssertEqual(box.value, "We can write ")
+    }
+
+    func testOnDeviceCompletionOptionRightAcceptsOneWordThenTabAcceptsRemainder() async throws {
+        let source = "We can write"
+        let box = EditorTextBox(source)
+        let prose = FlowProseCompletionSpy(result: "clearly, with confidence.")
+        let coordinator = makeCoordinator(box, proseCompletion: prose.service)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let rangesReady = await prepareProseCompletion(coordinator, textView: textView)
+        XCTAssertTrue(rangesReady)
+
+        textView.insertText(" ", replacementRange: textView.selectedRange())
+        let suggestionReady = await waitUntil { textView.flowProseSuggestion != nil }
+        XCTAssertTrue(suggestionReady)
+        textView.keyDown(with: try XCTUnwrap(keyEvent(
+            characters: "\u{F703}",
+            modifiers: [.option, .numericPad, .function],
+            keyCode: 124,
+            windowNumber: window.windowNumber
+        )))
+
+        XCTAssertEqual(textView.string, "We can write clearly, ")
+        XCTAssertEqual(textView.flowProseSuggestion?.continuation, "with confidence.")
+
+        textView.keyDown(with: try XCTUnwrap(keyEvent(
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
+            windowNumber: window.windowNumber
+        )))
+        XCTAssertEqual(textView.string, "We can write clearly, with confidence.")
+        XCTAssertNil(textView.flowProseSuggestion)
+    }
+
+    func testNilOnDeviceCompletionFallsBackToNativeAndUsesCooldown() async {
+        let source = "We can write"
+        let box = EditorTextBox(source)
+        let prose = FlowProseCompletionSpy(result: nil)
+        let coordinator = makeCoordinator(box, proseCompletion: prose.service)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let rangesReady = await prepareProseCompletion(coordinator, textView: textView)
+        XCTAssertTrue(rangesReady)
+
+        textView.insertText(" ", replacementRange: textView.selectedRange())
+        let firstRequestFinished = await waitUntil {
+            prose.requestCount == 1 && textView.inlinePredictionType == .default
+        }
+        XCTAssertTrue(firstRequestFinished)
+        XCTAssertNil(textView.flowProseSuggestion)
+
+        textView.insertText("x", replacementRange: textView.selectedRange())
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        XCTAssertEqual(prose.requestCount, 1)
+        XCTAssertNil(textView.flowProseSuggestion)
+        XCTAssertEqual(textView.inlinePredictionType, .default)
+    }
+
+    func testValidCompletionThatCannotFitDoesNotStartFailureCooldown() async {
+        let source = "We can write"
+        let box = EditorTextBox(source)
+        let prose = FlowProseCompletionSpy(result: "extraordinarilylongword")
+        let coordinator = makeCoordinator(box, proseCompletion: prose.service)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        window.setContentSize(NSSize(width: 120, height: 260))
+        scrollView.frame = window.contentView!.bounds
+        textView.frame = scrollView.bounds
+        let rangesReady = await prepareProseCompletion(coordinator, textView: textView)
+        XCTAssertTrue(rangesReady)
+
+        textView.insertText(" ", replacementRange: textView.selectedRange())
+        let firstAttemptFinished = await waitUntil {
+            prose.requestCount == 1 && textView.inlinePredictionType == .default
+        }
+        XCTAssertTrue(firstAttemptFinished)
+        XCTAssertNil(textView.flowProseSuggestion)
+
+        window.setContentSize(NSSize(width: 700, height: 260))
+        scrollView.frame = window.contentView!.bounds
+        textView.frame = scrollView.bounds
+        textView.refreshContentWidthLayout()
+        textView.insertText("x", replacementRange: textView.selectedRange())
+        let secondAttemptFinished = await waitUntil { prose.requestCount == 2 }
+        XCTAssertTrue(secondAttemptFinished)
+        XCTAssertNotNil(textView.flowProseSuggestion)
+    }
+
+    func testOnDeviceCompletionResumesOnceWhenProtectedRangesBecomeReady() async {
+        let source = "We can write"
+        let box = EditorTextBox(source)
+        let prose = FlowProseCompletionSpy(result: "clearer prose.")
+        let provider = BlockingProtectedRangeProvider(blockingCall: 2)
+        let coordinator = MarkdownTextEditor.Coordinator(
+            text: Binding(get: { box.value }, set: { box.value = $0 }),
+            flowProseCompletionService: prose.service,
+            flowProseCompletionDelayNanoseconds: 0,
+            protectedRangeProvider: { text, mode in
+                provider.protectedRanges(in: text, mode: mode)
+            },
+            flowFocusValidator: { _ in true }
+        )
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer {
+            provider.resumeBlockedCall()
+            dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator)
+        }
+        let rangesReady = await prepareProseCompletion(coordinator, textView: textView)
+        XCTAssertTrue(rangesReady)
+
+        textView.insertText(" ", replacementRange: textView.selectedRange())
+        let refreshBlocked = await waitUntil { provider.isCallBlocked }
+        XCTAssertTrue(refreshBlocked)
+        try? await Task.sleep(nanoseconds: 40_000_000)
+        XCTAssertEqual(prose.requestCount, 0)
+        XCTAssertEqual(textView.inlinePredictionType, .default)
+
+        provider.resumeBlockedCall()
+        let suggestionReady = await waitUntil(timeout: 3) {
+            prose.requestCount == 1 && textView.flowProseSuggestion != nil
+        }
+        XCTAssertTrue(suggestionReady)
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        XCTAssertEqual(prose.requestCount, 1)
+    }
+
+    func testPendingProtectedRangeRetryCannotReviveAfterSelectionChange() async {
+        let source = "We can write"
+        let box = EditorTextBox(source)
+        let prose = FlowProseCompletionSpy(result: "clearer prose.")
+        let provider = BlockingProtectedRangeProvider(blockingCall: 2)
+        let coordinator = MarkdownTextEditor.Coordinator(
+            text: Binding(get: { box.value }, set: { box.value = $0 }),
+            flowProseCompletionService: prose.service,
+            flowProseCompletionDelayNanoseconds: 0,
+            protectedRangeProvider: { text, mode in
+                provider.protectedRanges(in: text, mode: mode)
+            },
+            flowFocusValidator: { _ in true }
+        )
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer {
+            provider.resumeBlockedCall()
+            dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator)
+        }
+        let rangesReady = await prepareProseCompletion(coordinator, textView: textView)
+        XCTAssertTrue(rangesReady)
+
+        textView.insertText(" ", replacementRange: textView.selectedRange())
+        let refreshBlocked = await waitUntil { provider.isCallBlocked }
+        XCTAssertTrue(refreshBlocked)
+        try? await Task.sleep(nanoseconds: 40_000_000)
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        coordinator.textViewDidChangeSelection(Notification(
+            name: NSTextView.didChangeSelectionNotification,
+            object: textView
+        ))
+        provider.resumeBlockedCall()
+        let refreshFinished = await waitUntil(timeout: 3) { provider.activeCallCount == 0 }
+        XCTAssertTrue(refreshFinished)
+        try? await Task.sleep(nanoseconds: 80_000_000)
+
+        XCTAssertEqual(prose.requestCount, 0)
+        XCTAssertNil(textView.flowProseSuggestion)
+    }
+
+    func testOnDeviceCompletionContextIncludesPreviousHardWrappedLine() async {
+        let source = "Earlier line gives useful context\nContinue this"
+        let box = EditorTextBox(source)
+        let prose = FlowProseCompletionSpy(result: "with a useful ending.")
+        let coordinator = makeCoordinator(box, proseCompletion: prose.service)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let rangesReady = await prepareProseCompletion(coordinator, textView: textView)
+        XCTAssertTrue(rangesReady)
+
+        textView.insertText(" ", replacementRange: textView.selectedRange())
+        let requestArrived = await waitUntil { prose.requestCount == 1 }
+        XCTAssertTrue(requestArrived)
+        guard let context = prose.requests.first?.context else {
+            return XCTFail("Expected a prose-completion request")
+        }
+        XCTAssertEqual(context, source + " ")
+    }
+
+    func testOnDeviceCompletionEscapeDismissesWithoutChangingText() async throws {
+        let source = "We can write"
+        let box = EditorTextBox(source)
+        let prose = FlowProseCompletionSpy(result: "clearer prose.")
+        let coordinator = makeCoordinator(box, proseCompletion: prose.service)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let rangesReady = await prepareProseCompletion(coordinator, textView: textView)
+        XCTAssertTrue(rangesReady)
+
+        textView.insertText(" ", replacementRange: textView.selectedRange())
+        let suggestionReady = await waitUntil { textView.flowProseSuggestion != nil }
+        XCTAssertTrue(suggestionReady)
+        textView.keyDown(with: try XCTUnwrap(keyEvent(
+            characters: "\u{1b}",
+            modifiers: [],
+            keyCode: 53,
+            windowNumber: window.windowNumber
+        )))
+
+        XCTAssertNil(textView.flowProseSuggestion)
+        XCTAssertEqual(textView.string, "We can write ")
+        XCTAssertEqual(box.value, "We can write ")
+        XCTAssertEqual(textView.inlinePredictionType, .default)
+    }
+
+    func testOnDeviceCompletionOrdinaryTypingDismissesAndKeepsTypedText() async throws {
+        let source = "We can write"
+        let box = EditorTextBox(source)
+        let prose = FlowProseCompletionSpy(result: "clearer prose.")
+        let coordinator = makeCoordinator(box, proseCompletion: prose.service)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let rangesReady = await prepareProseCompletion(coordinator, textView: textView)
+        XCTAssertTrue(rangesReady)
+
+        textView.insertText(" ", replacementRange: textView.selectedRange())
+        let suggestionReady = await waitUntil { textView.flowProseSuggestion != nil }
+        XCTAssertTrue(suggestionReady)
+        textView.keyDown(with: try XCTUnwrap(keyEvent(
+            characters: "x",
+            modifiers: [],
+            keyCode: 7,
+            windowNumber: window.windowNumber
+        )))
+
+        XCTAssertNil(textView.flowProseSuggestion)
+        XCTAssertEqual(textView.string, "We can write x")
+        XCTAssertEqual(box.value, "We can write x")
+    }
+
+    func testLateOnDeviceCompletionDoesNotReappearAfterFocusLeavesAndReturns() async {
+        let source = "We can write"
+        let box = EditorTextBox(source)
+        let prose = FlowProseCompletionSpy(
+            result: "clearer prose.",
+            delayNanoseconds: 200_000_000,
+            ignoresCancellation: true
+        )
+        let coordinator = makeCoordinator(box, proseCompletion: prose.service)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let rangesReady = await prepareProseCompletion(coordinator, textView: textView)
+        XCTAssertTrue(rangesReady)
+
+        textView.insertText(" ", replacementRange: textView.selectedRange())
+        let requestStarted = await waitUntil { prose.requestCount == 1 }
+        XCTAssertTrue(requestStarted)
+        window.makeFirstResponder(nil)
+        window.makeFirstResponder(textView)
+        try? await Task.sleep(nanoseconds: 260_000_000)
+
+        XCTAssertNil(textView.flowProseSuggestion)
+        XCTAssertEqual(textView.string, "We can write ")
+        XCTAssertEqual(box.value, "We can write ")
+    }
+
+    func testOnDeviceCompletionExposesExactAccessibleActions() async {
+        let source = "We can write"
+        let box = EditorTextBox(source)
+        let prose = FlowProseCompletionSpy(result: "precisely and safely.")
+        let coordinator = makeCoordinator(box, proseCompletion: prose.service)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let rangesReady = await prepareProseCompletion(coordinator, textView: textView)
+        XCTAssertTrue(rangesReady)
+
+        textView.insertText(" ", replacementRange: textView.selectedRange())
+        let suggestionReady = await waitUntil { textView.flowProseSuggestion != nil }
+        XCTAssertTrue(suggestionReady)
+        let names = (textView.accessibilityCustomActions() ?? []).map(\.name)
+
+        XCTAssertEqual(names.count, 3)
+        XCTAssertTrue(names.contains("Accept completion: precisely and safely."))
+        XCTAssertTrue(names.contains("Accept next completion word"))
+        XCTAssertTrue(names.contains("Dismiss completion"))
+    }
+
+    func testOnDeviceCompletionContextIsBoundedForLargeDocuments() throws {
+        let prefix = String(repeating: "earlier words ", count: 2_000)
+        let source = prefix + "current sentence"
+        let context = try XCTUnwrap(EditorFlowProseContextPlanner.context(
+            in: source,
+            selectedRange: NSRange(location: (source as NSString).length, length: 0),
+            protectedRanges: []
+        ))
+
+        XCTAssertLessThanOrEqual(
+            (context.text as NSString).length,
+            FlowProseCompletionRequest.maximumContextUTF16Length
+        )
+        XCTAssertTrue(source.hasSuffix(context.text))
+        XCTAssertTrue(context.text.hasPrefix("earlier") || context.text.hasPrefix("words"))
+    }
+
+    func testOnDeviceCompletionProtectsCodeAndLinksAndExcludesEarlierProtectedContext() async {
+        let prose = FlowProseCompletionSpy(result: "with a useful ending.")
+        let protectedCases: [(String, String)] = [
+            ("Plain words `code value`", "value"),
+            ("Plain words [guide](Target.md)", "Target.md"),
+        ]
+        for (source, protectedText) in protectedCases {
+            let box = EditorTextBox(source)
+            let coordinator = makeCoordinator(box, proseCompletion: prose.service)
+            let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+            let rangesReady = await prepareProseCompletion(coordinator, textView: textView)
+            XCTAssertTrue(rangesReady)
+            let protectedRange = (source as NSString).range(of: protectedText)
+            textView.setSelectedRange(NSRange(location: NSMaxRange(protectedRange), length: 0))
+            coordinator.textViewDidChangeSelection(Notification(
+                name: NSTextView.didChangeSelectionNotification,
+                object: textView
+            ))
+            textView.insertText("x", replacementRange: textView.selectedRange())
+            try? await Task.sleep(nanoseconds: 60_000_000)
+            dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator)
+        }
+        XCTAssertEqual(prose.requestCount, 0)
+
+        let source = "Secret prefix `private token` Continue this"
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box, proseCompletion: prose.service)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let rangesReady = await prepareProseCompletion(coordinator, textView: textView)
+        XCTAssertTrue(rangesReady)
+        textView.insertText(" ", replacementRange: textView.selectedRange())
+        let requestArrived = await waitUntil { prose.requestCount == 1 }
+        XCTAssertTrue(requestArrived)
+
+        guard let request = prose.requests.first else {
+            return XCTFail("Expected one bounded prose-completion request")
+        }
+        XCTAssertFalse(request.context.contains("Secret prefix"))
+        XCTAssertFalse(request.context.contains("private token"))
+        XCTAssertTrue(request.context.contains("Continue this"))
+    }
+
+    func testVisibleCorrectionWinsOverPendingOnDeviceCompletion() async {
+        let source = "teh draft"
+        let box = EditorTextBox(source)
+        let prose = FlowProseCompletionSpy(
+            result: "with a polished ending.",
+            delayNanoseconds: 700_000_000
+        )
+        let checker = ImmediateSpellingFlowChecker(original: "teh", replacement: "the")
+        let coordinator = makeCoordinator(
+            box,
+            flowCheckingClient: checker.client,
+            proseCompletion: prose.service
+        )
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let rangesReady = await prepareProseCompletion(
+            coordinator,
+            textView: textView,
+            checksSpelling: true
+        )
+        XCTAssertTrue(rangesReady)
+
+        textView.insertText(".", replacementRange: textView.selectedRange())
+        textView.flowProseSuggestion = EditorFlowProseSuggestion(
+            documentID: "note.md",
+            revision: coordinator.revision,
+            sourceUTF16Length: (textView.string as NSString).length,
+            selectedRange: textView.selectedRange(),
+            continuation: " A polished ending."
+        )
+        XCTAssertNotNil(textView.flowProseSuggestion)
+        let correctionReady = await waitUntil { textView.flowSuggestion != nil }
+        XCTAssertTrue(correctionReady)
+        XCTAssertNil(textView.flowProseSuggestion)
+        XCTAssertEqual(textView.inlinePredictionType, .no)
+        try? await Task.sleep(nanoseconds: 750_000_000)
+        XCTAssertNil(textView.flowProseSuggestion)
+        XCTAssertNotNil(textView.flowSuggestion)
+    }
+
+    func testNarrowViewportStoresAndAcceptsOnlyFittedCompletionPrefix() async throws {
+        let source = "We can write"
+        let fullCompletion = "one two three four five six seven eight nine ten"
+        let box = EditorTextBox(source)
+        let prose = FlowProseCompletionSpy(result: fullCompletion)
+        let coordinator = makeCoordinator(box, proseCompletion: prose.service)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        window.setContentSize(NSSize(width: 320, height: 260))
+        scrollView.frame = window.contentView!.bounds
+        textView.frame = scrollView.bounds
+        let rangesReady = await prepareProseCompletion(coordinator, textView: textView)
+        XCTAssertTrue(rangesReady)
+
+        textView.insertText(" ", replacementRange: textView.selectedRange())
+        let suggestionReady = await waitUntil { textView.flowProseSuggestion != nil }
+        XCTAssertTrue(suggestionReady)
+        let visiblePrefix = try XCTUnwrap(textView.flowProseSuggestion?.continuation)
+        XCTAssertTrue(fullCompletion.hasPrefix(visiblePrefix))
+        XCTAssertLessThan(visiblePrefix.count, fullCompletion.count)
+
+        textView.keyDown(with: try XCTUnwrap(keyEvent(
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
+            windowNumber: window.windowNumber
+        )))
+        XCTAssertEqual(textView.string, "We can write " + visiblePrefix)
+        XCTAssertFalse(textView.string.contains("ten"))
+    }
+
+    func testCompletionCannotBeAcceptedAfterCaretScrollsOffscreen() async throws {
+        let source = (0..<60).map { "Context line \($0)" }.joined(separator: "\n")
+            + "\nWe can write"
+        let box = EditorTextBox(source)
+        let prose = FlowProseCompletionSpy(result: "with confidence.")
+        let coordinator = makeCoordinator(box, proseCompletion: prose.service)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        textView.frame = NSRect(x: 0, y: 0, width: scrollView.bounds.width, height: 1_600)
+        textView.setSelectedRange(NSRange(location: (source as NSString).length, length: 0))
+        textView.scrollRangeToVisible(textView.selectedRange())
+        let rangesReady = await prepareProseCompletion(coordinator, textView: textView)
+        XCTAssertTrue(rangesReady)
+
+        textView.insertText(" ", replacementRange: textView.selectedRange())
+        let suggestionReady = await waitUntil { textView.flowProseSuggestion != nil }
+        XCTAssertTrue(suggestionReady)
+        let suggestion = try XCTUnwrap(textView.flowProseSuggestion)
+        XCTAssertEqual(
+            textView.visibleFlowProseContinuation(
+                suggestion.continuation,
+                atUTF16Offset: suggestion.caretUTF16Offset
+            ),
+            suggestion.continuation
+        )
+
+        scrollView.contentView.scroll(to: .zero)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        let completionCleared = await waitUntil { textView.flowProseSuggestion == nil }
+        XCTAssertTrue(completionCleared)
+        XCTAssertEqual(textView.inlinePredictionType, .default)
+        XCTAssertTrue((textView.accessibilityCustomActions() ?? []).isEmpty)
+        XCTAssertFalse(coordinator.acceptFlowProseSuggestion(suggestion, nextWordOnly: false))
+        XCTAssertEqual(textView.string, source + " ")
+        XCTAssertNil(textView.flowProseSuggestion)
+    }
+
+    func testMasterInlinePreferenceDisablesOnDeviceCompletion() async {
+        let source = "We can write"
+        let box = EditorTextBox(source)
+        let prose = FlowProseCompletionSpy(result: "clearer prose.")
+        let coordinator = makeCoordinator(box, proseCompletion: prose.service)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let rangesReady = await prepareProseCompletion(
+            coordinator,
+            textView: textView,
+            inlinePredictions: false
+        )
+        XCTAssertTrue(rangesReady)
+
+        textView.insertText(" ", replacementRange: textView.selectedRange())
+        try? await Task.sleep(nanoseconds: 80_000_000)
+
+        XCTAssertEqual(prose.requestCount, 0)
+        XCTAssertNil(textView.flowProseSuggestion)
+        XCTAssertEqual(textView.inlinePredictionType, .no)
     }
 
     func testInlinePredictionsStayDisabledInProtectedMarkdownRanges() async {
@@ -3207,6 +3730,24 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         return await waitUntil { textView.flowWritingToolsReady }
     }
 
+    private func prepareProseCompletion(
+        _ coordinator: MarkdownTextEditor.Coordinator,
+        textView: MarkdownNSTextView,
+        checksSpelling: Bool = false,
+        inlinePredictions: Bool = true
+    ) async -> Bool {
+        let options = EditorTextCheckingOptions(
+            checksSpelling: checksSpelling,
+            checksGrammar: false,
+            inlinePredictions: inlinePredictions,
+            onDeviceProseCompletions: true
+        )
+        textView.flowSourceMode = .markdown
+        textView.applyTextChecking(options)
+        coordinator.configureFlow(mode: .markdown, options: options)
+        return await waitUntil { textView.flowWritingToolsReady }
+    }
+
     private func makeCoordinator(_ box: EditorTextBox) -> MarkdownTextEditor.Coordinator {
         MarkdownTextEditor.Coordinator(
             text: Binding(
@@ -3226,6 +3767,26 @@ final class MarkdownEditorInteractionTests: XCTestCase {
                 set: { box.value = $0 }
             ),
             flowCheckingClient: flowCheckingClient,
+            flowFocusValidator: { _ in true }
+        )
+    }
+
+    private func makeCoordinator(
+        _ box: EditorTextBox,
+        flowCheckingClient: EditorFlowCheckingClient = EditorFlowCheckingClient {
+            _, _, _, _, completion in completion([], nil)
+        },
+        proseCompletion: FlowProseCompletionService,
+        proseCompletionDelayNanoseconds: UInt64 = 0
+    ) -> MarkdownTextEditor.Coordinator {
+        MarkdownTextEditor.Coordinator(
+            text: Binding(
+                get: { box.value },
+                set: { box.value = $0 }
+            ),
+            flowCheckingClient: flowCheckingClient,
+            flowProseCompletionService: proseCompletion,
+            flowProseCompletionDelayNanoseconds: proseCompletionDelayNanoseconds,
             flowFocusValidator: { _ in true }
         )
     }
@@ -3321,6 +3882,9 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         textView.allowsUndo = true
         textView.delegate = coordinator
         textView.flowSuggestionAcceptanceHandler = { coordinator.acceptFlowSuggestion($0) }
+        textView.flowProseSuggestionAcceptanceHandler = {
+            coordinator.acceptFlowProseSuggestion($0, nextWordOnly: $1)
+        }
         textView.flowSuggestionDismissalHandler = { coordinator.dismissFlowSuggestion() }
         textView.flowSuggestionCancellationHandler = { coordinator.cancelFlowForFocusLoss() }
         textView.string = text
@@ -3421,6 +3985,53 @@ private final class EditorBoolBox {
 
 private final class EditorIntBox {
     var value = 0
+}
+
+private final class FlowProseCompletionSpy: @unchecked Sendable {
+    private let lock = NSLock()
+    private let available: Bool
+    private let result: String?
+    private let delayNanoseconds: UInt64
+    private let ignoresCancellation: Bool
+    private var storedRequests: [FlowProseCompletionRequest] = []
+
+    init(
+        isAvailable: Bool = true,
+        result: String?,
+        delayNanoseconds: UInt64 = 0,
+        ignoresCancellation: Bool = false
+    ) {
+        available = isAvailable
+        self.result = result
+        self.delayNanoseconds = delayNanoseconds
+        self.ignoresCancellation = ignoresCancellation
+    }
+
+    var requestCount: Int {
+        lock.withLock { storedRequests.count }
+    }
+
+    var requests: [FlowProseCompletionRequest] {
+        lock.withLock { storedRequests }
+    }
+
+    var service: FlowProseCompletionService {
+        FlowProseCompletionService(
+            isAvailable: { [available] _ in available },
+            client: { [weak self] request, _ in
+                guard let self else { return nil }
+                self.lock.withLock { self.storedRequests.append(request) }
+                if self.delayNanoseconds > 0 {
+                    if self.ignoresCancellation {
+                        try? await Task.sleep(nanoseconds: self.delayNanoseconds)
+                    } else {
+                        try await Task.sleep(nanoseconds: self.delayNanoseconds)
+                    }
+                }
+                return self.result
+            }
+        )
+    }
 }
 
 private final class ImmediateSpellingFlowChecker {

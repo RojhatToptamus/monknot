@@ -27,6 +27,8 @@ struct EditorPaneView: View {
     private var checksGrammar = EditorTextCheckingOptions.defaultChecksGrammar
     @AppStorage(EditorTextCheckingOptions.inlinePredictionsPreferenceKey)
     private var inlinePredictions = EditorTextCheckingOptions.defaultInlinePredictions
+    @AppStorage(EditorTextCheckingOptions.onDeviceProseCompletionsPreferenceKey)
+    private var onDeviceProseCompletions = EditorTextCheckingOptions.defaultOnDeviceProseCompletions
     @State private var markdownCommandSerial = 0
     @State private var markdownCommandRequest: MarkdownTextEditorCommandRequest?
     @State private var splitScrollSyncLock = false
@@ -76,7 +78,8 @@ struct EditorPaneView: View {
         EditorTextCheckingOptions(
             checksSpelling: checksSpelling,
             checksGrammar: checksGrammar,
-            inlinePredictions: inlinePredictions
+            inlinePredictions: inlinePredictions,
+            onDeviceProseCompletions: onDeviceProseCompletions
         )
     }
 
