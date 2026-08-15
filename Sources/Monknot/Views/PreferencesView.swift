@@ -220,11 +220,10 @@ private struct EditorSettingsView: View {
                 if #available(macOS 26.0, *) {
                     SettingsToggleRow(
                         theme: uiTheme,
-                        title: "On-device prose completions (Beta)",
-                        detail: "When available, replace system predictions with short Apple Intelligence continuations",
+                        title: "On-device writing assistance (Beta)",
+                        detail: "Use Apple Intelligence for uncertain sentence repairs and, when inline predictions are on, short continuations",
                         isOn: $onDeviceProseCompletions
                     )
-                    .disabled(!inlinePredictions)
                 }
 
                 SettingsWorkspaceZoomRow(

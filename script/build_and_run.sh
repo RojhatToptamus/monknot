@@ -377,6 +377,7 @@ APP_SOURCES=(
   "Sources/Monknot/Models/WorkspaceSearchState.swift"
   "Sources/Monknot/Models/MarkdownLinkInspectionState.swift"
   "Sources/Monknot/Services/FlowProseCompletionService.swift"
+  "Sources/Monknot/Services/FlowSentenceRepairService.swift"
   "Sources/Monknot/Services/MarkdownPDFExportService.swift"
   "Sources/Monknot/Services/MarkdownSemanticPasteboardExportService.swift"
   "Sources/Monknot/Services/MonknotLaunchCaptureParser.swift"

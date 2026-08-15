@@ -108,6 +108,97 @@ final class FlowProseCompletionServiceTests: XCTestCase {
         )
     }
 
+    func testServiceRejectsTypoCorrectedRestatementOfContext() async throws {
+        let service = FlowProseCompletionService { _, _ in
+            "Hello, I’m writing this to express that I’m…"
+        }
+        let request = try XCTUnwrap(FlowProseCompletionRequest(
+            context: "Hello im wiritng this to exprs that"
+        ))
+
+        let completion = await service.completion(for: request)
+
+        XCTAssertNil(completion)
+    }
+
+    func testSanitizerRejectsRestatementAfterShortPreface() {
+        XCTAssertNil(
+            FlowProseCompletionSanitizer.sanitize(
+                "and Hello, I’m writing this to express that I’m ready.",
+                context: "Hello im wiritng this to exprs that"
+            )
+        )
+    }
+
+    func testSanitizerRejectsShortCorrectionOfTextBeforeCaret() {
+        XCTAssertNil(
+            FlowProseCompletionSanitizer.sanitize(
+                "writing clearly.",
+                context: "I am writng"
+            )
+        )
+        XCTAssertNil(
+            FlowProseCompletionSanitizer.sanitize(
+                "the next step.",
+                context: "We already chose the"
+            )
+        )
+        XCTAssertNil(
+            FlowProseCompletionSanitizer.sanitize(
+                "the next step.",
+                context: "We typed teh"
+            )
+        )
+        XCTAssertNil(
+            FlowProseCompletionSanitizer.sanitize(
+                "and then continue.",
+                context: "We agreed adn"
+            )
+        )
+    }
+
+    func testSanitizerRejectsRepeatedEarlierExactClause() {
+        XCTAssertNil(
+            FlowProseCompletionSanitizer.sanitize(
+                "A focused draft helps readers decide before lunch.",
+                context: "A focused draft helps readers decide. After that we compare the options with the budget timeline owners risks evidence and launch criteria"
+            )
+        )
+    }
+
+    func testSanitizerRejectsCaseAndUnicodeApostropheRestatement() {
+        XCTAssertNil(
+            FlowProseCompletionSanitizer.sanitize(
+                "When I’m clear about the goal, the team can move.",
+                context: "WHEN IM CLEAR ABOUT THE GOAL we move faster"
+            )
+        )
+    }
+
+    func testSanitizerAllowsContinuationsWithOnlyBridgeWordsInCommon() {
+        XCTAssertEqual(
+            FlowProseCompletionSanitizer.sanitize(
+                "that this time we should ask for customer feedback",
+                context: "We agreed that this direction gives the team a stable plan"
+            ),
+            " that this time we should ask for customer feedback"
+        )
+        XCTAssertEqual(
+            FlowProseCompletionSanitizer.sanitize(
+                "the plan should leave room for revision",
+                context: "The plan from yesterday needs one more review"
+            ),
+            " the plan should leave room for revision"
+        )
+        XCTAssertEqual(
+            FlowProseCompletionSanitizer.sanitize(
+                "We can make every section easier to scan",
+                context: "We can make this useful for readers"
+            ),
+            " We can make every section easier to scan"
+        )
+    }
+
     func testSanitizerRejectsLineBreaksMarkdownAndLinks() {
         let invalid = [
             "will\ninterrupt typing",

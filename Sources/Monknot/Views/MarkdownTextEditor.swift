@@ -145,6 +145,7 @@ enum EditorFlowCheckingTypes {
             // spelling bit is present. Flow still filters spelling candidates
             // below when the user has disabled spelling suggestions.
             types |= NSTextCheckingResult.CheckingType.spelling.rawValue
+            types |= NSTextCheckingResult.CheckingType.correction.rawValue
             types |= NSTextCheckingResult.CheckingType.grammar.rawValue
         }
         return types
@@ -156,6 +157,11 @@ enum EditorFlowCorrectionKind: Equatable {
     case grammar
 }
 
+enum EditorFlowSuggestionSource: Equatable {
+    case deterministic
+    case ai
+}
+
 struct EditorFlowCorrectionEdit: Equatable {
     let range: NSRange
     let originalText: String
@@ -163,11 +169,22 @@ struct EditorFlowCorrectionEdit: Equatable {
     let kind: EditorFlowCorrectionKind
 }
 
+struct EditorFlowDisplayChange: Equatable {
+    let originalRange: NSRange
+    let correctedRange: NSRange
+    let originalText: String
+    let replacementText: String
+}
+
 struct EditorFlowSuggestion: Equatable {
     let documentID: String
     let revision: Int
     let selectedRange: NSRange
     let caretUTF16Offset: Int
+    let sentenceRange: NSRange
+    let originalSentence: String
+    let correctedSentence: String
+    let source: EditorFlowSuggestionSource
     let edits: [EditorFlowCorrectionEdit]
 
     init(
@@ -175,12 +192,20 @@ struct EditorFlowSuggestion: Equatable {
         revision: Int,
         selectedRange: NSRange,
         caretUTF16Offset: Int,
+        sentenceRange: NSRange,
+        originalSentence: String,
+        correctedSentence: String,
+        source: EditorFlowSuggestionSource,
         edits: [EditorFlowCorrectionEdit]
     ) {
         self.documentID = documentID
         self.revision = revision
         self.selectedRange = selectedRange
         self.caretUTF16Offset = caretUTF16Offset
+        self.sentenceRange = sentenceRange
+        self.originalSentence = originalSentence
+        self.correctedSentence = correctedSentence
+        self.source = source
         self.edits = edits.sorted { left, right in
             if left.range.location == right.range.location {
                 return left.range.length < right.range.length
@@ -189,26 +214,210 @@ struct EditorFlowSuggestion: Equatable {
         }
     }
 
-    /// The exact changes the editor may apply. These strings are intentionally
-    /// not compacted: any UI that can mutate text from a suggestion must first
-    /// show every affected string in full or route through review.
-    var fullChangeRows: [String] {
-        edits.map { "\($0.originalText) → \($0.replacementText)" }
+    var headerText: String {
+        switch source {
+        case .deterministic:
+            return "Fix \(edits.count) \(edits.count == 1 ? "issue" : "issues")"
+        case .ai:
+            return "AI repair"
+        }
+    }
+
+    var displayChanges: [EditorFlowDisplayChange] {
+        var delta = 0
+        return edits.compactMap { edit in
+            let originalOffset = edit.range.location - sentenceRange.location
+            let replacementLength = (edit.replacementText as NSString).length
+            defer { delta += replacementLength - edit.range.length }
+            guard originalOffset >= 0,
+                  NSMaxRange(edit.range) <= NSMaxRange(sentenceRange),
+                  let minimal = Self.minimalChange(
+                    from: edit.originalText,
+                    to: edit.replacementText
+                  )
+            else { return nil }
+            return EditorFlowDisplayChange(
+                originalRange: NSRange(
+                    location: originalOffset + minimal.prefixLength,
+                    length: minimal.originalLength
+                ),
+                correctedRange: NSRange(
+                    location: originalOffset + delta + minimal.prefixLength,
+                    length: minimal.replacementLength
+                ),
+                originalText: minimal.originalText,
+                replacementText: minimal.replacementText
+            )
+        }
+    }
+
+    var originalChangedRanges: [NSRange] {
+        displayChanges.map(\.originalRange)
+    }
+
+    var correctedChangedRanges: [NSRange] {
+        displayChanges.map(\.correctedRange)
     }
 
     var exactChangeDescription: String {
-        edits.map {
-            "replace “\($0.originalText)” with “\($0.replacementText)”"
+        displayChanges.map {
+            if $0.originalText.isEmpty {
+                return "insert “\($0.replacementText)”"
+            }
+            if $0.replacementText.isEmpty {
+                return "remove “\($0.originalText)”"
+            }
+            return "replace “\($0.originalText)” with “\($0.replacementText)”"
         }.joined(separator: ", ")
     }
 
-    var accessibilityText: String {
-        let instruction = "Tab to continue; Escape to dismiss."
-        if edits.count == 1 {
-            let description = exactChangeDescription
-            return "\(description.prefix(1).uppercased())\(description.dropFirst()). \(instruction)"
+    private static func minimalChange(
+        from original: String,
+        to replacement: String
+    ) -> (
+        prefixLength: Int,
+        originalLength: Int,
+        replacementLength: Int,
+        originalText: String,
+        replacementText: String
+    )? {
+        let originalLength = (original as NSString).length
+        let replacementLength = (replacement as NSString).length
+        let originalWords = lexicalWordRanges(in: original)
+        let replacementWords = lexicalWordRanges(in: replacement)
+        if originalWords == [NSRange(location: 0, length: originalLength)],
+           replacementWords == [NSRange(location: 0, length: replacementLength)],
+           original != replacement {
+            return (
+                prefixLength: 0,
+                originalLength: originalLength,
+                replacementLength: replacementLength,
+                originalText: original,
+                replacementText: replacement
+            )
         }
-        return "Fix \(edits.count) clear issues: \(exactChangeDescription). \(instruction)"
+        let originalCharacters = Array(original)
+        let replacementCharacters = Array(replacement)
+        var prefixCount = 0
+        while prefixCount < originalCharacters.count,
+              prefixCount < replacementCharacters.count,
+              originalCharacters[prefixCount] == replacementCharacters[prefixCount] {
+            prefixCount += 1
+        }
+        var suffixCount = 0
+        while suffixCount < originalCharacters.count - prefixCount,
+              suffixCount < replacementCharacters.count - prefixCount,
+              originalCharacters[originalCharacters.count - suffixCount - 1]
+                == replacementCharacters[replacementCharacters.count - suffixCount - 1] {
+            suffixCount += 1
+        }
+        let rawPrefix = String(originalCharacters.prefix(prefixCount))
+        var prefixLength = (rawPrefix as NSString).length
+        prefixLength = min(
+            lexicalBoundaryBefore(prefixLength, in: original),
+            lexicalBoundaryBefore(prefixLength, in: replacement)
+        )
+
+        let originalSource = original as NSString
+        let replacementSource = replacement as NSString
+        let rawSuffix = String(originalCharacters.suffix(suffixCount))
+        let rawSuffixLength = (rawSuffix as NSString).length
+        var originalSuffixStart = lexicalBoundaryAfter(
+            originalSource.length - rawSuffixLength,
+            in: original
+        )
+        var replacementSuffixStart = lexicalBoundaryAfter(
+            replacementSource.length - rawSuffixLength,
+            in: replacement
+        )
+        if originalSuffixStart < prefixLength
+            || replacementSuffixStart < prefixLength
+            || originalSource.substring(from: originalSuffixStart)
+                != replacementSource.substring(from: replacementSuffixStart) {
+            originalSuffixStart = originalSource.length
+            replacementSuffixStart = replacementSource.length
+        }
+        let originalMiddleRange = NSRange(
+            location: prefixLength,
+            length: originalSuffixStart - prefixLength
+        )
+        let replacementMiddleRange = NSRange(
+            location: prefixLength,
+            length: replacementSuffixStart - prefixLength
+        )
+        let originalMiddle = originalSource.substring(with: originalMiddleRange)
+        let replacementMiddle = replacementSource.substring(with: replacementMiddleRange)
+        guard originalMiddle != replacementMiddle else { return nil }
+        return (
+            prefixLength: prefixLength,
+            originalLength: originalMiddleRange.length,
+            replacementLength: replacementMiddleRange.length,
+            originalText: originalMiddle,
+            replacementText: replacementMiddle
+        )
+    }
+
+    private static func lexicalBoundaryBefore(_ location: Int, in text: String) -> Int {
+        for range in lexicalWordRanges(in: text)
+        where location > range.location && location < NSMaxRange(range) {
+            return range.location
+        }
+        return location
+    }
+
+    private static func lexicalBoundaryAfter(_ location: Int, in text: String) -> Int {
+        for range in lexicalWordRanges(in: text)
+        where location > range.location && location < NSMaxRange(range) {
+            return NSMaxRange(range)
+        }
+        return location
+    }
+
+    private static func lexicalWordRanges(in text: String) -> [NSRange] {
+        var ranges: [NSRange] = []
+        text.enumerateSubstrings(
+            in: text.startIndex..<text.endIndex,
+            options: [.byWords, .substringNotRequired]
+        ) { _, range, _, _ in
+            ranges.append(NSRange(range, in: text))
+        }
+        return ranges
+    }
+
+    var accessibilityText: String {
+        "\(headerText). Original: \(originalSentence)\nCorrected: \(correctedSentence)\n"
+            + "Changes: \(exactChangeDescription). Tab applies all changes. "
+            + "Escape dismisses. Option-Return reviews."
+    }
+
+    var accessibilityAnnouncementText: String {
+        "\(headerText). \(exactChangeDescription). Tab applies all changes. "
+            + "Escape dismisses. Option-Return reviews."
+    }
+
+    var accessibilityReviewText: String {
+        "\(headerText). Original: \(originalSentence)\nCorrected: \(correctedSentence)\n"
+            + "Changes: \(exactChangeDescription). Tab opens review before anything is applied. "
+            + "Escape dismisses. Option-Return reviews."
+    }
+
+    var accessibilityReviewAnnouncementText: String {
+        "\(headerText). \(exactChangeDescription). Tab opens review before anything is applied. "
+            + "Escape dismisses."
+    }
+
+    func rebased(revision: Int, selectedRange: NSRange) -> EditorFlowSuggestion {
+        EditorFlowSuggestion(
+            documentID: documentID,
+            revision: revision,
+            selectedRange: selectedRange,
+            caretUTF16Offset: selectedRange.location + selectedRange.length,
+            sentenceRange: sentenceRange,
+            originalSentence: originalSentence,
+            correctedSentence: correctedSentence,
+            source: source,
+            edits: edits
+        )
     }
 
     func matches(
@@ -221,22 +430,46 @@ struct EditorFlowSuggestion: Equatable {
               self.revision == revision,
               self.selectedRange == selectedRange,
               caretUTF16Offset == selectedRange.location + selectedRange.length,
-              !edits.isEmpty
+              sentenceRange.location != NSNotFound,
+              sentenceRange.location >= 0,
+              sentenceRange.length > 0,
+              !edits.isEmpty,
+              source != .ai || !originalSentence.isEmpty
         else { return false }
         let source = text as NSString
+        guard NSMaxRange(sentenceRange) <= source.length,
+              source.substring(with: sentenceRange) == originalSentence
+        else { return false }
         var previousUpperBound = -1
         for edit in edits {
             guard edit.range.location != NSNotFound,
                   edit.range.location >= 0,
-                  edit.range.length > 0,
+                  edit.range.length >= 0,
                   NSMaxRange(edit.range) <= source.length,
+                  edit.range.location >= sentenceRange.location,
+                  NSMaxRange(edit.range) <= NSMaxRange(sentenceRange),
                   edit.range.location >= previousUpperBound,
                   source.substring(with: edit.range) == edit.originalText,
                   edit.originalText != edit.replacementText
             else { return false }
             previousUpperBound = NSMaxRange(edit.range)
         }
-        return true
+        return applyingEdits(to: originalSentence) == correctedSentence
+    }
+
+    private func applyingEdits(to sentence: String) -> String? {
+        let result = NSMutableString(string: sentence)
+        for edit in edits.reversed() {
+            let localRange = NSRange(
+                location: edit.range.location - sentenceRange.location,
+                length: edit.range.length
+            )
+            guard localRange.location >= 0,
+                  NSMaxRange(localRange) <= result.length
+            else { return nil }
+            result.replaceCharacters(in: localRange, with: edit.replacementText)
+        }
+        return result as String
     }
 }
 
@@ -252,7 +485,7 @@ struct EditorFlowProseSuggestion: Equatable {
     }
 
     var accessibilityText: String {
-        "Completion: \(continuation). Tab to accept; Option-Right Arrow accepts the next word; Escape dismisses."
+        "Completion: \(continuation)\nTab to accept; Option-Right Arrow accepts the next word; Escape dismisses."
     }
 
     func matches(
@@ -364,97 +597,160 @@ struct EditorFlowCueLayout: Equatable {
     }
 
     let mode: Mode
-    let rows: [String]
+    let reviewText: String?
     let size: NSSize
-    let rowHeight: CGFloat
+    let headerHeight: CGFloat
+    let originalRowHeight: CGFloat
+    let correctedRowHeight: CGFloat
+    let footerHeight: CGFloat
     let horizontalInset: CGFloat
+    let labelWidth: CGFloat
+    let labelGap: CGFloat
     let cornerRadius: CGFloat
 
     static func make(
         for suggestion: EditorFlowSuggestion,
         availableWidth: CGFloat,
+        availableHeight: CGFloat = .greatestFiniteMagnitude,
         editorFont: NSFont,
         zoomScale: CGFloat
     ) -> EditorFlowCueLayout {
         let scale = max(0.1, zoomScale)
-        let rowHeight = max(1, (30 * scale).rounded())
-        let horizontalInset = max(1, (10 * scale).rounded())
+        let minimumRowHeight = max(1, (30 * scale).rounded())
+        let horizontalInset = max(1, (12 * scale).rounded())
         let cornerRadius = max(1, (12 * scale).rounded())
-        let cueFont = shortcutFont(scale: scale)
-        let hint = "  Tab"
-        let hintWidth = ceil((hint as NSString).size(withAttributes: [.font: cueFont]).width)
-        let maximumContentWidth = max(0, availableWidth - horizontalInset * 2)
-        let changeRows = suggestion.fullChangeRows
-        let joined = changeRows.joined(separator: " · ")
-
-        let joinedWidth = width(of: joined, font: editorFont) + hintWidth
-        if joinedWidth <= maximumContentWidth {
-            return layout(
-                mode: .direct,
-                rows: [joined],
-                contentWidth: joinedWidth,
-                rowHeight: rowHeight,
-                horizontalInset: horizontalInset,
-                cornerRadius: cornerRadius
-            )
-        }
-
-        let stackedWidths = changeRows.enumerated().map { index, row in
-            width(of: row, font: editorFont) + (index == changeRows.count - 1 ? hintWidth : 0)
-        }
-        if let widest = stackedWidths.max(), widest <= maximumContentWidth {
-            return layout(
-                mode: .direct,
-                rows: changeRows,
-                contentWidth: widest,
-                rowHeight: rowHeight,
-                horizontalInset: horizontalInset,
-                cornerRadius: cornerRadius
-            )
-        }
-
-        let reviewCandidates = [
-            "Review \(changeRows.count) \(changeRows.count == 1 ? "change" : "changes")",
-            "Review \(changeRows.count)",
-            "Review",
-        ]
-        let review = reviewCandidates.first {
-            width(of: $0, font: editorFont) + hintWidth <= maximumContentWidth
-        } ?? "Review"
-        let reviewWidth = width(of: review, font: editorFont) + hintWidth
-        return layout(
-            mode: .review,
-            rows: [review],
-            contentWidth: min(maximumContentWidth, reviewWidth),
-            rowHeight: rowHeight,
-            horizontalInset: horizontalInset,
-            cornerRadius: cornerRadius
+        let labelFont = sourceLabelFont(scale: scale)
+        let labelGap = max(1, (10 * scale).rounded())
+        let labelWidth = ceil(max(
+            width(of: "Original", font: labelFont),
+            width(of: "Corrected", font: labelFont)
+        ))
+        let intrinsicSentenceWidth = max(
+            width(of: suggestion.originalSentence, font: editorFont),
+            width(of: suggestion.correctedSentence, font: editorFont)
         )
-    }
+        let maximumPanelWidth = min(availableWidth, max(1, (640 * scale).rounded()))
+        let minimumPanelWidth = min(maximumPanelWidth, max(1, (320 * scale).rounded()))
+        let desiredWidth = ceil(
+            intrinsicSentenceWidth + horizontalInset * 2 + labelWidth + labelGap
+        )
+        let panelWidth = min(maximumPanelWidth, max(minimumPanelWidth, desiredWidth))
+        let sentenceWidth = panelWidth - horizontalInset * 2 - labelWidth - labelGap
+        let lineHeight = max(1, ceil(editorFont.ascender - editorFont.descender + editorFont.leading))
+        let hasUsableSentenceWidth = sentenceWidth > 0
+        let originalTextHeight = hasUsableSentenceWidth
+            ? measuredHeight(
+                of: suggestion.originalSentence,
+                font: editorFont,
+                width: sentenceWidth
+            )
+            : 0
+        let correctedTextHeight = hasUsableSentenceWidth
+            ? measuredHeight(
+                of: suggestion.correctedSentence,
+                font: editorFont,
+                width: sentenceWidth
+            )
+            : 0
+        let originalLines = hasUsableSentenceWidth
+            ? Int(ceil(originalTextHeight / lineHeight))
+            : Int.max
+        let correctedLines = hasUsableSentenceWidth
+            ? Int(ceil(correctedTextHeight / lineHeight))
+            : Int.max
+        let footerText = "Tab Apply   ⌥↩ Review   Esc Dismiss"
+        let footerFits = width(
+            of: footerText,
+            font: shortcutFont(scale: scale)
+        ) <= panelWidth - horizontalInset * 2
+        let rowVerticalPadding = max(1, (6 * scale).rounded())
+        let originalRowHeight = max(minimumRowHeight, ceil(originalTextHeight + rowVerticalPadding * 2))
+        let correctedRowHeight = max(minimumRowHeight, ceil(correctedTextHeight + rowVerticalPadding * 2))
+        let headerHeight = max(1, (28 * scale).rounded())
+        let footerHeight = max(1, (28 * scale).rounded())
+        let directHeight = headerHeight + originalRowHeight + correctedRowHeight + footerHeight
+        let maximumDirectHeight = min(
+            max(1, availableHeight * 0.40),
+            max(1, (260 * scale).rounded())
+        )
+        if hasUsableSentenceWidth,
+           footerFits,
+           originalLines <= 3,
+           correctedLines <= 3,
+           directHeight <= maximumDirectHeight {
+            return EditorFlowCueLayout(
+                mode: .direct,
+                reviewText: nil,
+                size: NSSize(width: panelWidth, height: directHeight),
+                headerHeight: headerHeight,
+                originalRowHeight: originalRowHeight,
+                correctedRowHeight: correctedRowHeight,
+                footerHeight: footerHeight,
+                horizontalInset: horizontalInset,
+                labelWidth: labelWidth,
+                labelGap: labelGap,
+                cornerRadius: cornerRadius
+            )
+        }
 
-    private static func layout(
-        mode: Mode,
-        rows: [String],
-        contentWidth: CGFloat,
-        rowHeight: CGFloat,
-        horizontalInset: CGFloat,
-        cornerRadius: CGFloat
-    ) -> EditorFlowCueLayout {
-        EditorFlowCueLayout(
-            mode: mode,
-            rows: rows,
-            size: NSSize(
-                width: ceil(contentWidth + horizontalInset * 2),
-                height: rowHeight * CGFloat(max(1, rows.count))
-            ),
-            rowHeight: rowHeight,
+        let cueFont = shortcutFont(scale: scale)
+        let hintWidth = width(of: "  Tab", font: cueFont)
+        let count = suggestion.edits.count
+        let reviewCandidates: [String]
+        switch suggestion.source {
+        case .deterministic:
+            reviewCandidates = [
+                "\(suggestion.headerText) — Review",
+                suggestion.headerText,
+                "Fix \(count)",
+                "Fix",
+            ]
+        case .ai:
+            reviewCandidates = ["AI repair — Review", "AI repair", "AI review", "AI"]
+        }
+        let review = reviewCandidates.first {
+            width(of: $0, font: editorFont) + hintWidth + horizontalInset * 2 <= availableWidth
+        } ?? "Review"
+        let reviewWidth = min(
+            availableWidth,
+            ceil(width(of: review, font: editorFont) + hintWidth + horizontalInset * 2)
+        )
+        return EditorFlowCueLayout(
+            mode: .review,
+            reviewText: review,
+            size: NSSize(width: max(1, reviewWidth), height: minimumRowHeight),
+            headerHeight: minimumRowHeight,
+            originalRowHeight: 0,
+            correctedRowHeight: 0,
+            footerHeight: 0,
             horizontalInset: horizontalInset,
+            labelWidth: 0,
+            labelGap: 0,
             cornerRadius: cornerRadius
         )
     }
 
     private static func width(of text: String, font: NSFont) -> CGFloat {
         ceil((text as NSString).size(withAttributes: [.font: font]).width)
+    }
+
+    private static func measuredHeight(of text: String, font: NSFont, width: CGFloat) -> CGFloat {
+        guard width > 0 else { return .greatestFiniteMagnitude }
+        return ceil((text as NSString).boundingRect(
+            with: NSSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font]
+        ).height)
+    }
+
+    static func sourceLabelFont(scale: CGFloat) -> NSFont {
+        let size = max(1, (10 * scale * 2).rounded() / 2)
+        return .systemFont(ofSize: size, weight: .semibold)
+    }
+
+    static func headerFont(scale: CGFloat) -> NSFont {
+        let size = max(1, (12 * scale * 2).rounded() / 2)
+        return .systemFont(ofSize: size, weight: .semibold)
     }
 
     static func shortcutFont(scale: CGFloat) -> NSFont {
@@ -470,6 +766,8 @@ private struct EditorFlowCuePalette {
     let surface: NSColor
     let primaryText: NSColor
     let secondaryText: NSColor
+    let removedText: NSColor
+    let addedText: NSColor
     let ring: NSColor
     let usesDarkElevation: Bool
 
@@ -477,6 +775,8 @@ private struct EditorFlowCuePalette {
         surface: .windowBackgroundColor,
         primaryText: .labelColor,
         secondaryText: .secondaryLabelColor,
+        removedText: .systemRed,
+        addedText: .systemGreen,
         ring: .separatorColor,
         usesDarkElevation: false
     )
@@ -491,8 +791,10 @@ struct EditorFlowCheckSnapshot: Equatable {
     let caretUTF16Offset: Int
     let options: EditorTextCheckingOptions
     let sourceMode: FlowSourceMode
+    let coversWholeCurrentSentence: Bool
     let offersSentenceBatch: Bool
     let checksCompletedStructuralSentence: Bool
+    let requestsAutocompleteAfterClear: Bool
 }
 
 struct EditorFlowCorrectionCandidate: Equatable {
@@ -506,9 +808,16 @@ struct EditorFlowAmbiguousGrammarCandidate: Equatable {
     let replacementTexts: [String]
 }
 
+struct EditorFlowDetectedIssue: Equatable {
+    let range: NSRange
+    let kind: EditorFlowCorrectionKind
+    let hasPreciseRange: Bool
+}
+
 enum EditorFlowCorrectionResolver {
     typealias SpellingCorrection = (_ range: NSRange, _ orthography: NSOrthography?) -> String?
     static let maximumValidatedGrammarAlternatives = 3
+    static let maximumSynchronousSpellingCorrectionCount = 8
 
     static func concreteCorrections(
         in text: String,
@@ -518,6 +827,18 @@ enum EditorFlowCorrectionResolver {
         spellingCorrection: SpellingCorrection
     ) -> [EditorFlowCorrectionCandidate] {
         let sourceLength = (text as NSString).length
+        let eligibleSpellingResultCount = results.reduce(into: 0) { count, result in
+            guard result.resultType == .spelling,
+                  result.range.location != NSNotFound,
+                  result.range.location >= 0,
+                  result.range.length > 0,
+                  NSMaxRange(result.range) <= sourceLength,
+                  NSMaxRange(result.range) <= caretUTF16Offset
+            else { return }
+            count += 1
+        }
+        let resolvesSpellingResults = eligibleSpellingResultCount
+            <= maximumSynchronousSpellingCorrectionCount
         let candidates = results.flatMap { result -> [EditorFlowCorrectionCandidate] in
             guard result.range.location != NSNotFound,
                   result.range.location >= 0,
@@ -531,6 +852,7 @@ enum EditorFlowCorrectionResolver {
                 guard let replacement = concreteReplacement(result.replacementString) else { return [] }
                 return [.init(range: result.range, replacementText: replacement, kind: .spelling)]
             case .spelling:
+                guard resolvesSpellingResults else { return [] }
                 guard let replacement = concreteReplacement(
                     spellingCorrection(result.range, orthography)
                 ) else { return [] }
@@ -583,7 +905,8 @@ enum EditorFlowCorrectionResolver {
             else { return [] }
 
             return (result.grammarDetails ?? []).compactMap { detail in
-                guard let corrections = detail[NSGrammarCorrections] as? [String] else {
+                guard detail[NSGrammarRange] != nil,
+                      let corrections = detail[NSGrammarCorrections] as? [String] else {
                     return nil
                 }
                 var uniqueReplacements: [String] = []
@@ -613,12 +936,99 @@ enum EditorFlowCorrectionResolver {
         }
     }
 
+    static func detectedIssues(
+        in text: String,
+        caretUTF16Offset: Int,
+        results: [NSTextCheckingResult],
+        options: EditorTextCheckingOptions
+    ) -> [EditorFlowDetectedIssue] {
+        let sourceLength = (text as NSString).length
+        let issues = results.flatMap { result -> [EditorFlowDetectedIssue] in
+            guard result.range.location != NSNotFound,
+                  result.range.location >= 0,
+                  result.range.length > 0,
+                  NSMaxRange(result.range) <= sourceLength,
+                  NSMaxRange(result.range) <= caretUTF16Offset
+            else { return [] }
+            switch result.resultType {
+            case .spelling where options.checksSpelling,
+                 .correction where options.checksSpelling:
+                return [EditorFlowDetectedIssue(
+                    range: result.range,
+                    kind: .spelling,
+                    hasPreciseRange: true
+                )]
+            case .grammar where options.checksGrammar:
+                let details = result.grammarDetails ?? []
+                if details.isEmpty {
+                    return [EditorFlowDetectedIssue(
+                        range: result.range,
+                        kind: .grammar,
+                        hasPreciseRange: false
+                    )]
+                }
+                var hasInvalidDetail = false
+                let detailedIssues: [EditorFlowDetectedIssue] = details.compactMap { detail in
+                    guard let range = grammarRange(
+                        from: detail,
+                        resultRange: result.range,
+                        sourceLength: sourceLength
+                    ) else {
+                        hasInvalidDetail = true
+                        return nil
+                    }
+                    return EditorFlowDetectedIssue(
+                        range: range,
+                        kind: .grammar,
+                        hasPreciseRange: detail[NSGrammarRange] != nil
+                    )
+                }
+                // A malformed or out-of-bounds detail still means Apple found
+                // a grammar issue. Keep the enclosing result as imprecise so
+                // the repair lane fails closed instead of releasing autocomplete.
+                if detailedIssues.isEmpty {
+                    return [EditorFlowDetectedIssue(
+                        range: result.range,
+                        kind: .grammar,
+                        hasPreciseRange: false
+                    )]
+                }
+                return hasInvalidDetail
+                    ? detailedIssues + [EditorFlowDetectedIssue(
+                        range: result.range,
+                        kind: .grammar,
+                        hasPreciseRange: false
+                    )]
+                    : detailedIssues
+            default:
+                return []
+            }
+        }
+        return issues.sorted { left, right in
+            if left.range.location == right.range.location {
+                return left.range.length < right.range.length
+            }
+            return left.range.location < right.range.location
+        }.reduce(into: []) { unique, issue in
+            if let index = unique.firstIndex(where: {
+                $0.range == issue.range && $0.kind == issue.kind
+            }) {
+                if issue.hasPreciseRange && !unique[index].hasPreciseRange {
+                    unique[index] = issue
+                }
+            } else {
+                unique.append(issue)
+            }
+        }
+    }
+
     private static func grammarCandidates(
         from result: NSTextCheckingResult,
         sourceLength: Int
     ) -> [EditorFlowCorrectionCandidate] {
         (result.grammarDetails ?? []).compactMap { detail in
-            guard let corrections = detail[NSGrammarCorrections] as? [String],
+            guard detail[NSGrammarRange] != nil,
+                  let corrections = detail[NSGrammarCorrections] as? [String],
                   corrections.count == 1,
                   let replacement = concreteReplacement(corrections[0])
             else { return nil }
@@ -666,6 +1076,345 @@ enum EditorFlowCorrectionResolver {
     }
 }
 
+enum EditorFlowSentenceRepairValidator {
+    private struct SegmentPair {
+        let originalRange: NSRange
+        let candidateRange: NSRange
+    }
+
+    static func edits(
+        originalSentence: String,
+        candidateSentence: String,
+        issueRanges: [NSRange]
+    ) -> [EditorFlowCorrectionEdit]? {
+        let original = originalSentence as NSString
+        let candidate = candidateSentence as NSString
+        guard !issueRanges.isEmpty,
+              original.length > 0,
+              candidate.length > 0,
+              abs(candidate.length - original.length) <= max(16, original.length / 4),
+              enclosureCharacters(in: originalSentence) == enclosureCharacters(in: candidateSentence),
+              symbolScalars(in: originalSentence) == symbolScalars(in: candidateSentence),
+              terminalIntentIsPreserved(
+                  from: originalSentence,
+                  to: candidateSentence
+              )
+        else { return nil }
+
+        let originalWords = wordRanges(in: originalSentence)
+        let candidateWords = wordRanges(in: candidateSentence)
+        guard !originalWords.isEmpty,
+              originalWords.count == candidateWords.count,
+              issueRanges.allSatisfy({ issue in
+                  issue.location >= 0
+                      && issue.length > 0
+                      && NSMaxRange(issue) <= original.length
+                      && issue.length <= max(48, original.length / 2)
+              })
+        else { return nil }
+
+        var changedWordCount = 0
+        for index in originalWords.indices {
+            let originalWord = original.substring(with: originalWords[index])
+            let candidateWord = candidate.substring(with: candidateWords[index])
+            if containsNumber(originalWord) || isLikelyProperName(originalWord) {
+                guard originalWord == candidateWord else { return nil }
+            }
+            if originalWord != candidateWord {
+                guard casePatternIsPreserved(
+                    from: originalWord,
+                    to: candidateWord,
+                    isSentenceInitial: index == 0
+                ) else { return nil }
+            }
+            if originalWord.compare(
+                candidateWord,
+                options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive]
+            ) != .orderedSame {
+                // A second spell/grammar pass can prove that a sentence is
+                // mechanically clean, but it cannot prove that replacing a
+                // content word preserved the user's claim. AI word changes
+                // therefore remain limited to small spelling/inflection edits;
+                // wider rewrites belong in explicit Writing Tools review.
+                guard isConservativeWordRepair(
+                    originalWord,
+                    candidateWord
+                ) else { return nil }
+                changedWordCount += 1
+            }
+        }
+        guard changedWordCount <= min(4, max(1, issueRanges.count * 2)) else { return nil }
+
+        let pairs = segmentPairs(
+            originalLength: original.length,
+            originalWords: originalWords,
+            candidateLength: candidate.length,
+            candidateWords: candidateWords
+        )
+        var rawEdits: [(original: NSRange, candidate: NSRange)] = []
+        for pair in pairs {
+            let originalText = original.substring(with: pair.originalRange)
+            let candidateText = candidate.substring(with: pair.candidateRange)
+            guard originalText != candidateText else { continue }
+            if let last = rawEdits.last,
+               NSMaxRange(last.original) == pair.originalRange.location,
+               NSMaxRange(last.candidate) == pair.candidateRange.location {
+                rawEdits[rawEdits.count - 1] = (
+                    NSRange(
+                        location: last.original.location,
+                        length: NSMaxRange(pair.originalRange) - last.original.location
+                    ),
+                    NSRange(
+                        location: last.candidate.location,
+                        length: NSMaxRange(pair.candidateRange) - last.candidate.location
+                    )
+                )
+            } else {
+                rawEdits.append((pair.originalRange, pair.candidateRange))
+            }
+        }
+        guard !rawEdits.isEmpty else { return nil }
+
+        let expandedIssues = issueRanges.map { issue in
+            let location = max(0, issue.location - 2)
+            return NSRange(
+                location: location,
+                length: min(original.length, NSMaxRange(issue) + 2) - location
+            )
+        }
+        func touchesIssue(_ editRange: NSRange, _ issue: NSRange) -> Bool {
+            if editRange.length == 0 {
+                return editRange.location >= issue.location
+                    && editRange.location <= NSMaxRange(issue)
+            }
+            return NSIntersectionRange(editRange, issue).length > 0
+        }
+        guard rawEdits.allSatisfy({ edit in
+            expandedIssues.contains { touchesIssue(edit.original, $0) }
+        }), issueRanges.allSatisfy({ issue in
+            rawEdits.contains { touchesIssue($0.original, issue) }
+        }) else { return nil }
+
+        return rawEdits.map { edit in
+            EditorFlowCorrectionEdit(
+                range: edit.original,
+                originalText: original.substring(with: edit.original),
+                replacementText: candidate.substring(with: edit.candidate),
+                kind: .grammar
+            )
+        }
+    }
+
+    private static func segmentPairs(
+        originalLength: Int,
+        originalWords: [NSRange],
+        candidateLength: Int,
+        candidateWords: [NSRange]
+    ) -> [SegmentPair] {
+        var pairs: [SegmentPair] = []
+        var originalOffset = 0
+        var candidateOffset = 0
+        for index in originalWords.indices {
+            let originalWord = originalWords[index]
+            let candidateWord = candidateWords[index]
+            pairs.append(SegmentPair(
+                originalRange: NSRange(
+                    location: originalOffset,
+                    length: originalWord.location - originalOffset
+                ),
+                candidateRange: NSRange(
+                    location: candidateOffset,
+                    length: candidateWord.location - candidateOffset
+                )
+            ))
+            pairs.append(SegmentPair(
+                originalRange: originalWord,
+                candidateRange: candidateWord
+            ))
+            originalOffset = NSMaxRange(originalWord)
+            candidateOffset = NSMaxRange(candidateWord)
+        }
+        pairs.append(SegmentPair(
+            originalRange: NSRange(
+                location: originalOffset,
+                length: originalLength - originalOffset
+            ),
+            candidateRange: NSRange(
+                location: candidateOffset,
+                length: candidateLength - candidateOffset
+            )
+        ))
+        return pairs
+    }
+
+    private static func wordRanges(in text: String) -> [NSRange] {
+        var ranges: [NSRange] = []
+        text.enumerateSubstrings(
+            in: text.startIndex..<text.endIndex,
+            options: [.byWords, .substringNotRequired]
+        ) { _, range, _, _ in
+            ranges.append(NSRange(range, in: text))
+        }
+        return ranges
+    }
+
+    private static func containsNumber(_ word: String) -> Bool {
+        word.unicodeScalars.contains { CharacterSet.decimalDigits.contains($0) }
+    }
+
+    private static func isConservativeWordRepair(
+        _ original: String,
+        _ replacement: String
+    ) -> Bool {
+        let left = Array(normalizedWord(original))
+        let right = Array(normalizedWord(replacement))
+        guard !left.isEmpty,
+              !right.isEmpty,
+              left.first == right.first
+        else { return false }
+        let maximumLength = max(left.count, right.count)
+        let allowedDistance = maximumLength >= 7 ? 2 : 1
+        guard abs(left.count - right.count) <= allowedDistance else { return false }
+        return editDistance(left, right) <= allowedDistance
+    }
+
+    private static func normalizedWord(_ word: String) -> String {
+        word.folding(
+            options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+            locale: .current
+        ).filter { $0.isLetter || $0.isNumber }
+    }
+
+    private static func editDistance(
+        _ left: [Character],
+        _ right: [Character]
+    ) -> Int {
+        var previous = Array(0...right.count)
+        var previousPrevious: [Int]?
+        for leftIndex in left.indices {
+            var current = Array(repeating: 0, count: right.count + 1)
+            current[0] = leftIndex + 1
+            for rightIndex in right.indices {
+                let substitution = previous[rightIndex]
+                    + (left[leftIndex] == right[rightIndex] ? 0 : 1)
+                var value = min(
+                    previous[rightIndex + 1] + 1,
+                    current[rightIndex] + 1,
+                    substitution
+                )
+                if leftIndex > 0,
+                   rightIndex > 0,
+                   left[leftIndex] == right[right.index(before: rightIndex)],
+                   left[left.index(before: leftIndex)] == right[rightIndex],
+                   let previousPrevious {
+                    value = min(value, previousPrevious[rightIndex - 1] + 1)
+                }
+                current[rightIndex + 1] = value
+            }
+            previousPrevious = previous
+            previous = current
+        }
+        return previous[right.count]
+    }
+
+    private static func isLikelyProperName(_ word: String) -> Bool {
+        guard let first = word.first else { return false }
+        return (first.isUppercase && word.dropFirst().contains(where: { $0.isLetter }))
+            || word.dropFirst().contains(where: { $0.isUppercase })
+    }
+
+    private static func casePatternIsPreserved(
+        from original: String,
+        to replacement: String,
+        isSentenceInitial: Bool
+    ) -> Bool {
+        let originalLetters = original.filter(\.isLetter)
+        let replacementLetters = replacement.filter(\.isLetter)
+        guard originalLetters.allSatisfy(\.isLowercase) else {
+            return original == replacement
+        }
+        if replacementLetters.allSatisfy(\.isLowercase) {
+            return true
+        }
+        guard isSentenceInitial,
+              replacementLetters.first?.isUppercase == true
+        else { return false }
+        return replacementLetters.dropFirst().allSatisfy(\.isLowercase)
+    }
+
+    private static func enclosureCharacters(in text: String) -> String {
+        let protected = CharacterSet(charactersIn: "()[]{}\"“”‘’«»‹›")
+        return String(text.unicodeScalars.filter { protected.contains($0) })
+    }
+
+    private static func symbolScalars(in text: String) -> [UnicodeScalar] {
+        text.unicodeScalars.filter { scalar in
+            switch scalar.properties.generalCategory {
+            case .mathSymbol, .currencySymbol, .modifierSymbol, .otherSymbol:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    private static func terminalIntentIsPreserved(
+        from original: String,
+        to candidate: String
+    ) -> Bool {
+        let originalTerminals = sentenceTerminalScalars(in: original)
+        let candidateTerminals = sentenceTerminalScalars(in: candidate)
+        if originalTerminals.isEmpty {
+            return candidateTerminals.isEmpty
+                || hasOneFinalPeriod(in: candidate)
+        }
+        return originalTerminals == candidateTerminals
+            && finalTerminalRun(in: original) == finalTerminalRun(in: candidate)
+    }
+
+    private static func hasOneFinalPeriod(in text: String) -> Bool {
+        let terminals = sentenceTerminalScalars(in: text)
+        guard terminals == "." || terminals == "。" else { return false }
+        let closers = CharacterSet(charactersIn: "\"'”’)]}»›")
+        let source = text.trimmingCharacters(in: .whitespaces) as NSString
+        var index = source.length - 1
+        while index >= 0,
+              let scalar = UnicodeScalar(source.character(at: index)),
+              closers.contains(scalar) {
+            index -= 1
+        }
+        guard index >= 0,
+              let scalar = UnicodeScalar(source.character(at: index))
+        else { return false }
+        return scalar == "." || scalar == "。"
+    }
+
+    private static func sentenceTerminalScalars(in text: String) -> String {
+        let terminals = CharacterSet(charactersIn: ".!?。！？")
+        return String(text.unicodeScalars.filter(terminals.contains))
+    }
+
+    private static func finalTerminalRun(in text: String) -> String {
+        let terminals = CharacterSet(charactersIn: ".!?。！？")
+        let closers = CharacterSet(charactersIn: "\"'”’)]}»›")
+        let source = text.trimmingCharacters(in: .whitespaces) as NSString
+        var end = source.length
+        while end > 0,
+              let scalar = UnicodeScalar(source.character(at: end - 1)),
+              closers.contains(scalar) {
+            end -= 1
+        }
+        var start = end
+        while start > 0,
+              let scalar = UnicodeScalar(source.character(at: start - 1)),
+              terminals.contains(scalar) {
+            start -= 1
+        }
+        guard start < end else { return "" }
+        return source.substring(with: NSRange(location: start, length: end - start))
+    }
+}
+
 enum EditorFlowCheckPlanner {
     static let boundaryDelayNanoseconds: UInt64 = 260_000_000
     static let idleDelayNanoseconds: UInt64 = 560_000_000
@@ -674,7 +1423,9 @@ enum EditorFlowCheckPlanner {
     struct Plan: Equatable {
         let range: NSRange
         let delayNanoseconds: UInt64
+        let coversWholeCurrentSentence: Bool
         let offersSentenceBatch: Bool
+        let isBatchSafe: Bool
     }
 
     static func plan(in text: String, selectedRange: NSRange) -> Plan? {
@@ -709,8 +1460,16 @@ enum EditorFlowCheckPlanner {
             }
         }
         let boundedRange = NSRange(location: candidateStart, length: caret - candidateStart)
-        let range = latestSentenceRange(in: source, boundedRange: boundedRange)
+        let range = trimmingTrailingWhitespace(
+            from: latestSentenceRange(in: source, boundedRange: boundedRange),
+            in: source
+        )
         guard range.length > 0 else { return nil }
+        let sentenceStartsAtArtificialLimit = candidateStart > paragraphStart
+            && range.location == candidateStart
+        let coversWholeCurrentSentence = !sentenceStartsAtArtificialLimit
+        let isBatchSafe = coversWholeCurrentSentence
+            && !containsAmbiguousInternalTerminal(in: source, range: range)
 
         let precedingCharacter = UnicodeScalar(source.character(at: caret - 1))
         let isBoundary = precedingCharacter.map {
@@ -720,8 +1479,55 @@ enum EditorFlowCheckPlanner {
         return Plan(
             range: range,
             delayNanoseconds: isBoundary ? boundaryDelayNanoseconds : idleDelayNanoseconds,
-            offersSentenceBatch: endsAtSentenceBoundary(source, caret: caret)
+            coversWholeCurrentSentence: coversWholeCurrentSentence,
+            offersSentenceBatch: isBatchSafe
+                && endsAtSentenceBoundary(source, caret: caret),
+            isBatchSafe: isBatchSafe
         )
+    }
+
+    private static func containsAmbiguousInternalTerminal(
+        in source: NSString,
+        range: NSRange
+    ) -> Bool {
+        let terminals = CharacterSet(charactersIn: ".!?。！？")
+        let closers = CharacterSet(charactersIn: "\"'”’)]}»›")
+        let end = NSMaxRange(range)
+        var index = range.location
+        while index < end - 1 {
+            guard let scalar = UnicodeScalar(source.character(at: index)),
+                  terminals.contains(scalar)
+            else {
+                index += 1
+                continue
+            }
+            var cursor = index + 1
+            while cursor < end,
+                  let next = UnicodeScalar(source.character(at: cursor)),
+                  terminals.contains(next) {
+                cursor += 1
+            }
+            while cursor < end,
+                  let next = UnicodeScalar(source.character(at: cursor)),
+                  closers.contains(next) {
+                cursor += 1
+            }
+            guard cursor < end,
+                  let separator = UnicodeScalar(source.character(at: cursor)),
+                  CharacterSet.whitespacesAndNewlines.contains(separator)
+            else {
+                index += 1
+                continue
+            }
+            while cursor < end,
+                  let whitespace = UnicodeScalar(source.character(at: cursor)),
+                  CharacterSet.whitespacesAndNewlines.contains(whitespace) {
+                cursor += 1
+            }
+            if cursor < end { return true }
+            index += 1
+        }
+        return false
     }
 
     private static func latestSentenceRange(
@@ -766,10 +1572,29 @@ enum EditorFlowCheckPlanner {
             index -= 1
         }
         if crossedNewline { return true }
+        let closingDelimiters = CharacterSet(charactersIn: "\"'”’)]}»›")
+        while index >= 0,
+              let scalar = UnicodeScalar(source.character(at: index)),
+              closingDelimiters.contains(scalar) {
+            index -= 1
+        }
         guard index >= 0, let scalar = UnicodeScalar(source.character(at: index)) else {
             return false
         }
         return ".!?。！？".unicodeScalars.contains(scalar)
+    }
+
+    private static func trimmingTrailingWhitespace(
+        from range: NSRange,
+        in source: NSString
+    ) -> NSRange {
+        var upperBound = NSMaxRange(range)
+        while upperBound > range.location,
+              let scalar = UnicodeScalar(source.character(at: upperBound - 1)),
+              CharacterSet.whitespacesAndNewlines.contains(scalar) {
+            upperBound -= 1
+        }
+        return NSRange(location: range.location, length: upperBound - range.location)
     }
 }
 
@@ -1027,6 +1852,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.flowSuggestionCancellationHandler = { [weak coordinator = context.coordinator] in
             coordinator?.cancelFlowForFocusLoss()
         }
+        textView.flowProseSuggestionCancellationHandler = { [weak coordinator = context.coordinator] in
+            coordinator?.cancelProseCompletionForGeometryChange()
+        }
         textView.writingToolsRequestHandler = { [weak coordinator = context.coordinator] in
             coordinator?.requestWritingTools() ?? false
         }
@@ -1121,6 +1949,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         let resolvedFont = font(for: theme, size: fontSize)
         if context.coordinator.shouldApplyFont(resolvedFont) {
             textView.font = resolvedFont
+            textView.invalidateFlowPresentationForGeometryChange()
         }
         textView.zoomScale = zoomScale
         textView.contentWidthPercent = contentWidthPercent
@@ -1194,6 +2023,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         coordinator.textView?.flowProseSuggestionAcceptanceHandler = nil
         coordinator.textView?.flowSuggestionDismissalHandler = nil
         coordinator.textView?.flowSuggestionCancellationHandler = nil
+        coordinator.textView?.flowProseSuggestionCancellationHandler = nil
         coordinator.textView?.writingToolsRequestHandler = nil
         coordinator.cancelFlowSuggestion()
         coordinator.textView = nil
@@ -1209,6 +2039,14 @@ struct MarkdownTextEditor: NSViewRepresentable {
             surface: NSColor(theme.elevatedSurfaceColor),
             primaryText: NSColor(theme.foregroundColor),
             secondaryText: NSColor(theme.mutedForegroundColor),
+            removedText: accessibleFlowSemanticColor(
+                theme.semanticColors.diffRemoved,
+                theme: theme
+            ),
+            addedText: accessibleFlowSemanticColor(
+                theme.semanticColors.diffAdded,
+                theme: theme
+            ),
             ring: NSColor(theme.foregroundColor).withAlphaComponent(theme.isDark ? 0.14 : 0.08),
             usesDarkElevation: theme.isDark
         )
@@ -1216,6 +2054,28 @@ struct MarkdownTextEditor: NSViewRepresentable {
             .backgroundColor: NSColor(hex: theme.selectionBackground),
             .foregroundColor: NSColor(hex: theme.selectionForeground)
         ]
+    }
+
+    private func accessibleFlowSemanticColor(_ hex: String, theme: AppTheme) -> NSColor {
+        let surfaceHex = theme.recessedSurfaceHex(amount: theme.isDark ? 0.11 : 0.05)
+        guard let background = RGBHex(surfaceHex),
+              let base = RGBHex(hex),
+              base.contrastRatio(with: background) < 4.5
+        else {
+            return NSColor(hex: hex)
+        }
+        for step in 1...10 {
+            let candidateHex = AppTheme.blendHex(
+                hex,
+                toward: theme.foreground,
+                amount: Double(step) / 10
+            )
+            if let candidate = RGBHex(candidateHex),
+               candidate.contrastRatio(with: background) >= 4.5 {
+                return NSColor(hex: candidateHex)
+            }
+        }
+        return NSColor(hex: theme.foreground)
     }
 
     private func font(for theme: AppTheme, size: CGFloat) -> NSFont {
@@ -1230,6 +2090,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         @Binding private var text: String
         private let flowCheckingClient: EditorFlowCheckingClient
         private let flowProseCompletionService: FlowProseCompletionService
+        private let flowSentenceRepairService: FlowSentenceRepairService
         private let flowProseCompletionDelayNanoseconds: UInt64
         private let flowFocusValidator: (MarkdownNSTextView) -> Bool
         private let protectedRangeProvider: @Sendable (String, FlowSourceMode) -> [NSRange]
@@ -1277,7 +2138,15 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private var flowSourceMode: FlowSourceMode?
         private var flowCheckingOptions = EditorTextCheckingOptions.defaultValue
         private var flowCheckTask: Task<Void, Never>?
+        private var flowSentenceRepairTask: Task<Void, Never>?
         private var flowRequestToken = 0
+        private enum SentenceRepairGate: Equatable {
+            case blocked
+            case clear
+
+            var allowsAutocomplete: Bool { self == .clear }
+        }
+        private var sentenceRepairGate: SentenceRepairGate = .blocked
         private struct PendingFlowProtectedRangesRetry {
             let snapshot: EditorFlowCheckSnapshot
             let token: Int
@@ -1303,6 +2172,13 @@ struct MarkdownTextEditor: NSViewRepresentable {
             let utf16Length: Int
             let selection: NSRange
         }
+        private struct PendingFlowTrailingSpace {
+            let suggestion: EditorFlowSuggestion
+            let sourceRevision: Int
+            let resultingSelection: NSRange
+            let mode: FlowSourceMode
+            let rebasedProtectedRanges: [NSRange]
+        }
         private struct ProseCompletionSnapshot {
             let documentID: String
             let revision: Int
@@ -1320,6 +2196,14 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private struct PendingProseCompletionRetry {
             let token: Int
             let expiresAt: Date
+        }
+        private struct PendingProseRemainder {
+            let documentID: String
+            let revision: Int
+            let sourceUTF16Length: Int
+            let selectedRange: NSRange
+            let continuation: String
+            let wasRendered: Bool
         }
         private struct PendingWritingToolsRangeUpdate {
             let expectedUTF16Length: Int
@@ -1393,9 +2277,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private var protectedRangesGeneration = 0
         private var pendingInlinePredictionEdit: InlinePredictionEditCandidate?
         private var inlinePredictionContinuation: InlinePredictionContinuation?
+        private var pendingFlowAutocompleteIntent = false
+        private var pendingFlowTrailingSpace: PendingFlowTrailingSpace?
         private var flowProseCompletionTask: Task<Void, Never>?
         private var flowProseRequestToken = 0
         private var pendingProseCompletionRetry: PendingProseCompletionRetry?
+        private var pendingProseRemainder: PendingProseRemainder?
         private var flowProseFailureCooldownUntil: Date?
         private var writingToolsDocumentID: String?
         private var writingToolsProtectedRanges: [NSRange]?
@@ -1408,6 +2295,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             text: Binding<String>,
             flowCheckingClient: EditorFlowCheckingClient = .system,
             flowProseCompletionService: FlowProseCompletionService = .system,
+            flowSentenceRepairService: FlowSentenceRepairService = .system,
             flowProseCompletionDelayNanoseconds: UInt64 = 850_000_000,
             protectedRangeProvider: @escaping @Sendable (String, FlowSourceMode) -> [NSRange] = { text, mode in
                 FlowProtectedRangeService().protectedRanges(in: text, mode: mode)
@@ -1428,6 +2316,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             self._text = text
             self.flowCheckingClient = flowCheckingClient
             self.flowProseCompletionService = flowProseCompletionService
+            self.flowSentenceRepairService = flowSentenceRepairService
             self.flowProseCompletionDelayNanoseconds = flowProseCompletionDelayNanoseconds
             self.protectedRangeProvider = protectedRangeProvider
             self.flowFocusValidator = flowFocusValidator
@@ -1456,9 +2345,18 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 name: NSApplication.didResignActiveNotification,
                 object: NSApp
             )
+            NSWorkspace.shared.notificationCenter.addObserver(
+                self,
+                selector: #selector(accessibilityDisplayOptionsDidChange(_:)),
+                name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+                object: nil
+            )
         }
 
         func detach() {
+            sentenceRepairGate = .blocked
+            pendingFlowTrailingSpace = nil
+            pendingFlowAutocompleteIntent = false
             finishWritingToolsSessionIfNeeded()
             cancelFlowSuggestion()
             protectedRangesTask?.cancel()
@@ -1469,6 +2367,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             pendingWritingToolsRequest = nil
             suppressedFlowSuggestion = nil
             NotificationCenter.default.removeObserver(self)
+            NSWorkspace.shared.notificationCenter.removeObserver(self)
             scrollView = nil
             onSelectionChange = nil
             onOpenLink = nil
@@ -1486,8 +2385,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
             pendingInlinePredictionEdit = nil
             inlinePredictionContinuation = nil
             pendingWritingToolsRequest = nil
+            pendingFlowTrailingSpace = nil
+            pendingFlowAutocompleteIntent = false
             suppressedFlowSuggestion = nil
             flowProseFailureCooldownUntil = nil
+            sentenceRepairGate = .blocked
             flowSourceMode = mode
             flowCheckingOptions = options
             cancelFlowSuggestion()
@@ -1553,9 +2455,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
             revision += 1
             pendingInlinePredictionEdit = nil
             inlinePredictionContinuation = nil
+            pendingFlowTrailingSpace = nil
             pendingWritingToolsRequest = nil
             suppressedFlowSuggestion = nil
             flowProseFailureCooldownUntil = nil
+            sentenceRepairGate = .blocked
             scheduleProtectedRangesRefresh(delayNanoseconds: 0)
             lastPublishedSelection = nil
             shouldRestoreSelection = true
@@ -1565,6 +2469,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         }
 
         func externalTextDidChange() {
+            sentenceRepairGate = .blocked
+            pendingFlowTrailingSpace = nil
             cancelFlowSuggestion()
             pendingWritingToolsRequest = nil
             revision += 1
@@ -1672,7 +2578,14 @@ struct MarkdownTextEditor: NSViewRepresentable {
         }
 
         @objc private func scrollViewBoundsDidChange(_ notification: Notification) {
-            guard !isRestoringScrollPosition else { return }
+            let shouldPublish = !isRestoringScrollPosition
+            if let textView, let suggestion = textView.flowSuggestion {
+                textView.invalidateRenderedFlowSuggestion()
+                if !textView.isFlowSuggestionAnchorVisible(suggestion) {
+                    sentenceRepairGate = .blocked
+                    cancelFlowSuggestion()
+                }
+            }
             if let textView,
                let suggestion = textView.flowProseSuggestion,
                textView.visibleFlowProseContinuation(
@@ -1682,7 +2595,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 _ = cancelProseCompletion()
                 refreshNativeFlowAvailability()
             }
-            publishCurrentScrollPosition()
+            if shouldPublish {
+                publishCurrentScrollPosition()
+            }
         }
 
         @objc private func windowDidResignKey(_ notification: Notification) {
@@ -1696,11 +2611,23 @@ struct MarkdownTextEditor: NSViewRepresentable {
             cancelFlowForFocusLoss()
         }
 
+        @objc private func accessibilityDisplayOptionsDidChange(_ notification: Notification) {
+            textView?.needsDisplay = true
+        }
+
         func cancelFlowForFocusLoss() {
+            sentenceRepairGate = .blocked
+            pendingFlowTrailingSpace = nil
+            pendingFlowAutocompleteIntent = false
             pendingWritingToolsRequest = nil
             pendingInlinePredictionEdit = nil
             inlinePredictionContinuation = nil
             cancelFlowSuggestion()
+            refreshNativeFlowAvailability()
+        }
+
+        func cancelProseCompletionForGeometryChange() {
+            _ = cancelProseCompletion()
             refreshNativeFlowAvailability()
         }
 
@@ -1745,8 +2672,42 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     in: textView
                 )
             }
+            pendingFlowTrailingSpace = nil
             pendingInlinePredictionEdit = nil
+            pendingFlowAutocompleteIntent = Self.isFlowAutocompleteTrigger(replacementString)
             let source = textView.string as NSString
+            if replacementString == " ",
+               affectedCharRange.length == 0,
+               let suggestion = textView.flowSuggestion,
+               let mode = flowSourceMode,
+               let protectedRanges = currentProtectedRanges,
+               suggestion.matches(
+                   documentID: documentID,
+                   revision: revision,
+                    text: textView.string,
+                    selectedRange: affectedCharRange
+               ),
+               !protectedRanges.contains(where: {
+                   affectedCharRange.location >= $0.location
+                       && affectedCharRange.location <= NSMaxRange($0)
+               }),
+               affectedCharRange.location == NSMaxRange(suggestion.sentenceRange) {
+                let rebasedProtectedRanges = protectedRanges.map { range in
+                    guard range.location > affectedCharRange.location else { return range }
+                    return NSRange(location: range.location + 1, length: range.length)
+                }
+                pendingFlowTrailingSpace = PendingFlowTrailingSpace(
+                    suggestion: suggestion,
+                    sourceRevision: revision,
+                    resultingSelection: NSRange(
+                        location: affectedCharRange.location + 1,
+                        length: 0
+                    ),
+                    mode: mode,
+                    rebasedProtectedRanges: rebasedProtectedRanges
+                )
+                return true
+            }
             guard let mode = flowSourceMode,
                   affectedCharRange.location != NSNotFound,
                   affectedCharRange.length == 0,
@@ -1872,7 +2833,29 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? MarkdownNSTextView else { return }
-            cancelFlowSuggestion()
+            let requestsAutocompleteAfterClear = pendingFlowAutocompleteIntent
+            pendingFlowAutocompleteIntent = false
+            let trailingSpace = pendingFlowTrailingSpace
+            pendingFlowTrailingSpace = nil
+            let preservesRepair = trailingSpace.map {
+                $0.sourceRevision == revision
+                    && textView.selectedRange() == $0.resultingSelection
+                    && NSMaxRange($0.suggestion.sentenceRange) < (textView.string as NSString).length
+                    && (textView.string as NSString).substring(with: $0.suggestion.sentenceRange)
+                        == $0.suggestion.originalSentence
+            } == true
+            if preservesRepair {
+                flowRequestToken &+= 1
+                flowCheckTask?.cancel()
+                flowCheckTask = nil
+                flowSentenceRepairTask?.cancel()
+                flowSentenceRepairTask = nil
+                pendingFlowProtectedRangesRetry = nil
+                _ = cancelProseCompletion()
+            } else {
+                sentenceRepairGate = .blocked
+                cancelFlowSuggestion()
+            }
             pendingWritingToolsRequest = nil
             revision += 1
             if isWritingToolsActive {
@@ -1909,18 +2892,42 @@ struct MarkdownTextEditor: NSViewRepresentable {
             if !isWritingToolsActive {
                 scheduleProtectedRangesRefresh()
             }
-            if completedOrdinaryProseEdit {
+            if preservesRepair, let trailingSpace {
+                protectedRangesSnapshot = ProtectedRangesSnapshot(
+                    revision: revision,
+                    text: textView.string,
+                    mode: trailingSpace.mode,
+                    ranges: trailingSpace.rebasedProtectedRanges
+                )
+                textView.flowSuggestion = trailingSpace.suggestion.rebased(
+                    revision: revision,
+                    selectedRange: trailingSpace.resultingSelection
+                )
+                sentenceRepairGate = .blocked
+            } else if completedOrdinaryProseEdit, sentenceRepairGate.allowsAutocomplete {
                 scheduleProseCompletion()
             }
             refreshNativeFlowAvailability()
             guard !isWritingToolsActive else { return }
             text = textView.string
             publishSelection()
-            scheduleFlowCheck()
+            if preservesRepair { return }
+            scheduleFlowCheck(
+                requestsAutocompleteAfterClear: requestsAutocompleteAfterClear
+            )
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? MarkdownNSTextView else { return }
+            if let trailingSpace = pendingFlowTrailingSpace,
+               trailingSpace.sourceRevision == revision,
+               textView.selectedRange() == trailingSpace.resultingSelection {
+                // AppKit may publish the post-insertion selection before
+                // textDidChange. Let that callback rebase the visible repair;
+                // treating this notification as a caret move would discard a
+                // repair the user explicitly kept by typing one Space.
+                return
+            }
             cancelFlowSuggestion()
             pendingWritingToolsRequest = nil
             if pendingInlinePredictionEdit.map({
@@ -1963,7 +2970,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
             flowRequestToken &+= 1
             flowCheckTask?.cancel()
             flowCheckTask = nil
+            flowSentenceRepairTask?.cancel()
+            flowSentenceRepairTask = nil
             pendingFlowProtectedRangesRetry = nil
+            pendingFlowTrailingSpace = nil
             textView?.flowSuggestion = nil
             if hadSuggestion {
                 refreshNativeFlowAvailability()
@@ -1975,10 +2985,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
             let hadCompletion = flowProseCompletionTask != nil
                 || textView?.flowProseSuggestion != nil
                 || pendingProseCompletionRetry != nil
+                || pendingProseRemainder != nil
             flowProseRequestToken &+= 1
             flowProseCompletionTask?.cancel()
             flowProseCompletionTask = nil
             pendingProseCompletionRetry = nil
+            pendingProseRemainder = nil
             textView?.flowProseSuggestion = nil
             return hadCompletion
         }
@@ -1989,6 +3001,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     suggestion,
                     accepted: false
                 )
+                sentenceRepairGate = .blocked
+            } else if textView?.flowProseSuggestion != nil {
+                // Escape dismisses the entire autocomplete lane for this
+                // revision; do not immediately replace Monknot's candidate
+                // with an AppKit candidate at the same caret.
+                sentenceRepairGate = .blocked
             }
             cancelFlowSuggestion()
         }
@@ -2028,6 +3046,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 )
             let inlinePredictionsAllowed = !isWritingToolsActive
                 && pendingWritingToolsRequest == nil
+                && sentenceRepairGate.allowsAutocomplete
                 && textView.flowSuggestion == nil
                 && textView.flowProseSuggestion == nil
                 && flowProseCompletionTask == nil
@@ -2061,6 +3080,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                   !isProseCompletionCoolingDown,
                   !isWritingToolsActive,
                   pendingWritingToolsRequest == nil,
+                  sentenceRepairGate.allowsAutocomplete,
                   let textView,
                   textView.flowSuggestion == nil,
                   !textView.hasMarkedText(),
@@ -2137,6 +3157,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                   !isProseCompletionCoolingDown,
                   !isWritingToolsActive,
                   pendingWritingToolsRequest == nil,
+                  sentenceRepairGate.allowsAutocomplete,
                   let documentID,
                   let mode = flowSourceMode,
                   let textView,
@@ -2190,6 +3211,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
                   let visibleContinuation = textView.visibleFlowProseContinuation(
                       continuation,
                       atUTF16Offset: snapshot.selectedRange.location
+                  ),
+                  Self.insertionRemainsOutsideProtectedSyntax(
+                    in: textView.string as NSString,
+                    insertionLocation: snapshot.selectedRange.location,
+                    replacement: visibleContinuation,
+                    mode: snapshot.mode
                   )
             else {
                 refreshNativeFlowAvailability()
@@ -2220,6 +3247,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             guard token == flowProseRequestToken,
                   !isWritingToolsActive,
                   pendingWritingToolsRequest == nil,
+                  sentenceRepairGate.allowsAutocomplete,
                   documentID == snapshot.documentID,
                   revision == snapshot.revision,
                   flowSourceMode == snapshot.mode,
@@ -2440,11 +3468,51 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
         }
 
-        private func scheduleFlowCheck(completedSentenceEndingAt endOffset: Int? = nil) {
-            guard !isWritingToolsActive,
-                  let mode = flowSourceMode,
-                  flowCheckingOptions.checksSpelling || flowCheckingOptions.checksGrammar,
-                  let textView,
+        private func finishSentenceRepairClear(requestsAutocomplete: Bool) {
+            sentenceRepairGate = .clear
+            if pendingProseRemainder != nil {
+                if presentPendingProseRemainderIfReady() {
+                    return
+                }
+                pendingProseRemainder = nil
+            }
+            refreshNativeFlowAvailability()
+            if requestsAutocomplete {
+                scheduleProseCompletion()
+            }
+        }
+
+        private func finishSentenceRepairUnresolved() {
+            sentenceRepairGate = .blocked
+            _ = cancelProseCompletion()
+            refreshNativeFlowAvailability()
+        }
+
+        private static func isFlowAutocompleteTrigger(_ replacement: String) -> Bool {
+            guard !replacement.isEmpty,
+                  !replacement.containsNewline,
+                  replacement != "\t",
+                  replacement.count == 1
+            else { return false }
+            return replacement.unicodeScalars.allSatisfy {
+                !CharacterSet.controlCharacters.contains($0)
+            }
+        }
+
+        private func scheduleFlowCheck(
+            completedSentenceEndingAt endOffset: Int? = nil,
+            requestsAutocompleteAfterClear: Bool = false
+        ) {
+            guard !isWritingToolsActive else { return }
+            guard let mode = flowSourceMode,
+                  flowCheckingOptions.checksSpelling || flowCheckingOptions.checksGrammar
+            else {
+                finishSentenceRepairClear(
+                    requestsAutocomplete: requestsAutocompleteAfterClear
+                )
+                return
+            }
+            guard let textView,
                   flowFocusValidator(textView),
                   !textView.hasMarkedText(),
                   let documentID,
@@ -2454,7 +3522,17 @@ struct MarkdownTextEditor: NSViewRepresentable {
                         NSRange(location: $0, length: 0)
                     } ?? textView.selectedRange()
                   )
-            else { return }
+            else {
+                sentenceRepairGate = .blocked
+                refreshNativeFlowAvailability()
+                return
+            }
+
+            let offersSentenceBatch = plan.isBatchSafe
+                && (endOffset != nil || plan.offersSentenceBatch)
+            sentenceRepairGate = .blocked
+            _ = cancelProseCompletion()
+            refreshNativeFlowAvailability()
 
             let caret = textView.selectedRange().location + textView.selectedRange().length
             let token = flowRequestToken
@@ -2468,8 +3546,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 caretUTF16Offset: caret,
                 options: flowCheckingOptions,
                 sourceMode: mode,
-                offersSentenceBatch: endOffset != nil || plan.offersSentenceBatch,
-                checksCompletedStructuralSentence: endOffset != nil
+                coversWholeCurrentSentence: plan.coversWholeCurrentSentence,
+                offersSentenceBatch: offersSentenceBatch,
+                checksCompletedStructuralSentence: endOffset != nil,
+                requestsAutocompleteAfterClear: requestsAutocompleteAfterClear
             )
             flowCheckTask = Task { @MainActor [weak self] in
                 do {
@@ -2490,6 +3570,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
             flowRequestToken &+= 1
             flowCheckTask?.cancel()
             flowCheckTask = nil
+            flowSentenceRepairTask?.cancel()
+            flowSentenceRepairTask = nil
             pendingFlowProtectedRangesRetry = nil
             scheduleFlowCheck(completedSentenceEndingAt: endOffset)
         }
@@ -2527,6 +3609,54 @@ struct MarkdownTextEditor: NSViewRepresentable {
             documentTag: Int
         ) {
             guard isCurrentFlowSnapshot(snapshot, token: token) else { return }
+            guard let textView else { return }
+            guard let ranges = protectedRanges(for: snapshot, in: textView) else {
+                pendingFlowProtectedRangesRetry = PendingFlowProtectedRangesRetry(
+                    snapshot: snapshot,
+                    token: token
+                )
+                return
+            }
+            pendingFlowProtectedRangesRetry = nil
+            let detectedIssues = EditorFlowCorrectionResolver.detectedIssues(
+                in: snapshot.checkedText,
+                caretUTF16Offset: (snapshot.checkedText as NSString).length,
+                results: results,
+                options: snapshot.options
+            ).compactMap { issue -> EditorFlowDetectedIssue? in
+                let absoluteRange = NSRange(
+                    location: snapshot.checkedRange.location + issue.range.location,
+                    length: issue.range.length
+                )
+                let protectedIntersection = ranges.reduce(0) { length, protectedRange in
+                    length + NSIntersectionRange(protectedRange, absoluteRange).length
+                }
+                if protectedIntersection >= absoluteRange.length {
+                    return nil
+                }
+                if protectedIntersection > 0 {
+                    return EditorFlowDetectedIssue(
+                        range: issue.range,
+                        kind: issue.kind,
+                        hasPreciseRange: false
+                    )
+                }
+                return issue
+            }
+            guard !detectedIssues.isEmpty else {
+                guard snapshot.coversWholeCurrentSentence else {
+                    finishSentenceRepairUnresolved()
+                    return
+                }
+                finishSentenceRepairClear(
+                    requestsAutocomplete: snapshot.requestsAutocompleteAfterClear
+                )
+                return
+            }
+            guard snapshot.offersSentenceBatch else {
+                finishSentenceRepairUnresolved()
+                return
+            }
             let checker = NSSpellChecker.shared
             let localCandidates = EditorFlowCorrectionResolver.concreteCorrections(
                 in: snapshot.checkedText,
@@ -2547,26 +3677,24 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     )
                 }
             )
+            let enabledLocalCandidates = localCandidates.filter { candidate in
+                switch candidate.kind {
+                case .spelling:
+                    return snapshot.options.checksSpelling
+                case .grammar:
+                    return snapshot.options.checksGrammar
+                }
+            }
             let ambiguousGrammarCandidates = EditorFlowCorrectionResolver
                 .ambiguousGrammarCorrections(
                     in: snapshot.checkedText,
                     caretUTF16Offset: (snapshot.checkedText as NSString).length,
                     results: results
                 )
-            guard !localCandidates.isEmpty || !ambiguousGrammarCandidates.isEmpty,
-                  let textView
-            else { return }
-            guard let ranges = protectedRanges(for: snapshot, in: textView) else {
-                pendingFlowProtectedRangesRetry = PendingFlowProtectedRangesRetry(
-                    snapshot: snapshot,
-                    token: token
-                )
-                return
-            }
-            pendingFlowProtectedRangesRetry = nil
             if let ambiguousCandidate = grammarCandidateForValidation(
                 ambiguousGrammarCandidates,
-                concreteCandidates: localCandidates,
+                concreteCandidates: enabledLocalCandidates,
+                detectedIssues: detectedIssues,
                 snapshot: snapshot,
                 protectedRanges: ranges,
                 in: textView
@@ -2575,30 +3703,73 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     ambiguousCandidate,
                     nextIndex: 0,
                     cleanReplacements: [],
-                    concreteCandidates: localCandidates,
+                    concreteCandidates: enabledLocalCandidates,
+                    detectedIssues: detectedIssues,
                     snapshot: snapshot,
                     token: token,
-                    documentTag: documentTag
+                    documentTag: documentTag,
+                    repairLocale: Self.repairLocale(from: orthography)
                 )
                 return
             }
-            presentFlowCandidates(
-                localCandidates,
+            if presentFlowCandidates(
+                enabledLocalCandidates,
+                detectedIssues: detectedIssues,
                 snapshot: snapshot,
                 token: token
-            )
+            ) == false {
+                if suppressionApplies(to: enabledLocalCandidates, snapshot: snapshot) {
+                    finishSentenceRepairUnresolved()
+                } else {
+                    attemptAISentenceRepair(
+                        detectedIssues: detectedIssues,
+                        snapshot: snapshot,
+                        token: token,
+                        documentTag: documentTag,
+                        locale: Self.repairLocale(from: orthography)
+                    )
+                }
+            }
         }
 
+        private func suppressionApplies(
+            to candidates: [EditorFlowCorrectionCandidate],
+            snapshot: EditorFlowCheckSnapshot
+        ) -> Bool {
+            guard let suppression = suppressedFlowSuggestion else { return false }
+            let checked = snapshot.checkedText as NSString
+            return candidates.contains { candidate in
+                guard candidate.range.location >= 0,
+                      candidate.range.length >= 0,
+                      NSMaxRange(candidate.range) <= checked.length
+                else { return false }
+                return suppression.suppresses(EditorFlowCorrectionEdit(
+                    range: NSRange(
+                        location: snapshot.checkedRange.location + candidate.range.location,
+                        length: candidate.range.length
+                    ),
+                    originalText: checked.substring(with: candidate.range),
+                    replacementText: candidate.replacementText,
+                    kind: candidate.kind
+                ))
+            }
+        }
+
+        @discardableResult
         private func presentFlowCandidates(
             _ localCandidates: [EditorFlowCorrectionCandidate],
+            detectedIssues: [EditorFlowDetectedIssue],
             snapshot: EditorFlowCheckSnapshot,
             token: Int
-        ) {
+        ) -> Bool {
             guard !localCandidates.isEmpty,
+                  !detectedIssues.isEmpty,
+                  detectedIssues.allSatisfy(\.hasPreciseRange),
+                  snapshot.offersSentenceBatch,
                   isCurrentFlowSnapshot(snapshot, token: token),
                   let textView,
                   let ranges = protectedRanges(for: snapshot, in: textView)
-            else { return }
+            else { return false }
             let sourceLength = (textView.string as NSString).length
             let caretProbe: NSRange?
             if snapshot.caretUTF16Offset < sourceLength {
@@ -2611,7 +3782,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             if !snapshot.checksCompletedStructuralSentence {
                 guard caretProbe.map({ probe in
                     !ranges.contains { NSIntersectionRange($0, probe).length > 0 }
-                }) != false else { return }
+                }) != false else { return false }
             }
 
             let checkedSource = snapshot.checkedText as NSString
@@ -2629,10 +3800,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
                       })
                 else { return nil }
                 let originalText = checkedSource.substring(with: candidate.range)
-                guard Self.isCompactFlowEdit(
-                    originalText: originalText,
-                    replacementText: candidate.replacementText
-                ) else { return nil }
                 return EditorFlowCorrectionEdit(
                     range: absoluteRange,
                     originalText: originalText,
@@ -2662,42 +3829,214 @@ struct MarkdownTextEditor: NSViewRepresentable {
             let unsuppressedEdits = conflictFreeEdits.filter {
                 suppressedFlowSuggestion?.suppresses($0) != true
             }
-            guard !unsuppressedEdits.isEmpty else { return }
-            let selectedEdits: [EditorFlowCorrectionEdit]
-            if snapshot.offersSentenceBatch {
-                // The compact cue shows two concrete replacements. Never apply a
-                // third unseen edit; another pass can offer any remaining issue.
-                selectedEdits = Array(unsuppressedEdits.prefix(2))
-            } else if let nearest = unsuppressedEdits
-                .filter({ edit in
-                    Self.isRecentFlowCorrection(
-                        edit,
-                        caretUTF16Offset: snapshot.caretUTF16Offset,
-                        in: textView.string
-                    )
-                })
-                .min(by: { left, right in
-                    let leftDistance = snapshot.caretUTF16Offset - NSMaxRange(left.range)
-                    let rightDistance = snapshot.caretUTF16Offset - NSMaxRange(right.range)
-                    if leftDistance == rightDistance {
-                        return left.range.location > right.range.location
-                    }
-                    return leftDistance < rightDistance
-                }) {
-                selectedEdits = [nearest]
-            } else {
-                return
+            guard unsuppressedEdits.count == eligibleEdits.count,
+                  conflictFreeEdits.count == eligibleEdits.count,
+                  !unsuppressedEdits.isEmpty
+            else { return false }
+            let localEdits = unsuppressedEdits.map { edit in
+                (
+                    range: NSRange(
+                        location: edit.range.location - snapshot.checkedRange.location,
+                        length: edit.range.length
+                    ),
+                    kind: edit.kind
+                )
             }
+            func overlaps(_ left: NSRange, _ right: NSRange) -> Bool {
+                NSIntersectionRange(left, right).length > 0
+                    || left.length == 0 && left.location >= right.location && left.location <= NSMaxRange(right)
+                    || right.length == 0 && right.location >= left.location && right.location <= NSMaxRange(left)
+            }
+            guard detectedIssues.allSatisfy({ issue in
+                localEdits.contains {
+                    $0.kind == issue.kind && overlaps($0.range, issue.range)
+                }
+            }), localEdits.allSatisfy({ edit in
+                detectedIssues.contains {
+                    $0.kind == edit.kind && overlaps(edit.range, $0.range)
+                }
+            }) else { return false }
+            let selectedEdits = unsuppressedEdits
             guard isCurrentFlowSnapshot(snapshot, token: token)
-            else { return }
-            cancelProseCompletion()
-            textView.flowSuggestion = EditorFlowSuggestion(
+            else { return false }
+            let correctedSentence = Self.applying(
+                selectedEdits,
+                to: snapshot.checkedText,
+                sentenceRange: snapshot.checkedRange
+            )
+            guard let correctedSentence else { return false }
+            let suggestion = EditorFlowSuggestion(
                 documentID: snapshot.documentID,
                 revision: snapshot.revision,
                 selectedRange: snapshot.selectedRange,
                 caretUTF16Offset: snapshot.caretUTF16Offset,
+                sentenceRange: snapshot.checkedRange,
+                originalSentence: snapshot.checkedText,
+                correctedSentence: correctedSentence,
+                source: .deterministic,
                 edits: selectedEdits
             )
+            guard textView.isFlowSuggestionAnchorVisible(suggestion) else {
+                finishSentenceRepairUnresolved()
+                return false
+            }
+            cancelProseCompletion()
+            textView.flowSuggestion = suggestion
+            sentenceRepairGate = .blocked
+            refreshNativeFlowAvailability()
+            return true
+        }
+
+        private func attemptAISentenceRepair(
+            detectedIssues: [EditorFlowDetectedIssue],
+            snapshot: EditorFlowCheckSnapshot,
+            token: Int,
+            documentTag: Int,
+            locale: Locale
+        ) {
+            guard snapshot.offersSentenceBatch,
+                  flowCheckingOptions.onDeviceProseCompletions,
+                  flowSentenceRepairService.isAvailable(for: locale),
+                  !detectedIssues.isEmpty,
+                  detectedIssues.allSatisfy(\.hasPreciseRange),
+                  isCurrentFlowSnapshot(snapshot, token: token),
+                  let textView,
+                  let protectedRanges = protectedRanges(for: snapshot, in: textView),
+                  !protectedRanges.contains(where: {
+                      NSIntersectionRange($0, snapshot.checkedRange).length > 0
+                  }),
+                  let request = FlowSentenceRepairRequest(
+                      sentence: snapshot.checkedText,
+                      locale: locale
+                  )
+            else {
+                finishSentenceRepairUnresolved()
+                return
+            }
+
+            sentenceRepairGate = .blocked
+            _ = cancelProseCompletion()
+            flowSentenceRepairTask?.cancel()
+            let service = flowSentenceRepairService
+            flowSentenceRepairTask = Task { @MainActor [weak self] in
+                let candidate = await service.repair(for: request)
+                guard !Task.isCancelled else { return }
+                self?.receiveAISentenceRepair(
+                    candidate,
+                    detectedIssues: detectedIssues,
+                    snapshot: snapshot,
+                    token: token,
+                    documentTag: documentTag
+                )
+            }
+            refreshNativeFlowAvailability()
+        }
+
+        private func receiveAISentenceRepair(
+            _ candidateSentence: String?,
+            detectedIssues: [EditorFlowDetectedIssue],
+            snapshot: EditorFlowCheckSnapshot,
+            token: Int,
+            documentTag: Int
+        ) {
+            guard isCurrentFlowSnapshot(snapshot, token: token) else { return }
+            flowSentenceRepairTask = nil
+            guard let candidateSentence,
+                  FlowProtectedRangeService().protectedRanges(
+                    in: candidateSentence,
+                    mode: snapshot.sourceMode
+                  ).isEmpty,
+                  let localEdits = EditorFlowSentenceRepairValidator.edits(
+                    originalSentence: snapshot.checkedText,
+                    candidateSentence: candidateSentence,
+                    issueRanges: detectedIssues.map(\.range)
+                  )
+            else {
+                finishSentenceRepairUnresolved()
+                return
+            }
+            let unifiedTypes = NSTextCheckingResult.CheckingType.orthography.rawValue
+                | NSTextCheckingResult.CheckingType.spelling.rawValue
+                | NSTextCheckingResult.CheckingType.correction.rawValue
+                | NSTextCheckingResult.CheckingType.grammar.rawValue
+            flowCheckingClient.request(
+                candidateSentence,
+                NSRange(location: 0, length: (candidateSentence as NSString).length),
+                unifiedTypes,
+                documentTag
+            ) { [weak self] results, orthography in
+                DispatchQueue.main.async { [weak self] in
+                    self?.finishAISentenceRepairValidation(
+                        candidateSentence: candidateSentence,
+                        localEdits: localEdits,
+                        results: results,
+                        orthography: orthography,
+                        snapshot: snapshot,
+                        token: token
+                    )
+                }
+            }
+        }
+
+        private func finishAISentenceRepairValidation(
+            candidateSentence: String,
+            localEdits: [EditorFlowCorrectionEdit],
+            results: [NSTextCheckingResult],
+            orthography: NSOrthography?,
+            snapshot: EditorFlowCheckSnapshot,
+            token: Int
+        ) {
+            guard isCurrentFlowSnapshot(snapshot, token: token) else { return }
+            guard orthography != nil,
+                  Self.allCheckingResultsAreClean(results),
+                  let textView,
+                  let protectedRanges = protectedRanges(for: snapshot, in: textView)
+            else {
+                finishSentenceRepairUnresolved()
+                return
+            }
+            let absoluteEdits = localEdits.map { edit in
+                EditorFlowCorrectionEdit(
+                    range: NSRange(
+                        location: snapshot.checkedRange.location + edit.range.location,
+                        length: edit.range.length
+                    ),
+                    originalText: edit.originalText,
+                    replacementText: edit.replacementText,
+                    kind: edit.kind
+                )
+            }
+            if let suppression = suppressedFlowSuggestion,
+               suppression.edits.count == absoluteEdits.count,
+               absoluteEdits.allSatisfy(suppression.suppresses) {
+                finishSentenceRepairUnresolved()
+                return
+            }
+            guard absoluteEdits.allSatisfy({ edit in
+                !protectedRanges.contains {
+                    NSIntersectionRange($0, edit.range).length > 0
+                }
+            }) else {
+                finishSentenceRepairUnresolved()
+                return
+            }
+            let suggestion = EditorFlowSuggestion(
+                documentID: snapshot.documentID,
+                revision: snapshot.revision,
+                selectedRange: snapshot.selectedRange,
+                caretUTF16Offset: snapshot.caretUTF16Offset,
+                sentenceRange: snapshot.checkedRange,
+                originalSentence: snapshot.checkedText,
+                correctedSentence: candidateSentence,
+                source: .ai,
+                edits: absoluteEdits
+            )
+            guard textView.isFlowSuggestionAnchorVisible(suggestion) else {
+                finishSentenceRepairUnresolved()
+                return
+            }
+            textView.flowSuggestion = suggestion
+            sentenceRepairGate = .blocked
             refreshNativeFlowAvailability()
         }
 
@@ -2717,6 +4056,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private func grammarCandidateForValidation(
             _ candidates: [EditorFlowAmbiguousGrammarCandidate],
             concreteCandidates: [EditorFlowCorrectionCandidate],
+            detectedIssues: [EditorFlowDetectedIssue],
             snapshot: EditorFlowCheckSnapshot,
             protectedRanges: [NSRange],
             in textView: NSTextView
@@ -2727,7 +4067,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
                   let candidate = candidates.first,
                   candidate.replacementTexts.count > 1,
                   candidate.replacementTexts.count <= EditorFlowCorrectionResolver
-                    .maximumValidatedGrammarAlternatives
+                    .maximumValidatedGrammarAlternatives,
+                  detectedIssues.contains(where: { $0.range == candidate.range })
             else { return nil }
 
             let checkedSource = snapshot.checkedText as NSString
@@ -2748,13 +4089,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
                   })
             else { return nil }
 
-            let originalText = checkedSource.substring(with: candidate.range)
-            guard candidate.replacementTexts.allSatisfy({
-                Self.isCompactFlowEdit(
-                    originalText: originalText,
-                    replacementText: $0
-                )
-            }) else { return nil }
             return candidate
         }
 
@@ -2763,9 +4097,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
             nextIndex: Int,
             cleanReplacements: [String],
             concreteCandidates: [EditorFlowCorrectionCandidate],
+            detectedIssues: [EditorFlowDetectedIssue],
             snapshot: EditorFlowCheckSnapshot,
             token: Int,
-            documentTag: Int
+            documentTag: Int,
+            repairLocale: Locale
         ) {
             guard isCurrentFlowSnapshot(snapshot, token: token) else { return }
             if cleanReplacements.count > 1 || nextIndex >= candidate.replacementTexts.count {
@@ -2773,17 +4109,32 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     candidate,
                     cleanReplacements: cleanReplacements,
                     concreteCandidates: concreteCandidates,
+                    detectedIssues: detectedIssues,
                     snapshot: snapshot,
-                    token: token
+                    token: token,
+                    repairLocale: repairLocale
                 )
                 return
             }
 
             let replacement = candidate.replacementTexts[nextIndex]
-            let validationText = (snapshot.checkedText as NSString).replacingCharacters(
-                in: candidate.range,
-                with: replacement
-            )
+            guard let validation = Self.validationSentence(
+                snapshot.checkedText,
+                ambiguousCandidate: candidate,
+                ambiguousReplacement: replacement,
+                concreteCandidates: concreteCandidates
+            ) else {
+                finishGrammarAlternativeValidation(
+                    candidate,
+                    cleanReplacements: [],
+                    concreteCandidates: concreteCandidates,
+                    detectedIssues: detectedIssues,
+                    snapshot: snapshot,
+                    token: token,
+                    repairLocale: repairLocale
+                )
+                return
+            }
             // On macOS the unified checker may omit grammar results when a
             // validation request asks for grammar alone. Request the complete
             // deterministic checking set, then ignore unrelated spelling
@@ -2792,25 +4143,24 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 | NSTextCheckingResult.CheckingType.spelling.rawValue
                 | NSTextCheckingResult.CheckingType.correction.rawValue
                 | NSTextCheckingResult.CheckingType.grammar.rawValue
-            let validationRange = NSRange(
-                location: candidate.range.location,
-                length: (replacement as NSString).length
-            )
             flowCheckingClient.request(
-                validationText,
-                NSRange(location: 0, length: (validationText as NSString).length),
+                validation.text,
+                NSRange(location: 0, length: (validation.text as NSString).length),
                 validationTypes,
                 documentTag
-            ) { [weak self] results, _ in
+            ) { [weak self] results, orthography in
                 DispatchQueue.main.async { [weak self] in
                     guard let self,
                           self.isCurrentFlowSnapshot(snapshot, token: token)
                     else { return }
                     var nextCleanReplacements = cleanReplacements
-                    if Self.grammarValidationIsClean(
-                        results,
-                        replacementRange: validationRange
-                    ),
+                    if orthography != nil,
+                       Self.checkingValidationIsClean(
+                           results,
+                           options: snapshot.options,
+                           requiredSpellingRange: validation.replacementRange,
+                           checkedUTF16Length: (validation.text as NSString).length
+                       ),
                        !nextCleanReplacements.contains(replacement) {
                         nextCleanReplacements.append(replacement)
                     }
@@ -2819,9 +4169,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
                         nextIndex: nextIndex + 1,
                         cleanReplacements: nextCleanReplacements,
                         concreteCandidates: concreteCandidates,
+                        detectedIssues: detectedIssues,
                         snapshot: snapshot,
                         token: token,
-                        documentTag: documentTag
+                        documentTag: documentTag,
+                        repairLocale: repairLocale
                     )
                 }
             }
@@ -2831,8 +4183,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
             _ candidate: EditorFlowAmbiguousGrammarCandidate,
             cleanReplacements: [String],
             concreteCandidates: [EditorFlowCorrectionCandidate],
+            detectedIssues: [EditorFlowDetectedIssue],
             snapshot: EditorFlowCheckSnapshot,
-            token: Int
+            token: Int,
+            repairLocale: Locale
         ) {
             guard isCurrentFlowSnapshot(snapshot, token: token) else { return }
 
@@ -2850,59 +4204,147 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 }
                 return left.range.location < right.range.location
             }
-            presentFlowCandidates(
+            if presentFlowCandidates(
                 resolvedCandidates,
+                detectedIssues: detectedIssues,
                 snapshot: snapshot,
                 token: token
-            )
+            ) == false {
+                if suppressionApplies(to: resolvedCandidates, snapshot: snapshot) {
+                    finishSentenceRepairUnresolved()
+                } else {
+                    attemptAISentenceRepair(
+                        detectedIssues: detectedIssues,
+                        snapshot: snapshot,
+                        token: token,
+                        documentTag: textView?.spellCheckerDocumentTag ?? 0,
+                        locale: repairLocale
+                    )
+                }
+            }
         }
 
-        private static func grammarValidationIsClean(
+        private static func checkingValidationIsClean(
             _ results: [NSTextCheckingResult],
-            replacementRange: NSRange
+            options: EditorTextCheckingOptions,
+            requiredSpellingRange: NSRange,
+            checkedUTF16Length: Int
         ) -> Bool {
             !results.contains { result in
                 switch result.resultType {
                 case .grammar:
-                    return true
+                    return options.checksGrammar
                 case .spelling, .correction:
-                    return result.range.location == NSNotFound
-                        || NSIntersectionRange(result.range, replacementRange).length > 0
+                    guard !options.checksSpelling else { return true }
+                    guard result.range.location != NSNotFound,
+                          result.range.location >= 0,
+                          result.range.length > 0,
+                          NSMaxRange(result.range) <= checkedUTF16Length
+                    else { return true }
+                    return NSIntersectionRange(
+                        result.range,
+                        requiredSpellingRange
+                    ).length > 0
                 default:
                     return false
                 }
             }
         }
 
-        private static func isRecentFlowCorrection(
-            _ edit: EditorFlowCorrectionEdit,
-            caretUTF16Offset: Int,
-            in text: String
+        private static func allCheckingResultsAreClean(
+            _ results: [NSTextCheckingResult]
         ) -> Bool {
-            let source = text as NSString
-            let editEnd = NSMaxRange(edit.range)
-            guard editEnd <= caretUTF16Offset, caretUTF16Offset <= source.length else {
-                return false
-            }
-            let trailing = source.substring(with: NSRange(
-                location: editEnd,
-                length: caretUTF16Offset - editEnd
-            ))
-            return trailing.unicodeScalars.allSatisfy {
-                CharacterSet.whitespacesAndNewlines.contains($0)
-                    || CharacterSet.punctuationCharacters.contains($0)
+            !results.contains {
+                $0.resultType == .grammar
+                    || $0.resultType == .spelling
+                    || $0.resultType == .correction
             }
         }
 
-        private static func isCompactFlowEdit(
-            originalText: String,
-            replacementText: String
-        ) -> Bool {
-            let maximumVisibleCharacters = 24
-            return !originalText.containsNewline
-                && !replacementText.containsNewline
-                && originalText.count <= maximumVisibleCharacters
-                && replacementText.count <= maximumVisibleCharacters
+        private static func repairLocale(from orthography: NSOrthography?) -> Locale {
+            guard let language = orthography?.dominantLanguage,
+                  !language.isEmpty
+            else { return .current }
+            return Locale(identifier: language)
+        }
+
+        private static func validationSentence(
+            _ sentence: String,
+            ambiguousCandidate: EditorFlowAmbiguousGrammarCandidate,
+            ambiguousReplacement: String,
+            concreteCandidates: [EditorFlowCorrectionCandidate]
+        ) -> (text: String, replacementRange: NSRange)? {
+            var replacements = concreteCandidates
+            replacements.append(EditorFlowCorrectionCandidate(
+                range: ambiguousCandidate.range,
+                replacementText: ambiguousReplacement,
+                kind: .grammar
+            ))
+            replacements.sort { left, right in
+                if left.range.location == right.range.location {
+                    return left.range.length < right.range.length
+                }
+                return left.range.location < right.range.location
+            }
+            var unique: [EditorFlowCorrectionCandidate] = []
+            for replacement in replacements {
+                if let previous = unique.last {
+                    if previous.range == replacement.range,
+                       previous.replacementText == replacement.replacementText {
+                        continue
+                    }
+                    guard NSIntersectionRange(previous.range, replacement.range).length == 0 else {
+                        return nil
+                    }
+                }
+                unique.append(replacement)
+            }
+            let result = NSMutableString(string: sentence)
+            for replacement in unique.reversed() {
+                guard replacement.range.location >= 0,
+                      replacement.range.length > 0,
+                      NSMaxRange(replacement.range) <= result.length
+                else { return nil }
+                result.replaceCharacters(
+                    in: replacement.range,
+                    with: replacement.replacementText
+                )
+            }
+            let precedingDelta = unique.reduce(0) { delta, replacement in
+                guard replacement.range.location < ambiguousCandidate.range.location else {
+                    return delta
+                }
+                return delta
+                    + (replacement.replacementText as NSString).length
+                    - replacement.range.length
+            }
+            return (
+                result as String,
+                NSRange(
+                    location: ambiguousCandidate.range.location + precedingDelta,
+                    length: (ambiguousReplacement as NSString).length
+                )
+            )
+        }
+
+        private static func applying(
+            _ edits: [EditorFlowCorrectionEdit],
+            to sentence: String,
+            sentenceRange: NSRange
+        ) -> String? {
+            let result = NSMutableString(string: sentence)
+            for edit in edits.reversed() {
+                let localRange = NSRange(
+                    location: edit.range.location - sentenceRange.location,
+                    length: edit.range.length
+                )
+                guard localRange.location >= 0,
+                      localRange.length >= 0,
+                      NSMaxRange(localRange) <= result.length
+                else { return nil }
+                result.replaceCharacters(in: localRange, with: edit.replacementText)
+            }
+            return result as String
         }
 
         func isCurrentFlowSnapshot(_ snapshot: EditorFlowCheckSnapshot, token: Int) -> Bool {
@@ -2926,9 +4368,29 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         @discardableResult
         func acceptFlowSuggestion(_ suggestion: EditorFlowSuggestion) -> Bool {
-            guard let textView,
-                  let textStorage = textView.textStorage,
+            guard let textView, let textStorage = textView.textStorage else {
+                cancelFlowSuggestion()
+                return false
+            }
+            let explicitConfirmation = textView.isFlowExplicitConfirmationInProgress
+            let directAcceptance = flowFocusValidator(textView)
+                && textView.canDirectlyAcceptFlowSuggestion(suggestion)
+            guard !isWritingToolsActive,
+                  pendingWritingToolsRequest == nil,
+                  directAcceptance || explicitConfirmation,
                   textView.flowSuggestion == suggestion,
+                  let protectedRanges = currentProtectedRanges,
+                  suggestion.edits.allSatisfy({ edit in
+                      if edit.range.length == 0 {
+                          return !protectedRanges.contains {
+                              edit.range.location >= $0.location
+                                  && edit.range.location <= NSMaxRange($0)
+                          }
+                      }
+                      return !protectedRanges.contains {
+                          NSIntersectionRange($0, edit.range).length > 0
+                      }
+                  }),
                   suggestion.matches(
                     documentID: documentID,
                     revision: revision,
@@ -2938,6 +4400,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
                   let firstEdit = suggestion.edits.first,
                   let lastEdit = suggestion.edits.last
             else {
+                if textView.flowSuggestion == suggestion {
+                    sentenceRepairGate = .blocked
+                }
                 cancelFlowSuggestion()
                 return false
             }
@@ -2963,6 +4428,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 in: replacementRange,
                 replacementString: replacementText
             ) else {
+                sentenceRepairGate = .blocked
                 cancelFlowSuggestion()
                 return false
             }
@@ -2971,17 +4437,21 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 guard edit.range.location < suggestion.caretUTF16Offset else { return delta }
                 return delta + (edit.replacementText as NSString).length - edit.range.length
             }
+            let nextRange = NSRange(
+                location: max(0, suggestion.caretUTF16Offset + caretDelta),
+                length: 0
+            )
             suppressedFlowSuggestion = SuppressedFlowSuggestion(suggestion, accepted: true)
             cancelFlowSuggestion()
             textView.breakUndoCoalescing()
             textView.undoManager?.beginUndoGrouping()
             textStorage.replaceCharacters(in: replacementRange, with: replacement)
             textView.didChangeText()
-            let nextRange = NSRange(
-                location: max(0, suggestion.caretUTF16Offset + caretDelta),
-                length: 0
-            )
             textView.setSelectedRange(nextRange)
+            textView.registerFlowSelectionTransition(
+                undoSelection: suggestion.selectedRange,
+                redoSelection: nextRange
+            )
             textView.scrollRangeToVisible(nextRange)
             textView.undoManager?.endUndoGrouping()
             textView.undoManager?.setActionName(
@@ -2998,8 +4468,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
             _ suggestion: EditorFlowProseSuggestion,
             nextWordOnly: Bool
         ) -> Bool {
+            let explicitConfirmation = textView?.isFlowExplicitConfirmationInProgress == true
+            let wasRendered = textView?.canDirectlyAcceptFlowProseSuggestion(suggestion) == true
             guard !isWritingToolsActive,
                   pendingWritingToolsRequest == nil,
+                  sentenceRepairGate.allowsAutocomplete,
                   let textView,
                   let textStorage = textView.textStorage,
                   textView.flowSuggestion == nil,
@@ -3011,14 +4484,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     selectedRange: textView.selectedRange()
                   ),
                   !textView.hasMarkedText(),
-                  flowFocusValidator(textView),
+                  explicitConfirmation
+                    || flowFocusValidator(textView)
+                        && wasRendered,
                   let mode = flowSourceMode,
                   let protectedRanges = currentProtectedRanges,
-                  caretIsOutsideProtectedRanges(protectedRanges, in: textView),
-                  textView.visibleFlowProseContinuation(
-                    suggestion.continuation,
-                    atUTF16Offset: suggestion.caretUTF16Offset
-                  ) == suggestion.continuation
+                  caretIsOutsideProtectedRanges(protectedRanges, in: textView)
             else {
                 cancelFlowSuggestion()
                 return false
@@ -3096,20 +4567,60 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 ranges: rebasedProtectedRanges
             )
 
-            if !remainingText.isEmpty,
-               let documentID,
-               let visibleRemainder = textView.visibleFlowProseContinuation(
-                remainingText,
-                atUTF16Offset: nextSelection.location
-               ),
-               visibleRemainder == remainingText {
-                textView.flowProseSuggestion = EditorFlowProseSuggestion(
+            if !remainingText.isEmpty, let documentID {
+                pendingProseRemainder = PendingProseRemainder(
                     documentID: documentID,
                     revision: revision,
                     sourceUTF16Length: (textView.string as NSString).length,
                     selectedRange: nextSelection,
-                    continuation: remainingText
+                    continuation: remainingText,
+                    wasRendered: wasRendered
                 )
+                _ = presentPendingProseRemainderIfReady()
+            }
+            refreshNativeFlowAvailability()
+            return true
+        }
+
+        @discardableResult
+        private func presentPendingProseRemainderIfReady() -> Bool {
+            guard sentenceRepairGate.allowsAutocomplete,
+                  let pending = pendingProseRemainder,
+                  !isWritingToolsActive,
+                  pendingWritingToolsRequest == nil,
+                  documentID == pending.documentID,
+                  revision == pending.revision,
+                  let textView,
+                  textView.flowSuggestion == nil,
+                  !textView.hasMarkedText(),
+                  flowFocusValidator(textView),
+                  (textView.string as NSString).length == pending.sourceUTF16Length,
+                  textView.selectedRange() == pending.selectedRange,
+                  let mode = flowSourceMode,
+                  let protectedRanges = currentProtectedRanges,
+                  caretIsOutsideProtectedRanges(protectedRanges, in: textView),
+                  Self.insertionRemainsOutsideProtectedSyntax(
+                    in: textView.string as NSString,
+                    insertionLocation: pending.selectedRange.location,
+                    replacement: pending.continuation,
+                    mode: mode
+                  ),
+                  textView.visibleFlowProseContinuation(
+                    pending.continuation,
+                    atUTF16Offset: pending.selectedRange.location
+                  ) == pending.continuation
+            else { return false }
+            pendingProseRemainder = nil
+            let suggestion = EditorFlowProseSuggestion(
+                documentID: pending.documentID,
+                revision: pending.revision,
+                sourceUTF16Length: pending.sourceUTF16Length,
+                selectedRange: pending.selectedRange,
+                continuation: pending.continuation
+            )
+            textView.flowProseSuggestion = suggestion
+            if pending.wasRendered {
+                textView.markFlowProseSuggestionAsRendered(suggestion)
             }
             refreshNativeFlowAvailability()
             return true
@@ -3162,6 +4673,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 return false
             }
             writingToolsPresenter(textView)
+            // showWritingTools only opens Apple's chooser. The active-session
+            // callback takes ownership if the user starts an operation.
+            refreshNativeFlowAvailability()
             return true
         }
 
@@ -3172,6 +4686,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                   let documentID
             else { return }
             pendingWritingToolsRequest = nil
+            sentenceRepairGate = .blocked
             cancelFlowSuggestion()
             guard let protectedRanges = currentProtectedRanges else {
                 rejectWritingToolsStart(in: textView)
@@ -3279,8 +4794,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
             else { return [] }
             return results.filter { result in
                 switch result.resultType {
-                case .spelling, .grammar, .correction:
-                    break
+                case .spelling, .correction:
+                    guard flowCheckingOptions.checksSpelling else { return false }
+                case .grammar:
+                    guard flowCheckingOptions.checksGrammar else { return false }
                 default:
                     return true
                 }
@@ -3350,18 +4867,48 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     mode: mode,
                     ranges: ranges
                 )
+                let textLength = (textView.string as NSString).length
+                for range in ranges where range.location >= 0
+                    && range.length > 0
+                    && NSMaxRange(range) <= textLength {
+                    textView.setSpellingState(0, range: range)
+                }
+                self.refreshNativeTextCheckingIndicators(in: textView)
                 self.inlinePredictionContinuation = nil
                 self.protectedRangesTask = nil
                 self.refreshNativeFlowAvailability()
                 self.presentPendingWritingToolsRequestIfReady()
-                self.resumePendingProseCompletionIfReady()
                 if let retry = self.pendingFlowProtectedRangesRetry,
                    retry.snapshot.revision == capturedRevision,
                    self.isCurrentFlowSnapshot(retry.snapshot, token: retry.token) {
                     self.pendingFlowProtectedRangesRetry = nil
                     self.requestFlowCorrection(for: retry.snapshot, token: retry.token)
+                } else if self.sentenceRepairGate.allowsAutocomplete {
+                    self.resumePendingProseCompletionIfReady()
                 }
             }
+        }
+
+        private func refreshNativeTextCheckingIndicators(in textView: NSTextView) {
+            var types: NSTextCheckingTypes = 0
+            if flowCheckingOptions.checksSpelling {
+                types |= NSTextCheckingResult.CheckingType.spelling.rawValue
+            }
+            if flowCheckingOptions.checksGrammar {
+                // macOS can omit grammar results unless spelling participates
+                // in the unified request. didCheckTextIn filters those helper
+                // spelling results when the user has spelling disabled.
+                types |= NSTextCheckingResult.CheckingType.spelling.rawValue
+                types |= NSTextCheckingResult.CheckingType.correction.rawValue
+                types |= NSTextCheckingResult.CheckingType.grammar.rawValue
+            }
+            guard types != 0,
+                  let plan = EditorFlowCheckPlanner.plan(
+                      in: textView.string,
+                      selectedRange: textView.selectedRange()
+                  )
+            else { return }
+            textView.checkText(in: plan.range, types: types, options: [:])
         }
 
         private func finishWritingToolsSessionIfNeeded() {
@@ -3373,6 +4920,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             pendingWritingToolsRequest = nil
             pendingInlinePredictionEdit = nil
             inlinePredictionContinuation = nil
+            sentenceRepairGate = .blocked
             cancelFlowSuggestion()
             lastSyntaxText = nil
             lastPublishedSelection = nil
@@ -3387,6 +4935,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
             publishSelection()
             _ = onWritingToolsStateChange?(activeDocumentID, false)
+            scheduleFlowCheck()
         }
 
         func open(_ link: MarkdownWorkspaceLink) -> Bool {
@@ -4114,11 +5663,18 @@ private extension String {
     }
 }
 
+private final class EditorFlowReviewDocumentView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 private final class EditorFlowReviewViewController: NSViewController {
     private let suggestion: EditorFlowSuggestion
     private let editorFont: NSFont
     private let zoomScale: CGFloat
-    private let onReplace: () -> Void
+    private let maximumWidth: CGFloat
+    private let maximumHeight: CGFloat
+    private let palette: EditorFlowCuePalette
+    private let onReplace: (NSButton) -> Void
     private let onCancel: () -> Void
     private var replaceButton: NSButton?
 
@@ -4126,12 +5682,18 @@ private final class EditorFlowReviewViewController: NSViewController {
         suggestion: EditorFlowSuggestion,
         editorFont: NSFont,
         zoomScale: CGFloat,
-        onReplace: @escaping () -> Void,
+        maximumWidth: CGFloat,
+        maximumHeight: CGFloat,
+        palette: EditorFlowCuePalette,
+        onReplace: @escaping (NSButton) -> Void,
         onCancel: @escaping () -> Void
     ) {
         self.suggestion = suggestion
         self.editorFont = editorFont
         self.zoomScale = max(0.1, zoomScale)
+        self.maximumWidth = max(1, maximumWidth)
+        self.maximumHeight = max(1, maximumHeight)
+        self.palette = palette
         self.onReplace = onReplace
         self.onCancel = onCancel
         super.init(nibName: nil, bundle: nil)
@@ -4144,23 +5706,77 @@ private final class EditorFlowReviewViewController: NSViewController {
 
     override func loadView() {
         let root = NSView()
+        root.wantsLayer = true
+        root.layer?.backgroundColor = palette.surface.cgColor
         let scale = zoomScale
         let count = suggestion.edits.count
-        let title = NSTextField(labelWithString: "Review \(count) \(count == 1 ? "change" : "changes")")
+        let title = NSTextField(labelWithString: suggestion.headerText)
         title.font = .systemFont(ofSize: 13 * scale, weight: .semibold)
-        title.textColor = .labelColor
+        title.textColor = palette.primaryText
         title.setAccessibilityLabel(title.stringValue)
 
-        let changeLabels = suggestion.edits.map { edit -> NSTextField in
-            let label = NSTextField(labelWithString: "\(edit.originalText) → \(edit.replacementText)")
-            label.font = editorFont
-            label.textColor = .labelColor
+        let labelWidth = max(64 * scale, 1)
+        func sentenceRow(
+            label labelText: String,
+            sentence: String,
+            changedRanges: [NSRange],
+            changedColor: NSColor
+        ) -> (NSStackView, NSTextField) {
+            let label = NSTextField(labelWithString: labelText)
+            label.font = EditorFlowCueLayout.sourceLabelFont(scale: scale)
+            label.textColor = palette.secondaryText
+            label.alignment = .right
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.widthAnchor.constraint(equalToConstant: labelWidth).isActive = true
+
+            let value = NSMutableAttributedString(
+                string: sentence,
+                attributes: [
+                    .font: editorFont,
+                    .foregroundColor: palette.primaryText,
+                ]
+            )
+            for range in changedRanges where range.length > 0 && NSMaxRange(range) <= value.length {
+                value.addAttribute(.foregroundColor, value: changedColor, range: range)
+            }
+            let sentenceField = NSTextField(labelWithAttributedString: value)
+            sentenceField.maximumNumberOfLines = 0
+            sentenceField.lineBreakMode = .byWordWrapping
+            sentenceField.cell?.wraps = true
+            sentenceField.setAccessibilityLabel("\(labelText): \(sentence)")
+
+            let row = NSStackView(views: [label, sentenceField])
+            row.orientation = .horizontal
+            row.alignment = .top
+            row.spacing = 10 * scale
+            return (row, sentenceField)
+        }
+        let (originalRow, originalField) = sentenceRow(
+            label: "Original",
+            sentence: suggestion.originalSentence,
+            changedRanges: suggestion.originalChangedRanges,
+            changedColor: palette.removedText
+        )
+        let (correctedRow, correctedField) = sentenceRow(
+            label: "Corrected",
+            sentence: suggestion.correctedSentence,
+            changedRanges: suggestion.correctedChangedRanges,
+            changedColor: palette.addedText
+        )
+        let preview = NSStackView(views: [originalRow, correctedRow])
+        preview.orientation = .vertical
+        preview.alignment = .leading
+        preview.spacing = 8 * scale
+
+        let changeLabels = suggestion.displayChanges.map { change -> NSTextField in
+            let description = suggestionDescription(for: change)
+            let label = NSTextField(labelWithString: description)
+            label.font = .systemFont(ofSize: 12 * scale, weight: .regular)
+            label.textColor = palette.secondaryText
             label.maximumNumberOfLines = 0
             label.lineBreakMode = .byWordWrapping
             label.cell?.wraps = true
-            label.setAccessibilityLabel(
-                "Replace “\(edit.originalText)” with “\(edit.replacementText)”."
-            )
+            label.setAccessibilityLabel(description)
             return label
         }
 
@@ -4171,10 +5787,12 @@ private final class EditorFlowReviewViewController: NSViewController {
 
         let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancelReview(_:)))
         cancel.bezelStyle = .rounded
+        cancel.font = .systemFont(ofSize: 12 * scale, weight: .regular)
         cancel.keyEquivalent = "\u{1b}"
         cancel.setAccessibilityLabel("Cancel correction")
         let replace = NSButton(title: "Replace", target: self, action: #selector(replaceText(_:)))
         replace.bezelStyle = .rounded
+        replace.font = .systemFont(ofSize: 12 * scale, weight: .regular)
         replace.keyEquivalent = "\r"
         replace.setAccessibilityLabel(
             count == 1 ? "Replace text" : "Replace text with \(count) reviewed changes"
@@ -4185,38 +5803,97 @@ private final class EditorFlowReviewViewController: NSViewController {
         buttons.orientation = .horizontal
         buttons.alignment = .centerY
         buttons.spacing = 8 * scale
+        cancel.heightAnchor.constraint(greaterThanOrEqualToConstant: 30 * scale).isActive = true
+        replace.heightAnchor.constraint(greaterThanOrEqualToConstant: 30 * scale).isActive = true
 
-        let content = NSStackView(views: [title, changes, buttons])
-        content.orientation = .vertical
-        content.alignment = .leading
-        content.spacing = 12 * scale
-        content.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(content)
-
-        let longestChangeWidth = suggestion.fullChangeRows.map {
-            ($0 as NSString).size(withAttributes: [.font: editorFont]).width
-        }.max() ?? 0
+        let longestSentenceWidth = max(
+            (suggestion.originalSentence as NSString).size(withAttributes: [.font: editorFont]).width,
+            (suggestion.correctedSentence as NSString).size(withAttributes: [.font: editorFont]).width
+        )
         let horizontalInset = 16 * scale
         let verticalInset = 14 * scale
+        let widthLimit = min(620 * scale, maximumWidth)
+        let minimumWidth = min(320 * scale, widthLimit)
         let width = min(
-            520 * scale,
-            max(280 * scale, ceil(longestChangeWidth) + horizontalInset * 2)
+            widthLimit,
+            max(minimumWidth, ceil(longestSentenceWidth) + labelWidth + 10 * scale + horizontalInset * 2)
         )
+        let sentenceFieldWidth = max(
+            1,
+            width - horizontalInset * 2 - labelWidth - 10 * scale
+        )
+        originalField.preferredMaxLayoutWidth = sentenceFieldWidth
+        correctedField.preferredMaxLayoutWidth = sentenceFieldWidth
         for label in changeLabels {
-            label.preferredMaxLayoutWidth = width - horizontalInset * 2
+            label.preferredMaxLayoutWidth = max(1, width - horizontalInset * 2)
         }
+
+        let body = NSStackView(views: [preview, changes])
+        body.orientation = .vertical
+        body.alignment = .leading
+        body.spacing = 12 * scale
+        body.translatesAutoresizingMaskIntoConstraints = false
+        let bodyDocument = EditorFlowReviewDocumentView()
+        bodyDocument.translatesAutoresizingMaskIntoConstraints = false
+        bodyDocument.addSubview(body)
+
+        let scrollView = NSScrollView()
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasHorizontalScroller = false
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.documentView = bodyDocument
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        title.translatesAutoresizingMaskIntoConstraints = false
+        buttons.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(title)
+        root.addSubview(scrollView)
+        root.addSubview(buttons)
+
+        let bodyWidth = max(1, width - horizontalInset * 2)
         NSLayoutConstraint.activate([
             root.widthAnchor.constraint(equalToConstant: width),
-            content.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: horizontalInset),
-            content.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -horizontalInset),
-            content.topAnchor.constraint(equalTo: root.topAnchor, constant: verticalInset),
-            content.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -verticalInset),
+            title.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: horizontalInset),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -horizontalInset),
+            title.topAnchor.constraint(equalTo: root.topAnchor, constant: verticalInset),
+            scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: horizontalInset),
+            scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -horizontalInset),
+            scrollView.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 12 * scale),
+            buttons.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -horizontalInset),
+            buttons.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 12 * scale),
+            buttons.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -verticalInset),
+            body.leadingAnchor.constraint(equalTo: bodyDocument.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: bodyDocument.trailingAnchor),
+            body.topAnchor.constraint(equalTo: bodyDocument.topAnchor),
+            body.bottomAnchor.constraint(equalTo: bodyDocument.bottomAnchor),
+            bodyDocument.widthAnchor.constraint(equalToConstant: bodyWidth),
         ])
+        bodyDocument.layoutSubtreeIfNeeded()
+        let bodyHeight = max(1, ceil(body.fittingSize.height))
+        bodyDocument.frame = NSRect(x: 0, y: 0, width: bodyWidth, height: bodyHeight)
+        let maximumBodyHeight = max(120 * scale, min(520 * scale, maximumHeight * 0.58))
+        let visibleBodyHeight = min(bodyHeight, maximumBodyHeight)
+        scrollView.heightAnchor.constraint(equalToConstant: visibleBodyHeight).isActive = true
         self.view = root
         preferredContentSize = NSSize(
             width: width,
-            height: max(112 * scale, ceil(content.fittingSize.height) + verticalInset * 2)
+            height: max(
+                112 * scale,
+                ceil(title.fittingSize.height)
+                    + visibleBodyHeight
+                    + ceil(buttons.fittingSize.height)
+                    + verticalInset * 2
+                    + 24 * scale
+            )
         )
+    }
+
+    private func suggestionDescription(for change: EditorFlowDisplayChange) -> String {
+        if change.originalText.isEmpty { return "Insert “\(change.replacementText)”" }
+        if change.replacementText.isEmpty { return "Remove “\(change.originalText)”" }
+        return "Replace “\(change.originalText)” with “\(change.replacementText)”"
     }
 
     override func viewDidAppear() {
@@ -4227,7 +5904,8 @@ private final class EditorFlowReviewViewController: NSViewController {
     }
 
     @objc private func replaceText(_ sender: Any?) {
-        onReplace()
+        guard let button = sender as? NSButton else { return }
+        onReplace(button)
     }
 
     @objc private func cancelReview(_ sender: Any?) {
@@ -4251,19 +5929,34 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
     var flowProseSuggestionAcceptanceHandler: ((EditorFlowProseSuggestion, Bool) -> Bool)?
     var flowSuggestionDismissalHandler: (() -> Void)?
     var flowSuggestionCancellationHandler: (() -> Void)?
+    var flowProseSuggestionCancellationHandler: (() -> Void)?
     var writingToolsRequestHandler: (() -> Bool)?
     var flowSuggestion: EditorFlowSuggestion? {
         didSet {
             guard flowSuggestion != oldValue else { return }
+            let preservesRenderedPresentation = lastRenderedFlowSuggestion == oldValue
+                && flowSuggestion?.source == oldValue?.source
+                && flowSuggestion?.originalSentence == oldValue?.originalSentence
+                && flowSuggestion?.correctedSentence == oldValue?.correctedSentence
+                && flowSuggestion?.edits == oldValue?.edits
+            lastRenderedFlowSuggestion = preservesRenderedPresentation ? flowSuggestion : nil
             closeFlowReviewPopover(restoreEditorFocus: false)
             needsDisplay = true
             refreshFlowAccessibilityPresentation()
-            if let flowSuggestion {
+            let announcesNewRepair = flowSuggestion.map { suggestion in
+                oldValue?.source != suggestion.source
+                    || oldValue?.originalSentence != suggestion.originalSentence
+                    || oldValue?.correctedSentence != suggestion.correctedSentence
+            } == true
+            if let flowSuggestion, announcesNewRepair {
+                let requiresReview = flowCueLayout(for: flowSuggestion).mode == .review
                 NSAccessibility.post(
                     element: self,
                     notification: .announcementRequested,
                     userInfo: [
-                        .announcement: flowSuggestion.accessibilityText,
+                        .announcement: requiresReview
+                            ? flowSuggestion.accessibilityReviewAnnouncementText
+                            : flowSuggestion.accessibilityAnnouncementText,
                         .priority: NSAccessibilityPriorityLevel.medium.rawValue,
                     ]
                 )
@@ -4273,6 +5966,7 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
     var flowProseSuggestion: EditorFlowProseSuggestion? {
         didSet {
             guard flowProseSuggestion != oldValue else { return }
+            lastRenderedFlowProseSuggestion = nil
             needsDisplay = true
             refreshFlowAccessibilityPresentation()
             if let flowProseSuggestion {
@@ -4288,9 +5982,19 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
         }
     }
     fileprivate var flowCuePalette = EditorFlowCuePalette.native {
-        didSet { needsDisplay = true }
+        didSet {
+            lastRenderedFlowSuggestion = nil
+            lastRenderedFlowProseSuggestion = nil
+            needsDisplay = true
+            if isFlowReviewPopoverShown {
+                closeFlowReviewPopover(restoreEditorFocus: true)
+            }
+        }
     }
     private var flowReviewPopover: NSPopover?
+    private(set) var isFlowExplicitConfirmationInProgress = false
+    private var lastRenderedFlowSuggestion: EditorFlowSuggestion?
+    private var lastRenderedFlowProseSuggestion: EditorFlowProseSuggestion?
     var isFlowReviewPopoverShown: Bool {
         flowReviewPopover?.isShown == true
     }
@@ -4307,12 +6011,14 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
         didSet {
             guard zoomScale != oldValue else { return }
             refreshContentWidthLayout()
+            invalidateFlowPresentationForGeometryChange()
         }
     }
     var contentWidthPercent = ContentWidthPreference.defaultValue {
         didSet {
             guard contentWidthPercent != oldValue else { return }
             refreshContentWidthLayout()
+            invalidateFlowPresentationForGeometryChange()
         }
     }
     private var wikilinkSuggestionIndex = 0
@@ -4375,6 +6081,18 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         refreshContentWidthLayout()
+        invalidateFlowPresentationForGeometryChange()
+    }
+
+    func invalidateFlowPresentationForGeometryChange() {
+        lastRenderedFlowSuggestion = nil
+        lastRenderedFlowProseSuggestion = nil
+        if isFlowReviewPopoverShown {
+            closeFlowReviewPopover(restoreEditorFocus: true)
+        }
+        needsDisplay = true
+        refreshFlowAccessibilityPresentation()
+        scheduleFlowProseGeometryValidation()
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -4626,6 +6344,39 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
         )
     }
 
+    func registerFlowSelectionTransition(
+        undoSelection: NSRange,
+        redoSelection: NSRange
+    ) {
+        registerFlowSelectionTransition(
+            undoSelection: undoSelection,
+            redoSelection: redoSelection,
+            restoresUndoSelection: true
+        )
+    }
+
+    private func registerFlowSelectionTransition(
+        undoSelection: NSRange,
+        redoSelection: NSRange,
+        restoresUndoSelection: Bool
+    ) {
+        let selection = restoresUndoSelection ? undoSelection : redoSelection
+        undoManager?.registerUndo(withTarget: self) { textView in
+            textView.registerFlowSelectionTransition(
+                undoSelection: undoSelection,
+                redoSelection: redoSelection,
+                restoresUndoSelection: !restoresUndoSelection
+            )
+            let sourceLength = (textView.string as NSString).length
+            guard selection.location >= 0,
+                  selection.length >= 0,
+                  NSMaxRange(selection) <= sourceLength
+            else { return }
+            textView.setSelectedRange(selection)
+            textView.scrollRangeToVisible(selection)
+        }
+    }
+
     override func keyDown(with event: NSEvent) {
         if #available(macOS 15.0, *), isWritingToolsActive {
             super.keyDown(with: event)
@@ -4637,13 +6388,18 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
         if event.keyCode == 124,
            modifiers == [.option],
            let flowProseSuggestion {
+            guard canDirectlyAcceptFlowProseSuggestion(flowProseSuggestion) else {
+                flowProseSuggestionCancellationHandler?()
+                super.keyDown(with: event)
+                return
+            }
             if flowProseSuggestionAcceptanceHandler?(
                 flowProseSuggestion,
                 true
             ) == true {
                 return
             }
-            super.keyDown(with: event)
+            NSSound.beep()
             return
         }
         if let flowSuggestion,
@@ -4655,6 +6411,35 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
             return
         }
         if event.keyCode == 48, modifiers.isEmpty {
+            if let flowSuggestion {
+                if hasRenderedFlowSuggestion(flowSuggestion) {
+                    if flowCueLayout(for: flowSuggestion).mode == .review {
+                        if !showFlowReviewPopover(for: flowSuggestion) {
+                            NSSound.beep()
+                        }
+                        return
+                    }
+                    if flowSuggestionAcceptanceHandler?(flowSuggestion) == true {
+                        return
+                    }
+                    NSSound.beep()
+                    return
+                }
+                flowSuggestionCancellationHandler?()
+            }
+            if let flowProseSuggestion {
+                if canDirectlyAcceptFlowProseSuggestion(flowProseSuggestion) {
+                    if flowProseSuggestionAcceptanceHandler?(
+                        flowProseSuggestion,
+                        false
+                    ) == true {
+                        return
+                    }
+                    NSSound.beep()
+                    return
+                }
+                flowProseSuggestionCancellationHandler?()
+            }
             if completeActiveWikilink() {
                 return
             }
@@ -4663,31 +6448,18 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
                performMarkdownListEdit(listCommand) {
                 return
             }
-            if let flowSuggestion {
-                if flowCueLayout(for: flowSuggestion).mode == .review {
-                    if !showFlowReviewPopover(for: flowSuggestion) {
-                        NSSound.beep()
-                    }
-                    return
-                }
-                if flowSuggestionAcceptanceHandler?(flowSuggestion) == true {
-                    return
-                }
-            }
-            if let flowProseSuggestion,
-               flowProseSuggestionAcceptanceHandler?(
-                flowProseSuggestion,
-                false
-               ) == true {
-                return
-            }
         } else if event.keyCode == 53,
                   modifiers.isEmpty,
                   flowSuggestion != nil || flowProseSuggestion != nil {
             flowSuggestionDismissalHandler?()
             return
+        } else if event.charactersIgnoringModifiers == " ",
+                  modifiers.isEmpty,
+                  flowSuggestion != nil {
+            super.keyDown(with: event)
+            return
         } else {
-            flowSuggestionDismissalHandler?()
+            flowSuggestionCancellationHandler?()
         }
 
         if markdownShortcutsEnabled,
@@ -4815,7 +6587,7 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
     }
 
     override func resignFirstResponder() -> Bool {
-        if flowReviewPopover == nil {
+        if !isFlowReviewPopoverShown {
             flowSuggestionCancellationHandler?()
         }
         return super.resignFirstResponder()
@@ -4837,8 +6609,23 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
             editorFont: font
                 ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
             zoomScale: max(0.1, zoomScale),
-            onReplace: { [weak self] in
-                guard let self else { return }
+            maximumWidth: max(
+                1,
+                (window?.screen?.visibleFrame.width ?? NSScreen.main?.visibleFrame.width ?? 640) - 40
+            ),
+            maximumHeight: max(
+                1,
+                (window?.screen?.visibleFrame.height ?? NSScreen.main?.visibleFrame.height ?? 760) - 40
+            ),
+            palette: flowCuePalette,
+            onReplace: { [weak self] button in
+                guard let self,
+                      NSApp.isActive,
+                      self.isFlowReviewPopoverShown,
+                      button.window === self.flowReviewPopover?.contentViewController?.view.window
+                else { return }
+                self.isFlowExplicitConfirmationInProgress = true
+                defer { self.isFlowExplicitConfirmationInProgress = false }
                 let accepted = self.flowSuggestionAcceptanceHandler?(suggestion) == true
                 self.closeFlowReviewPopover(restoreEditorFocus: true)
                 if !accepted {
@@ -4858,7 +6645,12 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
         popover.delegate = self
         flowReviewPopover = popover
         popover.show(relativeTo: geometry.rect, of: self, preferredEdge: .maxY)
-        return popover.isShown
+        guard popover.isShown else {
+            flowReviewPopover = nil
+            popover.close()
+            return false
+        }
+        return true
     }
 
     private func closeFlowReviewPopover(restoreEditorFocus: Bool) {
@@ -4881,8 +6673,13 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
     }
 
     private func refreshFlowAccessibilityPresentation() {
+        let repairHelp = flowSuggestion.map { suggestion in
+            flowCueLayout(for: suggestion).mode == .review
+                ? suggestion.accessibilityReviewText
+                : suggestion.accessibilityText
+        }
         setAccessibilityHelp(
-            flowSuggestion?.accessibilityText ?? flowProseSuggestion?.accessibilityText
+            repairHelp ?? flowProseSuggestion?.accessibilityText
         )
         refreshFlowAccessibilityActions()
     }
@@ -4890,11 +6687,20 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
     private func refreshFlowAccessibilityActions() {
         if let suggestion = flowSuggestion {
             let changes = suggestion.exactChangeDescription
-            let accept = NSAccessibilityCustomAction(
-                name: "Accept correction: \(changes)",
+            let canApplyDirectly = flowCueLayout(for: suggestion).mode == .direct
+            let primary = NSAccessibilityCustomAction(
+                name: canApplyDirectly
+                    ? "Apply \(suggestion.headerText): \(changes)"
+                    : "Review \(suggestion.headerText): \(changes)",
                 handler: { [weak self] in
                     guard let self, self.flowSuggestion == suggestion else { return false }
-                    return self.flowSuggestionAcceptanceHandler?(suggestion) == true
+                    if canApplyDirectly {
+                        guard NSApp.isActive else { return false }
+                        self.isFlowExplicitConfirmationInProgress = true
+                        defer { self.isFlowExplicitConfirmationInProgress = false }
+                        return self.flowSuggestionAcceptanceHandler?(suggestion) == true
+                    }
+                    return self.showFlowReviewPopover(for: suggestion)
                 }
             )
             let dismiss = NSAccessibilityCustomAction(
@@ -4911,7 +6717,9 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
                     self?.showFlowReviewPopover(for: suggestion) == true
                 }
             )
-            setAccessibilityCustomActions([accept, dismiss, review])
+            setAccessibilityCustomActions(
+                canApplyDirectly ? [primary, dismiss, review] : [primary, dismiss]
+            )
             return
         }
         if let suggestion = flowProseSuggestion {
@@ -4919,6 +6727,9 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
                 name: "Accept completion: \(suggestion.continuation)",
                 handler: { [weak self] in
                     guard let self, self.flowProseSuggestion == suggestion else { return false }
+                    guard NSApp.isActive else { return false }
+                    self.isFlowExplicitConfirmationInProgress = true
+                    defer { self.isFlowExplicitConfirmationInProgress = false }
                     return self.flowProseSuggestionAcceptanceHandler?(suggestion, false) == true
                 }
             )
@@ -4926,6 +6737,9 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
                 name: "Accept next completion word",
                 handler: { [weak self] in
                     guard let self, self.flowProseSuggestion == suggestion else { return false }
+                    guard NSApp.isActive else { return false }
+                    self.isFlowExplicitConfirmationInProgress = true
+                    defer { self.isFlowExplicitConfirmationInProgress = false }
                     return self.flowProseSuggestionAcceptanceHandler?(suggestion, true) == true
                 }
             )
@@ -4961,7 +6775,7 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
             string: suggestion.continuation,
             attributes: [
                 .font: editorFont,
-                .foregroundColor: flowCuePalette.secondaryText.withAlphaComponent(0.72),
+                .foregroundColor: flowCuePalette.secondaryText.withAlphaComponent(0.40),
             ]
         )
         let size = rendered.size()
@@ -4972,6 +6786,61 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
         let rect = NSRect(origin: origin, size: size)
         guard rect.insetBy(dx: -4, dy: -4).intersects(dirtyRect) else { return }
         rendered.draw(at: origin)
+        lastRenderedFlowProseSuggestion = suggestion
+    }
+
+    func canDirectlyAcceptFlowProseSuggestion(
+        _ suggestion: EditorFlowProseSuggestion
+    ) -> Bool {
+        lastRenderedFlowProseSuggestion == suggestion
+            && window?.firstResponder === self
+            && selectedRange() == suggestion.selectedRange
+            && visibleFlowProseContinuation(
+                suggestion.continuation,
+                atUTF16Offset: suggestion.caretUTF16Offset
+            ) == suggestion.continuation
+    }
+
+    func markFlowProseSuggestionAsRendered(_ suggestion: EditorFlowProseSuggestion) {
+        guard flowProseSuggestion == suggestion,
+              window?.firstResponder === self,
+              selectedRange() == suggestion.selectedRange,
+              visibleFlowProseContinuation(
+                  suggestion.continuation,
+                  atUTF16Offset: suggestion.caretUTF16Offset
+              ) == suggestion.continuation
+        else { return }
+        lastRenderedFlowProseSuggestion = suggestion
+    }
+
+    private func scheduleFlowProseGeometryValidation() {
+        lastRenderedFlowProseSuggestion = nil
+        guard let suggestion = flowProseSuggestion else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.flowProseSuggestion == suggestion
+            else { return }
+            if let layoutManager = self.layoutManager,
+               let textContainer = self.textContainer {
+                layoutManager.ensureLayout(for: textContainer)
+            }
+            self.cancelFlowProseSuggestionIfNotFullyVisible()
+        }
+    }
+
+    private func cancelFlowProseSuggestionIfNotFullyVisible() {
+        guard let suggestion = flowProseSuggestion,
+              visibleFlowProseContinuation(
+                  suggestion.continuation,
+                  atUTF16Offset: suggestion.caretUTF16Offset
+              ) != suggestion.continuation
+        else { return }
+        lastRenderedFlowProseSuggestion = nil
+        if let flowProseSuggestionCancellationHandler {
+            flowProseSuggestionCancellationHandler()
+        } else {
+            flowProseSuggestion = nil
+        }
     }
 
     func visibleFlowProseContinuation(
@@ -5018,31 +6887,126 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
 
         let layout = geometry.layout
         let drawRect = geometry.rect
+        guard visibleRect.contains(drawRect) else { return }
         guard drawRect.insetBy(dx: -28, dy: -28).intersects(dirtyRect) else { return }
         drawFlowCueSurface(in: drawRect, cornerRadius: layout.cornerRadius)
 
-        for (index, row) in layout.rows.enumerated() {
-            let rendered = attributedFlowCueRow(
-                row,
-                includesTabHint: index == layout.rows.count - 1
-            )
+        if layout.mode == .review {
+            let rendered = attributedFlowReviewCue(layout.reviewText ?? "Review")
             let contentSize = rendered.size()
-            let rowRect = NSRect(
+            let clipRect = NSRect(
                 x: drawRect.minX + layout.horizontalInset,
-                y: drawRect.minY + CGFloat(index) * layout.rowHeight,
-                width: drawRect.width - layout.horizontalInset * 2,
-                height: layout.rowHeight
+                y: drawRect.minY,
+                width: max(0, drawRect.width - layout.horizontalInset * 2),
+                height: drawRect.height
             )
             NSGraphicsContext.saveGraphicsState()
-            NSBezierPath(rect: rowRect).addClip()
-            rendered.draw(
-                at: NSPoint(
-                    x: rowRect.minX,
-                    y: rowRect.midY - contentSize.height / 2
-                )
-            )
+            NSBezierPath(rect: clipRect).addClip()
+            rendered.draw(at: NSPoint(
+                x: drawRect.minX + layout.horizontalInset,
+                y: drawRect.midY - contentSize.height / 2
+            ))
             NSGraphicsContext.restoreGraphicsState()
+            lastRenderedFlowSuggestion = suggestion
+            return
         }
+
+        let scale = max(0.1, zoomScale)
+        let headerRect = NSRect(
+            x: drawRect.minX + layout.horizontalInset,
+            y: drawRect.minY,
+            width: drawRect.width - layout.horizontalInset * 2,
+            height: layout.headerHeight
+        )
+        let header = NSAttributedString(
+            string: suggestion.headerText,
+            attributes: [
+                .font: EditorFlowCueLayout.headerFont(scale: scale),
+                .foregroundColor: flowCuePalette.primaryText,
+            ]
+        )
+        let headerSize = header.size()
+        header.draw(at: NSPoint(
+            x: headerRect.minX,
+            y: headerRect.midY - headerSize.height / 2
+        ))
+
+        let originalRect = NSRect(
+            x: drawRect.minX,
+            y: NSMaxY(headerRect),
+            width: drawRect.width,
+            height: layout.originalRowHeight
+        )
+        drawFlowSentenceRow(
+            label: "Original",
+            sentence: suggestion.originalSentence,
+            changedRanges: suggestion.originalChangedRanges,
+            changedColor: flowCuePalette.removedText,
+            in: originalRect,
+            layout: layout
+        )
+        let correctedRect = NSRect(
+            x: drawRect.minX,
+            y: NSMaxY(originalRect),
+            width: drawRect.width,
+            height: layout.correctedRowHeight
+        )
+        drawFlowSentenceRow(
+            label: "Corrected",
+            sentence: suggestion.correctedSentence,
+            changedRanges: suggestion.correctedChangedRanges,
+            changedColor: flowCuePalette.addedText,
+            in: correctedRect,
+            layout: layout
+        )
+
+        let footerRect = NSRect(
+            x: drawRect.minX + layout.horizontalInset,
+            y: NSMaxY(correctedRect),
+            width: drawRect.width - layout.horizontalInset * 2,
+            height: layout.footerHeight
+        )
+        let footer = NSAttributedString(
+            string: "Tab Apply   ⌥↩ Review   Esc Dismiss",
+            attributes: [
+                .font: EditorFlowCueLayout.shortcutFont(scale: scale),
+                .foregroundColor: flowCuePalette.secondaryText,
+            ]
+        )
+        let footerSize = footer.size()
+        footer.draw(at: NSPoint(
+            x: footerRect.minX,
+            y: footerRect.midY - footerSize.height / 2
+        ))
+        lastRenderedFlowSuggestion = suggestion
+    }
+
+    func invalidateRenderedFlowSuggestion() {
+        lastRenderedFlowSuggestion = nil
+        needsDisplay = true
+    }
+
+    func hasRenderedFlowSuggestion(_ suggestion: EditorFlowSuggestion) -> Bool {
+        lastRenderedFlowSuggestion == suggestion
+            && window?.firstResponder === self
+    }
+
+    func canDirectlyAcceptFlowSuggestion(_ suggestion: EditorFlowSuggestion) -> Bool {
+        guard lastRenderedFlowSuggestion == suggestion,
+              window?.firstResponder === self,
+              !isFlowReviewPopoverShown,
+              let geometry = flowCueGeometry(for: suggestion),
+              geometry.layout.mode == .direct,
+              visibleRect.contains(geometry.rect)
+        else { return false }
+        return true
+    }
+
+    func isFlowSuggestionAnchorVisible(_ suggestion: EditorFlowSuggestion) -> Bool {
+        guard let anchor = caretRect(atUTF16Offset: NSMaxRange(suggestion.sentenceRange)) else {
+            return false
+        }
+        return anchor.intersects(visibleRect)
     }
 
     func flowCueLayout(for suggestion: EditorFlowSuggestion) -> EditorFlowCueLayout {
@@ -5054,6 +7018,7 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
         return EditorFlowCueLayout.make(
             for: suggestion,
             availableWidth: availableWidth,
+            availableHeight: visibleRect.height,
             editorFont: editorFont,
             zoomScale: scale
         )
@@ -5064,7 +7029,7 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
     ) -> (layout: EditorFlowCueLayout, rect: NSRect)? {
         let layout = flowCueLayout(for: suggestion)
         guard let origin = flowSuggestionOrigin(
-            atUTF16Offset: suggestion.caretUTF16Offset,
+            atUTF16Offset: NSMaxRange(suggestion.sentenceRange),
             cueSize: layout.size
         ) else { return nil }
         let edgeInset = max(1, (8 * max(0.1, zoomScale)).rounded())
@@ -5079,10 +7044,7 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
         return (layout, NSRect(origin: drawOrigin, size: layout.size))
     }
 
-    private func attributedFlowCueRow(
-        _ row: String,
-        includesTabHint: Bool
-    ) -> NSAttributedString {
+    private func attributedFlowReviewCue(_ row: String) -> NSAttributedString {
         let editorFont = font
             ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         let rendered = NSMutableAttributedString(
@@ -5092,16 +7054,69 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
                 .foregroundColor: flowCuePalette.primaryText,
             ]
         )
-        if includesTabHint {
-            rendered.append(NSAttributedString(
-                string: "  Tab",
-                attributes: [
-                    .font: EditorFlowCueLayout.shortcutFont(scale: max(0.1, zoomScale)),
-                    .foregroundColor: flowCuePalette.secondaryText,
-                ]
-            ))
-        }
+        rendered.append(NSAttributedString(
+            string: "  Tab",
+            attributes: [
+                .font: EditorFlowCueLayout.shortcutFont(scale: max(0.1, zoomScale)),
+                .foregroundColor: flowCuePalette.secondaryText,
+            ]
+        ))
         return rendered
+    }
+
+    private func drawFlowSentenceRow(
+        label: String,
+        sentence: String,
+        changedRanges: [NSRange],
+        changedColor: NSColor,
+        in rect: NSRect,
+        layout: EditorFlowCueLayout
+    ) {
+        let scale = max(0.1, zoomScale)
+        let labelRect = NSRect(
+            x: rect.minX + layout.horizontalInset,
+            y: rect.minY,
+            width: layout.labelWidth,
+            height: rect.height
+        )
+        let labelValue = NSAttributedString(
+            string: label,
+            attributes: [
+                .font: EditorFlowCueLayout.sourceLabelFont(scale: scale),
+                .foregroundColor: flowCuePalette.secondaryText,
+            ]
+        )
+        let labelSize = labelValue.size()
+        labelValue.draw(at: NSPoint(
+            x: labelRect.maxX - labelSize.width,
+            y: labelRect.minY + max(0, (6 * scale).rounded())
+        ))
+
+        let editorFont = font
+            ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byWordWrapping
+        let value = NSMutableAttributedString(
+            string: sentence,
+            attributes: [
+                .font: editorFont,
+                .foregroundColor: flowCuePalette.primaryText,
+                .paragraphStyle: paragraph,
+            ]
+        )
+        for range in changedRanges where range.length > 0 && NSMaxRange(range) <= value.length {
+            value.addAttribute(.foregroundColor, value: changedColor, range: range)
+        }
+        let textRect = NSRect(
+            x: labelRect.maxX + layout.labelGap,
+            y: rect.minY + max(0, (6 * scale).rounded()),
+            width: rect.maxX - layout.horizontalInset - labelRect.maxX - layout.labelGap,
+            height: rect.height - max(0, (12 * scale).rounded())
+        )
+        value.draw(
+            with: textRect,
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
     }
 
     private func drawFlowCueSurface(in rect: NSRect, cornerRadius: CGFloat) {
@@ -5144,7 +7159,10 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
         path.fill()
         let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
         let lineWidth = 1 / max(1, scale)
-        flowCuePalette.ring.setStroke()
+        let ringColor = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+            ? flowCuePalette.primaryText.withAlphaComponent(0.30)
+            : flowCuePalette.ring
+        ringColor.setStroke()
         path.lineWidth = lineWidth
         path.stroke()
     }
@@ -5153,7 +7171,9 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
         atUTF16Offset offset: Int,
         cueSize: NSSize
     ) -> NSPoint? {
-        guard let localRect = caretRect(atUTF16Offset: offset) else { return nil }
+        guard let localRect = caretRect(atUTF16Offset: offset),
+              localRect.intersects(visibleRect)
+        else { return nil }
         let spacing = max(1, (6 * max(0.1, zoomScale)).rounded())
         let belowCaret = localRect.maxY + spacing
         let y = belowCaret + cueSize.height <= visibleRect.maxY

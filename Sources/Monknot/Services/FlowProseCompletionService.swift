@@ -116,7 +116,8 @@ enum FlowProseCompletionSanitizer {
               candidate.rangeOfCharacter(from: .newlines) == nil,
               !containsUnsafeInvisibleScalar(candidate),
               !containsMarkdown(candidate),
-              let capped = cappedContinuation(candidate)
+              let capped = cappedContinuation(candidate),
+              !repeatsEarlierContext(capped, context: context)
         else {
             return nil
         }
@@ -286,6 +287,137 @@ enum FlowProseCompletionSanitizer {
 
         let result = String(value[..<end]).trimmingCharacters(in: .whitespaces)
         return result.isEmpty ? nil : result
+    }
+
+    private static func repeatsEarlierContext(_ candidate: String, context: String) -> Bool {
+        let candidateTokens = Array(
+            normalizedLexicalTokens(in: candidate).prefix(maximumVisibleWordCount)
+        )
+        let contextTokens = normalizedLexicalTokens(in: context)
+        let shortOverlapLimit = min(3, candidateTokens.count, contextTokens.count)
+        if shortOverlapLimit > 0 {
+            for count in stride(from: shortOverlapLimit, through: 1, by: -1) {
+                let contextStart = contextTokens.count - count
+                let repeatsSuffix = (0..<count).allSatisfy { offset in
+                    typoEquivalent(
+                        candidateTokens[offset],
+                        contextTokens[contextStart + offset]
+                    )
+                }
+                if repeatsSuffix { return true }
+            }
+        }
+        guard candidateTokens.count >= 4, contextTokens.count >= 4 else {
+            return false
+        }
+
+        // Scan the bounded proposal, rather than only its first token. Models
+        // sometimes add a bridge word before restating and correcting the text
+        // immediately before the caret. Four matched lexical tokens is long
+        // enough to distinguish that from ordinary connective language. The
+        // 75% threshold admits common typing errors without treating loosely
+        // related prose as a restatement.
+        for candidateStart in candidateTokens.indices {
+            for contextStart in contextTokens.indices {
+                let comparableCount = min(
+                    candidateTokens.count - candidateStart,
+                    contextTokens.count - contextStart
+                )
+                guard comparableCount >= 4 else { continue }
+
+                var matchCount = 0
+                for offset in 0..<comparableCount {
+                    if typoEquivalent(
+                        candidateTokens[candidateStart + offset],
+                        contextTokens[contextStart + offset]
+                    ) {
+                        matchCount += 1
+                    }
+
+                    let comparedCount = offset + 1
+                    if comparedCount >= 4,
+                       matchCount >= 4,
+                       matchCount * 4 >= comparedCount * 3
+                    {
+                        return true
+                    }
+                }
+            }
+        }
+        return false
+    }
+
+    private static func normalizedLexicalTokens(in value: String) -> [String] {
+        wordRanges(in: value).compactMap { range in
+            let folded = value[range]
+                .folding(
+                    options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+                    locale: Locale(identifier: "en_US_POSIX")
+                )
+            let normalized = folded.filter { $0.isLetter || $0.isNumber }
+            return normalized.isEmpty ? nil : normalized
+        }
+    }
+
+    private static func typoEquivalent(_ lhs: String, _ rhs: String) -> Bool {
+        if lhs == rhs { return true }
+
+        let left = Array(lhs)
+        let right = Array(rhs)
+        if left.count == right.count,
+           left.count >= 3,
+           isSingleAdjacentTransposition(left, right) {
+            return true
+        }
+        let longestCount = max(left.count, right.count)
+        guard min(left.count, right.count) >= 4,
+              longestCount <= maximumVisibleGraphemeCount,
+              left.first == right.first
+        else {
+            return false
+        }
+
+        let allowedDistance = longestCount >= 7 ? 2 : 1
+        guard abs(left.count - right.count) <= allowedDistance else {
+            return false
+        }
+        return lexicalDistance(left, right) <= allowedDistance
+    }
+
+    private static func isSingleAdjacentTransposition(
+        _ lhs: [Character],
+        _ rhs: [Character]
+    ) -> Bool {
+        let differences = lhs.indices.filter { lhs[$0] != rhs[$0] }
+        guard differences.count == 2,
+              differences[1] == differences[0] + 1
+        else { return false }
+        let first = differences[0]
+        let second = differences[1]
+        return lhs[first] == rhs[second] && lhs[second] == rhs[first]
+    }
+
+    private static func lexicalDistance(
+        _ lhs: [Character],
+        _ rhs: [Character]
+    ) -> Int {
+        var previous = Array(0...rhs.count)
+
+        for leftIndex in lhs.indices {
+            var current = Array(repeating: 0, count: rhs.count + 1)
+            current[0] = leftIndex + 1
+
+            for rightIndex in rhs.indices {
+                let substitutionCost = lhs[leftIndex] == rhs[rightIndex] ? 0 : 1
+                current[rightIndex + 1] = min(
+                    previous[rightIndex + 1] + 1,
+                    current[rightIndex] + 1,
+                    previous[rightIndex] + substitutionCost
+                )
+            }
+            previous = current
+        }
+        return previous[rhs.count]
     }
 
     private static func insertionReadyContinuation(_ value: String, after context: String) -> String {
