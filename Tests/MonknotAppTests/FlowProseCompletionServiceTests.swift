@@ -42,7 +42,7 @@ final class FlowProseCompletionServiceTests: XCTestCase {
         ))
         let result = await service.completion(for: unavailableRequest)
         let callCount = await recorder.callCount
-        XCTAssertNil(result)
+        XCTAssertEqual(result, .unavailable)
         XCTAssertEqual(callCount, 0)
     }
 
@@ -63,7 +63,7 @@ final class FlowProseCompletionServiceTests: XCTestCase {
         let result = await service.completion(for: request)
         let snapshot = await recorder.snapshot()
 
-        XCTAssertEqual(result, " by keeping the next idea in view.")
+        XCTAssertEqual(result, .success(" by keeping the next idea in view."))
         XCTAssertEqual(snapshot.request, request)
         XCTAssertEqual(
             snapshot.maximumResponseTokens,
@@ -71,7 +71,7 @@ final class FlowProseCompletionServiceTests: XCTestCase {
         )
     }
 
-    func testNilAndThrownClientResultsFailClosed() async throws {
+    func testNilAndThrownClientResultsReportFailure() async throws {
         let request = try XCTUnwrap(FlowProseCompletionRequest(context: "A draft"))
         let nilService = FlowProseCompletionService { _, _ in nil }
         let throwingService = FlowProseCompletionService { _, _ in
@@ -80,8 +80,8 @@ final class FlowProseCompletionServiceTests: XCTestCase {
 
         let nilResult = await nilService.completion(for: request)
         let thrownResult = await throwingService.completion(for: request)
-        XCTAssertNil(nilResult)
-        XCTAssertNil(thrownResult)
+        XCTAssertEqual(nilResult, .failed)
+        XCTAssertEqual(thrownResult, .failed)
     }
 
     func testSanitizerStripsWrappingQuotesNewlinesAndRepeatedContext() {
@@ -118,7 +118,7 @@ final class FlowProseCompletionServiceTests: XCTestCase {
 
         let completion = await service.completion(for: request)
 
-        XCTAssertNil(completion)
+        XCTAssertEqual(completion, .validationRejected)
     }
 
     func testSanitizerRejectsRestatementAfterShortPreface() {
@@ -127,6 +127,42 @@ final class FlowProseCompletionServiceTests: XCTestCase {
                 "and Hello, I’m writing this to express that I’m ready.",
                 context: "Hello im wiritng this to exprs that"
             )
+        )
+    }
+
+    func testSanitizerRejectsReportedGenericTopicRestatement() {
+        let context = "We can write an essay on the importance of education in today’s world."
+        let genericRestatements = [
+            "Education is a fundamental aspect of human development, and its impact is broad.",
+            "Education is important for every person.",
+            "Education plays a key role in society.",
+            "Education remains vital to human development.",
+        ]
+
+        for candidate in genericRestatements {
+            XCTAssertNil(
+                FlowProseCompletionSanitizer.sanitize(candidate, context: context),
+                "Expected generic topic restatement rejection for: \(candidate)"
+            )
+        }
+    }
+
+    func testSanitizerAllowsSpecificEducationContinuations() {
+        let context = "We can write an essay on the importance of education in today’s world."
+
+        XCTAssertEqual(
+            FlowProseCompletionSanitizer.sanitize(
+                "That makes equal access the first policy question.",
+                context: context
+            ),
+            " That makes equal access the first policy question."
+        )
+        XCTAssertEqual(
+            FlowProseCompletionSanitizer.sanitize(
+                "Education data from rural schools would sharpen the argument.",
+                context: context
+            ),
+            " Education data from rural schools would sharpen the"
         )
     }
 
@@ -181,7 +217,7 @@ final class FlowProseCompletionServiceTests: XCTestCase {
                 "that this time we should ask for customer feedback",
                 context: "We agreed that this direction gives the team a stable plan"
             ),
-            " that this time we should ask for customer feedback"
+            " that this time we should ask for customer"
         )
         XCTAssertEqual(
             FlowProseCompletionSanitizer.sanitize(
@@ -208,7 +244,16 @@ final class FlowProseCompletionServiceTests: XCTestCase {
             "<em>formatted text</em>",
             "- a list item",
             "1. a numbered item",
-            "visit https://example.com"
+            "1) another numbered item",
+            "visit https://example.com",
+            "email editor@example.com tomorrow",
+            "open example.com/path",
+            "open example.com?x=1",
+            "open example.com#fragment",
+            "open example.com/path?x=1#fragment",
+            "?x=1",
+            "#fragment",
+            "connect to 192.0.2.1/path",
         ]
 
         for candidate in invalid {
@@ -217,6 +262,23 @@ final class FlowProseCompletionServiceTests: XCTestCase {
                 "Expected rejection for: \(candidate)"
             )
         }
+    }
+
+    func testSanitizerAllowsDecimalAndVersionNearMisses() {
+        XCTAssertEqual(
+            FlowProseCompletionSanitizer.sanitize(
+                "version 2.1 improves the draft",
+                context: "This"
+            ),
+            " version 2.1 improves the draft"
+        )
+        XCTAssertEqual(
+            FlowProseCompletionSanitizer.sanitize(
+                "the ratio stays 3.2 to 1",
+                context: "This"
+            ),
+            " the ratio stays 3.2 to 1"
+        )
     }
 
     func testSanitizerRejectsInvisibleAndDirectionChangingScalars() {
@@ -236,17 +298,93 @@ final class FlowProseCompletionServiceTests: XCTestCase {
     }
 
     func testSanitizerCapsAtWordAndGraphemeBoundaries() {
-        let thirteenWords = (1...13).map { "word\($0)" }.joined(separator: " ") + "."
-        let expected = " " + (1...12).map { "word\($0)" }.joined(separator: " ")
+        let nineWords = (1...9).map { "word\($0)" }.joined(separator: " ") + "."
+        let expected = " " + (1...8).map { "word\($0)" }.joined(separator: " ")
 
         XCTAssertEqual(
-            FlowProseCompletionSanitizer.sanitize(thirteenWords, context: "Continue"),
+            FlowProseCompletionSanitizer.sanitize(nineWords, context: "Continue"),
             expected
         )
         XCTAssertNil(FlowProseCompletionSanitizer.sanitize(
-            String(repeating: "a", count: 97),
+            String(repeating: "a", count: 65),
             context: "Continue"
         ))
+    }
+
+    func testSanitizerRejectionReturnsTypedOutcome() async throws {
+        let request = try XCTUnwrap(FlowProseCompletionRequest(context: "A draft"))
+        let service = FlowProseCompletionService { _, _ in
+            "**a Markdown continuation**"
+        }
+
+        let result = await service.completion(for: request)
+        XCTAssertEqual(result, .validationRejected)
+    }
+
+    func testClientTimeoutReturnsWithoutWaitingForNoncooperativeWork() async throws {
+        let request = try XCTUnwrap(FlowProseCompletionRequest(context: "A draft"))
+        let service = FlowProseCompletionService(
+            timeoutNanoseconds: 10_000_000,
+            client: { _, _ in
+                await flowProseCompletionNonCooperativeDelay()
+                return "can become clearer."
+            }
+        )
+        let start = ContinuousClock.now
+
+        let result = await service.completion(for: request)
+
+        XCTAssertEqual(result, .timedOut)
+        XCTAssertLessThan(start.duration(to: .now), .milliseconds(100))
+    }
+
+    func testTimedOutClientKeepsCopiedServiceAdmissionUntilUnderlyingCallEnds() async throws {
+        let request = try XCTUnwrap(FlowProseCompletionRequest(context: "A draft"))
+        let client = FlowProseCompletionBlockingClient()
+        let service = FlowProseCompletionService(
+            timeoutNanoseconds: 10_000_000,
+            client: { _, _ in await client.response() }
+        )
+        let copiedService = service
+
+        let timedOutResult = await service.completion(for: request)
+        let busyResult = await copiedService.completion(for: request)
+        let callCountWhileBusy = await client.callCount
+        XCTAssertEqual(timedOutResult, .timedOut)
+        XCTAssertEqual(busyResult, .unavailable)
+        XCTAssertEqual(callCountWhileBusy, 1)
+
+        await client.releaseFirstCall()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        var laterResult = await copiedService.completion(for: request)
+        while laterResult == .unavailable, ContinuousClock.now < deadline {
+            try await Task.sleep(nanoseconds: 5_000_000)
+            laterResult = await copiedService.completion(for: request)
+        }
+
+        let finalCallCount = await client.callCount
+        XCTAssertEqual(laterResult, .success(" can become clearer."))
+        XCTAssertEqual(finalCallCount, 2)
+    }
+
+    func testCancellationReturnsWithoutWaitingForClient() async throws {
+        let request = try XCTUnwrap(FlowProseCompletionRequest(context: "A draft"))
+        let service = FlowProseCompletionService(
+            timeoutNanoseconds: 1_000_000_000,
+            client: { _, _ in
+                await flowProseCompletionNonCooperativeDelay()
+                return "can become clearer."
+            }
+        )
+        let task = Task { await service.completion(for: request) }
+        try await Task.sleep(nanoseconds: 10_000_000)
+        let start = ContinuousClock.now
+
+        task.cancel()
+        let result = await task.value
+
+        XCTAssertEqual(result, .failed)
+        XCTAssertLessThan(start.duration(to: .now), .milliseconds(100))
     }
 
     func testSanitizerProducesInsertionReadySpacingWithoutBreakingNoSpaceScripts() {
@@ -331,4 +469,32 @@ private actor FlowProseCompletionRecorder {
 
 private enum FlowProseCompletionTestError: Error {
     case failed
+}
+
+private actor FlowProseCompletionBlockingClient {
+    private var firstCallContinuation: CheckedContinuation<Void, Never>?
+    private(set) var callCount = 0
+
+    func response() async -> String? {
+        callCount += 1
+        if callCount == 1 {
+            await withCheckedContinuation { continuation in
+                firstCallContinuation = continuation
+            }
+        }
+        return "can become clearer."
+    }
+
+    func releaseFirstCall() {
+        firstCallContinuation?.resume()
+        firstCallContinuation = nil
+    }
+}
+
+private func flowProseCompletionNonCooperativeDelay() async {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) {
+            continuation.resume()
+        }
+    }
 }

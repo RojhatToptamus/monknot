@@ -35,7 +35,8 @@ struct FlowProseCompletionService: Sendable {
         _ maximumResponseTokens: Int
     ) async throws -> String?
 
-    static let maximumResponseTokens = 24
+    static let maximumResponseTokens = 16
+    static let defaultTimeoutNanoseconds: UInt64 = 3_000_000_000
     static let system = FlowProseCompletionService(
         isAvailable: { locale in
             #if canImport(FoundationModels)
@@ -60,38 +61,54 @@ struct FlowProseCompletionService: Sendable {
 
     private let availability: Availability
     private let client: Client
+    private let timeoutNanoseconds: UInt64
+    private let admission: FlowModelCallAdmission
 
     init(
         isAvailable: @escaping Availability = { _ in true },
+        timeoutNanoseconds: UInt64 = Self.defaultTimeoutNanoseconds,
         client: @escaping Client
     ) {
         availability = isAvailable
+        self.timeoutNanoseconds = timeoutNanoseconds
         self.client = client
+        admission = FlowModelCallAdmission()
     }
 
     func isAvailable(for locale: Locale = .current) -> Bool {
         availability(locale)
     }
 
-    func completion(for request: FlowProseCompletionRequest) async -> String? {
-        guard isAvailable(for: request.locale) else { return nil }
+    func completion(for request: FlowProseCompletionRequest) async -> FlowModelOutcome {
+        guard isAvailable(for: request.locale) else { return .unavailable }
 
-        do {
-            guard let rawCompletion = try await client(
+        let client = self.client
+        let result = await performFlowModelCall(
+            timeoutNanoseconds: timeoutNanoseconds,
+            admission: admission
+        ) {
+            try await client(
                 request,
                 Self.maximumResponseTokens
-            ) else {
-                return nil
-            }
-            return FlowProseCompletionSanitizer.sanitize(
+            )
+        }
+        switch result {
+        case .response(nil):
+            return .failed
+        case let .response(rawCompletion?):
+            guard let completion = FlowProseCompletionSanitizer.sanitize(
                 rawCompletion,
                 context: request.context
-            )
-        } catch {
-            // Model availability can change after the initial gate and the
-            // framework can report failures outside its documented error enum.
-            // Autocomplete is optional, so every failure is a silent fallback.
-            return nil
+            ) else {
+                return .validationRejected
+            }
+            return .success(completion)
+        case .busy:
+            return .unavailable
+        case .failed, .cancelled:
+            return .failed
+        case .timedOut:
+            return .timedOut
         }
     }
 }
@@ -102,8 +119,16 @@ struct FlowProseCompletionWordSplit: Equatable, Sendable {
 }
 
 enum FlowProseCompletionSanitizer {
-    static let maximumVisibleWordCount = 12
-    static let maximumVisibleGraphemeCount = 96
+    static let maximumVisibleWordCount = 8
+    static let maximumVisibleGraphemeCount = 64
+    private static let genericTopicAdjectives: Set<String> = [
+        "critical", "crucial", "essential", "fundamental", "important",
+        "key", "major", "significant", "vital",
+    ]
+    private static let genericTopicNouns: Set<String> = [
+        "aspect", "component", "element", "factor", "foundation", "part",
+        "pillar", "role",
+    ]
 
     static func sanitize(_ rawCompletion: String, context: String) -> String? {
         var candidate = rawCompletion.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -116,8 +141,13 @@ enum FlowProseCompletionSanitizer {
               candidate.rangeOfCharacter(from: .newlines) == nil,
               !containsUnsafeInvisibleScalar(candidate),
               !containsMarkdown(candidate),
+              !containsEmailAddress(candidate),
+              !containsBareDomain(candidate),
+              wordRanges(in: candidate).count <= 12,
+              candidate.count <= 96,
               let capped = cappedContinuation(candidate),
-              !repeatsEarlierContext(capped, context: context)
+              !repeatsEarlierContext(capped, context: context),
+              !isGenericTopicRestatement(capped, context: context)
         else {
             return nil
         }
@@ -242,8 +272,83 @@ enum FlowProseCompletionSanitizer {
 
         guard let firstSpace = trimmed.firstIndex(of: " ") else { return false }
         let marker = trimmed[..<firstSpace]
-        guard marker.last == "." else { return false }
+        guard marker.last == "." || marker.last == ")" else { return false }
         return marker.dropLast().allSatisfy(\.isNumber) && marker.count > 1
+    }
+
+    private static func containsEmailAddress(_ value: String) -> Bool {
+        value.split(whereSeparator: \.isWhitespace).contains { token in
+            guard let at = token.firstIndex(of: "@"),
+                  at != token.startIndex,
+                  at != token.index(before: token.endIndex)
+            else { return false }
+            let domain = token[token.index(after: at)...]
+            guard let dot = domain.firstIndex(of: "."),
+                  dot != domain.startIndex,
+                  dot != domain.index(before: domain.endIndex)
+            else { return false }
+            return true
+        }
+    }
+
+    private static func containsBareDomain(_ value: String) -> Bool {
+        value.split(whereSeparator: \.isWhitespace).contains { rawToken in
+            let token = rawToken.trimmingCharacters(
+                in: CharacterSet.punctuationCharacters.subtracting(
+                    CharacterSet(charactersIn: ".-/?#:=[]")
+                )
+            )
+            if token.hasPrefix("?"), token.contains("=") || token.contains("&") {
+                return true
+            }
+            if token.hasPrefix("#"), token.count > 1 {
+                return true
+            }
+
+            let host = String(token.prefix { !"/?#".contains($0) })
+                .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            return isBareHost(host)
+        }
+    }
+
+    private static func isBareHost(_ value: String) -> Bool {
+        guard !value.isEmpty else { return false }
+        let host: Substring
+        if let colon = value.lastIndex(of: ":"),
+           value[value.index(after: colon)...].allSatisfy(\.isNumber),
+           !value[value.index(after: colon)...].isEmpty {
+            host = value[..<colon]
+        } else {
+            host = value[...]
+        }
+
+        let labels = host.split(separator: ".", omittingEmptySubsequences: false)
+        if labels.count == 4,
+           labels.allSatisfy({ label in
+               guard !label.isEmpty,
+                     label.allSatisfy(\.isNumber),
+                     let number = Int(label)
+               else { return false }
+               return (0...255).contains(number)
+           }) {
+            return true
+        }
+
+        guard labels.count >= 2,
+              labels.allSatisfy({ label in
+                  (1...63).contains(label.count)
+                      && (label.first?.isLetter == true || label.first?.isNumber == true)
+                      && (label.last?.isLetter == true || label.last?.isNumber == true)
+                      && label.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" }
+              }),
+              let suffix = labels.last,
+              (2...24).contains(suffix.count)
+        else { return false }
+
+        if suffix.allSatisfy(\.isLetter) {
+            return true
+        }
+        return suffix.lowercased().hasPrefix("xn--")
     }
 
     private static func containsUnsafeInvisibleScalar(_ value: String) -> Bool {
@@ -294,6 +399,13 @@ enum FlowProseCompletionSanitizer {
             normalizedLexicalTokens(in: candidate).prefix(maximumVisibleWordCount)
         )
         let contextTokens = normalizedLexicalTokens(in: context)
+        if let trailingContextToken = contextTokens.last,
+           trailingContextToken.count >= 3,
+           candidateTokens.prefix(4).contains(where: {
+               typoEquivalent($0, trailingContextToken)
+           }) {
+            return true
+        }
         let shortOverlapLimit = min(3, candidateTokens.count, contextTokens.count)
         if shortOverlapLimit > 0 {
             for count in stride(from: shortOverlapLimit, through: 1, by: -1) {
@@ -343,6 +455,39 @@ enum FlowProseCompletionSanitizer {
                     }
                 }
             }
+        }
+        return false
+    }
+
+    private static func isGenericTopicRestatement(_ candidate: String, context: String) -> Bool {
+        let candidateTokens = normalizedLexicalTokens(in: candidate)
+        let contextTokens = normalizedLexicalTokens(in: context)
+        guard candidateTokens.count >= 3,
+              contextTokens.contains(candidateTokens[0])
+        else { return false }
+
+        if ["is", "are", "remains"].contains(candidateTokens[1]) {
+            if genericTopicAdjectives.contains(candidateTokens[2]) {
+                return true
+            }
+            if ["a", "an", "the"].contains(candidateTokens[2]), candidateTokens.count >= 4 {
+                if genericTopicNouns.contains(candidateTokens[3]) {
+                    return true
+                }
+                if candidateTokens.count >= 5,
+                   genericTopicAdjectives.contains(candidateTokens[3]),
+                   genericTopicNouns.contains(candidateTokens[4]) {
+                    return true
+                }
+            }
+        }
+
+        if candidateTokens[1] == "plays",
+           candidateTokens.count >= 5,
+           ["a", "an", "the"].contains(candidateTokens[2]),
+           genericTopicAdjectives.contains(candidateTokens[3]),
+           candidateTokens[4] == "role" {
+            return true
         }
         return false
     }
@@ -490,7 +635,7 @@ private enum AppleFoundationProseCompletion {
         let session = LanguageModelSession(
             model: model,
             instructions: """
-            Continue the person's prose with one short, natural phrase. Match its language, tone, and tense. Return only the new text that belongs after the provided prose. Never repeat or quote the prose. Never use Markdown or line breaks.
+            Continue the person's prose with one short clause or sentence fragment of at most eight words. Match its language, tone, and tense. Return only new text that naturally belongs after the provided prose. Advance the thought; never restate, correct, summarize, define, or introduce the topic again, and never add generic filler. Never repeat or quote the prose. Never use Markdown, links, email addresses, or line breaks.
             """
         )
         let prompt = """

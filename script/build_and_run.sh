@@ -265,6 +265,11 @@ COMMON_SWIFT_FLAGS=(
   -module-cache-path "$MODULE_CACHE_DIR"
   -O
 )
+if [[ "${MONKNOT_FLOW_DIAGNOSTICS:-0}" == "1" ]]; then
+  COMMON_SWIFT_FLAGS+=(
+    -D MONKNOT_FLOW_DIAGNOSTICS
+  )
+fi
 
 printf "" >"$EMPTY_MODULEMAP"
 cat >"$OVERLAY_FILE" <<OVERLAY
