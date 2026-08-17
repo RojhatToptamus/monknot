@@ -565,15 +565,17 @@ enum FlowProseCompletionSanitizer {
         return previous[rhs.count]
     }
 
-    private static func insertionReadyContinuation(_ value: String, after context: String) -> String {
+    static func insertionReadyContinuation(_ value: String, after context: String) -> String? {
+        let continuation = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !continuation.isEmpty else { return nil }
         guard let previous = context.last,
-              let next = value.first,
+              let next = continuation.first,
               !previous.isWhitespace,
               shouldSeparate(previous: previous, next: next)
         else {
-            return value
+            return continuation
         }
-        return " " + value
+        return " " + continuation
     }
 
     private static func shouldSeparate(previous: Character, next: Character) -> Bool {

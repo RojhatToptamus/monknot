@@ -633,21 +633,27 @@ struct EditorFlowProseSuggestion: Equatable {
 }
 
 private struct EditorFlowSettlement: Equatable {
+    static let shimmerDuration: TimeInterval = 1
+
     let resultingText: String
     let selectedRange: NSRange
     let correctedRanges: [NSRange]
     let accessibilityAnnouncement: String
     let startedAt: Date
 
-    var undoExpiresAt: Date {
-        startedAt.addingTimeInterval(1.15)
-    }
-
     func matches(text: String, selectedRange: NSRange) -> Bool {
-        Date() < undoExpiresAt
-            && resultingText == text
+        resultingText == text
             && self.selectedRange == selectedRange
     }
+
+    func isShimmering(at date: Date) -> Bool {
+        date.timeIntervalSince(startedAt) < Self.shimmerDuration
+    }
+}
+
+private enum EditorFlowTabInteraction: Equatable {
+    case armed(EditorFlowProseSuggestion)
+    case swallowingUntilRelease
 }
 
 private struct EditorFlowAcceptanceFlash: Equatable {
@@ -6231,11 +6237,26 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 return false
             }
 
+            let insertionRange = suggestion.selectedRange
+            let source = textView.string as NSString
+            guard insertionRange.location >= 0,
+                  insertionRange.length == 0,
+                  insertionRange.location <= source.length,
+                  let normalizedContinuation = FlowProseCompletionSanitizer
+                    .insertionReadyContinuation(
+                        suggestion.continuation,
+                        after: source.substring(to: insertionRange.location)
+                    )
+            else {
+                cancelFlowSuggestion()
+                return false
+            }
+
             let acceptedText: String
             let remainingText: String
             if nextWordOnly {
                 guard let split = FlowProseCompletionSanitizer.splitNextWord(
-                    from: suggestion.continuation
+                    from: normalizedContinuation
                 ) else {
                     cancelFlowSuggestion()
                     return false
@@ -6243,10 +6264,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 acceptedText = split.acceptedPrefix
                 remainingText = split.remainingSuffix
             } else {
-                acceptedText = suggestion.continuation
+                acceptedText = normalizedContinuation
                 remainingText = ""
             }
-            let insertionRange = suggestion.selectedRange
             guard Self.insertionRemainsOutsideProtectedSyntax(
                 in: textView.string as NSString,
                 insertionLocation: insertionRange.location,
@@ -7508,9 +7528,12 @@ class MarkdownNSTextView: NSTextView {
             guard flowProseSuggestion != oldValue else { return }
             flowProsePresentedAt = flowProseSuggestion == nil ? nil : Date()
             animateFlowRevealIfNeeded()
-            flowTabHoldTimer?.invalidate()
-            flowTabHoldTimer = nil
-            flowTabHoldSuggestion = nil
+            if case let .armed(armedSuggestion) = flowTabInteraction,
+               flowProseSuggestion != armedSuggestion {
+                flowTabHoldTimer?.invalidate()
+                flowTabHoldTimer = nil
+                flowTabInteraction = .swallowingUntilRelease
+            }
             lastRenderedFlowProseSuggestion = nil
             needsDisplay = true
             refreshFlowAccessibilityPresentation()
@@ -7543,10 +7566,11 @@ class MarkdownNSTextView: NSTextView {
     private var flowProsePresentedAt: Date?
     private var highlightedFlowSuggestion: EditorFlowSuggestion?
     private var flowSettlement: EditorFlowSettlement?
+    private var flowSettlementMouseMonitor: Any?
     private var flowAcceptanceFlash: EditorFlowAcceptanceFlash?
     private var flowDisplayTimer: Timer?
     private var flowTabHoldTimer: Timer?
-    private var flowTabHoldSuggestion: EditorFlowProseSuggestion?
+    private var flowTabInteraction: EditorFlowTabInteraction?
     private struct PendingFlowProseTypedPrefix {
         let suggestion: EditorFlowProseSuggestion
         let insertedText: String
@@ -7607,6 +7631,7 @@ class MarkdownNSTextView: NSTextView {
             accessibilityAnnouncement: announcement,
             startedAt: Date()
         )
+        installFlowSettlementMouseMonitor()
         NSAccessibility.post(
             element: self,
             notification: .announcementRequested,
@@ -7622,8 +7647,29 @@ class MarkdownNSTextView: NSTextView {
 
     private func clearFlowSettlement() {
         flowSettlement = nil
+        removeFlowSettlementMouseMonitor()
         needsDisplay = true
         refreshFlowAccessibilityPresentation()
+    }
+
+    private func installFlowSettlementMouseMonitor() {
+        guard flowSettlementMouseMonitor == nil else { return }
+        flowSettlementMouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] event in
+            guard let self,
+                  self.flowSettlement != nil,
+                  event.window === self.window
+            else { return event }
+            self.clearFlowSettlement()
+            return event
+        }
+    }
+
+    private func removeFlowSettlementMouseMonitor() {
+        guard let monitor = flowSettlementMouseMonitor else { return }
+        NSEvent.removeMonitor(monitor)
+        flowSettlementMouseMonitor = nil
     }
 
     private func animateFlowRevealIfNeeded() {
@@ -7701,10 +7747,6 @@ class MarkdownNSTextView: NSTextView {
                 return
             }
             let now = Date()
-            if self.flowSettlement.map({ now >= $0.undoExpiresAt }) == true {
-                self.flowSettlement = nil
-                self.refreshFlowAccessibilityPresentation()
-            }
             if self.flowAcceptanceFlash.map({ now.timeIntervalSince($0.startedAt) >= 0.52 }) == true {
                 self.flowAcceptanceFlash = nil
             }
@@ -7713,8 +7755,10 @@ class MarkdownNSTextView: NSTextView {
             } == true || self.flowProsePresentedAt.map {
                 self.flowProseSuggestion != nil && now.timeIntervalSince($0) < 0.20
             } == true
+            let isShimmering = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+                && self.flowSettlement?.isShimmering(at: now) == true
             self.needsDisplay = true
-            guard isRevealing || self.flowSettlement != nil || self.flowAcceptanceFlash != nil else {
+            guard isRevealing || isShimmering || self.flowAcceptanceFlash != nil else {
                 timer.invalidate()
                 self.flowDisplayTimer = nil
                 return
@@ -7729,7 +7773,8 @@ class MarkdownNSTextView: NSTextView {
         flowDisplayTimer = nil
         flowTabHoldTimer?.invalidate()
         flowTabHoldTimer = nil
-        flowTabHoldSuggestion = nil
+        flowTabInteraction = nil
+        removeFlowSettlementMouseMonitor()
         flowSettlement = nil
         flowAcceptanceFlash = nil
         pendingFlowProseTypedPrefix = nil
@@ -8145,6 +8190,9 @@ class MarkdownNSTextView: NSTextView {
             return
         }
         if event.keyCode == 48, modifiers.isEmpty {
+            if flowTabInteraction != nil {
+                return
+            }
             if let flowSuggestion {
                 if hasRenderedFlowSuggestion(flowSuggestion) {
                     if applyFlowSuggestion(flowSuggestion) {
@@ -8156,6 +8204,9 @@ class MarkdownNSTextView: NSTextView {
                 flowSuggestionCancellationHandler?()
             }
             if let flowProseSuggestion {
+                if event.isARepeat {
+                    return
+                }
                 if canDirectlyAcceptFlowProseSuggestion(flowProseSuggestion) {
                     armFlowTabHold(for: flowProseSuggestion)
                     return
@@ -8226,14 +8277,17 @@ class MarkdownNSTextView: NSTextView {
             .subtracting([.capsLock, .numericPad, .function])
         guard event.keyCode == 48,
               modifiers.isEmpty,
-              let suggestion = flowTabHoldSuggestion
+              let interaction = flowTabInteraction
         else {
             super.keyUp(with: event)
             return
         }
         flowTabHoldTimer?.invalidate()
         flowTabHoldTimer = nil
-        flowTabHoldSuggestion = nil
+        flowTabInteraction = nil
+        guard case let .armed(suggestion) = interaction else {
+            return
+        }
         if flowProseSuggestion == suggestion,
            flowProseSuggestionAcceptanceHandler?(suggestion, true) == true {
             return
@@ -8242,15 +8296,15 @@ class MarkdownNSTextView: NSTextView {
     }
 
     private func armFlowTabHold(for suggestion: EditorFlowProseSuggestion) {
-        guard flowTabHoldSuggestion == nil else { return }
-        flowTabHoldSuggestion = suggestion
+        guard flowTabInteraction == nil else { return }
+        flowTabInteraction = .armed(suggestion)
         let timer = Timer(timeInterval: 0.35, repeats: false) { [weak self] _ in
             guard let self,
-                  self.flowTabHoldSuggestion == suggestion,
-                  self.flowProseSuggestion == suggestion
+                  self.flowTabInteraction == .armed(suggestion)
             else { return }
-            self.flowTabHoldSuggestion = nil
             self.flowTabHoldTimer = nil
+            self.flowTabInteraction = .swallowingUntilRelease
+            guard self.flowProseSuggestion == suggestion else { return }
             if self.flowProseSuggestionAcceptanceHandler?(suggestion, false) != true {
                 NSSound.beep()
             }
@@ -8296,6 +8350,10 @@ class MarkdownNSTextView: NSTextView {
 
     var selectedFlowReviewSuggestionForTesting: EditorFlowSuggestion? {
         flowSuggestion
+    }
+
+    var flowSettlementRangesForTesting: [NSRange]? {
+        flowSettlement?.correctedRanges
     }
 
     @discardableResult
@@ -8450,34 +8508,42 @@ class MarkdownNSTextView: NSTextView {
               let layoutManager,
               let textContainer
         else { return }
-        let elapsed = Date().timeIntervalSince(settlement.startedAt)
+        let elapsed = max(0, Date().timeIntervalSince(settlement.startedAt))
+        let persistentAlpha: CGFloat = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+            ? 0.16
+            : 0.09
         let shimmerAlpha: CGFloat
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            shimmerAlpha = elapsed < 0.72 ? 0.16 : max(0, 0.16 * (1 - (elapsed - 0.72) / 0.28))
-        } else if elapsed < 0.35 {
-            shimmerAlpha = 0.24 * CGFloat(elapsed / 0.35)
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            || elapsed >= EditorFlowSettlement.shimmerDuration {
+            shimmerAlpha = 0
+        } else if elapsed < 0.22 {
+            let progress = CGFloat(elapsed / 0.22)
+            let eased = 1 - pow(1 - progress, 3)
+            shimmerAlpha = 0.12 + (0.12 * eased)
         } else {
-            shimmerAlpha = max(0, 0.24 * CGFloat(1 - (elapsed - 0.35) / 0.65))
+            let progress = CGFloat(
+                (elapsed - 0.22) / (EditorFlowSettlement.shimmerDuration - 0.22)
+            )
+            let eased = progress * progress * (3 - 2 * progress)
+            shimmerAlpha = 0.24 * (1 - eased)
         }
         let origin = textContainerOrigin
-        if shimmerAlpha > 0 {
-            flowCuePalette.shimmer.withAlphaComponent(shimmerAlpha).setFill()
-            for range in settlement.correctedRanges where range.length > 0 {
-                let glyphRange = layoutManager.glyphRange(
-                    forCharacterRange: range,
-                    actualCharacterRange: nil
-                )
-                let rect = layoutManager.boundingRect(
-                    forGlyphRange: glyphRange,
-                    in: textContainer
-                ).offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -2, dy: -1)
-                guard rect.intersects(dirtyRect) else { continue }
-                NSBezierPath(
-                    roundedRect: rect,
-                    xRadius: max(2, (3 * max(0.1, zoomScale)).rounded()),
-                    yRadius: max(2, (3 * max(0.1, zoomScale)).rounded())
-                ).fill()
-            }
+        flowCuePalette.shimmer.withAlphaComponent(persistentAlpha + shimmerAlpha).setFill()
+        for range in settlement.correctedRanges where range.length > 0 {
+            let glyphRange = layoutManager.glyphRange(
+                forCharacterRange: range,
+                actualCharacterRange: nil
+            )
+            let rect = layoutManager.boundingRect(
+                forGlyphRange: glyphRange,
+                in: textContainer
+            ).offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -2, dy: -1)
+            guard rect.intersects(dirtyRect) else { continue }
+            NSBezierPath(
+                roundedRect: rect,
+                xRadius: max(2, (3 * max(0.1, zoomScale)).rounded()),
+                yRadius: max(2, (3 * max(0.1, zoomScale)).rounded())
+            ).fill()
         }
         let hintRange: NSRange? = if settlement.selectedRange.location > 0,
                                     settlement.selectedRange.location <= (string as NSString).length {
@@ -8485,8 +8551,7 @@ class MarkdownNSTextView: NSTextView {
         } else {
             settlement.correctedRanges.last
         }
-        if Date() < settlement.undoExpiresAt,
-           let hintRange,
+        if let hintRange,
            hintRange.length > 0,
            let lastRect = flowLastGlyphRect(
                layoutManager: layoutManager,
