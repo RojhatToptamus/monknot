@@ -435,27 +435,21 @@ struct EditorFlowSuggestion: Equatable {
     }
 
     var accessibilityText: String {
-        "Correction available. Corrected sentence: \(correctedSentence)\n"
-            + "Changes: \(exactChangeDescription). Tab accepts; Option-Return reviews; "
-            + "Escape dismisses. Source: \(sourceAccessibilityText)."
+        "Suggested correction: \(correctedSentence)\n"
+            + "Changes: \(exactChangeDescription). Tab applies; Right Arrow shows the next "
+            + "alternative; Escape dismisses. Source: \(sourceAccessibilityText)."
     }
 
     var accessibilityAnnouncementText: String {
-        "Correction available. Corrected sentence: \(correctedSentence). "
-            + "Changes: \(exactChangeDescription). Tab accepts; Option-Return reviews; "
-            + "Escape dismisses."
+        "Suggested correction: \(correctedSentence). Tab to apply. Escape to dismiss."
     }
 
     var accessibilityReviewText: String {
-        "Correction requires review. Corrected sentence: \(correctedSentence)\n"
-            + "Changes: \(exactChangeDescription). Tab opens review; Option-Return reviews; "
-            + "Escape dismisses. Source: \(sourceAccessibilityText)."
+        accessibilityText
     }
 
     var accessibilityReviewAnnouncementText: String {
-        "Correction requires review. Corrected sentence: \(correctedSentence). "
-            + "Changes: \(exactChangeDescription). Tab opens review; Option-Return reviews; "
-            + "Escape dismisses."
+        accessibilityAnnouncementText
     }
 
     func rebased(revision: Int, selectedRange: NSRange) -> EditorFlowSuggestion {
@@ -619,7 +613,7 @@ struct EditorFlowProseSuggestion: Equatable {
     }
 
     var accessibilityText: String {
-        "Completion: \(continuation)\nTab to accept; Option-Right Arrow accepts the next word; Escape dismisses."
+        "Completion: \(continuation)\nTap Tab for the next word; hold Tab for all; Escape dismisses."
     }
 
     func matches(
@@ -636,6 +630,29 @@ struct EditorFlowProseSuggestion: Equatable {
             && !continuation.isEmpty
             && !continuation.containsNewline
     }
+}
+
+private struct EditorFlowSettlement: Equatable {
+    let resultingText: String
+    let selectedRange: NSRange
+    let correctedRanges: [NSRange]
+    let accessibilityAnnouncement: String
+    let startedAt: Date
+
+    var undoExpiresAt: Date {
+        startedAt.addingTimeInterval(1.15)
+    }
+
+    func matches(text: String, selectedRange: NSRange) -> Bool {
+        Date() < undoExpiresAt
+            && resultingText == text
+            && self.selectedRange == selectedRange
+    }
+}
+
+private struct EditorFlowAcceptanceFlash: Equatable {
+    let range: NSRange
+    let startedAt: Date
 }
 
 struct EditorFlowProseContext: Equatable {
@@ -724,166 +741,22 @@ enum EditorFlowProseContextPlanner {
     }
 }
 
-struct EditorFlowCueLayout: Equatable {
-    enum Mode: Equatable {
-        case direct
-        case review
-    }
-
-    let mode: Mode
-    let reviewText: String?
-    let size: NSSize
-    let correctedRowHeight: CGFloat
-    let footerHeight: CGFloat
-    let horizontalInset: CGFloat
-    let verticalInset: CGFloat
-    let rowGap: CGFloat
-    let cornerRadius: CGFloat
-
-    static func make(
-        for suggestion: EditorFlowSuggestion,
-        availableWidth: CGFloat,
-        availableHeight: CGFloat = .greatestFiniteMagnitude,
-        editorFont: NSFont,
-        zoomScale: CGFloat
-    ) -> EditorFlowCueLayout {
-        let scale = max(0.1, zoomScale)
-        let minimumRowHeight = metric(30, scale: scale)
-        let horizontalInset = metric(12, scale: scale)
-        let verticalInset = metric(8, scale: scale)
-        let rowGap = metric(4, scale: scale)
-        let cornerRadius = metric(12, scale: scale)
-        let footerText = "Tab Accept · ⌥↩ Review · Esc Dismiss"
-        let footerFont = shortcutFont(scale: scale)
-        let intrinsicSentenceWidth = width(of: suggestion.correctedSentence, font: editorFont)
-        let intrinsicFooterWidth = width(of: footerText, font: footerFont)
-        let maximumPanelWidth = min(availableWidth, max(1, (640 * scale).rounded()))
-        let desiredWidth = ceil(max(intrinsicSentenceWidth, intrinsicFooterWidth) + horizontalInset * 2)
-        let panelWidth = min(maximumPanelWidth, max(1, desiredWidth))
-        let sentenceWidth = panelWidth - horizontalInset * 2
-        let lineHeight = max(1, ceil(editorFont.ascender - editorFont.descender + editorFont.leading))
-        let hasUsableSentenceWidth = sentenceWidth > 0
-        let correctedTextHeight = hasUsableSentenceWidth
-            ? measuredHeight(
-                of: suggestion.correctedSentence,
-                font: editorFont,
-                width: sentenceWidth
-            )
-            : 0
-        let correctedLines = hasUsableSentenceWidth
-            ? Int(ceil(correctedTextHeight / lineHeight))
-            : Int.max
-        let footerFits = intrinsicFooterWidth <= sentenceWidth
-        let correctedRowHeight = ceil(correctedTextHeight)
-        let footerHeight = max(metric(24, scale: scale), ceil(footerFont.ascender - footerFont.descender))
-        let directHeight = verticalInset * 2 + correctedRowHeight + rowGap + footerHeight
-        let maximumDirectHeight = min(
-            max(1, availableHeight * 0.30),
-            metric(180, scale: scale)
-        )
-        if suggestion.acceptance == .direct,
-           hasUsableSentenceWidth,
-           footerFits,
-           correctedLines <= 3,
-           directHeight <= maximumDirectHeight {
-            return EditorFlowCueLayout(
-                mode: .direct,
-                reviewText: nil,
-                size: NSSize(width: panelWidth, height: directHeight),
-                correctedRowHeight: correctedRowHeight,
-                footerHeight: footerHeight,
-                horizontalInset: horizontalInset,
-                verticalInset: verticalInset,
-                rowGap: rowGap,
-                cornerRadius: cornerRadius
-            )
-        }
-
-        let cueFont = shortcutFont(scale: scale)
-        let tabWidth = width(of: "Tab", font: cueFont)
-        let reviewCandidates = ["Review correction", "Review"]
-        let review = reviewCandidates.first { candidate in
-            width(of: candidate, font: editorFont)
-                + width(of: "  Tab", font: cueFont)
-                + horizontalInset * 2 <= availableWidth
-        } ?? ""
-        let reviewContentWidth = review.isEmpty
-            ? tabWidth
-            : width(of: review, font: editorFont) + width(of: "  Tab", font: cueFont)
-        let reviewWidth = ceil(reviewContentWidth + horizontalInset * 2)
-        return EditorFlowCueLayout(
-            mode: .review,
-            reviewText: review,
-            size: NSSize(width: max(1, reviewWidth), height: minimumRowHeight),
-            correctedRowHeight: 0,
-            footerHeight: 0,
-            horizontalInset: horizontalInset,
-            verticalInset: 0,
-            rowGap: 0,
-            cornerRadius: cornerRadius
-        )
-    }
-
-    private static func width(of text: String, font: NSFont) -> CGFloat {
-        ceil((text as NSString).size(withAttributes: [.font: font]).width)
-    }
-
-    private static func measuredHeight(of text: String, font: NSFont, width: CGFloat) -> CGFloat {
-        guard width > 0 else { return .greatestFiniteMagnitude }
-        return ceil((text as NSString).boundingRect(
-            with: NSSize(width: width, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: [.font: font]
-        ).height)
-    }
-
-    static func metric(_ value: CGFloat, scale: CGFloat) -> CGFloat {
-        max(1, (value * scale).rounded())
-    }
-
-    static func fontSize(_ value: CGFloat, scale: CGFloat) -> CGFloat {
-        max(1, (value * scale * 2).rounded() / 2)
-    }
-
-    static func sourceLabelFont(scale: CGFloat) -> NSFont {
-        let size = fontSize(10, scale: scale)
-        return .systemFont(ofSize: size, weight: .semibold)
-    }
-
-    static func shortcutFont(scale: CGFloat) -> NSFont {
-        let size = fontSize(12, scale: scale)
-        let base = NSFont.systemFont(ofSize: size, weight: .regular)
-        return base.fontDescriptor.withDesign(.rounded).flatMap {
-            NSFont(descriptor: $0, size: size)
-        } ?? base
-    }
-}
 
 private struct EditorFlowCuePalette {
     let surface: NSColor
-    let secondarySurface: NSColor
     let primaryText: NSColor
     let secondaryText: NSColor
-    let removedText: NSColor
-    let addedText: NSColor
-    let accent: NSColor
-    let onAccent: NSColor
-    let ring: NSColor
-    let shadow: NSColor
-    let usesDarkElevation: Bool
+    let ghostText: NSColor
+    let shimmer: NSColor
+    let border: NSColor
 
     static let native = EditorFlowCuePalette(
         surface: .windowBackgroundColor,
-        secondarySurface: .controlBackgroundColor,
         primaryText: .labelColor,
         secondaryText: .secondaryLabelColor,
-        removedText: .systemRed,
-        addedText: .systemGreen,
-        accent: .controlAccentColor,
-        onAccent: .white,
-        ring: .separatorColor,
-        shadow: .black,
-        usesDarkElevation: false
+        ghostText: .tertiaryLabelColor,
+        shimmer: .controlAccentColor,
+        border: .separatorColor
     )
 }
 
@@ -2464,8 +2337,8 @@ enum EditorFlowSentenceRepairValidator {
 }
 
 enum EditorFlowCheckPlanner {
-    static let boundaryDelayNanoseconds: UInt64 = 260_000_000
-    static let idleDelayNanoseconds: UInt64 = 560_000_000
+    static let boundaryDelayNanoseconds: UInt64 = 820_000_000
+    static let idleDelayNanoseconds: UInt64 = 820_000_000
     private static let maximumCheckedUTF16Length = 900
 
     struct Plan: Equatable {
@@ -3173,6 +3046,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         coordinator.textView?.flowSearchHighlightReapplyHandler = nil
         coordinator.textView?.writingToolsRequestHandler = nil
         coordinator.cancelFlowSuggestion()
+        coordinator.textView?.tearDownFlowPresentation()
         coordinator.textView = nil
     }
 
@@ -3184,63 +3058,22 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.insertionPointColor = NSColor(hex: theme.cursor)
         textView.flowCuePalette = EditorFlowCuePalette(
             surface: NSColor(theme.elevatedSurfaceColor),
-            secondarySurface: NSColor(hex: theme.recessedSurfaceHex(
-                amount: theme.isDark ? 0.17 : 0.09
-            )),
             primaryText: NSColor(theme.foregroundColor),
             secondaryText: NSColor(theme.mutedForegroundColor),
-            removedText: accessibleFlowSemanticColor(
-                theme.semanticColors.diffRemoved,
-                theme: theme
-            ),
-            addedText: accessibleFlowSemanticColor(
-                theme.semanticColors.diffAdded,
-                theme: theme
-            ),
-            accent: NSColor(hex: theme.accent),
-            onAccent: NSColor(hex: theme.onAccentForegroundHex),
-            ring: theme.isDark
-                ? NSColor(theme.foregroundColor).withAlphaComponent(0.14)
-                : NSColor(hex: AppTheme.blendHex(
-                    theme.foreground,
-                    toward: theme.accent,
-                    amount: 0.10
-                )).withAlphaComponent(0.08),
-            shadow: theme.isDark
-                ? .black
-                : NSColor(hex: AppTheme.blendHex(
-                    theme.foreground,
-                    toward: theme.accent,
-                    amount: 0.10
-                )),
-            usesDarkElevation: theme.isDark
+            ghostText: NSColor(hex: AppTheme.blendHex(
+                theme.foreground,
+                toward: theme.semanticColors.skill,
+                amount: theme.isDark ? 0.42 : 0.54
+            )),
+            shimmer: NSColor(hex: theme.semanticColors.skill),
+            border: NSColor(theme.foregroundColor).withAlphaComponent(
+                theme.isDark ? 0.18 : 0.14
+            )
         )
         textView.selectedTextAttributes = [
             .backgroundColor: NSColor(hex: theme.selectionBackground),
             .foregroundColor: NSColor(hex: theme.selectionForeground)
         ]
-    }
-
-    private func accessibleFlowSemanticColor(_ hex: String, theme: AppTheme) -> NSColor {
-        let surfaceHex = theme.recessedSurfaceHex(amount: theme.isDark ? 0.11 : 0.05)
-        guard let background = RGBHex(surfaceHex),
-              let base = RGBHex(hex),
-              base.contrastRatio(with: background) < 4.5
-        else {
-            return NSColor(hex: hex)
-        }
-        for step in 1...10 {
-            let candidateHex = AppTheme.blendHex(
-                hex,
-                toward: theme.foreground,
-                amount: Double(step) / 10
-            )
-            if let candidate = RGBHex(candidateHex),
-               candidate.contrastRatio(with: background) >= 4.5 {
-                return NSColor(hex: candidateHex)
-            }
-        }
-        return NSColor(hex: theme.foreground)
     }
 
     private func font(for theme: AppTheme, size: CGFloat) -> NSFont {
@@ -3257,6 +3090,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private let flowProseCompletionService: FlowProseCompletionService
         private let flowSentenceRepairService: FlowSentenceRepairService
         private let flowProseCompletionDelayNanoseconds: UInt64
+        private let flowProseOfferDelayNanoseconds: UInt64
         private let flowCheckingTimeoutNanoseconds: UInt64
         private let flowFocusValidator: (MarkdownNSTextView) -> Bool
         private let protectedRangeProvider: @Sendable (String, FlowSourceMode) -> [NSRange]
@@ -3498,7 +3332,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
             flowCheckingClient: EditorFlowCheckingClient = .system,
             flowProseCompletionService: FlowProseCompletionService = .system,
             flowSentenceRepairService: FlowSentenceRepairService = .system,
-            flowProseCompletionDelayNanoseconds: UInt64 = 850_000_000,
+            flowProseCompletionDelayNanoseconds: UInt64 = 360_000_000,
+            flowProseOfferDelayNanoseconds: UInt64 = 420_000_000,
             flowCheckingTimeoutNanoseconds: UInt64 = 2_000_000_000,
             protectedRangeProvider: @escaping @Sendable (String, FlowSourceMode) -> [NSRange] = { text, mode in
                 FlowProtectedRangeService().protectedRanges(in: text, mode: mode)
@@ -3521,6 +3356,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             self.flowProseCompletionService = flowProseCompletionService
             self.flowSentenceRepairService = flowSentenceRepairService
             self.flowProseCompletionDelayNanoseconds = flowProseCompletionDelayNanoseconds
+            self.flowProseOfferDelayNanoseconds = flowProseOfferDelayNanoseconds
             self.flowCheckingTimeoutNanoseconds = flowCheckingTimeoutNanoseconds
             self.protectedRangeProvider = protectedRangeProvider
             self.flowFocusValidator = flowFocusValidator
@@ -3675,6 +3511,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         }
 
         func externalTextDidChange() {
+            textView?.invalidateFlowSettlement()
             sentenceRepairGate = .blocked
             pendingFlowTrailingSpace = nil
             cancelFlowSuggestion()
@@ -4039,6 +3876,13 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? MarkdownNSTextView else { return }
+            let matchingProseRemainder = textView.consumeMatchingFlowProsePrefix(
+                documentID: documentID,
+                sourceRevision: revision
+            )
+            if textView.flowSuggestion == nil {
+                textView.invalidateFlowSettlement()
+            }
             let requestsAutocompleteAfterClear = pendingFlowAutocompleteIntent
             pendingFlowAutocompleteIntent = false
             let trailingSpace = pendingFlowTrailingSpace
@@ -4058,6 +3902,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 flowSentenceRepairTask = nil
                 pendingFlowProtectedRangesRetry = nil
                 _ = cancelProseCompletion()
+            } else if matchingProseRemainder != nil {
+                cancelFlowSuggestion()
+                sentenceRepairGate = .clear
             } else {
                 sentenceRepairGate = .blocked
                 cancelFlowSuggestion()
@@ -4110,6 +3957,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     selectedRange: trailingSpace.resultingSelection
                 )
                 sentenceRepairGate = .blocked
+            } else if let matchingProseRemainder {
+                textView.flowProseSuggestion = matchingProseRemainder
+                sentenceRepairGate = .clear
             } else if completedOrdinaryProseEdit, sentenceRepairGate.allowsAutocomplete {
                 scheduleProseCompletion()
             }
@@ -4117,7 +3967,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             guard !isWritingToolsActive else { return }
             text = textView.string
             publishSelection()
-            if preservesRepair { return }
+            if preservesRepair || matchingProseRemainder != nil { return }
             scheduleFlowCheck(
                 requestsAutocompleteAfterClear: requestsAutocompleteAfterClear
             )
@@ -4125,6 +3975,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? MarkdownNSTextView else { return }
+            textView.invalidateFlowSettlement()
             if let trailingSpace = pendingFlowTrailingSpace,
                trailingSpace.sourceRevision == revision,
                textView.selectedRange() == trailingSpace.resultingSelection {
@@ -4343,7 +4194,20 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 }
                 let service = prepared.service
                 let request = prepared.request
+                let requestStartedAt = Date()
                 let outcome = await service.completion(for: request)
+                guard !Task.isCancelled else { return }
+                let elapsed = Date().timeIntervalSince(requestStartedAt)
+                let offerDelay = Double(self.flowProseOfferDelayNanoseconds) / 1_000_000_000
+                if elapsed < offerDelay {
+                    do {
+                        try await Task.sleep(nanoseconds: UInt64(
+                            (offerDelay - elapsed) * 1_000_000_000
+                        ))
+                    } catch {
+                        return
+                    }
+                }
                 guard !Task.isCancelled else { return }
                 self.receiveProseCompletion(
                     outcome,
@@ -5607,12 +5471,16 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 return false
             }
             cancelProseCompletion()
-            textView.flowSuggestion = suggestion
             sentenceRepairGate = .blocked
             finishDiagnosticAttempt(
                 owner: .sentenceRepair,
                 reason: .visibleDeterministicRepair
             )
+            guard textView.presentFlowSuggestion(suggestion) else {
+                sentenceRepairGate = .nativeFallback
+                refreshNativeFlowAvailability()
+                return false
+            }
             refreshNativeFlowAvailability()
             return true
         }
@@ -5830,7 +5698,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 finishSentenceRepairUnresolved(reason: .stale)
                 return
             }
-            textView.flowSuggestion = suggestion
             sentenceRepairFailureCooldown = nil
             sentenceRepairGate = .blocked
             finishDiagnosticAttempt(
@@ -5839,6 +5706,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     ? .visibleAIDirectRepair
                     : .visibleAIReviewOnlyRepair
             )
+            guard textView.presentFlowSuggestion(suggestion) else {
+                sentenceRepairGate = .nativeFallback
+                refreshNativeFlowAvailability()
+                return
+            }
             refreshNativeFlowAvailability()
         }
 
@@ -6242,7 +6114,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             let presentedSuggestion = textView.flowSuggestion
             let explicitConfirmation = textView.isFlowExplicitConfirmationInProgress
             let directAcceptance = flowFocusValidator(textView)
-                && textView.canDirectlyAcceptFlowSuggestion(suggestion)
+                && textView.canApplyRenderedFlowSuggestion(suggestion)
             guard !isWritingToolsActive,
                   pendingWritingToolsRequest == nil,
                   directAcceptance || explicitConfirmation,
@@ -6424,6 +6296,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 nextWordOnly ? "Accept Flow Word" : "Accept Flow Completion"
             )
             textView.breakUndoCoalescing()
+            textView.flashAcceptedFlowProse(in: NSRange(
+                location: insertionRange.location,
+                length: insertionLength
+            ))
             protectedRangesSnapshot = ProtectedRangesSnapshot(
                 revision: revision,
                 text: textView.string,
@@ -7580,460 +7456,8 @@ private extension String {
     }
 }
 
-private final class EditorFlowReviewDocumentView: NSView {
-    override var isFlipped: Bool { true }
-}
 
-private final class EditorFlowReviewViewController: NSViewController {
-    private let suggestion: EditorFlowSuggestion
-    private var selectedSuggestion: EditorFlowSuggestion
-    private let editorFont: NSFont
-    private let zoomScale: CGFloat
-    private let maximumWidth: CGFloat
-    private let maximumHeight: CGFloat
-    private let palette: EditorFlowCuePalette
-    private let onReplace: (NSButton, EditorFlowSuggestion) -> Void
-    private let onCancel: () -> Void
-    private var replaceButton: NSButton?
-    private var reviewRoot: NSView?
-    private var originalField: NSTextField?
-    private var correctedField: NSTextField?
-    private var alternativesPopUp: NSPopUpButton?
-    private var changesStack: NSStackView?
-    private var bodyStack: NSStackView?
-    private var bodyDocument: EditorFlowReviewDocumentView?
-    private var scrollHeightConstraint: NSLayoutConstraint?
-    private var preferredBodyLimit: CGFloat = 0
-    private var fixedChromeHeight: CGFloat = 0
-
-    init(
-        suggestion: EditorFlowSuggestion,
-        editorFont: NSFont,
-        zoomScale: CGFloat,
-        maximumWidth: CGFloat,
-        maximumHeight: CGFloat,
-        palette: EditorFlowCuePalette,
-        onReplace: @escaping (NSButton, EditorFlowSuggestion) -> Void,
-        onCancel: @escaping () -> Void
-    ) {
-        self.suggestion = suggestion
-        self.selectedSuggestion = suggestion
-        self.editorFont = editorFont
-        self.zoomScale = max(0.1, zoomScale)
-        self.maximumWidth = max(1, maximumWidth)
-        self.maximumHeight = max(1, maximumHeight)
-        self.palette = palette
-        self.onReplace = onReplace
-        self.onCancel = onCancel
-        super.init(nibName: nil, bundle: nil)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func loadView() {
-        let root = NSView()
-        root.wantsLayer = true
-        root.layer?.backgroundColor = palette.surface.cgColor
-        root.setAccessibilityElement(true)
-        root.setAccessibilityRole(.group)
-        root.setAccessibilityLabel("Writing correction review")
-        root.setAccessibilityHelp(selectedSuggestion.accessibilityReviewText)
-        reviewRoot = root
-        let scale = zoomScale
-        let count = suggestion.edits.count
-        let title = NSTextField(labelWithString: "Review correction")
-        title.font = .systemFont(
-            ofSize: EditorFlowCueLayout.fontSize(13, scale: scale),
-            weight: .semibold
-        )
-        title.textColor = palette.primaryText
-        title.setAccessibilityLabel(title.stringValue)
-        title.setAccessibilityHelp("Source: \(suggestion.sourceAccessibilityText)")
-        title.toolTip = suggestion.sourceAccessibilityText
-
-        let labelWidth = EditorFlowCueLayout.metric(64, scale: scale)
-        func sentenceRow(
-            label labelText: String,
-            sentence: String,
-            changedRanges: [NSRange],
-            changedColor: NSColor
-        ) -> (NSStackView, NSTextField) {
-            let label = NSTextField(labelWithString: labelText)
-            label.font = EditorFlowCueLayout.sourceLabelFont(scale: scale)
-            label.textColor = palette.secondaryText
-            label.alignment = .right
-            label.translatesAutoresizingMaskIntoConstraints = false
-            label.widthAnchor.constraint(equalToConstant: labelWidth).isActive = true
-
-            let value = NSMutableAttributedString(
-                string: sentence,
-                attributes: [
-                    .font: editorFont,
-                    .foregroundColor: palette.primaryText,
-                ]
-            )
-            for range in changedRanges where range.length > 0 && NSMaxRange(range) <= value.length {
-                value.addAttribute(.foregroundColor, value: changedColor, range: range)
-            }
-            let sentenceField = NSTextField(labelWithAttributedString: value)
-            sentenceField.maximumNumberOfLines = 0
-            sentenceField.lineBreakMode = .byWordWrapping
-            sentenceField.cell?.wraps = true
-            sentenceField.setAccessibilityLabel("\(labelText): \(sentence)")
-
-            let row = NSStackView(views: [label, sentenceField])
-            row.orientation = .horizontal
-            row.alignment = .top
-            row.spacing = EditorFlowCueLayout.metric(10, scale: scale)
-            return (row, sentenceField)
-        }
-        let (originalRow, originalField) = sentenceRow(
-            label: "Original",
-            sentence: suggestion.originalSentence,
-            changedRanges: suggestion.originalChangedRanges,
-            changedColor: palette.removedText
-        )
-        let (correctedRow, correctedField) = sentenceRow(
-            label: "Corrected",
-            sentence: suggestion.correctedSentence,
-            changedRanges: suggestion.correctedChangedRanges,
-            changedColor: palette.addedText
-        )
-        self.originalField = originalField
-        self.correctedField = correctedField
-        let preview = NSStackView(views: [originalRow, correctedRow])
-        preview.orientation = .vertical
-        preview.alignment = .leading
-        preview.spacing = EditorFlowCueLayout.metric(8, scale: scale)
-
-        let changeLabels = suggestion.displayChanges.map(makeChangeLabel)
-
-        let changes = NSStackView(views: changeLabels)
-        changes.orientation = .vertical
-        changes.alignment = .leading
-        changes.spacing = EditorFlowCueLayout.metric(8, scale: scale)
-        changesStack = changes
-
-        var bodyViews: [NSView] = []
-        if let alternatives = suggestion.reviewAlternatives {
-            let alternativeLabel = NSTextField(labelWithString: "Correction")
-            alternativeLabel.font = EditorFlowCueLayout.sourceLabelFont(scale: scale)
-            alternativeLabel.textColor = palette.secondaryText
-            alternativeLabel.alignment = .right
-            alternativeLabel.translatesAutoresizingMaskIntoConstraints = false
-            alternativeLabel.widthAnchor.constraint(equalToConstant: labelWidth).isActive = true
-
-            let alternativesPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
-            alternativesPopUp.addItems(withTitles: alternatives.replacementTexts)
-            alternativesPopUp.selectItem(withTitle: suggestion.edits.first(where: {
-                $0.range == alternatives.absoluteRange && $0.kind == alternatives.kind
-            })?.replacementText ?? alternatives.replacementTexts[0])
-            alternativesPopUp.target = self
-            alternativesPopUp.action = #selector(selectAlternative(_:))
-            alternativesPopUp.font = .systemFont(
-                ofSize: EditorFlowCueLayout.fontSize(12, scale: scale),
-                weight: .regular
-            )
-            alternativesPopUp.setAccessibilityLabel("Correction alternative")
-            alternativesPopUp.setAccessibilityHelp(
-                "Select one of \(alternatives.replacementTexts.count) validated Apple spelling and grammar corrections"
-            )
-            self.alternativesPopUp = alternativesPopUp
-            let alternativeRow = NSStackView(views: [alternativeLabel, alternativesPopUp])
-            alternativeRow.orientation = .horizontal
-            alternativeRow.alignment = .centerY
-            alternativeRow.spacing = EditorFlowCueLayout.metric(10, scale: scale)
-            bodyViews.append(alternativeRow)
-        }
-        bodyViews.append(preview)
-        bodyViews.append(changes)
-
-        let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancelReview(_:)))
-        cancel.bezelStyle = .rounded
-        cancel.bezelColor = palette.secondarySurface
-        cancel.contentTintColor = palette.primaryText
-        cancel.font = .systemFont(
-            ofSize: EditorFlowCueLayout.fontSize(12, scale: scale),
-            weight: .regular
-        )
-        cancel.keyEquivalent = "\u{1b}"
-        cancel.setAccessibilityLabel("Cancel correction")
-        let replace = NSButton(title: "Replace", target: self, action: #selector(replaceText(_:)))
-        replace.bezelStyle = .rounded
-        replace.bezelColor = palette.accent
-        replace.contentTintColor = palette.onAccent
-        replace.font = .systemFont(
-            ofSize: EditorFlowCueLayout.fontSize(12, scale: scale),
-            weight: .regular
-        )
-        replace.keyEquivalent = "\r"
-        replace.setAccessibilityLabel(
-            count == 1 ? "Replace text" : "Replace text with \(count) reviewed changes"
-        )
-        replaceButton = replace
-
-        let buttons = NSStackView(views: [cancel, replace])
-        buttons.orientation = .horizontal
-        buttons.alignment = .centerY
-        buttons.spacing = EditorFlowCueLayout.metric(8, scale: scale)
-        let buttonHeight = EditorFlowCueLayout.metric(30, scale: scale)
-        cancel.heightAnchor.constraint(greaterThanOrEqualToConstant: buttonHeight).isActive = true
-        replace.heightAnchor.constraint(greaterThanOrEqualToConstant: buttonHeight).isActive = true
-
-        let correctedSentences = suggestion.reviewAlternatives?.replacementTexts.compactMap {
-            suggestion.selectingReviewAlternative($0)?.correctedSentence
-        } ?? [suggestion.correctedSentence]
-        let longestSentenceWidth = ([suggestion.originalSentence] + correctedSentences)
-            .map {
-                ($0 as NSString).size(withAttributes: [.font: editorFont]).width
-            }
-            .max() ?? 0
-        let horizontalInset = EditorFlowCueLayout.metric(16, scale: scale)
-        let verticalInset = EditorFlowCueLayout.metric(14, scale: scale)
-        let rowSpacing = EditorFlowCueLayout.metric(10, scale: scale)
-        let sectionSpacing = EditorFlowCueLayout.metric(12, scale: scale)
-        let widthLimit = min(EditorFlowCueLayout.metric(620, scale: scale), maximumWidth)
-        let minimumWidth = min(EditorFlowCueLayout.metric(320, scale: scale), widthLimit)
-        let width = min(
-            widthLimit,
-            max(minimumWidth, ceil(longestSentenceWidth) + labelWidth + rowSpacing + horizontalInset * 2)
-        )
-        let sentenceFieldWidth = max(
-            1,
-            width - horizontalInset * 2 - labelWidth - rowSpacing
-        )
-        originalField.preferredMaxLayoutWidth = sentenceFieldWidth
-        correctedField.preferredMaxLayoutWidth = sentenceFieldWidth
-        for label in changeLabels {
-            label.preferredMaxLayoutWidth = max(1, width - horizontalInset * 2)
-        }
-
-        let body = NSStackView(views: bodyViews)
-        body.orientation = .vertical
-        body.alignment = .leading
-        body.spacing = sectionSpacing
-        body.translatesAutoresizingMaskIntoConstraints = false
-        bodyStack = body
-        let bodyDocument = EditorFlowReviewDocumentView()
-        self.bodyDocument = bodyDocument
-        bodyDocument.translatesAutoresizingMaskIntoConstraints = false
-        bodyDocument.addSubview(body)
-
-        let scrollView = NSScrollView()
-        scrollView.drawsBackground = false
-        scrollView.borderType = .noBorder
-        scrollView.hasHorizontalScroller = false
-        scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.documentView = bodyDocument
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-
-        title.translatesAutoresizingMaskIntoConstraints = false
-        buttons.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(title)
-        root.addSubview(scrollView)
-        root.addSubview(buttons)
-
-        let bodyWidth = max(1, width - horizontalInset * 2)
-        NSLayoutConstraint.activate([
-            root.widthAnchor.constraint(equalToConstant: width),
-            title.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: horizontalInset),
-            title.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -horizontalInset),
-            title.topAnchor.constraint(equalTo: root.topAnchor, constant: verticalInset),
-            scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: horizontalInset),
-            scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -horizontalInset),
-            scrollView.topAnchor.constraint(equalTo: title.bottomAnchor, constant: sectionSpacing),
-            buttons.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -horizontalInset),
-            buttons.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: sectionSpacing),
-            buttons.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -verticalInset),
-            body.leadingAnchor.constraint(equalTo: bodyDocument.leadingAnchor),
-            body.trailingAnchor.constraint(equalTo: bodyDocument.trailingAnchor),
-            body.topAnchor.constraint(equalTo: bodyDocument.topAnchor),
-            body.bottomAnchor.constraint(equalTo: bodyDocument.bottomAnchor),
-            bodyDocument.widthAnchor.constraint(equalToConstant: bodyWidth),
-        ])
-        bodyDocument.layoutSubtreeIfNeeded()
-        let bodyHeight = max(1, ceil(body.fittingSize.height))
-        bodyDocument.frame = NSRect(x: 0, y: 0, width: bodyWidth, height: bodyHeight)
-        let preferredBodyLimit = max(
-            EditorFlowCueLayout.metric(120, scale: scale),
-            min(EditorFlowCueLayout.metric(520, scale: scale), maximumHeight * 0.58)
-        )
-        self.preferredBodyLimit = preferredBodyLimit
-        let titleHeight = max(1, ceil(title.fittingSize.height))
-        let buttonsHeight = max(buttonHeight, ceil(buttons.fittingSize.height))
-        let fixedChromeHeight = titleHeight
-            + buttonsHeight
-            + verticalInset * 2
-            + sectionSpacing * 2
-        self.fixedChromeHeight = fixedChromeHeight
-        let availableBodyHeight = max(1, maximumHeight - fixedChromeHeight)
-        let visibleBodyHeight = min(
-            bodyHeight,
-            min(preferredBodyLimit, availableBodyHeight)
-        )
-        let scrollHeightConstraint = scrollView.heightAnchor.constraint(
-            equalToConstant: visibleBodyHeight
-        )
-        scrollHeightConstraint.isActive = true
-        self.scrollHeightConstraint = scrollHeightConstraint
-        self.view = root
-        preferredContentSize = NSSize(
-            width: width,
-            height: min(
-                maximumHeight,
-                max(
-                    EditorFlowCueLayout.metric(112, scale: scale),
-                    fixedChromeHeight + visibleBodyHeight
-                )
-            )
-        )
-    }
-
-    private func attributedSentence(
-        _ sentence: String,
-        changedRanges: [NSRange],
-        changedColor: NSColor
-    ) -> NSAttributedString {
-        let value = NSMutableAttributedString(
-            string: sentence,
-            attributes: [
-                .font: editorFont,
-                .foregroundColor: palette.primaryText,
-            ]
-        )
-        for range in changedRanges where range.length > 0 && NSMaxRange(range) <= value.length {
-            value.addAttribute(.foregroundColor, value: changedColor, range: range)
-        }
-        return value
-    }
-
-    private func makeChangeLabel(_ change: EditorFlowDisplayChange) -> NSTextField {
-        let description = suggestionDescription(for: change)
-        let label = NSTextField(labelWithString: description)
-        label.font = .systemFont(
-            ofSize: EditorFlowCueLayout.fontSize(12, scale: zoomScale),
-            weight: .regular
-        )
-        label.textColor = palette.secondaryText
-        label.maximumNumberOfLines = 0
-        label.lineBreakMode = .byWordWrapping
-        label.cell?.wraps = true
-        label.setAccessibilityLabel(description)
-        if let bodyDocument {
-            label.preferredMaxLayoutWidth = max(1, bodyDocument.bounds.width)
-        }
-        return label
-    }
-
-    private func refreshSelectedSuggestionPresentation() {
-        guard let originalField, let correctedField, let changesStack else { return }
-        originalField.attributedStringValue = attributedSentence(
-            selectedSuggestion.originalSentence,
-            changedRanges: selectedSuggestion.originalChangedRanges,
-            changedColor: palette.removedText
-        )
-        originalField.setAccessibilityLabel("Original: \(selectedSuggestion.originalSentence)")
-        correctedField.attributedStringValue = attributedSentence(
-            selectedSuggestion.correctedSentence,
-            changedRanges: selectedSuggestion.correctedChangedRanges,
-            changedColor: palette.addedText
-        )
-        correctedField.setAccessibilityLabel("Corrected: \(selectedSuggestion.correctedSentence)")
-        for arrangedView in changesStack.arrangedSubviews {
-            changesStack.removeArrangedSubview(arrangedView)
-            arrangedView.removeFromSuperview()
-        }
-        for change in selectedSuggestion.displayChanges {
-            changesStack.addArrangedSubview(makeChangeLabel(change))
-        }
-        reviewRoot?.setAccessibilityHelp(selectedSuggestion.accessibilityReviewText)
-        replaceButton?.setAccessibilityLabel(
-            selectedSuggestion.edits.count == 1
-                ? "Replace text"
-                : "Replace text with \(selectedSuggestion.edits.count) reviewed changes"
-        )
-        view.layoutSubtreeIfNeeded()
-        guard let bodyStack, let bodyDocument, let scrollHeightConstraint else { return }
-        bodyStack.layoutSubtreeIfNeeded()
-        let bodyHeight = max(1, ceil(bodyStack.fittingSize.height))
-        bodyDocument.frame.size.height = bodyHeight
-        let availableBodyHeight = max(1, maximumHeight - fixedChromeHeight)
-        let visibleBodyHeight = min(bodyHeight, min(preferredBodyLimit, availableBodyHeight))
-        scrollHeightConstraint.constant = visibleBodyHeight
-        preferredContentSize.height = min(
-            maximumHeight,
-            max(
-                EditorFlowCueLayout.metric(112, scale: zoomScale),
-                fixedChromeHeight + visibleBodyHeight
-            )
-        )
-        NSAccessibility.post(element: correctedField, notification: .valueChanged)
-        if let reviewRoot {
-            NSAccessibility.post(element: reviewRoot, notification: .valueChanged)
-        }
-    }
-
-    private func suggestionDescription(for change: EditorFlowDisplayChange) -> String {
-        if change.originalText.isEmpty { return "Insert “\(change.replacementText)”" }
-        if change.replacementText.isEmpty { return "Remove “\(change.originalText)”" }
-        return "Replace “\(change.originalText)” with “\(change.replacementText)”"
-    }
-
-    override func viewDidAppear() {
-        super.viewDidAppear()
-        if let replaceButton {
-            view.window?.makeFirstResponder(replaceButton)
-        }
-    }
-
-    @objc private func selectAlternative(_ sender: NSPopUpButton) {
-        guard let alternatives = suggestion.reviewAlternatives,
-              sender.indexOfSelectedItem >= 0,
-              sender.indexOfSelectedItem < alternatives.replacementTexts.count,
-              let selected = suggestion.selectingReviewAlternative(
-                  alternatives.replacementTexts[sender.indexOfSelectedItem]
-              )
-        else {
-            NSSound.beep()
-            return
-        }
-        replaceButton?.isEnabled = false
-        selectedSuggestion = selected
-        refreshSelectedSuggestionPresentation()
-        replaceButton?.isEnabled = true
-    }
-
-    #if DEBUG
-    func selectAlternativeForTesting(at index: Int) -> Bool {
-        guard let alternativesPopUp,
-              index >= 0,
-              index < alternativesPopUp.numberOfItems
-        else { return false }
-        alternativesPopUp.selectItem(at: index)
-        selectAlternative(alternativesPopUp)
-        return alternativesPopUp.indexOfSelectedItem == index
-    }
-
-    var selectedSuggestionForTesting: EditorFlowSuggestion {
-        selectedSuggestion
-    }
-    #endif
-
-    @objc private func replaceText(_ sender: Any?) {
-        guard let button = sender as? NSButton else { return }
-        onReplace(button, selectedSuggestion)
-    }
-
-    @objc private func cancelReview(_ sender: Any?) {
-        onCancel()
-    }
-}
-
-class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
+class MarkdownNSTextView: NSTextView {
     var markdownShortcutsEnabled = false
     var flowSourceMode: FlowSourceMode?
     private var inlinePredictionsPreferenceEnabled = false
@@ -8055,15 +7479,10 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
     var flowSuggestion: EditorFlowSuggestion? {
         didSet {
             guard flowSuggestion != oldValue else { return }
+            flowSuggestionPresentedAt = flowSuggestion == nil ? nil : Date()
+            animateFlowRevealIfNeeded()
             removeFlowSourceHighlights()
-            let preservesRenderedPresentation = lastRenderedFlowSuggestion == oldValue
-                && flowSuggestion?.source == oldValue?.source
-                && flowSuggestion?.originalSentence == oldValue?.originalSentence
-                && flowSuggestion?.correctedSentence == oldValue?.correctedSentence
-                && flowSuggestion?.acceptance == oldValue?.acceptance
-                && flowSuggestion?.edits == oldValue?.edits
-            lastRenderedFlowSuggestion = preservesRenderedPresentation ? flowSuggestion : nil
-            closeFlowReviewPopover(restoreEditorFocus: false, restoreCompactSuggestion: nil)
+            lastRenderedFlowSuggestion = nil
             applyFlowSourceHighlightsIfNeeded()
             needsDisplay = true
             refreshFlowAccessibilityPresentation()
@@ -8072,15 +7491,12 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
                     || oldValue?.originalSentence != suggestion.originalSentence
                     || oldValue?.correctedSentence != suggestion.correctedSentence
             } == true
-            if let flowSuggestion, announcesNewRepair {
-                let requiresReview = flowCueLayout(for: flowSuggestion).mode == .review
+            if let flowSuggestion, announcesNewRepair, !isSettlingFlowSuggestionAutomatically {
                 NSAccessibility.post(
                     element: self,
                     notification: .announcementRequested,
                     userInfo: [
-                        .announcement: requiresReview
-                            ? flowSuggestion.accessibilityReviewAnnouncementText
-                            : flowSuggestion.accessibilityAnnouncementText,
+                        .announcement: flowSuggestion.accessibilityAnnouncementText,
                         .priority: NSAccessibilityPriorityLevel.medium.rawValue,
                     ]
                 )
@@ -8090,6 +7506,11 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
     var flowProseSuggestion: EditorFlowProseSuggestion? {
         didSet {
             guard flowProseSuggestion != oldValue else { return }
+            flowProsePresentedAt = flowProseSuggestion == nil ? nil : Date()
+            animateFlowRevealIfNeeded()
+            flowTabHoldTimer?.invalidate()
+            flowTabHoldTimer = nil
+            flowTabHoldSuggestion = nil
             lastRenderedFlowProseSuggestion = nil
             needsDisplay = true
             refreshFlowAccessibilityPresentation()
@@ -8111,21 +7532,222 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
             lastRenderedFlowSuggestion = nil
             lastRenderedFlowProseSuggestion = nil
             needsDisplay = true
-            if isFlowReviewPopoverShown {
-                rebuildFlowReviewPopoverForPresentationChange()
-            } else {
-                applyFlowSourceHighlightsIfNeeded()
-            }
+            applyFlowSourceHighlightsIfNeeded()
         }
     }
-    private var flowReviewPopover: NSPopover?
     private(set) var isFlowExplicitConfirmationInProgress = false
+    private var isSettlingFlowSuggestionAutomatically = false
     private var lastRenderedFlowSuggestion: EditorFlowSuggestion?
     private var lastRenderedFlowProseSuggestion: EditorFlowProseSuggestion?
+    private var flowSuggestionPresentedAt: Date?
+    private var flowProsePresentedAt: Date?
     private var highlightedFlowSuggestion: EditorFlowSuggestion?
-    private var highlightedFlowColor: NSColor?
-    var isFlowReviewPopoverShown: Bool {
-        flowReviewPopover != nil
+    private var flowSettlement: EditorFlowSettlement?
+    private var flowAcceptanceFlash: EditorFlowAcceptanceFlash?
+    private var flowDisplayTimer: Timer?
+    private var flowTabHoldTimer: Timer?
+    private var flowTabHoldSuggestion: EditorFlowProseSuggestion?
+    private struct PendingFlowProseTypedPrefix {
+        let suggestion: EditorFlowProseSuggestion
+        let insertedText: String
+        let remainingText: String
+    }
+    private var pendingFlowProseTypedPrefix: PendingFlowProseTypedPrefix?
+    var isFlowReviewPreviewShown: Bool {
+        flowSuggestion?.acceptance == .reviewOnly
+    }
+
+    @discardableResult
+    func presentFlowSuggestion(_ suggestion: EditorFlowSuggestion) -> Bool {
+        guard suggestion.acceptance == .direct else {
+            flowSuggestion = suggestion
+            return true
+        }
+        isSettlingFlowSuggestionAutomatically = true
+        defer { isSettlingFlowSuggestionAutomatically = false }
+        flowSuggestion = suggestion
+        isFlowExplicitConfirmationInProgress = true
+        defer { isFlowExplicitConfirmationInProgress = false }
+        return applyFlowSuggestion(suggestion)
+    }
+
+    @discardableResult
+    private func applyFlowSuggestion(_ suggestion: EditorFlowSuggestion) -> Bool {
+        guard flowSuggestion == suggestion,
+              flowSuggestionAcceptanceHandler?(suggestion) == true
+        else { return false }
+        beginFlowSettlement(for: suggestion)
+        return true
+    }
+
+    private func beginFlowSettlement(for suggestion: EditorFlowSuggestion) {
+        let ranges = suggestion.correctedChangedRanges.compactMap { localRange -> NSRange? in
+            guard localRange.location >= 0,
+                  suggestion.sentenceRange.location <= Int.max - localRange.location
+            else { return nil }
+            let absolute = NSRange(
+                location: suggestion.sentenceRange.location + localRange.location,
+                length: localRange.length
+            )
+            guard absolute.location >= 0,
+                  NSMaxRange(absolute) <= (string as NSString).length
+            else { return nil }
+            return absolute
+        }
+        let announcement: String
+        if suggestion.displayChanges.count == 1, let change = suggestion.displayChanges.first {
+            announcement = "Corrected \(change.originalText) to \(change.replacementText). Delete to undo."
+        } else {
+            announcement = "Applied \(suggestion.displayChanges.count) corrections. Delete to undo."
+        }
+        flowSettlement = EditorFlowSettlement(
+            resultingText: string,
+            selectedRange: selectedRange(),
+            correctedRanges: ranges,
+            accessibilityAnnouncement: announcement,
+            startedAt: Date()
+        )
+        NSAccessibility.post(
+            element: self,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: announcement,
+                .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+            ]
+        )
+        ensureFlowDisplayTimer()
+        refreshFlowAccessibilityPresentation()
+        needsDisplay = true
+    }
+
+    private func clearFlowSettlement() {
+        flowSettlement = nil
+        needsDisplay = true
+        refreshFlowAccessibilityPresentation()
+    }
+
+    private func animateFlowRevealIfNeeded() {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              flowSuggestion != nil || flowProseSuggestion != nil
+        else { return }
+        ensureFlowDisplayTimer()
+    }
+
+    private func prepareMatchingFlowProsePrefix(_ insertedText: String) -> Bool {
+        guard let suggestion = flowProseSuggestion,
+              !insertedText.isEmpty,
+              suggestion.continuation.hasPrefix(insertedText)
+        else {
+            pendingFlowProseTypedPrefix = nil
+            return false
+        }
+        pendingFlowProseTypedPrefix = PendingFlowProseTypedPrefix(
+            suggestion: suggestion,
+            insertedText: insertedText,
+            remainingText: String(suggestion.continuation.dropFirst(insertedText.count))
+        )
+        return true
+    }
+
+    fileprivate func consumeMatchingFlowProsePrefix(
+        documentID: String?,
+        sourceRevision: Int
+    ) -> EditorFlowProseSuggestion? {
+        defer { pendingFlowProseTypedPrefix = nil }
+        guard let pending = pendingFlowProseTypedPrefix,
+              pending.suggestion.documentID == documentID,
+              pending.suggestion.revision == sourceRevision,
+              pending.suggestion.selectedRange.length == 0,
+              !pending.remainingText.isEmpty
+        else { return nil }
+        let insertedLength = (pending.insertedText as NSString).length
+        let currentSource = string as NSString
+        let insertionRange = NSRange(
+            location: pending.suggestion.selectedRange.location,
+            length: insertedLength
+        )
+        let resultingSelection = NSRange(location: NSMaxRange(insertionRange), length: 0)
+        guard currentSource.length == pending.suggestion.sourceUTF16Length + insertedLength,
+              NSMaxRange(insertionRange) <= currentSource.length,
+              currentSource.substring(with: insertionRange) == pending.insertedText,
+              selectedRange() == resultingSelection
+        else { return nil }
+        return EditorFlowProseSuggestion(
+            documentID: pending.suggestion.documentID,
+            revision: sourceRevision + 1,
+            sourceUTF16Length: currentSource.length,
+            selectedRange: resultingSelection,
+            continuation: pending.remainingText
+        )
+    }
+
+    fileprivate func invalidateFlowSettlement() {
+        guard flowSettlement != nil else { return }
+        clearFlowSettlement()
+    }
+
+    fileprivate func flashAcceptedFlowProse(in range: NSRange) {
+        guard range.length > 0, NSMaxRange(range) <= (string as NSString).length else { return }
+        flowAcceptanceFlash = EditorFlowAcceptanceFlash(range: range, startedAt: Date())
+        ensureFlowDisplayTimer()
+        needsDisplay = true
+    }
+
+    private func ensureFlowDisplayTimer() {
+        guard flowDisplayTimer == nil else { return }
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+            guard let self else {
+                timer.invalidate()
+                return
+            }
+            let now = Date()
+            if self.flowSettlement.map({ now >= $0.undoExpiresAt }) == true {
+                self.flowSettlement = nil
+                self.refreshFlowAccessibilityPresentation()
+            }
+            if self.flowAcceptanceFlash.map({ now.timeIntervalSince($0.startedAt) >= 0.52 }) == true {
+                self.flowAcceptanceFlash = nil
+            }
+            let isRevealing = self.flowSuggestionPresentedAt.map {
+                self.flowSuggestion != nil && now.timeIntervalSince($0) < 0.20
+            } == true || self.flowProsePresentedAt.map {
+                self.flowProseSuggestion != nil && now.timeIntervalSince($0) < 0.20
+            } == true
+            self.needsDisplay = true
+            guard isRevealing || self.flowSettlement != nil || self.flowAcceptanceFlash != nil else {
+                timer.invalidate()
+                self.flowDisplayTimer = nil
+                return
+            }
+        }
+        flowDisplayTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    fileprivate func tearDownFlowPresentation() {
+        flowDisplayTimer?.invalidate()
+        flowDisplayTimer = nil
+        flowTabHoldTimer?.invalidate()
+        flowTabHoldTimer = nil
+        flowTabHoldSuggestion = nil
+        flowSettlement = nil
+        flowAcceptanceFlash = nil
+        pendingFlowProseTypedPrefix = nil
+        removeFlowSourceHighlights()
+    }
+
+    @discardableResult
+    private func revertFlowSettlementIfPossible() -> Bool {
+        guard let settlement = flowSettlement,
+              settlement.matches(text: string, selectedRange: selectedRange()),
+              undoManager?.canUndo == true
+        else {
+            clearFlowSettlement()
+            return false
+        }
+        clearFlowSettlement()
+        undoManager?.undo()
+        return true
     }
 
     // AppKit's text dragging contract uses acceptableDragTypes and the NSDraggingDestination
@@ -8216,26 +7838,17 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
     func invalidateFlowPresentationForGeometryChange() {
         lastRenderedFlowSuggestion = nil
         lastRenderedFlowProseSuggestion = nil
-        if isFlowReviewPopoverShown {
-            rebuildFlowReviewPopoverForPresentationChange()
-        }
+        removeFlowSourceHighlights()
+        applyFlowSourceHighlightsIfNeeded()
         needsDisplay = true
         refreshFlowAccessibilityPresentation()
         scheduleFlowProseGeometryValidation()
     }
 
     override func mouseDown(with event: NSEvent) {
-        if window?.firstResponder === self,
-           !isFlowReviewPopoverShown,
-           let suggestion = flowSuggestion,
-           let geometry = flowCueGeometry(for: suggestion) {
-            let point = convert(event.locationInWindow, from: nil)
-            if geometry.rect.contains(point) {
-                if !showFlowReviewPopover(for: suggestion) {
-                    NSSound.beep()
-                }
-                return
-            }
+        clearFlowSettlement()
+        if flowSuggestion != nil || flowProseSuggestion != nil {
+            flowSuggestionCancellationHandler?()
         }
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if event.clickCount == 1,
@@ -8514,41 +8127,27 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
         let modifiers = event.modifierFlags
             .intersection(.deviceIndependentFlagsMask)
             .subtracting([.capsLock, .numericPad, .function])
-        if event.keyCode == 124,
-           modifiers == [.option],
-           let flowProseSuggestion {
-            guard canDirectlyAcceptFlowProseSuggestion(flowProseSuggestion) else {
-                flowProseSuggestionCancellationHandler?()
-                super.keyDown(with: event)
-                return
+        let typedCharacters = event.characters ?? ""
+        let preservesProsePrefix = (modifiers.isEmpty || modifiers == [.shift])
+            && !typedCharacters.isEmpty
+            && typedCharacters.unicodeScalars.allSatisfy {
+                !CharacterSet.controlCharacters.contains($0)
             }
-            if flowProseSuggestionAcceptanceHandler?(
-                flowProseSuggestion,
-                true
-            ) == true {
-                return
-            }
-            NSSound.beep()
-            return
+            && prepareMatchingFlowProsePrefix(typedCharacters)
+        if event.keyCode == 51, modifiers.isEmpty, flowSettlement != nil {
+            if revertFlowSettlementIfPossible() { return }
+        } else if flowSettlement != nil {
+            clearFlowSettlement()
         }
-        if let flowSuggestion,
-           (event.keyCode == 36 || event.keyCode == 76),
-           modifiers == [.option] {
-            if !showFlowReviewPopover(for: flowSuggestion) {
-                NSSound.beep()
-            }
+        if event.keyCode == 124,
+           modifiers.isEmpty,
+           cycleFlowReviewAlternative() {
             return
         }
         if event.keyCode == 48, modifiers.isEmpty {
             if let flowSuggestion {
                 if hasRenderedFlowSuggestion(flowSuggestion) {
-                    if flowCueLayout(for: flowSuggestion).mode == .review {
-                        if !showFlowReviewPopover(for: flowSuggestion) {
-                            NSSound.beep()
-                        }
-                        return
-                    }
-                    if flowSuggestionAcceptanceHandler?(flowSuggestion) == true {
+                    if applyFlowSuggestion(flowSuggestion) {
                         return
                     }
                     NSSound.beep()
@@ -8558,13 +8157,7 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
             }
             if let flowProseSuggestion {
                 if canDirectlyAcceptFlowProseSuggestion(flowProseSuggestion) {
-                    if flowProseSuggestionAcceptanceHandler?(
-                        flowProseSuggestion,
-                        false
-                    ) == true {
-                        return
-                    }
-                    NSSound.beep()
+                    armFlowTabHold(for: flowProseSuggestion)
                     return
                 }
                 flowProseSuggestionCancellationHandler?()
@@ -8588,7 +8181,9 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
             super.keyDown(with: event)
             return
         } else {
-            flowSuggestionCancellationHandler?()
+            if !preservesProsePrefix {
+                flowSuggestionCancellationHandler?()
+            }
         }
 
         if markdownShortcutsEnabled,
@@ -8624,6 +8219,93 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
             return
         }
     }
+
+    override func keyUp(with event: NSEvent) {
+        let modifiers = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock, .numericPad, .function])
+        guard event.keyCode == 48,
+              modifiers.isEmpty,
+              let suggestion = flowTabHoldSuggestion
+        else {
+            super.keyUp(with: event)
+            return
+        }
+        flowTabHoldTimer?.invalidate()
+        flowTabHoldTimer = nil
+        flowTabHoldSuggestion = nil
+        if flowProseSuggestion == suggestion,
+           flowProseSuggestionAcceptanceHandler?(suggestion, true) == true {
+            return
+        }
+        NSSound.beep()
+    }
+
+    private func armFlowTabHold(for suggestion: EditorFlowProseSuggestion) {
+        guard flowTabHoldSuggestion == nil else { return }
+        flowTabHoldSuggestion = suggestion
+        let timer = Timer(timeInterval: 0.35, repeats: false) { [weak self] _ in
+            guard let self,
+                  self.flowTabHoldSuggestion == suggestion,
+                  self.flowProseSuggestion == suggestion
+            else { return }
+            self.flowTabHoldSuggestion = nil
+            self.flowTabHoldTimer = nil
+            if self.flowProseSuggestionAcceptanceHandler?(suggestion, false) != true {
+                NSSound.beep()
+            }
+        }
+        flowTabHoldTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    @discardableResult
+    private func cycleFlowReviewAlternative() -> Bool {
+        guard let suggestion = flowSuggestion,
+              let alternatives = suggestion.reviewAlternatives,
+              alternatives.replacementTexts.count > 1,
+              let current = suggestion.edits.first(where: {
+                  $0.range == alternatives.absoluteRange && $0.kind == alternatives.kind
+              })?.replacementText,
+              let currentIndex = alternatives.replacementTexts.firstIndex(of: current),
+              let next = suggestion.selectingReviewAlternative(
+                  alternatives.replacementTexts[(currentIndex + 1) % alternatives.replacementTexts.count]
+              )
+        else { return false }
+        let wasRendered = lastRenderedFlowSuggestion == suggestion
+        flowSuggestion = next
+        if wasRendered {
+            lastRenderedFlowSuggestion = next
+        }
+        return true
+    }
+
+    #if DEBUG
+    @discardableResult
+    func selectFlowReviewAlternativeForTesting(at index: Int) -> Bool {
+        guard let suggestion = flowSuggestion,
+              let alternatives = suggestion.reviewAlternatives,
+              alternatives.replacementTexts.indices.contains(index),
+              let selected = suggestion.selectingReviewAlternative(
+                  alternatives.replacementTexts[index]
+              )
+        else { return false }
+        flowSuggestion = selected
+        return true
+    }
+
+    var selectedFlowReviewSuggestionForTesting: EditorFlowSuggestion? {
+        flowSuggestion
+    }
+
+    @discardableResult
+    func confirmFlowReviewSuggestionForTesting() -> Bool {
+        guard let suggestion = flowSuggestion else { return false }
+        isFlowExplicitConfirmationInProgress = true
+        defer { isFlowExplicitConfirmationInProgress = false }
+        return applyFlowSuggestion(suggestion)
+    }
+    #endif
 
     @discardableResult
     func performMarkdownListEdit(_ command: MarkdownListEditCommand) -> Bool {
@@ -8729,9 +8411,95 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
         let previousAntialiasing = context.shouldAntialias
         context.shouldAntialias = fontSmoothingEnabled
         super.draw(dirtyRect)
+        drawFlowAcceptanceFlashIfNeeded(in: dirtyRect)
+        drawFlowSettlementIfNeeded(in: dirtyRect)
         drawFlowSuggestionIfNeeded(in: dirtyRect)
         drawFlowProseSuggestionIfNeeded(in: dirtyRect)
         context.shouldAntialias = previousAntialiasing
+    }
+
+    private func drawFlowAcceptanceFlashIfNeeded(in dirtyRect: NSRect) {
+        guard let flash = flowAcceptanceFlash,
+              Date().timeIntervalSince(flash.startedAt) < 0.52,
+              let layoutManager,
+              let textContainer,
+              NSMaxRange(flash.range) <= (string as NSString).length
+        else { return }
+        let elapsed = Date().timeIntervalSince(flash.startedAt)
+        let alpha = max(0, 0.16 * CGFloat(1 - elapsed / 0.52))
+        let glyphRange = layoutManager.glyphRange(
+            forCharacterRange: flash.range,
+            actualCharacterRange: nil
+        )
+        let rect = layoutManager.boundingRect(
+            forGlyphRange: glyphRange,
+            in: textContainer
+        ).offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y).insetBy(dx: -2, dy: -1)
+        guard rect.intersects(dirtyRect) else { return }
+        flowCuePalette.ghostText.withAlphaComponent(alpha).setFill()
+        NSBezierPath(
+            roundedRect: rect,
+            xRadius: max(2, (3 * max(0.1, zoomScale)).rounded()),
+            yRadius: max(2, (3 * max(0.1, zoomScale)).rounded())
+        ).fill()
+    }
+
+    private func drawFlowSettlementIfNeeded(in dirtyRect: NSRect) {
+        guard let settlement = flowSettlement,
+              settlement.matches(text: string, selectedRange: selectedRange()),
+              let layoutManager,
+              let textContainer
+        else { return }
+        let elapsed = Date().timeIntervalSince(settlement.startedAt)
+        let shimmerAlpha: CGFloat
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            shimmerAlpha = elapsed < 0.72 ? 0.16 : max(0, 0.16 * (1 - (elapsed - 0.72) / 0.28))
+        } else if elapsed < 0.35 {
+            shimmerAlpha = 0.24 * CGFloat(elapsed / 0.35)
+        } else {
+            shimmerAlpha = max(0, 0.24 * CGFloat(1 - (elapsed - 0.35) / 0.65))
+        }
+        let origin = textContainerOrigin
+        if shimmerAlpha > 0 {
+            flowCuePalette.shimmer.withAlphaComponent(shimmerAlpha).setFill()
+            for range in settlement.correctedRanges where range.length > 0 {
+                let glyphRange = layoutManager.glyphRange(
+                    forCharacterRange: range,
+                    actualCharacterRange: nil
+                )
+                let rect = layoutManager.boundingRect(
+                    forGlyphRange: glyphRange,
+                    in: textContainer
+                ).offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -2, dy: -1)
+                guard rect.intersects(dirtyRect) else { continue }
+                NSBezierPath(
+                    roundedRect: rect,
+                    xRadius: max(2, (3 * max(0.1, zoomScale)).rounded()),
+                    yRadius: max(2, (3 * max(0.1, zoomScale)).rounded())
+                ).fill()
+            }
+        }
+        let hintRange: NSRange? = if settlement.selectedRange.location > 0,
+                                    settlement.selectedRange.location <= (string as NSString).length {
+            NSRange(location: settlement.selectedRange.location - 1, length: 1)
+        } else {
+            settlement.correctedRanges.last
+        }
+        if Date() < settlement.undoExpiresAt,
+           let hintRange,
+           hintRange.length > 0,
+           let lastRect = flowLastGlyphRect(
+               layoutManager: layoutManager,
+               textContainer: textContainer,
+               characterRange: hintRange
+           ) {
+            drawFlowHint(
+                groups: [("⌫", "undo")],
+                trailingText: nil,
+                after: lastRect.offsetBy(dx: origin.x, dy: origin.y),
+                revealDate: settlement.startedAt
+            )
+        }
     }
 
     override func becomeFirstResponder() -> Bool {
@@ -8744,10 +8512,9 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
     }
 
     override func resignFirstResponder() -> Bool {
-        if !isFlowReviewPopoverShown {
-            removeFlowSourceHighlights()
-            flowSuggestionCancellationHandler?()
-        }
+        removeFlowSourceHighlights()
+        clearFlowSettlement()
+        flowSuggestionCancellationHandler?()
         return super.resignFirstResponder()
     }
 
@@ -8760,51 +8527,46 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
     }
 
     fileprivate func applyFlowSourceHighlightsIfNeeded() {
-        guard flowReviewPopover == nil,
-              window?.firstResponder === self,
+        guard window?.firstResponder === self,
               let suggestion = flowSuggestion,
+              suggestion.acceptance == .reviewOnly,
               isFlowSuggestionExact(suggestion),
               selectedRange() == suggestion.selectedRange,
-              let geometry = flowCueGeometry(for: suggestion),
-              visibleRect.contains(geometry.rect),
               let layoutManager
         else { return }
-        let color = flowCuePalette.removedText.withAlphaComponent(
-            NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-                ? (flowCuePalette.usesDarkElevation ? 0.22 : 0.20)
-                : (flowCuePalette.usesDarkElevation ? 0.12 : 0.10)
-        )
-        if highlightedFlowSuggestion == suggestion,
-           highlightedFlowColor?.isEqual(color) == true {
-            return
-        }
+        if highlightedFlowSuggestion == suggestion { return }
         removeFlowSourceHighlights()
         for range in flowSourceHighlightRanges(for: suggestion) {
             layoutManager.addTemporaryAttribute(
-                .backgroundColor,
-                value: color,
+                .foregroundColor,
+                value: NSColor.clear,
+                forCharacterRange: range
+            )
+            layoutManager.addTemporaryAttribute(
+                .spellingState,
+                value: 0,
                 forCharacterRange: range
             )
             layoutManager.invalidateDisplay(forCharacterRange: range)
         }
         highlightedFlowSuggestion = suggestion
-        highlightedFlowColor = color
     }
 
     fileprivate func invalidateFlowSourceHighlightCache() {
-        // Retain the prior suggestion so the next application can remove its
-        // actual temporary attributes before restoring the authoritative
-        // search and Flow colors.
-        highlightedFlowColor = nil
+        // Flow preview uses foreground color while search uses background
+        // color, so the two temporary-attribute layers do not conflict.
     }
 
     private func removeFlowSourceHighlights() {
         guard let suggestion = highlightedFlowSuggestion, let layoutManager else { return }
         highlightedFlowSuggestion = nil
-        highlightedFlowColor = nil
         for range in flowSourceHighlightRanges(for: suggestion) {
             layoutManager.removeTemporaryAttribute(
-                .backgroundColor,
+                .foregroundColor,
+                forCharacterRange: range
+            )
+            layoutManager.removeTemporaryAttribute(
+                .spellingState,
                 forCharacterRange: range
             )
             layoutManager.invalidateDisplay(forCharacterRange: range)
@@ -8813,205 +8575,11 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
     }
 
     private func flowSourceHighlightRanges(for suggestion: EditorFlowSuggestion) -> [NSRange] {
-        let textLength = (string as NSString).length
-        return suggestion.displayChanges.compactMap { change in
-            guard change.originalRange.location >= 0,
-                  change.originalRange.length > 0,
-                  suggestion.sentenceRange.location <= Int.max - change.originalRange.location
-            else { return nil }
-            let range = NSRange(
-                location: suggestion.sentenceRange.location + change.originalRange.location,
-                length: change.originalRange.length
-            )
-            guard range.location >= 0, NSMaxRange(range) <= textLength else { return nil }
-            return range
-        }
-    }
-
-    private func rebuildFlowReviewPopoverForPresentationChange() {
-        guard flowReviewPopover != nil else { return }
-        guard let suggestion = flowSuggestion,
-              isFlowSuggestionExact(suggestion)
-        else {
-            closeFlowReviewPopover(
-                restoreEditorFocus: false,
-                restoreCompactSuggestion: nil
-            )
-            return
-        }
-        // If the anchor is temporarily unavailable during an AppKit layout pass,
-        // keep the current review visible rather than exposing the compact cue.
-        guard flowCueGeometry(for: suggestion) != nil else { return }
-        closeFlowReviewPopover(
-            restoreEditorFocus: false,
-            restoreCompactSuggestion: nil
-        )
-        if !showFlowReviewPopover(for: suggestion) {
-            flowSuggestionCancellationHandler?()
-        }
-    }
-
-    @discardableResult
-    private func showFlowReviewPopover(for suggestion: EditorFlowSuggestion) -> Bool {
-        guard flowSuggestion == suggestion,
-              window != nil,
-              let geometry = flowCueGeometry(for: suggestion)
-        else { return false }
-        if flowReviewPopover != nil {
-            return true
-        }
-
-        let controller = EditorFlowReviewViewController(
-            suggestion: suggestion,
-            editorFont: font
-                ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
-            zoomScale: max(0.1, zoomScale),
-            maximumWidth: max(
-                1,
-                (window?.screen?.visibleFrame.width ?? NSScreen.main?.visibleFrame.width ?? 640) - 40
-            ),
-            maximumHeight: max(
-                1,
-                (window?.screen?.visibleFrame.height ?? NSScreen.main?.visibleFrame.height ?? 760) - 40
-            ),
-            palette: flowCuePalette,
-            onReplace: { [weak self] button, selectedSuggestion in
-                guard let self,
-                      NSApp.isActive,
-                      self.isFlowReviewPopoverShown,
-                      button.window === self.flowReviewPopover?.contentViewController?.view.window,
-                      self.isFlowSuggestionExact(suggestion)
-                else { return }
-                self.confirmFlowReviewSuggestion(
-                    selectedSuggestion,
-                    presentedSuggestion: suggestion
-                )
-            },
-            onCancel: { [weak self] in
-                guard let self, self.isFlowReviewPopoverShown else { return }
-                self.closeFlowReviewPopover(
-                    restoreEditorFocus: true,
-                    restoreCompactSuggestion: suggestion
-                )
-            }
-        )
-        let popover = NSPopover()
-        popover.behavior = .applicationDefined
-        popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        popover.contentViewController = controller
-        popover.delegate = self
-        flowReviewPopover = popover
-        removeFlowSourceHighlights()
-        lastRenderedFlowSuggestion = nil
-        setNeedsDisplay(geometry.rect.insetBy(dx: -32, dy: -32))
-        displayIfNeeded()
-        popover.show(relativeTo: geometry.rect, of: self, preferredEdge: .maxY)
-        guard popover.isShown else {
-            flowReviewPopover = nil
-            popover.delegate = nil
-            popover.close()
-            restoreCompactFlowSuggestionIfValid(suggestion)
-            return false
-        }
-        refreshFlowAccessibilityPresentation()
-        return true
-    }
-
-    @discardableResult
-    private func confirmFlowReviewSuggestion(
-        _ selectedSuggestion: EditorFlowSuggestion,
-        presentedSuggestion: EditorFlowSuggestion
-    ) -> Bool {
-        guard isFlowReviewPopoverShown,
-              flowSuggestion == presentedSuggestion,
-              isFlowSuggestionExact(presentedSuggestion),
-              presentedSuggestion.approvedReviewVariant(selectedSuggestion) != nil
-        else { return false }
-        isFlowExplicitConfirmationInProgress = true
-        defer { isFlowExplicitConfirmationInProgress = false }
-        let accepted = flowSuggestionAcceptanceHandler?(selectedSuggestion) == true
-        closeFlowReviewPopover(
-            restoreEditorFocus: true,
-            restoreCompactSuggestion: nil
-        )
-        if !accepted {
-            NSSound.beep()
-        }
-        return accepted
-    }
-
-    #if DEBUG
-    @discardableResult
-    func selectFlowReviewAlternativeForTesting(at index: Int) -> Bool {
-        guard isFlowReviewPopoverShown,
-              let controller = flowReviewPopover?.contentViewController
-                as? EditorFlowReviewViewController
-        else { return false }
-        return controller.selectAlternativeForTesting(at: index)
-    }
-
-    var selectedFlowReviewSuggestionForTesting: EditorFlowSuggestion? {
-        guard isFlowReviewPopoverShown,
-              let controller = flowReviewPopover?.contentViewController
-                as? EditorFlowReviewViewController
-        else { return nil }
-        return controller.selectedSuggestionForTesting
-    }
-
-    @discardableResult
-    func confirmFlowReviewSuggestionForTesting() -> Bool {
-        guard let suggestion = flowSuggestion,
-              let controller = flowReviewPopover?.contentViewController
-                as? EditorFlowReviewViewController
-        else { return false }
-        return confirmFlowReviewSuggestion(
-            controller.selectedSuggestionForTesting,
-            presentedSuggestion: suggestion
-        )
-    }
-    #endif
-
-    private func closeFlowReviewPopover(
-        restoreEditorFocus: Bool,
-        restoreCompactSuggestion: EditorFlowSuggestion?
-    ) {
-        let popover = flowReviewPopover
-        flowReviewPopover = nil
-        popover?.delegate = nil
-        popover?.animates = false
-        popover?.close()
-        if restoreEditorFocus {
-            window?.makeFirstResponder(self)
-        }
-        if let restoreCompactSuggestion {
-            restoreCompactFlowSuggestionIfValid(restoreCompactSuggestion)
-        }
-        lastRenderedFlowSuggestion = nil
-        needsDisplay = true
-        refreshFlowAccessibilityPresentation()
-    }
-
-    func popoverDidClose(_ notification: Notification) {
-        guard let closedPopover = notification.object as? NSPopover,
-              closedPopover === flowReviewPopover
-        else { return }
-        flowReviewPopover = nil
-        if NSApp.isActive, window?.isKeyWindow == true {
-            window?.makeFirstResponder(self)
-            if let suggestion = flowSuggestion {
-                restoreCompactFlowSuggestionIfValid(suggestion)
-            }
-        }
-        refreshFlowAccessibilityPresentation()
-    }
-
-    private func restoreCompactFlowSuggestionIfValid(_ suggestion: EditorFlowSuggestion) {
-        guard window?.firstResponder === self,
-              isFlowSuggestionExact(suggestion)
-        else { return }
-        applyFlowSourceHighlightsIfNeeded()
-        lastRenderedFlowSuggestion = nil
-        needsDisplay = true
+        let source = string as NSString
+        guard suggestion.sentenceRange.location >= 0,
+              NSMaxRange(suggestion.sentenceRange) <= source.length
+        else { return [] }
+        return [source.paragraphRange(for: suggestion.sentenceRange)]
     }
 
     private func isFlowSuggestionExact(_ suggestion: EditorFlowSuggestion) -> Bool {
@@ -9026,20 +8594,11 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
     }
 
     private func refreshFlowAccessibilityPresentation() {
-        // The popover owns the proposal while review is open. Do not leave a
-        // second actionable representation on the editor for VoiceOver.
-        guard flowReviewPopover == nil else {
-            setAccessibilityHelp(nil)
-            setAccessibilityCustomActions([])
-            return
-        }
-        let repairHelp = flowSuggestion.map { suggestion in
-            flowCueLayout(for: suggestion).mode == .review
-                ? suggestion.accessibilityReviewText
-                : suggestion.accessibilityText
-        }
+        let repairHelp = flowSuggestion?.accessibilityText
         setAccessibilityHelp(
-            repairHelp ?? flowProseSuggestion?.accessibilityText
+            repairHelp
+                ?? flowProseSuggestion?.accessibilityText
+                ?? flowSettlement?.accessibilityAnnouncement
         )
         refreshFlowAccessibilityActions()
     }
@@ -9047,24 +8606,15 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
     private func refreshFlowAccessibilityActions() {
         if let suggestion = flowSuggestion {
             let changes = suggestion.exactChangeDescription
-            let canApplyDirectly = suggestion.acceptance == .direct
-                && flowCueLayout(for: suggestion).mode == .direct
             let proposal = suggestion.correctedSentence
             let primary = NSAccessibilityCustomAction(
-                name: canApplyDirectly
-                    ? "Accept correction: \(proposal). Changes: \(changes)"
-                    : "Review correction: \(proposal). Changes: \(changes)",
+                name: "Apply correction: \(proposal). Changes: \(changes)",
                 handler: { [weak self] in
                     guard let self, self.flowSuggestion == suggestion else { return false }
-                    if canApplyDirectly {
-                        guard NSApp.isActive,
-                              self.canDirectlyAcceptFlowSuggestion(suggestion)
-                        else { return false }
-                        self.isFlowExplicitConfirmationInProgress = true
-                        defer { self.isFlowExplicitConfirmationInProgress = false }
-                        return self.flowSuggestionAcceptanceHandler?(suggestion) == true
-                    }
-                    return self.showFlowReviewPopover(for: suggestion)
+                    guard NSApp.isActive else { return false }
+                    self.isFlowExplicitConfirmationInProgress = true
+                    defer { self.isFlowExplicitConfirmationInProgress = false }
+                    return self.applyFlowSuggestion(suggestion)
                 }
             )
             let dismiss = NSAccessibilityCustomAction(
@@ -9075,15 +8625,17 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
                     return true
                 }
             )
-            let review = NSAccessibilityCustomAction(
-                name: "Review correction: \(proposal). Changes: \(changes)",
-                handler: { [weak self] in
-                    self?.showFlowReviewPopover(for: suggestion) == true
-                }
-            )
-            setAccessibilityCustomActions(
-                canApplyDirectly ? [primary, dismiss, review] : [primary, dismiss]
-            )
+            var actions = [primary]
+            if suggestion.reviewAlternatives != nil {
+                actions.append(NSAccessibilityCustomAction(
+                    name: "Show next correction alternative",
+                    handler: { [weak self] in
+                        self?.cycleFlowReviewAlternative() == true
+                    }
+                ))
+            }
+            actions.append(dismiss)
+            setAccessibilityCustomActions(actions)
             return
         }
         if let suggestion = flowProseSuggestion {
@@ -9118,6 +8670,17 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
             setAccessibilityCustomActions([accept, acceptWord, dismiss])
             return
         }
+        if flowSettlement != nil {
+            setAccessibilityCustomActions([
+                NSAccessibilityCustomAction(
+                    name: "Undo settled correction",
+                    handler: { [weak self] in
+                        self?.revertFlowSettlementIfPossible() == true
+                    }
+                ),
+            ])
+            return
+        }
         setAccessibilityCustomActions(nil)
     }
 
@@ -9126,30 +8689,49 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
               let suggestion = flowProseSuggestion,
               window?.firstResponder === self,
               selectedRange() == suggestion.selectedRange,
-              let caretRect = caretRect(atUTF16Offset: suggestion.caretUTF16Offset),
-              visibleFlowProseContinuation(
-                suggestion.continuation,
-                atUTF16Offset: suggestion.caretUTF16Offset
-              ) == suggestion.continuation
+              let overlay = makeFlowOverlay(),
+              suggestion.caretUTF16Offset <= overlay.storage.length
         else { return }
-
-        let editorFont = font
-            ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        let rendered = NSAttributedString(
+        let fade = flowRevealProgress(since: flowProsePresentedAt, duration: 0.18)
+        var attributes = flowInsertionAttributes(at: suggestion.caretUTF16Offset)
+        attributes[.foregroundColor] = flowCuePalette.ghostText.withAlphaComponent(
+            0.20 + 0.48 * fade
+        )
+        let inserted = NSAttributedString(
             string: suggestion.continuation,
-            attributes: [
-                .font: editorFont,
-                .foregroundColor: flowCuePalette.secondaryText.withAlphaComponent(0.40),
-            ]
+            attributes: attributes
         )
-        let size = rendered.size()
-        let origin = NSPoint(
-            x: caretRect.maxX + 1,
-            y: caretRect.midY - size.height / 2
+        overlay.storage.insert(inserted, at: suggestion.caretUTF16Offset)
+        let characterRange = NSRange(
+            location: suggestion.caretUTF16Offset,
+            length: inserted.length
         )
-        let rect = NSRect(origin: origin, size: size)
-        guard rect.insetBy(dx: -4, dy: -4).intersects(dirtyRect) else { return }
-        rendered.draw(at: origin)
+        overlay.layoutManager.ensureLayout(for: overlay.textContainer)
+        let glyphRange = overlay.layoutManager.glyphRange(
+            forCharacterRange: characterRange,
+            actualCharacterRange: nil
+        )
+        let origin = textContainerOrigin
+        let bounds = overlay.layoutManager.boundingRect(
+            forGlyphRange: glyphRange,
+            in: overlay.textContainer
+        ).offsetBy(dx: origin.x, dy: origin.y)
+        guard visibleRect.insetBy(dx: -1, dy: -1).contains(bounds),
+              bounds.insetBy(dx: -4, dy: -4).intersects(dirtyRect)
+        else { return }
+        overlay.layoutManager.drawGlyphs(forGlyphRange: glyphRange, at: origin)
+        if let lastRect = flowLastGlyphRect(
+            layoutManager: overlay.layoutManager,
+            textContainer: overlay.textContainer,
+            characterRange: characterRange
+        ) {
+            drawFlowHint(
+                groups: [("⇥", "word")],
+                trailingText: "· hold for all",
+                after: lastRect.offsetBy(dx: origin.x, dy: origin.y),
+                revealDate: flowProsePresentedAt
+            )
+        }
         lastRenderedFlowProseSuggestion = suggestion
     }
 
@@ -9159,20 +8741,14 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
         lastRenderedFlowProseSuggestion == suggestion
             && window?.firstResponder === self
             && selectedRange() == suggestion.selectedRange
-            && visibleFlowProseContinuation(
-                suggestion.continuation,
-                atUTF16Offset: suggestion.caretUTF16Offset
-            ) == suggestion.continuation
+            && flowProseSuggestionIsFullyVisible(suggestion)
     }
 
     func markFlowProseSuggestionAsRendered(_ suggestion: EditorFlowProseSuggestion) {
         guard flowProseSuggestion == suggestion,
               window?.firstResponder === self,
               selectedRange() == suggestion.selectedRange,
-              visibleFlowProseContinuation(
-                  suggestion.continuation,
-                  atUTF16Offset: suggestion.caretUTF16Offset
-              ) == suggestion.continuation
+              flowProseSuggestionIsFullyVisible(suggestion)
         else { return }
         lastRenderedFlowProseSuggestion = suggestion
     }
@@ -9194,10 +8770,7 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
 
     private func cancelFlowProseSuggestionIfNotFullyVisible() {
         guard let suggestion = flowProseSuggestion,
-              visibleFlowProseContinuation(
-                  suggestion.continuation,
-                  atUTF16Offset: suggestion.caretUTF16Offset
-              ) != suggestion.continuation
+              !flowProseSuggestionIsFullyVisible(suggestion)
         else { return }
         lastRenderedFlowProseSuggestion = nil
         if let flowProseSuggestionCancellationHandler {
@@ -9211,124 +8784,260 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
         _ continuation: String,
         atUTF16Offset offset: Int
     ) -> String? {
-        guard !continuation.isEmpty,
-              !continuation.containsNewline,
-              let caretRect = caretRect(atUTF16Offset: offset),
-              caretRect.intersects(visibleRect)
-        else { return nil }
-        let edgeInset = max(1, (8 * max(0.1, zoomScale)).rounded())
-        let availableWidth = visibleRect.maxX - edgeInset - caretRect.maxX - 1
-        guard availableWidth > 0 else { return nil }
-        let editorFont = font
-            ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        let width: (String) -> CGFloat = { value in
-            ceil((value as NSString).size(withAttributes: [.font: editorFont]).width)
-        }
-        if width(continuation) <= availableWidth {
-            return continuation
-        }
-
-        var accepted = ""
-        var remainder = continuation
-        while let split = FlowProseCompletionSanitizer.splitNextWord(from: remainder) {
-            let candidate = accepted + split.acceptedPrefix
-            guard width(candidate) <= availableWidth else { break }
-            accepted = candidate
-            remainder = split.remainingSuffix
-            if remainder.isEmpty { break }
-        }
-        return accepted.isEmpty ? nil : accepted
+        let probe = EditorFlowProseSuggestion(
+            documentID: flowProseSuggestion?.documentID ?? "",
+            revision: flowProseSuggestion?.revision ?? 0,
+            sourceUTF16Length: (string as NSString).length,
+            selectedRange: NSRange(location: offset, length: 0),
+            continuation: continuation
+        )
+        return flowProseSuggestionIsFullyVisible(probe) ? continuation : nil
     }
 
     private func drawFlowSuggestionIfNeeded(in dirtyRect: NSRect) {
         guard let suggestion = flowSuggestion,
               window?.firstResponder === self,
-              !isFlowReviewPopoverShown,
+              suggestion.acceptance == .reviewOnly,
               selectedRange() == suggestion.selectedRange,
               suggestion.caretUTF16Offset <= (string as NSString).length,
-              let geometry = flowCueGeometry(for: suggestion)
+              let overlay = makeFlowOverlay(),
+              let sourceStorage = textStorage
         else { return }
-
-        let layout = geometry.layout
-        let drawRect = geometry.rect
-        guard visibleRect.contains(drawRect) else { return }
-        guard drawRect.insetBy(dx: -28, dy: -28).intersects(dirtyRect) else { return }
         applyFlowSourceHighlightsIfNeeded()
-        drawFlowCueSurface(in: drawRect, cornerRadius: layout.cornerRadius)
-
-        if layout.mode == .review {
-            let rendered = attributedFlowReviewCue(layout.reviewText ?? "Review")
-            let contentSize = rendered.size()
-            let clipRect = NSRect(
-                x: drawRect.minX + layout.horizontalInset,
-                y: drawRect.minY,
-                width: max(0, drawRect.width - layout.horizontalInset * 2),
-                height: drawRect.height
-            )
-            NSGraphicsContext.saveGraphicsState()
-            NSBezierPath(rect: clipRect).addClip()
-            rendered.draw(at: NSPoint(
-                x: drawRect.minX + layout.horizontalInset,
-                y: drawRect.midY - contentSize.height / 2
-            ))
-            NSGraphicsContext.restoreGraphicsState()
-            lastRenderedFlowSuggestion = suggestion
-            return
-        }
-
-        let scale = max(0.1, zoomScale)
-        let correctedRect = NSRect(
-            x: drawRect.minX + layout.horizontalInset,
-            y: drawRect.minY + layout.verticalInset,
-            width: max(0, drawRect.width - layout.horizontalInset * 2),
-            height: layout.correctedRowHeight
+        let source = string as NSString
+        let sourceParagraph = source.paragraphRange(for: suggestion.sentenceRange)
+        var attributes = flowInsertionAttributes(at: suggestion.sentenceRange.location)
+        attributes[.foregroundColor] = flowCuePalette.ghostText.withAlphaComponent(
+            NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 0.88 : 0.68
         )
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byWordWrapping
-        let corrected = NSMutableAttributedString(
+        let replacement = NSAttributedString(
             string: suggestion.correctedSentence,
-            attributes: [
-                .font: font
-                    ?? .monospacedSystemFont(
-                        ofSize: NSFont.systemFontSize,
-                        weight: .regular
-                    ),
-                .foregroundColor: flowCuePalette.primaryText,
-                .paragraphStyle: paragraph,
-            ]
+            attributes: attributes
         )
-        for range in suggestion.correctedChangedRanges
-        where range.length > 0 && NSMaxRange(range) <= corrected.length {
-            corrected.addAttribute(
-                .foregroundColor,
-                value: flowCuePalette.addedText,
-                range: range
+        overlay.storage.replaceCharacters(in: suggestion.sentenceRange, with: replacement)
+        let delta = replacement.length - suggestion.sentenceRange.length
+        let correctedParagraph = NSRange(
+            location: sourceParagraph.location,
+            length: max(0, sourceParagraph.length + delta)
+        )
+        guard NSMaxRange(correctedParagraph) <= overlay.storage.length else { return }
+        overlay.storage.addAttribute(
+            .foregroundColor,
+            value: attributes[.foregroundColor] as Any,
+            range: correctedParagraph
+        )
+        overlay.storage.removeAttribute(.backgroundColor, range: correctedParagraph)
+        overlay.layoutManager.ensureLayout(for: overlay.textContainer)
+        let glyphRange = overlay.layoutManager.glyphRange(
+            forCharacterRange: correctedParagraph,
+            actualCharacterRange: nil
+        )
+        let origin = textContainerOrigin
+        let bounds = overlay.layoutManager.boundingRect(
+            forGlyphRange: glyphRange,
+            in: overlay.textContainer
+        ).offsetBy(dx: origin.x, dy: origin.y)
+        guard bounds.intersects(visibleRect),
+              bounds.insetBy(dx: -4, dy: -34).intersects(dirtyRect),
+              sourceStorage.length == (string as NSString).length
+        else { return }
+        overlay.layoutManager.drawGlyphs(forGlyphRange: glyphRange, at: origin)
+        let correctedSentenceRange = NSRange(
+            location: suggestion.sentenceRange.location,
+            length: replacement.length
+        )
+        if let lastRect = flowLastGlyphRect(
+            layoutManager: overlay.layoutManager,
+            textContainer: overlay.textContainer,
+            characterRange: correctedSentenceRange
+        ) {
+            var groups = [("⇥", "apply")]
+            if suggestion.reviewAlternatives != nil {
+                groups.append(("→", "next"))
+            }
+            groups.append(("Esc", "dismiss"))
+            drawFlowHint(
+                groups: groups,
+                trailingText: nil,
+                after: lastRect.offsetBy(dx: origin.x, dy: origin.y),
+                revealDate: flowSuggestionPresentedAt
             )
         }
-        corrected.draw(
-            with: correctedRect,
-            options: [.usesLineFragmentOrigin, .usesFontLeading]
-        )
-
-        let footerRect = NSRect(
-            x: drawRect.minX + layout.horizontalInset,
-            y: NSMaxY(correctedRect) + layout.rowGap,
-            width: drawRect.width - layout.horizontalInset * 2,
-            height: layout.footerHeight
-        )
-        let footer = NSAttributedString(
-            string: "Tab Accept · ⌥↩ Review · Esc Dismiss",
-            attributes: [
-                .font: EditorFlowCueLayout.shortcutFont(scale: scale),
-                .foregroundColor: flowCuePalette.secondaryText,
-            ]
-        )
-        let footerSize = footer.size()
-        footer.draw(at: NSPoint(
-            x: footerRect.minX,
-            y: footerRect.midY - footerSize.height / 2
-        ))
         lastRenderedFlowSuggestion = suggestion
+    }
+
+    private func makeFlowOverlay() -> (
+        storage: NSTextStorage,
+        layoutManager: NSLayoutManager,
+        textContainer: NSTextContainer
+    )? {
+        guard let sourceStorage = textStorage, let sourceContainer = textContainer else { return nil }
+        let storage = NSTextStorage(attributedString: sourceStorage)
+        let layoutManager = NSLayoutManager()
+        let container = NSTextContainer(containerSize: sourceContainer.containerSize)
+        container.lineFragmentPadding = sourceContainer.lineFragmentPadding
+        container.widthTracksTextView = sourceContainer.widthTracksTextView
+        container.heightTracksTextView = sourceContainer.heightTracksTextView
+        container.lineBreakMode = sourceContainer.lineBreakMode
+        container.maximumNumberOfLines = sourceContainer.maximumNumberOfLines
+        layoutManager.addTextContainer(container)
+        storage.addLayoutManager(layoutManager)
+        return (storage, layoutManager, container)
+    }
+
+    private func flowInsertionAttributes(at offset: Int) -> [NSAttributedString.Key: Any] {
+        guard let textStorage, textStorage.length > 0 else { return typingAttributes }
+        let index = min(max(0, offset == textStorage.length ? offset - 1 : offset), textStorage.length - 1)
+        var attributes = textStorage.attributes(at: index, effectiveRange: nil)
+        attributes[.font] = font ?? attributes[.font]
+        attributes.removeValue(forKey: .backgroundColor)
+        return attributes
+    }
+
+    private func flowProseSuggestionIsFullyVisible(_ suggestion: EditorFlowProseSuggestion) -> Bool {
+        guard !suggestion.continuation.isEmpty,
+              !suggestion.continuation.containsNewline,
+              let overlay = makeFlowOverlay(),
+              suggestion.caretUTF16Offset <= overlay.storage.length
+        else { return false }
+        overlay.storage.insert(
+            NSAttributedString(
+                string: suggestion.continuation,
+                attributes: flowInsertionAttributes(at: suggestion.caretUTF16Offset)
+            ),
+            at: suggestion.caretUTF16Offset
+        )
+        overlay.layoutManager.ensureLayout(for: overlay.textContainer)
+        let glyphRange = overlay.layoutManager.glyphRange(
+            forCharacterRange: NSRange(
+                location: suggestion.caretUTF16Offset,
+                length: (suggestion.continuation as NSString).length
+            ),
+            actualCharacterRange: nil
+        )
+        let bounds = overlay.layoutManager.boundingRect(
+            forGlyphRange: glyphRange,
+            in: overlay.textContainer
+        ).offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+        return !bounds.isEmpty && visibleRect.insetBy(dx: -1, dy: -1).contains(bounds)
+    }
+
+    private func flowLastGlyphRect(
+        layoutManager: NSLayoutManager,
+        textContainer: NSTextContainer,
+        characterRange: NSRange
+    ) -> NSRect? {
+        guard characterRange.length > 0 else { return nil }
+        let lastCharacter = NSRange(location: NSMaxRange(characterRange) - 1, length: 1)
+        let glyphRange = layoutManager.glyphRange(
+            forCharacterRange: lastCharacter,
+            actualCharacterRange: nil
+        )
+        let rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+        return rect.isEmpty ? nil : rect
+    }
+
+    private func flowRevealProgress(since date: Date?, duration: TimeInterval) -> CGFloat {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              let date,
+              duration > 0
+        else { return 1 }
+        return min(1, max(0, Date().timeIntervalSince(date) / duration))
+    }
+
+    private func drawFlowHint(
+        groups: [(String, String)],
+        trailingText: String?,
+        after anchor: NSRect,
+        revealDate: Date?
+    ) {
+        let scale = max(0.1, zoomScale)
+        let font = NSFont.monospacedSystemFont(
+            ofSize: max(8, (11 * scale * 2).rounded() / 2),
+            weight: .regular
+        )
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: flowCuePalette.secondaryText,
+        ]
+        let keyAttributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: flowCuePalette.primaryText,
+        ]
+        let horizontalPadding = max(4, (6 * scale).rounded())
+        let verticalPadding = max(1, (1 * scale).rounded())
+        let keyActionGap = max(4, (6 * scale).rounded())
+        let groupGap = max(7, (11 * scale).rounded())
+        let textHeight = ceil(font.ascender - font.descender + font.leading)
+        let keyHeight = textHeight + verticalPadding * 2 + max(1, (2 * scale).rounded())
+        let widths = groups.map { key, action -> (CGFloat, CGFloat) in
+            (
+                ceil((key as NSString).size(withAttributes: keyAttributes).width) + horizontalPadding * 2,
+                ceil((action as NSString).size(withAttributes: attributes).width)
+            )
+        }
+        let trailingWidth = trailingText.map {
+            ceil(($0 as NSString).size(withAttributes: attributes).width)
+        } ?? 0
+        let contentWidth = widths.enumerated().reduce(CGFloat.zero) { width, item in
+            width + item.element.0 + keyActionGap + item.element.1
+                + (item.offset == widths.count - 1 ? 0 : groupGap)
+        } + (trailingText == nil ? 0 : groupGap + trailingWidth)
+        let reveal = flowRevealProgress(since: revealDate, duration: 0.20)
+        let translation = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? 0
+            : -4 * (1 - reveal)
+        let edgeInset = max(4, (8 * scale).rounded())
+        var origin = NSPoint(
+            x: anchor.maxX + max(6, (10 * scale).rounded()) + translation,
+            y: anchor.midY - keyHeight / 2
+        )
+        if origin.x + contentWidth > visibleRect.maxX - edgeInset {
+            origin.x = lineFragmentOriginX(atUTF16Offset: selectedRange().location)
+                ?? visibleRect.minX + edgeInset
+            origin.x += translation
+            origin.y = anchor.maxY + max(1, (2 * scale).rounded())
+        }
+        var x = origin.x
+        for (index, group) in groups.enumerated() {
+            let keyRect = NSRect(x: x, y: origin.y, width: widths[index].0, height: keyHeight)
+            let keyPath = NSBezierPath(
+                roundedRect: keyRect,
+                xRadius: max(2, (5 * scale).rounded()),
+                yRadius: max(2, (5 * scale).rounded())
+            )
+            flowCuePalette.surface.setFill()
+            keyPath.fill()
+            flowCuePalette.border.setStroke()
+            keyPath.lineWidth = 1 / max(1, window?.backingScaleFactor ?? 2)
+            keyPath.stroke()
+            let bottom = NSRect(
+                x: keyRect.minX + 1,
+                y: keyRect.maxY - max(1, (2 * scale).rounded()),
+                width: max(0, keyRect.width - 2),
+                height: max(1, (2 * scale).rounded())
+            )
+            flowCuePalette.border.withAlphaComponent(0.72).setFill()
+            NSBezierPath(rect: bottom).fill()
+            let keyText = NSAttributedString(string: group.0, attributes: keyAttributes)
+            let keySize = keyText.size()
+            keyText.draw(at: NSPoint(
+                x: keyRect.midX - keySize.width / 2,
+                y: keyRect.midY - keySize.height / 2 - 1
+            ))
+            x = keyRect.maxX + keyActionGap
+            let action = NSAttributedString(string: group.1, attributes: attributes)
+            let actionSize = action.size()
+            action.draw(at: NSPoint(x: x, y: keyRect.midY - actionSize.height / 2))
+            x += actionSize.width
+            if index < groups.count - 1 { x += groupGap }
+        }
+        if let trailingText {
+            x += groupGap
+            let trailing = NSAttributedString(string: trailingText, attributes: attributes)
+            let size = trailing.size()
+            trailing.draw(at: NSPoint(x: x, y: origin.y + keyHeight / 2 - size.height / 2))
+        }
     }
 
     func invalidateRenderedFlowSuggestion() {
@@ -9341,14 +9050,11 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
             && window?.firstResponder === self
     }
 
-    func canDirectlyAcceptFlowSuggestion(_ suggestion: EditorFlowSuggestion) -> Bool {
+    func canApplyRenderedFlowSuggestion(_ suggestion: EditorFlowSuggestion) -> Bool {
         guard lastRenderedFlowSuggestion == suggestion,
-              suggestion.acceptance == .direct,
               window?.firstResponder === self,
-              !isFlowReviewPopoverShown,
-              let geometry = flowCueGeometry(for: suggestion),
-              geometry.layout.mode == .direct,
-              visibleRect.contains(geometry.rect)
+              suggestion.acceptance == .reviewOnly,
+              isFlowSuggestionExact(suggestion)
         else { return false }
         return true
     }
@@ -9358,136 +9064,6 @@ class MarkdownNSTextView: NSTextView, NSPopoverDelegate {
             return false
         }
         return anchor.intersects(visibleRect)
-    }
-
-    func flowCueLayout(for suggestion: EditorFlowSuggestion) -> EditorFlowCueLayout {
-        let scale = max(0.1, zoomScale)
-        let edgeInset = max(1, (8 * scale).rounded())
-        let availableWidth = max(0, visibleRect.width - edgeInset * 2)
-        let editorFont = font
-            ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        return EditorFlowCueLayout.make(
-            for: suggestion,
-            availableWidth: availableWidth,
-            availableHeight: visibleRect.height,
-            editorFont: editorFont,
-            zoomScale: scale
-        )
-    }
-
-    private func flowCueGeometry(
-        for suggestion: EditorFlowSuggestion
-    ) -> (layout: EditorFlowCueLayout, rect: NSRect)? {
-        let layout = flowCueLayout(for: suggestion)
-        guard let origin = flowSuggestionOrigin(
-            atUTF16Offset: NSMaxRange(suggestion.sentenceRange),
-            cueSize: layout.size
-        ) else { return nil }
-        let edgeInset = max(1, (8 * max(0.1, zoomScale)).rounded())
-        let maximumX = max(
-            visibleRect.minX + edgeInset,
-            visibleRect.maxX - layout.size.width - edgeInset
-        )
-        let drawOrigin = NSPoint(
-            x: min(max(origin.x, visibleRect.minX + edgeInset), maximumX),
-            y: origin.y
-        )
-        return (layout, NSRect(origin: drawOrigin, size: layout.size))
-    }
-
-    private func attributedFlowReviewCue(_ row: String) -> NSAttributedString {
-        let editorFont = font
-            ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        if row.isEmpty {
-            return NSAttributedString(
-                string: "Tab",
-                attributes: [
-                    .font: EditorFlowCueLayout.shortcutFont(scale: max(0.1, zoomScale)),
-                    .foregroundColor: flowCuePalette.secondaryText,
-                ]
-            )
-        }
-        let rendered = NSMutableAttributedString(
-            string: row,
-            attributes: [
-                .font: editorFont,
-                .foregroundColor: flowCuePalette.primaryText,
-            ]
-        )
-        rendered.append(NSAttributedString(
-            string: "  Tab",
-            attributes: [
-                .font: EditorFlowCueLayout.shortcutFont(scale: max(0.1, zoomScale)),
-                .foregroundColor: flowCuePalette.secondaryText,
-            ]
-        ))
-        return rendered
-    }
-
-    private func drawFlowCueSurface(in rect: NSRect, cornerRadius: CGFloat) {
-        let path = NSBezierPath(
-            roundedRect: rect,
-            xRadius: cornerRadius,
-            yRadius: cornerRadius
-        )
-        let ambient = NSShadow()
-        ambient.shadowColor = flowCuePalette.usesDarkElevation
-            ? NSColor.black.withAlphaComponent(0.50)
-            : flowCuePalette.shadow.withAlphaComponent(0.08)
-        ambient.shadowBlurRadius = flowCuePalette.usesDarkElevation ? 24 : 12
-        ambient.shadowOffset = NSSize(
-            width: 0,
-            height: flowCuePalette.usesDarkElevation ? -8 : -4
-        )
-        NSGraphicsContext.saveGraphicsState()
-        ambient.set()
-        flowCuePalette.surface.setFill()
-        path.fill()
-        NSGraphicsContext.restoreGraphicsState()
-
-        let key = NSShadow()
-        key.shadowColor = flowCuePalette.usesDarkElevation
-            ? NSColor.black.withAlphaComponent(0.34)
-            : flowCuePalette.shadow.withAlphaComponent(0.05)
-        key.shadowBlurRadius = flowCuePalette.usesDarkElevation ? 6 : 3
-        key.shadowOffset = NSSize(
-            width: 0,
-            height: flowCuePalette.usesDarkElevation ? -2 : -1
-        )
-        NSGraphicsContext.saveGraphicsState()
-        key.set()
-        flowCuePalette.surface.setFill()
-        path.fill()
-        NSGraphicsContext.restoreGraphicsState()
-
-        flowCuePalette.surface.setFill()
-        path.fill()
-        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
-        let lineWidth = 1 / max(1, scale)
-        let ringColor = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-            ? flowCuePalette.primaryText.withAlphaComponent(0.30)
-            : flowCuePalette.ring
-        ringColor.setStroke()
-        path.lineWidth = lineWidth
-        path.stroke()
-    }
-
-    private func flowSuggestionOrigin(
-        atUTF16Offset offset: Int,
-        cueSize: NSSize
-    ) -> NSPoint? {
-        guard let localRect = caretRect(atUTF16Offset: offset),
-              localRect.intersects(visibleRect)
-        else { return nil }
-        let spacing = max(1, (6 * max(0.1, zoomScale)).rounded())
-        let belowCaret = localRect.maxY + spacing
-        let y = belowCaret + cueSize.height <= visibleRect.maxY
-            ? belowCaret
-            : max(visibleRect.minY, localRect.minY - cueSize.height - spacing)
-        return NSPoint(
-            x: lineFragmentOriginX(atUTF16Offset: offset) ?? localRect.minX,
-            y: y
-        )
     }
 
     private func lineFragmentOriginX(atUTF16Offset offset: Int) -> CGFloat? {

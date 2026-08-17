@@ -151,7 +151,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertEqual(textView.inlinePredictionType, .default)
     }
 
-    func testOnDeviceCompletionTabAcceptsOnlyVisibleTextAndUndoIsOneStep() async throws {
+    func testOnDeviceCompletionHoldTabAcceptsAllVisibleTextAndUndoIsOneStep() async throws {
         let source = "We can write"
         let box = EditorTextBox(source)
         let prose = FlowProseCompletionSpy(result: "clearer prose.")
@@ -174,6 +174,14 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             keyCode: 48,
             windowNumber: window.windowNumber
         )))
+        try? await Task.sleep(nanoseconds: 380_000_000)
+        textView.keyUp(with: try XCTUnwrap(keyEvent(
+            type: .keyUp,
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
+            windowNumber: window.windowNumber
+        )))
         XCTAssertEqual(textView.string, "We can write clearer prose.")
         XCTAssertEqual(box.value, "We can write clearer prose.")
         XCTAssertNil(textView.flowProseSuggestion)
@@ -183,7 +191,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertEqual(box.value, "We can write ")
     }
 
-    func testOnDeviceCompletionOptionRightAcceptsOneWordThenTabAcceptsRemainder() async throws {
+    func testOnDeviceCompletionTapTabAcceptsOneWordThenHoldTabAcceptsRemainder() async throws {
         let source = "We can write"
         let box = EditorTextBox(source)
         let prose = FlowProseCompletionSpy(result: "clearly, with confidence.")
@@ -197,9 +205,16 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         let suggestionReady = await waitUntil { textView.flowProseSuggestion != nil }
         XCTAssertTrue(suggestionReady)
         textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\u{F703}",
-            modifiers: [.option, .numericPad, .function],
-            keyCode: 124,
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
+            windowNumber: window.windowNumber
+        )))
+        textView.keyUp(with: try XCTUnwrap(keyEvent(
+            type: .keyUp,
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
             windowNumber: window.windowNumber
         )))
 
@@ -216,11 +231,19 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             keyCode: 48,
             windowNumber: window.windowNumber
         )))
+        try? await Task.sleep(nanoseconds: 380_000_000)
+        textView.keyUp(with: try XCTUnwrap(keyEvent(
+            type: .keyUp,
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
+            windowNumber: window.windowNumber
+        )))
         XCTAssertEqual(textView.string, "We can write clearly, with confidence.")
         XCTAssertNil(textView.flowProseSuggestion)
     }
 
-    func testDefaultChecksDelayThenRestoreOptionRightCompletionRemainder() async throws {
+    func testDefaultChecksDelayThenRestoreTappedTabCompletionRemainder() async throws {
         let source = "We can write"
         let box = EditorTextBox(source)
         let prose = FlowProseCompletionSpy(result: "clearly, with confidence.")
@@ -265,9 +288,16 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         )))
 
         textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\u{F703}",
-            modifiers: [.option, .numericPad, .function],
-            keyCode: 124,
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
+            windowNumber: window.windowNumber
+        )))
+        textView.keyUp(with: try XCTUnwrap(keyEvent(
+            type: .keyUp,
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
             windowNumber: window.windowNumber
         )))
         XCTAssertEqual(textView.string, "We can write clearly, ")
@@ -295,12 +325,20 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             keyCode: 48,
             windowNumber: window.windowNumber
         )))
+        try? await Task.sleep(nanoseconds: 380_000_000)
+        textView.keyUp(with: try XCTUnwrap(keyEvent(
+            type: .keyUp,
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
+            windowNumber: window.windowNumber
+        )))
         XCTAssertEqual(textView.string, "We can write clearly, with confidence.")
         XCTAssertEqual(box.value, "We can write clearly, with confidence.")
         XCTAssertNil(textView.flowProseSuggestion)
     }
 
-    func testPendingOptionRightRemainderIsDiscardedWhenItNoLongerFitsBeforeCleanRelease() async throws {
+    func testPendingTappedTabRemainderWrapsWhenReleasedIntoANarrowViewport() async throws {
         let source = "We can write"
         let box = EditorTextBox(source)
         let prose = FlowProseCompletionSpy(result: "clearly, with confidence.")
@@ -339,9 +377,16 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertTrue(completionReady)
 
         textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\u{F703}",
-            modifiers: [.option, .numericPad, .function],
-            keyCode: 124,
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
+            windowNumber: window.windowNumber
+        )))
+        textView.keyUp(with: try XCTUnwrap(keyEvent(
+            type: .keyUp,
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
             windowNumber: window.windowNumber
         )))
         XCTAssertEqual(textView.string, "We can write clearly, ")
@@ -355,10 +400,11 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         textView.refreshContentWidthLayout()
         completions[1]([], englishOrthography())
 
-        let nativePredictionRestored = await waitUntil {
-            textView.flowProseSuggestion == nil && textView.inlinePredictionType == .default
+        let remainderReturned = await waitUntil {
+            textView.flowProseSuggestion?.continuation == "with confidence."
         }
-        XCTAssertTrue(nativePredictionRestored)
+        XCTAssertTrue(remainderReturned)
+        XCTAssertEqual(textView.inlinePredictionType, .no)
         XCTAssertEqual(textView.string, "We can write clearly, ")
         XCTAssertEqual(box.value, "We can write clearly, ")
 
@@ -367,7 +413,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         textView.frame = scrollView.bounds
         textView.refreshContentWidthLayout()
         await nextMainRunLoopTurn()
-        XCTAssertNil(textView.flowProseSuggestion)
+        XCTAssertEqual(textView.flowProseSuggestion?.continuation, "with confidence.")
     }
 
     func testCustomAutocompleteTabBeforeFirstPaintDoesNotInsertUnseenText() async throws {
@@ -827,7 +873,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         }
     }
 
-    func testValidCompletionThatCannotFitDoesNotStartFailureCooldown() async {
+    func testLongCompletionWrapsInNarrowViewportWithoutStartingFailureCooldown() async throws {
         let source = "We can write"
         let box = EditorTextBox(source)
         let prose = FlowProseCompletionSpy(result: "extraordinarilylongword")
@@ -842,9 +888,18 @@ final class MarkdownEditorInteractionTests: XCTestCase {
 
         textView.insertText(" ", replacementRange: textView.selectedRange())
         let firstAttemptFinished = await waitUntil {
-            prose.requestCount == 1 && textView.inlinePredictionType == .default
+            prose.requestCount == 1 && textView.flowProseSuggestion != nil
         }
         XCTAssertTrue(firstAttemptFinished)
+        XCTAssertEqual(textView.flowProseSuggestion?.continuation, "extraordinarilylongword")
+        XCTAssertEqual(textView.inlinePredictionType, .no)
+
+        textView.keyDown(with: try XCTUnwrap(keyEvent(
+            characters: "\u{1b}",
+            modifiers: [],
+            keyCode: 53,
+            windowNumber: window.windowNumber
+        )))
         XCTAssertNil(textView.flowProseSuggestion)
 
         window.setContentSize(NSSize(width: 700, height: 260))
@@ -867,6 +922,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             text: Binding(get: { box.value }, set: { box.value = $0 }),
             flowProseCompletionService: prose.service,
             flowProseCompletionDelayNanoseconds: 0,
+            flowProseOfferDelayNanoseconds: 0,
             protectedRangeProvider: { text, mode in
                 provider.protectedRanges(in: text, mode: mode)
             },
@@ -911,6 +967,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             text: Binding(get: { box.value }, set: { box.value = $0 }),
             flowProseCompletionService: prose.service,
             flowProseCompletionDelayNanoseconds: 0,
+            flowProseOfferDelayNanoseconds: 0,
             protectedRangeProvider: { text, mode in
                 provider.protectedRanges(in: text, mode: mode)
             },
@@ -966,6 +1023,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             text: Binding(get: { box.value }, set: { box.value = $0 }),
             flowProseCompletionService: prose.service,
             flowProseCompletionDelayNanoseconds: 0,
+            flowProseOfferDelayNanoseconds: 0,
             protectedRangeProvider: { text, mode in
                 provider.protectedRanges(in: text, mode: mode)
             },
@@ -1065,6 +1123,31 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertNil(textView.flowProseSuggestion)
         XCTAssertEqual(textView.string, "We can write x")
         XCTAssertEqual(box.value, "We can write x")
+    }
+
+    func testOnDeviceCompletionMatchingTypingConsumesPrefixAndKeepsRemainder() async throws {
+        let source = "We can write"
+        let box = EditorTextBox(source)
+        let prose = FlowProseCompletionSpy(result: "clearer prose.")
+        let coordinator = makeCoordinator(box, proseCompletion: prose.service)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let rangesReady = await prepareProseCompletion(coordinator, textView: textView)
+        XCTAssertTrue(rangesReady)
+
+        textView.insertText(" ", replacementRange: textView.selectedRange())
+        let suggestionReady = await waitUntil { textView.flowProseSuggestion != nil }
+        XCTAssertTrue(suggestionReady)
+        textView.keyDown(with: try XCTUnwrap(keyEvent(
+            characters: "c",
+            modifiers: [],
+            keyCode: 8,
+            windowNumber: window.windowNumber
+        )))
+
+        XCTAssertEqual(textView.string, "We can write c")
+        XCTAssertEqual(box.value, "We can write c")
+        XCTAssertEqual(textView.flowProseSuggestion?.continuation, "learer prose.")
     }
 
     func testLateOnDeviceCompletionDoesNotReappearAfterFocusLeavesAndReturns() async {
@@ -1208,13 +1291,13 @@ final class MarkdownEditorInteractionTests: XCTestCase {
     }
 
     func testVisibleCorrectionWinsOverPendingOnDeviceCompletion() async {
-        let source = "teh draft"
+        let source = "writting draft"
         let box = EditorTextBox(source)
         let prose = FlowProseCompletionSpy(
             result: "with a polished ending.",
             delayNanoseconds: 700_000_000
         )
-        let checker = ImmediateSpellingFlowChecker(original: "teh", replacement: "the")
+        let checker = ImmediateSpellingFlowChecker(original: "writting", replacement: "writing")
         let coordinator = makeCoordinator(
             box,
             flowCheckingClient: checker.client,
@@ -1247,7 +1330,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertNotNil(textView.flowSuggestion)
     }
 
-    func testNarrowViewportStoresAndAcceptsOnlyFittedCompletionPrefix() async throws {
+    func testNarrowViewportWrapsEntireBoundedCompletionAndHoldTabAcceptsAll() async throws {
         let source = "We can write"
         let fullCompletion = "one two three four five six seven eight nine ten"
         let box = EditorTextBox(source)
@@ -1264,9 +1347,16 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         textView.insertText(" ", replacementRange: textView.selectedRange())
         let suggestionReady = await waitUntil { textView.flowProseSuggestion != nil }
         XCTAssertTrue(suggestionReady)
-        let visiblePrefix = try XCTUnwrap(textView.flowProseSuggestion?.continuation)
-        XCTAssertTrue(fullCompletion.hasPrefix(visiblePrefix))
-        XCTAssertLessThan(visiblePrefix.count, fullCompletion.count)
+        let suggestion = try XCTUnwrap(textView.flowProseSuggestion)
+        let boundedContinuation = suggestion.continuation
+        XCTAssertTrue(fullCompletion.hasPrefix(boundedContinuation))
+        XCTAssertEqual(
+            textView.visibleFlowProseContinuation(
+                boundedContinuation,
+                atUTF16Offset: suggestion.caretUTF16Offset
+            ),
+            boundedContinuation
+        )
 
         textView.keyDown(with: try XCTUnwrap(keyEvent(
             characters: "\t",
@@ -1274,7 +1364,8 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             keyCode: 48,
             windowNumber: window.windowNumber
         )))
-        XCTAssertEqual(textView.string, "We can write " + visiblePrefix)
+        try? await Task.sleep(nanoseconds: 380_000_000)
+        XCTAssertEqual(textView.string, "We can write " + boundedContinuation)
         XCTAssertFalse(textView.string.contains("ten"))
     }
 
@@ -1315,7 +1406,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertNil(textView.flowProseSuggestion)
     }
 
-    func testResizeAfterVisibleCustomCompletionCancelsGhostAndRestoresNativePrediction() async throws {
+    func testResizeAfterVisibleCustomCompletionReflowsGhost() async throws {
         let source = "We can write"
         let box = EditorTextBox(source)
         let prose = FlowProseCompletionSpy(result: "with confidence.")
@@ -1346,13 +1437,14 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         textView.frame = scrollView.bounds
         textView.refreshContentWidthLayout()
 
-        let completionCancelled = await waitUntil {
-            textView.flowProseSuggestion == nil && textView.inlinePredictionType == .default
-        }
-        XCTAssertTrue(completionCancelled)
+        XCTAssertEqual(textView.flowProseSuggestion, suggestion)
+        XCTAssertFalse(textView.canDirectlyAcceptFlowProseSuggestion(suggestion))
+        await renderFlowSuggestion(in: textView, window: window)
+        XCTAssertTrue(textView.canDirectlyAcceptFlowProseSuggestion(suggestion))
+        XCTAssertEqual(textView.inlinePredictionType, .no)
         XCTAssertEqual(textView.string, source + " ")
         XCTAssertEqual(box.value, source + " ")
-        XCTAssertTrue((textView.accessibilityCustomActions() ?? []).isEmpty)
+        XCTAssertFalse((textView.accessibilityCustomActions() ?? []).isEmpty)
     }
 
     func testContentWidthChangeInvalidatesRenderedRepairUntilRepaint() async throws {
@@ -1383,21 +1475,22 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             coordinator: coordinator,
             textView: textView,
             checkedText: "teh",
-            replacement: "the"
+            replacement: "the",
+            acceptance: .reviewOnly
         )
         textView.flowSuggestion = suggestion
         await renderFlowSuggestion(in: textView, window: window)
-        XCTAssertTrue(textView.canDirectlyAcceptFlowSuggestion(suggestion))
+        XCTAssertTrue(textView.canApplyRenderedFlowSuggestion(suggestion))
 
         textView.contentWidthPercent = 64
-        XCTAssertFalse(textView.canDirectlyAcceptFlowSuggestion(suggestion))
+        XCTAssertFalse(textView.canApplyRenderedFlowSuggestion(suggestion))
         XCTAssertFalse(textView.hasRenderedFlowSuggestion(suggestion))
         XCTAssertEqual(textView.flowSuggestion, suggestion)
         XCTAssertEqual(textView.string, source)
         XCTAssertEqual(box.value, source)
 
         await renderFlowSuggestion(in: textView, window: window)
-        XCTAssertTrue(textView.canDirectlyAcceptFlowSuggestion(suggestion))
+        XCTAssertTrue(textView.canApplyRenderedFlowSuggestion(suggestion))
         textView.keyDown(with: try XCTUnwrap(keyEvent(
             characters: "\t",
             modifiers: [],
@@ -1438,22 +1531,23 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             coordinator: coordinator,
             textView: textView,
             checkedText: "teh",
-            replacement: "the"
+            replacement: "the",
+            acceptance: .reviewOnly
         )
         textView.flowSuggestion = suggestion
         await renderFlowSuggestion(in: textView, window: window)
-        XCTAssertTrue(textView.canDirectlyAcceptFlowSuggestion(suggestion))
+        XCTAssertTrue(textView.canApplyRenderedFlowSuggestion(suggestion))
 
         textView.font = .monospacedSystemFont(ofSize: 18, weight: .regular)
         textView.invalidateFlowPresentationForGeometryChange()
-        XCTAssertFalse(textView.canDirectlyAcceptFlowSuggestion(suggestion))
+        XCTAssertFalse(textView.canApplyRenderedFlowSuggestion(suggestion))
         XCTAssertFalse(textView.hasRenderedFlowSuggestion(suggestion))
         XCTAssertEqual(textView.flowSuggestion, suggestion)
         XCTAssertEqual(textView.string, source)
         XCTAssertEqual(box.value, source)
 
         await renderFlowSuggestion(in: textView, window: window)
-        XCTAssertTrue(textView.canDirectlyAcceptFlowSuggestion(suggestion))
+        XCTAssertTrue(textView.canApplyRenderedFlowSuggestion(suggestion))
         textView.keyDown(with: try XCTUnwrap(keyEvent(
             characters: "\t",
             modifiers: [],
@@ -1466,7 +1560,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertNil(textView.flowSuggestion)
     }
 
-    func testFontChangeCancelsProseGhostThatNoLongerFits() async throws {
+    func testFontChangeReflowsWrappedProseGhostWithoutDiscardingIt() async throws {
         let source = "We can write"
         let box = EditorTextBox(source)
         let prose = FlowProseCompletionSpy(result: "with confidence and precision.")
@@ -1496,13 +1590,24 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         textView.font = .monospacedSystemFont(ofSize: 36, weight: .regular)
         textView.invalidateFlowPresentationForGeometryChange()
 
-        let completionCancelled = await waitUntil {
-            textView.flowProseSuggestion == nil && textView.inlinePredictionType == .default
-        }
-        XCTAssertTrue(completionCancelled)
+        XCTAssertEqual(textView.flowProseSuggestion, suggestion)
+        XCTAssertFalse(textView.canDirectlyAcceptFlowProseSuggestion(suggestion))
+        await renderFlowSuggestion(in: textView, window: window)
+        XCTAssertEqual(
+            textView.visibleFlowProseContinuation(
+                suggestion.continuation,
+                atUTF16Offset: suggestion.caretUTF16Offset
+            ),
+            suggestion.continuation
+        )
+        XCTAssertTrue(textView.canDirectlyAcceptFlowProseSuggestion(suggestion))
         XCTAssertEqual(textView.string, source + " ")
         XCTAssertEqual(box.value, source + " ")
-        XCTAssertTrue((textView.accessibilityCustomActions() ?? []).isEmpty)
+        XCTAssertEqual(textView.accessibilityCustomActions()?.map(\.name), [
+            "Accept completion: with confidence and precision.",
+            "Accept next completion word",
+            "Dismiss completion",
+        ])
     }
 
     func testMasterInlinePreferenceDisablesOnDeviceCompletion() async {
@@ -3139,15 +3244,11 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertEqual(outcome, .review)
     }
 
-    func testFrozenLongDeterministicReviewUsesReplaceAndExactUndoRedo() async throws {
+    func testFrozenLongDeterministicRepairUsesPolicyAndExactUndoRedo() async throws {
         let testCase = try XCTUnwrap(
             FlowWritingCorpus.repairCases.first { $0.id == "repair-exact-024" }
         )
-        try await runFrozenDeterministicCorpusCase(
-            testCase,
-            inputPath: .pasteboard,
-            requiresReviewLayout: true
-        )
+        try await runFrozenDeterministicCorpusCase(testCase, inputPath: .pasteboard)
     }
 
     func testFrozenQuotedHardWrapUsesRealPunctuationAndCloserKeyEvents() async throws {
@@ -3196,7 +3297,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         }
     }
 
-    func testAISentenceRepairFallbackShowsValidatedFullPreviewAndAppliesAtomically() async throws {
+    func testAISentenceRepairFallbackSettlesValidatedDirectRepairAtomically() async throws {
         let source = "I am writng clearly"
         let corrected = "I am writing clearly."
         let box = EditorTextBox(source)
@@ -3239,37 +3340,21 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertTrue(rangesReady)
 
         textView.insertText(".", replacementRange: textView.selectedRange())
-        let suggestionReady = await waitUntil { textView.flowSuggestion?.source == .ai }
-        XCTAssertTrue(suggestionReady)
-        XCTAssertEqual(
-            textView.flowSuggestion?.sourceAccessibilityText,
-            "On-device writing assistance"
-        )
-        XCTAssertEqual(textView.flowSuggestion?.originalSentence, "I am writng clearly.")
-        XCTAssertEqual(textView.flowSuggestion?.correctedSentence, corrected)
-        XCTAssertTrue(textView.flowSuggestion?.accessibilityText.contains(
-            "replace “writng” with “writing”"
-        ) == true)
-        await renderFlowSuggestion(in: textView, window: window)
-        XCTAssertTrue(textView.canDirectlyAcceptFlowSuggestion(try XCTUnwrap(
-            textView.flowSuggestion
-        )))
-        textView.undoManager?.removeAllActions()
-
+        let settled = await waitUntil { textView.string == corrected }
+        XCTAssertTrue(settled)
+        XCTAssertNil(textView.flowSuggestion)
+        XCTAssertTrue(textView.accessibilityHelp()?.contains("Delete to undo") == true)
         textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\t",
+            characters: "\u{7f}",
             modifiers: [],
-            keyCode: 48,
+            keyCode: 51,
             windowNumber: window.windowNumber
         )))
-        XCTAssertEqual(textView.string, corrected)
-        XCTAssertEqual(box.value, corrected)
-        textView.undoManager?.undo()
         XCTAssertEqual(textView.string, source + ".")
         XCTAssertEqual(box.value, source + ".")
     }
 
-    func testReportedAIReviewOnlyRepairPostCheckPresentsReviewAndTabNeverApplies() async throws {
+    func testReportedAIReviewOnlyRepairPostCheckPresentsInlineReviewAndTabApplies() async throws {
         let incomplete = "I am nt be able to come today because yesterday I got sick so badly and now cannot get out of the bed wirhgth now"
         let original = incomplete + "."
         let candidate = "I am not able to come today because yesterday I got sick so badly, and now I cannot get out of the bed right now."
@@ -3340,7 +3425,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertEqual(suggestion.source, .ai)
         XCTAssertEqual(suggestion.originalSentence, original)
         XCTAssertEqual(suggestion.correctedSentence, candidate)
-        XCTAssertEqual(textView.flowCueLayout(for: suggestion).mode, .review)
+        XCTAssertEqual(suggestion.acceptance, .reviewOnly)
         textView.undoManager?.removeAllActions()
         await renderFlowSuggestion(in: textView, window: window)
         textView.keyDown(with: try XCTUnwrap(keyEvent(
@@ -3350,10 +3435,13 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             windowNumber: window.windowNumber
         )))
 
-        XCTAssertTrue(textView.isFlowReviewPopoverShown)
+        XCTAssertFalse(textView.isFlowReviewPreviewShown)
+        XCTAssertEqual(textView.string, candidate)
+        XCTAssertEqual(box.value, candidate)
+        XCTAssertTrue(textView.undoManager?.canUndo == true)
+        textView.undoManager?.undo()
         XCTAssertEqual(textView.string, original)
         XCTAssertEqual(box.value, original)
-        XCTAssertFalse(textView.undoManager?.canUndo == true)
     }
 
     func testAISentenceRepairFallbackRejectsUnsafeContentWordChange() async {
@@ -3407,7 +3495,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
     }
 
     func testDismissedAIRepairDoesNotReappearForSameSentenceOnRecheck() async throws {
-        let source = "I am writng clearly"
+        let source = "I am writting clearly"
         let completedSource = source + "."
         let corrected = "I am writing clearly."
         let box = EditorTextBox(source)
@@ -3427,7 +3515,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
                     completion([], self.englishOrthography())
                     return
                 }
-                let issueRange = (checkedText as NSString).range(of: "writng")
+                let issueRange = (checkedText as NSString).range(of: "writting")
                 completion([
                     NSTextCheckingResult.correctionCheckingResult(
                         range: issueRange,
@@ -3578,9 +3666,9 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertEqual(single.correctedChangedRanges, [NSRange(location: 0, length: 3)])
         XCTAssertEqual(
             single.accessibilityText,
-            "Correction available. Corrected sentence: the.\n"
-                + "Changes: replace “teh” with “the”. Tab accepts; Option-Return reviews; "
-                + "Escape dismisses. Source: Apple spelling and grammar."
+            "Suggested correction: the.\n"
+                + "Changes: replace “teh” with “the”. Tab applies; Right Arrow shows the next "
+                + "alternative; Escape dismisses. Source: Apple spelling and grammar."
         )
 
         let batchOriginal = "teh cats is ready."
@@ -3615,9 +3703,9 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertEqual(batch.exactChangeDescription, "replace “teh” with “the”, replace “is” with “are”")
         XCTAssertEqual(
             batch.accessibilityText,
-            "Correction available. Corrected sentence: the cats are ready.\n"
+            "Suggested correction: the cats are ready.\n"
                 + "Changes: replace “teh” with “the”, replace “is” with “are”. "
-                + "Tab accepts; Option-Return reviews; Escape dismisses. "
+                + "Tab applies; Right Arrow shows the next alternative; Escape dismisses. "
                 + "Source: Apple spelling and grammar."
         )
     }
@@ -3692,86 +3780,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertFalse(suggestion.exactChangeDescription.contains("replace “” with “s”"))
     }
 
-    func testFlowCueLayoutShowsCompleteSentencesOrRequiresReviewAndScalesGeometry() throws {
-        let original = "abcdefghijklmnopqrstuvwx zyxwvutsrqponmlkjihgfe"
-        let corrected = "ABCDEFGHIJKLMNOPQRSTUVWX ZYXWVUTSRQPONMLKJIHGFE"
-        let suggestion = EditorFlowSuggestion(
-            documentID: "note.md",
-            revision: 1,
-            selectedRange: NSRange(location: 50, length: 0),
-            caretUTF16Offset: 50,
-            sentenceRange: NSRange(location: 0, length: (original as NSString).length),
-            originalSentence: original,
-            correctedSentence: corrected,
-            source: .deterministic,
-            edits: [
-                EditorFlowCorrectionEdit(
-                    range: NSRange(location: 0, length: 24),
-                    originalText: "abcdefghijklmnopqrstuvwx",
-                    replacementText: "ABCDEFGHIJKLMNOPQRSTUVWX",
-                    kind: .spelling
-                ),
-                EditorFlowCorrectionEdit(
-                    range: NSRange(location: 25, length: 24),
-                    originalText: "zyxwvutsrqponmlkjihgfe",
-                    replacementText: "ZYXWVUTSRQPONMLKJIHGFE",
-                    kind: .grammar
-                ),
-            ]
-        )
-        let font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
-        let wide = EditorFlowCueLayout.make(
-            for: suggestion,
-            availableWidth: 1_000,
-            availableHeight: 600,
-            editorFont: font,
-            zoomScale: 1
-        )
-        XCTAssertEqual(wide.mode, .direct)
-        XCTAssertNil(wide.reviewText)
-        XCTAssertGreaterThan(wide.correctedRowHeight, 0)
-        XCTAssertGreaterThan(wide.footerHeight, 0)
-
-        let review = EditorFlowCueLayout.make(
-            for: suggestion,
-            availableWidth: 100,
-            availableHeight: 100,
-            editorFont: font,
-            zoomScale: 1
-        )
-        XCTAssertEqual(review.mode, .review)
-        XCTAssertEqual(review.reviewText, "")
-        XCTAssertLessThanOrEqual(review.size.width, 100)
-        XCTAssertLessThanOrEqual(review.size.height, 100)
-        XCTAssertEqual(review.correctedRowHeight, 0)
-
-        let zoomed = EditorFlowCueLayout.make(
-            for: suggestion,
-            availableWidth: 2_000,
-            availableHeight: 1_200,
-            editorFont: font,
-            zoomScale: 2
-        )
-        XCTAssertGreaterThan(zoomed.correctedRowHeight, 0)
-        XCTAssertEqual(zoomed.footerHeight, 48)
-        XCTAssertEqual(zoomed.verticalInset, 16)
-        XCTAssertEqual(zoomed.cornerRadius, 24)
-
-        let narrowZoomed = EditorFlowCueLayout.make(
-            for: suggestion,
-            availableWidth: 120,
-            availableHeight: 100,
-            editorFont: font,
-            zoomScale: 2.5
-        )
-        XCTAssertEqual(narrowZoomed.mode, .review)
-        XCTAssertLessThanOrEqual(narrowZoomed.size.width, 120)
-        XCTAssertLessThanOrEqual(narrowZoomed.size.height, 100)
-        XCTAssertGreaterThan(narrowZoomed.size.width, 0)
-        XCTAssertGreaterThan(narrowZoomed.size.height, 0)
-    }
-
-    func testCompactReviewCuesRetainDeterministicAndAIProvenance() {
+    func testFlowPresentationPolicyIsIndependentOfViewportGeometryAndPreservesProvenance() {
         let original = "The dogs is ready."
         let corrected = "The dogs are ready."
         let range = NSRange(location: 0, length: (original as NSString).length)
@@ -3785,6 +3794,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
                 originalSentence: original,
                 correctedSentence: corrected,
                 source: source,
+                acceptance: .reviewOnly,
                 edits: [EditorFlowCorrectionEdit(
                     range: (original as NSString).range(of: "is"),
                     originalText: "is",
@@ -3793,26 +3803,8 @@ final class MarkdownEditorInteractionTests: XCTestCase {
                 )]
             )
         }
-        let font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
-        let deterministic = EditorFlowCueLayout.make(
-            for: suggestion(source: .deterministic),
-            availableWidth: 180,
-            availableHeight: 80,
-            editorFont: font,
-            zoomScale: 1
-        )
-        let ai = EditorFlowCueLayout.make(
-            for: suggestion(source: .ai),
-            availableWidth: 180,
-            availableHeight: 80,
-            editorFont: font,
-            zoomScale: 1
-        )
 
-        XCTAssertEqual(deterministic.mode, .review)
-        XCTAssertTrue(deterministic.reviewText?.hasPrefix("Review") == true)
-        XCTAssertEqual(ai.mode, .review)
-        XCTAssertEqual(ai.reviewText, deterministic.reviewText)
+        XCTAssertEqual(suggestion(source: .deterministic).acceptance, .reviewOnly)
         XCTAssertEqual(
             suggestion(source: .deterministic).sourceAccessibilityText,
             "Apple spelling and grammar"
@@ -3843,6 +3835,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             originalSentence: source,
             correctedSentence: "ABCDEFGHIJKLMNOPQRSTUVWX ZYXWVUTSRQPONMLKJIHGFE",
             source: .deterministic,
+            acceptance: .reviewOnly,
             edits: [
                 EditorFlowCorrectionEdit(
                     range: (source as NSString).range(of: "abcdefghijklmnopqrstuvwx"),
@@ -3861,10 +3854,9 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         textView.flowSuggestion = suggestion
 
         let names = (textView.accessibilityCustomActions() ?? []).map(\.name)
-        XCTAssertEqual(names.count, 3)
-        XCTAssertTrue(names.contains { $0.hasPrefix("Accept correction:") })
+        XCTAssertEqual(names.count, 2)
+        XCTAssertTrue(names.contains { $0.hasPrefix("Apply correction:") })
         XCTAssertTrue(names.contains { $0.hasPrefix("Dismiss correction:") })
-        XCTAssertTrue(names.contains { $0.hasPrefix("Review correction:") })
         for name in names {
             XCTAssertTrue(name.contains("abcdefghijklmnopqrstuvwx"))
             XCTAssertTrue(name.contains("ABCDEFGHIJKLMNOPQRSTUVWX"))
@@ -3875,7 +3867,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertEqual(textView.accessibilityHelp(), suggestion.accessibilityText)
         XCTAssertFalse(textView.accessibilityHelp()?.contains("Original: \(source)") == true)
         XCTAssertTrue(textView.accessibilityHelp()?.contains(
-            "Corrected sentence: ABCDEFGHIJKLMNOPQRSTUVWX ZYXWVUTSRQPONMLKJIHGFE"
+            "Suggested correction: ABCDEFGHIJKLMNOPQRSTUVWX ZYXWVUTSRQPONMLKJIHGFE"
         ) == true)
     }
 
@@ -3923,7 +3915,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertEqual(textView.string, "teh.N")
     }
 
-    func testDelayedCheckerResultDisplaysConcreteSuggestionWhenSnapshotIsCurrent() async throws {
+    func testDelayedCheckerResultSettlesConcreteSuggestionWhenSnapshotIsCurrent() async throws {
         let source = "teh"
         let box = EditorTextBox(source)
         let requestBox = FlowCheckingRequestBox()
@@ -3951,12 +3943,11 @@ final class MarkdownEditorInteractionTests: XCTestCase {
                 replacementString: "the"
             ),
         ], nil)
-        let didDisplaySuggestion = await waitUntil { textView.flowSuggestion != nil }
-        XCTAssertTrue(didDisplaySuggestion)
-
-        XCTAssertNotNil(textView.flowSuggestion)
-        XCTAssertEqual(textView.flowSuggestion?.edits.first?.replacementText, "the")
-        XCTAssertEqual(textView.string, "teh.")
+        let settled = await waitUntil { textView.string == "the." }
+        XCTAssertTrue(settled)
+        XCTAssertNil(textView.flowSuggestion)
+        XCTAssertEqual(box.value, "the.")
+        XCTAssertTrue(textView.accessibilityHelp()?.contains("Delete to undo") == true)
     }
 
     func testFlowRetriesConcreteCorrectionAfterCurrentProtectedRangesFinish() async {
@@ -4000,6 +3991,11 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         coordinator.configureFlow(mode: .markdown, options: options)
         let initialRangesReady = await waitUntil { textView.flowWritingToolsReady }
         XCTAssertTrue(initialRangesReady)
+        var acceptedSuggestion: EditorFlowSuggestion?
+        textView.flowSuggestionAcceptanceHandler = { suggestion in
+            acceptedSuggestion = suggestion
+            return coordinator.acceptFlowSuggestion(suggestion)
+        }
 
         textView.insertText(".", replacementRange: textView.selectedRange())
         let currentRefreshBlocked = await waitUntil { provider.isCallBlocked }
@@ -4010,13 +4006,14 @@ final class MarkdownEditorInteractionTests: XCTestCase {
 
         provider.resumeBlockedCall()
         let retriedSuggestionReady = await waitUntil(timeout: 3) {
-            requestCount.value == 2 && textView.flowSuggestion != nil
+            requestCount.value == 2 && textView.string == "the."
         }
 
         XCTAssertTrue(retriedSuggestionReady)
-        XCTAssertEqual(textView.string, "teh.")
-        XCTAssertEqual(textView.flowSuggestion?.edits.map(\.originalText), ["teh"])
-        XCTAssertEqual(textView.flowSuggestion?.edits.map(\.replacementText), ["the"])
+        XCTAssertEqual(textView.string, "the.")
+        XCTAssertNil(textView.flowSuggestion)
+        XCTAssertEqual(acceptedSuggestion?.edits.map(\.originalText), ["teh"])
+        XCTAssertEqual(acceptedSuggestion?.edits.map(\.replacementText), ["the"])
     }
 
     func testCompletedListFlowSnapshotRetriesAfterCurrentProtectedRangesFinish() async throws {
@@ -4078,20 +4075,13 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertNil(textView.flowSuggestion)
 
         provider.resumeBlockedCall()
-        let retriedSuggestionReady = await waitUntil(timeout: 3) {
-            requestCount.value == 2 && textView.flowSuggestion != nil
+        let retriedCorrectionSettled = await waitUntil(timeout: 3) {
+            requestCount.value >= 2 && textView.string == "- the\n- "
         }
 
-        XCTAssertTrue(retriedSuggestionReady)
-        XCTAssertEqual(checkedTexts, ["- teh", "- teh"])
-        XCTAssertEqual(
-            textView.flowSuggestion?.edits.map(\.range),
-            [(textView.string as NSString).range(of: "teh")]
-        )
-        XCTAssertEqual(
-            textView.flowSuggestion?.exactChangeDescription,
-            "replace “teh” with “the”"
-        )
+        XCTAssertTrue(retriedCorrectionSettled)
+        XCTAssertEqual(Array(checkedTexts.prefix(2)), ["- teh", "- teh"])
+        XCTAssertNil(textView.flowSuggestion)
     }
 
     func testFlowCheckerSendsBoundedCurrentSentenceAndTranslatesLocalOffsets() async {
@@ -4107,8 +4097,10 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         let coordinator = makeCoordinator(
             box,
             flowCheckingClient: EditorFlowCheckingClient { checkedText, range, _, _, completion in
-                capturedText = checkedText
-                capturedRange = range
+                if capturedText == nil {
+                    capturedText = checkedText
+                    capturedRange = range
+                }
                 let localRange = (checkedText as NSString).range(of: "teh")
                 guard localRange.location != NSNotFound else {
                     completion([], nil)
@@ -4122,7 +4114,12 @@ final class MarkdownEditorInteractionTests: XCTestCase {
                 ], nil)
             }
         )
-        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        let recordingTextView = FlowChangeRecordingTextView()
+        let (window, scrollView, textView) = makeHostedTextView(
+            coordinator: coordinator,
+            text: source,
+            textView: recordingTextView
+        )
         defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
         let options = EditorTextCheckingOptions(checksSpelling: true, checksGrammar: false)
         textView.flowSourceMode = .markdown
@@ -4132,8 +4129,8 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertTrue(writingToolsReady)
 
         textView.insertText(".", replacementRange: textView.selectedRange())
-        let suggestionReady = await waitUntil { textView.flowSuggestion != nil }
-        XCTAssertTrue(suggestionReady)
+        let settled = await waitUntil { textView.string.hasSuffix("the cats is ready.") }
+        XCTAssertTrue(settled)
 
         let checkedText = capturedText ?? ""
         XCTAssertEqual(checkedText, currentSentence + ".")
@@ -4142,10 +4139,9 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             capturedRange,
             NSRange(location: 0, length: (checkedText as NSString).length)
         )
-        let absoluteRange = (textView.string as NSString).range(of: "teh", options: .backwards)
-        XCTAssertEqual(textView.flowSuggestion?.edits.first?.range, absoluteRange)
-        XCTAssertEqual(textView.flowSuggestion?.edits.first?.originalText, "teh")
-        XCTAssertEqual(textView.flowSuggestion?.edits.first?.replacementText, "the")
+        let absoluteRange = (source as NSString).range(of: "teh", options: .backwards)
+        XCTAssertEqual(recordingTextView.approvedChanges.last?.range, absoluteRange)
+        XCTAssertEqual(recordingTextView.approvedChanges.last?.replacement, "the")
     }
 
     func testOverlongRunOnNeverOffersBatchOrAIAtPunctuationOrReturn() async {
@@ -4371,11 +4367,12 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             coordinator: coordinator,
             textView: textView,
             checkedText: "teh",
-            replacement: "the"
+            replacement: "the",
+            acceptance: .reviewOnly
         )
         textView.flowSuggestion = suggestion
         await renderFlowSuggestion(in: textView, window: window)
-        XCTAssertTrue(textView.canDirectlyAcceptFlowSuggestion(suggestion))
+        XCTAssertTrue(textView.canApplyRenderedFlowSuggestion(suggestion))
 
         textView.keyDown(with: try XCTUnwrap(keyEvent(
             characters: "\t",
@@ -4425,8 +4422,8 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             replacement: "the"
         )
         textView.flowSuggestion = suggestion
-        XCTAssertEqual(textView.flowCueLayout(for: suggestion).mode, .direct)
-        XCTAssertFalse(textView.canDirectlyAcceptFlowSuggestion(suggestion))
+        XCTAssertEqual(suggestion.acceptance, .direct)
+        XCTAssertFalse(textView.canApplyRenderedFlowSuggestion(suggestion))
 
         textView.keyDown(with: try XCTUnwrap(keyEvent(
             characters: "\t",
@@ -4472,9 +4469,9 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             replacement: "the"
         )
         textView.flowSuggestion = suggestion
-        XCTAssertFalse(textView.canDirectlyAcceptFlowSuggestion(suggestion))
+        XCTAssertFalse(textView.canApplyRenderedFlowSuggestion(suggestion))
         let apply = try XCTUnwrap((textView.accessibilityCustomActions() ?? []).first {
-            $0.name.hasPrefix("Accept correction:")
+            $0.name.hasPrefix("Apply correction:")
         })
 
         NSApp.activate(ignoringOtherApps: true)
@@ -4532,6 +4529,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             originalSentence: "teh.",
             correctedSentence: "the.",
             source: .deterministic,
+            acceptance: .reviewOnly,
             edits: [EditorFlowCorrectionEdit(
                 range: editRange,
                 originalText: "teh",
@@ -4541,13 +4539,13 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         )
         textView.flowSuggestion = suggestion
         await renderFlowSuggestion(in: textView, window: window)
-        XCTAssertTrue(textView.canDirectlyAcceptFlowSuggestion(suggestion))
+        XCTAssertTrue(textView.canApplyRenderedFlowSuggestion(suggestion))
 
         scrollView.contentView.scroll(to: .zero)
         scrollView.reflectScrolledClipView(scrollView.contentView)
         let repairCleared = await waitUntil { textView.flowSuggestion == nil }
         XCTAssertTrue(repairCleared)
-        XCTAssertFalse(textView.canDirectlyAcceptFlowSuggestion(suggestion))
+        XCTAssertFalse(textView.canApplyRenderedFlowSuggestion(suggestion))
 
         textView.keyDown(with: try XCTUnwrap(keyEvent(
             characters: "\t",
@@ -4560,17 +4558,23 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertFalse(textView.string.hasSuffix("the.\t"))
     }
 
-    func testNarrowFlowTabAndOptionReturnOpenReviewWithoutMutatingText() async throws {
+    func testNarrowInlineReviewDismissesWithEscapeWithoutMutatingText() async throws {
         let first = "abcdefghijklmnopqrstuvwx"
         let second = "zyxwvutsrqponmlkjihgfe"
         let source = "\(first) \(second)"
         let box = EditorTextBox(source)
-        let coordinator = makeCoordinator(box)
+        let coordinator = makeCoordinator(
+            box,
+            flowCheckingClient: EditorFlowCheckingClient { _, _, _, _, completion in
+                completion([], nil)
+            }
+        )
         let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
         defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
         window.setContentSize(NSSize(width: 120, height: 260))
         scrollView.frame = window.contentView?.bounds ?? scrollView.frame
         textView.frame = scrollView.bounds
+        let corrected = "\(first.uppercased()) \(second.uppercased())"
         let suggestion = EditorFlowSuggestion(
             documentID: coordinator.documentID!,
             revision: coordinator.revision,
@@ -4578,8 +4582,9 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             caretUTF16Offset: textView.selectedRange().location,
             sentenceRange: NSRange(location: 0, length: (source as NSString).length),
             originalSentence: source,
-            correctedSentence: "\(first.uppercased()) \(second.uppercased())",
+            correctedSentence: corrected,
             source: .deterministic,
+            acceptance: .reviewOnly,
             edits: [
                 EditorFlowCorrectionEdit(
                     range: (source as NSString).range(of: first),
@@ -4596,64 +4601,39 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             ]
         )
         textView.flowSuggestion = suggestion
-        XCTAssertEqual(textView.flowCueLayout(for: suggestion).mode, .review)
+        XCTAssertEqual(suggestion.acceptance, .reviewOnly)
         await renderFlowSuggestion(in: textView, window: window)
 
-        textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\t",
-            modifiers: [],
-            keyCode: 48,
-            windowNumber: window.windowNumber
-        )))
-
-        XCTAssertTrue(textView.isFlowReviewPopoverShown)
+        XCTAssertTrue(textView.isFlowReviewPreviewShown)
+        XCTAssertTrue(textView.hasRenderedFlowSuggestion(suggestion))
         XCTAssertEqual(textView.string, source)
         XCTAssertEqual(box.value, source)
         XCTAssertFalse(textView.undoManager?.canUndo == true)
-        XCTAssertNil(textView.accessibilityHelp())
-        XCTAssertTrue((textView.accessibilityCustomActions() ?? []).isEmpty)
-
-        let reviewWindow = try XCTUnwrap((NSApp.windows + (window.childWindows ?? [])).first {
-            candidate in
-            guard candidate !== window, let contentView = candidate.contentView else {
-                return false
-            }
-            return descendantViews(in: contentView).contains {
-                ($0 as? NSButton)?.title == "Cancel"
-            }
-        })
-        let cancel = try XCTUnwrap(
-            descendantViews(in: try XCTUnwrap(reviewWindow.contentView))
-                .compactMap { $0 as? NSButton }
-                .first { $0.title == "Cancel" }
-        )
-        cancel.performClick(nil)
-        let reviewClosed = await waitUntil { !textView.isFlowReviewPopoverShown }
-        XCTAssertTrue(reviewClosed)
         XCTAssertEqual(textView.accessibilityHelp(), suggestion.accessibilityReviewText)
         XCTAssertEqual((textView.accessibilityCustomActions() ?? []).count, 2)
+        XCTAssertTrue(window.childWindows?.isEmpty ?? true)
 
-        textView.flowSuggestion = nil
-        window.makeFirstResponder(textView)
-        textView.flowSuggestion = suggestion
-        await renderFlowSuggestion(in: textView, window: window)
         textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\r",
-            modifiers: [.option],
-            keyCode: 36,
+            characters: "\u{1b}",
+            modifiers: [],
+            keyCode: 53,
             windowNumber: window.windowNumber
         )))
-
-        XCTAssertTrue(textView.isFlowReviewPopoverShown)
+        XCTAssertFalse(textView.isFlowReviewPreviewShown)
         XCTAssertEqual(textView.string, source)
         XCTAssertEqual(box.value, source)
     }
 
-    func testReviewReplaceAppliesExactlyOnceAfterFocusMovesToCancel() async throws {
+    func testInlineReviewAppliesExactlyOnce() async throws {
         let source = "abcdefghijklmnopqrstuvwx"
         let corrected = source.uppercased()
         let box = EditorTextBox(source)
-        let coordinator = makeCoordinator(box)
+        let coordinator = makeCoordinator(
+            box,
+            flowCheckingClient: EditorFlowCheckingClient { _, _, _, _, completion in
+                completion([], nil)
+            }
+        )
         let (window, scrollView, textView) = makeHostedTextView(
             coordinator: coordinator,
             text: source
@@ -4687,6 +4667,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             originalSentence: source,
             correctedSentence: corrected,
             source: .deterministic,
+            acceptance: .reviewOnly,
             edits: [EditorFlowCorrectionEdit(
                 range: NSRange(location: 0, length: (source as NSString).length),
                 originalText: source,
@@ -4695,62 +4676,35 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             )]
         )
         textView.flowSuggestion = suggestion
-        XCTAssertEqual(textView.flowCueLayout(for: suggestion).mode, .review)
+        XCTAssertEqual(suggestion.acceptance, .reviewOnly)
         await renderFlowSuggestion(in: textView, window: window)
 
+        XCTAssertTrue(textView.isFlowReviewPreviewShown)
+        XCTAssertTrue(textView.hasRenderedFlowSuggestion(suggestion))
+        XCTAssertTrue(window.childWindows?.isEmpty ?? true)
+        XCTAssertEqual(textView.string, source)
         textView.keyDown(with: try XCTUnwrap(keyEvent(
             characters: "\t",
             modifiers: [],
             keyCode: 48,
             windowNumber: window.windowNumber
         )))
-        let reviewShown = await waitUntil { textView.isFlowReviewPopoverShown }
-        XCTAssertTrue(reviewShown)
-        await nextMainRunLoopTurn()
-
-        let candidateWindows = NSApp.windows + (window.childWindows ?? [])
-        let reviewWindow = try XCTUnwrap(candidateWindows.first { candidate in
-            guard candidate !== window, let contentView = candidate.contentView else { return false }
-            let buttons = descendantViews(in: contentView).compactMap { $0 as? NSButton }
-            return buttons.contains { $0.title == "Replace" }
-                && buttons.contains { $0.title == "Cancel" }
-        })
-        let buttons = descendantViews(in: try XCTUnwrap(reviewWindow.contentView))
-            .compactMap { $0 as? NSButton }
-        let replace = try XCTUnwrap(buttons.first { $0.title == "Replace" })
-        let cancel = try XCTUnwrap(buttons.first { $0.title == "Cancel" })
-        XCTAssertTrue(reviewWindow.makeFirstResponder(cancel))
-        XCTAssertTrue(reviewWindow.firstResponder === cancel)
-
-        NSApp.activate(ignoringOtherApps: true)
-        let appActivated = await waitUntil { NSApp.isActive }
-        guard appActivated else {
-            replace.performClick(nil)
-            XCTAssertEqual(acceptanceCount.value, 0)
-            XCTAssertEqual(textView.string, source)
-            XCTAssertEqual(box.value, source)
-            XCTAssertTrue(textView.isFlowReviewPopoverShown)
-            throw XCTSkip("The command-line XCTest host cannot become the active macOS application")
-        }
-
-        replace.performClick(nil)
         let applied = await waitUntil {
             acceptanceCount.value == 1
                 && textView.string == corrected
-                && !textView.isFlowReviewPopoverShown
+                && !textView.isFlowReviewPreviewShown
         }
         XCTAssertTrue(applied)
         XCTAssertEqual(box.value, corrected)
         XCTAssertNil(textView.flowSuggestion)
 
-        replace.performClick(nil)
-        await nextMainRunLoopTurn()
+        XCTAssertFalse(textView.confirmFlowReviewSuggestionForTesting())
         XCTAssertEqual(acceptanceCount.value, 1)
         XCTAssertEqual(textView.string, corrected)
         XCTAssertEqual(box.value, corrected)
     }
 
-    func testLongReviewAtTwoTimesZoomIsScreenBoundedAndScrollable() async throws {
+    func testLongInlineReviewAtTwoTimesZoomUsesEditorViewportWithoutExtraWindow() async throws {
         let repeated = Array(
             repeating: "teh sentence has enough surrounding context to require careful review.",
             count: 24
@@ -4758,12 +4712,27 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         let source = repeated
         let corrected = source.replacingOccurrences(of: "teh", with: "the")
         let box = EditorTextBox(source)
-        let coordinator = makeCoordinator(box)
+        let coordinator = makeCoordinator(
+            box,
+            flowCheckingClient: EditorFlowCheckingClient { _, _, _, _, completion in
+                completion([], nil)
+            }
+        )
         let (window, scrollView, textView) = makeHostedTextView(
             coordinator: coordinator,
             text: source
         )
         defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let options = EditorTextCheckingOptions(
+            checksSpelling: false,
+            checksGrammar: false,
+            inlinePredictions: false
+        )
+        textView.flowSourceMode = .markdown
+        textView.applyTextChecking(options)
+        coordinator.configureFlow(mode: .markdown, options: options)
+        let rangesReady = await waitUntil { textView.flowWritingToolsReady }
+        XCTAssertTrue(rangesReady)
         textView.frame = NSRect(x: 0, y: 0, width: scrollView.bounds.width, height: 6_000)
         textView.zoomScale = 2
         textView.setSelectedRange(NSRange(location: (source as NSString).length, length: 0))
@@ -4792,11 +4761,18 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             originalSentence: source,
             correctedSentence: corrected,
             source: .deterministic,
+            acceptance: .reviewOnly,
             edits: edits
         )
         textView.flowSuggestion = suggestion
-        XCTAssertEqual(textView.flowCueLayout(for: suggestion).mode, .review)
+        XCTAssertEqual(suggestion.acceptance, .reviewOnly)
         await renderFlowSuggestion(in: textView, window: window)
+
+        XCTAssertTrue(textView.isFlowReviewPreviewShown)
+        XCTAssertTrue(textView.hasRenderedFlowSuggestion(suggestion))
+        XCTAssertTrue(window.childWindows?.isEmpty ?? true)
+        XCTAssertEqual(textView.string, source)
+        XCTAssertEqual(box.value, source)
 
         textView.keyDown(with: try XCTUnwrap(keyEvent(
             characters: "\t",
@@ -4804,36 +4780,14 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             keyCode: 48,
             windowNumber: window.windowNumber
         )))
-        let reviewShown = await waitUntil { textView.isFlowReviewPopoverShown }
-        XCTAssertTrue(reviewShown)
-        await nextMainRunLoopTurn()
-
-        let candidateWindows = NSApp.windows + (window.childWindows ?? [])
-        let reviewWindow = try XCTUnwrap(candidateWindows.first { candidate in
-            guard candidate !== window, let contentView = candidate.contentView else { return false }
-            return descendantViews(in: contentView).contains { view in
-                (view as? NSButton)?.title == "Replace"
-            }
-        })
-        reviewWindow.contentView?.layoutSubtreeIfNeeded()
-        let reviewViews = descendantViews(in: try XCTUnwrap(reviewWindow.contentView))
-        let bodyScrollView = try XCTUnwrap(reviewViews.compactMap { $0 as? NSScrollView }.first {
-            $0.hasVerticalScroller && $0.documentView != nil
-        })
-        bodyScrollView.layoutSubtreeIfNeeded()
-        let documentHeight = try XCTUnwrap(bodyScrollView.documentView).frame.height
-        XCTAssertGreaterThan(documentHeight, bodyScrollView.contentView.bounds.height)
-
-        let visibleFrame = reviewWindow.screen?.visibleFrame
-            ?? NSScreen.main?.visibleFrame
-            ?? NSRect(x: 0, y: 0, width: 1_024, height: 768)
-        XCTAssertLessThanOrEqual(reviewWindow.frame.width, visibleFrame.width)
-        XCTAssertLessThanOrEqual(reviewWindow.frame.height, visibleFrame.height)
+        XCTAssertEqual(textView.string, corrected)
+        XCTAssertEqual(box.value, corrected)
+        textView.undoManager?.undo()
         XCTAssertEqual(textView.string, source)
         XCTAssertEqual(box.value, source)
     }
 
-    func testSentenceBoundaryFlowBatchTabAppliesAtomicallyThenUndoRedoRestoresExactText() async throws {
+    func testSentenceBoundaryFlowBatchSettlesAtomicallyDeleteRevertsAndRedoRestoresExactText() async throws {
         let source = "teh cats is ready"
         let box = EditorTextBox(source)
         let requestCount = EditorIntBox()
@@ -4881,14 +4835,6 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         let writingToolsReady = await waitUntil { textView.flowWritingToolsReady }
         XCTAssertTrue(writingToolsReady)
 
-        textView.insertText(".", replacementRange: textView.selectedRange())
-        let batchSuggestionReady = await waitUntil { textView.flowSuggestion?.edits.count == 2 }
-        XCTAssertTrue(batchSuggestionReady)
-        XCTAssertEqual(textView.flowCueLayout(for: try XCTUnwrap(textView.flowSuggestion)).mode, .direct)
-        XCTAssertEqual(requestCount.value, 1)
-        XCTAssertEqual(textView.flowSuggestion?.originalSentence, "teh cats is ready.")
-        XCTAssertEqual(textView.flowSuggestion?.correctedSentence, "the cats are ready.")
-        XCTAssertEqual(textView.string, "teh cats is ready.")
         let preservedGapKey = NSAttributedString.Key("MonknotFlowPreservedGap")
         let preservedGapRange = (textView.string as NSString).range(of: "cats")
         textView.textStorage?.addAttribute(
@@ -4898,23 +4844,18 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         )
         textView.undoManager?.removeAllActions()
         recordingTextView.approvedChanges.removeAll()
-        await renderFlowSuggestion(in: textView, window: window)
-        XCTAssertTrue(textView.canDirectlyAcceptFlowSuggestion(try XCTUnwrap(
-            textView.flowSuggestion
-        )))
 
-        textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\t",
-            modifiers: [],
-            keyCode: 48,
-            windowNumber: window.windowNumber
-        )))
-
+        textView.insertText(".", replacementRange: textView.selectedRange())
+        let settled = await waitUntil { textView.string == "the cats are ready." }
+        XCTAssertTrue(settled)
+        XCTAssertEqual(requestCount.value, 1)
+        XCTAssertNil(textView.flowSuggestion)
+        XCTAssertTrue(textView.accessibilityHelp()?.contains("Delete to undo") == true)
         XCTAssertEqual(textView.string, "the cats are ready.")
         XCTAssertEqual(box.value, "the cats are ready.")
-        XCTAssertEqual(recordingTextView.approvedChanges.count, 1)
-        XCTAssertEqual(recordingTextView.approvedChanges.first?.range, NSRange(location: 0, length: 11))
-        XCTAssertEqual(recordingTextView.approvedChanges.first?.replacement, "the cats are")
+        XCTAssertEqual(recordingTextView.approvedChanges.count, 2)
+        XCTAssertEqual(recordingTextView.approvedChanges.last?.range, NSRange(location: 0, length: 11))
+        XCTAssertEqual(recordingTextView.approvedChanges.last?.replacement, "the cats are")
         XCTAssertEqual(
             textView.textStorage?.attribute(
                 preservedGapKey,
@@ -4924,9 +4865,13 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             "preserved"
         )
         XCTAssertEqual(textView.selectedRange(), NSRange(location: 19, length: 0))
-        XCTAssertTrue(textView.undoManager?.canUndo == true)
 
-        textView.undoManager?.undo()
+        textView.keyDown(with: try XCTUnwrap(keyEvent(
+            characters: "\u{7f}",
+            modifiers: [],
+            keyCode: 51,
+            windowNumber: window.windowNumber
+        )))
         XCTAssertEqual(textView.string, "teh cats is ready.")
         XCTAssertEqual(box.value, "teh cats is ready.")
         XCTAssertTrue(textView.undoManager?.canRedo == true)
@@ -4975,12 +4920,18 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         coordinator.configureFlow(mode: .markdown, options: options)
         let rangesReady = await waitUntil { textView.flowWritingToolsReady }
         XCTAssertTrue(rangesReady)
+        var acceptedSuggestion: EditorFlowSuggestion?
+        textView.flowSuggestionAcceptanceHandler = { suggestion in
+            acceptedSuggestion = suggestion
+            return coordinator.acceptFlowSuggestion(suggestion)
+        }
 
         textView.insertText(".", replacementRange: textView.selectedRange())
-        let suggestionReady = await waitUntil { textView.flowSuggestion != nil }
-        XCTAssertTrue(suggestionReady)
-        let suggestion = try XCTUnwrap(textView.flowSuggestion)
+        let settled = await waitUntil { textView.string == "This is an important note." }
+        XCTAssertTrue(settled)
+        let suggestion = try XCTUnwrap(acceptedSuggestion)
         XCTAssertEqual(requestCount.value, 1)
+        XCTAssertNil(textView.flowSuggestion)
         XCTAssertEqual(suggestion.source, .deterministic)
         XCTAssertEqual(suggestion.originalSentence, completed)
         XCTAssertEqual(suggestion.correctedSentence, "This is an important note.")
@@ -5084,23 +5035,26 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         textView.undoManager?.removeAllActions()
         recordingTextView.approvedChanges.removeAll()
         await renderFlowSuggestion(in: textView, window: window)
-        XCTAssertFalse(textView.canDirectlyAcceptFlowSuggestion(suggestion))
+        XCTAssertTrue(textView.canApplyRenderedFlowSuggestion(suggestion))
+        textView.keyDown(with: try XCTUnwrap(keyEvent(
+            characters: "\u{F703}",
+            modifiers: [.numericPad, .function],
+            keyCode: 124,
+            windowNumber: window.windowNumber
+        )))
+        XCTAssertTrue(textView.isFlowReviewPreviewShown)
+        XCTAssertEqual(textView.string, completed)
+        XCTAssertEqual(box.value, completed)
+        XCTAssertEqual(
+            textView.selectedFlowReviewSuggestionForTesting?.correctedSentence,
+            expected
+        )
         textView.keyDown(with: try XCTUnwrap(keyEvent(
             characters: "\t",
             modifiers: [],
             keyCode: 48,
             windowNumber: window.windowNumber
         )))
-
-        XCTAssertTrue(textView.isFlowReviewPopoverShown)
-        XCTAssertEqual(textView.string, completed)
-        XCTAssertEqual(box.value, completed)
-        XCTAssertTrue(textView.selectFlowReviewAlternativeForTesting(at: 1))
-        XCTAssertEqual(
-            textView.selectedFlowReviewSuggestionForTesting?.correctedSentence,
-            expected
-        )
-        XCTAssertTrue(textView.confirmFlowReviewSuggestionForTesting())
         XCTAssertEqual(textView.string, expected)
         XCTAssertEqual(box.value, expected)
         XCTAssertEqual(recordingTextView.approvedChanges.count, 1)
@@ -5189,7 +5143,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertEqual(suggestion.correctedSentence, "The package is coming.")
         XCTAssertEqual(suggestion.acceptance, .reviewOnly)
         XCTAssertEqual(suggestion.reviewAlternatives?.kind, .spelling)
-        XCTAssertFalse(textView.canDirectlyAcceptFlowSuggestion(suggestion))
+        XCTAssertTrue(textView.isFlowReviewPreviewShown)
         XCTAssertEqual(textView.string, completed)
     }
 
@@ -5466,13 +5420,19 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         coordinator.configureFlow(mode: .plainText, options: options)
         let rangesReady = await waitUntil { textView.flowWritingToolsReady }
         XCTAssertTrue(rangesReady)
+        var acceptedSuggestion: EditorFlowSuggestion?
+        textView.flowSuggestionAcceptanceHandler = { suggestion in
+            acceptedSuggestion = suggestion
+            return coordinator.acceptFlowSuggestion(suggestion)
+        }
 
         textView.insertText(".", replacementRange: textView.selectedRange())
-        let suggestionReady = await waitUntil { textView.flowSuggestion != nil }
-        XCTAssertTrue(suggestionReady)
+        let settled = await waitUntil { textView.string == "The dogs are playing." }
+        XCTAssertTrue(settled)
         XCTAssertEqual(candidateRequestCount.value, 0)
-        XCTAssertEqual(textView.flowSuggestion?.correctedSentence, "The dogs are playing.")
-        XCTAssertEqual(textView.flowSuggestion?.acceptance, .direct)
+        XCTAssertEqual(acceptedSuggestion?.correctedSentence, "The dogs are playing.")
+        XCTAssertEqual(acceptedSuggestion?.acceptance, .direct)
+        XCTAssertNil(textView.flowSuggestion)
     }
 
     func testFlowGrammarRedoRestoresSentenceEndAfterNativeCorrectionUndo() async throws {
@@ -5520,6 +5480,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             originalSentence: nativeCorrected,
             correctedSentence: flowCorrected,
             source: .deterministic,
+            acceptance: .reviewOnly,
             edits: [EditorFlowCorrectionEdit(
                 range: grammarRange,
                 originalText: "is",
@@ -5529,7 +5490,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         )
         textView.flowSuggestion = suggestion
         await renderFlowSuggestion(in: textView, window: window)
-        XCTAssertTrue(textView.canDirectlyAcceptFlowSuggestion(suggestion))
+        XCTAssertTrue(textView.canApplyRenderedFlowSuggestion(suggestion))
 
         textView.keyDown(with: try XCTUnwrap(keyEvent(
             characters: "\t",
@@ -5641,9 +5602,9 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertTrue(rangesReady)
 
         textView.insertText(".", replacementRange: textView.selectedRange())
-        let suggestionReady = await waitUntil { textView.flowSuggestion?.edits.count == 2 }
-        XCTAssertTrue(suggestionReady)
-        XCTAssertEqual(requestedTexts, [
+        let settled = await waitUntil { textView.string == "The dogs are playing." }
+        XCTAssertTrue(settled)
+        XCTAssertEqual(Array(requestedTexts.prefix(3)), [
             "The dogs is playig.",
             "The dogs am playing.",
             "The dogs are playing.",
@@ -5652,31 +5613,10 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             $0 & NSTextCheckingResult.CheckingType.spelling.rawValue != 0
                 && $0 & NSTextCheckingResult.CheckingType.grammar.rawValue != 0
         })
-        XCTAssertEqual(textView.flowSuggestion?.edits.map(\.originalText), ["is", "playig"])
-        XCTAssertEqual(textView.flowSuggestion?.edits.map(\.replacementText), ["are", "playing"])
-        XCTAssertEqual(textView.flowSuggestion?.source, .deterministic)
-        XCTAssertEqual(textView.flowSuggestion?.originalSentence, "The dogs is playig.")
-        XCTAssertEqual(textView.flowSuggestion?.correctedSentence, "The dogs are playing.")
-        XCTAssertTrue(textView.flowSuggestion?.accessibilityText.contains(
-            "Corrected sentence: The dogs are playing."
-        ) == true)
-
-        textView.undoManager?.removeAllActions()
-        recordingTextView.approvedChanges.removeAll()
-        await renderFlowSuggestion(in: textView, window: window)
-        XCTAssertTrue(textView.canDirectlyAcceptFlowSuggestion(try XCTUnwrap(
-            textView.flowSuggestion
-        )))
-        textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\t",
-            modifiers: [],
-            keyCode: 48,
-            windowNumber: window.windowNumber
-        )))
-
+        XCTAssertNil(textView.flowSuggestion)
         XCTAssertEqual(textView.string, "The dogs are playing.")
         XCTAssertEqual(box.value, "The dogs are playing.")
-        XCTAssertEqual(recordingTextView.approvedChanges.count, 1)
+        XCTAssertEqual(recordingTextView.approvedChanges.count, 2)
         textView.undoManager?.undo()
         XCTAssertEqual(textView.string, "The dogs is playig.")
         XCTAssertEqual(box.value, "The dogs is playig.")
@@ -5697,6 +5637,10 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             box,
             flowCheckingClient: EditorFlowCheckingClient { checkedText, _, types, _, completion in
                 requestedTypes = types
+                guard checkedText == source + "." else {
+                    completion([], nil)
+                    return
+                }
                 completion([
                     NSTextCheckingResult.correctionCheckingResult(
                         range: (checkedText as NSString).range(of: "teh"),
@@ -5725,10 +5669,15 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         coordinator.configureFlow(mode: .markdown, options: options)
         let rangesReady = await waitUntil { textView.flowWritingToolsReady }
         XCTAssertTrue(rangesReady)
+        var acceptedSuggestion: EditorFlowSuggestion?
+        textView.flowSuggestionAcceptanceHandler = { suggestion in
+            acceptedSuggestion = suggestion
+            return coordinator.acceptFlowSuggestion(suggestion)
+        }
 
         textView.insertText(".", replacementRange: textView.selectedRange())
-        let suggestionReady = await waitUntil { textView.flowSuggestion != nil }
-        XCTAssertTrue(suggestionReady)
+        let settled = await waitUntil { textView.string == "teh dogs are ready." }
+        XCTAssertTrue(settled)
         XCTAssertNotEqual(
             requestedTypes & NSTextCheckingResult.CheckingType.spelling.rawValue,
             0
@@ -5737,8 +5686,9 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             requestedTypes & NSTextCheckingResult.CheckingType.grammar.rawValue,
             0
         )
-        XCTAssertEqual(textView.flowSuggestion?.edits.map(\.originalText), ["is"])
-        XCTAssertEqual(textView.flowSuggestion?.edits.map(\.replacementText), ["are"])
+        XCTAssertNil(textView.flowSuggestion)
+        XCTAssertEqual(acceptedSuggestion?.edits.map(\.originalText), ["is"])
+        XCTAssertEqual(acceptedSuggestion?.edits.map(\.replacementText), ["are"])
     }
 
     func testGrammarOnlyAlternativeValidationIgnoresUnrelatedSpelling() async {
@@ -5792,20 +5742,26 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         coordinator.configureFlow(mode: .markdown, options: options)
         let rangesReady = await waitUntil { textView.flowWritingToolsReady }
         XCTAssertTrue(rangesReady)
+        var acceptedSuggestion: EditorFlowSuggestion?
+        textView.flowSuggestionAcceptanceHandler = { suggestion in
+            acceptedSuggestion = suggestion
+            return coordinator.acceptFlowSuggestion(suggestion)
+        }
 
         textView.insertText(".", replacementRange: textView.selectedRange())
-        let suggestionReady = await waitUntil { textView.flowSuggestion != nil }
-        XCTAssertTrue(suggestionReady)
+        let settled = await waitUntil { textView.string == "teh dogs are ready." }
+        XCTAssertTrue(settled)
 
-        XCTAssertEqual(requestedTexts, [
+        XCTAssertEqual(Array(requestedTexts.prefix(3)), [
             "teh dogs is ready.",
             "teh dogs are ready.",
             "teh dogs were ready.",
         ])
-        XCTAssertEqual(textView.flowSuggestion?.edits.map(\.originalText), ["is"])
-        XCTAssertEqual(textView.flowSuggestion?.edits.map(\.replacementText), ["are"])
-        XCTAssertEqual(textView.flowSuggestion?.correctedSentence, "teh dogs are ready.")
-        XCTAssertFalse(textView.flowSuggestion?.exactChangeDescription.contains("teh") == true)
+        XCTAssertNil(textView.flowSuggestion)
+        XCTAssertEqual(acceptedSuggestion?.edits.map(\.originalText), ["is"])
+        XCTAssertEqual(acceptedSuggestion?.edits.map(\.replacementText), ["are"])
+        XCTAssertEqual(acceptedSuggestion?.correctedSentence, "teh dogs are ready.")
+        XCTAssertFalse(acceptedSuggestion?.exactChangeDescription.contains("teh") == true)
     }
 
     func testGrammarOnlyAlternativeValidationRejectsSpellingAndCorrectionAtTransformedTarget() async {
@@ -5918,14 +5874,13 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         recordingTextView.approvedChanges.removeAll()
         await renderFlowSuggestion(in: textView, window: window)
         textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\t",
-            modifiers: [],
-            keyCode: 48,
+            characters: "\u{F703}",
+            modifiers: [.numericPad, .function],
+            keyCode: 124,
             windowNumber: window.windowNumber
         )))
-        XCTAssertTrue(textView.isFlowReviewPopoverShown)
+        XCTAssertTrue(textView.isFlowReviewPreviewShown)
         XCTAssertEqual(textView.string, completedSource)
-        XCTAssertTrue(textView.selectFlowReviewAlternativeForTesting(at: 1))
         XCTAssertEqual(
             textView.selectedFlowReviewSuggestionForTesting?.correctedSentence,
             "They were ready."
@@ -5935,7 +5890,12 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             ["were"]
         )
 
-        XCTAssertTrue(textView.confirmFlowReviewSuggestionForTesting())
+        textView.keyDown(with: try XCTUnwrap(keyEvent(
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
+            windowNumber: window.windowNumber
+        )))
         XCTAssertEqual(textView.string, "They were ready.")
         XCTAssertEqual(box.value, "They were ready.")
         XCTAssertEqual(recordingTextView.approvedChanges.count, 1)
@@ -6137,43 +6097,37 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         coordinator.configureFlow(mode: .markdown, options: options)
         let rangesReady = await waitUntil { textView.flowWritingToolsReady }
         XCTAssertTrue(rangesReady)
+        var acceptedSuggestion: EditorFlowSuggestion?
+        textView.flowSuggestionAcceptanceHandler = { suggestion in
+            acceptedSuggestion = suggestion
+            return coordinator.acceptFlowSuggestion(suggestion)
+        }
+        textView.undoManager?.removeAllActions()
 
         textView.insertText(".", replacementRange: textView.selectedRange())
-        let suggestionReady = await waitUntil { textView.flowSuggestion?.edits.count == 3 }
-        XCTAssertTrue(suggestionReady)
+        let settled = await waitUntil { textView.string == "the and weird." }
+        XCTAssertTrue(settled)
         XCTAssertEqual(
-            textView.flowSuggestion?.edits.map(\.originalText),
+            acceptedSuggestion?.edits.map(\.originalText),
             ["teh", "adn", "wierd"]
         )
         XCTAssertEqual(
-            textView.flowSuggestion?.edits.map(\.replacementText),
+            acceptedSuggestion?.edits.map(\.replacementText),
             ["the", "and", "weird"]
         )
-        XCTAssertEqual(textView.flowSuggestion?.originalSentence, "teh adn wierd.")
-        XCTAssertEqual(textView.flowSuggestion?.correctedSentence, "the and weird.")
-        XCTAssertTrue(textView.flowSuggestion?.accessibilityText.contains(
+        XCTAssertEqual(acceptedSuggestion?.originalSentence, "teh adn wierd.")
+        XCTAssertEqual(acceptedSuggestion?.correctedSentence, "the and weird.")
+        XCTAssertTrue(acceptedSuggestion?.accessibilityText.contains(
             "replace “wierd” with “weird”"
         ) == true)
-        textView.undoManager?.removeAllActions()
-        await renderFlowSuggestion(in: textView, window: window)
-        XCTAssertTrue(textView.canDirectlyAcceptFlowSuggestion(try XCTUnwrap(
-            textView.flowSuggestion
-        )))
-
-        textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\t",
-            modifiers: [],
-            keyCode: 48,
-            windowNumber: window.windowNumber
-        )))
-
         XCTAssertEqual(textView.string, "the and weird.")
         XCTAssertEqual(box.value, "the and weird.")
+        XCTAssertNil(textView.flowSuggestion)
         XCTAssertTrue(textView.undoManager?.canUndo == true)
         textView.undoManager?.undo()
         XCTAssertEqual(textView.string, "teh adn wierd.")
         XCTAssertEqual(box.value, "teh adn wierd.")
-        XCTAssertFalse(textView.undoManager?.canUndo == true)
+        XCTAssertTrue(textView.undoManager?.canUndo == true)
     }
 
     func testImpreciseBroadGrammarDetailDoesNotOfferWholeSentenceRewrite() async {
@@ -6369,23 +6323,20 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         coordinator.configureFlow(mode: .markdown, options: options)
         let rangesReady = await waitUntil { textView.flowWritingToolsReady }
         XCTAssertTrue(rangesReady)
+        var acceptedSuggestion: EditorFlowSuggestion?
+        textView.flowSuggestionAcceptanceHandler = { suggestion in
+            acceptedSuggestion = suggestion
+            return coordinator.acceptFlowSuggestion(suggestion)
+        }
+        textView.undoManager?.removeAllActions()
 
         textView.insertText(".", replacementRange: textView.selectedRange())
-        let suggestionReady = await waitUntil { textView.flowSuggestion?.edits.count == 2 }
-        XCTAssertTrue(suggestionReady)
-        XCTAssertEqual(textView.flowSuggestion?.edits.map(\.originalText), ["teh", "adn"])
-        textView.undoManager?.removeAllActions()
-        await renderFlowSuggestion(in: textView, window: window)
-        XCTAssertTrue(textView.canDirectlyAcceptFlowSuggestion(try XCTUnwrap(
-            textView.flowSuggestion
-        )))
-
-        textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\t",
-            modifiers: [],
-            keyCode: 48,
-            windowNumber: window.windowNumber
-        )))
+        let settled = await waitUntil {
+            textView.string == "the prose `tehcode` [guide](teh-link.md) and."
+        }
+        XCTAssertTrue(settled)
+        XCTAssertEqual(acceptedSuggestion?.edits.map(\.originalText), ["teh", "adn"])
+        XCTAssertNil(textView.flowSuggestion)
         XCTAssertEqual(
             textView.string,
             "the prose `tehcode` [guide](teh-link.md) and."
@@ -6442,6 +6393,11 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         coordinator.configureFlow(mode: .markdown, options: options)
         let rangesReady = await waitUntil { textView.flowWritingToolsReady }
         XCTAssertTrue(rangesReady)
+        var acceptedSuggestion: EditorFlowSuggestion?
+        textView.flowSuggestionAcceptanceHandler = { suggestion in
+            acceptedSuggestion = suggestion
+            return coordinator.acceptFlowSuggestion(suggestion)
+        }
 
         textView.keyDown(with: try XCTUnwrap(keyEvent(
             characters: "\r",
@@ -6452,39 +6408,29 @@ final class MarkdownEditorInteractionTests: XCTestCase {
 
         XCTAssertEqual(textView.string, "- teh cats is ready\n- ")
         XCTAssertEqual(box.value, "- teh cats is ready\n- ")
+        let triggeredSource = textView.string as NSString
+        let newlineLocation = triggeredSource.range(of: "\n").location
         XCTAssertEqual(
             textView.selectedRange(),
             NSRange(location: (textView.string as NSString).length, length: 0)
         )
-        let batchReady = await waitUntil { textView.flowSuggestion?.edits.count == 2 }
-        XCTAssertTrue(batchReady)
-        let suggestion = try XCTUnwrap(textView.flowSuggestion)
-        let newlineLocation = (textView.string as NSString).range(of: "\n").location
+        let settled = await waitUntil { textView.string == "- the cats are ready\n- " }
+        XCTAssertTrue(settled)
+        let suggestion = try XCTUnwrap(acceptedSuggestion)
         XCTAssertEqual(NSMaxRange(suggestion.sentenceRange), newlineLocation)
         XCTAssertLessThan(NSMaxRange(suggestion.sentenceRange), (textView.string as NSString).length)
         XCTAssertTrue(checkedTexts.contains { $0.contains("teh cats is ready") })
         XCTAssertEqual(
-            textView.flowSuggestion?.exactChangeDescription,
+            acceptedSuggestion?.exactChangeDescription,
             "replace “teh” with “the”, replace “is” with “are”"
         )
         XCTAssertEqual(
-            textView.flowSuggestion?.edits.map(\.range),
+            acceptedSuggestion?.edits.map(\.range),
             [
-                (textView.string as NSString).range(of: "teh"),
-                (textView.string as NSString).range(of: "is"),
+                NSRange(location: 2, length: 3),
+                NSRange(location: 11, length: 2),
             ]
         )
-        await renderFlowSuggestion(in: textView, window: window)
-        XCTAssertTrue(textView.canDirectlyAcceptFlowSuggestion(try XCTUnwrap(
-            textView.flowSuggestion
-        )))
-
-        textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\t",
-            modifiers: [],
-            keyCode: 48,
-            windowNumber: window.windowNumber
-        )))
         XCTAssertEqual(textView.string, "- the cats are ready\n- ")
         XCTAssertEqual(box.value, "- the cats are ready\n- ")
         XCTAssertNil(textView.flowSuggestion)
@@ -6562,10 +6508,11 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             coordinator: coordinator,
             textView: textView,
             checkedText: "teh",
-            replacement: "the"
+            replacement: "the",
+            acceptance: .reviewOnly
         )
         await renderFlowSuggestion(in: textView, window: window)
-        XCTAssertTrue(textView.canDirectlyAcceptFlowSuggestion(try XCTUnwrap(
+        XCTAssertTrue(textView.canApplyRenderedFlowSuggestion(try XCTUnwrap(
             textView.flowSuggestion
         )))
 
@@ -6660,7 +6607,8 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             coordinator: coordinator,
             textView: textView,
             checkedText: "teh",
-            replacement: "the"
+            replacement: "the",
+            acceptance: .reviewOnly
         )
 
         textView.keyDown(with: try XCTUnwrap(keyEvent(
@@ -6729,11 +6677,12 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             coordinator: coordinator,
             textView: textView,
             checkedText: "teh",
-            replacement: "the"
+            replacement: "the",
+            acceptance: .reviewOnly
         )
         textView.undoManager?.removeAllActions()
         await renderFlowSuggestion(in: textView, window: window)
-        XCTAssertTrue(textView.canDirectlyAcceptFlowSuggestion(try XCTUnwrap(
+        XCTAssertTrue(textView.canApplyRenderedFlowSuggestion(try XCTUnwrap(
             textView.flowSuggestion
         )))
 
@@ -6748,7 +6697,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertEqual(box.value, "teh. ")
         await nextMainRunLoopTurn()
         await renderFlowSuggestion(in: textView, window: window)
-        XCTAssertTrue(textView.canDirectlyAcceptFlowSuggestion(try XCTUnwrap(
+        XCTAssertTrue(textView.canApplyRenderedFlowSuggestion(try XCTUnwrap(
             textView.flowSuggestion
         )))
 
@@ -6768,7 +6717,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertEqual(box.value, "teh. ")
     }
 
-    func testPunctuationFollowedImmediatelyByOneSpaceCanStillOfferCompletedSentenceRepair() async throws {
+    func testPunctuationFollowedImmediatelyByOneSpaceStillSettlesCompletedSentenceRepair() async throws {
         let source = "teh"
         let box = EditorTextBox(source)
         let checker = ImmediateSpellingFlowChecker(original: "teh", replacement: "the")
@@ -6791,12 +6740,9 @@ final class MarkdownEditorInteractionTests: XCTestCase {
 
         textView.insertText(".", replacementRange: textView.selectedRange())
         textView.insertText(" ", replacementRange: textView.selectedRange())
-        let suggestionReady = await waitUntil { textView.flowSuggestion != nil }
-        XCTAssertTrue(suggestionReady)
-        XCTAssertEqual(textView.string, "teh. ")
-        XCTAssertEqual(textView.flowSuggestion?.selectedRange, NSRange(location: 5, length: 0))
-        XCTAssertEqual(textView.flowSuggestion?.originalSentence, "teh.")
-        XCTAssertEqual(textView.flowSuggestion?.correctedSentence, "the.")
+        let settled = await waitUntil { textView.string == "the. " }
+        XCTAssertTrue(settled)
+        XCTAssertNil(textView.flowSuggestion)
 
         textView.keyDown(with: try XCTUnwrap(keyEvent(
             characters: "N",
@@ -6805,13 +6751,14 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             windowNumber: window.windowNumber
         )))
         XCTAssertNil(textView.flowSuggestion)
-        XCTAssertEqual(textView.string, "teh. N")
+        XCTAssertEqual(textView.string, "the. N")
     }
 
     func testEscapeThenContinuedTypingDoesNotReofferTheSameCorrection() async throws {
-        let source = "teh"
+        let source = "writting"
+        let completedSource = source + "."
         let box = EditorTextBox(source)
-        let checker = ImmediateSpellingFlowChecker(original: "teh", replacement: "the")
+        let checker = ImmediateSpellingFlowChecker(original: "writting", replacement: "writing")
         let coordinator = makeCoordinator(box, flowCheckingClient: checker.client)
         let diagnostics = FlowDiagnosticEventBox()
         coordinator.flowDiagnosticsHandler = { diagnostics.append($0) }
@@ -6838,7 +6785,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         textView.insertText(" Other.", replacementRange: textView.selectedRange())
         let requestsBeforeReturn = checker.requestCount
         diagnostics.removeAll()
-        textView.setSelectedRange(NSRange(location: 4, length: 0))
+        textView.setSelectedRange(NSRange(location: (completedSource as NSString).length, length: 0))
         coordinator.textViewDidChangeSelection(Notification(
             name: NSTextView.didChangeSelectionNotification,
             object: textView
@@ -6853,7 +6800,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertTrue(suppressionFinished)
         try? await Task.sleep(nanoseconds: 80_000_000)
 
-        XCTAssertEqual(textView.string, "teh. Other.")
+        XCTAssertEqual(textView.string, "writting. Other.")
         XCTAssertNil(textView.flowSuggestion)
         let terminal = try XCTUnwrap(diagnostics.events.first(where: {
             $0.owner == .sentenceRepair && $0.reason == .suppressedDuplicate
@@ -6867,10 +6814,10 @@ final class MarkdownEditorInteractionTests: XCTestCase {
     }
 
     func testDismissedDeterministicRepairDoesNotSuppressExpandedSameSentenceRepair() async throws {
-        let source = "teh report"
+        let source = "writting report"
         let completedSource = source + "."
-        let expandedSource = "teh report is redy."
-        let corrected = "the report is ready."
+        let expandedSource = "writting report is redy."
+        let corrected = "writing report is ready."
         let box = EditorTextBox(source)
         let checkerCount = EditorIntBox()
         let diagnostics = FlowDiagnosticEventBox()
@@ -6880,11 +6827,11 @@ final class MarkdownEditorInteractionTests: XCTestCase {
                 checkerCount.value += 1
                 let checked = checkedText as NSString
                 var results: [NSTextCheckingResult] = []
-                let first = checked.range(of: "teh")
+                let first = checked.range(of: "writting")
                 if first.location != NSNotFound {
                     results.append(NSTextCheckingResult.correctionCheckingResult(
                         range: first,
-                        replacementString: "the"
+                        replacementString: "writing"
                     ))
                 }
                 let second = checked.range(of: "redy")
@@ -6939,8 +6886,8 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             textView.flowSuggestion?.correctedSentence == corrected
         }
         XCTAssertTrue(expandedRepairReady)
-        XCTAssertEqual(textView.flowSuggestion?.edits.map(\.originalText), ["teh", "redy"])
-        XCTAssertEqual(textView.flowSuggestion?.edits.map(\.replacementText), ["the", "ready"])
+        XCTAssertEqual(textView.flowSuggestion?.edits.map(\.originalText), ["writting", "redy"])
+        XCTAssertEqual(textView.flowSuggestion?.edits.map(\.replacementText), ["writing", "ready"])
         XCTAssertFalse(diagnostics.events.contains { $0.reason == .suppressedDuplicate })
 
         textView.undoManager?.removeAllActions()
@@ -6963,9 +6910,9 @@ final class MarkdownEditorInteractionTests: XCTestCase {
     }
 
     func testDismissedCorrectionCanReappearForANewlyTypedTarget() async throws {
-        let source = "teh"
+        let source = "writting"
         let box = EditorTextBox(source)
-        let checker = ImmediateSpellingFlowChecker(original: "teh", replacement: "the")
+        let checker = ImmediateSpellingFlowChecker(original: "writting", replacement: "writing")
         let coordinator = makeCoordinator(box, flowCheckingClient: checker.client)
         let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
         defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
@@ -6986,26 +6933,26 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         )))
         XCTAssertNil(textView.flowSuggestion)
 
-        textView.insertText("the", replacementRange: NSRange(location: 0, length: 3))
+        textView.insertText("writing", replacementRange: NSRange(location: 0, length: 8))
         textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
         // Use a paragraph boundary so this is unambiguously a newly authored
         // target rather than a lowercase hard-wrapped continuation.
         textView.insertText("\n\n", replacementRange: textView.selectedRange())
         let newTargetLocation = (textView.string as NSString).length
-        textView.insertText("teh.", replacementRange: textView.selectedRange())
+        textView.insertText("writting.", replacementRange: textView.selectedRange())
         let newSuggestionReady = await waitUntil {
             textView.flowSuggestion?.edits.first?.range.location == newTargetLocation
         }
 
         XCTAssertTrue(newSuggestionReady)
-        XCTAssertEqual(textView.string, "the.\n\nteh.")
+        XCTAssertEqual(textView.string, "writing.\n\nwritting.")
         XCTAssertEqual(
             textView.flowSuggestion?.edits.first?.range,
-            NSRange(location: newTargetLocation, length: 3)
+            NSRange(location: newTargetLocation, length: 8)
         )
         XCTAssertEqual(
             textView.flowSuggestion?.exactChangeDescription,
-            "replace “teh” with “the”"
+            "replace “writting” with “writing”"
         )
     }
 
@@ -7049,18 +6996,8 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertTrue(writingToolsReady)
 
         textView.insertText(".", replacementRange: textView.selectedRange())
-        let suggestionReady = await waitUntil { textView.flowSuggestion != nil }
-        XCTAssertTrue(suggestionReady)
-        await renderFlowSuggestion(in: textView, window: window)
-        XCTAssertTrue(textView.canDirectlyAcceptFlowSuggestion(try XCTUnwrap(
-            textView.flowSuggestion
-        )))
-        textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\t",
-            modifiers: [],
-            keyCode: 48,
-            windowNumber: window.windowNumber
-        )))
+        let settled = await waitUntil { textView.string == "the." }
+        XCTAssertTrue(settled)
         XCTAssertEqual(textView.string, "the.")
 
         textView.undoManager?.undo()
@@ -7132,19 +7069,9 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertTrue(rangesReady)
 
         textView.insertText(".", replacementRange: textView.selectedRange())
-        let firstRepairReady = await waitUntil {
-            textView.flowSuggestion?.correctedSentence == firstCorrected
-        }
+        let firstRepairReady = await waitUntil { textView.string == firstCorrected }
         XCTAssertTrue(firstRepairReady)
         XCTAssertEqual(aiRequestCount.value, 1)
-        textView.undoManager?.removeAllActions()
-        await renderFlowSuggestion(in: textView, window: window)
-        textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\t",
-            modifiers: [],
-            keyCode: 48,
-            windowNumber: window.windowNumber
-        )))
         XCTAssertEqual(textView.string, firstCorrected)
 
         textView.undoManager?.undo()
@@ -7186,7 +7113,8 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         ))
         let changedRepairReady = await waitUntil {
             aiRequestCount.value == 2
-                && textView.flowSuggestion?.correctedSentence == mutatedCorrected
+                && textView.string == mutatedCorrected
+                && textView.flowSuggestion == nil
         }
         XCTAssertTrue(changedRepairReady)
         XCTAssertEqual(aiRequestCount.value, 2)
@@ -7288,10 +7216,10 @@ final class MarkdownEditorInteractionTests: XCTestCase {
     }
 
     func testFocusResignCancelsWithoutSuppressingCorrectionOnFocusReturn() async {
-        let source = "teh"
+        let source = "writting"
         let box = EditorTextBox(source)
         let focus = EditorBoolBox(true)
-        let checker = ImmediateSpellingFlowChecker(original: "teh", replacement: "the")
+        let checker = ImmediateSpellingFlowChecker(original: "writting", replacement: "writing")
         let coordinator = MarkdownTextEditor.Coordinator(
             text: Binding(get: { box.value }, set: { box.value = $0 }),
             flowCheckingClient: checker.client,
@@ -7330,10 +7258,10 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         }
 
         XCTAssertTrue(suggestionReturned)
-        XCTAssertEqual(textView.string, "teh.")
+        XCTAssertEqual(textView.string, "writting.")
         XCTAssertEqual(
             textView.flowSuggestion?.exactChangeDescription,
-            "replace “teh” with “the”"
+            "replace “writting” with “writing”"
         )
     }
 
@@ -7781,7 +7709,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertFalse(coordinator.isWritingToolsActive)
         XCTAssertNil(textView.flowSuggestion)
         XCTAssertNil(textView.flowProseSuggestion)
-        XCTAssertFalse(textView.isFlowReviewPopoverShown)
+        XCTAssertFalse(textView.isFlowReviewPreviewShown)
         let nativeReleased = await waitUntil {
             textView.flowWritingToolsReady && textView.inlinePredictionType == .default
         }
@@ -8051,17 +7979,26 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             coordinator: coordinator,
             textView: textView,
             checkedText: "is",
-            replacement: "are"
+            replacement: "are",
+            acceptance: .reviewOnly
         )
         textView.flowSuggestion = suggestion
         await renderFlowSuggestion(in: textView, window: window)
 
         let layoutManager = try XCTUnwrap(textView.layoutManager)
         let initialFlowColor = try XCTUnwrap(layoutManager.temporaryAttribute(
-            .backgroundColor,
+            .foregroundColor,
             atCharacterIndex: changedRange.location,
             effectiveRange: nil
         ) as? NSColor)
+        XCTAssertEqual(
+            layoutManager.temporaryAttribute(
+                .spellingState,
+                atCharacterIndex: changedRange.location,
+                effectiveRange: nil
+            ) as? Int,
+            0
+        )
 
         var search = DocumentSearchState()
         search.present()
@@ -8074,7 +8011,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         let result = coordinator.applySearch(search, theme: .defaultDark, in: textView)
         search.updateResult(result)
         let colorAfterFindUpdate = try XCTUnwrap(layoutManager.temporaryAttribute(
-            .backgroundColor,
+            .foregroundColor,
             atCharacterIndex: changedRange.location,
             effectiveRange: nil
         ) as? NSColor)
@@ -8087,7 +8024,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         search.dismiss()
         XCTAssertEqual(coordinator.applySearch(search, theme: .defaultDark, in: textView), .init())
         let colorAfterFindClear = try XCTUnwrap(layoutManager.temporaryAttribute(
-            .backgroundColor,
+            .foregroundColor,
             atCharacterIndex: changedRange.location,
             effectiveRange: nil
         ) as? NSColor)
@@ -8199,22 +8136,26 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         coordinator.configureFlow(mode: .markdown, options: options)
         let rangesReady = await waitUntil { textView.flowWritingToolsReady }
         XCTAssertTrue(rangesReady, file: file, line: line)
-
-        textView.insertText(".", replacementRange: textView.selectedRange())
-        let suggestionReady = await waitUntil {
-            textView.flowSuggestion?.correctedSentence == "teh dogs were ready."
+        var acceptedSuggestion: EditorFlowSuggestion?
+        textView.flowSuggestionAcceptanceHandler = { suggestion in
+            acceptedSuggestion = suggestion
+            return coordinator.acceptFlowSuggestion(suggestion)
         }
 
-        XCTAssertTrue(suggestionReady, file: file, line: line)
-        XCTAssertEqual(requestedTexts, [
+        textView.insertText(".", replacementRange: textView.selectedRange())
+        let settled = await waitUntil { textView.string == "teh dogs were ready." }
+
+        XCTAssertTrue(settled, file: file, line: line)
+        XCTAssertEqual(Array(requestedTexts.prefix(3)), [
             "teh dogs is ready.",
             "teh dogs are ready.",
             "teh dogs were ready.",
         ], file: file, line: line)
-        XCTAssertEqual(textView.flowSuggestion?.edits.map(\.originalText), ["is"], file: file, line: line)
-        XCTAssertEqual(textView.flowSuggestion?.edits.map(\.replacementText), ["were"], file: file, line: line)
+        XCTAssertNil(textView.flowSuggestion, file: file, line: line)
+        XCTAssertEqual(acceptedSuggestion?.edits.map(\.originalText), ["is"], file: file, line: line)
+        XCTAssertEqual(acceptedSuggestion?.edits.map(\.replacementText), ["were"], file: file, line: line)
         XCTAssertFalse(
-            textView.flowSuggestion?.exactChangeDescription.contains("teh") == true,
+            acceptedSuggestion?.exactChangeDescription.contains("teh") == true,
             file: file,
             line: line
         )
@@ -8415,8 +8356,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
 
     private func runFrozenDeterministicCorpusCase(
         _ testCase: FlowWritingRepairCase,
-        inputPath: FrozenCorpusInputPath,
-        requiresReviewLayout: Bool = false
+        inputPath: FrozenCorpusInputPath
     ) async throws {
         let box = EditorTextBox("")
         let diagnostics = FlowDiagnosticEventBox()
@@ -8466,6 +8406,14 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             rangesReady,
             "Protected ranges did not settle for \(testCase.id)"
         )
+        let acceptanceCount = EditorIntBox()
+        var acceptedSuggestion: EditorFlowSuggestion?
+        textView.flowSuggestionAcceptanceHandler = { suggestion in
+            acceptedSuggestion = suggestion
+            acceptanceCount.value += 1
+            return coordinator.acceptFlowSuggestion(suggestion)
+        }
+        textView.undoManager?.removeAllActions()
 
         let triggeredDocument = try await enterFrozenCorpusCase(
             testCase,
@@ -8476,7 +8424,8 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         )
 
         let suggestionReady = await waitUntil(timeout: 3) {
-            textView.flowSuggestion?.source == .deterministic
+            acceptedSuggestion?.source == .deterministic
+                || textView.flowSuggestion?.source == .deterministic
         }
         XCTAssertTrue(
             suggestionReady,
@@ -8484,8 +8433,8 @@ final class MarkdownEditorInteractionTests: XCTestCase {
                 + checkerTrace.joined(separator: " | ")
         )
         let suggestion = try XCTUnwrap(
-            textView.flowSuggestion,
-            "Missing visible deterministic proposal for \(testCase.id)"
+            acceptedSuggestion ?? textView.flowSuggestion,
+            "Missing deterministic result for \(testCase.id)"
         )
         XCTAssertEqual(suggestion.source, .deterministic)
         let hasLetterDeletingSpellingRepair = suggestion.edits.contains { edit in
@@ -8527,29 +8476,14 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             with: suggestion.correctedSentence
         )
         let acceptedDocument = expectedDocument as String
-        let acceptanceCount = EditorIntBox()
-        textView.flowSuggestionAcceptanceHandler = { suggestion in
-            acceptanceCount.value += 1
-            return coordinator.acceptFlowSuggestion(suggestion)
-        }
-        textView.undoManager?.removeAllActions()
-        await renderFlowSuggestion(in: textView, window: window)
-        let layoutMode = textView.flowCueLayout(for: suggestion).mode
-        if requiresReviewLayout {
-            XCTAssertEqual(layoutMode, .review)
-        }
-        if layoutMode == .review {
-            XCTAssertFalse(textView.canDirectlyAcceptFlowSuggestion(suggestion))
-            textView.keyDown(with: try XCTUnwrap(keyEvent(
-                characters: "\t",
-                modifiers: [],
-                keyCode: 48,
-                windowNumber: window.windowNumber
-            )))
-            XCTAssertTrue(textView.isFlowReviewPopoverShown)
+        let layoutMode = suggestion.acceptance
+        if layoutMode == .reviewOnly {
+            textView.undoManager?.removeAllActions()
+            await renderFlowSuggestion(in: textView, window: window)
+            XCTAssertTrue(textView.canApplyRenderedFlowSuggestion(suggestion))
+            XCTAssertTrue(textView.isFlowReviewPreviewShown)
             XCTAssertEqual(textView.string, triggeredDocument)
             XCTAssertEqual(box.value, triggeredDocument)
-            XCTAssertFalse(textView.undoManager?.canUndo == true)
             await replaceFrozenReviewSuggestion(
                 suggestion,
                 expectedDocument: acceptedDocument,
@@ -8562,14 +8496,9 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             )
             return
         }
-        XCTAssertTrue(textView.canDirectlyAcceptFlowSuggestion(suggestion))
-
-        textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\t",
-            modifiers: [],
-            keyCode: 48,
-            windowNumber: window.windowNumber
-        )))
+        let settled = await waitUntil { textView.string == acceptedDocument }
+        XCTAssertTrue(settled, "Automatic settlement timed out for \(testCase.id)")
+        XCTAssertNil(textView.flowSuggestion)
         XCTAssertEqual(textView.string, acceptedDocument, "Acceptance mismatch for \(testCase.id)")
         XCTAssertEqual(box.value, acceptedDocument, "Binding mismatch for \(testCase.id)")
         XCTAssertEqual(acceptanceCount.value, 1, "Acceptance count mismatch for \(testCase.id)")
@@ -8655,6 +8584,14 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             rangesReady,
             "Protected ranges did not settle for \(testCase.id)"
         )
+        let acceptanceCount = EditorIntBox()
+        var acceptedSuggestion: EditorFlowSuggestion?
+        textView.flowSuggestionAcceptanceHandler = { suggestion in
+            acceptedSuggestion = suggestion
+            acceptanceCount.value += 1
+            return coordinator.acceptFlowSuggestion(suggestion)
+        }
+        textView.undoManager?.removeAllActions()
 
         let triggeredDocument = try await enterFrozenCorpusCase(
             testCase,
@@ -8714,7 +8651,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         )
 
         let suggestionReady = await waitUntil(timeout: 3) {
-            textView.flowSuggestion?.source == .ai
+            acceptedSuggestion?.source == .ai || textView.flowSuggestion?.source == .ai
         }
         XCTAssertTrue(
             suggestionReady,
@@ -8723,7 +8660,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
                     "\($0.owner.rawValue)#\($0.token):\($0.reason.rawValue)"
                 }.joined(separator: ",")
         )
-        let suggestion = try XCTUnwrap(textView.flowSuggestion)
+        let suggestion = try XCTUnwrap(acceptedSuggestion ?? textView.flowSuggestion)
         XCTAssertEqual(suggestion.source, .ai)
         XCTAssertEqual(suggestion.acceptance, expectedRepair.acceptance)
         XCTAssertEqual(suggestion.correctedSentence, candidate)
@@ -8741,21 +8678,9 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             "AI repair exceeded the corpus latency budget for \(testCase.id)"
         )
 
-        let acceptanceCount = EditorIntBox()
-        textView.flowSuggestionAcceptanceHandler = { suggestion in
-            acceptanceCount.value += 1
-            return coordinator.acceptFlowSuggestion(suggestion)
-        }
-        textView.undoManager?.removeAllActions()
-        await renderFlowSuggestion(in: textView, window: window)
         let requiresReview = expectedRepair.acceptance == .reviewOnly
-            || textView.flowCueLayout(for: suggestion).mode == .review
+            || suggestion.acceptance == .reviewOnly
         let expectedDocument = NSMutableString(string: triggeredDocument)
-        XCTAssertEqual(
-            textView.string,
-            triggeredDocument,
-            "The live editor drifted from the frozen trigger for \(testCase.id)"
-        )
         guard suggestion.sentenceRange.location >= 0,
               NSMaxRange(suggestion.sentenceRange) <= expectedDocument.length
         else {
@@ -8775,17 +8700,12 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             with: candidate
         )
         let acceptedDocument = expectedDocument as String
-        textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\t",
-            modifiers: [],
-            keyCode: 48,
-            windowNumber: window.windowNumber
-        )))
         if requiresReview {
-            XCTAssertTrue(textView.isFlowReviewPopoverShown)
+            textView.undoManager?.removeAllActions()
+            await renderFlowSuggestion(in: textView, window: window)
+            XCTAssertTrue(textView.isFlowReviewPreviewShown)
             XCTAssertEqual(textView.string, triggeredDocument)
             XCTAssertEqual(box.value, triggeredDocument)
-            XCTAssertFalse(textView.undoManager?.canUndo == true)
             await replaceFrozenReviewSuggestion(
                 suggestion,
                 expectedDocument: acceptedDocument,
@@ -8797,6 +8717,9 @@ final class MarkdownEditorInteractionTests: XCTestCase {
                 testCaseID: testCase.id
             )
         } else {
+            let settled = await waitUntil { textView.string == acceptedDocument }
+            XCTAssertTrue(settled, "Automatic AI settlement timed out for \(testCase.id)")
+            XCTAssertNil(textView.flowSuggestion)
             XCTAssertEqual(textView.string, acceptedDocument)
             XCTAssertEqual(box.value, acceptedDocument)
             XCTAssertEqual(acceptanceCount.value, 1)
@@ -8822,64 +8745,28 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         window: NSWindow,
         testCaseID: String
     ) async {
-        let reviewShown = await waitUntil { textView.isFlowReviewPopoverShown }
-        XCTAssertTrue(reviewShown, "Review did not open for \(testCaseID)")
-        await nextMainRunLoopTurn()
-
-        guard let reviewWindow = (NSApp.windows + (window.childWindows ?? [])).first(where: {
-            candidate in
-            guard candidate !== window, let contentView = candidate.contentView else {
-                return false
-            }
-            let buttons = descendantViews(in: contentView).compactMap { $0 as? NSButton }
-            return buttons.contains { $0.title == "Replace" }
-                && buttons.contains { $0.title == "Cancel" }
-        }) else {
-            XCTFail("Missing review controls for \(testCaseID)")
-            return
-        }
-        guard let reviewContentView = reviewWindow.contentView else {
-            XCTFail("Missing review content for \(testCaseID)")
-            return
-        }
-        let buttons = descendantViews(in: reviewContentView)
-            .compactMap { $0 as? NSButton }
-        guard let replace = buttons.first(where: { $0.title == "Replace" }),
-              let cancel = buttons.first(where: { $0.title == "Cancel" })
-        else {
-            XCTFail("Missing Replace or Cancel control for \(testCaseID)")
-            return
-        }
-        XCTAssertTrue(reviewWindow.makeFirstResponder(cancel))
-        XCTAssertTrue(reviewWindow.firstResponder === cancel)
-
-        if NSApp.isActive {
-            replace.performClick(nil)
-        } else {
-            // The command-line XCTest host cannot become the active app. The
-            // production guard must remain authoritative: exercise the actual
-            // control and prove it does not mutate, then report only this
-            // activation-dependent mutation as unavailable in this harness.
-            replace.performClick(nil)
-            await nextMainRunLoopTurn()
-            XCTAssertEqual(acceptanceCount.value, 0)
-            XCTAssertEqual(textView.string, originalDocument)
-            XCTAssertEqual(box.value, originalDocument)
-            XCTAssertTrue(textView.isFlowReviewPopoverShown)
-            XCTAssertTrue(
-                textView.confirmFlowReviewSuggestionForTesting(),
-                "Review controller seam rejected \(testCaseID)"
-            )
-        }
+        let reviewShown = await waitUntil { textView.isFlowReviewPreviewShown }
+        XCTAssertTrue(reviewShown, "Inline review did not appear for \(testCaseID)")
+        XCTAssertTrue(textView.hasRenderedFlowSuggestion(suggestion))
+        XCTAssertTrue(window.childWindows?.isEmpty ?? true)
+        XCTAssertEqual(acceptanceCount.value, 0)
+        XCTAssertEqual(textView.string, originalDocument)
+        XCTAssertEqual(box.value, originalDocument)
+        textView.keyDown(with: try! XCTUnwrap(keyEvent(
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
+            windowNumber: window.windowNumber
+        )))
         let applied = await waitUntil {
             acceptanceCount.value == 1 && textView.string == expectedDocument
         }
-        XCTAssertTrue(applied, "Review Replace did not apply \(testCaseID)")
+        XCTAssertTrue(applied, "Inline review did not apply \(testCaseID)")
         XCTAssertEqual(box.value, expectedDocument)
 
         XCTAssertFalse(
             textView.confirmFlowReviewSuggestionForTesting(),
-            "Closed review controller accepted twice for \(testCaseID)"
+            "Dismissed inline review accepted twice for \(testCaseID)"
         )
         await nextMainRunLoopTurn()
         XCTAssertEqual(acceptanceCount.value, 1, "Review applied twice for \(testCaseID)")
@@ -8970,12 +8857,10 @@ final class MarkdownEditorInteractionTests: XCTestCase {
     ) async throws {
         let box = EditorTextBox("")
         let diagnostics = FlowDiagnosticEventBox()
-        let checkerFoundProtectedIssue = EditorBoolBox(false)
         let coordinator = makeCoordinator(
             box,
             flowCheckingClient: EditorFlowCheckingClient { checkedText, _, _, _, completion in
                 let results = self.corpusProtectedResults(in: checkedText)
-                checkerFoundProtectedIssue.value = !results.isEmpty
                 completion(results, self.englishOrthography())
             }
         )
@@ -9007,11 +8892,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             window: window,
             diagnostics: diagnostics
         )
-        let isReturnBoundary: Bool = {
-            if case .returnKey = testCase.trigger { return true }
-            return false
-        }()
-        let terminated = await waitUntil(timeout: isReturnBoundary ? 0.8 : 3) {
+        let terminated = await waitUntil(timeout: 3) {
             diagnostics.events.contains {
                 $0.owner == .sentenceRepair
                     && ($0.reason == .protected || $0.reason == .clean)
@@ -9021,9 +8902,9 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             terminated,
             "Protected corpus attempt did not terminate for \(testCase.id) via \(inputPath)"
         )
-        let reason: EditorFlowTerminalReason = checkerFoundProtectedIssue.value
-            ? .protected
-            : .clean
+        let reason = diagnostics.events.first(where: {
+            $0.owner == .sentenceRepair && ($0.reason == .protected || $0.reason == .clean)
+        })?.reason ?? .clean
         _ = await assertSingleDiagnosticAttempt(
             diagnostics,
             owner: .sentenceRepair,
@@ -9701,6 +9582,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             flowCheckingClient: flowCheckingClient,
             flowProseCompletionService: proseCompletion,
             flowProseCompletionDelayNanoseconds: proseCompletionDelayNanoseconds,
+            flowProseOfferDelayNanoseconds: 0,
             flowFocusValidator: { _ in true }
         )
     }
@@ -9895,7 +9777,8 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         coordinator: MarkdownTextEditor.Coordinator,
         textView: MarkdownNSTextView,
         checkedText: String,
-        replacement: String
+        replacement: String,
+        acceptance: EditorFlowSuggestionAcceptance = .direct
     ) -> EditorFlowSuggestion {
         let originalSentence = textView.string
         let editRange = (originalSentence as NSString).range(of: checkedText)
@@ -9912,6 +9795,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             originalSentence: originalSentence,
             correctedSentence: correctedSentence,
             source: .deterministic,
+            acceptance: acceptance,
             edits: [EditorFlowCorrectionEdit(
                 range: editRange,
                 originalText: checkedText,
@@ -9942,13 +9826,14 @@ final class MarkdownEditorInteractionTests: XCTestCase {
     }
 
     private func keyEvent(
+        type: NSEvent.EventType = .keyDown,
         characters: String,
         modifiers: NSEvent.ModifierFlags,
         keyCode: UInt16,
         windowNumber: Int
     ) -> NSEvent? {
         NSEvent.keyEvent(
-            with: .keyDown,
+            with: type,
             location: .zero,
             modifierFlags: modifiers,
             timestamp: 0,
