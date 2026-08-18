@@ -4951,6 +4951,86 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertEqual(box.value, "the cats are ready.")
     }
 
+    func testSettlementHighlightUsesThemeContrastAndMotionStrengths() {
+        let samples: [(TimeInterval, Bool, Bool, Bool, CGFloat)] = [
+            (0, true, false, false, 0.24),
+            (0.22, true, false, false, 0.44),
+            (1, true, false, false, 0.24),
+            (0, false, false, false, 0.18),
+            (0.22, false, false, false, 0.34),
+            (2, false, false, false, 0.18),
+            (0, true, true, false, 0.34),
+            (0, false, true, false, 0.28),
+            (0.22, true, false, true, 0.24),
+        ]
+        for (elapsed, isDark, increaseContrast, reduceMotion, expected) in samples {
+            XCTAssertEqual(
+                EditorFlowSettlementHighlight.strength(
+                    elapsed: elapsed,
+                    isDark: isDark,
+                    increaseContrast: increaseContrast,
+                    reduceMotion: reduceMotion
+                ),
+                expected,
+                accuracy: 0.001
+            )
+        }
+    }
+
+    func testActiveSettlementImmediatelyRecolorsWhenThemeChanges() throws {
+        let source = "teh."
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(
+            coordinator: coordinator,
+            text: source
+        )
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        textView.undoManager?.removeAllActions()
+        textView.flowSuggestionAcceptanceHandler = { suggestion in
+            textView.flowSuggestion = nil
+            textView.string = suggestion.correctedSentence
+            textView.setSelectedRange(NSRange(
+                location: (suggestion.correctedSentence as NSString).length,
+                length: 0
+            ))
+            return true
+        }
+
+        let suggestion = flowSuggestion(
+            coordinator: coordinator,
+            textView: textView,
+            checkedText: "teh",
+            replacement: "the"
+        )
+        XCTAssertTrue(textView.presentFlowSuggestion(suggestion))
+        XCTAssertEqual(textView.flowSettlementRangesForTesting?.count, 1)
+
+        let darkTheme = AppTheme.defaultDark
+        textView.applyFlowThemeForTesting(darkTheme)
+        let darkColor = try XCTUnwrap(textView.flowSettlementHighlightColorForTesting(elapsed: 1.25))
+        let expectedDark = try XCTUnwrap(
+            NSColor(hex: darkTheme.background).blended(
+                withFraction: 0.24,
+                of: NSColor(hex: darkTheme.semanticColors.skill)
+            )
+        )
+        XCTAssertTrue(darkColor.isEqual(expectedDark))
+
+        let lightTheme = AppTheme.defaultLight
+        textView.applyFlowThemeForTesting(lightTheme)
+        let lightColor = try XCTUnwrap(textView.flowSettlementHighlightColorForTesting(elapsed: 1.25))
+        let expectedLight = try XCTUnwrap(
+            NSColor(hex: lightTheme.background).blended(
+                withFraction: 0.18,
+                of: NSColor(hex: lightTheme.semanticColors.skill)
+            )
+        )
+        XCTAssertTrue(lightColor.isEqual(expectedLight))
+        XCTAssertFalse(lightColor.isEqual(darkColor))
+        XCTAssertEqual(textView.flowSettlementRangesForTesting?.count, 1)
+    }
+
     func testDeletionOnlySettlementHighlightsSurvivorAndDeleteRestoresCollapsedCaret() async throws {
         let source = "The migration migration are complete but two checks still needs owners."
         let corrected = "The migration are complete but two checks still needs owners."

@@ -633,7 +633,7 @@ struct EditorFlowProseSuggestion: Equatable {
 }
 
 private struct EditorFlowSettlement: Equatable {
-    static let shimmerDuration: TimeInterval = 1
+    static let shimmerDuration = EditorFlowSettlementHighlight.duration
 
     let resultingText: String
     let selectedRange: NSRange
@@ -765,20 +765,94 @@ enum EditorFlowProseContextPlanner {
 
 private struct EditorFlowCuePalette {
     let surface: NSColor
+    let editorBackground: NSColor
     let primaryText: NSColor
     let secondaryText: NSColor
     let ghostText: NSColor
-    let shimmer: NSColor
+    let skill: NSColor
     let border: NSColor
+    let isDark: Bool
+
+    static func themed(_ theme: AppTheme) -> EditorFlowCuePalette {
+        EditorFlowCuePalette(
+            surface: NSColor(theme.elevatedSurfaceColor),
+            editorBackground: NSColor(hex: theme.background),
+            primaryText: NSColor(theme.foregroundColor),
+            secondaryText: NSColor(theme.mutedForegroundColor),
+            ghostText: NSColor(hex: AppTheme.blendHex(
+                theme.foreground,
+                toward: theme.semanticColors.skill,
+                amount: theme.isDark ? 0.42 : 0.54
+            )),
+            skill: NSColor(hex: theme.semanticColors.skill),
+            border: NSColor(theme.foregroundColor).withAlphaComponent(
+                theme.isDark ? 0.18 : 0.14
+            ),
+            isDark: theme.isDark
+        )
+    }
 
     static let native = EditorFlowCuePalette(
         surface: .windowBackgroundColor,
+        editorBackground: .textBackgroundColor,
         primaryText: .labelColor,
         secondaryText: .secondaryLabelColor,
         ghostText: .tertiaryLabelColor,
-        shimmer: .controlAccentColor,
-        border: .separatorColor
+        skill: .controlAccentColor,
+        border: .separatorColor,
+        isDark: false
     )
+}
+
+enum EditorFlowSettlementHighlight {
+    static let peakTime: TimeInterval = 0.22
+    static let duration: TimeInterval = 1
+
+    static func strength(
+        elapsed: TimeInterval,
+        isDark: Bool,
+        increaseContrast: Bool,
+        reduceMotion: Bool
+    ) -> CGFloat {
+        let persistent: CGFloat
+        if increaseContrast {
+            persistent = isDark ? 0.34 : 0.28
+        } else {
+            persistent = isDark ? 0.24 : 0.18
+        }
+        guard !reduceMotion else { return persistent }
+
+        let peak: CGFloat = isDark ? 0.44 : 0.34
+        let elapsed = max(0, elapsed)
+        guard elapsed < duration else { return persistent }
+        if elapsed <= peakTime {
+            return persistent + ((peak - persistent) * smoothstep(elapsed / peakTime))
+        }
+        let fallingProgress = (elapsed - peakTime) / (duration - peakTime)
+        return peak + ((persistent - peak) * smoothstep(fallingProgress))
+    }
+
+    static func color(
+        background: NSColor,
+        skill: NSColor,
+        elapsed: TimeInterval,
+        isDark: Bool,
+        increaseContrast: Bool,
+        reduceMotion: Bool
+    ) -> NSColor {
+        let amount = strength(
+            elapsed: elapsed,
+            isDark: isDark,
+            increaseContrast: increaseContrast,
+            reduceMotion: reduceMotion
+        )
+        return background.blended(withFraction: amount, of: skill) ?? background
+    }
+
+    private static func smoothstep(_ progress: TimeInterval) -> CGFloat {
+        let value = CGFloat(min(1, max(0, progress)))
+        return value * value * (3 - (2 * value))
+    }
 }
 
 struct EditorFlowCheckSnapshot: Equatable {
@@ -3077,20 +3151,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         scrollView.backgroundColor = background
         textView.textColor = NSColor(hex: theme.foreground)
         textView.insertionPointColor = NSColor(hex: theme.cursor)
-        textView.flowCuePalette = EditorFlowCuePalette(
-            surface: NSColor(theme.elevatedSurfaceColor),
-            primaryText: NSColor(theme.foregroundColor),
-            secondaryText: NSColor(theme.mutedForegroundColor),
-            ghostText: NSColor(hex: AppTheme.blendHex(
-                theme.foreground,
-                toward: theme.semanticColors.skill,
-                amount: theme.isDark ? 0.42 : 0.54
-            )),
-            shimmer: NSColor(hex: theme.semanticColors.skill),
-            border: NSColor(theme.foregroundColor).withAlphaComponent(
-                theme.isDark ? 0.18 : 0.14
-            )
-        )
+        textView.flowCuePalette = .themed(theme)
         textView.selectedTextAttributes = [
             .backgroundColor: NSColor(hex: theme.selectionBackground),
             .foregroundColor: NSColor(hex: theme.selectionForeground)
@@ -8442,6 +8503,26 @@ class MarkdownNSTextView: NSTextView {
         flowSettlement?.deletionCollapses.map(\.range)
     }
 
+    func applyFlowThemeForTesting(_ theme: AppTheme) {
+        flowCuePalette = .themed(theme)
+    }
+
+    func flowSettlementHighlightColorForTesting(
+        elapsed: TimeInterval,
+        increaseContrast: Bool = false,
+        reduceMotion: Bool = false
+    ) -> NSColor? {
+        guard flowSettlement != nil else { return nil }
+        return EditorFlowSettlementHighlight.color(
+            background: flowCuePalette.editorBackground,
+            skill: flowCuePalette.skill,
+            elapsed: elapsed,
+            isDark: flowCuePalette.isDark,
+            increaseContrast: increaseContrast,
+            reduceMotion: reduceMotion
+        )
+    }
+
     @discardableResult
     func confirmFlowReviewSuggestionForTesting() -> Bool {
         guard let suggestion = flowSuggestion else { return false }
@@ -8595,26 +8676,17 @@ class MarkdownNSTextView: NSTextView {
               let textContainer
         else { return }
         let elapsed = max(0, Date().timeIntervalSince(settlement.startedAt))
-        let persistentAlpha: CGFloat = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-            ? 0.16
-            : 0.09
-        let shimmerAlpha: CGFloat
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            || elapsed >= EditorFlowSettlement.shimmerDuration {
-            shimmerAlpha = 0
-        } else if elapsed < 0.22 {
-            let progress = CGFloat(elapsed / 0.22)
-            let eased = 1 - pow(1 - progress, 3)
-            shimmerAlpha = 0.12 + (0.12 * eased)
-        } else {
-            let progress = CGFloat(
-                (elapsed - 0.22) / (EditorFlowSettlement.shimmerDuration - 0.22)
-            )
-            let eased = progress * progress * (3 - 2 * progress)
-            shimmerAlpha = 0.24 * (1 - eased)
-        }
+        let workspace = NSWorkspace.shared
+        let reduceMotion = workspace.accessibilityDisplayShouldReduceMotion
         let origin = textContainerOrigin
-        flowCuePalette.shimmer.withAlphaComponent(persistentAlpha + shimmerAlpha).setFill()
+        let highlightColor = EditorFlowSettlementHighlight.color(
+            background: flowCuePalette.editorBackground,
+            skill: flowCuePalette.skill,
+            elapsed: elapsed,
+            isDark: flowCuePalette.isDark,
+            increaseContrast: workspace.accessibilityDisplayShouldIncreaseContrast,
+            reduceMotion: reduceMotion
+        )
         for range in settlement.correctedRanges where range.length > 0 {
             let glyphRange = layoutManager.glyphRange(
                 forCharacterRange: range,
@@ -8624,7 +8696,7 @@ class MarkdownNSTextView: NSTextView {
                 forGlyphRange: glyphRange,
                 in: textContainer
             ).offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -2, dy: -1)
-            if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+            if !reduceMotion,
                elapsed < EditorFlowDeletionCollapse.duration,
                let collapse = settlement.deletionCollapses.first(where: { $0.range == range }) {
                 let rawProgress = CGFloat(elapsed / EditorFlowDeletionCollapse.duration)
@@ -8640,11 +8712,13 @@ class MarkdownNSTextView: NSTextView {
                 rect.size.width += collapsingWidth
             }
             guard rect.intersects(dirtyRect) else { continue }
+            highlightColor.setFill()
             NSBezierPath(
                 roundedRect: rect,
                 xRadius: max(2, (3 * max(0.1, zoomScale)).rounded()),
                 yRadius: max(2, (3 * max(0.1, zoomScale)).rounded())
             ).fill()
+            layoutManager.drawGlyphs(forGlyphRange: glyphRange, at: origin)
         }
         let hintRange: NSRange? = if settlement.selectedRange.location > 0,
                                     settlement.selectedRange.location <= (string as NSString).length {
@@ -8688,6 +8762,10 @@ class MarkdownNSTextView: NSTextView {
         removeFlowSourceHighlights()
         applyFlowSourceHighlightsIfNeeded()
         lastRenderedFlowSuggestion = nil
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+           flowSettlement?.isShimmering(at: Date()) == true {
+            ensureFlowDisplayTimer()
+        }
         needsDisplay = true
         refreshFlowAccessibilityPresentation()
     }
