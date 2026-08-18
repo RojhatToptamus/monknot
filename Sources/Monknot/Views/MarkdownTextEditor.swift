@@ -769,7 +769,7 @@ private struct EditorFlowCuePalette {
     let primaryText: NSColor
     let secondaryText: NSColor
     let ghostText: NSColor
-    let skill: NSColor
+    let accent: NSColor
     let border: NSColor
     let isDark: Bool
 
@@ -781,10 +781,10 @@ private struct EditorFlowCuePalette {
             secondaryText: NSColor(theme.mutedForegroundColor),
             ghostText: NSColor(hex: AppTheme.blendHex(
                 theme.foreground,
-                toward: theme.semanticColors.skill,
+                toward: theme.accent,
                 amount: theme.isDark ? 0.42 : 0.54
             )),
-            skill: NSColor(hex: theme.semanticColors.skill),
+            accent: NSColor(hex: theme.accent),
             border: NSColor(theme.foregroundColor).withAlphaComponent(
                 theme.isDark ? 0.18 : 0.14
             ),
@@ -798,7 +798,7 @@ private struct EditorFlowCuePalette {
         primaryText: .labelColor,
         secondaryText: .secondaryLabelColor,
         ghostText: .tertiaryLabelColor,
-        skill: .controlAccentColor,
+        accent: .controlAccentColor,
         border: .separatorColor,
         isDark: false
     )
@@ -834,7 +834,7 @@ enum EditorFlowSettlementHighlight {
 
     static func color(
         background: NSColor,
-        skill: NSColor,
+        accent: NSColor,
         elapsed: TimeInterval,
         isDark: Bool,
         increaseContrast: Bool,
@@ -846,7 +846,7 @@ enum EditorFlowSettlementHighlight {
             increaseContrast: increaseContrast,
             reduceMotion: reduceMotion
         )
-        return background.blended(withFraction: amount, of: skill) ?? background
+        return background.blended(withFraction: amount, of: accent) ?? background
     }
 
     private static func smoothstep(_ progress: TimeInterval) -> CGFloat {
@@ -8515,12 +8515,16 @@ class MarkdownNSTextView: NSTextView {
         guard flowSettlement != nil else { return nil }
         return EditorFlowSettlementHighlight.color(
             background: flowCuePalette.editorBackground,
-            skill: flowCuePalette.skill,
+            accent: flowCuePalette.accent,
             elapsed: elapsed,
             isDark: flowCuePalette.isDark,
             increaseContrast: increaseContrast,
             reduceMotion: reduceMotion
         )
+    }
+
+    var flowGhostTextColorForTesting: NSColor {
+        flowCuePalette.ghostText
     }
 
     @discardableResult
@@ -8681,7 +8685,7 @@ class MarkdownNSTextView: NSTextView {
         let origin = textContainerOrigin
         let highlightColor = EditorFlowSettlementHighlight.color(
             background: flowCuePalette.editorBackground,
-            skill: flowCuePalette.skill,
+            accent: flowCuePalette.accent,
             elapsed: elapsed,
             isDark: flowCuePalette.isDark,
             increaseContrast: workspace.accessibilityDisplayShouldIncreaseContrast,

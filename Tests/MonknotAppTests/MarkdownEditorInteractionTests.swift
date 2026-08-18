@@ -4977,7 +4977,7 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         }
     }
 
-    func testActiveSettlementImmediatelyRecolorsWhenThemeChanges() throws {
+    func testActiveSettlementAndGhostTextUseAccentWhenThemeChanges() throws {
         let source = "teh."
         let box = EditorTextBox(source)
         let coordinator = makeCoordinator(box)
@@ -5012,10 +5012,23 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         let expectedDark = try XCTUnwrap(
             NSColor(hex: darkTheme.background).blended(
                 withFraction: 0.24,
+                of: NSColor(hex: darkTheme.accent)
+            )
+        )
+        let oldDarkSkillColor = try XCTUnwrap(
+            NSColor(hex: darkTheme.background).blended(
+                withFraction: 0.24,
                 of: NSColor(hex: darkTheme.semanticColors.skill)
             )
         )
+        let expectedDarkGhost = NSColor(hex: AppTheme.blendHex(
+            darkTheme.foreground,
+            toward: darkTheme.accent,
+            amount: 0.42
+        ))
         XCTAssertTrue(darkColor.isEqual(expectedDark))
+        XCTAssertFalse(darkColor.isEqual(oldDarkSkillColor))
+        XCTAssertTrue(textView.flowGhostTextColorForTesting.isEqual(expectedDarkGhost))
 
         let lightTheme = AppTheme.defaultLight
         textView.applyFlowThemeForTesting(lightTheme)
@@ -5023,10 +5036,23 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         let expectedLight = try XCTUnwrap(
             NSColor(hex: lightTheme.background).blended(
                 withFraction: 0.18,
+                of: NSColor(hex: lightTheme.accent)
+            )
+        )
+        let oldLightSkillColor = try XCTUnwrap(
+            NSColor(hex: lightTheme.background).blended(
+                withFraction: 0.18,
                 of: NSColor(hex: lightTheme.semanticColors.skill)
             )
         )
+        let expectedLightGhost = NSColor(hex: AppTheme.blendHex(
+            lightTheme.foreground,
+            toward: lightTheme.accent,
+            amount: 0.54
+        ))
         XCTAssertTrue(lightColor.isEqual(expectedLight))
+        XCTAssertFalse(lightColor.isEqual(oldLightSkillColor))
+        XCTAssertTrue(textView.flowGhostTextColorForTesting.isEqual(expectedLightGhost))
         XCTAssertFalse(lightColor.isEqual(darkColor))
         XCTAssertEqual(textView.flowSettlementRangesForTesting?.count, 1)
     }
