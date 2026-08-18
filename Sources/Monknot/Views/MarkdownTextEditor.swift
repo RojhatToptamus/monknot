@@ -423,7 +423,7 @@ struct EditorFlowSuggestion: Equatable {
         return location
     }
 
-    private static func lexicalWordRanges(in text: String) -> [NSRange] {
+    fileprivate static func lexicalWordRanges(in text: String) -> [NSRange] {
         var ranges: [NSRange] = []
         text.enumerateSubstrings(
             in: text.startIndex..<text.endIndex,
@@ -637,7 +637,9 @@ private struct EditorFlowSettlement: Equatable {
 
     let resultingText: String
     let selectedRange: NSRange
+    let revertCaretUTF16Offset: Int
     let correctedRanges: [NSRange]
+    let deletionCollapses: [EditorFlowDeletionCollapse]
     let accessibilityAnnouncement: String
     let startedAt: Date
 
@@ -649,6 +651,19 @@ private struct EditorFlowSettlement: Equatable {
     func isShimmering(at date: Date) -> Bool {
         date.timeIntervalSince(startedAt) < Self.shimmerDuration
     }
+}
+
+private struct EditorFlowDeletionCollapse: Equatable {
+    enum Edge: Equatable {
+        case leading
+        case trailing
+    }
+
+    static let duration: TimeInterval = 0.28
+
+    let range: NSRange
+    let edge: Edge
+    let removedUTF16Length: Int
 }
 
 private enum EditorFlowTabInteraction: Equatable {
@@ -7605,29 +7620,66 @@ class MarkdownNSTextView: NSTextView {
     }
 
     private func beginFlowSettlement(for suggestion: EditorFlowSuggestion) {
-        let ranges = suggestion.correctedChangedRanges.compactMap { localRange -> NSRange? in
+        let sentenceWords = EditorFlowSuggestion.lexicalWordRanges(
+            in: suggestion.correctedSentence
+        )
+        var ranges: [NSRange] = []
+        var deletionCollapses: [EditorFlowDeletionCollapse] = []
+        for change in suggestion.displayChanges {
+            var localRange = change.correctedRange
+            var deletionEdge: EditorFlowDeletionCollapse.Edge?
+            if localRange.length == 0,
+               !change.originalText.isEmpty,
+               let anchor = flowDeletionAnchor(
+                    at: localRange.location,
+                    wordRanges: sentenceWords
+               ) {
+                localRange = anchor.range
+                deletionEdge = anchor.edge
+            }
             guard localRange.location >= 0,
                   suggestion.sentenceRange.location <= Int.max - localRange.location
-            else { return nil }
+            else { continue }
             let absolute = NSRange(
                 location: suggestion.sentenceRange.location + localRange.location,
                 length: localRange.length
             )
             guard absolute.location >= 0,
                   NSMaxRange(absolute) <= (string as NSString).length
-            else { return nil }
-            return absolute
+            else { continue }
+            if !ranges.contains(absolute) {
+                ranges.append(absolute)
+            }
+            if let deletionEdge {
+                deletionCollapses.append(EditorFlowDeletionCollapse(
+                    range: absolute,
+                    edge: deletionEdge,
+                    removedUTF16Length: max(1, (change.originalText as NSString).length)
+                ))
+            }
         }
         let announcement: String
         if suggestion.displayChanges.count == 1, let change = suggestion.displayChanges.first {
-            announcement = "Corrected \(change.originalText) to \(change.replacementText). Delete to undo."
+            let original = change.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let replacement = change.replacementText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if original.isEmpty, replacement.isEmpty {
+                announcement = "Adjusted spacing. Delete to undo."
+            } else if replacement.isEmpty {
+                announcement = "Removed \(original). Delete to undo."
+            } else if original.isEmpty {
+                announcement = "Inserted \(replacement). Delete to undo."
+            } else {
+                announcement = "Corrected \(original) to \(replacement). Delete to undo."
+            }
         } else {
             announcement = "Applied \(suggestion.displayChanges.count) corrections. Delete to undo."
         }
         flowSettlement = EditorFlowSettlement(
             resultingText: string,
             selectedRange: selectedRange(),
+            revertCaretUTF16Offset: suggestion.caretUTF16Offset,
             correctedRanges: ranges,
+            deletionCollapses: deletionCollapses,
             accessibilityAnnouncement: announcement,
             startedAt: Date()
         )
@@ -7643,6 +7695,28 @@ class MarkdownNSTextView: NSTextView {
         ensureFlowDisplayTimer()
         refreshFlowAccessibilityPresentation()
         needsDisplay = true
+    }
+
+    private func flowDeletionAnchor(
+        at location: Int,
+        wordRanges: [NSRange]
+    ) -> (range: NSRange, edge: EditorFlowDeletionCollapse.Edge)? {
+        let previous = wordRanges.last { NSMaxRange($0) <= location }
+        let following = wordRanges.first { $0.location >= location }
+        switch (previous, following) {
+        case let (previous?, following?):
+            let previousDistance = location - NSMaxRange(previous)
+            let followingDistance = following.location - location
+            return previousDistance <= followingDistance
+                ? (previous, .trailing)
+                : (following, .leading)
+        case let (previous?, nil):
+            return (previous, .trailing)
+        case let (nil, following?):
+            return (following, .leading)
+        case (nil, nil):
+            return nil
+        }
     }
 
     private func clearFlowSettlement() {
@@ -7785,13 +7859,21 @@ class MarkdownNSTextView: NSTextView {
     private func revertFlowSettlementIfPossible() -> Bool {
         guard let settlement = flowSettlement,
               settlement.matches(text: string, selectedRange: selectedRange()),
-              undoManager?.canUndo == true
+              let undoManager,
+              undoManager.canUndo
         else {
             clearFlowSettlement()
             return false
         }
         clearFlowSettlement()
-        undoManager?.undo()
+        undoManager.undo()
+        let caret = min(
+            max(0, settlement.revertCaretUTF16Offset),
+            (string as NSString).length
+        )
+        let restoredSelection = NSRange(location: caret, length: 0)
+        setSelectedRange(restoredSelection)
+        scrollRangeToVisible(restoredSelection)
         return true
     }
 
@@ -8356,6 +8438,10 @@ class MarkdownNSTextView: NSTextView {
         flowSettlement?.correctedRanges
     }
 
+    var flowSettlementDeletionCollapseRangesForTesting: [NSRange]? {
+        flowSettlement?.deletionCollapses.map(\.range)
+    }
+
     @discardableResult
     func confirmFlowReviewSuggestionForTesting() -> Bool {
         guard let suggestion = flowSuggestion else { return false }
@@ -8534,10 +8620,25 @@ class MarkdownNSTextView: NSTextView {
                 forCharacterRange: range,
                 actualCharacterRange: nil
             )
-            let rect = layoutManager.boundingRect(
+            var rect = layoutManager.boundingRect(
                 forGlyphRange: glyphRange,
                 in: textContainer
             ).offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -2, dy: -1)
+            if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+               elapsed < EditorFlowDeletionCollapse.duration,
+               let collapse = settlement.deletionCollapses.first(where: { $0.range == range }) {
+                let rawProgress = CGFloat(elapsed / EditorFlowDeletionCollapse.duration)
+                let progress = rawProgress * rawProgress * (3 - 2 * rawProgress)
+                let removedRatio = min(
+                    2.5,
+                    max(0.65, CGFloat(collapse.removedUTF16Length) / CGFloat(range.length))
+                )
+                let collapsingWidth = rect.width * removedRatio * (1 - progress)
+                if collapse.edge == .leading {
+                    rect.origin.x -= collapsingWidth
+                }
+                rect.size.width += collapsingWidth
+            }
             guard rect.intersects(dirtyRect) else { continue }
             NSBezierPath(
                 roundedRect: rect,

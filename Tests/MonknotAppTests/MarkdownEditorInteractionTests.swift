@@ -4951,6 +4951,95 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertEqual(box.value, "the cats are ready.")
     }
 
+    func testDeletionOnlySettlementHighlightsSurvivorAndDeleteRestoresCollapsedCaret() async throws {
+        let source = "The migration migration are complete but two checks still needs owners."
+        let corrected = "The migration are complete but two checks still needs owners."
+        let sourceText = source as NSString
+        let correctedText = corrected as NSString
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(
+            box,
+            flowCheckingClient: EditorFlowCheckingClient { _, _, _, _, completion in
+                completion([], nil)
+            }
+        )
+        let (window, scrollView, textView) = makeHostedTextView(
+            coordinator: coordinator,
+            text: source
+        )
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let options = EditorTextCheckingOptions(
+            checksSpelling: false,
+            checksGrammar: false,
+            inlinePredictions: false
+        )
+        textView.flowSourceMode = .markdown
+        textView.applyTextChecking(options)
+        coordinator.configureFlow(mode: .markdown, options: options)
+        let rangesReady = await waitUntil { textView.flowWritingToolsReady }
+        XCTAssertTrue(rangesReady)
+
+        let originalCaret = NSRange(location: sourceText.length, length: 0)
+        textView.setSelectedRange(originalCaret)
+        textView.flowSuggestionAcceptanceHandler = { suggestion in
+            coordinator.acceptFlowSuggestion(suggestion)
+        }
+        textView.undoManager?.removeAllActions()
+        let firstMigration = sourceText.range(of: "migration")
+        let removedDuplicate = sourceText.range(of: " migration", options: [], range: NSRange(
+            location: NSMaxRange(firstMigration),
+            length: sourceText.length - NSMaxRange(firstMigration)
+        ))
+        let suggestion = EditorFlowSuggestion(
+            documentID: try XCTUnwrap(coordinator.documentID),
+            revision: coordinator.revision,
+            selectedRange: originalCaret,
+            caretUTF16Offset: originalCaret.location,
+            sentenceRange: NSRange(location: 0, length: sourceText.length),
+            originalSentence: source,
+            correctedSentence: corrected,
+            source: .ai,
+            acceptance: .direct,
+            edits: [EditorFlowCorrectionEdit(
+                range: removedDuplicate,
+                originalText: sourceText.substring(with: removedDuplicate),
+                replacementText: "",
+                kind: .grammar
+            )]
+        )
+
+        XCTAssertTrue(textView.presentFlowSuggestion(suggestion))
+        let survivingMigration = correctedText.range(of: "migration")
+        XCTAssertEqual(textView.string, corrected)
+        XCTAssertEqual(box.value, corrected)
+        XCTAssertEqual(textView.selectedRange(), NSRange(location: correctedText.length, length: 0))
+        XCTAssertEqual(textView.flowSettlementRangesForTesting, [survivingMigration])
+        XCTAssertEqual(
+            textView.flowSettlementDeletionCollapseRangesForTesting,
+            [survivingMigration]
+        )
+        XCTAssertTrue(textView.accessibilityHelp()?.contains("Removed migration") == true)
+        XCTAssertTrue(textView.accessibilityHelp()?.contains("Delete to undo") == true)
+
+        try? await Task.sleep(nanoseconds: 1_250_000_000)
+        XCTAssertEqual(textView.flowSettlementRangesForTesting, [survivingMigration])
+        XCTAssertTrue(textView.accessibilityHelp()?.contains("Delete to undo") == true)
+
+        textView.keyDown(with: try XCTUnwrap(keyEvent(
+            characters: "\u{7f}",
+            modifiers: [],
+            keyCode: 51,
+            windowNumber: window.windowNumber
+        )))
+        XCTAssertEqual(textView.string, source)
+        XCTAssertEqual(box.value, source)
+        XCTAssertEqual(textView.selectedRange(), originalCaret)
+        XCTAssertEqual(textView.selectedRange().length, 0)
+        XCTAssertNil(textView.flowSettlementRangesForTesting)
+        XCTAssertNil(textView.flowSettlementDeletionCollapseRangesForTesting)
+        XCTAssertFalse(textView.accessibilityHelp()?.contains("Delete to undo") == true)
+    }
+
     func testSettledCorrectionClearsOnlyForIntentionalEditorInteractions() async throws {
         let source = "teh."
         let corrected = "the."
