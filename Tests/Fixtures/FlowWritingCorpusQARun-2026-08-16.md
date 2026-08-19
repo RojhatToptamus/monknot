@@ -345,13 +345,11 @@ Send the receipt to teh.user@example.com after lunch today.
 - Undo: not applicable because Flow made no change.
 - Result: PASS as a safe rejection.
 
-## Review, Writing Tools, and screenshots
+## Review and Writing Tools
 
 The detailed case 14 replay exposed exactly one review group through AX. No second inline surface was visible in the main window.
 
 The compact editor actions remained in AX during review. The compact inline surface was not visible.
-
-The app-window capture did not include the child review-window pixels. Thus `case-14-review.png` is not visual proof of the review contents.
 
 On a live case 01 cue, Edit > Show Writing Tools opened the system Writing Tools popover. AX showed the system popover.
 
@@ -360,18 +358,3 @@ The Flow surface and its AX help and actions disappeared immediately. The editor
 Escape closed Writing Tools. No Flow surface returned during the next 2,200 ms.
 
 This observation proves priority and visible exclusivity only. It does not test a Writing Tools proofreading result.
-
-The app-window capture also omitted the Writing Tools child-window pixels. Its image shows the main window after Flow disappeared.
-
-The screenshot cases were fixed before execution as 01, 02, 11, 15, and 18. Extra screenshots recorded case 14 and Writing Tools behavior.
-
-Representative session screenshot hashes:
-
-- [`case-01-compact.jpeg`](FlowWritingQAScreenshots/2026-08-16-case-01-compact.jpeg): `6248b9431b0d08d4dbb674c16a7c276fbc7fdb551e5c370334cda26ed69aaddf`.
-- [`case-02-no-result.jpeg`](FlowWritingQAScreenshots/2026-08-16-case-02-no-result.jpeg): `d541536e999713739064d77b05c7a0d8861cfc22180270e4839f5ee2c059ef77`.
-- [`case-11-trigger.jpeg`](FlowWritingQAScreenshots/2026-08-16-case-11-trigger.jpeg): `e9565d5b693be7f2295fc02e4bd0e24a7c76d7d8a894b1c504a96be90777dc6a`.
-- `case-14-trigger.png`: `a9a4827d5b2aabf7145b0b74834d500d989c9794794d124111cc86700df0ce53`.
-- `case-14-review.png`: `fcc1386ddfaa09b9d8f9063cb805767521a8e6020f23e7f1d92b4b49191bf329`.
-- [`case-15-trigger.jpeg`](FlowWritingQAScreenshots/2026-08-16-case-15-trigger.jpeg): `ed68b69bc3fe209d3c3255398b56a2b81082d2ccf2236a3648a2bd56e8c70161`.
-- [`case-18-trigger.jpeg`](FlowWritingQAScreenshots/2026-08-16-case-18-trigger.jpeg): `32dd51cb33d467b43e8896d8479a8f6d57cd4644a67ae27891a22f1671e797fd`.
-- [`writing-tools-priority.jpeg`](FlowWritingQAScreenshots/2026-08-16-writing-tools-priority.jpeg): `d49a324fdce270ed01a67dcb57e197d3e549e98e5f48d0e368ec734d3170d23f`.

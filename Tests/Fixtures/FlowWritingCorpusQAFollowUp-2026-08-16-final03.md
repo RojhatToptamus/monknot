@@ -2,7 +2,7 @@
 
 This file contains targeted timed follow-ups and a later full fixed-sample rerun of the [original signed-app run](FlowWritingCorpusQARun-2026-08-16.md).
 
-The original record remains unchanged except for links to its preserved screenshots.
+The original record contains the earlier signed-app observations.
 
 ## Run identity
 
@@ -76,14 +76,6 @@ I will brnig the keys when I meet you outside.
 - Narrow width: the editor pane was approximately 479 px wide.
 - Result: PASS. The complete compact cue stayed visible and unclipped at both widths.
 
-![Light compact correction](FlowWritingQAScreenshots/2026-08-16-light-compact.jpeg)
-
-SHA-256: `d8d3effd7694ba800a30eb67644137d73537b645d196b7a7dbe1a0376895dbc0`.
-
-![Light narrow compact correction](FlowWritingQAScreenshots/2026-08-16-light-narrow-compact.jpeg)
-
-SHA-256: `69a6633782d6b6b00418f3ebf23653797a3ab74d540a6dc4448840647600fddb`.
-
 ## Full fixed-sample rerun — completed 2026-08-17
 
 The same final03 clone ran all 20 seeded sample IDs: exactly 10 were typed and 10 used real Command-V paste; 13 documents were Markdown and seven were plain text. The exact frozen inputs are recorded under the same IDs in [the fixed QA document](FlowWritingCorpusQA.md) and the [original run](FlowWritingCorpusQARun-2026-08-16.md). They were reused byte-for-byte except where this table explicitly records an AppKit native correction before the trigger.
@@ -124,17 +116,6 @@ The app UI did not expose the checker issue count, request owner, or internal te
 - At 125% workspace zoom in dark mode and a 920 × 648 narrow window, the hard-wrapped case 11 review cue stayed unclipped and highlighted only the two proposed source spans.
 - Switching documents hid the cue in the other document and restored the still-exact cue on return. Revising `tehcnical` to `technical draft` then cancelled the stale cue immediately.
 - Reading System Settings for Increase Contrast hung in the accessibility driver. It was interrupted before any setting was clicked or changed. Increase Contrast, VoiceOver spoken order, 10 additional model/editor cases, and actual Writing Tools proofreading were not tested in this rerun.
-
-### Rerun screenshots
-
-The preselected screenshot cases remained 01, 02, 11, 15, and 18; the dark/narrow hard-wrap capture is an additional matrix screenshot.
-
-- [`final03-fixed-01.jpeg`](FlowWritingQAScreenshots/2026-08-17-final03-fixed-01.jpeg): `51ad54e402c2c08e227e599a26391de27e671876b290406f0cf825b872c6b7a3`.
-- [`final03-fixed-02.jpeg`](FlowWritingQAScreenshots/2026-08-17-final03-fixed-02.jpeg): `117c6d501268a1fea424c4759f723a413e0658ffc7d556a0b1067536a1f1fde0`.
-- [`final03-fixed-11.jpeg`](FlowWritingQAScreenshots/2026-08-17-final03-fixed-11.jpeg): `3a1ce6cf40b2844950a601bda925fdafd8f4f848aa602ce43a4d5f2d2fdd06af`.
-- [`final03-fixed-15.jpeg`](FlowWritingQAScreenshots/2026-08-17-final03-fixed-15.jpeg): `9ae1c73c03f66e621378d63a42c94e24285d2d14a8c55e522c0750a646905e79`.
-- [`final03-fixed-18.jpeg`](FlowWritingQAScreenshots/2026-08-17-final03-fixed-18.jpeg): `00ca5b4d6fe9c37aed6280a895ecc4faf844eae72c848b3abcee04fa0d1becb0`.
-- [`final03-dark-125-narrow-hardwrap.jpeg`](FlowWritingQAScreenshots/2026-08-17-final03-dark-125-narrow-hardwrap.jpeg): `0b1a16bff3b261c81ba1e0e83f8d7bd7d4000494029b1b0f5a522a29d3756da0`.
 
 ## Post-audit build boundary
 

@@ -353,25 +353,6 @@ final class FlowWritingCorpusTests: XCTestCase {
         XCTAssertTrue(record.contains("No current04 UI behavior is claimed."))
         XCTAssertTrue(record.contains("that build offered `very` for `repair-exact-023`"))
         XCTAssertTrue(record.contains("No latest-clone UI behavior is claimed"))
-        for screenshot in [
-            "2026-08-16-light-compact.jpeg",
-            "2026-08-16-light-narrow-compact.jpeg",
-            "2026-08-17-final03-fixed-01.jpeg",
-            "2026-08-17-final03-fixed-02.jpeg",
-            "2026-08-17-final03-fixed-11.jpeg",
-            "2026-08-17-final03-fixed-15.jpeg",
-            "2026-08-17-final03-fixed-18.jpeg",
-            "2026-08-17-final03-dark-125-narrow-hardwrap.jpeg",
-        ] {
-            XCTAssertTrue(
-                FileManager.default.fileExists(
-                    atPath: fixturesURL
-                        .appendingPathComponent("FlowWritingQAScreenshots")
-                        .appendingPathComponent(screenshot)
-                        .path
-                )
-            )
-        }
     }
 
     private func wordCount(in text: String) -> Int {

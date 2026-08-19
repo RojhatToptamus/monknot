@@ -41,10 +41,14 @@
   <sub>Split · Markdown source and rendered output, scrolling in sync</sub>
 </p>
 
-## Editor, Split, Preview, PDF, and Terminal
+## Features
 
 **Editor** — Write Markdown and plain text with syntax highlighting, document
 tabs, search, and a formatting bar when you want one.
+
+**Writing assistance** — Review inline spelling and grammar fixes. On supported
+Macs, use private on-device sentence repair and autocomplete. Accepted fixes
+stay visible and undoable.
 
 **Split** — Keep source and rendered output side by side, scrolling in sync.
 
