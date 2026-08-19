@@ -267,6 +267,10 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         textView.insertText(" ", replacementRange: textView.selectedRange())
         let suggestionReady = await waitUntil { textView.flowProseSuggestion != nil }
         XCTAssertTrue(suggestionReady)
+        await renderFlowSuggestion(in: textView, window: window)
+        XCTAssertTrue(textView.canDirectlyAcceptFlowProseSuggestion(try XCTUnwrap(
+            textView.flowProseSuggestion
+        )))
         textView.keyDown(with: try XCTUnwrap(keyEvent(
             characters: "\t",
             modifiers: [],
@@ -10119,8 +10123,17 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             window.contentView?.needsDisplay = true
             window.contentView?.displayIfNeeded()
             textView.displayIfNeededIgnoringOpacity()
+            let visibleRect = textView.visibleRect.intersection(textView.bounds)
+            if !visibleRect.isEmpty,
+               let representation = textView.bitmapImageRepForCachingDisplay(in: visibleRect) {
+                textView.cacheDisplay(in: visibleRect, to: representation)
+            }
             if let suggestion = textView.flowSuggestion,
                textView.hasRenderedFlowSuggestion(suggestion) {
+                return
+            }
+            if let suggestion = textView.flowProseSuggestion,
+               textView.canDirectlyAcceptFlowProseSuggestion(suggestion) {
                 return
             }
         }
