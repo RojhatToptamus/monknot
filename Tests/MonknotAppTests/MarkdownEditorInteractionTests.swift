@@ -10108,16 +10108,22 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         in textView: MarkdownNSTextView,
         window: NSWindow
     ) async {
-        await nextMainRunLoopTurn()
-        textView.layoutSubtreeIfNeeded()
-        if let textContainer = textView.textContainer {
-            textView.layoutManager?.ensureLayout(for: textContainer)
+        for _ in 0..<3 {
+            await nextMainRunLoopTurn()
+            window.makeFirstResponder(textView)
+            textView.layoutSubtreeIfNeeded()
+            if let textContainer = textView.textContainer {
+                textView.layoutManager?.ensureLayout(for: textContainer)
+            }
+            textView.needsDisplay = true
+            window.contentView?.needsDisplay = true
+            window.contentView?.displayIfNeeded()
+            textView.displayIfNeededIgnoringOpacity()
+            if let suggestion = textView.flowSuggestion,
+               textView.hasRenderedFlowSuggestion(suggestion) {
+                return
+            }
         }
-        textView.needsDisplay = true
-        window.contentView?.needsDisplay = true
-        window.contentView?.displayIfNeeded()
-        textView.displayIfNeeded()
-        await nextMainRunLoopTurn()
     }
 
     private func assertSingleDiagnosticAttempt(
