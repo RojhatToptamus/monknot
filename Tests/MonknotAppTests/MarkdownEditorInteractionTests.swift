@@ -4763,6 +4763,32 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertNil(textView.flowSuggestion)
         XCTAssertEqual(textView.flowSettlementRangesForTesting?.count, 1)
 
+        for _ in 0..<3 {
+            textView.keyDown(with: try XCTUnwrap(keyEvent(
+                characters: "\t",
+                modifiers: [],
+                keyCode: 48,
+                windowNumber: window.windowNumber,
+                isRepeat: true
+            )))
+        }
+        XCTAssertEqual(textView.string, corrected)
+        XCTAssertEqual(box.value, corrected)
+        XCTAssertEqual(textView.selectedRange(), NSRange(
+            location: (corrected as NSString).length,
+            length: 0
+        ))
+        XCTAssertEqual(textView.flowSettlementRangesForTesting?.count, 1)
+        XCTAssertFalse(textView.string.contains("\t"))
+
+        textView.keyUp(with: try XCTUnwrap(keyEvent(
+            type: .keyUp,
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
+            windowNumber: window.windowNumber
+        )))
+
         XCTAssertFalse(textView.confirmFlowReviewSuggestionForTesting())
         XCTAssertEqual(acceptanceCount.value, 1)
         XCTAssertEqual(textView.string, corrected)
@@ -5055,6 +5081,64 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertTrue(textView.flowGhostTextColorForTesting.isEqual(expectedLightGhost))
         XCTAssertFalse(lightColor.isEqual(darkColor))
         XCTAssertEqual(textView.flowSettlementRangesForTesting?.count, 1)
+    }
+
+    func testInlineReviewUsesNormalTextAndHighlightsOnlyChangedWordWithThemeAccent() async throws {
+        let source = "I will definitly send the report."
+        let corrected = "I will definitely send the report."
+        let sourceText = source as NSString
+        let correctedText = corrected as NSString
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(
+            coordinator: coordinator,
+            text: source
+        )
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let typoRange = sourceText.range(of: "definitly")
+        let suggestion = EditorFlowSuggestion(
+            documentID: try XCTUnwrap(coordinator.documentID),
+            revision: coordinator.revision,
+            selectedRange: textView.selectedRange(),
+            caretUTF16Offset: textView.selectedRange().location,
+            sentenceRange: NSRange(location: 0, length: sourceText.length),
+            originalSentence: source,
+            correctedSentence: corrected,
+            source: .deterministic,
+            acceptance: .reviewOnly,
+            edits: [EditorFlowCorrectionEdit(
+                range: typoRange,
+                originalText: sourceText.substring(with: typoRange),
+                replacementText: "definitely",
+                kind: .spelling
+            )]
+        )
+        let theme = AppTheme.defaultDark.replacing(accent: "#20B486")
+        textView.applyFlowThemeForTesting(theme)
+        textView.flowSuggestion = suggestion
+        await renderFlowSuggestion(in: textView, window: window)
+
+        let changedWord = correctedText.range(of: "definitely")
+        XCTAssertTrue(textView.hasRenderedFlowSuggestion(suggestion))
+        XCTAssertEqual(textView.flowReviewHighlightRangesForTesting, [changedWord])
+        XCTAssertTrue(textView.flowReviewTextColorForTesting.isEqual(NSColor(theme.foregroundColor)))
+        XCTAssertFalse(textView.flowReviewTextColorForTesting.isEqual(textView.flowGhostTextColorForTesting))
+        let highlight = try XCTUnwrap(textView.flowReviewHighlightColorForTesting())
+        let expected = try XCTUnwrap(
+            NSColor(hex: theme.background).blended(
+                withFraction: 0.24,
+                of: NSColor(hex: theme.accent)
+            )
+        )
+        let oldSkill = try XCTUnwrap(
+            NSColor(hex: theme.background).blended(
+                withFraction: 0.24,
+                of: NSColor(hex: theme.semanticColors.skill)
+            )
+        )
+        XCTAssertTrue(highlight.isEqual(expected))
+        XCTAssertFalse(highlight.isEqual(oldSkill))
+        XCTAssertEqual(textView.string, source)
     }
 
     func testDeletionOnlySettlementHighlightsSurvivorAndDeleteRestoresCollapsedCaret() async throws {

@@ -666,6 +666,11 @@ private struct EditorFlowDeletionCollapse: Equatable {
     let removedUTF16Length: Int
 }
 
+private struct EditorFlowCorrectionHighlight {
+    let range: NSRange
+    let deletionCollapse: EditorFlowDeletionCollapse?
+}
+
 private enum EditorFlowTabInteraction: Equatable {
     case armed(EditorFlowProseSuggestion)
     case swallowingUntilRelease
@@ -7681,44 +7686,12 @@ class MarkdownNSTextView: NSTextView {
     }
 
     private func beginFlowSettlement(for suggestion: EditorFlowSuggestion) {
-        let sentenceWords = EditorFlowSuggestion.lexicalWordRanges(
-            in: suggestion.correctedSentence
+        let highlights = flowCorrectionHighlights(
+            for: suggestion,
+            correctedDocumentUTF16Length: (string as NSString).length
         )
-        var ranges: [NSRange] = []
-        var deletionCollapses: [EditorFlowDeletionCollapse] = []
-        for change in suggestion.displayChanges {
-            var localRange = change.correctedRange
-            var deletionEdge: EditorFlowDeletionCollapse.Edge?
-            if localRange.length == 0,
-               !change.originalText.isEmpty,
-               let anchor = flowDeletionAnchor(
-                    at: localRange.location,
-                    wordRanges: sentenceWords
-               ) {
-                localRange = anchor.range
-                deletionEdge = anchor.edge
-            }
-            guard localRange.location >= 0,
-                  suggestion.sentenceRange.location <= Int.max - localRange.location
-            else { continue }
-            let absolute = NSRange(
-                location: suggestion.sentenceRange.location + localRange.location,
-                length: localRange.length
-            )
-            guard absolute.location >= 0,
-                  NSMaxRange(absolute) <= (string as NSString).length
-            else { continue }
-            if !ranges.contains(absolute) {
-                ranges.append(absolute)
-            }
-            if let deletionEdge {
-                deletionCollapses.append(EditorFlowDeletionCollapse(
-                    range: absolute,
-                    edge: deletionEdge,
-                    removedUTF16Length: max(1, (change.originalText as NSString).length)
-                ))
-            }
-        }
+        let ranges = highlights.map(\.range)
+        let deletionCollapses = highlights.compactMap(\.deletionCollapse)
         let announcement: String
         if suggestion.displayChanges.count == 1, let change = suggestion.displayChanges.first {
             let original = change.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -7756,6 +7729,52 @@ class MarkdownNSTextView: NSTextView {
         ensureFlowDisplayTimer()
         refreshFlowAccessibilityPresentation()
         needsDisplay = true
+    }
+
+    private func flowCorrectionHighlights(
+        for suggestion: EditorFlowSuggestion,
+        correctedDocumentUTF16Length: Int
+    ) -> [EditorFlowCorrectionHighlight] {
+        let sentenceWords = EditorFlowSuggestion.lexicalWordRanges(
+            in: suggestion.correctedSentence
+        )
+        var highlights: [EditorFlowCorrectionHighlight] = []
+        for change in suggestion.displayChanges {
+            var localRange = change.correctedRange
+            var deletionEdge: EditorFlowDeletionCollapse.Edge?
+            if localRange.length == 0,
+               !change.originalText.isEmpty,
+               let anchor = flowDeletionAnchor(
+                    at: localRange.location,
+                    wordRanges: sentenceWords
+               ) {
+                localRange = anchor.range
+                deletionEdge = anchor.edge
+            }
+            guard localRange.location >= 0,
+                  suggestion.sentenceRange.location <= Int.max - localRange.location
+            else { continue }
+            let absolute = NSRange(
+                location: suggestion.sentenceRange.location + localRange.location,
+                length: localRange.length
+            )
+            guard absolute.location >= 0,
+                  NSMaxRange(absolute) <= correctedDocumentUTF16Length,
+                  !highlights.contains(where: { $0.range == absolute })
+            else { continue }
+            let deletionCollapse = deletionEdge.map { edge in
+                EditorFlowDeletionCollapse(
+                    range: absolute,
+                    edge: edge,
+                    removedUTF16Length: max(1, (change.originalText as NSString).length)
+                )
+            }
+            highlights.append(EditorFlowCorrectionHighlight(
+                range: absolute,
+                deletionCollapse: deletionCollapse
+            ))
+        }
+        return highlights
     }
 
     private func flowDeletionAnchor(
@@ -8322,6 +8341,11 @@ class MarkdownNSTextView: NSTextView {
                 !CharacterSet.controlCharacters.contains($0)
             }
             && prepareMatchingFlowProsePrefix(typedCharacters)
+        if event.keyCode == 48,
+           modifiers.isEmpty,
+           flowTabInteraction != nil {
+            return
+        }
         if event.keyCode == 51, modifiers.isEmpty, flowSettlement != nil {
             if revertFlowSettlementIfPossible() { return }
         } else if flowSettlement != nil {
@@ -8333,11 +8357,9 @@ class MarkdownNSTextView: NSTextView {
             return
         }
         if event.keyCode == 48, modifiers.isEmpty {
-            if flowTabInteraction != nil {
-                return
-            }
             if let flowSuggestion {
                 if hasRenderedFlowSuggestion(flowSuggestion) {
+                    flowTabInteraction = .swallowingUntilRelease
                     if applyFlowSuggestion(flowSuggestion) {
                         return
                     }
@@ -8527,6 +8549,34 @@ class MarkdownNSTextView: NSTextView {
         flowCuePalette.ghostText
     }
 
+    var flowReviewTextColorForTesting: NSColor {
+        flowCuePalette.primaryText
+    }
+
+    var flowReviewHighlightRangesForTesting: [NSRange]? {
+        guard let suggestion = flowSuggestion else { return nil }
+        let sourceLength = (string as NSString).length
+        let correctedSentenceLength = (suggestion.correctedSentence as NSString).length
+        guard sourceLength >= suggestion.sentenceRange.length else { return nil }
+        return flowCorrectionHighlights(
+            for: suggestion,
+            correctedDocumentUTF16Length: sourceLength
+                - suggestion.sentenceRange.length
+                + correctedSentenceLength
+        ).map(\.range)
+    }
+
+    func flowReviewHighlightColorForTesting(
+        increaseContrast: Bool = false,
+        reduceMotion: Bool = false
+    ) -> NSColor? {
+        guard flowSuggestion != nil else { return nil }
+        return flowCorrectionHighlightColor(
+            increaseContrast: increaseContrast,
+            reduceMotion: reduceMotion
+        )
+    }
+
     @discardableResult
     func confirmFlowReviewSuggestionForTesting() -> Bool {
         guard let suggestion = flowSuggestion else { return false }
@@ -8683,11 +8733,8 @@ class MarkdownNSTextView: NSTextView {
         let workspace = NSWorkspace.shared
         let reduceMotion = workspace.accessibilityDisplayShouldReduceMotion
         let origin = textContainerOrigin
-        let highlightColor = EditorFlowSettlementHighlight.color(
-            background: flowCuePalette.editorBackground,
-            accent: flowCuePalette.accent,
+        let highlightColor = flowCorrectionHighlightColor(
             elapsed: elapsed,
-            isDark: flowCuePalette.isDark,
             increaseContrast: workspace.accessibilityDisplayShouldIncreaseContrast,
             reduceMotion: reduceMotion
         )
@@ -8744,6 +8791,21 @@ class MarkdownNSTextView: NSTextView {
                 revealDate: settlement.startedAt
             )
         }
+    }
+
+    private func flowCorrectionHighlightColor(
+        elapsed: TimeInterval = EditorFlowSettlementHighlight.duration,
+        increaseContrast: Bool,
+        reduceMotion: Bool
+    ) -> NSColor {
+        EditorFlowSettlementHighlight.color(
+            background: flowCuePalette.editorBackground,
+            accent: flowCuePalette.accent,
+            elapsed: elapsed,
+            isDark: flowCuePalette.isDark,
+            increaseContrast: increaseContrast,
+            reduceMotion: reduceMotion
+        )
     }
 
     override func becomeFirstResponder() -> Bool {
@@ -9055,9 +9117,7 @@ class MarkdownNSTextView: NSTextView {
         let source = string as NSString
         let sourceParagraph = source.paragraphRange(for: suggestion.sentenceRange)
         var attributes = flowInsertionAttributes(at: suggestion.sentenceRange.location)
-        attributes[.foregroundColor] = flowCuePalette.ghostText.withAlphaComponent(
-            NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 0.88 : 0.68
-        )
+        attributes[.foregroundColor] = flowCuePalette.primaryText
         let replacement = NSAttributedString(
             string: suggestion.correctedSentence,
             attributes: attributes
@@ -9069,11 +9129,6 @@ class MarkdownNSTextView: NSTextView {
             length: max(0, sourceParagraph.length + delta)
         )
         guard NSMaxRange(correctedParagraph) <= overlay.storage.length else { return }
-        overlay.storage.addAttribute(
-            .foregroundColor,
-            value: attributes[.foregroundColor] as Any,
-            range: correctedParagraph
-        )
         overlay.storage.removeAttribute(.backgroundColor, range: correctedParagraph)
         overlay.layoutManager.ensureLayout(for: overlay.textContainer)
         let glyphRange = overlay.layoutManager.glyphRange(
@@ -9089,6 +9144,31 @@ class MarkdownNSTextView: NSTextView {
               bounds.insetBy(dx: -4, dy: -34).intersects(dirtyRect),
               sourceStorage.length == (string as NSString).length
         else { return }
+        let workspace = NSWorkspace.shared
+        let highlightColor = flowCorrectionHighlightColor(
+            increaseContrast: workspace.accessibilityDisplayShouldIncreaseContrast,
+            reduceMotion: workspace.accessibilityDisplayShouldReduceMotion
+        )
+        for highlight in flowCorrectionHighlights(
+            for: suggestion,
+            correctedDocumentUTF16Length: overlay.storage.length
+        ) where highlight.range.length > 0 {
+            let highlightGlyphRange = overlay.layoutManager.glyphRange(
+                forCharacterRange: highlight.range,
+                actualCharacterRange: nil
+            )
+            let highlightRect = overlay.layoutManager.boundingRect(
+                forGlyphRange: highlightGlyphRange,
+                in: overlay.textContainer
+            ).offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: -2, dy: -1)
+            guard highlightRect.intersects(dirtyRect) else { continue }
+            highlightColor.setFill()
+            NSBezierPath(
+                roundedRect: highlightRect,
+                xRadius: max(2, (3 * max(0.1, zoomScale)).rounded()),
+                yRadius: max(2, (3 * max(0.1, zoomScale)).rounded())
+            ).fill()
+        }
         overlay.layoutManager.drawGlyphs(forGlyphRange: glyphRange, at: origin)
         let correctedSentenceRange = NSRange(
             location: suggestion.sentenceRange.location,
