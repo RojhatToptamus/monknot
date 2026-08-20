@@ -167,8 +167,8 @@ if [[ ! "$SPARKLE_FEED_URL" =~ ^https:// ]]; then
   echo "MONKNOT_SPARKLE_FEED_URL must be an HTTPS URL: $SPARKLE_FEED_URL" >&2
   exit 64
 fi
-if [[ ! "$TARGET_ARCH" =~ ^(arm64|x86_64)$ ]]; then
-  echo "unsupported MONKNOT_TARGET_ARCH: $TARGET_ARCH" >&2
+if [[ "$TARGET_ARCH" != "arm64" ]]; then
+  echo "Monknot supports arm64 builds only: $TARGET_ARCH" >&2
   exit 64
 fi
 if [[ ! "$SIGNING_MODE" =~ ^(adhoc|development)$ ]]; then

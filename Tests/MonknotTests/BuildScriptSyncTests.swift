@@ -459,6 +459,17 @@ final class BuildScriptSyncTests: XCTestCase {
         XCTAssertTrue(configuration.contains("interval: weekly"))
     }
 
+    func testManualAppBuildSupportsAppleSiliconOnly() throws {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let script = try String(
+            contentsOf: root.appendingPathComponent("script/build_and_run.sh"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(script.contains(#"if [[ "$TARGET_ARCH" != "arm64" ]]; then"#))
+        XCTAssertFalse(script.contains("arm64|x86_64"))
+    }
+
     func testSparkleDependencyBundleConfigurationAndAppcastToolsStayPinned() throws {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
         let package = try String(contentsOf: root.appendingPathComponent("Package.swift"), encoding: .utf8)
