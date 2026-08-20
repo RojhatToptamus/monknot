@@ -168,20 +168,13 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         XCTAssertEqual(textView.inlinePredictionType, .no)
         XCTAssertEqual(prose.requests.map(\.context), ["We can write "])
 
-        textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\t",
-            modifiers: [],
-            keyCode: 48,
-            windowNumber: window.windowNumber
-        )))
-        try? await Task.sleep(nanoseconds: 380_000_000)
-        textView.keyUp(with: try XCTUnwrap(keyEvent(
-            type: .keyUp,
-            characters: "\t",
-            modifiers: [],
-            keyCode: 48,
-            windowNumber: window.windowNumber
-        )))
+        await renderFlowSuggestion(in: textView, window: window)
+        let fullAcceptanceReady = try await holdTabUntilAccepted(
+            in: textView,
+            window: window,
+            expectedText: "We can write clearer prose."
+        )
+        XCTAssertTrue(fullAcceptanceReady)
         XCTAssertEqual(textView.string, "We can write clearer prose.")
         XCTAssertEqual(box.value, "We can write clearer prose.")
         XCTAssertNil(textView.flowProseSuggestion)
@@ -295,20 +288,12 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             textView.flowProseSuggestion
         )))
 
-        textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\t",
-            modifiers: [],
-            keyCode: 48,
-            windowNumber: window.windowNumber
-        )))
-        try? await Task.sleep(nanoseconds: 380_000_000)
-        textView.keyUp(with: try XCTUnwrap(keyEvent(
-            type: .keyUp,
-            characters: "\t",
-            modifiers: [],
-            keyCode: 48,
-            windowNumber: window.windowNumber
-        )))
+        let fullAcceptanceReady = try await holdTabUntilAccepted(
+            in: textView,
+            window: window,
+            expectedText: "We can write clearly, with confidence."
+        )
+        XCTAssertTrue(fullAcceptanceReady)
         XCTAssertEqual(textView.string, "We can write clearly, with confidence.")
         XCTAssertNil(textView.flowProseSuggestion)
     }
@@ -389,20 +374,12 @@ final class MarkdownEditorInteractionTests: XCTestCase {
         // The remainder was part of the ghost the user already saw. The clean
         // repair check may gate its reappearance, but must not require a second
         // paint before the immediately following hardware Tab can accept it.
-        textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\t",
-            modifiers: [],
-            keyCode: 48,
-            windowNumber: window.windowNumber
-        )))
-        try? await Task.sleep(nanoseconds: 380_000_000)
-        textView.keyUp(with: try XCTUnwrap(keyEvent(
-            type: .keyUp,
-            characters: "\t",
-            modifiers: [],
-            keyCode: 48,
-            windowNumber: window.windowNumber
-        )))
+        let fullAcceptanceReady = try await holdTabUntilAccepted(
+            in: textView,
+            window: window,
+            expectedText: "We can write clearly, with confidence."
+        )
+        XCTAssertTrue(fullAcceptanceReady)
         XCTAssertEqual(textView.string, "We can write clearly, with confidence.")
         XCTAssertEqual(box.value, "We can write clearly, with confidence.")
         XCTAssertNil(textView.flowProseSuggestion)
@@ -1428,13 +1405,13 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             boundedContinuation
         )
 
-        textView.keyDown(with: try XCTUnwrap(keyEvent(
-            characters: "\t",
-            modifiers: [],
-            keyCode: 48,
-            windowNumber: window.windowNumber
-        )))
-        try? await Task.sleep(nanoseconds: 380_000_000)
+        await renderFlowSuggestion(in: textView, window: window)
+        let fullAcceptanceReady = try await holdTabUntilAccepted(
+            in: textView,
+            window: window,
+            expectedText: "We can write " + boundedContinuation
+        )
+        XCTAssertTrue(fullAcceptanceReady)
         XCTAssertEqual(textView.string, "We can write " + boundedContinuation)
         XCTAssertFalse(textView.string.contains("ten"))
     }
@@ -10109,6 +10086,30 @@ final class MarkdownEditorInteractionTests: XCTestCase {
                 continuation.resume()
             }
         }
+    }
+
+    private func holdTabUntilAccepted(
+        in textView: MarkdownNSTextView,
+        window: NSWindow,
+        expectedText: String
+    ) async throws -> Bool {
+        textView.keyDown(with: try XCTUnwrap(keyEvent(
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
+            windowNumber: window.windowNumber
+        )))
+        let accepted = await waitUntil(timeout: 1.5) {
+            textView.string == expectedText && textView.flowProseSuggestion == nil
+        }
+        textView.keyUp(with: try XCTUnwrap(keyEvent(
+            type: .keyUp,
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
+            windowNumber: window.windowNumber
+        )))
+        return accepted
     }
 
     private func renderFlowSuggestion(
