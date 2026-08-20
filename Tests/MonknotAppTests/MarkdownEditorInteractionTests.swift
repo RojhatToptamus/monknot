@@ -226,7 +226,10 @@ final class MarkdownEditorInteractionTests: XCTestCase {
             keyCode: 48,
             windowNumber: window.windowNumber
         )))
-        try? await Task.sleep(nanoseconds: 380_000_000)
+        let fullAcceptanceReady = await waitUntil(timeout: 1.5) {
+            acceptanceCount.value == 1
+        }
+        XCTAssertTrue(fullAcceptanceReady)
         XCTAssertEqual(textView.string, "We can write clearer prose.")
         XCTAssertEqual(acceptanceCount.value, 1)
 
