@@ -2,6 +2,19 @@ import AppKit
 import MonknotCore
 import SwiftUI
 
+enum EditorFlowEligibility {
+    static func sourceMode(for document: WorkspaceDocument) -> FlowSourceMode? {
+        if document.kind == .markdown {
+            return .markdown
+        }
+        guard document.kind == .text else { return nil }
+        switch document.url.pathExtension.lowercased() {
+        case "txt", "text": return .plainText
+        default: return nil
+        }
+    }
+}
+
 struct EditorPaneView: View {
     @ObservedObject var store: WorkspaceStore
     @Binding var editorMode: EditorMode
@@ -12,6 +25,10 @@ struct EditorPaneView: View {
     private var checksSpelling = EditorTextCheckingOptions.defaultChecksSpelling
     @AppStorage(EditorTextCheckingOptions.grammarPreferenceKey)
     private var checksGrammar = EditorTextCheckingOptions.defaultChecksGrammar
+    @AppStorage(EditorTextCheckingOptions.inlinePredictionsPreferenceKey)
+    private var inlinePredictions = EditorTextCheckingOptions.defaultInlinePredictions
+    @AppStorage(EditorTextCheckingOptions.onDeviceProseCompletionsPreferenceKey)
+    private var onDeviceProseCompletions = EditorTextCheckingOptions.defaultOnDeviceProseCompletions
     @State private var markdownCommandSerial = 0
     @State private var markdownCommandRequest: MarkdownTextEditorCommandRequest?
     @State private var splitScrollSyncLock = false
@@ -60,7 +77,9 @@ struct EditorPaneView: View {
     private var textCheckingOptions: EditorTextCheckingOptions {
         EditorTextCheckingOptions(
             checksSpelling: checksSpelling,
-            checksGrammar: checksGrammar
+            checksGrammar: checksGrammar,
+            inlinePredictions: inlinePredictions,
+            onDeviceProseCompletions: onDeviceProseCompletions
         )
     }
 
@@ -88,6 +107,11 @@ struct EditorPaneView: View {
                     splitSourcePaneRatio = DocumentSplitViewPersistence.sourcePaneRatio(forDocumentPath: newDocumentID)
                 } else {
                     splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
+                }
+            }
+            .onChange(of: store.activeWritingToolsDocumentID) { _, documentID in
+                if documentID != nil {
+                    markdownCommandRequest = nil
                 }
             }
             .sheet(item: Binding(
@@ -132,6 +156,7 @@ struct EditorPaneView: View {
                         text: store.documentText,
                         sendCommand: sendMarkdownCommand
                     )
+                    .disabled(store.activeWritingToolsDocumentID != nil)
                 }
             }
 
@@ -148,6 +173,7 @@ struct EditorPaneView: View {
     }
 
     private func sendMarkdownCommand(_ command: MarkdownTextEditorCommand) {
+        guard store.activeWritingToolsDocumentID == nil else { return }
         markdownCommandSerial += 1
         markdownCommandRequest = MarkdownTextEditorCommandRequest(
             serial: markdownCommandSerial,
@@ -396,6 +422,13 @@ struct EditorPaneView: View {
             searchOptions: searchOptions,
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
+            },
+            flowSourceMode: EditorFlowEligibility.sourceMode(for: selectedDocument),
+            onWritingToolsTextCommit: { documentID, text in
+                store.commitWritingToolsText(text, documentID: documentID)
+            },
+            onWritingToolsStateChange: { documentID, isActive in
+                store.setWritingToolsActive(isActive, documentID: documentID)
             }
         )
     }
@@ -452,6 +485,7 @@ struct EditorPaneView: View {
             contentWidthPercent: contentWidthPercent,
             fontSmoothing: fontSmoothing,
             textCheckingOptions: textCheckingOptions,
+            flowSourceMode: EditorFlowEligibility.sourceMode(for: selectedDocument),
             scrollPosition: activeViewportState?.textScrollPosition,
             textSelection: activeViewportState?.textSelection,
             syncScrollEnabled: isSplitViewEnabled,
@@ -466,6 +500,12 @@ struct EditorPaneView: View {
             onInspectLinks: onInspectLinks,
             onImagePasteRequest: onMarkdownImagePasteRequest,
             onFileDropRequest: onMarkdownFileDropRequest,
+            onWritingToolsTextCommit: { documentID, text in
+                store.commitWritingToolsText(text, documentID: documentID)
+            },
+            onWritingToolsStateChange: { documentID, isActive in
+                store.setWritingToolsActive(isActive, documentID: documentID)
+            },
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
             },

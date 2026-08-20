@@ -167,8 +167,8 @@ if [[ ! "$SPARKLE_FEED_URL" =~ ^https:// ]]; then
   echo "MONKNOT_SPARKLE_FEED_URL must be an HTTPS URL: $SPARKLE_FEED_URL" >&2
   exit 64
 fi
-if [[ ! "$TARGET_ARCH" =~ ^(arm64|x86_64)$ ]]; then
-  echo "unsupported MONKNOT_TARGET_ARCH: $TARGET_ARCH" >&2
+if [[ "$TARGET_ARCH" != "arm64" ]]; then
+  echo "Monknot supports arm64 builds only: $TARGET_ARCH" >&2
   exit 64
 fi
 if [[ ! "$SIGNING_MODE" =~ ^(adhoc|development)$ ]]; then
@@ -265,6 +265,11 @@ COMMON_SWIFT_FLAGS=(
   -module-cache-path "$MODULE_CACHE_DIR"
   -O
 )
+if [[ "${MONKNOT_FLOW_DIAGNOSTICS:-0}" == "1" ]]; then
+  COMMON_SWIFT_FLAGS+=(
+    -D MONKNOT_FLOW_DIAGNOSTICS
+  )
+fi
 
 printf "" >"$EMPTY_MODULEMAP"
 cat >"$OVERLAY_FILE" <<OVERLAY
@@ -327,6 +332,7 @@ CORE_SOURCES=(
   "Sources/MonknotCore/Services/DailyNotePlanner.swift"
   "Sources/MonknotCore/Services/DocumentSplitViewPersistence.swift"
   "Sources/MonknotCore/Services/ExternalDocumentReconciliationService.swift"
+  "Sources/MonknotCore/Services/FlowProtectedRangeService.swift"
   "Sources/MonknotCore/Services/HTMLScrollSync.swift"
   "Sources/MonknotCore/Services/MonknotCaptureURLBuilder.swift"
   "Sources/MonknotCore/Services/MarkdownOutlineParser.swift"
@@ -375,6 +381,8 @@ APP_SOURCES=(
   "Sources/Monknot/Models/WorkspaceQuickOpenState.swift"
   "Sources/Monknot/Models/WorkspaceSearchState.swift"
   "Sources/Monknot/Models/MarkdownLinkInspectionState.swift"
+  "Sources/Monknot/Services/FlowProseCompletionService.swift"
+  "Sources/Monknot/Services/FlowSentenceRepairService.swift"
   "Sources/Monknot/Services/MarkdownPDFExportService.swift"
   "Sources/Monknot/Services/MarkdownSemanticPasteboardExportService.swift"
   "Sources/Monknot/Services/MonknotLaunchCaptureParser.swift"

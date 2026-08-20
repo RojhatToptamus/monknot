@@ -191,6 +191,12 @@ final class TerminalFocusRestorer: ObservableObject {
     }
 }
 
+enum EditorWritingToolsPresentationPolicy {
+    static func resolvedMode(_ storedMode: EditorMode, writingToolsActive: Bool) -> EditorMode {
+        writingToolsActive ? .source : storedMode
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var store: WorkspaceStore
     @ObservedObject var themeStore: ThemeSettingsStore
@@ -267,8 +273,27 @@ struct ContentView: View {
     }
 
     private var editorMode: EditorMode {
-        get { EditorMode(rawValue: editorModeRawValue) ?? .source }
-        nonmutating set { editorModeRawValue = newValue.rawValue }
+        get {
+            EditorWritingToolsPresentationPolicy.resolvedMode(
+                EditorMode(rawValue: editorModeRawValue) ?? .source,
+                writingToolsActive: store.activeWritingToolsDocumentID != nil
+            )
+        }
+        nonmutating set {
+            guard newValue != editorMode else { return }
+            guard store.activeWritingToolsDocumentID == nil else {
+                store.errorMessage = "Finish Writing Tools before changing editor views."
+                return
+            }
+            editorModeRawValue = newValue.rawValue
+        }
+    }
+
+    private var markdownSplitViewBinding: Binding<Bool> {
+        Binding(
+            get: { isMarkdownSplitViewEnabled },
+            set: { setMarkdownSplitViewEnabled($0) }
+        )
     }
 
     private var themePreference: ThemePreference {
@@ -647,7 +672,7 @@ struct ContentView: View {
                 get: { editorMode },
                 set: { editorMode = $0 }
             ),
-            isSplitViewEnabled: $isMarkdownSplitViewEnabled,
+            isSplitViewEnabled: markdownSplitViewBinding,
             emptyStateTitle: store.workspaceURL?.lastPathComponent ?? "Monknot",
             selectedDocument: store.selectedDocument,
             isBusy: store.isBusy,
@@ -713,7 +738,7 @@ struct ContentView: View {
                     get: { editorMode },
                     set: { editorMode = $0 }
                 ),
-                isSplitViewEnabled: $isMarkdownSplitViewEnabled,
+                isSplitViewEnabled: markdownSplitViewBinding,
                 theme: activeTheme,
                 zoomScale: zoomScale,
                 codeFontSize: CGFloat(activeTheme.codeFontSize),
@@ -879,6 +904,10 @@ struct ContentView: View {
     }
 
     private func resolveUnsavedChangesIfNeeded(for documentID: String) async -> Bool {
+        guard store.activeWritingToolsDocumentID != documentID else {
+            store.errorMessage = "Finish Writing Tools before closing this document."
+            return false
+        }
         guard !store.saveState(for: documentID).isClean else { return true }
         guard let document = store.document(id: documentID) else { return true }
 
@@ -901,6 +930,11 @@ struct ContentView: View {
         isResolvingUnsavedChanges = true
         defer { isResolvingUnsavedChanges = false }
 
+        guard store.activeWritingToolsDocumentID == nil else {
+            store.errorMessage = "Finish Writing Tools before closing the window or changing workspaces."
+            return false
+        }
+
         for documentID in tabState.tabs.map(\.documentID) where !store.saveState(for: documentID).isClean {
             guard await resolveUnsavedChangesIfNeeded(for: documentID) else {
                 return false
@@ -918,6 +952,10 @@ struct ContentView: View {
     }
 
     private func exportMarkdownPDF(_ document: WorkspaceDocument) {
+        guard store.activeWritingToolsDocumentID != document.id else {
+            store.errorMessage = "Finish Writing Tools before exporting this document."
+            return
+        }
         pdfExportOptions = MarkdownPDFExportOptions.loadLastUsed()
         pendingPDFExportDocument = document
     }
@@ -1761,7 +1799,9 @@ struct ContentView: View {
                 }
                 store.exportAllPDFAnnotationsToMarkdown()
             },
-            canExportAllPDFAnnotationsMarkdown: !store.isBusy && store.hasPDFDocuments,
+            canExportAllPDFAnnotationsMarkdown: !store.isBusy
+                && store.hasPDFDocuments
+                && store.activeWritingToolsDocumentID == nil,
             exportAnnotatedPDFCopy: {
                 if let document = store.selectedDocument {
                     if document.kind == .pdf {
@@ -1865,7 +1905,16 @@ struct ContentView: View {
 
     private func toggleMarkdownSplitView() {
         guard canToggleMarkdownSplitView else { return }
-        isMarkdownSplitViewEnabled.toggle()
+        setMarkdownSplitViewEnabled(!isMarkdownSplitViewEnabled)
+    }
+
+    private func setMarkdownSplitViewEnabled(_ isEnabled: Bool) {
+        guard isEnabled != isMarkdownSplitViewEnabled else { return }
+        guard store.activeWritingToolsDocumentID == nil else {
+            store.errorMessage = "Finish Writing Tools before changing editor views."
+            return
+        }
+        isMarkdownSplitViewEnabled = isEnabled
     }
 
     private var canInspectLinks: Bool {

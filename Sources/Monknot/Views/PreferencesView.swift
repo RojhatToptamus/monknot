@@ -180,6 +180,10 @@ private struct EditorSettingsView: View {
     private var checksSpelling = EditorTextCheckingOptions.defaultChecksSpelling
     @AppStorage(EditorTextCheckingOptions.grammarPreferenceKey)
     private var checksGrammar = EditorTextCheckingOptions.defaultChecksGrammar
+    @AppStorage(EditorTextCheckingOptions.inlinePredictionsPreferenceKey)
+    private var inlinePredictions = EditorTextCheckingOptions.defaultInlinePredictions
+    @AppStorage(EditorTextCheckingOptions.onDeviceProseCompletionsPreferenceKey)
+    private var onDeviceProseCompletions = EditorTextCheckingOptions.defaultOnDeviceProseCompletions
 
     var body: some View {
         SettingsPage(theme: uiTheme) {
@@ -205,6 +209,22 @@ private struct EditorSettingsView: View {
                     detail: "Use native language-aware grammar checking",
                     isOn: $checksGrammar
                 )
+
+                SettingsToggleRow(
+                    theme: uiTheme,
+                    title: "Inline predictions",
+                    detail: "Show system predictive text from macOS",
+                    isOn: $inlinePredictions
+                )
+
+                if #available(macOS 26.0, *) {
+                    SettingsToggleRow(
+                        theme: uiTheme,
+                        title: "On-device writing assistance (Beta)",
+                        detail: "Use Apple Intelligence for uncertain sentence repairs and, when inline predictions are on, short continuations",
+                        isOn: $onDeviceProseCompletions
+                    )
+                }
 
                 SettingsWorkspaceZoomRow(
                     theme: uiTheme,

@@ -32,6 +32,15 @@ final class MonknotKeyboardShortcutCatalogTests: XCTestCase {
         )
     }
 
+    func testWritingToolsShortcutIsListedWithItsPlatformRequirement() {
+        XCTAssertEqual(
+            MonknotKeyboardShortcutCatalog.entries.first {
+                $0.title == "Show Writing Tools (macOS 15.2+)"
+            }?.shortcut,
+            "⌃⌘R"
+        )
+    }
+
     func testReopenClosedTabShortcutIsListed() {
         XCTAssertEqual(
             MonknotKeyboardShortcutCatalog.entries.first { $0.title == "Reopen Closed Tab" }?.shortcut,
