@@ -1,13 +1,25 @@
-# Monknot 0.1.4
+# Monknot 0.1.5
 
-This release expands Monknot's editing, search, navigation, link, and terminal workflows while refining keyboard focus and window chrome.
+This release adds one private writing-assistance flow for Markdown and plain text. It keeps corrections clear, local, and easy to reverse.
 
-- Searches unsaved workspace buffers and adds shared Match Case and Match Whole Word options.
-- Adds find-and-replace for the current document while keeping workspace replacement in the sidebar.
-- Adds Go to Line, Save All, reopen-closed-tab history, and structural Markdown list editing.
-- Adds native spelling and grammar controls plus Markdown file imports through drag and drop.
-- Adds exact Markdown link inspection and creates notes directly from missing wikilinks.
-- Adds terminal scrollback search and honors the configured terminal working directory.
-- Routes ordinary keyboard input to the active editor, search field, or terminal and restores focus when panels close.
-- Uses one restrained shortcut-hint style throughout the app and aligns search controls with Monknot's design language.
-- Restores clickable native close, minimize, and zoom controls with balanced titlebar spacing.
+## Writing assistance
+
+- Shows Apple spelling and grammar corrections beside the affected text.
+- Combines related corrections into one sentence preview when the complete result is safe.
+- Uses private on-device models for bounded English sentence repair on supported Macs.
+- Adds private on-device autocomplete on supported Macs.
+- Opens a focused review for broad changes and safe alternatives before Monknot replaces text.
+
+## Correction feedback
+
+- Uses the current theme accent for previews, correction shimmer, persistent highlights, and ghost text.
+- Keeps each accepted correction highlighted with an undo hint until the user continues editing.
+- Restores the complete correction with Delete or Command-Z and returns the caret without selecting restored words.
+- Highlights the surviving word after a deletion-only correction.
+- Supports light and dark themes, Increase Contrast, Reduce Motion, and immediate theme changes.
+
+## Safety and compatibility
+
+- Protects Markdown syntax, links, code, names, numbers, identifiers, and quote boundaries.
+- Keeps Apple text assistance available when Monknot cannot show a safe correction.
+- Runs on Apple silicon with macOS 14 or later.
