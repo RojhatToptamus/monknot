@@ -309,18 +309,18 @@ After the first rehearsal, the release managers checked every backup, the suppor
 - Domain: health-related message
 - Classification: AI invariant
 - Trigger: punctuation `.`
-- Mutations: spelling mistake, missing short word, wrong preposition, run-on clause, spelling mistake
+- Mutations: spelling mistake, subject–verb disagreement, run-on clause, subject–verb disagreement, spelling mistake
 - Long or hard-wrapped: yes
 - Input:
 
 ~~~text
-I am nt be able to come today because yesterday I got sick so badly and now cannot get out of the bed wirhgth now.
+My ankle did nt improve overnight after the new exercises the swelling look worse and the clinic have not replyed yet.
 ~~~
 
 - Human reference (not a required exact AI wording):
 
 ~~~text
-I am not able to come today because I got very sick yesterday, and now I cannot get out of bed.
+My ankle did not improve overnight after the new exercises; the swelling looks worse, and the clinic has not replied yet.
 ~~~
 
 - Runtime record: NSSpellChecker issues ___; owner ___; visible proposal ___; direct/review-only ___; terminal reason ___; latency ___ ms; final text ___; undo ___; result ___

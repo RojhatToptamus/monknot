@@ -28,7 +28,7 @@ final class FlowSentenceRepairServiceTests: XCTestCase {
     func testTrustedInstructionIsExactAndStable() {
         XCTAssertEqual(
             FlowSentenceRepairService.trustedInstructions,
-            "Correct only spelling, grammar, and punctuation. Preserve meaning, tone, names, numbers, Markdown, and sentence structure. Do not add information or paraphrase. Return only the corrected sentence."
+            "Correct only spelling, grammar, and punctuation. Preserve meaning, tone, names, numbers, Markdown, and line breaks. Do not add information or paraphrase. Return only the corrected text."
         )
     }
 
@@ -39,17 +39,17 @@ final class FlowSentenceRepairServiceTests: XCTestCase {
                 request: request,
                 maximumResponseTokens: maximumResponseTokens
             )
-            return "  “The dogs are playing.”  "
+            return "  “The lanterns are flickering.”  "
         }
         let request = try XCTUnwrap(FlowSentenceRepairRequest(
-            sentence: "The dogs is playig.",
+            sentence: "The lanterns is flickring.",
             locale: Locale(identifier: "en_US")
         ))
 
         let result = await service.repair(for: request)
         let snapshot = await recorder.snapshot()
 
-        XCTAssertEqual(result, .success("The dogs are playing."))
+        XCTAssertEqual(result, .success("The lanterns are flickering."))
         XCTAssertEqual(snapshot.request, request)
         XCTAssertEqual(
             snapshot.maximumResponseTokens,
@@ -57,18 +57,24 @@ final class FlowSentenceRepairServiceTests: XCTestCase {
         )
     }
 
-    func testSanitizerRejectsEqualNewlineInvisibleOversizedAndMoreThanTwoSentences() {
-        let original = "The dogs is playig."
+    func testSanitizerAllowsUnchangedOutputAndRejectsMalformedOutput() {
+        let original = "The lanterns is flickring."
         let oversized = String(
             repeating: "a",
             count: FlowSentenceRepairRequest.maximumSentenceUTF16Length + 1
         )
+        XCTAssertEqual(
+            FlowSentenceRepairSanitizer.sanitize(
+                original,
+                originalSentence: original
+            ),
+            original
+        )
+
         let invalid = [
-            original,
-            "The dogs are\nplaying.",
-            "The dogs are\u{202E}playing.",
+            "The lanterns are\nflickering.",
+            "The lanterns are\u{202E}flickering.",
             oversized,
-            "The dogs are playing. They are outside. We should leave.",
         ]
 
         for candidate in invalid {
@@ -85,24 +91,31 @@ final class FlowSentenceRepairServiceTests: XCTestCase {
     func testSanitizerAcceptsOneChangedSentenceWithClosingPunctuation() {
         XCTAssertEqual(
             FlowSentenceRepairSanitizer.sanitize(
-                "\n  She asked, “Are the dogs playing?”  \n",
-                originalSentence: "She ask, “Is the dogs playig?”"
+                "\n  She asked, “Are the lanterns flickering?”  \n",
+                originalSentence: "She ask, “Is the lanterns flickring?”"
             ),
-            "She asked, “Are the dogs playing?”"
+            "She asked, “Are the lanterns flickering?”"
         )
         XCTAssertEqual(
             FlowSentenceRepairSanitizer.sanitize(
-                "“The dogs are playing.”",
-                originalSentence: "“The dogs is playig.”"
+                "“The lanterns are flickering.”",
+                originalSentence: "“The lanterns is flickring.”"
             ),
-            "“The dogs are playing.”"
+            "“The lanterns are flickering.”"
         )
         XCTAssertEqual(
             FlowSentenceRepairSanitizer.sanitize(
-                "The dogs are playing. They are outside.",
-                originalSentence: "The dogs is playing and they is outside."
+                "The lanterns are glowing. They are outside.",
+                originalSentence: "The lanterns is glowing and they is outside."
             ),
-            "The dogs are playing. They are outside."
+            "The lanterns are glowing. They are outside."
+        )
+        XCTAssertEqual(
+            FlowSentenceRepairSanitizer.sanitize(
+                "Hey, did the parcel arrive yesterday? Was the box damaged? Can we call the shop tomorrow?",
+                originalSentence: "hey did the parcel arive yesturday was the box damagd can we call the shop tomorow qzpt"
+            ),
+            "Hey, did the parcel arrive yesterday? Was the box damaged? Can we call the shop tomorrow?"
         )
     }
 
@@ -189,8 +202,8 @@ final class FlowSentenceRepairServiceTests: XCTestCase {
     func testHardWrappedRepairKeepsBoundaryOwnershipWhileDeferringWordValidation() {
         let original = "Please revieiw\nthe draft before noon."
         let corrected = "Please review\nthe draft before noon."
-        let grammarOriginal = "The dogs\nis"
-        let grammarCorrected = "The dogs\nare"
+        let grammarOriginal = "The parcels\nis"
+        let grammarCorrected = "The parcels\nare"
 
         XCTAssertEqual(
             FlowSentenceRepairSanitizer.sanitize(
@@ -208,10 +221,10 @@ final class FlowSentenceRepairServiceTests: XCTestCase {
         )
         XCTAssertEqual(
             FlowSentenceRepairSanitizer.sanitize(
-                "The dogs\nare ready.",
-                originalSentence: "The dogs\nready."
+                "The parcels\nare ready.",
+                originalSentence: "The parcels\nready."
             ),
-            "The dogs\nare ready."
+            "The parcels\nare ready."
         )
         XCTAssertEqual(
             FlowSentenceRepairSanitizer.sanitize(
@@ -229,12 +242,12 @@ final class FlowSentenceRepairServiceTests: XCTestCase {
             originalSentence: "Please review\nthe draft before noon."
         ))
         XCTAssertNil(FlowSentenceRepairSanitizer.sanitize(
-            "The dogs are\nready.",
-            originalSentence: "The dogs\nis ready."
+            "The parcels are\nready.",
+            originalSentence: "The parcels\nis ready."
         ))
         XCTAssertNil(FlowSentenceRepairSanitizer.sanitize(
-            "The dogs are ready.",
-            originalSentence: "The dogs\nis ready."
+            "The parcels are ready.",
+            originalSentence: "The parcels\nis ready."
         ))
     }
 
@@ -264,7 +277,7 @@ final class FlowSentenceRepairServiceTests: XCTestCase {
 
     func testNilAndThrownClientResultsReportFailure() async throws {
         let request = try XCTUnwrap(FlowSentenceRepairRequest(
-            sentence: "The dogs is playig."
+            sentence: "The lanterns is flickring."
         ))
         let nilService = FlowSentenceRepairService { _, _ in nil }
         let throwingService = FlowSentenceRepairService { _, _ in
@@ -277,27 +290,27 @@ final class FlowSentenceRepairServiceTests: XCTestCase {
         XCTAssertEqual(thrownResult, .failed)
     }
 
-    func testSanitizerRejectionReturnsTypedOutcome() async throws {
+    func testUnchangedModelOutputReturnsSuccessForCoordinatorClassification() async throws {
         let request = try XCTUnwrap(FlowSentenceRepairRequest(
-            sentence: "The dogs is playig."
+            sentence: "The lanterns is flickring."
         ))
         let service = FlowSentenceRepairService { _, _ in
-            "The dogs is playig."
+            "The lanterns is flickring."
         }
 
         let result = await service.repair(for: request)
-        XCTAssertEqual(result, .validationRejected)
+        XCTAssertEqual(result, .success("The lanterns is flickring."))
     }
 
     func testClientTimeoutReturnsWithoutWaitingForNoncooperativeWork() async throws {
         let request = try XCTUnwrap(FlowSentenceRepairRequest(
-            sentence: "The dogs is playig."
+            sentence: "The lanterns is flickring."
         ))
         let service = FlowSentenceRepairService(
             timeoutNanoseconds: 10_000_000,
             client: { _, _ in
                 await flowSentenceRepairNonCooperativeDelay()
-                return "The dogs are playing."
+                return "The lanterns are flickering."
             }
         )
         let start = ContinuousClock.now
@@ -310,7 +323,7 @@ final class FlowSentenceRepairServiceTests: XCTestCase {
 
     func testTimedOutClientKeepsCopiedServiceAdmissionUntilUnderlyingCallEnds() async throws {
         let request = try XCTUnwrap(FlowSentenceRepairRequest(
-            sentence: "The dogs is playig."
+            sentence: "The lanterns is flickring."
         ))
         let client = FlowSentenceRepairBlockingClient()
         let service = FlowSentenceRepairService(
@@ -335,19 +348,19 @@ final class FlowSentenceRepairServiceTests: XCTestCase {
         }
 
         let finalCallCount = await client.callCount
-        XCTAssertEqual(laterResult, .success("The dogs are playing."))
+        XCTAssertEqual(laterResult, .success("The lanterns are flickering."))
         XCTAssertEqual(finalCallCount, 2)
     }
 
     func testCancellationReturnsWithoutWaitingForClient() async throws {
         let request = try XCTUnwrap(FlowSentenceRepairRequest(
-            sentence: "The dogs is playig."
+            sentence: "The lanterns is flickring."
         ))
         let service = FlowSentenceRepairService(
             timeoutNanoseconds: 1_000_000_000,
             client: { _, _ in
                 await flowSentenceRepairNonCooperativeDelay()
-                return "The dogs are playing."
+                return "The lanterns are flickering."
             }
         )
         let task = Task { await service.repair(for: request) }
@@ -361,9 +374,9 @@ final class FlowSentenceRepairServiceTests: XCTestCase {
         XCTAssertLessThan(start.duration(to: .now), .milliseconds(100))
     }
 
-    func testReportedLongMultiErrorSentenceCanReachTypedSuccess() async throws {
-        let original = "I am nt be able to come today because yesterday I got sick so badly and now cannot get out of the bed wirhgth now."
-        let corrected = "I am not able to come today because yesterday I got so sick that I cannot get out of bed now."
+    func testGeneratedLongMultiErrorSentenceCanReachTypedSuccess() async throws {
+        let original = "My ankle did nt improve overnight after the new exercises the swelling look worse and the clinic have not replyed yet."
+        let corrected = "My ankle did not improve overnight after the new exercises; the swelling looks worse, and the clinic has not replied yet."
         let request = try XCTUnwrap(FlowSentenceRepairRequest(
             sentence: original,
             locale: Locale(identifier: "en_US")
@@ -412,7 +425,7 @@ private actor FlowSentenceRepairBlockingClient {
                 firstCallContinuation = continuation
             }
         }
-        return "The dogs are playing."
+        return "The lanterns are flickering."
     }
 
     func releaseFirstCall() {
