@@ -58,6 +58,8 @@ struct MonknotCommandActions {
     let setSearchWholeWord: (Bool) -> Void
     let canConfigureSearch: Bool
     let toggleTerminal: () -> Void
+    let toggleTerminalFullscreen: () -> Void
+    let canToggleTerminalFullscreen: Bool
     let toggleSidebar: () -> Void
     let toggleSplitView: () -> Void
     let canToggleSplitView: Bool
@@ -150,6 +152,12 @@ struct MonknotCommandMenu: Commands {
             }
             .keyboardShortcut("j", modifiers: [.command, .option])
             .disabled(actions == nil)
+
+            Button("Toggle Terminal Fullscreen") {
+                actions?.toggleTerminalFullscreen()
+            }
+            .keyboardShortcut(.return, modifiers: [.command, .control])
+            .disabled(actions?.canToggleTerminalFullscreen != true)
 
             Button("Toggle Sidebar") {
                 actions?.toggleSidebar()

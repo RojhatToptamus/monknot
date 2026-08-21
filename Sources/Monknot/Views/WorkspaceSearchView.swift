@@ -181,10 +181,8 @@ struct WorkspaceSearchView: View {
 
     private var queryField: some View {
         HStack(spacing: scaled(MonknotMetrics.Spacing.s)) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: glyphScaled(14), weight: .medium))
+            MonknotSearchGlyph(theme: theme, zoomScale: zoomScale)
                 .foregroundStyle(theme.sidebarMutedColor())
-                .accessibilityHidden(true)
 
             TextField(
                 "Search workspace",
@@ -542,8 +540,12 @@ struct WorkspaceSearchView: View {
 
     private func resultGroupHeader(_ group: WorkspaceSearchResultGroup) -> some View {
         HStack(spacing: scaled(MonknotMetrics.Spacing.xs)) {
-            Image(systemName: group.kind.resolvedSystemImage)
-                .font(.system(size: glyphScaled(12), weight: .medium))
+            MonknotFileKindGlyph(
+                systemImage: group.kind.resolvedSystemImage,
+                theme: theme,
+                zoomScale: zoomScale,
+                pointSizeBase: 12
+            )
                 .foregroundStyle(theme.sidebarMutedColor(prominence: 0.78))
                 .accessibilityHidden(true)
 

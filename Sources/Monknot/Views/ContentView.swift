@@ -213,6 +213,7 @@ struct ContentView: View {
     private var terminalWorkingDirectory = TerminalWorkingDirectoryPreference.defaultValue.rawValue
     @SceneStorage("Monknot.isTerminalDrawerOpen") private var terminalPreferredVisible = false
     @State private var isTerminalVisible = false
+    @State private var isTerminalFullscreen = false
     @State private var terminalRevealRequest: UInt = 0
     @StateObject private var terminalFocusRestorer = TerminalFocusRestorer()
     @StateObject private var goToLineFocusRestorer = TerminalFocusRestorer()
@@ -541,6 +542,7 @@ struct ContentView: View {
                 WorkspaceSplitView(
                     isSidebarPresented: sidebarPreferredVisible,
                     isTerminalPresented: terminalPreferredVisible,
+                    isTerminalFullscreen: isTerminalFullscreen,
                     layoutScale: activeTheme.layoutScale(zoomScale: zoomScale),
                     separatorColor: NSColor(activeTheme.separatorColor),
                     accentColor: NSColor(activeTheme.accentColor),
@@ -815,6 +817,8 @@ struct ContentView: View {
                 usePointerCursors: usePointerCursors,
                 fontSmoothing: fontSmoothing,
                 showsChrome: true,
+                isFullscreen: isTerminalFullscreen,
+                toggleFullscreen: { toggleTerminalFullscreen(animated: true) },
                 close: { setTerminalDrawerPresented(false, animated: true) }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1858,6 +1862,8 @@ struct ContentView: View {
             setSearchWholeWord: { searchOptions.isWholeWord = $0 },
             canConfigureSearch: documentSearch.isPresented || workspaceSearch.isPresented,
             toggleTerminal: { toggleTerminalDrawer(animated: false) },
+            toggleTerminalFullscreen: { toggleTerminalFullscreen(animated: true) },
+            canToggleTerminalFullscreen: isTerminalVisible,
             toggleSidebar: { toggleSidebar(animated: false) },
             toggleSplitView: { toggleMarkdownSplitView() },
             canToggleSplitView: canToggleMarkdownSplitView,
@@ -2117,6 +2123,7 @@ struct ContentView: View {
             canToggleSplitView: canToggleMarkdownSplitView,
             canInspectLinks: canInspectLinks,
             canUndoWorkspaceReplace: store.canUndoWorkspaceReplace && !store.isBusy,
+            canToggleTerminalFullscreen: isTerminalVisible,
             isBusy: store.isBusy
         )
     }
@@ -2163,6 +2170,8 @@ struct ContentView: View {
             _ = pasteFromCommand()
         case .toggleTerminal:
             toggleTerminalDrawer(animated: false)
+        case .toggleTerminalFullscreen:
+            toggleTerminalFullscreen(animated: true)
         case .toggleSidebar:
             toggleSidebar(animated: false)
         case .undoPDFAnnotation:
@@ -2555,6 +2564,20 @@ struct ContentView: View {
         setTerminalDrawerPresented(!isTerminalVisible, animated: animated)
     }
 
+    private func toggleTerminalFullscreen(animated: Bool) {
+        guard isTerminalVisible else { return }
+        let updates = {
+            isTerminalFullscreen.toggle()
+        }
+        if animated && !reduceMotion {
+            withAnimation(MonknotMotion.terminalFullscreenTransition, updates)
+        } else {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction, updates)
+        }
+    }
+
     private func setTerminalDrawerPresented(_ isPresented: Bool, animated: Bool) {
         guard terminalPreferredVisible != isPresented || isTerminalVisible != isPresented else { return }
         let wasEffectivelyVisible = isTerminalVisible
@@ -2567,6 +2590,7 @@ struct ContentView: View {
             if isPresented {
                 terminalRevealRequest &+= 1
             } else {
+                isTerminalFullscreen = false
                 isTerminalVisible = false
             }
         }
@@ -2604,6 +2628,9 @@ struct ContentView: View {
         updateChromeState(animated: false) {
             if userInitiated {
                 terminalPreferredVisible = isPresented
+            }
+            if !isPresented {
+                isTerminalFullscreen = false
             }
             isTerminalVisible = isPresented
         }
@@ -2901,7 +2928,12 @@ private struct AmbiguousMarkdownLinkPicker: View {
                                 open(document.id)
                             } label: {
                                 HStack(spacing: scaled(8)) {
-                                    Image(systemName: document.kind.resolvedSystemImage)
+                                    MonknotFileKindGlyph(
+                                        systemImage: document.kind.resolvedSystemImage,
+                                        theme: theme,
+                                        zoomScale: zoomScale,
+                                        pointSizeBase: 14
+                                    )
                                         .foregroundStyle(theme.mutedForegroundColor)
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(document.displayName)

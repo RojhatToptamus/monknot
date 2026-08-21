@@ -1,6 +1,24 @@
 import MonknotCore
 import SwiftUI
 
+/// Shared search-field symbol with the same optical centering as search
+/// buttons. Point size can vary by role without changing the correction.
+struct MonknotSearchGlyph: View {
+    let theme: AppTheme
+    let zoomScale: Double
+    var pointSizeBase: CGFloat = 14
+
+    var body: some View {
+        MonknotSystemGlyph(
+            systemImage: "magnifyingglass",
+            nominalPointSizeBase: pointSizeBase,
+            theme: theme,
+            zoomScale: zoomScale
+        )
+            .accessibilityHidden(true)
+    }
+}
+
 struct MonknotSearchField: View {
     let placeholder: String
     @Binding var text: String
@@ -13,8 +31,11 @@ struct MonknotSearchField: View {
 
     var body: some View {
         HStack(spacing: MonknotMetrics.scale(MonknotMetrics.Spacing.s, theme: theme, zoomScale: zoomScale)) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: MonknotMetrics.scale(12, theme: theme, zoomScale: zoomScale), weight: .medium))
+            MonknotSearchGlyph(
+                theme: theme,
+                zoomScale: zoomScale,
+                pointSizeBase: 12
+            )
                 .foregroundStyle(theme.mutedForegroundColor)
 
             TextField(placeholder, text: $text)

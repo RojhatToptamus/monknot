@@ -27,6 +27,195 @@ final class WorkspaceSplitViewTests: XCTestCase {
         )
     }
 
+    func testTerminalFullscreenCoversDocumentAreaAndRestoresExactDockedGeometry() throws {
+        let autosaveName = "Monknot.WorkspaceSplitTests.Fullscreen.\(UUID().uuidString)"
+        defer { removeSplitAutosaveDefaults(named: autosaveName) }
+        let recorder = PresentationRecorder()
+        let controller = makeController(
+            autosaveName: autosaveName,
+            recorder: recorder
+        )
+        let window = mount(controller, width: 1_600)
+        defer {
+            window.orderOut(nil)
+            window.contentViewController = nil
+        }
+
+        controller.splitView.setPosition(340, ofDividerAt: 0)
+        controller.splitView.setPosition(
+            controller.splitView.bounds.width - 510 - controller.splitView.dividerThickness,
+            ofDividerAt: 1
+        )
+        layout(window, controller)
+
+        let sidebarWidth = paneWidth(controller.sidebarItem, in: controller)
+        let terminalWidth = paneWidth(controller.terminalItem, in: controller)
+        let detailView = paneView(controller.detailItem, in: controller)
+        let terminalView = paneView(controller.terminalItem, in: controller)
+
+        update(
+            controller,
+            sidebarPresented: true,
+            terminalPresented: true,
+            isTerminalFullscreen: true,
+            recorder: recorder,
+            animated: true
+        )
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.25))
+        layout(window, controller)
+
+        XCTAssertTrue(controller.isTerminalFullscreen)
+        XCTAssertTrue(controller.detailItem.isCollapsed)
+        XCTAssertTrue(detailView.isHidden)
+        XCTAssertEqual(paneWidth(controller.sidebarItem, in: controller), sidebarWidth, accuracy: 1)
+        XCTAssertTrue(paneView(controller.detailItem, in: controller) === detailView)
+        XCTAssertTrue(paneView(controller.terminalItem, in: controller) === terminalView)
+        XCTAssertEqual(
+            paneFrame(controller.terminalItem, in: controller).minX,
+            paneFrame(controller.sidebarItem, in: controller).maxX
+                + WorkspaceSplitMetrics.dividerThickness,
+            accuracy: 1
+        )
+        XCTAssertEqual(
+            paneFrame(controller.terminalItem, in: controller).maxX,
+            controller.splitView.bounds.maxX,
+            accuracy: 1
+        )
+        XCTAssertNil(controller.splitView.autosaveName)
+
+        let nativeSplit = try XCTUnwrap(controller.splitView as? WorkspaceNativeSplitView)
+        XCTAssertEqual(nativeSplit.disabledDividerIndices, [0, 1])
+        XCTAssertEqual(
+            controller.splitView(
+                nativeSplit,
+                effectiveRect: nativeSplit.bounds,
+                forDrawnRect: nativeSplit.bounds,
+                ofDividerAt: 1
+            ),
+            .zero
+        )
+
+        update(
+            controller,
+            sidebarPresented: true,
+            terminalPresented: true,
+            isTerminalFullscreen: false,
+            recorder: recorder,
+            animated: true
+        )
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.25))
+        layout(window, controller)
+
+        XCTAssertFalse(controller.isTerminalFullscreen)
+        XCTAssertFalse(controller.detailItem.isCollapsed)
+        XCTAssertFalse(detailView.isHidden)
+        XCTAssertEqual(paneWidth(controller.sidebarItem, in: controller), sidebarWidth, accuracy: 1)
+        XCTAssertEqual(paneWidth(controller.terminalItem, in: controller), terminalWidth, accuracy: 1)
+        XCTAssertEqual(nativeSplit.disabledDividerIndices, [])
+        XCTAssertEqual(controller.splitView.autosaveName, autosaveName)
+    }
+
+    func testClosingTerminalFromFullscreenClearsTheStateAndReopensAtDockedWidth() {
+        let recorder = PresentationRecorder()
+        let controller = makeController(recorder: recorder)
+        let window = mount(controller, width: 1_500)
+        defer {
+            window.orderOut(nil)
+            window.contentViewController = nil
+        }
+
+        controller.splitView.setPosition(
+            controller.splitView.bounds.width - 475 - controller.splitView.dividerThickness,
+            ofDividerAt: 1
+        )
+        layout(window, controller)
+        let dockedWidth = paneWidth(controller.terminalItem, in: controller)
+
+        update(
+            controller,
+            sidebarPresented: true,
+            terminalPresented: true,
+            isTerminalFullscreen: true,
+            recorder: recorder
+        )
+        layout(window, controller)
+        update(
+            controller,
+            sidebarPresented: true,
+            terminalPresented: false,
+            isTerminalFullscreen: false,
+            recorder: recorder
+        )
+        layout(window, controller)
+
+        XCTAssertFalse(controller.isTerminalFullscreen)
+        XCTAssertFalse(controller.detailItem.isCollapsed)
+        XCTAssertTrue(controller.terminalItem.isCollapsed)
+
+        update(
+            controller,
+            sidebarPresented: true,
+            terminalPresented: true,
+            isTerminalFullscreen: false,
+            terminalRevealRequest: 1,
+            recorder: recorder
+        )
+        layout(window, controller)
+
+        XCTAssertFalse(controller.terminalItem.isCollapsed)
+        XCTAssertEqual(paneWidth(controller.terminalItem, in: controller), dockedWidth, accuracy: 1)
+    }
+
+    func testTerminalFullscreenScalesItsRetainedDockedWidthWithWorkspaceZoom() {
+        let recorder = PresentationRecorder()
+        let controller = makeController(recorder: recorder)
+        let window = mount(controller, width: 2_200)
+        defer {
+            window.orderOut(nil)
+            window.contentViewController = nil
+        }
+
+        controller.splitView.setPosition(
+            controller.splitView.bounds.width - 400 - controller.splitView.dividerThickness,
+            ofDividerAt: 1
+        )
+        layout(window, controller)
+        let dockedWidth = paneWidth(controller.terminalItem, in: controller)
+
+        update(
+            controller,
+            sidebarPresented: true,
+            terminalPresented: true,
+            isTerminalFullscreen: true,
+            recorder: recorder
+        )
+        layout(window, controller)
+        update(
+            controller,
+            sidebarPresented: true,
+            terminalPresented: true,
+            isTerminalFullscreen: true,
+            layoutScale: 1.25,
+            recorder: recorder
+        )
+        layout(window, controller)
+        update(
+            controller,
+            sidebarPresented: true,
+            terminalPresented: true,
+            isTerminalFullscreen: false,
+            layoutScale: 1.25,
+            recorder: recorder
+        )
+        layout(window, controller)
+
+        XCTAssertEqual(
+            paneWidth(controller.terminalItem, in: controller),
+            dockedWidth * 1.25,
+            accuracy: 1
+        )
+    }
+
     func testCollapsedTerminalPaneHasNoVisibleContentResponder() {
         let controller = makeController(terminalPresented: true)
         let window = mount(controller, width: 1_400)
@@ -2529,6 +2718,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
     private func makeController(
         sidebarPresented: Bool = true,
         terminalPresented: Bool = true,
+        isTerminalFullscreen: Bool = false,
         layoutScale: CGFloat = 1,
         autosaveName: String? = nil,
         migratesLegacyLayout: Bool = false,
@@ -2542,6 +2732,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
             terminal: Color.black,
             isSidebarPresented: sidebarPresented,
             isTerminalPresented: terminalPresented,
+            isTerminalFullscreen: isTerminalFullscreen,
             layoutScale: layoutScale,
             separatorColor: .separatorColor,
             accentColor: .controlAccentColor,
@@ -2577,10 +2768,12 @@ final class WorkspaceSplitViewTests: XCTestCase {
         _ controller: TestWorkspaceSplitViewController,
         sidebarPresented: Bool,
         terminalPresented: Bool,
+        isTerminalFullscreen: Bool = false,
         layoutScale: CGFloat? = nil,
         sidebarRevealRequest: UInt = 0,
         terminalRevealRequest: UInt = 0,
-        recorder: PresentationRecorder
+        recorder: PresentationRecorder,
+        animated: Bool = false
     ) {
         controller.update(
             sidebar: Color.red,
@@ -2588,6 +2781,7 @@ final class WorkspaceSplitViewTests: XCTestCase {
             terminal: Color.black,
             isSidebarPresented: sidebarPresented,
             isTerminalPresented: terminalPresented,
+            isTerminalFullscreen: isTerminalFullscreen,
             layoutScale: layoutScale ?? controller.layoutScale,
             separatorColor: .separatorColor,
             accentColor: .controlAccentColor,
@@ -2604,7 +2798,8 @@ final class WorkspaceSplitViewTests: XCTestCase {
                     isPresented: isPresented,
                     userInitiated: userInitiated
                 ))
-            }
+            },
+            animated: animated
         )
     }
 

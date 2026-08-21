@@ -18,6 +18,7 @@ private func context(
     canUndoPDFAnnotation: Bool = false,
     canRedoPDFAnnotation: Bool = false,
     isDocumentSearchPresented: Bool = false,
+    canToggleTerminalFullscreen: Bool = false,
     isBusy: Bool = false
 ) -> MonknotKeyboardShortcutContext {
     MonknotKeyboardShortcutContext(
@@ -31,6 +32,7 @@ private func context(
         canUndoPDFAnnotation: canUndoPDFAnnotation,
         canRedoPDFAnnotation: canRedoPDFAnnotation,
         isDocumentSearchPresented: isDocumentSearchPresented,
+        canToggleTerminalFullscreen: canToggleTerminalFullscreen,
         isBusy: isBusy
     )
 }
@@ -123,6 +125,15 @@ expect(action("=", [.command]) == .zoomIn, "Command-= should zoom in")
 expect(action("-", [.command]) == .zoomOut, "Command-- should zoom out")
 expect(action("0", [.command]) == .resetZoom, "Command-0 should reset zoom")
 expect(action("j", [.command, .option]) == .toggleTerminal, "Option-Command-J should toggle the terminal")
+expect(
+    action("\r", [.command, .control], context: context(canToggleTerminalFullscreen: true))
+        == .toggleTerminalFullscreen,
+    "Control-Command-Return should toggle terminal fullscreen while the terminal is visible"
+)
+expect(
+    action("\r", [.command, .control]) == nil,
+    "Control-Command-Return should remain unhandled when the terminal is hidden"
+)
 expect(action("s", [.command, .control]) == .toggleSidebar, "Control-Command-S should toggle the sidebar")
 expect(action("o", [.command]) == .openFolder, "Command-O should open a folder")
 expect(action("?", []) == nil, "Question mark should remain available for typing")

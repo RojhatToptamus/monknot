@@ -13,6 +13,8 @@ struct TerminalDrawerView: View {
     let usePointerCursors: Bool
     let fontSmoothing: Bool
     var showsChrome = true
+    var isFullscreen = false
+    var toggleFullscreen: () -> Void = {}
     let close: () -> Void
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -37,6 +39,8 @@ struct TerminalDrawerView: View {
                         workspaceRoot: workspaceRoot,
                         theme: theme,
                         zoomScale: zoomScale,
+                        isFullscreen: isFullscreen,
+                        toggleFullscreen: toggleFullscreen,
                         close: close
                     )
                 }
@@ -83,6 +87,8 @@ struct TerminalDrawerChromeRow: View {
     var workspaceRoot: URL? = nil
     let theme: AppTheme
     let zoomScale: Double
+    var isFullscreen = false
+    var toggleFullscreen: () -> Void = {}
     let close: () -> Void
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -96,7 +102,9 @@ struct TerminalDrawerChromeRow: View {
                 workingDirectory: workingDirectory,
                 workspaceRoot: workspaceRoot,
                 theme: theme,
-                zoomScale: zoomScale
+                zoomScale: zoomScale,
+                isFullscreen: isFullscreen,
+                toggleFullscreen: toggleFullscreen
             )
             .frame(minWidth: scaled(60), maxWidth: .infinity)
             .layoutPriority(1)
@@ -125,6 +133,8 @@ private struct TerminalDrawerTabGroup: View {
     var workspaceRoot: URL? = nil
     let theme: AppTheme
     let zoomScale: Double
+    let isFullscreen: Bool
+    let toggleFullscreen: () -> Void
 
     @State private var viewportTabFrames: [String: CGRect] = [:]
     @State private var revealRequest = HorizontalTabRevealRequest()
@@ -215,6 +225,19 @@ private struct TerminalDrawerTabGroup: View {
                     .frame(width: 1, height: scaled(13))
 
                 MonknotIconButton(
+                    systemImage: isFullscreen
+                        ? "arrow.down.right.and.arrow.up.left"
+                        : "arrow.up.left.and.arrow.down.right",
+                    label: isFullscreen ? "Restore Terminal Panel" : "Expand Terminal Panel",
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    isActive: isFullscreen,
+                    size: .compact,
+                    action: toggleFullscreen
+                )
+                .accessibilityValue(isFullscreen ? "Fullscreen" : "Docked")
+
+                MonknotIconButton(
                     systemImage: "plus",
                     label: "New Terminal",
                     theme: theme,
@@ -230,8 +253,8 @@ private struct TerminalDrawerTabGroup: View {
     }
 
     private var fixedControlsWidth: CGFloat {
-        MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale)
-            + scaled(13)
+        MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale) * 2
+            + scaled(6) * 3
             + 1
     }
 
