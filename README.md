@@ -46,9 +46,10 @@
 **Editor** — Write Markdown and plain text with syntax highlighting, document
 tabs, search, and a formatting bar when you want one.
 
-**Writing assistance** — Review inline spelling and grammar fixes. On supported
-Macs, use private on-device sentence repair and autocomplete. Accepted fixes
-stay visible and undoable.
+**Writing assistance** — Apple checks spelling and grammar first. On supported
+Macs, a private on-device model can repair completed text when Apple has no
+complete fix. Model repairs always open a review before they change the
+document. Autocomplete and accepted fixes stay private, visible, and undoable.
 
 **Split** — Keep source and rendered output side by side, scrolling in sync.
 

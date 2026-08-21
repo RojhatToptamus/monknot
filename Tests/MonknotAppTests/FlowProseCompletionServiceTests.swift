@@ -130,39 +130,38 @@ final class FlowProseCompletionServiceTests: XCTestCase {
         )
     }
 
-    func testSanitizerRejectsReportedGenericTopicRestatement() {
-        let context = "We can write an essay on the importance of education in today’s world."
-        let genericRestatements = [
-            "Education is a fundamental aspect of human development, and its impact is broad.",
-            "Education is important for every person.",
-            "Education plays a key role in society.",
-            "Education remains vital to human development.",
+    func testSanitizerDoesNotEncodeAuthoredTopicVocabulary() {
+        let context = "We can outline why public parks matter in dense cities."
+        let structurallySafeCompletions = [
+            "Public parks are important for every neighborhood.",
+            "Public parks play a key role downtown.",
+            "Public parks remain vital to urban health.",
         ]
 
-        for candidate in genericRestatements {
-            XCTAssertNil(
+        for candidate in structurallySafeCompletions {
+            XCTAssertEqual(
                 FlowProseCompletionSanitizer.sanitize(candidate, context: context),
-                "Expected generic topic restatement rejection for: \(candidate)"
+                " \(candidate)"
             )
         }
     }
 
-    func testSanitizerAllowsSpecificEducationContinuations() {
-        let context = "We can write an essay on the importance of education in today’s world."
+    func testSanitizerAllowsSpecificTopicContinuations() {
+        let context = "We can outline why public parks matter in dense cities."
 
         XCTAssertEqual(
             FlowProseCompletionSanitizer.sanitize(
-                "That makes equal access the first policy question.",
+                "That makes equal access the first planning question.",
                 context: context
             ),
-            " That makes equal access the first policy question."
+            " That makes equal access the first planning question."
         )
         XCTAssertEqual(
             FlowProseCompletionSanitizer.sanitize(
-                "Education data from rural schools would sharpen the argument.",
+                "Survey data from outer districts would sharpen the argument.",
                 context: context
             ),
-            " Education data from rural schools would sharpen the"
+            " Survey data from outer districts would sharpen the"
         )
     }
 

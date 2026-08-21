@@ -175,7 +175,6 @@ enum EditorFlowDiagnosticOwner: String, Equatable {
 enum EditorFlowTerminalReason: String, Equatable {
     case clean
     case visibleDeterministicRepair
-    case visibleAIDirectRepair
     case visibleAIReviewOnlyRepair
     case visibleAutocomplete
     case protected
@@ -1229,1211 +1228,6 @@ enum EditorFlowCorrectionResolver {
         }
     }
 
-}
-
-struct EditorFlowValidatedRepair: Equatable {
-    let edits: [EditorFlowCorrectionEdit]
-    let acceptance: EditorFlowSuggestionAcceptance
-}
-
-enum EditorFlowSentenceRepairValidator {
-    private struct Word {
-        let range: NSRange
-        let text: String
-        let normalized: String
-    }
-
-    private static let functionWords: Set<String> = [
-        "a", "am", "an", "and", "are", "as", "at", "be", "because", "been", "being",
-        "but", "by", "can", "could", "did", "do", "does", "for", "from", "had",
-        "has", "have", "he", "her", "hers", "him", "his", "i", "if", "in", "is",
-        "it", "its", "may", "might", "must", "not", "of", "on", "or", "our",
-        "ours", "she", "should", "so", "that", "the", "their", "theirs", "them",
-        "they", "this", "those", "to", "us", "was", "we", "were", "will", "with",
-        "would", "you", "your", "yours",
-    ]
-
-    private static let semanticPivots: Set<String> = [
-        "all", "and", "any", "because", "both", "but", "can", "could",
-        "each", "either", "every", "few", "he", "her", "hers", "him", "his",
-        "i", "if", "it", "its", "many", "may", "might", "more", "most",
-        "must", "neither", "never", "no", "none", "nor", "not", "or", "our",
-        "ours", "she", "should", "so", "some", "that", "their", "theirs",
-        "them", "they", "this", "those", "unless", "us", "we", "while",
-        "will", "would", "yet", "you", "your", "yours",
-    ]
-
-    private static let directFunctionFamilies: [Set<String>] = [
-        ["a", "an"],
-        ["am", "are", "is"],
-        ["was", "were"],
-        ["do", "does"],
-        ["has", "have"],
-    ]
-
-    private static let reviewPreservedPivots = semanticPivots
-    private static let reviewRestrictedInsertions: Set<String> = [
-        "all", "any", "because", "both", "but", "can", "could", "each",
-        "either", "every", "few", "he", "her", "hers", "him", "his", "i",
-        "if", "it", "its", "many", "may", "might", "most", "must",
-        "neither", "never", "no", "none", "nor", "not", "or", "our",
-        "ours", "she", "should", "so", "their", "theirs", "them", "they",
-        "this", "those", "unless", "us", "we", "while", "would", "yet",
-        "will", "you", "your", "yours",
-    ]
-
-    static func validatedRepair(
-        originalSentence: String,
-        candidateSentence: String,
-        detectedIssues: [EditorFlowDetectedIssue]
-    ) -> EditorFlowValidatedRepair? {
-        // Identifiers are authored content, not proofreading syntax. They
-        // must survive every acceptance path.
-        guard identifierTokens(in: originalSentence) == identifierTokens(in: candidateSentence),
-              markdownDelimiterSignature(in: originalSentence)
-                  == markdownDelimiterSignature(in: candidateSentence)
-        else { return nil }
-
-        let issueRanges = detectedIssues.map(\.range)
-        let original = originalSentence as NSString
-        let candidate = candidateSentence as NSString
-        let runOnRepair = isLikelyRunOn(originalSentence)
-            && hasRunOnGrammarEvidence(
-                in: originalSentence,
-                detectedIssues: detectedIssues
-            )
-        guard !issueRanges.isEmpty,
-              original.length > 0,
-              candidate.length > 0,
-              abs(candidate.length - original.length) <= max(32, original.length / 3),
-              enclosureCharacters(in: originalSentence) == enclosureCharacters(in: candidateSentence),
-              quoteBoundarySignature(in: originalSentence)
-                  == quoteBoundarySignature(in: candidateSentence),
-              symbolScalars(in: originalSentence) == symbolScalars(in: candidateSentence),
-              reviewSemanticIntentIsPreserved(
-                  from: originalSentence,
-                  to: candidateSentence,
-                  detectedIssues: detectedIssues,
-                  permitsRunOnRepair: runOnRepair
-              ),
-              issueRanges.allSatisfy({ issue in
-                  issue.location >= 0
-                      && issue.length > 0
-                      && NSMaxRange(issue) <= original.length
-                      && issue.length <= max(64, original.length / 2)
-              }),
-              let reviewEdits = differenceEdits(
-                  originalSentence: originalSentence,
-                  candidateSentence: candidateSentence
-              ),
-              !reviewEdits.isEmpty,
-              reviewEdits.count <= 12,
-              reviewFunctionSubstitutionsAreSafe(
-                  reviewEdits,
-                  detectedIssues: detectedIssues
-              )
-        else { return nil }
-
-        guard reviewTerminalIntentIsPreserved(
-                  from: originalSentence,
-                  to: candidateSentence,
-                  permitsRunOnSplit: runOnRepair,
-                  detectedIssues: detectedIssues
-              ),
-              preservesProtectedWords(
-                  from: originalSentence,
-                  to: candidateSentence,
-                  detectedIssues: detectedIssues
-              ),
-              preservesContentAnchors(
-                  from: originalSentence,
-                  to: candidateSentence,
-                  detectedIssues: detectedIssues
-              ),
-              changesAreIssueScoped(
-                  reviewEdits,
-                  issueRanges: issueRanges,
-                  originalLength: original.length
-              )
-        else { return nil }
-
-        if isMechanicallyDirect(
-            reviewEdits,
-            detectedIssues: detectedIssues,
-            originalLength: original.length
-        ) {
-            return EditorFlowValidatedRepair(edits: reviewEdits, acceptance: .direct)
-        }
-        return EditorFlowValidatedRepair(edits: reviewEdits, acceptance: .reviewOnly)
-    }
-
-    private static func wordRanges(in text: String) -> [NSRange] {
-        var ranges: [NSRange] = []
-        text.enumerateSubstrings(
-            in: text.startIndex..<text.endIndex,
-            options: [.byWords, .substringNotRequired]
-        ) { _, range, _, _ in
-            ranges.append(NSRange(range, in: text))
-        }
-        return ranges
-    }
-
-    private static func words(in text: String) -> [Word] {
-        let source = text as NSString
-        return wordRanges(in: text).map { range in
-            let word = source.substring(with: range)
-            return Word(range: range, text: word, normalized: normalizedWord(word))
-        }
-    }
-
-    private static func differenceEdits(
-        originalSentence: String,
-        candidateSentence: String
-    ) -> [EditorFlowCorrectionEdit]? {
-        let originalSource = originalSentence as NSString
-        let candidateSource = candidateSentence as NSString
-        let originalWordRanges = wordRanges(in: originalSentence)
-        let candidateWordRanges = wordRanges(in: candidateSentence)
-        let originalWords = originalWordRanges.map { originalSource.substring(with: $0) }
-        let candidateWords = candidateWordRanges.map { candidateSource.substring(with: $0) }
-
-        // Exact words are stable anchors. Gaps between their longest common
-        // subsequence contain complete lexical replacements and any adjacent
-        // punctuation, so applying the resulting edits always reconstructs
-        // the candidate without splitting misspelled words into fragments.
-        var lengths = Array(
-            repeating: Array(repeating: 0, count: candidateWords.count + 1),
-            count: originalWords.count + 1
-        )
-        if !originalWords.isEmpty, !candidateWords.isEmpty {
-            for originalIndex in originalWords.indices.reversed() {
-                for candidateIndex in candidateWords.indices.reversed() {
-                    if originalWords[originalIndex] == candidateWords[candidateIndex] {
-                        lengths[originalIndex][candidateIndex] =
-                            lengths[originalIndex + 1][candidateIndex + 1] + 1
-                    } else {
-                        lengths[originalIndex][candidateIndex] = max(
-                            lengths[originalIndex + 1][candidateIndex],
-                            lengths[originalIndex][candidateIndex + 1]
-                        )
-                    }
-                }
-            }
-        }
-
-        var matches: [(original: Int, candidate: Int)] = []
-        var originalIndex = 0
-        var candidateIndex = 0
-        while originalIndex < originalWords.count,
-              candidateIndex < candidateWords.count {
-            if originalWords[originalIndex] == candidateWords[candidateIndex] {
-                matches.append((originalIndex, candidateIndex))
-                originalIndex += 1
-                candidateIndex += 1
-            } else if lengths[originalIndex + 1][candidateIndex]
-                        >= lengths[originalIndex][candidateIndex + 1] {
-                originalIndex += 1
-            } else {
-                candidateIndex += 1
-            }
-        }
-
-        func trimSharedNonlexicalEdges(
-            original: NSRange,
-            candidate: NSRange
-        ) -> (original: NSRange, candidate: NSRange) {
-            var original = original
-            var candidate = candidate
-            let lexical = CharacterSet.alphanumerics
-            while original.length > 0, candidate.length > 0 {
-                let originalCharacter = originalSource.rangeOfComposedCharacterSequence(
-                    at: original.location
-                )
-                let candidateCharacter = candidateSource.rangeOfComposedCharacterSequence(
-                    at: candidate.location
-                )
-                let originalText = originalSource.substring(with: originalCharacter)
-                let candidateText = candidateSource.substring(with: candidateCharacter)
-                guard originalText == candidateText,
-                      originalText.rangeOfCharacter(from: lexical) == nil
-                else { break }
-                original.location += originalCharacter.length
-                original.length -= originalCharacter.length
-                candidate.location += candidateCharacter.length
-                candidate.length -= candidateCharacter.length
-            }
-            while original.length > 0, candidate.length > 0 {
-                let originalCharacter = originalSource.rangeOfComposedCharacterSequence(
-                    at: NSMaxRange(original) - 1
-                )
-                let candidateCharacter = candidateSource.rangeOfComposedCharacterSequence(
-                    at: NSMaxRange(candidate) - 1
-                )
-                let originalText = originalSource.substring(with: originalCharacter)
-                let candidateText = candidateSource.substring(with: candidateCharacter)
-                guard originalText == candidateText,
-                      originalText.rangeOfCharacter(from: lexical) == nil
-                else { break }
-                original.length -= originalCharacter.length
-                candidate.length -= candidateCharacter.length
-            }
-            return (original, candidate)
-        }
-
-        var pairedRanges: [(original: NSRange, candidate: NSRange)] = []
-        var originalOffset = 0
-        var candidateOffset = 0
-        for match in matches {
-            let originalAnchor = originalWordRanges[match.original]
-            let candidateAnchor = candidateWordRanges[match.candidate]
-            let gap = trimSharedNonlexicalEdges(
-                original: NSRange(
-                    location: originalOffset,
-                    length: originalAnchor.location - originalOffset
-                ),
-                candidate: NSRange(
-                    location: candidateOffset,
-                    length: candidateAnchor.location - candidateOffset
-                )
-            )
-            if originalSource.substring(with: gap.original)
-                != candidateSource.substring(with: gap.candidate) {
-                pairedRanges.append(gap)
-            }
-            originalOffset = NSMaxRange(originalAnchor)
-            candidateOffset = NSMaxRange(candidateAnchor)
-        }
-        let finalGap = trimSharedNonlexicalEdges(
-            original: NSRange(
-                location: originalOffset,
-                length: originalSource.length - originalOffset
-            ),
-            candidate: NSRange(
-                location: candidateOffset,
-                length: candidateSource.length - candidateOffset
-            )
-        )
-        if originalSource.substring(with: finalGap.original)
-            != candidateSource.substring(with: finalGap.candidate) {
-            pairedRanges.append(finalGap)
-        }
-        guard !pairedRanges.isEmpty else { return nil }
-
-        let edits = pairedRanges.map { edit in
-            EditorFlowCorrectionEdit(
-                range: edit.original,
-                originalText: originalSource.substring(with: edit.original),
-                replacementText: candidateSource.substring(with: edit.candidate),
-                kind: .grammar
-            )
-        }
-        let rebuilt = NSMutableString(string: originalSentence)
-        for edit in edits.reversed() {
-            rebuilt.replaceCharacters(in: edit.range, with: edit.replacementText)
-        }
-        return rebuilt as String == candidateSentence ? edits : nil
-    }
-
-    private static func isMechanicallyDirect(
-        _ edits: [EditorFlowCorrectionEdit],
-        detectedIssues: [EditorFlowDetectedIssue],
-        originalLength: Int
-    ) -> Bool {
-        let issueRanges = detectedIssues.map(\.range)
-        guard edits.count <= 4,
-              changesAreIssueScoped(
-                  edits,
-                  issueRanges: issueRanges,
-                  originalLength: originalLength
-              ),
-              edits.reduce(0, { total, edit in
-                  total + edit.range.length + (edit.replacementText as NSString).length
-              }) <= max(24, originalLength / 3)
-        else { return false }
-
-        return edits.allSatisfy { edit in
-            let originalWords = words(in: edit.originalText)
-            let replacementWords = words(in: edit.replacementText)
-            if originalWords.isEmpty && replacementWords.isEmpty {
-                // Clause separators are structural even when the raw edit is
-                // punctuation-only. They always require explicit review;
-                // commas and terminal punctuation may remain direct.
-                return !edit.originalText.contains(where: { ";:".contains($0) })
-                    && !edit.replacementText.contains(where: { ";:".contains($0) })
-            }
-            if originalWords.isEmpty {
-                return replacementWords.count <= 2
-                    && replacementWords.allSatisfy {
-                        functionWords.contains($0.normalized)
-                            && !semanticPivots.contains($0.normalized)
-                    }
-            }
-            guard originalWords.count == replacementWords.count,
-                  originalWords.count <= 2
-            else { return false }
-            return zip(originalWords, replacementWords).allSatisfy { original, replacement in
-                if original.normalized == replacement.normalized {
-                    return true
-                }
-                let absoluteRange = NSRange(
-                    location: edit.range.location + original.range.location,
-                    length: original.range.length
-                )
-                if functionWords.contains(original.normalized)
-                    || functionWords.contains(replacement.normalized)
-                {
-                    let hasPreciseSpellingIssue = detectedIssues.contains { issue in
-                        issue.kind == .spelling
-                            && issue.hasPreciseRange
-                            && rangesTouch(absoluteRange, issue.range)
-                    }
-                    return isSafeDirectFunctionSubstitution(
-                        original.normalized,
-                        replacement.normalized
-                    )
-                        || absoluteRange.location == 0
-                            && ["teh", "hte"].contains(original.normalized)
-                            && replacement.normalized == "the"
-                            && hasPreciseSpellingIssue
-                }
-                return isConservativeDirectWordRepair(
-                    original.text,
-                    replacement.text
-                )
-                    && !isLikelyProperName(original.text)
-                    && detectedIssues.contains { issue in
-                        issue.kind == .spelling
-                            && issue.hasPreciseRange
-                            && rangesTouch(absoluteRange, issue.range)
-                    }
-            }
-        }
-    }
-
-    private static func reviewFunctionSubstitutionsAreSafe(
-        _ edits: [EditorFlowCorrectionEdit],
-        detectedIssues: [EditorFlowDetectedIssue]
-    ) -> Bool {
-        edits.allSatisfy { edit in
-            let originalWords = words(in: edit.originalText)
-            let replacementWords = words(in: edit.replacementText)
-            var remainingOriginalFunctions = originalWords.indices.filter {
-                functionWords.contains(originalWords[$0].normalized)
-            }
-            var remainingReplacementFunctions = replacementWords.indices.filter {
-                functionWords.contains(replacementWords[$0].normalized)
-            }
-
-            for originalIndex in remainingOriginalFunctions.reversed() {
-                guard let replacementPosition = remainingReplacementFunctions.firstIndex(where: {
-                    replacementWords[$0].normalized == originalWords[originalIndex].normalized
-                }) else { continue }
-                remainingOriginalFunctions.removeAll { $0 == originalIndex }
-                remainingReplacementFunctions.remove(at: replacementPosition)
-            }
-
-            for replacementPosition in remainingReplacementFunctions.indices.reversed() {
-                let replacement = replacementWords[
-                    remainingReplacementFunctions[replacementPosition]
-                ]
-                let repairsIssueWord = originalWords.contains { original in
-                    guard !functionWords.contains(original.normalized),
-                          isReviewIssueWordRepair(original.text, replacement.text)
-                    else { return false }
-                    let absoluteRange = NSRange(
-                        location: edit.range.location + original.range.location,
-                        length: original.range.length
-                    )
-                    return detectedIssues.contains { issue in
-                        issue.kind == .spelling
-                            && issue.hasPreciseRange
-                            && rangesTouch(absoluteRange, issue.range)
-                    }
-                }
-                if repairsIssueWord {
-                    remainingReplacementFunctions.remove(at: replacementPosition)
-                }
-            }
-
-            for originalIndex in remainingOriginalFunctions.reversed() {
-                guard let replacementPosition = remainingReplacementFunctions.firstIndex(where: {
-                    isSafeDirectFunctionSubstitution(
-                        originalWords[originalIndex].normalized,
-                        replacementWords[$0].normalized
-                    )
-                }) else { continue }
-                remainingOriginalFunctions.removeAll { $0 == originalIndex }
-                remainingReplacementFunctions.remove(at: replacementPosition)
-            }
-
-            // One-sided leftovers are insertions/deletions, which the issue
-            // scope and semantic-pivot guards validate. Opposing leftovers
-            // are an unsafe tense/definiteness substitution.
-            return remainingOriginalFunctions.isEmpty
-                || remainingReplacementFunctions.isEmpty
-        }
-    }
-
-    private static func isSafeDirectFunctionSubstitution(
-        _ original: String,
-        _ replacement: String
-    ) -> Bool {
-        guard functionWords.contains(original),
-              functionWords.contains(replacement),
-              !semanticPivots.contains(original),
-              !semanticPivots.contains(replacement)
-        else { return false }
-        return directFunctionFamilies.contains { family in
-            family.contains(original) && family.contains(replacement)
-        }
-    }
-
-    private static func changesAreIssueScoped(
-        _ edits: [EditorFlowCorrectionEdit],
-        issueRanges: [NSRange],
-        originalLength: Int
-    ) -> Bool {
-        let expandedIssues = issueRanges.map { issue in
-            let location = max(0, issue.location - 3)
-            return NSRange(
-                location: location,
-                length: min(originalLength, NSMaxRange(issue) + 3) - location
-            )
-        }
-        return edits.allSatisfy { edit in
-            expandedIssues.contains { rangesTouch(edit.range, $0) }
-        } && expandedIssues.allSatisfy { issue in
-            edits.contains { rangesTouch($0.range, issue) }
-        }
-    }
-
-    private static func rangesTouch(_ left: NSRange, _ right: NSRange) -> Bool {
-        if left.length == 0 {
-            return left.location >= right.location && left.location <= NSMaxRange(right)
-        }
-        if right.length == 0 {
-            return right.location >= left.location && right.location <= NSMaxRange(left)
-        }
-        return NSIntersectionRange(left, right).length > 0
-    }
-
-    private static func preservesProtectedWords(
-        from original: String,
-        to candidate: String,
-        detectedIssues: [EditorFlowDetectedIssue]
-    ) -> Bool {
-        let originalWords = words(in: original)
-        let candidateWords = words(in: candidate)
-        let repairsSentenceInitialProtectedWord: Bool = {
-            guard let originalWord = originalWords.first,
-                  let candidateWord = candidateWords.first,
-                  isLikelyProperName(originalWord.text),
-                  isKnownSentenceInitialSpellingRepair(
-                      originalWord.normalized,
-                      candidateWord.normalized
-                  ),
-                  detectedIssues.contains(where: { issue in
-                      issue.kind == .spelling
-                          && issue.hasPreciseRange
-                          && rangesTouch(originalWord.range, issue.range)
-                  })
-            else { return false }
-            return true
-        }()
-
-        func protectedWords(in sourceWords: [Word], droppingInitialRepair: Bool) -> [String] {
-            sourceWords.enumerated().compactMap { index, word in
-                if droppingInitialRepair && index == 0 { return nil }
-                let identifierLike = word.text.contains("_")
-                    || word.text.contains("-") && word.text.contains(where: \.isNumber)
-                return containsNumber(word.text) || isLikelyProperName(word.text) || identifierLike
-                    ? word.text
-                    : nil
-            }
-        }
-        return protectedWords(
-            in: originalWords,
-            droppingInitialRepair: repairsSentenceInitialProtectedWord
-        ) == protectedWords(
-            in: candidateWords,
-            droppingInitialRepair: repairsSentenceInitialProtectedWord
-        )
-    }
-
-    private static func reviewSemanticIntentIsPreserved(
-        from original: String,
-        to candidate: String,
-        detectedIssues: [EditorFlowDetectedIssue],
-        permitsRunOnRepair: Bool
-    ) -> Bool {
-        let originalWords = words(in: original)
-        let candidateWords = words(in: candidate)
-        let pivotsToPreserve = reviewPreservedPivots
-        let candidatePivots = candidateWords.filter {
-            pivotsToPreserve.contains($0.normalized)
-        }
-        let originalPivots = originalWords.filter {
-            pivotsToPreserve.contains($0.normalized)
-        }
-
-        var nextCandidateIndex = candidatePivots.startIndex
-        var matchedCandidateIndices = Set<Int>()
-        for originalPivot in originalPivots {
-            guard let match = candidatePivots.indices.dropFirst(nextCandidateIndex).first(where: {
-                candidatePivots[$0].normalized == originalPivot.normalized
-            }) else { return false }
-            matchedCandidateIndices.insert(match)
-            nextCandidateIndex = match + 1
-        }
-
-        let issueWords = originalWords.filter { word in
-            detectedIssues.contains { issue in
-                issue.kind == .spelling
-                    && issue.hasPreciseRange
-                    && rangesTouch(word.range, issue.range)
-            }
-        }
-        let subjectPronouns: Set<String> = ["he", "i", "it", "she", "they", "we", "you"]
-        let runOnConnectors: Set<String> = ["and", "because", "but", "so", "while", "yet"]
-        func repeatsLocallyInheritedRunOnSubject(_ inserted: Word) -> Bool {
-            guard permitsRunOnRepair,
-                  subjectPronouns.contains(inserted.normalized),
-                  let insertedIndex = candidateWords.firstIndex(where: {
-                      $0.range == inserted.range
-                  }),
-                  let candidateConnectorIndex = candidateWords.indices[..<insertedIndex]
-                    .last(where: {
-                        runOnConnectors.contains(candidateWords[$0].normalized)
-                    })
-            else { return false }
-
-            // The added subject must fill an elided subject after the nearest
-            // existing connector, not introduce a second actor in that clause.
-            guard !candidateWords.indices[(candidateConnectorIndex + 1)..<insertedIndex]
-                .contains(where: {
-                    subjectPronouns.contains(candidateWords[$0].normalized)
-                })
-            else { return false }
-
-            let connector = candidateWords[candidateConnectorIndex].normalized
-            let connectorOrdinal = candidateWords.indices[...candidateConnectorIndex]
-                .filter { candidateWords[$0].normalized == connector }
-                .count
-            let matchingOriginalConnectors = originalWords.indices.filter {
-                originalWords[$0].normalized == connector
-            }
-            guard connectorOrdinal > 0,
-                  connectorOrdinal <= matchingOriginalConnectors.count
-            else { return false }
-            let originalConnectorIndex = matchingOriginalConnectors[connectorOrdinal - 1]
-            guard let inheritedSubjectIndex = originalWords.indices[..<originalConnectorIndex]
-                .last(where: {
-                    subjectPronouns.contains(originalWords[$0].normalized)
-                })
-            else { return false }
-            return originalWords[inheritedSubjectIndex].normalized == inserted.normalized
-        }
-
-        var repeatedRunOnSubjectInsertions = 0
-        for index in candidatePivots.indices where !matchedCandidateIndices.contains(index) {
-            let inserted = candidatePivots[index]
-            let isOneRepeatedRunOnSubject = permitsRunOnRepair
-                && subjectPronouns.contains(inserted.normalized)
-                && originalPivots.contains(where: {
-                    $0.normalized == inserted.normalized
-                })
-                && candidatePivots.filter {
-                    $0.normalized == inserted.normalized
-                }.count <= originalPivots.filter {
-                    $0.normalized == inserted.normalized
-                }.count + 1
-                && repeatsLocallyInheritedRunOnSubject(inserted)
-            if isOneRepeatedRunOnSubject {
-                repeatedRunOnSubjectInsertions += 1
-                guard repeatedRunOnSubjectInsertions == 1 else { return false }
-            }
-            guard !reviewRestrictedInsertions.contains(inserted.normalized)
-                    || isOneRepeatedRunOnSubject
-                    || issueWords.contains(where: {
-                        isReviewIssueWordRepair($0.text, inserted.text)
-                    })
-            else { return false }
-        }
-        return true
-    }
-
-    private static func preservesContentAnchors(
-        from original: String,
-        to candidate: String,
-        detectedIssues: [EditorFlowDetectedIssue]
-    ) -> Bool {
-        let originalWords = words(in: original)
-        let candidateWords = words(in: candidate)
-        let originalContent = originalWords.filter {
-            !functionWords.contains($0.normalized)
-        }
-        let candidateContent = candidateWords.filter {
-            !functionWords.contains($0.normalized)
-        }
-        var unmatchedCandidateIndices = Array(candidateContent.indices)
-        var usedCandidateFunctionRanges = Set<NSRange>()
-        var repairedDuplicateGrammarIssues = Set<NSRange>()
-        var matchedAnchors: [(original: String, candidateIndex: Int)] = []
-
-        func preciseDuplicateGrammarIssue(
-            covering originalWord: Word
-        ) -> EditorFlowDetectedIssue? {
-            detectedIssues.first { issue in
-                guard issue.kind == .grammar,
-                      issue.hasPreciseRange,
-                      rangesTouch(originalWord.range, issue.range)
-                else { return false }
-                let coveredWords = originalWords.filter {
-                    NSIntersectionRange($0.range, issue.range).length > 0
-                }
-                guard coveredWords.count >= 2,
-                      let first = coveredWords.first,
-                      let last = coveredWords.last,
-                      issue.range.location <= first.range.location,
-                      NSMaxRange(issue.range) >= NSMaxRange(last.range)
-                else { return false }
-                return coveredWords.allSatisfy {
-                    $0.normalized == originalWord.normalized
-                }
-            }
-        }
-
-        for originalWord in originalContent {
-            if let remainingIndex = unmatchedCandidateIndices.firstIndex(where: {
-                candidateContent[$0].normalized == originalWord.normalized
-            }) {
-                let candidateIndex = unmatchedCandidateIndices.remove(at: remainingIndex)
-                matchedAnchors.append((originalWord.normalized, candidateIndex))
-                if let duplicateIssue = preciseDuplicateGrammarIssue(covering: originalWord) {
-                    repairedDuplicateGrammarIssues.insert(duplicateIssue.range)
-                }
-                continue
-            }
-
-            func issueAllowsRepair(to replacement: Word) -> Bool {
-                detectedIssues.contains { issue in
-                    guard issue.hasPreciseRange,
-                          rangesTouch(originalWord.range, issue.range)
-                    else { return false }
-                    switch issue.kind {
-                    case .spelling:
-                        return isReviewIssueWordRepair(
-                            originalWord.text,
-                            replacement.text
-                        )
-                    case .grammar:
-                        // Grammar result ranges can describe an entire clause.
-                        // Only a word-local span may authorize a conservative
-                        // inflection. A precise adjacent duplicate run may
-                        // also inflect its one retained occurrence; broad
-                        // ranges still cannot change content roots.
-                        let isLocalInflection = issue.range.length
-                            <= originalWord.range.length + 2
-                        let isDuplicateRun = preciseDuplicateGrammarIssue(
-                            covering: originalWord
-                        )?.range == issue.range
-                        return (isLocalInflection || isDuplicateRun)
-                            && isConservativeInflectionRepair(
-                                originalWord.text,
-                                replacement.text
-                            )
-                    }
-                }
-            }
-            if let remainingIndex = unmatchedCandidateIndices.firstIndex(where: {
-                issueAllowsRepair(to: candidateContent[$0])
-            }) {
-                let candidateIndex = unmatchedCandidateIndices.remove(at: remainingIndex)
-                matchedAnchors.append((originalWord.normalized, candidateIndex))
-                if let duplicateIssue = preciseDuplicateGrammarIssue(covering: originalWord) {
-                    repairedDuplicateGrammarIssues.insert(duplicateIssue.range)
-                }
-                continue
-            }
-            let hasPreciseSpellingIssue = detectedIssues.contains { issue in
-                issue.kind == .spelling
-                    && issue.hasPreciseRange
-                    && rangesTouch(originalWord.range, issue.range)
-            }
-            if hasPreciseSpellingIssue,
-               let repairedFunction = candidateWords.first(where: { candidateWord in
-                   functionWords.contains(candidateWord.normalized)
-                       && !usedCandidateFunctionRanges.contains(candidateWord.range)
-                       && isReviewIssueWordRepair(originalWord.text, candidateWord.text)
-               }) {
-                usedCandidateFunctionRanges.insert(repairedFunction.range)
-                continue
-            }
-            if let duplicateIssue = preciseDuplicateGrammarIssue(covering: originalWord),
-               repairedDuplicateGrammarIssues.contains(duplicateIssue.range) {
-                continue
-            }
-            return false
-        }
-        guard unmatchedCandidateIndices.isEmpty else { return false }
-
-        let originalFunctionCount = originalWords.filter {
-            functionWords.contains($0.normalized)
-        }.count
-        let candidateFunctionCount = candidateWords.filter {
-            functionWords.contains($0.normalized)
-        }.count
-        guard abs(candidateFunctionCount - originalFunctionCount) <= 4 else { return false }
-
-        let originalAnchorOrder = matchedAnchors.map(\.original)
-        let candidateAnchorOrder = matchedAnchors.sorted {
-            $0.candidateIndex < $1.candidateIndex
-        }.map(\.original)
-        return preservesAnchorOrder(
-            originalAnchorOrder,
-            candidateAnchorOrder
-        )
-    }
-
-    private static func preservesAnchorOrder(
-        _ original: [String],
-        _ candidate: [String]
-    ) -> Bool {
-        guard original.sorted() == candidate.sorted() else { return false }
-        guard original != candidate else { return true }
-        let movableModifiers: Set<String> = [
-            "afternoon", "afterward", "earlier", "evening", "later", "morning",
-            "now", "soon", "then", "today", "tomorrow", "tonight", "yesterday",
-        ]
-        for index in original.indices where movableModifiers.contains(original[index]) {
-            var originalWithoutModifier = original
-            originalWithoutModifier.remove(at: index)
-            var candidateWithoutModifier = candidate
-            guard let candidateIndex = candidateWithoutModifier.firstIndex(of: original[index]) else {
-                continue
-            }
-            candidateWithoutModifier.remove(at: candidateIndex)
-            if originalWithoutModifier == candidateWithoutModifier,
-               abs(candidateIndex - index) <= 3 {
-                return true
-            }
-        }
-        return false
-    }
-
-    private static func identifierTokens(in text: String) -> [String] {
-        var result: [String] = []
-        var token = ""
-
-        func appendTokenIfNeeded() {
-            guard !token.isEmpty else { return }
-            let isIdentifier = token.contains("_")
-                || token.contains("-")
-                || token.dropFirst().contains(where: \.isUppercase)
-            if isIdentifier {
-                result.append(token)
-            }
-            token.removeAll(keepingCapacity: true)
-        }
-
-        for character in text {
-            if character.isLetter || character.isNumber || character == "_" || character == "-" {
-                token.append(character)
-            } else {
-                appendTokenIfNeeded()
-            }
-        }
-        appendTokenIfNeeded()
-        return result
-    }
-
-    private static func markdownDelimiterSignature(in text: String) -> String {
-        let delimiters = CharacterSet(charactersIn: "*_`~")
-        return String(text.unicodeScalars.filter(delimiters.contains))
-    }
-
-    private static func isLikelyRunOn(_ text: String) -> Bool {
-        let normalized = words(in: text).map(\.normalized)
-        guard normalized.count >= 18,
-              sentenceTerminalScalars(in: text).count == 1,
-              text.rangeOfCharacter(from: CharacterSet(charactersIn: ",;:")) == nil
-        else { return false }
-        let connectors = normalized.filter {
-            ["and", "because", "but", "so", "while", "yet"].contains($0)
-        }.count
-        let subjects = normalized.filter {
-            ["he", "i", "it", "she", "they", "we", "you"].contains($0)
-        }.count
-        return (connectors >= 2 && subjects >= 2)
-            || (connectors >= 1 && subjects >= 3)
-    }
-
-    private static func hasRunOnGrammarEvidence(
-        in text: String,
-        detectedIssues: [EditorFlowDetectedIssue]
-    ) -> Bool {
-        let sourceLength = (text as NSString).length
-        let connectorRanges = words(in: text).filter {
-            ["and", "because", "but", "so", "while", "yet"].contains($0.normalized)
-        }.map(\.range)
-        guard !connectorRanges.isEmpty else { return false }
-
-        return detectedIssues.contains { issue in
-            guard issue.kind == .grammar,
-                  issue.hasPreciseRange,
-                  issue.range.location >= 0,
-                  issue.range.length > 0,
-                  NSMaxRange(issue.range) <= sourceLength
-            else { return false }
-            let location = max(0, issue.range.location - 3)
-            let expandedIssue = NSRange(
-                location: location,
-                length: min(sourceLength, NSMaxRange(issue.range) + 3) - location
-            )
-            return connectorRanges.contains { rangesTouch($0, expandedIssue) }
-        }
-    }
-
-    private static func reviewTerminalIntentIsPreserved(
-        from original: String,
-        to candidate: String,
-        permitsRunOnSplit: Bool,
-        detectedIssues: [EditorFlowDetectedIssue]
-    ) -> Bool {
-        if terminalIntentIsPreserved(from: original, to: candidate) {
-            return true
-        }
-        if sentenceTerminalScalars(in: original) == ".",
-           sentenceTerminalScalars(in: candidate) == "?",
-           finalTerminalRun(in: original) == ".",
-           finalTerminalRun(in: candidate) == "?",
-           endsWithQuestionForm(candidate),
-           let terminalRange = finalTerminalRange(in: original),
-           detectedIssues.contains(where: { issue in
-               issue.kind == .grammar
-                   && issue.hasPreciseRange
-                   && rangesTouch(terminalRange, issue.range)
-           }) {
-            return true
-        }
-        guard permitsRunOnSplit else { return false }
-        let originalTerminals = sentenceTerminalScalars(in: original)
-        let candidateTerminals = sentenceTerminalScalars(in: candidate)
-        return originalTerminals.count == 1
-            && (candidateTerminals.count == 1 || candidateTerminals.count == 2)
-            && finalTerminalRun(in: original) == finalTerminalRun(in: candidate)
-    }
-
-    private static func finalTerminalRange(in text: String) -> NSRange? {
-        let source = text as NSString
-        let terminals = CharacterSet(charactersIn: ".!?。！？")
-        let closers = CharacterSet(charactersIn: "\"'”’)]}»›")
-        var index = source.length - 1
-        while index >= 0,
-              let scalar = UnicodeScalar(source.character(at: index)),
-              CharacterSet.whitespacesAndNewlines.contains(scalar)
-                  || closers.contains(scalar) {
-            index -= 1
-        }
-        guard index >= 0,
-              let scalar = UnicodeScalar(source.character(at: index)),
-              terminals.contains(scalar)
-        else { return nil }
-        return source.rangeOfComposedCharacterSequence(at: index)
-    }
-
-    private static func endsWithQuestionForm(_ text: String) -> Bool {
-        let source = text as NSString
-        let clauseSeparators = CharacterSet(charactersIn: ";.!?。！？")
-        let terminalLocation = finalTerminalRange(in: text)?.location ?? source.length
-        var clauseStart = 0
-        for index in 0..<terminalLocation {
-            guard let scalar = UnicodeScalar(source.character(at: index)),
-                  clauseSeparators.contains(scalar)
-            else { continue }
-            clauseStart = index + 1
-        }
-        guard let firstClauseWord = words(in: text).first(where: {
-            $0.range.location >= clauseStart
-        }) else { return false }
-        return [
-            "are", "can", "could", "did", "do", "does", "how", "is", "may",
-            "should", "was", "were", "what", "when", "where", "which", "who",
-            "why", "will", "would",
-        ].contains(firstClauseWord.normalized)
-    }
-
-    private static func containsNumber(_ word: String) -> Bool {
-        word.unicodeScalars.contains { CharacterSet.decimalDigits.contains($0) }
-    }
-
-    private static func isConservativeWordRepair(
-        _ original: String,
-        _ replacement: String
-    ) -> Bool {
-        let left = Array(normalizedWord(original))
-        let right = Array(normalizedWord(replacement))
-        guard !left.isEmpty,
-              !right.isEmpty,
-              left.first == right.first
-        else { return false }
-        let maximumLength = max(left.count, right.count)
-        let allowedDistance = maximumLength >= 7 ? 2 : 1
-        guard abs(left.count - right.count) <= allowedDistance else { return false }
-        return editDistance(left, right) <= allowedDistance
-    }
-
-    private static func isConservativeDirectWordRepair(
-        _ original: String,
-        _ replacement: String
-    ) -> Bool {
-        let originalLength = normalizedWord(original).count
-        let replacementLength = normalizedWord(replacement).count
-        // A deletion can turn a misspelling into a different valid word
-        // (for example, `verfy` -> `very`). Apple can still offer that result
-        // for explicit review, but it is not mechanically safe for Tab.
-        return replacementLength >= originalLength
-            && isConservativeWordRepair(original, replacement)
-    }
-
-    private static func isConservativeInflectionRepair(
-        _ original: String,
-        _ replacement: String
-    ) -> Bool {
-        let left = normalizedWord(original)
-        let right = normalizedWord(replacement)
-        guard !left.isEmpty, !right.isEmpty, left != right else { return false }
-
-        let suffixes = ["s", "es", "ed", "ing"]
-        if suffixes.contains(where: { left + $0 == right || right + $0 == left }) {
-            return true
-        }
-        if left.hasSuffix("y"), String(left.dropLast()) + "ies" == right {
-            return true
-        }
-        if right.hasSuffix("y"), String(right.dropLast()) + "ies" == left {
-            return true
-        }
-        return false
-    }
-
-    private static func isReviewIssueWordRepair(
-        _ original: String,
-        _ replacement: String
-    ) -> Bool {
-        let left = Array(normalizedWord(original))
-        let right = Array(normalizedWord(replacement))
-        guard !left.isEmpty,
-              !right.isEmpty
-        else { return false }
-        let maximumLength = max(left.count, right.count)
-        let allowedDistance = maximumLength >= 7
-            ? 4
-            : min(3, max(1, Int(ceil(Double(maximumLength) * 0.45))))
-        var remaining = right
-        var sharedCharacterCount = 0
-        for character in left {
-            if let index = remaining.firstIndex(of: character) {
-                sharedCharacterCount += 1
-                remaining.remove(at: index)
-            }
-        }
-        guard abs(left.count - right.count) <= allowedDistance,
-              sharedCharacterCount * 5 >= maximumLength * 3
-        else { return false }
-        return editDistance(left, right) <= allowedDistance
-    }
-
-    private static func normalizedWord(_ word: String) -> String {
-        word.folding(
-            options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
-            locale: .current
-        ).filter { $0.isLetter || $0.isNumber }
-    }
-
-    private static func editDistance(
-        _ left: [Character],
-        _ right: [Character]
-    ) -> Int {
-        var previous = Array(0...right.count)
-        var previousPrevious: [Int]?
-        for leftIndex in left.indices {
-            var current = Array(repeating: 0, count: right.count + 1)
-            current[0] = leftIndex + 1
-            for rightIndex in right.indices {
-                let substitution = previous[rightIndex]
-                    + (left[leftIndex] == right[rightIndex] ? 0 : 1)
-                var value = min(
-                    previous[rightIndex + 1] + 1,
-                    current[rightIndex] + 1,
-                    substitution
-                )
-                if leftIndex > 0,
-                   rightIndex > 0,
-                   left[leftIndex] == right[right.index(before: rightIndex)],
-                   left[left.index(before: leftIndex)] == right[rightIndex],
-                   let previousPrevious {
-                    value = min(value, previousPrevious[rightIndex - 1] + 1)
-                }
-                current[rightIndex + 1] = value
-            }
-            previousPrevious = previous
-            previous = current
-        }
-        return previous[right.count]
-    }
-
-    private static func isLikelyProperName(_ word: String) -> Bool {
-        guard let first = word.first else { return false }
-        return (first.isUppercase && word.dropFirst().contains(where: { $0.isLetter }))
-            || word.dropFirst().contains(where: { $0.isUppercase })
-    }
-
-    private static func isKnownSentenceInitialSpellingRepair(
-        _ original: String,
-        _ replacement: String
-    ) -> Bool {
-        switch (original, replacement) {
-        case ("teh", "the"), ("hte", "the"), ("recieve", "receive"), ("ths", "this"):
-            return true
-        default:
-            return false
-        }
-    }
-
-    private static func enclosureCharacters(in text: String) -> String {
-        // Curly single quotes are also apostrophes inside words (for example,
-        // `can’t`). Paired quoted claims are protected separately above.
-        let protected = CharacterSet(charactersIn: "()[]{}\"“”«»‹›")
-        return String(text.unicodeScalars.filter { protected.contains($0) })
-    }
-
-    private static func quoteBoundarySignature(in text: String) -> [String] {
-        let source = text as NSString
-        let sourceWords = words(in: text)
-        let openingQuotes = CharacterSet(charactersIn: "“«‹‘")
-        let closingQuotes = CharacterSet(charactersIn: "”»›’")
-        let straightQuotes = CharacterSet(charactersIn: "\"'")
-        var result: [String] = []
-        var straightQuoteIsOpen = true
-
-        var location = 0
-        while location < source.length {
-            let range = source.rangeOfComposedCharacterSequence(at: location)
-            let fragment = source.substring(with: range)
-            guard let scalar = fragment.unicodeScalars.first else {
-                location = NSMaxRange(range)
-                continue
-            }
-
-            let isApostrophe = (scalar == "'" || scalar == "’")
-                && location > 0
-                && NSMaxRange(range) < source.length
-                && UnicodeScalar(source.character(at: location - 1)).map {
-                    CharacterSet.letters.contains($0)
-                } == true
-                && UnicodeScalar(source.character(at: NSMaxRange(range))).map {
-                    CharacterSet.letters.contains($0)
-                } == true
-            if isApostrophe {
-                location = NSMaxRange(range)
-                continue
-            }
-
-            let isOpening: Bool
-            if openingQuotes.contains(scalar) {
-                isOpening = true
-            } else if closingQuotes.contains(scalar) {
-                isOpening = false
-            } else if straightQuotes.contains(scalar) {
-                isOpening = straightQuoteIsOpen
-                straightQuoteIsOpen.toggle()
-            } else {
-                location = NSMaxRange(range)
-                continue
-            }
-
-            if isOpening {
-                let anchor = sourceWords.last(where: { NSMaxRange($0.range) <= location })
-                    .map(\.normalized) ?? "^"
-                result.append("open:\(anchor)")
-            } else {
-                let anchor = sourceWords.first(where: {
-                    $0.range.location >= NSMaxRange(range)
-                }).map(\.normalized) ?? "$"
-                result.append("close:\(anchor)")
-            }
-            location = NSMaxRange(range)
-        }
-        return result
-    }
-
-    private static func symbolScalars(in text: String) -> [UnicodeScalar] {
-        text.unicodeScalars.filter { scalar in
-            switch scalar.properties.generalCategory {
-            case .mathSymbol, .currencySymbol, .modifierSymbol, .otherSymbol:
-                return true
-            default:
-                return false
-            }
-        }
-    }
-
-    private static func terminalIntentIsPreserved(
-        from original: String,
-        to candidate: String
-    ) -> Bool {
-        let originalTerminals = sentenceTerminalScalars(in: original)
-        let candidateTerminals = sentenceTerminalScalars(in: candidate)
-        if originalTerminals.isEmpty {
-            return candidateTerminals.isEmpty
-                || hasOneFinalPeriod(in: candidate)
-        }
-        return originalTerminals == candidateTerminals
-            && finalTerminalRun(in: original) == finalTerminalRun(in: candidate)
-    }
-
-    private static func hasOneFinalPeriod(in text: String) -> Bool {
-        let terminals = sentenceTerminalScalars(in: text)
-        guard terminals == "." || terminals == "。" else { return false }
-        let closers = CharacterSet(charactersIn: "\"'”’)]}»›")
-        let source = text.trimmingCharacters(in: .whitespaces) as NSString
-        var index = source.length - 1
-        while index >= 0,
-              let scalar = UnicodeScalar(source.character(at: index)),
-              closers.contains(scalar) {
-            index -= 1
-        }
-        guard index >= 0,
-              let scalar = UnicodeScalar(source.character(at: index))
-        else { return false }
-        return scalar == "." || scalar == "。"
-    }
-
-    private static func sentenceTerminalScalars(in text: String) -> String {
-        let terminals = CharacterSet(charactersIn: ".!?。！？")
-        return String(text.unicodeScalars.filter(terminals.contains))
-    }
-
-    private static func finalTerminalRun(in text: String) -> String {
-        let terminals = CharacterSet(charactersIn: ".!?。！？")
-        let closers = CharacterSet(charactersIn: "\"'”’)]}»›")
-        let source = text.trimmingCharacters(in: .whitespaces) as NSString
-        var end = source.length
-        while end > 0,
-              let scalar = UnicodeScalar(source.character(at: end - 1)),
-              closers.contains(scalar) {
-            end -= 1
-        }
-        var start = end
-        while start > 0,
-              let scalar = UnicodeScalar(source.character(at: start - 1)),
-              terminals.contains(scalar) {
-            start -= 1
-        }
-        guard start < end else { return "" }
-        return source.substring(with: NSRange(location: start, length: end - start))
-    }
 }
 
 enum EditorFlowCheckPlanner {
@@ -4842,10 +3636,13 @@ struct MarkdownTextEditor: NSViewRepresentable {
             )
         }
 
-        private func finishSentenceRepairClear(requestsAutocomplete: Bool) {
+        private func finishSentenceRepairClear(
+            requestsAutocomplete: Bool,
+            reason: EditorFlowTerminalReason = .clean
+        ) {
             sentenceRepairFailureCooldown = nil
             sentenceRepairGate = .clear
-            finishDiagnosticAttempt(owner: .sentenceRepair, reason: .clean)
+            finishDiagnosticAttempt(owner: .sentenceRepair, reason: reason)
             if pendingProseRemainder != nil {
                 if presentPendingProseRemainderIfReady() {
                     return
@@ -5133,9 +3930,20 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     finishSentenceRepairBlocked()
                     return
                 }
-                finishSentenceRepairClear(
-                    requestsAutocomplete: snapshot.requestsAutocompleteAfterClear
-                )
+                if snapshot.offersSentenceBatch,
+                   flowCheckingOptions.onDeviceProseCompletions {
+                    attemptAISentenceRepair(
+                        appleFoundIssues: false,
+                        snapshot: snapshot,
+                        token: token,
+                        documentTag: documentTag,
+                        locale: Self.repairLocale(from: orthography)
+                    )
+                } else {
+                    finishSentenceRepairClear(
+                        requestsAutocomplete: snapshot.requestsAutocompleteAfterClear
+                    )
+                }
                 return
             }
             guard snapshot.offersSentenceBatch else {
@@ -5341,7 +4149,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
             ) == false {
                 finishAppleCandidatesUnresolved(
                     candidatesToPresent,
-                    detectedIssues: detectedIssues,
                     snapshot: snapshot,
                     token: token,
                     documentTag: documentTag,
@@ -5352,7 +4159,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         private func finishAppleCandidatesUnresolved(
             _ candidates: [EditorFlowCorrectionCandidate],
-            detectedIssues: [EditorFlowDetectedIssue],
             snapshot: EditorFlowCheckSnapshot,
             token: Int,
             documentTag: Int,
@@ -5363,7 +4169,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 finishSentenceRepairUnresolved(reason: .suppressedDuplicate)
             } else {
                 attemptAISentenceRepair(
-                    detectedIssues: detectedIssues,
+                    appleFoundIssues: true,
                     snapshot: snapshot,
                     token: token,
                     documentTag: documentTag,
@@ -5529,9 +4335,15 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     && edit.replacementText.filter { $0.isLetter || $0.isNumber }.count
                         < edit.originalText.filter { $0.isLetter || $0.isNumber }.count
             }
+            let hasLexicalGrammarRepair = selectedEdits.contains { edit in
+                guard edit.kind == .grammar else { return false }
+                return edit.originalText.contains { $0.isLetter || $0.isNumber }
+                    || edit.replacementText.contains { $0.isLetter || $0.isNumber }
+            }
             let acceptance: EditorFlowSuggestionAcceptance = forcesReview
                 || reviewAlternatives != nil
                 || hasLetterDeletingSpellingRepair
+                || hasLexicalGrammarRepair
                 ? .reviewOnly
                 : .direct
             let suggestion = EditorFlowSuggestion(
@@ -5573,27 +4385,22 @@ struct MarkdownTextEditor: NSViewRepresentable {
         }
 
         private func attemptAISentenceRepair(
-            detectedIssues: [EditorFlowDetectedIssue],
+            appleFoundIssues: Bool,
             snapshot: EditorFlowCheckSnapshot,
             token: Int,
             documentTag: Int,
             locale: Locale
         ) {
-            // The conservative semantic validator currently has explicit
-            // English function-word and clause rules. Keep other locales on
-            // Apple spelling/grammar and native prediction rather than imply
-            // broader AI safety than we can validate.
-            guard Self.supportsAISentenceRepairValidation(locale) else {
-                finishSentenceRepairUnresolved(reason: .validationRejected)
-                return
-            }
             guard !isSentenceRepairCoolingDown(for: snapshot) else {
-                finishSentenceRepairUnresolved(reason: .retryCoolingDown)
+                finishAISentenceRepairWithoutSuggestion(
+                    appleFoundIssues: appleFoundIssues,
+                    snapshot: snapshot,
+                    reason: .retryCoolingDown
+                )
                 return
             }
             guard snapshot.offersSentenceBatch,
                   flowCheckingOptions.onDeviceProseCompletions,
-                  !detectedIssues.isEmpty,
                   isCurrentFlowSnapshot(snapshot, token: token),
                   let textView,
                   protectedRanges(for: snapshot, in: textView) != nil,
@@ -5602,11 +4409,19 @@ struct MarkdownTextEditor: NSViewRepresentable {
                       locale: locale
                   )
             else {
-                finishSentenceRepairUnresolved()
+                finishAISentenceRepairWithoutSuggestion(
+                    appleFoundIssues: appleFoundIssues,
+                    snapshot: snapshot,
+                    reason: .unresolvedAppleResult
+                )
                 return
             }
             guard flowSentenceRepairService.isAvailable(for: locale) else {
-                finishSentenceRepairUnresolved(reason: .modelUnavailable)
+                finishAISentenceRepairWithoutSuggestion(
+                    appleFoundIssues: appleFoundIssues,
+                    snapshot: snapshot,
+                    reason: .modelUnavailable
+                )
                 return
             }
 
@@ -5619,7 +4434,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 guard !Task.isCancelled else { return }
                 self?.receiveAISentenceRepair(
                     outcome,
-                    detectedIssues: detectedIssues,
+                    appleFoundIssues: appleFoundIssues,
                     snapshot: snapshot,
                     token: token,
                     documentTag: documentTag
@@ -5630,7 +4445,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         private func receiveAISentenceRepair(
             _ outcome: FlowModelOutcome,
-            detectedIssues: [EditorFlowDetectedIssue],
+            appleFoundIssues: Bool,
             snapshot: EditorFlowCheckSnapshot,
             token: Int,
             documentTag: Int
@@ -5649,19 +4464,46 @@ struct MarkdownTextEditor: NSViewRepresentable {
             case let .success(value):
                 candidateSentence = value
             case .unavailable:
-                finishSentenceRepairUnresolved(reason: .modelUnavailable)
+                finishAISentenceRepairWithoutSuggestion(
+                    appleFoundIssues: appleFoundIssues,
+                    snapshot: snapshot,
+                    reason: .modelUnavailable
+                )
                 return
             case .failed:
-                recordSentenceRepairFailureCooldown(for: snapshot)
-                finishSentenceRepairUnresolved(reason: .modelFailed)
+                finishAISentenceRepairWithoutSuggestion(
+                    appleFoundIssues: appleFoundIssues,
+                    snapshot: snapshot,
+                    reason: .modelFailed,
+                    recordsCooldown: true
+                )
                 return
             case .timedOut:
-                recordSentenceRepairFailureCooldown(for: snapshot)
-                finishSentenceRepairUnresolved(reason: .modelTimedOut)
+                finishAISentenceRepairWithoutSuggestion(
+                    appleFoundIssues: appleFoundIssues,
+                    snapshot: snapshot,
+                    reason: .modelTimedOut,
+                    recordsCooldown: true
+                )
                 return
             case .validationRejected:
-                recordSentenceRepairFailureCooldown(for: snapshot)
-                finishSentenceRepairUnresolved(reason: .validationRejected)
+                finishAISentenceRepairWithoutSuggestion(
+                    appleFoundIssues: appleFoundIssues,
+                    snapshot: snapshot,
+                    reason: .validationRejected,
+                    recordsCooldown: true
+                )
+                return
+            }
+            guard candidateSentence != snapshot.checkedText else {
+                sentenceRepairFailureCooldown = nil
+                if appleFoundIssues {
+                    finishSentenceRepairUnresolved(reason: .validationRejected)
+                } else {
+                    finishSentenceRepairClear(
+                        requestsAutocomplete: snapshot.requestsAutocompleteAfterClear
+                    )
+                }
                 return
             }
             guard Self.protectedFragments(
@@ -5671,22 +4513,19 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     in: snapshot.checkedText,
                     mode: snapshot.sourceMode
                   ),
-                  let validatedRepair = EditorFlowSentenceRepairValidator.validatedRepair(
+                  let validatedEdits = EditorFlowAIRepairValidator.edits(
                     originalSentence: snapshot.checkedText,
-                    candidateSentence: candidateSentence,
-                    detectedIssues: detectedIssues
+                    candidateSentence: candidateSentence
                   )
             else {
-                recordSentenceRepairFailureCooldown(for: snapshot)
-                finishSentenceRepairUnresolved(reason: .validationRejected)
+                finishAISentenceRepairWithoutSuggestion(
+                    appleFoundIssues: appleFoundIssues,
+                    snapshot: snapshot,
+                    reason: .validationRejected,
+                    recordsCooldown: true
+                )
                 return
             }
-            let reviewedRepair = detectedIssues.allSatisfy(\.hasPreciseRange)
-                ? validatedRepair
-                : EditorFlowValidatedRepair(
-                    edits: validatedRepair.edits,
-                    acceptance: .reviewOnly
-                )
             let unifiedTypes = NSTextCheckingResult.CheckingType.orthography.rawValue
                 | NSTextCheckingResult.CheckingType.spelling.rawValue
                 | NSTextCheckingResult.CheckingType.correction.rawValue
@@ -5705,7 +4544,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 DispatchQueue.main.async { [weak self] in
                     self?.finishAISentenceRepairValidation(
                         candidateSentence: candidateSentence,
-                        validatedRepair: reviewedRepair,
+                        validatedEdits: validatedEdits,
+                        appleFoundIssues: appleFoundIssues,
                         results: results,
                         orthography: orthography,
                         snapshot: snapshot,
@@ -5717,7 +4557,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         private func finishAISentenceRepairValidation(
             candidateSentence: String,
-            validatedRepair: EditorFlowValidatedRepair,
+            validatedEdits: [EditorFlowCorrectionEdit],
+            appleFoundIssues: Bool,
             results: [NSTextCheckingResult],
             orthography: NSOrthography?,
             snapshot: EditorFlowCheckSnapshot,
@@ -5738,11 +4579,15 @@ struct MarkdownTextEditor: NSViewRepresentable {
                   let textView,
                   let protectedRanges = protectedRanges(for: snapshot, in: textView)
             else {
-                recordSentenceRepairFailureCooldown(for: snapshot)
-                finishSentenceRepairUnresolved(reason: .validationRejected)
+                finishAISentenceRepairWithoutSuggestion(
+                    appleFoundIssues: appleFoundIssues,
+                    snapshot: snapshot,
+                    reason: .validationRejected,
+                    recordsCooldown: true
+                )
                 return
             }
-            let absoluteEdits = validatedRepair.edits.map { edit in
+            let absoluteEdits = validatedEdits.map { edit in
                 EditorFlowCorrectionEdit(
                     range: NSRange(
                         location: snapshot.checkedRange.location + edit.range.location,
@@ -5778,7 +4623,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 originalSentence: snapshot.checkedText,
                 correctedSentence: candidateSentence,
                 source: .ai,
-                acceptance: validatedRepair.acceptance,
+                acceptance: .reviewOnly,
                 edits: absoluteEdits
             )
             guard textView.isFlowSuggestionAnchorVisible(suggestion) else {
@@ -5789,9 +4634,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             sentenceRepairGate = .blocked
             finishDiagnosticAttempt(
                 owner: .sentenceRepair,
-                reason: validatedRepair.acceptance == .direct
-                    ? .visibleAIDirectRepair
-                    : .visibleAIReviewOnlyRepair
+                reason: .visibleAIReviewOnlyRepair
             )
             guard textView.presentFlowSuggestion(suggestion) else {
                 sentenceRepairGate = .nativeFallback
@@ -5799,6 +4642,25 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 return
             }
             refreshNativeFlowAvailability()
+        }
+
+        private func finishAISentenceRepairWithoutSuggestion(
+            appleFoundIssues: Bool,
+            snapshot: EditorFlowCheckSnapshot,
+            reason: EditorFlowTerminalReason,
+            recordsCooldown: Bool = false
+        ) {
+            if recordsCooldown, appleFoundIssues {
+                recordSentenceRepairFailureCooldown(for: snapshot)
+            }
+            if appleFoundIssues {
+                finishSentenceRepairUnresolved(reason: reason)
+            } else {
+                finishSentenceRepairClear(
+                    requestsAutocomplete: snapshot.requestsAutocompleteAfterClear,
+                    reason: reason
+                )
+            }
         }
 
         private static func protectedFragments(
@@ -6034,7 +4896,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
             ) == false {
                 finishAppleCandidatesUnresolved(
                     resolvedCandidates,
-                    detectedIssues: detectedIssues,
                     snapshot: snapshot,
                     token: token,
                     documentTag: textView?.spellCheckerDocumentTag ?? 0,
@@ -6082,16 +4943,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         private static func repairLocale(from orthography: NSOrthography?) -> Locale {
             guard let language = orthography?.dominantLanguage,
-                  !language.isEmpty
+                  !language.isEmpty,
+                  Locale(identifier: language).language.languageCode
+                    != Locale.LanguageCode("und")
             else { return .current }
             return Locale(identifier: language)
-        }
-
-        private static func supportsAISentenceRepairValidation(_ locale: Locale) -> Bool {
-            let identifier = locale.identifier.lowercased()
-            return identifier == "en"
-                || identifier.hasPrefix("en_")
-                || identifier.hasPrefix("en-")
         }
 
         private static func validationSentence(

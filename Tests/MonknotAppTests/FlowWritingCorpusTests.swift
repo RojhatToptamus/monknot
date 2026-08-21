@@ -73,7 +73,6 @@ final class FlowWritingCorpusTests: XCTestCase {
             case .exactDeterministic:
                 XCTAssertNotEqual(testCase.input, testCase.referenceText, testCase.id)
                 XCTAssertEqual(testCase.expectedFinalText, testCase.referenceText, testCase.id)
-                XCTAssertNil(testCase.aiClassification, testCase.id)
                 XCTAssertFalse(testCase.mutations.isEmpty, testCase.id)
                 XCTAssertTrue(testCase.protectedFragments.isEmpty, testCase.id)
             case .aiInvariant:
@@ -83,13 +82,11 @@ final class FlowWritingCorpusTests: XCTestCase {
                     testCase.conservativeCandidateFixture ?? testCase.referenceText,
                     testCase.id
                 )
-                XCTAssertNotNil(testCase.aiClassification, testCase.id)
                 XCTAssertFalse(testCase.mutations.isEmpty, testCase.id)
                 XCTAssertTrue(testCase.protectedFragments.isEmpty, testCase.id)
             case .protectedUnsafe:
                 XCTAssertNotEqual(testCase.input, testCase.referenceText, testCase.id)
                 XCTAssertEqual(testCase.expectedFinalText, testCase.input, testCase.id)
-                XCTAssertNil(testCase.aiClassification, testCase.id)
                 XCTAssertFalse(testCase.mutationManifest.isEmpty, testCase.id)
                 XCTAssertFalse(testCase.mutations.isEmpty, testCase.id)
                 XCTAssertFalse(testCase.protectedFragments.isEmpty, testCase.id)
@@ -99,7 +96,6 @@ final class FlowWritingCorpusTests: XCTestCase {
             case .clean:
                 XCTAssertEqual(testCase.input, testCase.referenceText, testCase.id)
                 XCTAssertEqual(testCase.expectedFinalText, testCase.input, testCase.id)
-                XCTAssertNil(testCase.aiClassification, testCase.id)
                 XCTAssertTrue(testCase.mutations.isEmpty, testCase.id)
                 XCTAssertTrue(testCase.protectedFragments.isEmpty, testCase.id)
             }
@@ -126,57 +122,29 @@ final class FlowWritingCorpusTests: XCTestCase {
             Set(FlowWritingMutationKind.allCases)
         )
 
-        let directAI = FlowWritingCorpus.repairCases.filter {
-            $0.aiClassification == .direct
-        }
-        let reviewOnlyAI = FlowWritingCorpus.repairCases.filter {
-            $0.aiClassification == .reviewOnly
-        }
-        XCTAssertEqual(directAI.count, 4)
-        XCTAssertEqual(reviewOnlyAI.count, 16)
-        let directMutationKinds: Set<FlowWritingMutationKind> = [
-            .spelling,
-            .adjacentTransposition,
-            .missingShortWord,
-            .subjectVerbAgreement,
-            .wrongArticle,
-            .wrongPreposition,
-            .missingComma,
-            .incorrectPunctuation,
-            .capitalization,
-        ]
-        for testCase in directAI {
-            XCTAssertTrue(
-                testCase.mutations.allSatisfy(directMutationKinds.contains),
-                "Direct AI fixture contains a structural mutation: \(testCase.id)"
-            )
-        }
-        XCTAssertTrue(reviewOnlyAI.contains { $0.mutations.contains(.duplicatedWord) })
-        XCTAssertTrue(reviewOnlyAI.contains { $0.mutations.contains(.localReorder) })
-        XCTAssertTrue(reviewOnlyAI.contains { $0.mutations.contains(.runOnClause) })
+        let aiCases = FlowWritingCorpus.repairCases.filter { $0.expectation == .aiInvariant }
+        XCTAssertEqual(aiCases.count, 20)
+        XCTAssertTrue(aiCases.contains { $0.mutations.contains(.duplicatedWord) })
+        XCTAssertTrue(aiCases.contains { $0.mutations.contains(.localReorder) })
+        XCTAssertTrue(aiCases.contains { $0.mutations.contains(.runOnClause) })
 
-        let reported = FlowWritingCorpus.repairCases.first { $0.id == "repair-ai-001" }
+        let generated = FlowWritingCorpus.repairCases.first { $0.id == "repair-ai-001" }
         XCTAssertEqual(
-            reported?.input,
-            "I am nt be able to come today because yesterday I got sick so badly and now cannot get out of the bed wirhgth now."
+            generated?.input,
+            "My ankle did nt improve overnight after the new exercises the swelling look worse and the clinic have not replyed yet."
         )
-        XCTAssertEqual(reported?.aiClassification, .reviewOnly)
         XCTAssertEqual(
-            reported?.conservativeCandidateFixture,
-            "I am not able to come today because yesterday I got sick so badly, and now I cannot get out of the bed right now."
+            generated?.conservativeCandidateFixture,
+            "My ankle did not improve overnight after the new exercises; the swelling looks worse, and the clinic has not replied yet."
         )
     }
 
-    func testAutocompleteCorpusHasEightCasesPerClassAndRequiredRegressions() {
+    func testAutocompleteCorpusHasExpectedCasesAndRequiredRegressions() {
         let cases = FlowWritingCorpus.autocompleteCases
         XCTAssertEqual(Set(cases.map(\.id)).count, 24)
-        for expectation in FlowWritingAutocompleteExpectation.allCases {
-            XCTAssertEqual(
-                cases.filter { $0.expectation == expectation }.count,
-                8,
-                expectation.rawValue
-            )
-        }
+        XCTAssertEqual(cases.filter { $0.expectation == .useful }.count, 9)
+        XCTAssertEqual(cases.filter { $0.expectation == .restatementOrGeneric }.count, 7)
+        XCTAssertEqual(cases.filter { $0.expectation == .unsafe }.count, 8)
 
         for testCase in cases {
             XCTAssertFalse(testCase.context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -193,10 +161,10 @@ final class FlowWritingCorpusTests: XCTestCase {
             }
         }
 
-        let reported = cases.first { $0.id == "autocomplete-restatement-001" }
-        XCTAssertEqual(reported?.context, "Hello im wiritng this to exprs that")
+        let restatement = cases.first { $0.id == "autocomplete-restatement-001" }
+        XCTAssertEqual(restatement?.context, "Hello im wiritng this to exprs that")
         XCTAssertEqual(
-            reported?.modelOutput,
+            restatement?.modelOutput,
             "Hello, I’m writing this to express that I’m…"
         )
         XCTAssertTrue(cases.contains {
@@ -206,8 +174,8 @@ final class FlowWritingCorpusTests: XCTestCase {
             $0.context == "We agreed adn" && $0.modelOutput == "and continue"
         })
         XCTAssertTrue(cases.contains {
-            $0.expectation == .restatementOrGeneric
-                && $0.context.localizedCaseInsensitiveContains("education")
+            $0.expectation == .useful
+                && $0.context.localizedCaseInsensitiveContains("public parks")
         })
     }
 
@@ -288,71 +256,6 @@ final class FlowWritingCorpusTests: XCTestCase {
                 "QA artifact must number \(id) exactly once"
             )
         }
-    }
-
-    func testCompletedSignedAppQARunContainsEveryFrozenCaseWithoutPlaceholders() throws {
-        let runURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("Fixtures/FlowWritingCorpusQARun-2026-08-16.md")
-        let run = try String(contentsOf: runURL, encoding: .utf8)
-
-        XCTAssertFalse(run.contains("___"))
-        XCTAssertEqual(
-            run.components(separatedBy: "### Case ").count - 1,
-            FlowWritingCorpus.qaSampleIDs.count
-        )
-        for id in FlowWritingCorpus.qaSampleIDs {
-            XCTAssertEqual(
-                run.components(separatedBy: "`\(id)`").count - 1,
-                1,
-                "Completed QA run must contain \(id) exactly once"
-            )
-        }
-    }
-
-    func testFinalSignedAppQAFollowUpRecordMatchesRecordedScope() throws {
-        let fixturesURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("Fixtures")
-        let record = try String(
-            contentsOf: fixturesURL.appendingPathComponent(
-                "FlowWritingCorpusQAFollowUp-2026-08-16-final03.md"
-            ),
-            encoding: .utf8
-        )
-
-        XCTAssertFalse(record.contains("___"))
-        XCTAssertEqual(record.components(separatedBy: "## Observation ").count - 1, 4)
-        let rerunSections = record.components(separatedBy: "## Full fixed-sample rerun")
-        XCTAssertEqual(rerunSections.count, 2)
-        let rerunTail = try XCTUnwrap(rerunSections.last)
-        let rerun = try XCTUnwrap(
-            rerunTail.components(
-                separatedBy: "\n## Post-audit build boundary"
-            ).first
-        )
-        XCTAssertTrue(rerun.contains("exactly 10 were typed and 10 used real Command-V paste"))
-        for id in FlowWritingCorpus.qaSampleIDs {
-            XCTAssertEqual(
-                rerun.components(separatedBy: "`\(id)`").count - 1,
-                1,
-                "Final03 rerun must contain \(id) exactly once"
-            )
-        }
-        XCTAssertEqual(
-            record.components(
-                separatedBy: "## Async spelling-candidate build boundary — 2026-08-17"
-            ).count - 1,
-            1
-        )
-        XCTAssertTrue(record.contains("Deep and strict code-signature verification passed."))
-        XCTAssertTrue(record.contains("automated hosted-editor evidence, not a signed-app observation"))
-        XCTAssertTrue(record.contains("This targeted check is not a full fixed-sample rerun"))
-        XCTAssertTrue(record.contains("No current04 UI behavior is claimed."))
-        XCTAssertTrue(record.contains("that build offered `very` for `repair-exact-023`"))
-        XCTAssertTrue(record.contains("No latest-clone UI behavior is claimed"))
     }
 
     private func wordCount(in text: String) -> Int {

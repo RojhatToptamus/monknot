@@ -121,14 +121,6 @@ struct FlowProseCompletionWordSplit: Equatable, Sendable {
 enum FlowProseCompletionSanitizer {
     static let maximumVisibleWordCount = 8
     static let maximumVisibleGraphemeCount = 64
-    private static let genericTopicAdjectives: Set<String> = [
-        "critical", "crucial", "essential", "fundamental", "important",
-        "key", "major", "significant", "vital",
-    ]
-    private static let genericTopicNouns: Set<String> = [
-        "aspect", "component", "element", "factor", "foundation", "part",
-        "pillar", "role",
-    ]
 
     static func sanitize(_ rawCompletion: String, context: String) -> String? {
         var candidate = rawCompletion.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -146,8 +138,7 @@ enum FlowProseCompletionSanitizer {
               wordRanges(in: candidate).count <= 12,
               candidate.count <= 96,
               let capped = cappedContinuation(candidate),
-              !repeatsEarlierContext(capped, context: context),
-              !isGenericTopicRestatement(capped, context: context)
+              !repeatsEarlierContext(capped, context: context)
         else {
             return nil
         }
@@ -455,39 +446,6 @@ enum FlowProseCompletionSanitizer {
                     }
                 }
             }
-        }
-        return false
-    }
-
-    private static func isGenericTopicRestatement(_ candidate: String, context: String) -> Bool {
-        let candidateTokens = normalizedLexicalTokens(in: candidate)
-        let contextTokens = normalizedLexicalTokens(in: context)
-        guard candidateTokens.count >= 3,
-              contextTokens.contains(candidateTokens[0])
-        else { return false }
-
-        if ["is", "are", "remains"].contains(candidateTokens[1]) {
-            if genericTopicAdjectives.contains(candidateTokens[2]) {
-                return true
-            }
-            if ["a", "an", "the"].contains(candidateTokens[2]), candidateTokens.count >= 4 {
-                if genericTopicNouns.contains(candidateTokens[3]) {
-                    return true
-                }
-                if candidateTokens.count >= 5,
-                   genericTopicAdjectives.contains(candidateTokens[3]),
-                   genericTopicNouns.contains(candidateTokens[4]) {
-                    return true
-                }
-            }
-        }
-
-        if candidateTokens[1] == "plays",
-           candidateTokens.count >= 5,
-           ["a", "an", "the"].contains(candidateTokens[2]),
-           genericTopicAdjectives.contains(candidateTokens[3]),
-           candidateTokens[4] == "role" {
-            return true
         }
         return false
     }
