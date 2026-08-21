@@ -171,6 +171,13 @@ struct MarkdownSourceToolbar: View {
     let text: String
     let sendCommand: (MarkdownTextEditorCommand) -> Void
 
+    static let controlSize = MonknotIconButton.IconButtonSize.editorToolbar
+    static let expandedHeadingWidthBase: CGFloat = 100
+    static let compactHeadingWidthBase: CGFloat = 104
+    static let headingFontSizeBase: CGFloat = 13
+    static let headingChevronFontSizeBase: CGFloat = 10
+    static let headingChevronBaselineOffsetBase: CGFloat = 3.2
+
     static let regularActionGroups = [
         [
             MarkdownToolbarActionDescriptor(systemImage: "bold", label: "Bold", command: .bold),
@@ -196,10 +203,6 @@ struct MarkdownSourceToolbar: View {
 
     private func textScaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    private func glyphScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -260,43 +263,51 @@ struct MarkdownSourceToolbar: View {
     }
 
     private var expandedHeadingMenu: some View {
-        headingMenu(width: scaled(92))
+        headingMenu(width: scaled(Self.expandedHeadingWidthBase))
     }
 
     private var compactHeadingMenu: some View {
-        headingMenu(width: scaled(104))
+        headingMenu(width: scaled(Self.compactHeadingWidthBase))
     }
 
     private func headingMenu(width: CGFloat) -> some View {
-        let shape = RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale))
+        let dimension = Self.controlSize.dimension(theme: theme, zoomScale: zoomScale)
+        let shape = RoundedRectangle(
+            cornerRadius: Self.controlSize.cornerRadius(theme: theme, zoomScale: zoomScale)
+        )
 
         return Menu {
             blockStyleCommands
         } label: {
-            HStack(spacing: scaled(7)) {
-                Text("Paragraph")
-                    .font(.system(size: textScaled(12), weight: .medium))
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Image(systemName: "chevron.down")
-                    .font(.system(size: glyphScaled(9), weight: .semibold))
-                    .foregroundStyle(theme.mutedForegroundColor)
-            }
-            .foregroundStyle(theme.foregroundColor)
-            .padding(.horizontal, scaled(10))
-            .frame(
-                width: width,
-                height: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)
-            )
-            .background(shape.fill(theme.controlTrackFillColor))
-            .contentShape(shape)
+            headingMenuLabel
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, scaled(10))
+                .frame(width: width, height: dimension)
+                .background(shape.fill(theme.controlTrackFillColor))
+                .contentShape(shape)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .buttonStyle(.plain)
         .help("Block Style")
         .accessibilityLabel("Block Style")
+    }
+
+    private var headingMenuLabel: Text {
+        // macOS Menu extracts only one label value: standalone Images move to
+        // the leading icon slot and later sibling views are discarded. Keep
+        // the title, scalable spacing, and indicator in one composed Text. The
+        // arrowhead's SF Pro ink sits 3.2pt below the title's optical center.
+        Text("Paragraph")
+            .font(.system(size: textScaled(Self.headingFontSizeBase), weight: .regular))
+            .foregroundColor(theme.foregroundColor)
+        + Text(verbatim: "\u{2002}")
+            .font(.system(size: textScaled(Self.headingFontSizeBase), weight: .regular))
+        + Text(verbatim: "⌄")
+            .font(.system(size: textScaled(Self.headingChevronFontSizeBase), weight: .regular))
+            .baselineOffset(textScaled(Self.headingChevronBaselineOffsetBase))
+            .foregroundColor(theme.mutedForegroundColor)
     }
 
     private var blockStyleIconMenu: some View {
@@ -372,11 +383,17 @@ struct MarkdownSourceToolbar: View {
     }
 
     private func toolbarMenuLabel(systemImage: String) -> some View {
-        let dimension = MonknotMetrics.interfaceControl(30, theme: theme, zoomScale: zoomScale)
-        let shape = RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale))
+        let dimension = Self.controlSize.dimension(theme: theme, zoomScale: zoomScale)
+        let shape = RoundedRectangle(
+            cornerRadius: Self.controlSize.cornerRadius(theme: theme, zoomScale: zoomScale)
+        )
 
-        return Image(systemName: systemImage)
-            .font(.system(size: glyphScaled(18), weight: .regular))
+        return MonknotSystemGlyph(
+            systemImage: systemImage,
+            nominalPointSizeBase: 17,
+            theme: theme,
+            zoomScale: zoomScale
+        )
             .foregroundStyle(theme.mutedForegroundColor)
             .frame(width: dimension, height: dimension)
             .contentShape(shape)
@@ -402,7 +419,7 @@ struct MarkdownSourceToolbar: View {
             label: label,
             theme: theme,
             zoomScale: zoomScale,
-            size: .editorToolbar,
+            size: Self.controlSize,
             action: { sendCommand(command) }
         )
     }

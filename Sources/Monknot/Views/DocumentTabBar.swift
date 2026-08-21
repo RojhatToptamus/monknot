@@ -17,19 +17,23 @@ enum DocumentTabWidthPolicy {
             theme: theme,
             zoomScale: zoomScale
         )
-        let documentGlyph = MonknotMetrics.interfaceGlyph(15, theme: theme, zoomScale: zoomScale)
+        let documentGlyphColumn = MonknotMetrics.interfaceGlyph(
+            MonknotMetrics.rowIconColumnWidthBase,
+            theme: theme,
+            zoomScale: zoomScale
+        )
         let outerPadding = MonknotMetrics.interfaceDensity(20, theme: theme, zoomScale: zoomScale)
         let labelGaps = MonknotMetrics.interfaceDensity(16, theme: theme, zoomScale: zoomScale)
         let fixedControls: CGFloat
         if isPinned {
             fixedControls = MonknotMetrics.interfaceDensity(18, theme: theme, zoomScale: zoomScale)
                 + labelGaps
-                + documentGlyph
+                + documentGlyphColumn
                 + MonknotMetrics.interfaceGlyph(9, theme: theme, zoomScale: zoomScale)
         } else {
             fixedControls = outerPadding
                 + labelGaps
-                + documentGlyph
+                + documentGlyphColumn
                 + MonknotTabCloseButton.dimension(theme: theme, zoomScale: zoomScale)
         }
         return min(maximumTabWidth, labelWidth + fixedControls)
@@ -262,10 +266,6 @@ private struct DocumentTabItemView: View {
         MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
     }
 
-    private var titlebarGlyphSize: CGFloat {
-        MonknotMetrics.interfaceGlyph(15, theme: theme, zoomScale: zoomScale)
-    }
-
     private var chromeRowHeight: CGFloat {
         MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
     }
@@ -274,13 +274,12 @@ private struct DocumentTabItemView: View {
         HStack(spacing: 0) {
             Button(action: select) {
                 HStack(spacing: scaled(8)) {
-                    Image(systemName: documentIconName)
-                        .font(.system(
-                            size: titlebarGlyphSize,
-                            weight: .regular
-                        ))
+                    MonknotFileKindGlyph(
+                        systemImage: documentIconName,
+                        theme: theme,
+                        zoomScale: zoomScale
+                    )
                         .foregroundStyle(iconColor)
-                        .frame(width: titlebarGlyphSize)
                         .overlay(alignment: .bottomTrailing) {
                             if tab.isPinned, !saveState.isClean {
                                 Circle()

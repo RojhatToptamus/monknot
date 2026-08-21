@@ -217,10 +217,8 @@ struct TopNavigationBar: View {
 
     private var documentSearchBar: some View {
         HStack(spacing: scaled(8)) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: glyphScaled(14), weight: .medium))
+            MonknotSearchGlyph(theme: theme, zoomScale: zoomScale)
                 .foregroundStyle(theme.mutedForegroundColor)
-                .accessibilityHidden(true)
 
             Rectangle()
                 .fill(theme.borderColor)

@@ -82,21 +82,29 @@ struct MonknotIconButton: View {
         }
 
         func iconSize(theme: AppTheme, zoomScale: Double) -> CGFloat {
+            MonknotMetrics.interfaceGlyph(
+                iconPointSizeBase,
+                theme: theme,
+                zoomScale: zoomScale
+            )
+        }
+
+        var iconPointSizeBase: CGFloat {
             switch self {
             case .chrome:
-                return MonknotMetrics.chromeGlyphSize(theme: theme, zoomScale: zoomScale)
+                return MonknotMetrics.iconPointSizeBase
             case .windowNavigation:
-                return MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale)
+                return 16
             case .sidebarHeader:
-                return MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale)
+                return 16
             case .compact:
-                return MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale)
+                return 16
             case .findBar:
-                return MonknotMetrics.interfaceGlyph(17, theme: theme, zoomScale: zoomScale)
+                return 17
             case .editorToolbar:
-                return MonknotMetrics.interfaceGlyph(18, theme: theme, zoomScale: zoomScale)
+                return 17
             case .segmented:
-                return MonknotMetrics.interfaceGlyph(18, theme: theme, zoomScale: zoomScale)
+                return 18
             }
         }
 
@@ -160,12 +168,12 @@ struct MonknotIconButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(
-                    size: size.iconSize(theme: theme, zoomScale: zoomScale),
-                    weight: size.iconWeight
-                ))
-                .symbolRenderingMode(.monochrome)
+            MonknotSystemGlyph(
+                systemImage: systemImage,
+                nominalPointSizeBase: size.iconPointSizeBase,
+                theme: theme,
+                zoomScale: zoomScale
+            )
                 .foregroundStyle(iconColor)
                 .frame(
                     width: size.dimension(theme: theme, zoomScale: zoomScale),

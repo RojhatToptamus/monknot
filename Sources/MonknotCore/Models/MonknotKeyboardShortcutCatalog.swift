@@ -29,6 +29,7 @@ public enum MonknotKeyboardShortcutCatalog {
         MonknotKeyboardShortcutHelpEntry(title: "Find Previous", shortcut: "⇧⌘G"),
         MonknotKeyboardShortcutHelpEntry(title: "Pin or Unpin Tab", shortcut: "⇧⌘P"),
         MonknotKeyboardShortcutHelpEntry(title: "Toggle Terminal", shortcut: "⌥⌘J"),
+        MonknotKeyboardShortcutHelpEntry(title: "Toggle Terminal Fullscreen", shortcut: "⌃⌘↩"),
         MonknotKeyboardShortcutHelpEntry(title: "Toggle Sidebar", shortcut: "⌃⌘S"),
         MonknotKeyboardShortcutHelpEntry(title: "Toggle Split Editor", shortcut: "⌘\\"),
         MonknotKeyboardShortcutHelpEntry(title: "Show Writing Tools (macOS 15.2+)", shortcut: "⌃⌘R"),

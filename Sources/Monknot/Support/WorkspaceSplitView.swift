@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import SwiftUI
 
 /// The native owner of Monknot's sidebar, document area, and terminal layout.
@@ -9,6 +10,7 @@ import SwiftUI
 struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewControllerRepresentable {
     let isSidebarPresented: Bool
     let isTerminalPresented: Bool
+    let isTerminalFullscreen: Bool
     let layoutScale: CGFloat
     let separatorColor: NSColor
     let accentColor: NSColor
@@ -25,6 +27,7 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
     init(
         isSidebarPresented: Bool,
         isTerminalPresented: Bool,
+        isTerminalFullscreen: Bool = false,
         layoutScale: CGFloat,
         separatorColor: NSColor,
         accentColor: NSColor,
@@ -38,6 +41,7 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
     ) {
         self.isSidebarPresented = isSidebarPresented
         self.isTerminalPresented = isTerminalPresented
+        self.isTerminalFullscreen = isTerminalFullscreen
         self.layoutScale = layoutScale
         self.separatorColor = separatorColor
         self.accentColor = accentColor
@@ -59,6 +63,7 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
             terminal: terminal(),
             isSidebarPresented: isSidebarPresented,
             isTerminalPresented: isTerminalPresented,
+            isTerminalFullscreen: isTerminalFullscreen,
             layoutScale: layoutScale,
             separatorColor: separatorColor,
             accentColor: accentColor,
@@ -79,6 +84,7 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
             terminal: terminal(),
             isSidebarPresented: isSidebarPresented,
             isTerminalPresented: isTerminalPresented,
+            isTerminalFullscreen: isTerminalFullscreen,
             layoutScale: layoutScale,
             separatorColor: separatorColor,
             accentColor: accentColor,
@@ -154,6 +160,22 @@ final class WorkspaceNativeSplitView: NSSplitView {
             window?.invalidateCursorRects(for: self)
         }
     }
+    var disabledDividerIndices: Set<Int> = [] {
+        didSet {
+            if let hoveredDividerIndex, disabledDividerIndices.contains(hoveredDividerIndex) {
+                setHoveredDivider(nil)
+            }
+            window?.invalidateCursorRects(for: self)
+        }
+    }
+    var isTerminalFullscreen = false {
+        didSet {
+            guard oldValue != isTerminalFullscreen else { return }
+            needsLayout = true
+            needsDisplay = true
+            window?.invalidateCursorRects(for: self)
+        }
+    }
     // The final value is the pointer-requested divider position before any
     // native minimum-width clamp, not a second pane-width owner.
     var didFinishDraggingDivider: ((Int, CGFloat?, CGFloat?) -> Void)?
@@ -163,7 +185,11 @@ final class WorkspaceNativeSplitView: NSSplitView {
     private var pointerTrackingArea: NSTrackingArea?
 
     override var mouseDownCanMoveWindow: Bool { false }
-    override var dividerThickness: CGFloat { WorkspaceSplitMetrics.dividerThickness }
+    override var dividerThickness: CGFloat {
+        isTerminalFullscreen
+            ? WorkspaceSplitMetrics.dividerThickness / 2
+            : WorkspaceSplitMetrics.dividerThickness
+    }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
@@ -178,6 +204,23 @@ final class WorkspaceNativeSplitView: NSSplitView {
 
     override func drawDivider(in rect: NSRect) {
         let index = dividerIndex(nearest: rect.midX)
+        if isTerminalFullscreen {
+            guard index == 0,
+                  arrangedSubviews.indices.contains(0),
+                  arrangedSubviews.indices.contains(2) else {
+                return
+            }
+            let sidebarEdge = arrangedSubviews[0].frame.maxX
+            let terminalEdge = arrangedSubviews[2].frame.minX
+            separatorColor.setFill()
+            NSRect(
+                x: (sidebarEdge + terminalEdge) / 2 - 0.5,
+                y: rect.minY,
+                width: 1,
+                height: rect.height
+            ).fill()
+            return
+        }
         let isActive = index == activeDividerIndex
         let isHovered = index == hoveredDividerIndex
         let lineWidth: CGFloat = isActive ? rect.width : (isHovered ? min(2, rect.width) : 1)
@@ -223,7 +266,7 @@ final class WorkspaceNativeSplitView: NSSplitView {
 
     override func resetCursorRects() {
         super.resetCursorRects()
-        for index in dividerIndices {
+        for index in dividerIndices where !disabledDividerIndices.contains(index) {
             addCursorRect(centerBiasedHitRect(forDividerAt: index), cursor: horizontalResizeCursor)
         }
     }
@@ -339,7 +382,10 @@ final class WorkspaceNativeSplitView: NSSplitView {
     }
 
     private func dividerIndex(containing point: NSPoint) -> Int? {
-        dividerIndices.first { centerBiasedHitRect(forDividerAt: $0).contains(point) }
+        dividerIndices.first {
+            !disabledDividerIndices.contains($0)
+                && centerBiasedHitRect(forDividerAt: $0).contains(point)
+        }
     }
 
     private func dividerIndex(nearest x: CGFloat) -> Int? {
@@ -376,6 +422,7 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
 
     private(set) var preferredSidebarPresentation: Bool
     private(set) var preferredTerminalPresentation: Bool
+    private(set) var isTerminalFullscreen: Bool
     private(set) var layoutScale: CGFloat
 
     private var onSidebarPresentationChange: (Bool, Bool) -> Void
@@ -397,6 +444,11 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
     // remains owned exclusively by NSSplitView.
     private var collapsedSidebarWidth: CGFloat?
     private var collapsedTerminalWidth: CGFloat?
+    private var terminalWidthBeforeFullscreen: CGFloat?
+    private var suspendedSplitAutosaveName: NSSplitView.AutosaveName?
+    private var didSuspendSplitAutosave = false
+    private var terminalFullscreenTransitionGeneration: UInt = 0
+    private var isReconcilingTerminalFullscreen = false
     private var isReconcilingPresentation = false
     private var isChangingPressureDuringConstraint = false
     private let migratesLegacyLayout: Bool
@@ -408,6 +460,7 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         terminal: Terminal,
         isSidebarPresented: Bool,
         isTerminalPresented: Bool,
+        isTerminalFullscreen: Bool = false,
         layoutScale: CGFloat,
         separatorColor: NSColor,
         accentColor: NSColor,
@@ -426,6 +479,7 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         terminalItem = NSSplitViewItem(inspectorWithViewController: terminalHostingController)
         preferredSidebarPresentation = isSidebarPresented
         preferredTerminalPresentation = isTerminalPresented
+        self.isTerminalFullscreen = isTerminalFullscreen && isTerminalPresented
         self.layoutScale = WorkspaceSplitMetrics.normalizedScale(layoutScale)
         self.onSidebarPresentationChange = onSidebarPresentationChange
         self.onTerminalPresentationChange = onTerminalPresentationChange
@@ -500,6 +554,7 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         super.viewDidLayout()
         migrateLegacyLayoutIfNeeded()
         reconcilePresentation(animated: false)
+        reconcileTerminalFullscreen(animated: false)
     }
 
     /// The allocation supplied by the representable's parent. AppKit can
@@ -520,6 +575,9 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         forDrawnRect drawnRect: NSRect,
         ofDividerAt dividerIndex: Int
     ) -> NSRect {
+        if workspaceSplitView.disabledDividerIndices.contains(dividerIndex) {
+            return .zero
+        }
         let systemRect = super.splitView(
             splitView,
             effectiveRect: proposedEffectiveRect,
@@ -543,6 +601,9 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         _ splitView: NSSplitView,
         additionalEffectiveRectOfDividerAt dividerIndex: Int
     ) -> NSRect {
+        if workspaceSplitView.disabledDividerIndices.contains(dividerIndex) {
+            return .zero
+        }
         let systemRect = super.splitView(
             splitView,
             additionalEffectiveRectOfDividerAt: dividerIndex
@@ -686,6 +747,7 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         terminal: Terminal,
         isSidebarPresented: Bool,
         isTerminalPresented: Bool,
+        isTerminalFullscreen: Bool = false,
         layoutScale: CGFloat,
         separatorColor: NSColor,
         accentColor: NSColor,
@@ -700,8 +762,10 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         terminalHostingController.rootView = terminal
         let requestsSidebarReveal = self.sidebarRevealRequest != sidebarRevealRequest
         let requestsTerminalReveal = self.terminalRevealRequest != terminalRevealRequest
+        let wasTerminalFullscreen = self.isTerminalFullscreen
         preferredSidebarPresentation = isSidebarPresented
         preferredTerminalPresentation = isTerminalPresented
+        self.isTerminalFullscreen = isTerminalFullscreen && isTerminalPresented
         self.sidebarRevealRequest = sidebarRevealRequest
         self.terminalRevealRequest = terminalRevealRequest
         self.onSidebarPresentationChange = onSidebarPresentationChange
@@ -713,7 +777,18 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         if self.layoutScale != normalizedScale {
             let previousScale = self.layoutScale
             let sidebarWidth = restorableWidthIfAvailable(for: sidebarItem)
-            let terminalWidth = restorableWidthIfAvailable(for: terminalItem)
+            let terminalWidth = self.isTerminalFullscreen
+                ? nil
+                : restorableWidthIfAvailable(for: terminalItem)
+            if self.isTerminalFullscreen, let terminalWidthBeforeFullscreen {
+                self.terminalWidthBeforeFullscreen = min(
+                    WorkspaceSplitMetrics.terminalMaximumWidth * normalizedScale,
+                    max(
+                        WorkspaceSplitMetrics.terminalMinimumWidth * normalizedScale,
+                        terminalWidthBeforeFullscreen * normalizedScale / previousScale
+                    )
+                )
+            }
             applyLayoutScaleChange(
                 to: normalizedScale,
                 sidebarWidth: sidebarWidth,
@@ -742,7 +817,13 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         if requestsTerminalReveal, isTerminalPresented {
             terminalPressureCollapseCause = nil
         }
+        if wasTerminalFullscreen, !self.isTerminalFullscreen {
+            reconcileTerminalFullscreen(animated: animated && isTerminalPresented)
+        }
         reconcilePresentation(animated: animated)
+        if self.isTerminalFullscreen {
+            reconcileTerminalFullscreen(animated: animated)
+        }
         if requestsSidebarReveal, isSidebarPresented, sidebarItem.isCollapsed {
             reportPresentationChanges(
                 userInitiatedSidebar: false,
@@ -770,16 +851,22 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         sidebarItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         sidebarItem.isSpringLoaded = false
 
-        detailItem.minimumThickness = WorkspaceSplitMetrics.detailMinimumWidth * scale
+        detailItem.minimumThickness = isTerminalFullscreen
+            ? 0
+            : WorkspaceSplitMetrics.detailMinimumWidth * scale
         detailItem.holdingPriority = WorkspaceSplitMetrics.detailHoldingPriority
-        detailItem.canCollapse = false
+        detailItem.canCollapse = isTerminalFullscreen
 
-        terminalItem.minimumThickness = WorkspaceSplitMetrics.terminalMinimumWidth * scale
-        terminalItem.maximumThickness = WorkspaceSplitMetrics.terminalMaximumWidth * scale
+        terminalItem.minimumThickness = isTerminalFullscreen
+            ? 0
+            : WorkspaceSplitMetrics.terminalMinimumWidth * scale
+        terminalItem.maximumThickness = isTerminalFullscreen
+            ? NSSplitViewItem.unspecifiedDimension
+            : WorkspaceSplitMetrics.terminalMaximumWidth * scale
         terminalItem.preferredThicknessFraction = NSSplitViewItem.unspecifiedDimension
         terminalItem.holdingPriority = WorkspaceSplitMetrics.terminalHoldingPriority
-        terminalItem.canCollapse = true
-        terminalItem.canCollapseFromWindowResize = true
+        terminalItem.canCollapse = !isTerminalFullscreen
+        terminalItem.canCollapseFromWindowResize = !isTerminalFullscreen
         terminalItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         terminalItem.isSpringLoaded = false
 
@@ -828,7 +915,9 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
 
         let dividerWidth = splitView.dividerThickness
         let sidebarMinimum = WorkspaceSplitMetrics.sidebarMinimumWidth * scale
-        let detailMinimum = WorkspaceSplitMetrics.detailMinimumWidth * scale
+        let detailMinimum = isTerminalFullscreen
+            ? 0
+            : WorkspaceSplitMetrics.detailMinimumWidth * scale
         let terminalMinimum = WorkspaceSplitMetrics.terminalMinimumWidth * scale
 
         func requiredMinimumWidth(sidebar: Bool, terminal: Bool) -> CGFloat {
@@ -836,6 +925,8 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
                 + (sidebar ? sidebarMinimum + dividerWidth : 0)
                 + (terminal ? terminalMinimum + dividerWidth : 0)
         }
+
+        if isTerminalFullscreen { return }
 
         if preferredTerminalPresentation,
            requiredMinimumWidth(
@@ -977,6 +1068,198 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         return width
     }
 
+    private func reconcileTerminalFullscreen(animated: Bool) {
+        guard availableLayoutWidth > 0,
+              workspaceSplitView.activeDividerIndex == nil,
+              !isReconcilingTerminalFullscreen else {
+            return
+        }
+
+        if isTerminalFullscreen {
+            guard preferredTerminalPresentation, !terminalItem.isCollapsed else { return }
+            enterTerminalFullscreen(animated: animated)
+        } else if detailItem.isCollapsed
+                    || terminalWidthBeforeFullscreen != nil
+                    || didSuspendSplitAutosave {
+            restoreTerminalFromFullscreen(animated: animated)
+        }
+    }
+
+    private func enterTerminalFullscreen(animated: Bool) {
+        if terminalWidthBeforeFullscreen == nil {
+            let width = nativePaneWidth(for: terminalItem)
+            if width.isFinite, width > 0 {
+                terminalWidthBeforeFullscreen = min(
+                    WorkspaceSplitMetrics.terminalMaximumWidth * layoutScale,
+                    max(WorkspaceSplitMetrics.terminalMinimumWidth * layoutScale, width)
+                )
+            }
+        }
+
+        suspendSplitAutosaveForTerminalFullscreen()
+        configureItems()
+        workspaceSplitView.isTerminalFullscreen = true
+        workspaceSplitView.disabledDividerIndices = [0, 1]
+        workspaceSplitView.needsDisplay = true
+
+        guard !detailItem.isCollapsed else { return }
+        isReconcilingTerminalFullscreen = true
+        terminalFullscreenTransitionGeneration &+= 1
+        let generation = terminalFullscreenTransitionGeneration
+
+        guard animated, view.window != nil else {
+            detailItem.isCollapsed = true
+            splitView.layoutSubtreeIfNeeded()
+            isReconcilingTerminalFullscreen = false
+            return
+        }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = MonknotMotion.terminalFullscreenTransitionDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            detailItem.animator().isCollapsed = true
+        } completionHandler: { [weak self] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self,
+                          self.terminalFullscreenTransitionGeneration == generation else {
+                        return
+                    }
+                    self.splitView.layoutSubtreeIfNeeded()
+                    self.isReconcilingTerminalFullscreen = false
+                    if !self.isTerminalFullscreen {
+                        self.reconcileTerminalFullscreen(animated: true)
+                    }
+                }
+            }
+        }
+    }
+
+    private func restoreTerminalFromFullscreen(animated: Bool) {
+        let retainedWidth = terminalWidthBeforeFullscreen
+            ?? WorkspaceSplitMetrics.terminalMinimumWidth * layoutScale
+
+        isReconcilingTerminalFullscreen = true
+        terminalFullscreenTransitionGeneration &+= 1
+        let generation = terminalFullscreenTransitionGeneration
+
+        // Keep the document mounted and start it at zero width. Moving the
+        // terminal divider then reveals the same document view without a fade,
+        // replacement host, or loss of editor state.
+        detailItem.minimumThickness = 0
+        detailItem.canCollapse = true
+        terminalItem.maximumThickness = NSSplitViewItem.unspecifiedDimension
+        terminalItem.canCollapse = true
+        terminalItem.canCollapseFromWindowResize = true
+        detailItem.isCollapsed = false
+        splitView.layoutSubtreeIfNeeded()
+
+        let targetWidth = terminalDockedTargetWidth(retaining: retainedWidth)
+        let targetPosition = splitView.bounds.width
+            - targetWidth
+            - splitView.dividerThickness
+
+        guard animated, view.window != nil else {
+            splitView.setPosition(targetPosition, ofDividerAt: 1)
+            splitView.layoutSubtreeIfNeeded()
+            finishTerminalFullscreenRestore(
+                generation: generation,
+                retainedWidth: retainedWidth
+            )
+            return
+        }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = MonknotMotion.terminalFullscreenTransitionDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            splitView.animator().setPosition(targetPosition, ofDividerAt: 1)
+        } completionHandler: { [weak self] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self?.finishTerminalFullscreenRestore(
+                        generation: generation,
+                        retainedWidth: retainedWidth
+                    )
+                }
+            }
+        }
+    }
+
+    private func finishTerminalFullscreenRestore(
+        generation: UInt,
+        retainedWidth: CGFloat
+    ) {
+        guard terminalFullscreenTransitionGeneration == generation else { return }
+        guard !isTerminalFullscreen else {
+            isReconcilingTerminalFullscreen = false
+            reconcileTerminalFullscreen(animated: true)
+            return
+        }
+
+        workspaceSplitView.isTerminalFullscreen = false
+        configureItems()
+        splitView.layoutSubtreeIfNeeded()
+        let targetWidth = terminalDockedTargetWidth(retaining: retainedWidth)
+        setTerminalWidth(targetWidth)
+        terminalWidthBeforeFullscreen = nil
+        workspaceSplitView.disabledDividerIndices = []
+        workspaceSplitView.needsDisplay = true
+        restoreSplitAutosaveAfterTerminalFullscreen()
+        isReconcilingTerminalFullscreen = false
+    }
+
+    private func setTerminalWidth(_ targetWidth: CGFloat) {
+        let requestedPosition = splitView.bounds.width
+            - targetWidth
+            - splitView.dividerThickness
+        splitView.setPosition(requestedPosition, ofDividerAt: 1)
+        splitView.layoutSubtreeIfNeeded()
+
+        // A collapsed middle item makes AppKit retain the previous half-divider
+        // spacing for the first normal layout pass. Correct that native result
+        // once from the measured pane width so restoration is exact.
+        let widthDelta = nativePaneWidth(for: terminalItem) - targetWidth
+        guard abs(widthDelta) > 0.25 else { return }
+        splitView.setPosition(requestedPosition + widthDelta, ofDividerAt: 1)
+        splitView.layoutSubtreeIfNeeded()
+    }
+
+    private func terminalDockedTargetWidth(retaining retainedWidth: CGFloat) -> CGFloat {
+        let dividerWidth = splitView.dividerThickness
+        let sidebarContribution = sidebarItem.isCollapsed
+            ? 0
+            : max(
+                WorkspaceSplitMetrics.sidebarMinimumWidth * layoutScale,
+                nativePaneWidth(for: sidebarItem)
+            ) + dividerWidth
+        let maximumAvailable = availableLayoutWidth
+            - sidebarContribution
+            - WorkspaceSplitMetrics.detailMinimumWidth * layoutScale
+            - dividerWidth
+        return min(
+            WorkspaceSplitMetrics.terminalMaximumWidth * layoutScale,
+            max(
+                WorkspaceSplitMetrics.terminalMinimumWidth * layoutScale,
+                min(retainedWidth, maximumAvailable)
+            )
+        )
+    }
+
+    private func suspendSplitAutosaveForTerminalFullscreen() {
+        guard !didSuspendSplitAutosave else { return }
+        suspendedSplitAutosaveName = splitView.autosaveName
+        didSuspendSplitAutosave = true
+        splitView.autosaveName = nil
+    }
+
+    private func restoreSplitAutosaveAfterTerminalFullscreen() {
+        guard didSuspendSplitAutosave else { return }
+        let autosaveName = suspendedSplitAutosaveName
+        suspendedSplitAutosaveName = nil
+        didSuspendSplitAutosave = false
+        splitView.autosaveName = autosaveName
+    }
+
     private func reconcilePresentation(animated: Bool) {
         // Native mouse tracking owns geometry until mouse-up. SwiftUI can
         // immediately feed an effective collapse callback back into update();
@@ -1030,6 +1313,7 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
             setCollapsed(false, for: terminalItem, animated: animated)
             terminalPressureCollapseCause = nil
         }
+        reconcileTerminalFullscreen(animated: animated)
     }
 
     private func canRestoreSidebar(
@@ -1039,7 +1323,9 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         let dividerWidth = splitView.dividerThickness
         let sidebarMinimum = WorkspaceSplitMetrics.sidebarMinimumWidth * layoutScale
         let sidebarMaximum = WorkspaceSplitMetrics.sidebarMaximumWidth * layoutScale
-        let detailMinimum = WorkspaceSplitMetrics.detailMinimumWidth * layoutScale
+        let detailMinimum = isTerminalFullscreen
+            ? 0
+            : WorkspaceSplitMetrics.detailMinimumWidth * layoutScale
         let sidebarWidth = preservingSidebarWidth
             ? min(sidebarMaximum, max(sidebarMinimum, restorableWidth(for: sidebarItem)))
             : sidebarMinimum
@@ -1060,7 +1346,9 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         preservingTerminalWidth: Bool
     ) -> Bool {
         let dividerWidth = splitView.dividerThickness
-        let detailMinimum = WorkspaceSplitMetrics.detailMinimumWidth * layoutScale
+        let detailMinimum = isTerminalFullscreen
+            ? 0
+            : WorkspaceSplitMetrics.detailMinimumWidth * layoutScale
         let terminalMinimum = WorkspaceSplitMetrics.terminalMinimumWidth * layoutScale
         let terminalMaximum = WorkspaceSplitMetrics.terminalMaximumWidth * layoutScale
         let sidebarWidth = sidebarItem.isCollapsed
@@ -1316,7 +1604,9 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
     }
 
     private func splitViewDidResize() {
-        guard !isReconcilingPresentation, !isChangingPressureDuringConstraint else { return }
+        guard !isReconcilingPresentation,
+              !isReconcilingTerminalFullscreen,
+              !isChangingPressureDuringConstraint else { return }
 
         // A native window-pressure collapse does not alter the user's preferred
         // presentation. Its transient collapsed width is restored when the

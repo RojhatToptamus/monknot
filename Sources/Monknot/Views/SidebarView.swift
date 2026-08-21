@@ -883,6 +883,7 @@ private struct SidebarNodeRow: View {
                         weight: MonknotMetrics.sidebarIconWeight
                     ))
                     .foregroundStyle(theme.sidebarMutedColor(prominence: 0.72))
+                    .frame(width: glyphScaled(MonknotMetrics.rowIconColumnWidthBase))
                     .accessibilityHidden(true)
 
                 Text(visibleNode.displayName)
@@ -937,17 +938,16 @@ private struct SidebarNodeRow: View {
             }
         } label: {
             HStack(spacing: scaled(7)) {
-                Image(systemName: documentIconName)
-                    .font(.system(
-                        size: glyphScaled(MonknotMetrics.sidebarIconPointSizeBase),
-                        weight: MonknotMetrics.sidebarIconWeight
-                    ))
+                MonknotFileKindGlyph(
+                    systemImage: documentIconName,
+                    theme: theme,
+                    zoomScale: zoomScale
+                )
                     .foregroundStyle(
                         isSelected
                             ? theme.sidebarColor(theme.accentColor, opacity: 0.95)
                             : theme.sidebarMutedColor(prominence: 0.7)
                     )
-                    .frame(width: glyphScaled(MonknotMetrics.sidebarIconPointSizeBase))
                     .accessibilityHidden(true)
 
                 Text(node.name)

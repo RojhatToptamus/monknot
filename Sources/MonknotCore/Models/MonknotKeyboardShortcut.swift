@@ -50,6 +50,7 @@ public struct MonknotKeyboardShortcutContext: Equatable, Sendable {
     public var canToggleSplitView: Bool
     public var canInspectLinks: Bool
     public var canUndoWorkspaceReplace: Bool
+    public var canToggleTerminalFullscreen: Bool
     public var isBusy: Bool
 
     public init(
@@ -73,6 +74,7 @@ public struct MonknotKeyboardShortcutContext: Equatable, Sendable {
         canToggleSplitView: Bool = false,
         canInspectLinks: Bool = false,
         canUndoWorkspaceReplace: Bool = false,
+        canToggleTerminalFullscreen: Bool = false,
         isBusy: Bool
     ) {
         self.hasWorkspace = hasWorkspace
@@ -95,6 +97,7 @@ public struct MonknotKeyboardShortcutContext: Equatable, Sendable {
         self.canToggleSplitView = canToggleSplitView
         self.canInspectLinks = canInspectLinks
         self.canUndoWorkspaceReplace = canUndoWorkspaceReplace
+        self.canToggleTerminalFullscreen = canToggleTerminalFullscreen
         self.isBusy = isBusy
     }
 }
@@ -120,6 +123,7 @@ public enum MonknotKeyboardShortcutAction: Equatable, Sendable {
     case resetZoom
     case importPasteboard
     case toggleTerminal
+    case toggleTerminalFullscreen
     case toggleSidebar
     case undoPDFAnnotation
     case redoPDFAnnotation
@@ -235,6 +239,11 @@ public enum MonknotKeyboardShortcutRouter {
 
         if modifiers == [.command, .control], key == "s" {
             return .toggleSidebar
+        }
+
+        if modifiers == [.command, .control],
+           (key == "\r" || key == "\n" || event.keyCode == 36 || event.keyCode == 76) {
+            return context.canToggleTerminalFullscreen ? .toggleTerminalFullscreen : nil
         }
 
         return nil

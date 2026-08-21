@@ -369,8 +369,12 @@ size.
 
 ### 8.2 The two sizes
 
-- **Beside a label:** `size = label + 2` → 15pt next to a 13pt label.
-- **Alone in a button:** 17pt in a 28pt button.
+- **Beside a label:** nominally `size = label + 2` → 15pt next to a 13pt label. The tall
+  `doc.text` / `doc.richtext` contours use a 14pt optical size inside the same 18pt column.
+- **Alone in a button:** nominally 17pt in a 28pt button. Optical ceilings are measured from the
+  rendered symbol bounds: whole-word search is 12.5pt; `curlybraces` and `link` are 13pt;
+  `magnifyingglass`, `checklist`, `photo`, document glyphs, and the diagonal terminal arrows are
+  14pt; the two sidebar glyphs are 15pt. Other symbols retain the nominal size.
 
 Both scale by the zoom factor. Weight is `.regular` **everywhere** — `.medium` on a 15pt symbol
 reads as a different icon set two rows down.
@@ -402,7 +406,8 @@ identical regardless of which symbol occupies it. Never rely on a symbol's own s
 
 Exactly two symbols need a nudge because their ink is off-centre in its box: `chevron.right` in a
 disclosure control moves **0.5pt right**; `magnifyingglass` moves **0.5pt left**. Nothing else. Do
-not eyeball others.
+not eyeball others. These positional nudges are separate from the point-size corrections above;
+neither changes the control or glyph-column geometry.
 
 ### 8.7 The set
 
@@ -421,12 +426,16 @@ against `ink3` at rest it reads as a rendering bug.
 
 ### 8.9 When SF Symbols will not do
 
-Only two cases:
+Only three cases:
 
 1. **Outline rail dashes** — not glyphs at all. Draw as 2pt rounded `Capsule()` shapes; no symbol
    encodes heading depth.
 2. **File-kind badge for an unknown extension** — SF Symbols has no generic-with-extension glyph.
    Draw `doc` and overlay the extension in 7pt SF Mono.
+3. **Trailing indicator in a native macOS `Menu` label** — SwiftUI promotes a standalone SF Symbol
+   to the menu's leading icon position and discards non-text trailing content. Use SF Pro's `⌄`
+   down-arrowhead as a separate 10pt regular text run so it remains trailing. Its ink center is
+   3.2pt below the 13pt title's ink center, so apply a scalable +3.2pt baseline offset.
 
 Everywhere else a custom glyph will look imported. SF Symbols carry the system's stroke contrast and
 terminal shapes; a hand-drawn 15pt icon beside them always reads as foreign. If a custom glyph is
@@ -615,6 +624,16 @@ Run state tints the glyph, the only coloured element in the header:
 Close: 10pt `xmark` in a 14 target, on the active pill and on hover. The strip scrolls with the same
 24pt trailing fade; being clipped by the panel edge is correct.
 
+The header order is session scroller → 13pt divider → fullscreen → new session → close panel.
+Fullscreen is one 26/14 optical control: diagonal arrows point out when docked and in when expanded.
+The smaller symbol size compensates for the diagonal-arrow symbol's larger visible bounds and
+balances it with the adjacent 16pt `plus` and `xmark` glyphs. The control temporarily covers the
+document area while leaving the titlebar and left sidebar in place. The
+document stays mounted, the terminal divider is disabled, and the active button uses the normal
+`accsoft`/`accent` treatment. Restoring returns to the exact pre-expand terminal width. Closing the
+panel clears fullscreen, so reopening uses the docked width. ⌃⌘↩ toggles fullscreen; Escape does
+not.
+
 ### 10.7 Scale table — every box and glyph at 1×
 
 Glyph size and box size are two different numbers and both are fixed. **A glyph is never sized to
@@ -623,9 +642,10 @@ fill its box.** If an icon looks small, that is correct — macOS chrome glyphs 
 | Region | Metrics |
 |---|---|
 | Titlebar | bar 44 · traffic light 12 · chrome button 28 box / 17 glyph · segmented 28 outer (22 cell + 2 padding + 1 border) / 16 glyph · divider 1×16 · strip inset 3 · 3 between chips |
-| File tab | chip 30 · padding-x 10 · kind glyph 15 in 18 column · gap 8 · label 13 · trailing slot 16 · close 11 · dirty dot 6 · pin 11 · max width 220 · no minimum |
-| Sidebar | header 40 · row 30 · padding-x 10 · glyph 15 · gap 8 · label 13 · chevron 10 · indent 16 · gutter 6 · 2 between rows · header action 26/16 · footer 30/15 |
-| Terminal | header 36 · pill 43×24 · glyph 14 · gap 6 · number 12 mono · close 10 in 14 · buttons 26/16 · divider 1×13 |
+| File tab | chip 30 · padding-x 10 · kind glyph 14 optical in 18 column · gap 8 · label 13 · trailing slot 16 · close 11 · dirty dot 6 · pin 11 · max width 220 · no minimum |
+| Sidebar | header 40 · row 30 · padding-x 10 · folder glyph 15 / file glyph 14 optical in 18 column · gap 8 · label 13 · chevron 10 · indent 16 · gutter 6 · 2 between rows · header action 26/16 (search 14 optical) · footer 30/15 |
+| Markdown toolbar | heading selector 100×30, radius 8, label 13 regular, trailing `⌄` 10 regular / +3.2 baseline · icon button 30 box / 17 nominal glyph · inline code and link 13 optical · task list and image 14 optical · dividers 1×20 · gaps 6 |
+| Terminal | header 36 · pill 43×24 · glyph 14 · gap 6 · number 12 mono · close 10 in 14 · new/close buttons 26/16 · fullscreen 26/14 optical · divider 1×13 |
 | Elsewhere | field 28 · push button 28 bars / 30 sheets · toggle 34×20, knob 16 · stepper 26 · slider track 4 / knob 16 · overlay row 34 · settings row 28/15 · outline dash 22/14/9 × 2 |
 
 **Hard ceilings.** No chrome glyph over 17. No square button over 28. No row over 34. The only glyphs
@@ -636,8 +656,10 @@ above 17 anywhere are empty-state illustrations at 34, which are not controls.
 ## 11. Motion
 
 - **120ms ease** on hover: fill and foreground colour only.
+- **180ms standard ease** for terminal fullscreen: width only, with no fade or scale.
 - **fadeUp** for overlays, toasts and the outline peek card entrance.
-- Never animate size, position, elevation, border or weight.
+- Never animate size, position, elevation, border or weight except for the explicit terminal
+  fullscreen width transition above.
 - Honour Reduce Motion: entrances become instant opacity changes; hover colour transitions may stay.
 
 ---

@@ -4,6 +4,7 @@ enum MonknotMotion {
     static let hoverDuration: Double = 0.12
     static let outlineDuration: Double = 0.16
     static let sidebarTransitionDuration: Double = 0.22
+    static let terminalFullscreenTransitionDuration: Double = 0.18
 
     static var hoverAnimation: Animation {
         .easeOut(duration: hoverDuration)
@@ -17,6 +18,10 @@ enum MonknotMotion {
             1,
             duration: sidebarTransitionDuration
         )
+    }
+
+    static var terminalFullscreenTransition: Animation {
+        .easeInOut(duration: terminalFullscreenTransitionDuration)
     }
 
     static func sidebarTransition(reduceMotion: Bool) -> Animation? {

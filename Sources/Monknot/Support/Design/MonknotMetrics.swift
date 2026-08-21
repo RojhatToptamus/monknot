@@ -22,6 +22,7 @@ enum MonknotMetrics {
     static let iconButtonSizeBase: CGFloat = 28
     static let iconPointSizeBase: CGFloat = 17
     static let sidebarIconPointSizeBase: CGFloat = 15
+    static let rowIconColumnWidthBase: CGFloat = 18
     static let sidebarIconWeight: Font.Weight = .regular
     static let iconCornerRadiusBase: CGFloat = 8
     static let trafficLightReserveBase: CGFloat = 72
@@ -110,6 +111,72 @@ enum MonknotMetrics {
             + interfaceDensity(10, theme: theme, zoomScale: zoomScale)
     }
 
+}
+
+/// Optical corrections for SF Symbols whose visible bounds are materially
+/// larger than adjacent symbols at the same nominal point size.
+enum MonknotSymbolOptics {
+    static func pointSizeBase(for systemImage: String, nominal: CGFloat) -> CGFloat {
+        guard let maximum = maximumPointSizeBase(for: systemImage) else {
+            return nominal
+        }
+        return min(nominal, maximum)
+    }
+
+    static func maximumPointSizeBase(for systemImage: String) -> CGFloat? {
+        switch systemImage {
+        case "character.cursor.ibeam":
+            return 12.5
+        case "curlybraces", "link":
+            return 13
+        case "magnifyingglass",
+             "doc", "doc.fill",
+             "doc.text", "doc.text.fill",
+             "doc.richtext", "doc.richtext.fill",
+             "checklist", "photo",
+             "arrow.up.left.and.arrow.down.right",
+             "arrow.down.right.and.arrow.up.left":
+            return 14
+        case "sidebar.left", "sidebar.right":
+            return 15
+        default:
+            return nil
+        }
+    }
+
+    static func horizontalOffsetBase(for systemImage: String) -> CGFloat {
+        systemImage == "magnifyingglass" ? -0.5 : 0
+    }
+}
+
+/// Shared SF Symbol renderer for chrome. Point-size normalization, weight,
+/// rendering mode, and positional correction have one owner.
+struct MonknotSystemGlyph: View {
+    let systemImage: String
+    let nominalPointSizeBase: CGFloat
+    let theme: AppTheme
+    let zoomScale: Double
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(
+                size: MonknotMetrics.interfaceGlyph(
+                    MonknotSymbolOptics.pointSizeBase(
+                        for: systemImage,
+                        nominal: nominalPointSizeBase
+                    ),
+                    theme: theme,
+                    zoomScale: zoomScale
+                ),
+                weight: .regular
+            ))
+            .symbolRenderingMode(.monochrome)
+            .offset(x: MonknotMetrics.interfaceGlyph(
+                MonknotSymbolOptics.horizontalOffsetBase(for: systemImage),
+                theme: theme,
+                zoomScale: zoomScale
+            ))
+    }
 }
 
 enum WorkspaceZoomPolicy {

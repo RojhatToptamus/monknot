@@ -894,6 +894,64 @@ final class ChromeAlignmentTests: XCTestCase {
         )
     }
 
+    func testMarkdownToolbarUsesMeasuredOpticalSymbolSizes() {
+        let expectedPointSizes: [String: CGFloat] = [
+            "bold": 17,
+            "italic": 17,
+            "quote.opening": 17,
+            "curlybraces": 13,
+            "link": 13,
+            "list.bullet": 17,
+            "list.number": 17,
+            "checklist": 14,
+            "photo": 14,
+            "minus": 17,
+        ]
+
+        XCTAssertEqual(MonknotIconButton.IconButtonSize.editorToolbar.iconPointSizeBase, 17)
+        XCTAssertEqual(
+            Set(MarkdownSourceToolbar.regularActionGroups.flatMap { $0.map(\.systemImage) }),
+            Set(expectedPointSizes.keys)
+        )
+
+        for (systemImage, expectedPointSize) in expectedPointSizes {
+            XCTAssertEqual(
+                MonknotSymbolOptics.pointSizeBase(
+                    for: systemImage,
+                    nominal: MonknotIconButton.IconButtonSize.editorToolbar.iconPointSizeBase
+                ),
+                expectedPointSize,
+                "\(systemImage) escaped the measured Markdown-toolbar profile"
+            )
+        }
+    }
+
+    func testMarkdownHeadingMenuSharesTheFormattingControlGeometry() {
+        let size = MarkdownSourceToolbar.controlSize
+
+        XCTAssertEqual(size.iconPointSizeBase, 17)
+        XCTAssertEqual(MarkdownSourceToolbar.expandedHeadingWidthBase, 100)
+        XCTAssertEqual(MarkdownSourceToolbar.compactHeadingWidthBase, 104)
+        XCTAssertEqual(MarkdownSourceToolbar.headingFontSizeBase, 13)
+        XCTAssertEqual(MarkdownSourceToolbar.headingChevronFontSizeBase, 10)
+        XCTAssertEqual(MarkdownSourceToolbar.headingChevronBaselineOffsetBase, 3.2)
+
+        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
+            for zoomScale in WorkspaceZoomPolicy.supportedLevels {
+                XCTAssertEqual(
+                    size.dimension(theme: theme, zoomScale: zoomScale),
+                    size.height(theme: theme, zoomScale: zoomScale),
+                    "Paragraph and formatting controls must share one height"
+                )
+                XCTAssertEqual(
+                    size.cornerRadius(theme: theme, zoomScale: zoomScale),
+                    theme.chromeRadius(8, zoomScale: zoomScale),
+                    "Paragraph and formatting controls must share one corner radius"
+                )
+            }
+        }
+    }
+
     func testQuietSidebarSecondaryInkStaysLegibleWithoutDoubleOpacity() {
         for baseTheme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             let standard = baseTheme.sidebarMutedOpacity(prominence: 0.68)
@@ -1279,6 +1337,7 @@ final class ChromeAlignmentTests: XCTestCase {
 
     func testSidebarRowIconsStayTwoPointsLargerThanAdjacentLabels() {
         XCTAssertEqual(MonknotMetrics.sidebarIconPointSizeBase, 15)
+        XCTAssertEqual(MonknotMetrics.rowIconColumnWidthBase, 18)
         XCTAssertEqual(MonknotMetrics.sidebarIconWeight, .regular)
 
         for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
@@ -1302,6 +1361,79 @@ final class ChromeAlignmentTests: XCTestCase {
                 )
             }
         }
+    }
+
+    func testVisuallyExpansiveSymbolsShareTheOpticalPointSizeCeiling() {
+        let expansiveSymbols = [
+            "magnifyingglass",
+            "doc.text",
+            "doc.richtext",
+            "arrow.up.left.and.arrow.down.right",
+            "arrow.down.right.and.arrow.up.left",
+        ]
+
+        for systemImage in expansiveSymbols {
+            XCTAssertEqual(
+                MonknotSymbolOptics.pointSizeBase(for: systemImage, nominal: 16),
+                14,
+                "\(systemImage) escaped the shared optical-size policy"
+            )
+        }
+        XCTAssertEqual(MonknotSymbolOptics.pointSizeBase(for: "plus", nominal: 16), 16)
+        XCTAssertEqual(MonknotSymbolOptics.pointSizeBase(for: "xmark", nominal: 16), 16)
+        XCTAssertEqual(MonknotSymbolOptics.pointSizeBase(for: "doc.text", nominal: 12), 12)
+    }
+
+    func testSharedChromeOpticalProfilesCoverMeasuredOutliersOnly() {
+        let measuredCeilings: [String: CGFloat] = [
+            "character.cursor.ibeam": 12.5,
+            "curlybraces": 13,
+            "link": 13,
+            "magnifyingglass": 14,
+            "doc.text": 14,
+            "doc.richtext": 14,
+            "checklist": 14,
+            "photo": 14,
+            "arrow.up.left.and.arrow.down.right": 14,
+            "arrow.down.right.and.arrow.up.left": 14,
+            "sidebar.left": 15,
+            "sidebar.right": 15,
+        ]
+
+        for (systemImage, expectedCeiling) in measuredCeilings {
+            XCTAssertEqual(
+                MonknotSymbolOptics.maximumPointSizeBase(for: systemImage),
+                expectedCeiling,
+                "\(systemImage) lost its measured optical ceiling"
+            )
+        }
+
+        for systemImage in ["bold", "italic", "quote.opening", "list.bullet", "plus", "xmark"] {
+            XCTAssertNil(
+                MonknotSymbolOptics.maximumPointSizeBase(for: systemImage),
+                "\(systemImage) should retain its nominal point size"
+            )
+        }
+    }
+
+    func testSearchOpticalCorrectionPreservesTheControlGeometry() {
+        XCTAssertEqual(MonknotSymbolOptics.horizontalOffsetBase(for: "magnifyingglass"), -0.5)
+        XCTAssertEqual(MonknotSymbolOptics.horizontalOffsetBase(for: "plus"), 0)
+
+        let size = MonknotIconButton.IconButtonSize.sidebarHeader
+        XCTAssertEqual(size.iconPointSizeBase, 16)
+        XCTAssertEqual(
+            MonknotSymbolOptics.pointSizeBase(
+                for: MonknotWorkspaceIcons.searchWorkspace,
+                nominal: size.iconPointSizeBase
+            ),
+            14
+        )
+        XCTAssertEqual(
+            size.dimension(theme: .defaultDark, zoomScale: 1),
+            22,
+            "Optical symbol sizing must not shrink the action target"
+        )
     }
 
     func testSidebarHeaderActionsShareRowSymbolStyleWithoutShrinkingHitTargets() {

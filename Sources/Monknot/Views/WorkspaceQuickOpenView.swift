@@ -50,8 +50,7 @@ struct WorkspaceQuickOpenView: View {
 
     private var searchField: some View {
         HStack(spacing: scaled(8)) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: scaled(14), weight: .medium))
+            MonknotSearchGlyph(theme: theme, zoomScale: zoomScale)
                 .foregroundStyle(theme.mutedForegroundColor)
 
             TextField(
@@ -101,8 +100,12 @@ struct WorkspaceQuickOpenView: View {
                             openDocument(document.id)
                         } label: {
                             HStack(spacing: scaled(8)) {
-                                Image(systemName: document.kind.resolvedSystemImage)
-                                    .font(.system(size: scaled(14), weight: .regular))
+                                MonknotFileKindGlyph(
+                                    systemImage: document.kind.resolvedSystemImage,
+                                    theme: theme,
+                                    zoomScale: zoomScale,
+                                    pointSizeBase: 14
+                                )
                                     .foregroundStyle(theme.mutedForegroundColor)
 
                                 VStack(alignment: .leading, spacing: scaled(1)) {
