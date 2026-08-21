@@ -280,11 +280,6 @@ enum FlowWritingRepairExpectation: String, CaseIterable {
     }
 }
 
-enum FlowWritingAIClassification: String {
-    case direct
-    case reviewOnly
-}
-
 enum FlowWritingTrigger: Equatable {
     case punctuation(Character, trailingDelimiterCount: Int = 0)
     case returnKey
@@ -309,7 +304,6 @@ struct FlowWritingRepairCase: Equatable {
     let input: String
     let referenceText: String
     let expectation: FlowWritingRepairExpectation
-    let aiClassification: FlowWritingAIClassification?
     let conservativeCandidateFixture: String?
     let mutations: [FlowWritingMutationKind]
     let trigger: FlowWritingTrigger
@@ -372,7 +366,6 @@ private extension FlowWritingCorpus {
         input: String,
         reference: String,
         expectation: FlowWritingRepairExpectation,
-        ai: FlowWritingAIClassification? = nil,
         conservativeCandidateFixture: String? = nil,
         mutations: [FlowWritingMutationKind],
         trigger: FlowWritingTrigger = .punctuation("."),
@@ -394,7 +387,6 @@ private extension FlowWritingCorpus {
             input: generatedInput,
             referenceText: reference,
             expectation: expectation,
-            aiClassification: ai,
             conservativeCandidateFixture: conservativeCandidateFixture,
             mutations: mutations,
             trigger: trigger,
@@ -605,12 +597,11 @@ private extension FlowWritingCorpus {
     static let aiRepairDrafts: [FlowWritingRepairCase] = [
         repair(
             "repair-ai-001", .healthMessage,
-            input: "I am nt be able to come today because yesterday I got sick so badly and now cannot get out of the bed wirhgth now.",
-            reference: "I am not able to come today because I got very sick yesterday, and now I cannot get out of bed.",
+            input: "My ankle did nt improve overnight after the new exercises the swelling look worse and the clinic have not replyed yet.",
+            reference: "My ankle did not improve overnight after the new exercises; the swelling looks worse, and the clinic has not replied yet.",
             expectation: .aiInvariant,
-            ai: .reviewOnly,
-            conservativeCandidateFixture: "I am not able to come today because yesterday I got sick so badly, and now I cannot get out of the bed right now.",
-            mutations: [.spelling, .missingShortWord, .wrongPreposition, .runOnClause, .spelling],
+            conservativeCandidateFixture: "My ankle did not improve overnight after the new exercises; the swelling looks worse, and the clinic has not replied yet.",
+            mutations: [.spelling, .subjectVerbAgreement, .runOnClause, .subjectVerbAgreement, .spelling],
             long: true
         ),
         repair(
@@ -618,7 +609,6 @@ private extension FlowWritingCorpus {
             input: "I wanted let you know that the train is delayed.",
             reference: "I wanted to let you know that the train is delayed.",
             expectation: .aiInvariant,
-            ai: .direct,
             mutations: [.missingShortWord]
         ),
         repair(
@@ -626,15 +616,13 @@ private extension FlowWritingCorpus {
             input: "We need send draft to team before noon.",
             reference: "We need to send the draft to the team before noon.",
             expectation: .aiInvariant,
-            ai: .direct,
             mutations: [.missingShortWord, .missingShortWord]
         ),
         repair(
             "repair-ai-004", .personalMessage,
-            input: "The dog are playig near the garden gate.",
-            reference: "The dog is playing near the garden gate.",
+            input: "The lanterns is flickring beside the footpath.",
+            reference: "The lanterns are flickering beside the footpath.",
             expectation: .aiInvariant,
-            ai: .direct,
             mutations: [.subjectVerbAgreement, .spelling]
         ),
         repair(
@@ -642,7 +630,6 @@ private extension FlowWritingCorpus {
             input: "After review an engineer will send a update.",
             reference: "After review, an engineer will send an update.",
             expectation: .aiInvariant,
-            ai: .direct,
             mutations: [.missingComma, .wrongArticle]
         ),
         repair(
@@ -650,7 +637,6 @@ private extension FlowWritingCorpus {
             input: "The team team approved the revised agenda before lunch.",
             reference: "The team approved the revised agenda before lunch.",
             expectation: .aiInvariant,
-            ai: .reviewOnly,
             mutations: [.duplicatedWord]
         ),
         repair(
@@ -658,7 +644,6 @@ private extension FlowWritingCorpus {
             input: "I finished yesterday the client summary and shared it with Omar.",
             reference: "I finished the client summary yesterday and shared it with Omar.",
             expectation: .aiInvariant,
-            ai: .reviewOnly,
             mutations: [.localReorder],
             anchors: ["Omar"]
         ),
@@ -667,7 +652,6 @@ private extension FlowWritingCorpus {
             input: "We reviewed the launch plan it still needs a rollback owner.",
             reference: "We reviewed the launch plan, but it still needs a rollback owner.",
             expectation: .aiInvariant,
-            ai: .reviewOnly,
             conservativeCandidateFixture: "We reviewed the launch plan; it still needs a rollback owner.",
             mutations: [.runOnClause, .missingShortWord]
         ),
@@ -676,7 +660,6 @@ private extension FlowWritingCorpus {
             input: "Before the workshop begins we should test the projector confirm the guest list print the revised schedule and ask each speaker whether they need a adapter or an additional microphone.",
             reference: "Before the workshop begins, we should test the projector, confirm the guest list, print the revised schedule, and ask each speaker whether they need an adapter or an additional microphone.",
             expectation: .aiInvariant,
-            ai: .reviewOnly,
             mutations: [.missingComma, .missingComma, .missingComma, .wrongArticle],
             long: true
         ),
@@ -685,7 +668,6 @@ private extension FlowWritingCorpus {
             input: "I started feeling dizzy last night I slept badly and this morning I cant safely drive to the clinic for my appointment.",
             reference: "I started feeling dizzy last night, slept badly, and cannot safely drive to the clinic for my appointment this morning.",
             expectation: .aiInvariant,
-            ai: .reviewOnly,
             conservativeCandidateFixture: "I started feeling dizzy last night, I slept badly, and this morning I cannot safely drive to the clinic for my appointment.",
             mutations: [.runOnClause, .incorrectPunctuation, .spelling],
             long: true,
@@ -696,25 +678,22 @@ private extension FlowWritingCorpus {
             input: "The notes says design will send prototype support review it tomorrow.",
             reference: "The notes say that design will send the prototype, and support will review it tomorrow.",
             expectation: .aiInvariant,
-            ai: .reviewOnly,
             conservativeCandidateFixture: "The notes say that design will send the prototype, and support reviews it tomorrow.",
             mutations: [.subjectVerbAgreement, .missingShortWord, .missingShortWord, .missingComma]
         ),
         repair(
             "repair-ai-012", .workUpdate,
-            input: "The migration migration are complete but two checks still needs owners.",
-            reference: "The migration is complete, but two checks still need owners.",
+            input: "The archive archive are ready but three labels still needs review.",
+            reference: "The archive is ready, but three labels still need review.",
             expectation: .aiInvariant,
-            ai: .reviewOnly,
             mutations: [.duplicatedWord, .subjectVerbAgreement, .missingComma, .subjectVerbAgreement],
-            anchors: ["two"]
+            anchors: ["three"]
         ),
         repair(
             "repair-ai-013", .email,
             input: "Hello Daniel I am writng because invoice 4821 have not arrived can you send it again.",
             reference: "Hello Daniel, I am writing because invoice 4821 has not arrived; can you send it again?",
             expectation: .aiInvariant,
-            ai: .reviewOnly,
             mutations: [.missingComma, .spelling, .subjectVerbAgreement, .incorrectPunctuation],
             anchors: ["Daniel", "4821"]
         ),
@@ -723,7 +702,6 @@ private extension FlowWritingCorpus {
             input: "The import now keeps headings and code spans but it still loose link titles\nwhen a document are moved and the destination contains a space.",
             reference: "The import now keeps headings and code spans, but it still loses link titles\nwhen a document is moved and the destination contains a space.",
             expectation: .aiInvariant,
-            ai: .reviewOnly,
             mutations: [.missingComma, .spelling, .subjectVerbAgreement],
             trigger: .returnKey,
             long: true,
@@ -734,7 +712,6 @@ private extension FlowWritingCorpus {
             input: "On Friday Maya will compare the two vendor proposals the security notes from March and every open question then she send a recommendation to Project Cedar owners before the budget meeting starts.",
             reference: "On Friday, Maya will compare the two vendor proposals, the security notes from March, and every open question; then she will send a recommendation to the Project Cedar owners before the budget meeting starts.",
             expectation: .aiInvariant,
-            ai: .reviewOnly,
             conservativeCandidateFixture: "On Friday, Maya will compare the two vendor proposals, the security notes from March, and every open question; then she sends a recommendation to the Project Cedar owners before the budget meeting starts.",
             mutations: [.missingComma, .missingComma, .subjectVerbAgreement, .missingShortWord],
             long: true,
@@ -745,7 +722,6 @@ private extension FlowWritingCorpus {
             input: "Lea said, “I cant join tonight the babysitter cancel and I need stay home.”",
             reference: "Lea said, “I cannot join tonight because the babysitter cancelled, and I need to stay home.”",
             expectation: .aiInvariant,
-            ai: .reviewOnly,
             conservativeCandidateFixture: "Lea said, “I cannot join tonight; the babysitter cancelled, and I need to stay home.”",
             mutations: [.spelling, .missingShortWord, .spelling, .missingComma, .missingShortWord],
             trigger: .punctuation(".", trailingDelimiterCount: 1),
@@ -756,7 +732,6 @@ private extension FlowWritingCorpus {
             input: "Nora finish the Vienna audit on August 21, 2026 and the three findings was shared unchanged.",
             reference: "Nora finished the Vienna audit on August 21, 2026, and the three findings were shared unchanged.",
             expectation: .aiInvariant,
-            ai: .reviewOnly,
             mutations: [.subjectVerbAgreement, .missingComma, .subjectVerbAgreement],
             anchors: ["Nora", "Vienna", "August 21, 2026", "three"]
         ),
@@ -765,7 +740,6 @@ private extension FlowWritingCorpus {
             input: "Build MK-204 contain 17 fixes it do not change the saved workspace format.",
             reference: "Build MK-204 contains 17 fixes; it does not change the saved workspace format.",
             expectation: .aiInvariant,
-            ai: .reviewOnly,
             mutations: [.subjectVerbAgreement, .runOnClause, .subjectVerbAgreement],
             anchors: ["MK-204", "17"]
         ),
@@ -774,7 +748,6 @@ private extension FlowWritingCorpus {
             input: "The note marks **Launch Ready** but it do not explains why the PDF export fail.",
             reference: "The note marks **Launch Ready**, but it does not explain why the PDF export fails.",
             expectation: .aiInvariant,
-            ai: .reviewOnly,
             mutations: [.missingComma, .subjectVerbAgreement, .subjectVerbAgreement, .subjectVerbAgreement],
             anchors: ["**Launch Ready**", "PDF"]
         ),
@@ -783,7 +756,6 @@ private extension FlowWritingCorpus {
             input: "Before the autumn launch the research team interview twelve customers from Vienna Berlin and Prague then compare those notes with support tickets collected since March the team also need test imports on two older Macs verify every Markdown link and ask Maya to record unresolved risks for Project Cedar before August 28, 2026.",
             reference: "Before the autumn launch, the research team will interview twelve customers from Vienna, Berlin, and Prague, then compare those notes with support tickets collected since March; the team also needs to test imports on two older Macs, verify every Markdown link, and ask Maya to record unresolved risks for Project Cedar before August 28, 2026.",
             expectation: .aiInvariant,
-            ai: .reviewOnly,
             conservativeCandidateFixture: "Before the autumn launch, the research team interviews twelve customers from Vienna, Berlin, and Prague, then compares those notes with support tickets collected since March; the team also needs to test imports on two older Macs, verify every Markdown link, and ask Maya to record unresolved risks for Project Cedar before August 28, 2026.",
             mutations: [.missingComma, .subjectVerbAgreement, .runOnClause, .subjectVerbAgreement, .missingShortWord],
             long: true,
@@ -1041,10 +1013,10 @@ private extension FlowWritingCorpus {
         ),
         autocomplete(
             "autocomplete-restatement-006", .longForm,
-            context: "Education is important because it helps people evaluate evidence and make informed decisions",
-            output: "Education is important for making informed decisions.",
-            expected: nil,
-            expectation: .restatementOrGeneric
+            context: "Public parks matter because they give crowded neighborhoods room to gather and rest",
+            output: "Public parks matter for healthy neighborhoods.",
+            expected: " Public parks matter for healthy neighborhoods.",
+            expectation: .useful
         ),
         autocomplete(
             "autocomplete-restatement-007", .projectSummary,
