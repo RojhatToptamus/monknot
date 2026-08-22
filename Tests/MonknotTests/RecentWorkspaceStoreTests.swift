@@ -4,7 +4,8 @@ import XCTest
 
 final class RecentWorkspaceStoreTests: XCTestCase {
     func testRecordKeepsMostRecentWorkspaceFirstAndDeduplicatesPaths() throws {
-        let userDefaults = try makeUserDefaults()
+        let defaultsFixture = IsolatedUserDefaults(prefix: "RecentWorkspaceStoreTests")
+        let userDefaults = defaultsFixture.userDefaults
         let store = RecentWorkspaceStore(userDefaults: userDefaults, key: "recents", limit: 3)
         let first = URL(fileURLWithPath: "/tmp/Monknot/A", isDirectory: true)
         let second = URL(fileURLWithPath: "/tmp/Monknot/B", isDirectory: true)
@@ -20,7 +21,8 @@ final class RecentWorkspaceStoreTests: XCTestCase {
     }
 
     func testRecordLimitsStoredWorkspaces() throws {
-        let userDefaults = try makeUserDefaults()
+        let defaultsFixture = IsolatedUserDefaults(prefix: "RecentWorkspaceStoreTests")
+        let userDefaults = defaultsFixture.userDefaults
         let store = RecentWorkspaceStore(userDefaults: userDefaults, key: "recents", limit: 2)
 
         store.record(URL(fileURLWithPath: "/tmp/Monknot/A", isDirectory: true))
@@ -34,7 +36,8 @@ final class RecentWorkspaceStoreTests: XCTestCase {
     }
 
     func testRemoveAndClearUpdateStoredWorkspaces() throws {
-        let userDefaults = try makeUserDefaults()
+        let defaultsFixture = IsolatedUserDefaults(prefix: "RecentWorkspaceStoreTests")
+        let userDefaults = defaultsFixture.userDefaults
         let store = RecentWorkspaceStore(userDefaults: userDefaults, key: "recents", limit: 3)
 
         store.record(URL(fileURLWithPath: "/tmp/Monknot/A", isDirectory: true))
@@ -47,12 +50,5 @@ final class RecentWorkspaceStoreTests: XCTestCase {
 
         store.clear()
         XCTAssertEqual(store.entries(), [])
-    }
-
-    private func makeUserDefaults() throws -> UserDefaults {
-        let suiteName = "RecentWorkspaceStoreTests.\(UUID().uuidString)"
-        let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        userDefaults.removePersistentDomain(forName: suiteName)
-        return userDefaults
     }
 }

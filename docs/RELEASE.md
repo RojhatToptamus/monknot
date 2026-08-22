@@ -199,9 +199,8 @@ unsandboxed and ad-hoc signed:
 swift test
 swift run MonknotSmokeTests
 swift run MonknotStoreSmokeTests
-swift run MonknotRecentWorkspaceSmokeTests
-swift run MonknotShortcutSmokeTests
-swift run MonknotWorkspaceExport
+swift run monknot-export --help
+swift run monknot-capture --help
 npm --prefix website run build
 script/build_and_run.sh --verify
 ```

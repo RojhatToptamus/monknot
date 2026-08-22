@@ -1973,6 +1973,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private let flowProseCompletionDelayNanoseconds: UInt64
         private let flowProseOfferDelayNanoseconds: UInt64
         private let flowCheckingTimeoutNanoseconds: UInt64
+        private let flowCheckDelayNanoseconds: UInt64?
         private let flowFocusValidator: (MarkdownNSTextView) -> Bool
         private let protectedRangeProvider: @Sendable (String, FlowSourceMode) -> [NSRange]
         private let writingToolsAvailability: () -> Bool
@@ -2216,6 +2217,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             flowProseCompletionDelayNanoseconds: UInt64 = 360_000_000,
             flowProseOfferDelayNanoseconds: UInt64 = 420_000_000,
             flowCheckingTimeoutNanoseconds: UInt64 = 2_000_000_000,
+            flowCheckDelayNanoseconds: UInt64? = nil,
             protectedRangeProvider: @escaping @Sendable (String, FlowSourceMode) -> [NSRange] = { text, mode in
                 FlowProtectedRangeService().protectedRanges(in: text, mode: mode)
             },
@@ -2239,6 +2241,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             self.flowProseCompletionDelayNanoseconds = flowProseCompletionDelayNanoseconds
             self.flowProseOfferDelayNanoseconds = flowProseOfferDelayNanoseconds
             self.flowCheckingTimeoutNanoseconds = flowCheckingTimeoutNanoseconds
+            self.flowCheckDelayNanoseconds = flowCheckDelayNanoseconds
             self.protectedRangeProvider = protectedRangeProvider
             self.flowFocusValidator = flowFocusValidator
             self.writingToolsAvailability = writingToolsAvailability
@@ -3791,9 +3794,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 checksCompletedStructuralSentence: endOffset != nil,
                 requestsAutocompleteAfterClear: requestsAutocompleteAfterClear
             )
+            let delayNanoseconds = flowCheckDelayNanoseconds ?? plan.delayNanoseconds
             flowCheckTask = Task { @MainActor [weak self] in
                 do {
-                    try await Task.sleep(nanoseconds: plan.delayNanoseconds)
+                    try await Task.sleep(nanoseconds: delayNanoseconds)
                 } catch {
                     return
                 }

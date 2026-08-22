@@ -187,6 +187,43 @@ final class WorkspaceReplaceServiceTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: note, encoding: .utf8), "keep me")
     }
 
+    func testWriteFailureKeepsEarlierCompletedFileAndLeavesFailingFileUnchanged() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let first = root.appendingPathComponent("first.md")
+        let lockedDirectory = root.appendingPathComponent("locked", isDirectory: true)
+        let second = lockedDirectory.appendingPathComponent("second.md")
+        try "replace first".write(to: first, atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: lockedDirectory, withIntermediateDirectories: true)
+        try "replace second".write(to: second, atomically: true, encoding: .utf8)
+
+        let documents = [
+            WorkspaceDocument(url: first, rootURL: root),
+            WorkspaceDocument(url: second, rootURL: root),
+        ]
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o555],
+            ofItemAtPath: lockedDirectory.path
+        )
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o755],
+                ofItemAtPath: lockedDirectory.path
+            )
+        }
+
+        XCTAssertThrowsError(try WorkspaceReplaceService(
+            textCache: WorkspaceTextContentCache()
+        ).replaceAndWrite(
+            find: "replace",
+            replacement: "updated",
+            documents: documents
+        ))
+        XCTAssertEqual(try String(contentsOf: first, encoding: .utf8), "updated first")
+        XCTAssertEqual(try String(contentsOf: second, encoding: .utf8), "replace second")
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("monknot-replace-tests")

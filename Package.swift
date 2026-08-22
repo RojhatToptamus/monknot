@@ -42,6 +42,11 @@ let package = Package(
                 .product(name: "Sparkle", package: "Sparkle")
             ]
         ),
+        .testTarget(
+            name: "RepositoryContractTests",
+            dependencies: ["MonknotExport"],
+            path: "Tests/RepositoryContractTests"
+        ),
         .executableTarget(
             name: "MonknotSmokeTests",
             dependencies: ["MonknotCore"],
@@ -57,16 +62,6 @@ let package = Package(
             ]
         ),
         .executableTarget(
-            name: "MonknotRecentWorkspaceSmokeTests",
-            dependencies: ["MonknotCore"],
-            path: "Tests/MonknotRecentWorkspaceSmokeTests"
-        ),
-        .executableTarget(
-            name: "MonknotShortcutSmokeTests",
-            dependencies: ["MonknotCore"],
-            path: "Tests/MonknotShortcutSmokeTests"
-        ),
-        .executableTarget(
             name: "MonknotExport",
             dependencies: ["MonknotCore"],
             path: "Sources/MonknotExport"
@@ -80,11 +75,6 @@ let package = Package(
             name: "MonknotThemeCatalogExport",
             dependencies: ["MonknotCore"],
             path: "Sources/MonknotThemeCatalogExport"
-        ),
-        .executableTarget(
-            name: "MonknotWorkspaceExport",
-            dependencies: ["MonknotCore"],
-            path: "Tests/MonknotWorkspaceExport"
         )
     ]
 )

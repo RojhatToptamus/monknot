@@ -6,14 +6,18 @@ public enum WorkspaceSearchResultExporter {
         query: String
     ) -> String {
         var lines = ["path\tline\tpreview\tquery"]
-        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedQuery = sanitized(query.trimmingCharacters(in: .whitespacesAndNewlines))
         for result in results {
             let location = result.kind == .pdf ? "p\(result.line)" : "\(result.line)"
-            let preview = result.preview
-                .replacingOccurrences(of: "\t", with: " ")
-                .replacingOccurrences(of: "\n", with: " ")
-            lines.append("\(result.relativePath)\t\(location)\t\(preview)\t\(trimmedQuery)")
+            lines.append("\(sanitized(result.relativePath))\t\(location)\t\(sanitized(result.preview))\t\(trimmedQuery)")
         }
         return lines.joined(separator: "\n")
+    }
+
+    private static func sanitized(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\t", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
     }
 }

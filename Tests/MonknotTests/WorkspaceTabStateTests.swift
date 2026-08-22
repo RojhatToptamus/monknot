@@ -2,6 +2,69 @@ import XCTest
 @testable import MonknotCore
 
 final class WorkspaceTabStateTests: XCTestCase {
+    func testMoveTabBeforeAnotherTabAndToTheEnd() {
+        let (readme, guide, notes) = documents()
+        var state = WorkspaceTabState()
+        [readme, guide, notes].forEach { state.open($0) }
+
+        state.moveTab(documentID: notes.id, before: readme.id)
+        XCTAssertEqual(state.tabs.map(\.documentID), [notes.id, readme.id, guide.id])
+
+        state.moveTab(documentID: notes.id, before: nil)
+        XCTAssertEqual(state.tabs.map(\.documentID), [readme.id, guide.id, notes.id])
+    }
+
+    func testMovingPinnedTabKeepsPinnedTabsBeforeUnpinnedTabs() {
+        let (readme, guide, notes) = documents()
+        var state = WorkspaceTabState()
+        [readme, guide, notes].forEach { state.open($0) }
+        state.togglePin(documentID: notes.id)
+        state.togglePin(documentID: guide.id)
+
+        state.moveTab(documentID: notes.id, before: guide.id)
+
+        XCTAssertEqual(state.tabs.map(\.documentID), [notes.id, guide.id, readme.id])
+        XCTAssertTrue(state.tabs.prefix(2).allSatisfy(\.isPinned))
+    }
+
+    func testClosingSelectedAndFinalTabsUpdatesSelectionAndUserEmptyState() {
+        let (readme, guide, _) = documents()
+        var state = WorkspaceTabState()
+        state.open(readme)
+        state.open(guide)
+
+        XCTAssertEqual(state.close(documentID: guide.id), readme.id)
+        XCTAssertEqual(state.selectedDocumentID, readme.id)
+        XCTAssertFalse(state.isEmptyByUserChoice)
+
+        XCTAssertNil(state.close(documentID: readme.id))
+        XCTAssertTrue(state.tabs.isEmpty)
+        XCTAssertNil(state.selectedDocumentID)
+        XCTAssertTrue(state.isEmptyByUserChoice)
+    }
+
+    func testRemapAndPrunePreserveOnlyAvailableOrExplicitlyPreservedTabs() {
+        let (readme, _, notes) = documents()
+        var state = WorkspaceTabState()
+        state.open(readme)
+        state.open(notes)
+        let renamedID = "/tmp/MonknotWorkspace/Renamed.md"
+
+        state.remapDocumentID(sourceID: notes.id, destinationID: renamedID)
+        XCTAssertTrue(state.contains(documentID: renamedID))
+        XCTAssertFalse(state.contains(documentID: notes.id))
+
+        state.pruneUnavailableDocuments(
+            availableDocumentIDs: [readme.id],
+            preserving: [renamedID]
+        )
+        XCTAssertTrue(state.contains(documentID: renamedID))
+
+        state.pruneUnavailableDocuments(availableDocumentIDs: [readme.id])
+        XCTAssertFalse(state.contains(documentID: renamedID))
+        XCTAssertEqual(state.tabs.map(\.documentID), [readme.id])
+    }
+
     func testOpeningExistingTabActivatesWithoutMovingIt() {
         let root = URL(fileURLWithPath: "/tmp/MonknotWorkspace", isDirectory: true)
         let readme = WorkspaceDocument(url: root.appendingPathComponent("README.md"), rootURL: root)
@@ -96,6 +159,15 @@ final class WorkspaceTabStateTests: XCTestCase {
             relativePath: name,
             kind: .markdown,
             isPinned: isPinned
+        )
+    }
+
+    private func documents() -> (WorkspaceDocument, WorkspaceDocument, WorkspaceDocument) {
+        let root = URL(fileURLWithPath: "/tmp/MonknotWorkspace", isDirectory: true)
+        return (
+            WorkspaceDocument(url: root.appendingPathComponent("README.md"), rootURL: root),
+            WorkspaceDocument(url: root.appendingPathComponent("Guide.pdf"), rootURL: root),
+            WorkspaceDocument(url: root.appendingPathComponent("Notes.md"), rootURL: root)
         )
     }
 

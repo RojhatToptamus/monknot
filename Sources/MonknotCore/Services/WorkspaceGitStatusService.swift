@@ -29,7 +29,8 @@ public struct WorkspaceGitStatusService: Sendable {
         for line in output.split(separator: "\n", omittingEmptySubsequences: false) {
             guard line.count >= 4 else { continue }
             let statusCode = String(line.prefix(2))
-            let relativePath = String(line.dropFirst(3))
+            let rawPath = String(line.dropFirst(3))
+            let relativePath = normalizedPath(rawPath, statusCode: statusCode)
             guard !relativePath.isEmpty else { continue }
 
             if let status = parseStatusCode(statusCode) {
@@ -59,6 +60,24 @@ public struct WorkspaceGitStatusService: Sendable {
         }
 
         return nil
+    }
+
+    private func normalizedPath(_ rawPath: String, statusCode: String) -> String {
+        let selectedPath: String
+        if statusCode.contains("R"), let arrow = rawPath.range(of: " -> ", options: .backwards) {
+            selectedPath = String(rawPath[arrow.upperBound...])
+        } else {
+            selectedPath = rawPath
+        }
+        guard selectedPath.first == "\"", selectedPath.last == "\"",
+              let data = selectedPath.data(using: .utf8),
+              let decoded = try? JSONSerialization.jsonObject(
+                  with: data,
+                  options: .fragmentsAllowed
+              ) as? String else {
+            return selectedPath
+        }
+        return decoded
     }
 }
 

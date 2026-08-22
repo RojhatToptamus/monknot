@@ -111,6 +111,9 @@ final class MarkdownListEditPlannerTests: XCTestCase {
     }
 
     func testLargeDocumentPlanningRemainsAnOnDemandBoundedInteraction() throws {
+        guard ProcessInfo.processInfo.environment["MONKNOT_RUN_PERFORMANCE_TESTS"] == "1" else {
+            throw XCTSkip("Set MONKNOT_RUN_PERFORMANCE_TESTS=1 to run the manual list-planner performance lane.")
+        }
         let source = String(repeating: "ordinary Markdown body line\n", count: 120_000) + "- tail"
         let started = Date()
         let plan = MarkdownListEditPlanner.plan(
