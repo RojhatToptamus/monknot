@@ -27,7 +27,7 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         )
     }
 
-    func testOpeningSettingsWindowLetsMountedWorkspaceLayoutBecomeQuiescent() throws {
+    func testOpeningSettingsWindowLetsMountedWorkspaceLayoutBecomeQuiescent() async throws {
         let defaultsName = "WorkspaceSplitViewTests.Settings.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsName))
         defer { defaults.removePersistentDomain(forName: defaultsName) }
@@ -60,9 +60,16 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         workspaceWindow.contentView = workspaceHost
         workspaceWindow.setContentSize(NSSize(width: 1_300, height: 720))
         workspaceWindow.makeKeyAndOrderFront(nil)
-        workspaceWindow.layoutIfNeeded()
-        workspaceHost.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        await waitForMountedSplitHost(
+            window: workspaceWindow,
+            host: workspaceHost,
+            until: { splitView in
+                splitView.arrangedSubviews.count == 3
+                    && splitView.bounds.width > 0
+                    && splitView.bounds.height > 0
+                    && splitView.arrangedSubviews[2].isHidden
+            }
+        )
 
         let splitView = try XCTUnwrap(
             firstDescendant(of: WorkspaceNativeSplitView.self, in: workspaceHost)
@@ -108,7 +115,17 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         settingsWindow.makeKeyAndOrderFront(nil)
         settingsWindow.layoutIfNeeded()
         settingsHost.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        await drainMainQueue()
+        settingsWindow.layoutIfNeeded()
+        settingsHost.layoutSubtreeIfNeeded()
+        await waitForMountedSplitHost(
+            window: workspaceWindow,
+            host: workspaceHost,
+            until: { splitView in
+                splitView.arrangedSubviews.count == 3
+                    && splitView.arrangedSubviews[2].isHidden
+            }
+        )
         let settledSplitFrame = splitView.frame
 
         // Ignore the finite initial settings transaction. With no input or
@@ -116,7 +133,7 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         // workspace or resizing its native split panes.
         splitResizeActivity.reset()
         workspaceHost.resetLayoutCounts()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        await drainMainQueue()
 
         XCTAssertLessThanOrEqual(workspaceHost.layoutCallCount, 2)
         XCTAssertLessThanOrEqual(workspaceHost.updateConstraintsCallCount, 2)
@@ -128,7 +145,7 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         XCTAssertTrue(splitView.arrangedSubviews[2].isHidden)
     }
 
-    func testSwiftUIBridgeHonorsWideHostProposalInsteadOfIntrinsicSplitWidth() throws {
+    func testSwiftUIBridgeHonorsWideHostProposalInsteadOfIntrinsicSplitWidth() async throws {
         let rootView = WorkspaceSplitView(
             isSidebarPresented: true,
             isTerminalPresented: true,
@@ -152,11 +169,16 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         )
         window.contentView = host
         window.setContentSize(NSSize(width: 1_600, height: 620))
-        window.layoutIfNeeded()
-        host.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
-        window.layoutIfNeeded()
-        host.layoutSubtreeIfNeeded()
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                splitView.arrangedSubviews.count == 3
+                    && !splitView.arrangedSubviews[0].isHidden
+                    && !splitView.arrangedSubviews[2].isHidden
+                    && abs(splitView.bounds.width - host.bounds.width) <= 1
+            }
+        )
 
         let nativeSplitView = try XCTUnwrap(
             firstDescendant(of: WorkspaceNativeSplitView.self, in: host)
@@ -165,7 +187,7 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         XCTAssertEqual(nativeSplitView.bounds.width, host.bounds.width, accuracy: 1)
     }
 
-    func testMountedBridgeKeepsVisiblePaneSubtreeAfterResettingZoomWithTerminalHidden() throws {
+    func testMountedBridgeKeepsVisiblePaneSubtreeAfterResettingZoomWithTerminalHidden() async throws {
         for width in [CGFloat(1_300), 1_600] {
             let model = MountedSplitZoomModel()
             let host = NSHostingView(rootView: MountedSplitZoomFixture(model: model))
@@ -179,7 +201,16 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
             )
             window.contentView = host
             window.setContentSize(host.frame.size)
-            layoutMountedSplitHost(window: window, host: host)
+            await waitForMountedSplitHost(
+                window: window,
+                host: host,
+                until: { splitView in
+                    splitView.arrangedSubviews.count == 3
+                        && !splitView.arrangedSubviews[0].isHidden
+                        && splitView.arrangedSubviews[2].isHidden
+                        && abs(splitView.bounds.width - host.bounds.width) <= 1
+                }
+            )
 
             let splitView = try XCTUnwrap(
                 firstDescendant(of: WorkspaceNativeSplitView.self, in: host)
@@ -211,7 +242,15 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
             XCTAssertGreaterThan(arrangedSubviews[1].frame.width, 0)
 
             model.layoutScale = 1
-            layoutMountedSplitHost(window: window, host: host)
+            await waitForMountedSplitHost(
+                window: window,
+                host: host,
+                until: { splitView in
+                    !splitView.arrangedSubviews[0].isHidden
+                        && splitView.arrangedSubviews[2].isHidden
+                        && abs(splitView.bounds.width - host.bounds.width) <= 1
+                }
+            )
 
             let resetSplitView = try XCTUnwrap(
                 firstDescendant(of: WorkspaceNativeSplitView.self, in: host)
@@ -238,7 +277,7 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         }
     }
 
-    func testSwiftUIFeedbackDuringAnOutwardDragDoesNotRecollapseTheSidebar() throws {
+    func testSwiftUIFeedbackDuringAnOutwardDragDoesNotRecollapseTheSidebar() async throws {
         let model = LiveSplitFeedbackModel()
         let host = NSHostingView(rootView: LiveSplitFeedbackFixture(model: model))
         host.sizingOptions = []
@@ -250,11 +289,17 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
             defer: false
         )
         window.contentView = host
-        window.layoutIfNeeded()
-        host.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
-        window.layoutIfNeeded()
-        host.layoutSubtreeIfNeeded()
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                splitView.arrangedSubviews.count == 3
+                    && splitView.arrangedSubviews[0].isHidden
+                    && !splitView.arrangedSubviews[2].isHidden
+                    && !model.sidebarEffective
+                    && model.terminalEffective
+            }
+        )
 
         let splitView = try XCTUnwrap(
             firstDescendant(of: WorkspaceNativeSplitView.self, in: host)
@@ -263,9 +308,18 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         model.sidebarEvents.removeAll()
 
         try dragDivider(0, to: 360, in: splitView, window: window)
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
-        window.layoutIfNeeded()
-        host.layoutSubtreeIfNeeded()
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                !splitView.arrangedSubviews[0].isHidden
+                    && !splitView.arrangedSubviews[2].isHidden
+                    && model.sidebarPreferred
+                    && model.sidebarEffective
+                    && model.sidebarEvents.last
+                        == PresentationEvent(isPresented: true, userInitiated: true)
+            }
+        )
 
         XCTAssertFalse(splitView.arrangedSubviews[0].isHidden)
         XCTAssertTrue(model.sidebarPreferred)
@@ -282,7 +336,7 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         )
     }
 
-    func testNarrowSwiftUIFeedbackKeepsTheOppositePanePressureCollapsedAfterReveal() throws {
+    func testNarrowSwiftUIFeedbackKeepsTheOppositePanePressureCollapsedAfterReveal() async throws {
         let model = LiveSplitFeedbackModel()
         let host = NSHostingView(rootView: LiveSplitFeedbackFixture(model: model))
         host.sizingOptions = []
@@ -294,11 +348,17 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
             defer: false
         )
         window.contentView = host
-        window.layoutIfNeeded()
-        host.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
-        window.layoutIfNeeded()
-        host.layoutSubtreeIfNeeded()
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                splitView.arrangedSubviews.count == 3
+                    && splitView.arrangedSubviews[0].isHidden
+                    && !splitView.arrangedSubviews[2].isHidden
+                    && !model.sidebarEffective
+                    && model.terminalEffective
+            }
+        )
 
         let splitView = try XCTUnwrap(
             firstDescendant(of: WorkspaceNativeSplitView.self, in: host)
@@ -320,9 +380,18 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
             in: splitView,
             window: window
         )
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
-        window.layoutIfNeeded()
-        host.layoutSubtreeIfNeeded()
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                !splitView.arrangedSubviews[0].isHidden
+                    && splitView.arrangedSubviews[2].isHidden
+                    && model.sidebarEffective
+                    && !model.terminalEffective
+                    && model.sidebarEvents.last
+                        == PresentationEvent(isPresented: true, userInitiated: true)
+            }
+        )
 
         XCTAssertFalse(splitView.arrangedSubviews[0].isHidden)
         XCTAssertTrue(
@@ -346,7 +415,7 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         ))
     }
 
-    func testMountedScaleIncreaseKeepsTheSplitInsideItsHostWhileTerminalPressureCollapses() throws {
+    func testMountedScaleIncreaseKeepsTheSplitInsideItsHostWhileTerminalPressureCollapses() async throws {
         let model = MountedConstrainedScaleModel(
             sidebarPreferred: true,
             terminalPreferred: true
@@ -364,13 +433,25 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         window.contentView = host
         window.setContentSize(host.frame.size)
         defer { window.contentView = nil }
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                splitView.arrangedSubviews.count == 3
+                    && !splitView.arrangedSubviews[0].isHidden
+                    && !splitView.arrangedSubviews[2].isHidden
+                    && model.sidebarEffective
+                    && model.terminalEffective
+                    && abs(splitView.bounds.width - allocationWidth) <= 1
+            }
+        )
 
         let splitView = try XCTUnwrap(
             firstDescendant(of: WorkspaceNativeSplitView.self, in: host)
         )
         let initialPaneViews = splitView.arrangedSubviews
         let initialTerminalWidth = initialPaneViews[2].frame.width
+        let retainedWidthTolerance = max(2, splitView.dividerThickness)
         let geometry = MountedSplitWidthObservation()
         let observers = observeSplitWidthChanges(splitView, recording: geometry)
         defer { observers.forEach(NotificationCenter.default.removeObserver) }
@@ -381,7 +462,20 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         XCTAssertFalse(initialPaneViews[2].isHidden)
 
         model.layoutScale = 2
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                !splitView.arrangedSubviews[0].isHidden
+                    && splitView.arrangedSubviews[2].isHidden
+                    && model.sidebarEffective
+                    && !model.terminalEffective
+                    && splitView.arrangedSubviews[0].frame.width
+                        >= WorkspaceSplitMetrics.sidebarMinimumWidth * 2 - 1
+                    && splitView.arrangedSubviews[1].frame.width
+                        >= WorkspaceSplitMetrics.detailMinimumWidth * 2 - 1
+            }
+        )
 
         XCTAssertTrue(splitView === firstDescendant(of: WorkspaceNativeSplitView.self, in: host))
         XCTAssertTrue(
@@ -410,7 +504,17 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         )
 
         model.layoutScale = 1
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                !splitView.arrangedSubviews[0].isHidden
+                    && !splitView.arrangedSubviews[2].isHidden
+                    && model.terminalEffective
+                    && abs(splitView.arrangedSubviews[2].frame.width - initialTerminalWidth)
+                        <= retainedWidthTolerance
+            }
+        )
 
         assertMountedSplitFitsAllocation(
             splitView,
@@ -424,12 +528,12 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         XCTAssertEqual(
             splitView.arrangedSubviews[2].frame.width,
             initialTerminalWidth,
-            accuracy: 2,
+            accuracy: retainedWidthTolerance,
             "Zooming down must reveal the pressure-hidden terminal at its retained useful width"
         )
     }
 
-    func testPreferredTerminalSubtreeStaysMountedAcrossPressureCollapseAndRestore() throws {
+    func testPreferredTerminalSubtreeStaysMountedAcrossPressureCollapseAndRestore() async throws {
         let model = MountedConstrainedScaleModel(
             sidebarPreferred: true,
             terminalPreferred: true
@@ -452,7 +556,17 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         window.contentView = host
         window.setContentSize(host.frame.size)
         defer { window.contentView = nil }
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                splitView.arrangedSubviews.count == 3
+                    && !splitView.arrangedSubviews[2].isHidden
+                    && model.terminalEffective
+                    && lifecycle.mountCount == 1
+                    && lifecycle.dismantleCount == 0
+            }
+        )
 
         let splitView = try XCTUnwrap(
             firstDescendant(of: WorkspaceNativeSplitView.self, in: host)
@@ -463,7 +577,15 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         XCTAssertFalse(splitView.arrangedSubviews[2].isHidden)
 
         window.setContentSize(NSSize(width: 850, height: 620))
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                splitView.arrangedSubviews[2].isHidden
+                    && !model.terminalEffective
+                    && abs(splitView.bounds.width - 850) <= 1
+            }
+        )
 
         XCTAssertTrue(model.terminalPreferred)
         XCTAssertFalse(model.terminalEffective)
@@ -473,7 +595,15 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         XCTAssertEqual(lifecycle.dismantleCount, 0)
 
         window.setContentSize(NSSize(width: 1_600, height: 620))
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                !splitView.arrangedSubviews[2].isHidden
+                    && model.terminalEffective
+                    && abs(splitView.bounds.width - 1_600) <= 1
+            }
+        )
 
         XCTAssertTrue(model.terminalEffective)
         XCTAssertFalse(splitView.arrangedSubviews[2].isHidden)
@@ -482,7 +612,7 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         XCTAssertEqual(lifecycle.dismantleCount, 0)
     }
 
-    func testMountedScaleIncreasePreservesAUserHiddenTerminalWhileSidebarPressureCollapses() throws {
+    func testMountedScaleIncreasePreservesAUserHiddenTerminalWhileSidebarPressureCollapses() async throws {
         let model = MountedConstrainedScaleModel(
             sidebarPreferred: true,
             terminalPreferred: false
@@ -500,14 +630,30 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         window.contentView = host
         window.setContentSize(host.frame.size)
         defer { window.contentView = nil }
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                splitView.arrangedSubviews.count == 3
+                    && !splitView.arrangedSubviews[0].isHidden
+                    && splitView.arrangedSubviews[2].isHidden
+                    && model.sidebarEffective
+                    && !model.terminalEffective
+            }
+        )
 
         let splitView = try XCTUnwrap(
             firstDescendant(of: WorkspaceNativeSplitView.self, in: host)
         )
         let usefulSidebarWidth: CGFloat = 360
         splitView.setPosition(usefulSidebarWidth, ofDividerAt: 0)
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                abs(splitView.arrangedSubviews[0].frame.width - usefulSidebarWidth) <= 2
+            }
+        )
         let initialSidebarWidth = splitView.arrangedSubviews[0].frame.width
         XCTAssertEqual(initialSidebarWidth, usefulSidebarWidth, accuracy: 2)
         let geometry = MountedSplitWidthObservation()
@@ -518,7 +664,16 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         XCTAssertTrue(splitView.arrangedSubviews[2].isHidden)
 
         model.layoutScale = 2
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                splitView.arrangedSubviews[0].isHidden
+                    && splitView.arrangedSubviews[2].isHidden
+                    && !model.sidebarEffective
+                    && !model.terminalEffective
+            }
+        )
 
         assertMountedSplitFitsAllocation(
             splitView,
@@ -538,7 +693,17 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         )
 
         model.layoutScale = 1
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                !splitView.arrangedSubviews[0].isHidden
+                    && splitView.arrangedSubviews[2].isHidden
+                    && model.sidebarEffective
+                    && !model.terminalEffective
+                    && abs(splitView.arrangedSubviews[0].frame.width - initialSidebarWidth) <= 2
+            }
+        )
 
         assertMountedSplitFitsAllocation(
             splitView,
@@ -558,7 +723,7 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         )
     }
 
-    func testMountedScaledOutwardTerminalDragCannotInflateTheSplitPastItsHost() throws {
+    func testMountedScaledOutwardTerminalDragCannotInflateTheSplitPastItsHost() async throws {
         let model = MountedConstrainedScaleModel(
             sidebarPreferred: true,
             terminalPreferred: true
@@ -582,7 +747,18 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
             window.orderOut(nil)
             window.contentView = nil
         }
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                splitView.arrangedSubviews.count == 3
+                    && !splitView.arrangedSubviews[0].isHidden
+                    && !splitView.arrangedSubviews[2].isHidden
+                    && model.sidebarEffective
+                    && model.terminalEffective
+                    && abs(splitView.bounds.width - allocationWidth) <= 1
+            }
+        )
 
         let splitView = try XCTUnwrap(
             firstDescendant(of: WorkspaceNativeSplitView.self, in: host)
@@ -591,7 +767,16 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         XCTAssertFalse(splitView.arrangedSubviews[2].isHidden)
 
         model.layoutScale = 2
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                !splitView.arrangedSubviews[0].isHidden
+                    && splitView.arrangedSubviews[2].isHidden
+                    && model.sidebarEffective
+                    && !model.terminalEffective
+            }
+        )
 
         XCTAssertEqual(splitView.bounds.width, allocationWidth, accuracy: 1)
         XCTAssertFalse(splitView.arrangedSubviews[0].isHidden)
@@ -609,7 +794,16 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
             in: splitView,
             window: window
         )
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                splitView.arrangedSubviews[2].isHidden
+                    && !model.terminalEffective
+                    && splitView.arrangedSubviews[1].frame.width
+                        >= WorkspaceSplitMetrics.detailMinimumWidth * 2 - 1
+            }
+        )
 
         assertMountedSplitFitsAllocation(
             splitView,
@@ -644,7 +838,16 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         XCTAssertFalse(model.terminalEffective)
 
         model.layoutScale = 1
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                !splitView.arrangedSubviews[0].isHidden
+                    && !splitView.arrangedSubviews[2].isHidden
+                    && model.terminalEffective
+                    && abs(splitView.arrangedSubviews[2].frame.width - initialTerminalWidth) <= 2
+            }
+        )
 
         assertMountedSplitFitsAllocation(
             splitView,
@@ -664,7 +867,7 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         )
     }
 
-    func testMountedScaledOutwardSidebarDragPreservesShowIntentUntilItCanFit() throws {
+    func testMountedScaledOutwardSidebarDragPreservesShowIntentUntilItCanFit() async throws {
         let model = MountedConstrainedScaleModel(
             sidebarPreferred: true,
             terminalPreferred: false
@@ -688,20 +891,45 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
             window.orderOut(nil)
             window.contentView = nil
         }
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                splitView.arrangedSubviews.count == 3
+                    && !splitView.arrangedSubviews[0].isHidden
+                    && splitView.arrangedSubviews[2].isHidden
+                    && model.sidebarEffective
+                    && !model.terminalEffective
+            }
+        )
 
         let splitView = try XCTUnwrap(
             firstDescendant(of: WorkspaceNativeSplitView.self, in: host)
         )
         let usefulSidebarWidth: CGFloat = 360
         splitView.setPosition(usefulSidebarWidth, ofDividerAt: 0)
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                abs(splitView.arrangedSubviews[0].frame.width - usefulSidebarWidth) <= 2
+            }
+        )
         XCTAssertEqual(splitView.arrangedSubviews[0].frame.width, usefulSidebarWidth, accuracy: 2)
         XCTAssertFalse(splitView.arrangedSubviews[0].isHidden)
         XCTAssertTrue(splitView.arrangedSubviews[2].isHidden)
 
         model.layoutScale = 2
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                splitView.arrangedSubviews[0].isHidden
+                    && splitView.arrangedSubviews[2].isHidden
+                    && !model.sidebarEffective
+                    && !model.terminalEffective
+            }
+        )
 
         XCTAssertEqual(splitView.bounds.width, allocationWidth, accuracy: 1)
         XCTAssertTrue(splitView.arrangedSubviews[0].isHidden)
@@ -716,7 +944,18 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
             in: splitView,
             window: window
         )
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                splitView.arrangedSubviews[0].isHidden
+                    && splitView.arrangedSubviews[2].isHidden
+                    && !model.sidebarEffective
+                    && !model.terminalEffective
+                    && splitView.arrangedSubviews[1].frame.width
+                        >= WorkspaceSplitMetrics.detailMinimumWidth * 2 - 1
+            }
+        )
 
         assertMountedSplitFitsAllocation(
             splitView,
@@ -739,7 +978,17 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         XCTAssertFalse(model.terminalEffective)
 
         model.layoutScale = 1
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                !splitView.arrangedSubviews[0].isHidden
+                    && splitView.arrangedSubviews[2].isHidden
+                    && model.sidebarEffective
+                    && !model.terminalEffective
+                    && abs(splitView.arrangedSubviews[0].frame.width - usefulSidebarWidth) <= 2
+            }
+        )
 
         assertMountedSplitFitsAllocation(
             splitView,
@@ -761,7 +1010,7 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         )
     }
 
-    func testMountedWindowResizeRestoresBothUserPaneWidthsAfterTerminalPressureCollapse() throws {
+    func testMountedWindowResizeRestoresBothUserPaneWidthsAfterTerminalPressureCollapse() async throws {
         let model = MountedConstrainedScaleModel(
             sidebarPreferred: true,
             terminalPreferred: true
@@ -785,7 +1034,17 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
             window.orderOut(nil)
             window.contentView = nil
         }
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                splitView.arrangedSubviews.count == 3
+                    && !splitView.arrangedSubviews[0].isHidden
+                    && !splitView.arrangedSubviews[2].isHidden
+                    && model.sidebarEffective
+                    && model.terminalEffective
+            }
+        )
 
         let splitView = try XCTUnwrap(
             firstDescendant(of: WorkspaceNativeSplitView.self, in: host)
@@ -805,9 +1064,22 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
             splitView.bounds.width - requestedTerminalWidth - splitView.dividerThickness,
             ofDividerAt: 1
         )
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                abs(splitView.arrangedSubviews[2].frame.width - requestedTerminalWidth) <= 2
+            }
+        )
         splitView.setPosition(requestedSidebarWidth, ofDividerAt: 0)
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                abs(splitView.arrangedSubviews[0].frame.width - requestedSidebarWidth) <= 2
+                    && abs(splitView.arrangedSubviews[2].frame.width - requestedTerminalWidth) <= 2
+            }
+        )
         splitController.splitViewItems[1].holdingPriority = detailHoldingPriority
 
         let usefulSidebarWidth = paneViews[0].frame.width
@@ -818,7 +1090,17 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         XCTAssertFalse(paneViews[2].isHidden)
 
         window.setContentSize(NSSize(width: 920, height: 720))
-        layoutMountedSplitHost(window: window, host: host)
+        await waitForMountedSplitHost(
+            window: window,
+            host: host,
+            until: { splitView in
+                abs(splitView.bounds.width - 920) <= 1
+                    && !splitView.arrangedSubviews[0].isHidden
+                    && splitView.arrangedSubviews[2].isHidden
+                    && !model.terminalEffective
+                    && abs(splitView.arrangedSubviews[0].frame.width - usefulSidebarWidth) <= 2
+            }
+        )
 
         XCTAssertEqual(window.contentView?.bounds.width ?? 0, 920, accuracy: 1)
         XCTAssertEqual(host.bounds.width, 920, accuracy: 1)
@@ -833,7 +1115,16 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         let widthsBeforeRetainedPanesFit: [CGFloat] = [940, 1_000, 1_100]
         for width in widthsBeforeRetainedPanesFit {
             window.setContentSize(NSSize(width: width, height: 720))
-            layoutMountedSplitHost(window: window, host: host)
+            await waitForMountedSplitHost(
+                window: window,
+                host: host,
+                until: { splitView in
+                    abs(splitView.bounds.width - width) <= 1
+                        && !splitView.arrangedSubviews[0].isHidden
+                        && splitView.arrangedSubviews[2].isHidden
+                        && abs(splitView.arrangedSubviews[0].frame.width - usefulSidebarWidth) <= 2
+                }
+            )
 
             XCTAssertEqual(window.contentView?.bounds.width ?? 0, width, accuracy: 1)
             XCTAssertEqual(host.bounds.width, width, accuracy: 1)
@@ -854,7 +1145,18 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         let widthsAfterRetainedPanesFit: [CGFloat] = [1_160, 1_300, 1_500, 1_800]
         for width in widthsAfterRetainedPanesFit {
             window.setContentSize(NSSize(width: width, height: 720))
-            layoutMountedSplitHost(window: window, host: host)
+            await waitForMountedSplitHost(
+                window: window,
+                host: host,
+                until: { splitView in
+                    abs(splitView.bounds.width - width) <= 1
+                        && !splitView.arrangedSubviews[0].isHidden
+                        && !splitView.arrangedSubviews[2].isHidden
+                        && model.terminalEffective
+                        && abs(splitView.arrangedSubviews[0].frame.width - usefulSidebarWidth) <= 2
+                        && abs(splitView.arrangedSubviews[2].frame.width - usefulTerminalWidth) <= 2
+                }
+            )
 
             XCTAssertEqual(window.contentView?.bounds.width ?? 0, width, accuracy: 1)
             XCTAssertEqual(host.bounds.width, width, accuracy: 1)

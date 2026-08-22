@@ -430,7 +430,7 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
         )
     }
 
-    func testContainerBoundsPressureCollapsesTerminalFirstAndRestoresItsNativeWidth() {
+    func testContainerBoundsPressureCollapsesTerminalFirstAndRestoresItsNativeWidth() async {
         let recorder = PresentationRecorder()
         let controller = makeController(recorder: recorder)
         let window = mount(controller, width: 1_600)
@@ -452,7 +452,11 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
         controller.viewDidLayout()
         controller.view.layoutSubtreeIfNeeded()
         controller.splitView.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        let didReportPressureCollapse = await waitForMainQueueCondition {
+            recorder.terminalEvents.last
+                == PresentationEvent(isPresented: false, userInitiated: false)
+        }
+        XCTAssertTrue(didReportPressureCollapse)
 
         XCTAssertFalse(controller.sidebarItem.isCollapsed)
         XCTAssertTrue(
@@ -472,7 +476,11 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
         controller.viewDidLayout()
         controller.view.layoutSubtreeIfNeeded()
         controller.splitView.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        let didReportPressureRestore = await waitForMainQueueCondition {
+            recorder.terminalEvents.last
+                == PresentationEvent(isPresented: true, userInitiated: false)
+        }
+        XCTAssertTrue(didReportPressureRestore)
 
         XCTAssertFalse(controller.sidebarItem.isCollapsed)
         XCTAssertFalse(controller.terminalItem.isCollapsed)
@@ -603,11 +611,15 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
         assertAllVisiblePanesMeetMinimums(controller)
     }
 
-    func testProgrammaticPressureCallbackArrivesAfterUpdateWithCurrentNativeTruth() {
+    func testProgrammaticPressureCallbackArrivesAfterUpdateWithCurrentNativeTruth() async {
         let recorder = PresentationRecorder()
         let controller = makeController(recorder: recorder)
         _ = mount(controller, width: 1_230)
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        let didReportInitialTruth = await waitForMainQueueCondition {
+            recorder.terminalEvents.last
+                == PresentationEvent(isPresented: true, userInitiated: false)
+        }
+        XCTAssertTrue(didReportInitialTruth)
         XCTAssertEqual(
             recorder.terminalEvents.last,
             PresentationEvent(isPresented: true, userInitiated: false)
@@ -629,7 +641,11 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
             "A representable update must return before its non-user callback mutates SwiftUI state"
         )
 
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        let didReportPressureCollapse = await waitForMainQueueCondition {
+            recorder.terminalEvents
+                == [PresentationEvent(isPresented: false, userInitiated: false)]
+        }
+        XCTAssertTrue(didReportPressureCollapse)
 
         XCTAssertEqual(
             recorder.terminalEvents,
@@ -637,11 +653,15 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
         )
     }
 
-    func testDeferredPressureCallbackCoalescesToNativeTruthBeforeDelivery() {
+    func testDeferredPressureCallbackCoalescesToNativeTruthBeforeDelivery() async {
         let recorder = PresentationRecorder()
         let controller = makeController(recorder: recorder)
         _ = mount(controller, width: 1_230)
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        let didReportInitialTruth = await waitForMainQueueCondition {
+            recorder.terminalEvents.last
+                == PresentationEvent(isPresented: true, userInitiated: false)
+        }
+        XCTAssertTrue(didReportInitialTruth)
         XCTAssertEqual(
             recorder.terminalEvents.last,
             PresentationEvent(isPresented: true, userInitiated: false)
@@ -667,7 +687,7 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
         XCTAssertFalse(controller.terminalItem.isCollapsed)
         XCTAssertTrue(recorder.terminalEvents.isEmpty)
 
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        await drainMainQueue()
 
         XCTAssertEqual(
             recorder.terminalEvents,

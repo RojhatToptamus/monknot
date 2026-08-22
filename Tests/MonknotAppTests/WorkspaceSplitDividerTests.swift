@@ -513,11 +513,17 @@ final class WorkspaceSplitDividerTests: WorkspaceSplitViewTestCase {
         )
     }
 
-    func testProgrammaticVisibilityChangesAreReportedWithoutBeingMarkedAsUserDrags() {
+    func testProgrammaticVisibilityChangesAreReportedWithoutBeingMarkedAsUserDrags() async {
         let recorder = PresentationRecorder()
         let controller = makeController(recorder: recorder)
         let window = mount(controller, width: 2_000)
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        let didReportInitialTruth = await waitForMainQueueCondition {
+            recorder.sidebarEvents.last
+                == PresentationEvent(isPresented: true, userInitiated: false)
+                && recorder.terminalEvents.last
+                    == PresentationEvent(isPresented: true, userInitiated: false)
+        }
+        XCTAssertTrue(didReportInitialTruth)
         XCTAssertFalse(controller.sidebarItem.isCollapsed)
         XCTAssertFalse(controller.terminalItem.isCollapsed)
         recorder.sidebarEvents.removeAll()
@@ -525,7 +531,13 @@ final class WorkspaceSplitDividerTests: WorkspaceSplitViewTestCase {
 
         update(controller, sidebarPresented: false, terminalPresented: false, recorder: recorder)
         layout(window, controller)
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        let didReportHiddenState = await waitForMainQueueCondition {
+            recorder.sidebarEvents.last
+                == PresentationEvent(isPresented: false, userInitiated: false)
+                && recorder.terminalEvents.last
+                    == PresentationEvent(isPresented: false, userInitiated: false)
+        }
+        XCTAssertTrue(didReportHiddenState)
 
         XCTAssertTrue(controller.sidebarItem.isCollapsed)
         XCTAssertTrue(controller.terminalItem.isCollapsed)
@@ -536,7 +548,13 @@ final class WorkspaceSplitDividerTests: WorkspaceSplitViewTestCase {
 
         update(controller, sidebarPresented: true, terminalPresented: true, recorder: recorder)
         layout(window, controller)
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        let didReportVisibleState = await waitForMainQueueCondition {
+            recorder.sidebarEvents.last
+                == PresentationEvent(isPresented: true, userInitiated: false)
+                && recorder.terminalEvents.last
+                    == PresentationEvent(isPresented: true, userInitiated: false)
+        }
+        XCTAssertTrue(didReportVisibleState)
 
         XCTAssertFalse(controller.sidebarItem.isCollapsed)
         XCTAssertFalse(controller.terminalItem.isCollapsed)
