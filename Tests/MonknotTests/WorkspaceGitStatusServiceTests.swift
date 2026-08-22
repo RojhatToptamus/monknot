@@ -23,4 +23,19 @@ final class WorkspaceGitStatusServiceTests: XCTestCase {
         let statuses = service.statusMap(workspaceURL: URL(fileURLWithPath: "/tmp/workspace", isDirectory: true))
         XCTAssertTrue(statuses.isEmpty)
     }
+
+    func testParsesRenamedDestinationsAndGitQuotedPaths() {
+        let output = #"""
+        R  old-name.md -> new-name.md
+         M "notes/space name.md"
+        ?? "notes/line\nname.md"
+        """#
+        let statuses = WorkspaceGitStatusService { _ in output }
+            .statusMap(workspaceURL: URL(fileURLWithPath: "/tmp/workspace", isDirectory: true))
+
+        XCTAssertEqual(statuses["new-name.md"], .renamed)
+        XCTAssertEqual(statuses["notes/space name.md"], .modified)
+        XCTAssertEqual(statuses["notes/line\nname.md"], .untracked)
+        XCTAssertNil(statuses["old-name.md -> new-name.md"])
+    }
 }

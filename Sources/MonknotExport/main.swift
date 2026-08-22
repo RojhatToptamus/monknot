@@ -3,21 +3,25 @@ import MonknotCore
 
 enum MonknotExportCLI {
     static func run(arguments: [String] = CommandLine.arguments) -> Int32 {
-        if arguments.contains("--help") || arguments.contains("-h") {
+        let options = Array(arguments.dropFirst())
+        if options == ["--help"] || options == ["-h"] {
             printHelp()
             return 0
         }
 
-        if arguments.contains("--stdio") || arguments.contains("--mcp") {
+        if options.isEmpty || options == ["--stdio"] || options == ["--mcp"] {
             return runStdioServer()
         }
 
-        if let workspacePath = value(for: "--workspace", in: arguments),
-           arguments.contains("--json") {
+        if options.count == 3,
+           options[0] == "--workspace",
+           options[2] == "--json" {
+            let workspacePath = options[1]
             return runOneShotExport(workspacePath: workspacePath)
         }
 
-        return runStdioServer()
+        writeError("Invalid arguments. Use --help for usage.")
+        return 2
     }
 
     private static func runOneShotExport(workspacePath: String) -> Int32 {
@@ -52,13 +56,6 @@ enum MonknotExportCLI {
         }
 
         return 0
-    }
-
-    private static func value(for flag: String, in arguments: [String]) -> String? {
-        guard let index = arguments.firstIndex(of: flag), index + 1 < arguments.count else {
-            return nil
-        }
-        return arguments[index + 1]
     }
 
     private static func localizedDescription(for error: Error) -> String {

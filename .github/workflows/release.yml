@@ -160,9 +160,6 @@ jobs:
           set -euo pipefail
           swift run MonknotSmokeTests
           swift run MonknotStoreSmokeTests
-          swift run MonknotRecentWorkspaceSmokeTests
-          swift run MonknotShortcutSmokeTests
-          swift run MonknotWorkspaceExport
           swift run monknot-export --help
           swift run monknot-capture --help
 

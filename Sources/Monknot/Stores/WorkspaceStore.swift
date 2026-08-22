@@ -36,7 +36,8 @@ final class WorkspaceStore: ObservableObject {
     private var replaceUndoSnapshot: WorkspaceReplaceUndoSnapshot?
 
     private let scanner: any WorkspaceDocumentScanning
-    private let recentDocumentStore = RecentDocumentStore()
+    private let userDefaults: UserDefaults
+    private let recentDocumentStore: RecentDocumentStore
     private let fileWatcher = WorkspaceFileWatcher()
     private let bookmarkKey = "Monknot.workspaceBookmark"
     private var lastSavedText = ""
@@ -74,8 +75,13 @@ final class WorkspaceStore: ObservableObject {
     private static let recentDocumentRecordDelayNanoseconds: UInt64 = 350_000_000
     @Published private var pendingDocumentTransfer: WorkspaceDocumentTransfer?
 
-    init(scanner: any WorkspaceDocumentScanning = WorkspaceDocumentScanner()) {
+    init(
+        scanner: any WorkspaceDocumentScanning = WorkspaceDocumentScanner(),
+        userDefaults: UserDefaults = .standard
+    ) {
         self.scanner = scanner
+        self.userDefaults = userDefaults
+        recentDocumentStore = RecentDocumentStore(userDefaults: userDefaults)
     }
 
     var selectedDocument: WorkspaceDocument? {
@@ -108,7 +114,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func restoreWorkspace() {
-        guard workspaceURL == nil, let bookmarkData = UserDefaults.standard.data(forKey: bookmarkKey) else {
+        guard workspaceURL == nil, let bookmarkData = userDefaults.data(forKey: bookmarkKey) else {
             return
         }
 
@@ -122,7 +128,7 @@ final class WorkspaceStore: ObservableObject {
             )
             startWorkspaceLoad(url, selecting: nil, persistBookmark: isStale, preserveSelection: nil, reloadSelection: true)
         } catch {
-            UserDefaults.standard.removeObject(forKey: bookmarkKey)
+            userDefaults.removeObject(forKey: bookmarkKey)
             errorMessage = "Could not restore the previous workspace: \(error.localizedDescription)"
         }
     }
@@ -2103,7 +2109,7 @@ final class WorkspaceStore: ObservableObject {
                     includingResourceValuesForKeys: nil,
                     relativeTo: nil
                 )
-                UserDefaults.standard.set(bookmarkData, forKey: bookmarkKey)
+                userDefaults.set(bookmarkData, forKey: bookmarkKey)
             } catch {
                 errorMessage = "Could not persist workspace access: \(error.localizedDescription)"
             }

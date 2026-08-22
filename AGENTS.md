@@ -18,15 +18,14 @@ The package is organized around these main SwiftPM targets and helper executable
 - `MonknotCapture`: CLI helper for building and opening `monknot://capture` URLs (`monknot-capture`).
 - `MonknotThemeCatalogExport`: build-time JSON export of the canonical theme catalog for the
   product website.
-- `MonknotWorkspaceExport`: executable smoke/export coverage target used by local verification.
 
 The package declares these test targets:
 
 - `MonknotTests`: XCTest coverage for `MonknotCore`.
 - `MonknotAppTests`: XCTest integration coverage for `MonknotApp` (`WorkspaceStore` conflict and dirty-state behavior).
-- `MonknotSmokeTests`: executable smoke coverage for core workflows (scanner, tabs, search, render).
-- `MonknotStoreSmokeTests`: executable smoke coverage for `WorkspaceStore` save, paste, conflict, and file operations.
-- Additional executable smoke targets cover recent workspaces and shortcut routing.
+- `RepositoryContractTests`: XCTest coverage for build, release, workflow, license, and repository policy.
+- `MonknotSmokeTests`: one scanner-to-search-to-render executable smoke path.
+- `MonknotStoreSmokeTests`: one executable `WorkspaceStore` open, edit, save, and external-change path.
 
 ## Repository Map
 
@@ -47,10 +46,9 @@ The package declares these test targets:
   and derives its theme explorer data from `MonknotThemeCatalog`.
 - `Tests/MonknotTests`: XCTest unit tests for core services and models.
 - `Tests/MonknotAppTests`: XCTest integration tests for app-layer store behavior.
-- `Tests/MonknotSmokeTests`: executable smoke tests for core workflows.
-- `Tests/MonknotStoreSmokeTests`: executable smoke tests for `WorkspaceStore`.
-- `Tests/MonknotRecentWorkspaceSmokeTests`, `Tests/MonknotShortcutSmokeTests`: additional SwiftPM executable smoke tests for core integration edges.
-- `Tests/MonknotPDFAnnotationSmokeTests`, `Tests/MonknotPDFExportSmokeTests`, `Tests/MonknotTerminalSmokeTests`, `Tests/MonknotWindowSmokeTests`: historical manual smoke sources that exercise app-internal types; prefer XCTest in `MonknotAppTests` or manual compile paths when reviving them.
+- `Tests/RepositoryContractTests`: repository, workflow, release, security, license, and real CLI process contracts.
+- `Tests/MonknotSmokeTests`: scanner-to-search-to-render executable smoke test.
+- `Tests/MonknotStoreSmokeTests`: executable `WorkspaceStore` lifecycle smoke test.
 - `script/build_and_run.sh`: manual ad-hoc-signed app bundle builder/runner. It compiles explicit source-file lists and copies runtime resources into `dist/Monknot.app`.
 - `dist`: local build output. Treat as generated.
 
@@ -236,20 +234,18 @@ Primary command:
 swift test
 swift run MonknotSmokeTests
 swift run MonknotStoreSmokeTests
-swift run MonknotRecentWorkspaceSmokeTests
-swift run MonknotShortcutSmokeTests
-swift run MonknotWorkspaceExport
-swift run monknot-export --workspace /path/to/workspace --json
+swift run monknot-export --help
+swift run monknot-capture --help
 ```
 
 If SwiftPM fails before test compilation with a CommandLineTools module-map issue (`SwiftBridging` redefinition and Foundation/CoreServices module build failures), record the exact output and use the manual build/smoke verification paths below until the toolchain is repaired.
 
 Current XCTest coverage focuses on `MonknotCore`:
 
-- `WorkspaceDocumentScannerTests`: tree scanning, file classification, sorting, symlink skipping, relative paths.
-- `MarkdownRenderServiceTests`: HTML shell generation, theme variables, escaping, export styling.
-- `WorkspaceSearchServiceTests`: Markdown and PDF search behavior.
-- `WorkspaceSearchIndexTests`, `WorkspaceSearchCacheTests`, and `WorkspaceSearchBenchmarkTests`: bounded text/PDF index reuse, invalidation, and large-workspace search regressions.
+- `WorkspaceDocumentScannerTests` and `WorkspaceDocumentSupportTests`: scanning, classification, capabilities, paths, and symlink boundaries.
+- `MarkdownRenderServiceTests`, `ThemeCatalogTests`, and `ThemePreferenceTests`: rendering and theme contracts.
+- `WorkspaceTextSearchServiceTests` and `WorkspacePDFSearchServiceTests`: text and PDF search behavior.
+- Search cache and index suites: observable reuse, invalidation, and bounded eviction.
 - `MarkdownOutlineParserTests`: Markdown heading extraction behavior.
 - `MarkdownPDFExportOptionsTests`: export option defaults, clamping, persistence behavior.
 - `MarkdownScrollSyncTests`: source line ↔ character offset math for split-view scroll sync.
@@ -260,17 +256,15 @@ Current XCTest coverage focuses on `MonknotCore`:
 - `WorkspaceContextAssemblerTests`: excerpt assembly, stop-word term extraction, preferred related-note path priority.
 - `WorkspaceReplaceServiceTests`: dry-run `preview()`, scoped replace, undo snapshots, summary message formatting.
 - `WorkspaceContextOrderingTests`: related-note-first ordering for context chips.
-- `BuildScriptSyncTests`: manual build script source/resource sync.
-- Manual smoke coverage includes `WorkspaceTabState` open/dedupe/pin/close/prune/remap behavior and `WorkspaceStore` remap/delete guard behavior.
+- `RepositoryContractTests`: manual build, workflow, release, security, license, governance, Sparkle, and CLI process contracts.
+- `WorkspaceTabStateTests`: open, order, pin, close, remap, prune, and closed-tab history behavior.
 
-Manual smoke verification used in this repo when SwiftPM is blocked:
+Manual Core smoke verification used in this repo when SwiftPM is blocked:
 
 ```sh
 script/build_and_run.sh --verify
 swiftc -vfsoverlay .build/manual/swift-vfs-overlay.yaml -I .build/manual -L .build/manual -lMonknotCore -Xlinker -rpath -Xlinker .build/manual Tests/MonknotSmokeTests/main.swift -o .build/manual/MonknotSmokeTests
 .build/manual/MonknotSmokeTests
-swiftc -parse-as-library -vfsoverlay .build/manual/swift-vfs-overlay.yaml -I .build/manual -L .build/manual -lMonknotCore -Xlinker -rpath -Xlinker .build/manual Sources/Monknot/Models/DocumentSaveState.swift Sources/Monknot/Services/WorkspaceFileWatcher.swift Sources/Monknot/Services/WorkspacePasteboardImportService.swift Sources/Monknot/Stores/WorkspaceStore.swift Tests/MonknotStoreSmokeTests/MonknotStoreSmokeTestsSupport.swift Tests/MonknotStoreSmokeTests/MonknotStoreSmokeTests.swift -o .build/manual/MonknotStoreSmokeTests
-.build/manual/MonknotStoreSmokeTests
 ```
 
 When adding logic:
@@ -292,10 +286,8 @@ Run unit tests:
 swift test
 swift run MonknotSmokeTests
 swift run MonknotStoreSmokeTests
-swift run MonknotRecentWorkspaceSmokeTests
-swift run MonknotShortcutSmokeTests
-swift run MonknotWorkspaceExport
-swift run monknot-export --workspace /path/to/workspace --json
+swift run monknot-export --help
+swift run monknot-capture --help
 ```
 
 Build and open the app bundle:

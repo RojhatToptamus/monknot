@@ -120,6 +120,9 @@ final class ContentWidthPreferenceTests: XCTestCase {
             defer: false
         )
         window.contentView = host
+        defer {
+            window.contentView = nil
+        }
         window.layoutIfNeeded()
         host.layoutSubtreeIfNeeded()
 
@@ -226,6 +229,9 @@ final class ContentWidthPreferenceTests: XCTestCase {
             defer: false
         )
         window.contentView = host
+        defer {
+            window.contentView = nil
+        }
         window.layoutIfNeeded()
         host.layoutSubtreeIfNeeded()
 
@@ -388,6 +394,9 @@ final class ContentWidthPreferenceTests: XCTestCase {
             defer: false
         )
         window.contentView = host
+        defer {
+            window.contentView = nil
+        }
         window.layoutIfNeeded()
         host.layoutSubtreeIfNeeded()
         let webView = try XCTUnwrap(

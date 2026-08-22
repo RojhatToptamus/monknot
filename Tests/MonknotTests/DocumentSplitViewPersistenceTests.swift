@@ -13,9 +13,8 @@ final class DocumentSplitViewPersistenceTests: XCTestCase {
     }
 
     func testPerDocumentSplitViewPersistence() {
-        let defaults = UserDefaults(suiteName: "DocumentSplitViewPersistenceTests")!
-        defaults.removePersistentDomain(forName: "DocumentSplitViewPersistenceTests")
-        defer { defaults.removePersistentDomain(forName: "DocumentSplitViewPersistenceTests") }
+        let defaultsFixture = IsolatedUserDefaults(prefix: "DocumentSplitViewPersistenceTests")
+        let defaults = defaultsFixture.userDefaults
 
         let first = "/tmp/first.md"
         let second = "/tmp/second.md"
@@ -28,9 +27,8 @@ final class DocumentSplitViewPersistenceTests: XCTestCase {
     }
 
     func testDefaultSplitValuesDoNotCreatePerDocumentKeys() {
-        let defaults = UserDefaults(suiteName: "DocumentSplitViewPersistenceTests.defaults")!
-        defaults.removePersistentDomain(forName: "DocumentSplitViewPersistenceTests.defaults")
-        defer { defaults.removePersistentDomain(forName: "DocumentSplitViewPersistenceTests.defaults") }
+        let defaultsFixture = IsolatedUserDefaults(prefix: "DocumentSplitViewPersistenceTests")
+        let defaults = defaultsFixture.userDefaults
 
         let path = "/tmp/default.md"
         DocumentSplitViewPersistence.setEnabled(false, forDocumentPath: path, defaults: defaults)
@@ -45,9 +43,8 @@ final class DocumentSplitViewPersistenceTests: XCTestCase {
     }
 
     func testSplitViewStoresOverrideWhenLegacyDefaultDiffers() {
-        let defaults = UserDefaults(suiteName: "DocumentSplitViewPersistenceTests.legacyOverride")!
-        defaults.removePersistentDomain(forName: "DocumentSplitViewPersistenceTests.legacyOverride")
-        defer { defaults.removePersistentDomain(forName: "DocumentSplitViewPersistenceTests.legacyOverride") }
+        let defaultsFixture = IsolatedUserDefaults(prefix: "DocumentSplitViewPersistenceTests")
+        let defaults = defaultsFixture.userDefaults
 
         let path = "/tmp/override.md"
         defaults.set(true, forKey: "Monknot.markdownSplitView")
@@ -59,18 +56,16 @@ final class DocumentSplitViewPersistenceTests: XCTestCase {
     }
 
     func testFallsBackToLegacyGlobalSplitViewPreference() {
-        let defaults = UserDefaults(suiteName: "DocumentSplitViewPersistenceTests")!
-        defaults.removePersistentDomain(forName: "DocumentSplitViewPersistenceTests")
-        defer { defaults.removePersistentDomain(forName: "DocumentSplitViewPersistenceTests") }
+        let defaultsFixture = IsolatedUserDefaults(prefix: "DocumentSplitViewPersistenceTests")
+        let defaults = defaultsFixture.userDefaults
 
         defaults.set(true, forKey: "Monknot.markdownSplitView")
         XCTAssertTrue(DocumentSplitViewPersistence.isEnabled(forDocumentPath: "/tmp/new.md", defaults: defaults))
     }
 
     func testRemapDocumentPathMigratesSplitViewPreference() {
-        let defaults = UserDefaults(suiteName: "DocumentSplitViewPersistenceTests.remap")!
-        defaults.removePersistentDomain(forName: "DocumentSplitViewPersistenceTests.remap")
-        defer { defaults.removePersistentDomain(forName: "DocumentSplitViewPersistenceTests.remap") }
+        let defaultsFixture = IsolatedUserDefaults(prefix: "DocumentSplitViewPersistenceTests")
+        let defaults = defaultsFixture.userDefaults
 
         let source = "/tmp/workspace/old-name.md"
         let destination = "/tmp/workspace/new-name.md"
@@ -83,9 +78,8 @@ final class DocumentSplitViewPersistenceTests: XCTestCase {
     }
 
     func testRemapDocumentPathNoOpWhenSourceHasNoStoredPreference() {
-        let defaults = UserDefaults(suiteName: "DocumentSplitViewPersistenceTests.remapNoOp")!
-        defaults.removePersistentDomain(forName: "DocumentSplitViewPersistenceTests.remapNoOp")
-        defer { defaults.removePersistentDomain(forName: "DocumentSplitViewPersistenceTests.remapNoOp") }
+        let defaultsFixture = IsolatedUserDefaults(prefix: "DocumentSplitViewPersistenceTests")
+        let defaults = defaultsFixture.userDefaults
 
         DocumentSplitViewPersistence.setEnabled(false, forDocumentPath: "/tmp/other.md", defaults: defaults)
         DocumentSplitViewPersistence.remapDocumentPath(
@@ -99,9 +93,8 @@ final class DocumentSplitViewPersistenceTests: XCTestCase {
     }
 
     func testPerDocumentSplitRatioPersistence() {
-        let defaults = UserDefaults(suiteName: "DocumentSplitViewPersistenceTests.ratio")!
-        defaults.removePersistentDomain(forName: "DocumentSplitViewPersistenceTests.ratio")
-        defer { defaults.removePersistentDomain(forName: "DocumentSplitViewPersistenceTests.ratio") }
+        let defaultsFixture = IsolatedUserDefaults(prefix: "DocumentSplitViewPersistenceTests")
+        let defaults = defaultsFixture.userDefaults
 
         let first = "/tmp/first.md"
         let second = "/tmp/second.md"
@@ -119,9 +112,8 @@ final class DocumentSplitViewPersistenceTests: XCTestCase {
     }
 
     func testRemapDocumentPathMigratesSplitRatioPreference() {
-        let defaults = UserDefaults(suiteName: "DocumentSplitViewPersistenceTests.ratioRemap")!
-        defaults.removePersistentDomain(forName: "DocumentSplitViewPersistenceTests.ratioRemap")
-        defer { defaults.removePersistentDomain(forName: "DocumentSplitViewPersistenceTests.ratioRemap") }
+        let defaultsFixture = IsolatedUserDefaults(prefix: "DocumentSplitViewPersistenceTests")
+        let defaults = defaultsFixture.userDefaults
 
         let source = "/tmp/workspace/old-name.md"
         let destination = "/tmp/workspace/new-name.md"

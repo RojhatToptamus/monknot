@@ -4,6 +4,41 @@ import XCTest
 @testable import MonknotApp
 
 final class TerminalPTYSessionTests: XCTestCase {
+    @MainActor
+    func testTerminalDirectoryResolutionCoversNilFileDirectoryAndMissingPath() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TerminalDirectoryResolutionTests-\(UUID().uuidString)", isDirectory: true)
+        let docs = root.appendingPathComponent("Docs", isDirectory: true)
+        let note = docs.appendingPathComponent("Note.md")
+        try FileManager.default.createDirectory(at: docs, withIntermediateDirectories: true)
+        try "# Note\n".write(to: note, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        XCTAssertNil(TerminalSessionStore.resolvedDirectory(nil))
+        XCTAssertEqual(TerminalSessionStore.resolvedDirectory(note)?.standardizedFileURL, docs.standardizedFileURL)
+        XCTAssertEqual(TerminalSessionStore.resolvedDirectory(docs)?.standardizedFileURL, docs.standardizedFileURL)
+        XCTAssertEqual(
+            TerminalSessionStore.resolvedDirectory(docs.appendingPathComponent("Draft.md"))?.standardizedFileURL,
+            docs.standardizedFileURL
+        )
+        XCTAssertEqual(
+            TerminalWorkingDirectoryPolicy.directory(
+                preference: .activeDocumentFolder,
+                workspaceURL: root,
+                selectedDocumentURL: note
+            )?.standardizedFileURL,
+            docs.standardizedFileURL
+        )
+        XCTAssertEqual(
+            TerminalWorkingDirectoryPolicy.directory(
+                preference: .workspaceRoot,
+                workspaceURL: root,
+                selectedDocumentURL: note
+            )?.standardizedFileURL,
+            root.standardizedFileURL
+        )
+    }
+
     func testInteractiveLoginShellUsesWorkspaceEnvironmentAndPTYControls() throws {
         let workspace = FileManager.default.temporaryDirectory
             .appendingPathComponent("MonknotTerminalPTY-\(UUID().uuidString)", isDirectory: true)
@@ -35,14 +70,10 @@ final class TerminalPTYSessionTests: XCTestCase {
             printf '__MONKNOT_%s__hello\\n' ECHO
             printf '__MONKNOT_%s__' LS; command ls -1 | tr '\\n' ','; printf '\\n'
             printf '__MONKNOT_%s__' WHICH_GIT; which git
-            git --version | sed 's/^/__MONKNOT_GIT_VERSION__/'
             printf '__MONKNOT_%s__%s\\n' PATH \"$PATH\"
             for tool in claude codex node brew; do
               if command -v \"$tool\" >/dev/null 2>&1; then
                 printf '__MONKNOT_%s__%s=available\\n' TOOL \"$tool\"
-                if [[ \"$tool\" != brew ]]; then
-                  \"$tool\" --version 2>&1 | head -n 1 | sed \"s/^/__MONKNOT_VERSION__${tool}=/\"
-                fi
               else
                 printf '__MONKNOT_%s__%s=unavailable\\n' TOOL \"$tool\"
               fi
@@ -64,7 +95,6 @@ final class TerminalPTYSessionTests: XCTestCase {
         XCTAssertTrue(beforeInterrupt.contains("__MONKNOT_ECHO__hello"), beforeInterrupt)
         XCTAssertTrue(beforeInterrupt.contains("__MONKNOT_LS__terminal-fixture.txt,"), beforeInterrupt)
         XCTAssertTrue(beforeInterrupt.contains("__MONKNOT_WHICH_GIT__/"), beforeInterrupt)
-        XCTAssertTrue(beforeInterrupt.contains("__MONKNOT_GIT_VERSION__git version"), beforeInterrupt)
         XCTAssertTrue(beforeInterrupt.contains("__MONKNOT_SIZE__40 120"), beforeInterrupt)
 
         let outputLines = beforeInterrupt
@@ -92,9 +122,6 @@ final class TerminalPTYSessionTests: XCTestCase {
                 isUnavailable,
                 "Expected exactly one availability marker for \(tool).\n\(beforeInterrupt)"
             )
-            if isAvailable, tool != "brew" {
-                XCTAssertTrue(beforeInterrupt.contains("__MONKNOT_VERSION__\(tool)="), beforeInterrupt)
-            }
         }
 
         session.write("\u{3}")

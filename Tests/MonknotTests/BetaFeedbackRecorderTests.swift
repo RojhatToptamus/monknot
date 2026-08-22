@@ -28,6 +28,23 @@ final class BetaFeedbackRecorderTests: XCTestCase {
         }
     }
 
+    func testAppendProducesOneDecodableJSONObjectPerLineInOrder() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileURL = root.appendingPathComponent("feedback.jsonl")
+        let recorder = BetaFeedbackRecorder(fileURL: fileURL)
+
+        _ = try recorder.append(message: "  First message  ")
+        _ = try recorder.append(message: "Second message")
+
+        let lines = try String(contentsOf: fileURL, encoding: .utf8)
+            .split(separator: "\n")
+        let entries = try lines.map {
+            try JSONDecoder().decode(BetaFeedbackEntry.self, from: Data($0.utf8))
+        }
+        XCTAssertEqual(entries.map(\.message), ["First message", "Second message"])
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("monknot-feedback-tests")

@@ -251,6 +251,32 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         )
     }
 
+    func testTerminalFullscreenAcceptsBothReturnFormsAndKeyCodesWhenEligible() {
+        let eligible = shortcutContext(canToggleTerminalFullscreen: true)
+        for event in [
+            MonknotKeyboardShortcutEvent(key: "\r", modifiers: [.command, .control], keyCode: nil),
+            MonknotKeyboardShortcutEvent(key: "\n", modifiers: [.command, .control], keyCode: nil),
+            MonknotKeyboardShortcutEvent(key: "", modifiers: [.command, .control], keyCode: 36),
+            MonknotKeyboardShortcutEvent(key: "", modifiers: [.command, .control], keyCode: 76),
+        ] {
+            XCTAssertEqual(MonknotKeyboardShortcutRouter.action(for: event, context: eligible), .toggleTerminalFullscreen)
+        }
+    }
+
+    func testTerminalFullscreenReturnEventsRemainUnhandledWhenIneligible() {
+        let ineligible = shortcutContext(canToggleTerminalFullscreen: false)
+        for keyCode: UInt16 in [36, 76] {
+            XCTAssertNil(MonknotKeyboardShortcutRouter.action(
+                for: MonknotKeyboardShortcutEvent(
+                    key: keyCode == 36 ? "\r" : "\n",
+                    modifiers: [.command, .control],
+                    keyCode: keyCode
+                ),
+                context: ineligible
+            ))
+        }
+    }
+
     func testQuestionMarkTypingIsNeverConsumed() {
         XCTAssertNil(action(for: "?", modifiers: [], context: shortcutContext()))
         XCTAssertNil(action(for: "?", modifiers: [.shift], context: shortcutContext()))
@@ -406,6 +432,7 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         canToggleSplitView: Bool = false,
         canInspectLinks: Bool = false,
         canUndoWorkspaceReplace: Bool = false,
+        canToggleTerminalFullscreen: Bool = false,
         isBusy: Bool = false
     ) -> MonknotKeyboardShortcutContext {
         MonknotKeyboardShortcutContext(
@@ -429,6 +456,7 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
             canToggleSplitView: canToggleSplitView,
             canInspectLinks: canInspectLinks,
             canUndoWorkspaceReplace: canUndoWorkspaceReplace,
+            canToggleTerminalFullscreen: canToggleTerminalFullscreen,
             isBusy: isBusy
         )
     }

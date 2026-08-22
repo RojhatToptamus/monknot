@@ -2,14 +2,14 @@ import XCTest
 @testable import MonknotApp
 
 @MainActor
-final class WorkspaceStoreReplaceUndoTests: XCTestCase {
+final class WorkspaceStoreReplaceUndoTests: WorkspaceStoreTestCase {
     func testTextMutationUndoAndRedoApplyExactTextSynchronously() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let file = root.appendingPathComponent("note.md")
         try "alpha beta".write(to: file, atomically: true, encoding: .utf8)
 
-        let store = WorkspaceStore()
+        let store = makeWorkspaceStore()
         store.openWorkspace(root)
         let didLoad = await waitUntil {
             !store.isBusy && !store.isDocumentLoading && store.documentText == "alpha beta"
@@ -51,7 +51,7 @@ final class WorkspaceStoreReplaceUndoTests: XCTestCase {
         let file = root.appendingPathComponent("note.md")
         try "alpha beta".write(to: file, atomically: true, encoding: .utf8)
 
-        let store = WorkspaceStore()
+        let store = makeWorkspaceStore()
         store.openWorkspace(root)
         let didLoad = await waitUntil {
             !store.isBusy && !store.isDocumentLoading && store.documentText == "alpha beta"
@@ -81,7 +81,7 @@ final class WorkspaceStoreReplaceUndoTests: XCTestCase {
         try "alpha beta".write(to: first, atomically: true, encoding: .utf8)
         try "beta only".write(to: second, atomically: true, encoding: .utf8)
 
-        let store = WorkspaceStore()
+        let store = makeWorkspaceStore()
         store.openWorkspace(root)
 
         let didLoad = await waitUntil { !store.isBusy && store.documents.count == 2 }
@@ -111,7 +111,7 @@ final class WorkspaceStoreReplaceUndoTests: XCTestCase {
         try "alpha beta".write(to: first, atomically: true, encoding: .utf8)
         try "beta only".write(to: second, atomically: true, encoding: .utf8)
 
-        let store = WorkspaceStore()
+        let store = makeWorkspaceStore()
         store.openWorkspace(root)
 
         let didLoad = await waitUntil { !store.isBusy && store.documents.count == 2 }
@@ -140,7 +140,7 @@ final class WorkspaceStoreReplaceUndoTests: XCTestCase {
         try "alpha beta".write(to: first, atomically: true, encoding: .utf8)
         try "beta only".write(to: second, atomically: true, encoding: .utf8)
 
-        let store = WorkspaceStore()
+        let store = makeWorkspaceStore()
         store.openWorkspace(root)
 
         let didLoad = await waitUntil { !store.isBusy && store.documents.count == 2 }

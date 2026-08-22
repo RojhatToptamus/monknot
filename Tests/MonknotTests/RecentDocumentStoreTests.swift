@@ -3,8 +3,8 @@ import XCTest
 
 final class RecentDocumentStoreTests: XCTestCase {
     func testRecordsRecentDocumentsPerWorkspace() throws {
-        let defaults = UserDefaults(suiteName: UUID().uuidString)!
-        defer { defaults.removePersistentDomain(forName: defaults.description) }
+        let defaultsFixture = IsolatedUserDefaults(prefix: "RecentDocumentStoreTests")
+        let defaults = defaultsFixture.userDefaults
 
         let store = RecentDocumentStore(userDefaults: defaults, limit: 3)
         let workspace = URL(fileURLWithPath: "/tmp/workspace-a", isDirectory: true)
