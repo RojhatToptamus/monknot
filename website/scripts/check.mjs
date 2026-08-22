@@ -21,6 +21,8 @@ const expectedAssets = new Map([
   ["shots/preview-light.jpg", "362b4da1d50e300bee2620e7a5c6cdacf4f8ebc741aa4ef3c9c24ed42c1e3183"],
   ["shots/pdf-light.jpg", "275ea7146cda16cf336290fc25a9830921d9d3c9eb4d6a4d144991e5f86813d6"],
   ["shots/terminal-light.jpg", "285be266ac7f12a9c2f0b345b0b0047df5e2d5763be1687cca43c5b47823503a"],
+  ["shots/writing-assistance.gif", "c4b011c477b5a28979dff45233dd76b27b6f7b40e94eb1b48aa9045a8730bd8f"],
+  ["shots/writing-assistance-poster.png", "a18bb4451b91d294677f7a165489e1b8d7457d2e8d9185ae742a13c90fbfa753"],
 ]);
 
 await Promise.all(["index.html", "support.html", "privacy.html", "styles.css", "main.js", "page.js", "theme-catalog.json", "robots.txt", "sitemap.xml", "vercel.json", ...expectedAssets.keys()].map((file) => access(resolve(root, file))));
@@ -92,6 +94,11 @@ const requiredMarkup = [
     `data-view="${view}" data-mode="light"`,
     `id="tab-${view}"`,
   ]),
+  'data-view="writing" data-mode="any"',
+  'data-static-src="shots/writing-assistance-poster.png"',
+  'data-animated-src="shots/writing-assistance.gif"',
+  'id="tab-writing"',
+  'class="writing-demo-toggle"',
 ];
 
 for (const marker of requiredMarkup) {
@@ -189,8 +196,12 @@ for (const marker of [
   if (!styles.includes(marker)) throw new Error(`Supplied geometry changed: ${marker}`);
 }
 
-if ((html.match(/class="product-shot/g) ?? []).length !== 10) throw new Error("Expected ten supplied product screenshots.");
-if ((html.match(/role="tab"/g) ?? []).length !== 5) throw new Error("Expected five product tabs.");
+if ((html.match(/class="product-shot/g) ?? []).length !== 11) throw new Error("Expected ten screenshots and one writing-assistance demo.");
+if ((html.match(/role="tab"/g) ?? []).length !== 6) throw new Error("Expected six product tabs.");
+const writingMedia = html.match(/<img class="product-shot" data-view="writing"[^>]+>/)?.[0];
+if (!writingMedia || !writingMedia.includes('width="1600" height="1039"')) {
+  throw new Error("Writing-assistance media must keep its fixed 1600 by 1039 dimensions.");
+}
 
 if (themeCatalog.sourceVersion !== "monknot-theme-v4" || themeCatalog.light?.length !== 19 || themeCatalog.dark?.length !== 30) {
   throw new Error("Expected the complete canonical catalog of 19 light and 30 dark presets.");
@@ -209,6 +220,10 @@ for (const marker of ['let previewMode = "light";', 'event.key === "ArrowDown"',
   if (!script.includes(marker)) throw new Error(`Missing theme keyboard behavior: ${marker}`);
 }
 
+for (const marker of ['window.matchMedia("(prefers-reduced-motion: reduce)")', "shot.dataset.animatedSrc", 'reducedMotion.addEventListener("change", renderProductView)', 'writingDemoToggle.addEventListener("click"']) {
+  if (!script.includes(marker)) throw new Error(`Missing writing-demo behavior: ${marker}`);
+}
+
 
 for (const marker of ["dataset.siteTheme", 'aria-pressed', 'theme-color']) {
   if (!pageScript.includes(marker)) throw new Error(`Missing legal-page appearance behavior: ${marker}`);
@@ -223,4 +238,4 @@ await Promise.all(
     .map((file) => access(resolve(root, file.replace(/^\//, ""))))
 );
 
-console.log(`Checked ${expectedAssets.size} assets, complete SEO metadata, 10 product views, 49 theme presets, support and privacy routes, and deployment files.`);
+console.log(`Checked ${expectedAssets.size} assets, complete SEO metadata, six product views backed by 11 media elements, 49 theme presets, support and privacy routes, and deployment files.`);

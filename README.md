@@ -43,23 +43,32 @@
 
 ## Features
 
-**Editor** — Write Markdown and plain text with syntax highlighting, document
+**Editor:** Write Markdown and plain text with syntax highlighting, document
 tabs, search, and a formatting bar when you want one.
 
-**Writing assistance** — Apple checks spelling and grammar first. On supported
-Macs, a private on-device model can repair completed text when Apple has no
-complete fix. Model repairs always open a review before they change the
-document. Autocomplete and accepted fixes stay private, visible, and undoable.
+**Writing assistance:** Fix spelling and grammar inline in Markdown, `.txt`,
+and `.text` files. On supported Macs with macOS 26, private AI suggestions and
+completions run on-device. They need no internet connection or AI subscription.
+Press Tab for the next word, or hold Tab for the full completion. Apple Writing
+Tools are also available on macOS 15.2 or later.
 
-**Split** — Keep source and rendered output side by side, scrolling in sync.
+<p align="center">
+  <img src="website/shots/writing-assistance.gif" width="800" height="520" alt="Monknot writing assistance in Field-brief.txt: automatic typo fixes, a reviewed grammar correction, full autocomplete acceptance, and the Apple Writing Tools menu">
+</p>
 
-**Preview** — Read the rendered document full width, including tables, task
+<p align="center">
+  <sub>Inline fixes · Reviewed grammar · On-device autocomplete · Apple Writing Tools</sub>
+</p>
+
+**Split:** Keep source and rendered output side by side, scrolling in sync.
+
+**Preview:** Read the rendered document full width, including tables, task
 lists, code blocks, links, and images.
 
-**PDF** — Search documents and add highlights, underlines, strike-throughs, and
+**PDF:** Search documents and add highlights, underlines, strike-throughs, and
 freehand marks. Markdown exports to PDF.
 
-**Terminal** — Run several shell sessions beside the active document, switch
+**Terminal:** Run several shell sessions beside the active document, switch
 between them, and search bounded scrollback without leaving Monknot.
 
 <p align="center">
@@ -85,6 +94,7 @@ Release downloads are signed with a Developer ID certificate and notarized by Ap
 | --- | --- |
 | Quick Open | <kbd>⌘ P</kbd> |
 | Go to Heading | <kbd>⇧ ⌘ O</kbd> |
+| Show Writing Tools | <kbd>⌃ ⌘ R</kbd> |
 | Toggle split editor | <kbd>⌘ \</kbd> |
 | Toggle terminal | <kbd>⌥ ⌘ J</kbd> |
 

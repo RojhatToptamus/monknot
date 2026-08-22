@@ -295,6 +295,7 @@ main {
 }
 
 .product-shot {
+  display: block;
   position: absolute;
   inset: 0;
   width: 100%;
@@ -359,12 +360,72 @@ main {
   color: var(--ink);
 }
 
-.product-caption {
+.product-caption-wrap {
   margin: 12px 0 0;
+  min-height: 3em;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 16px;
+}
+
+.product-caption {
+  margin: 0;
   text-align: center;
   font: 400 13px/1.5 var(--ui);
   color: var(--ink2);
   text-wrap: pretty;
+}
+
+.writing-demo-toggle {
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink2);
+  cursor: pointer;
+}
+
+.writing-demo-toggle[hidden] {
+  display: none;
+}
+
+.writing-demo-toggle:hover,
+.writing-demo-toggle:focus-visible {
+  color: var(--ink);
+  border-color: var(--ink2);
+}
+
+.writing-demo-toggle svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.writing-demo-toggle .play-icon,
+.writing-demo-toggle.is-stopped .stop-icon {
+  display: none;
+}
+
+.writing-demo-toggle.is-stopped .play-icon {
+  display: block;
+  fill: currentColor;
+  stroke: none;
+}
+
+@media (max-width: 520px) {
+  .product-caption-wrap {
+    min-height: 6.5em;
+  }
 }
 
 .themes-section {
