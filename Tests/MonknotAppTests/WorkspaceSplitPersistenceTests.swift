@@ -33,103 +33,101 @@ final class WorkspaceSplitPersistenceTests: WorkspaceSplitViewTestCase {
         XCTAssertEqual(paneWidth(restoredController.terminalItem, in: restoredController), expectedTerminalWidth, accuracy: 2)
     }
 
-    func testNarrowMigrationRetainsBothLegacyPeripheralWidthsIndependently() {
+    func testNarrowMigrationRetainsBothLegacyPeripheralWidthsIndependently() async {
         let legacySidebarWidth: CGFloat = 390
         let legacyTerminalWidth: CGFloat = 470
-        let previousLegacySidebarWidth = readLegacySidebarWidth()
-        defer { storeLegacySidebarWidth(previousLegacySidebarWidth) }
-        storeLegacySidebarWidth(legacySidebarWidth)
 
-        XCTAssertEqual(readLegacySidebarWidth(), legacySidebarWidth, accuracy: 2)
-        withIsolatedLegacyMigrationDefaults(terminalWidth: legacyTerminalWidth) { defaults in
-            let controller = makeController(migratesLegacyLayout: true)
-            setControllerSize(controller, width: 920)
-            controller.viewDidLayout()
-            controller.splitView.layoutSubtreeIfNeeded()
+        await withLegacySidebarWidth(legacySidebarWidth) {
+            XCTAssertEqual(readLegacySidebarWidth(), legacySidebarWidth, accuracy: 2)
+            withIsolatedLegacyMigrationDefaults(terminalWidth: legacyTerminalWidth) { defaults in
+                let controller = makeController(migratesLegacyLayout: true)
+                setControllerSize(controller, width: 920)
+                controller.viewDidLayout()
+                controller.splitView.layoutSubtreeIfNeeded()
 
-            XCTAssertEqual(controller.layoutScale, 1)
-            XCTAssertFalse(controller.sidebarItem.isCollapsed)
-            XCTAssertTrue(controller.terminalItem.isCollapsed)
-            XCTAssertEqual(
-                paneWidth(controller.sidebarItem, in: controller),
-                legacySidebarWidth,
-                accuracy: 2
-            )
-            XCTAssertNil(defaults.object(forKey: WorkspaceSplitMetrics.legacyTerminalWidthKey))
-            XCTAssertTrue(defaults.bool(forKey: WorkspaceSplitMetrics.migrationMarkerKey))
+                XCTAssertEqual(controller.layoutScale, 1)
+                XCTAssertFalse(controller.sidebarItem.isCollapsed)
+                XCTAssertTrue(controller.terminalItem.isCollapsed)
+                XCTAssertEqual(
+                    paneWidth(controller.sidebarItem, in: controller),
+                    legacySidebarWidth,
+                    accuracy: 2
+                )
+                XCTAssertNil(defaults.object(forKey: WorkspaceSplitMetrics.legacyTerminalWidthKey))
+                XCTAssertTrue(defaults.bool(forKey: WorkspaceSplitMetrics.migrationMarkerKey))
 
-            layoutController(controller, width: 1_600)
+                layoutController(controller, width: 1_600)
 
-            XCTAssertFalse(controller.sidebarItem.isCollapsed)
-            XCTAssertFalse(controller.terminalItem.isCollapsed)
-            XCTAssertEqual(
-                paneWidth(controller.sidebarItem, in: controller),
-                legacySidebarWidth,
-                accuracy: 2
-            )
-            XCTAssertEqual(
-                paneWidth(controller.terminalItem, in: controller),
-                legacyTerminalWidth,
-                accuracy: 2
-            )
+                XCTAssertFalse(controller.sidebarItem.isCollapsed)
+                XCTAssertFalse(controller.terminalItem.isCollapsed)
+                XCTAssertEqual(
+                    paneWidth(controller.sidebarItem, in: controller),
+                    legacySidebarWidth,
+                    accuracy: 2
+                )
+                XCTAssertEqual(
+                    paneWidth(controller.terminalItem, in: controller),
+                    legacyTerminalWidth,
+                    accuracy: 2
+                )
+            }
         }
     }
 
-    func testScaleTwoNarrowMigrationStagesAndRestoresScaledNativeWidths() {
-        let previousLegacySidebarWidth = readLegacySidebarWidth()
-        defer { storeLegacySidebarWidth(previousLegacySidebarWidth) }
+    func testScaleTwoNarrowMigrationStagesAndRestoresScaledNativeWidths() async {
         let legacySidebarWidth: CGFloat = 360
         let legacyTerminalWidth: CGFloat = 520
-        storeLegacySidebarWidth(legacySidebarWidth)
 
-        withIsolatedLegacyMigrationDefaults(terminalWidth: legacyTerminalWidth) { defaults in
-            let controller = makeController(
-                layoutScale: 2,
-                migratesLegacyLayout: true
-            )
-            setControllerSize(controller, width: 920)
-            controller.viewDidLayout()
-            controller.splitView.layoutSubtreeIfNeeded()
-
-            XCTAssertTrue(defaults.bool(forKey: WorkspaceSplitMetrics.migrationMarkerKey))
-            XCTAssertNil(defaults.object(forKey: WorkspaceSplitMetrics.legacyTerminalWidthKey))
-            XCTAssertTrue(controller.sidebarItem.isCollapsed)
-            XCTAssertTrue(controller.terminalItem.isCollapsed)
-
-            let expectedSidebarWidth = min(
-                WorkspaceSplitMetrics.sidebarMaximumWidth * controller.layoutScale,
-                max(
-                    WorkspaceSplitMetrics.sidebarMinimumWidth * controller.layoutScale,
-                    legacySidebarWidth
+        await withLegacySidebarWidth(legacySidebarWidth) {
+            withIsolatedLegacyMigrationDefaults(terminalWidth: legacyTerminalWidth) { defaults in
+                let controller = makeController(
+                    layoutScale: 2,
+                    migratesLegacyLayout: true
                 )
-            )
-            let expectedTerminalWidth = min(
-                WorkspaceSplitMetrics.terminalMaximumWidth * controller.layoutScale,
-                max(
-                    WorkspaceSplitMetrics.terminalMinimumWidth * controller.layoutScale,
-                    legacyTerminalWidth
+                setControllerSize(controller, width: 920)
+                controller.viewDidLayout()
+                controller.splitView.layoutSubtreeIfNeeded()
+
+                XCTAssertTrue(defaults.bool(forKey: WorkspaceSplitMetrics.migrationMarkerKey))
+                XCTAssertNil(defaults.object(forKey: WorkspaceSplitMetrics.legacyTerminalWidthKey))
+                XCTAssertTrue(controller.sidebarItem.isCollapsed)
+                XCTAssertTrue(controller.terminalItem.isCollapsed)
+
+                let expectedSidebarWidth = min(
+                    WorkspaceSplitMetrics.sidebarMaximumWidth * controller.layoutScale,
+                    max(
+                        WorkspaceSplitMetrics.sidebarMinimumWidth * controller.layoutScale,
+                        legacySidebarWidth
+                    )
                 )
-            )
+                let expectedTerminalWidth = min(
+                    WorkspaceSplitMetrics.terminalMaximumWidth * controller.layoutScale,
+                    max(
+                        WorkspaceSplitMetrics.terminalMinimumWidth * controller.layoutScale,
+                        legacyTerminalWidth
+                    )
+                )
 
-            layoutController(controller, width: 2_200)
+                layoutController(controller, width: 2_200)
 
-            XCTAssertFalse(controller.sidebarItem.isCollapsed)
-            XCTAssertFalse(controller.terminalItem.isCollapsed)
-            XCTAssertEqual(
-                paneWidth(controller.sidebarItem, in: controller),
-                expectedSidebarWidth,
-                accuracy: 2 * controller.splitView.dividerThickness + 2,
-                "The semantic sidebar container may add its fixed native edge decoration"
-            )
-            XCTAssertEqual(
-                paneWidth(controller.terminalItem, in: controller),
-                expectedTerminalWidth,
-                accuracy: 2
-            )
-            XCTAssertGreaterThanOrEqual(
-                paneWidth(controller.detailItem, in: controller),
-                WorkspaceSplitMetrics.detailMinimumWidth * controller.layoutScale - 1
-            )
+                XCTAssertFalse(controller.sidebarItem.isCollapsed)
+                XCTAssertFalse(controller.terminalItem.isCollapsed)
+                XCTAssertEqual(
+                    paneWidth(controller.sidebarItem, in: controller),
+                    expectedSidebarWidth,
+                    accuracy: 2 * controller.splitView.dividerThickness + 2,
+                    "The semantic sidebar container may add its fixed native edge decoration"
+                )
+                XCTAssertEqual(
+                    paneWidth(controller.terminalItem, in: controller),
+                    expectedTerminalWidth,
+                    accuracy: 2
+                )
+                XCTAssertGreaterThanOrEqual(
+                    paneWidth(controller.detailItem, in: controller),
+                    WorkspaceSplitMetrics.detailMinimumWidth * controller.layoutScale - 1
+                )
+            }
         }
     }
 

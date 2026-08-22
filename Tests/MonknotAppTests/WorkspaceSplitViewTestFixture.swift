@@ -530,14 +530,56 @@ class WorkspaceSplitViewTestCase: XCTestCase {
         return controller.splitView.arrangedSubviews[0].frame.width
     }
 
-    func storeLegacySidebarWidth(_ width: CGFloat) {
+    func storeLegacySidebarWidth(
+        _ width: CGFloat,
+        timeout: TimeInterval = 1
+    ) async -> Bool {
         let controller = makeLegacySidebarController()
+        let window = UnconstrainedSplitTestWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1_600, height: 620),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
         controller.splitView.autosaveName = WorkspaceSplitMetrics.legacyAutosaveName
+        window.contentViewController = controller
+        window.setContentSize(NSSize(width: 1_600, height: 620))
+        window.layoutIfNeeded()
         controller.splitView.layoutSubtreeIfNeeded()
         controller.splitView.setPosition(width, ofDividerAt: 0)
+        window.layoutIfNeeded()
         controller.splitView.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+
+        let deadline = Date().addingTimeInterval(timeout)
+        var didRestoreExpectedWidth = false
+        while Date() < deadline {
+            await nextMainQueueTurn()
+            window.layoutIfNeeded()
+            controller.splitView.layoutSubtreeIfNeeded()
+            if abs(readLegacySidebarWidth() - width) <= 2 {
+                didRestoreExpectedWidth = true
+                break
+            }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+
         controller.splitView.autosaveName = nil
+        window.orderOut(nil)
+        window.contentViewController = nil
+        await nextMainQueueTurn()
+        return didRestoreExpectedWidth
+    }
+
+    func withLegacySidebarWidth(
+        _ width: CGFloat,
+        perform body: () async -> Void
+    ) async {
+        let previousWidth = readLegacySidebarWidth()
+        let didStoreWidth = await storeLegacySidebarWidth(width)
+        XCTAssertTrue(didStoreWidth)
+        await body()
+        let didRestorePreviousWidth = await storeLegacySidebarWidth(previousWidth)
+        XCTAssertTrue(didRestorePreviousWidth)
     }
 
     func makeLegacySidebarController() -> NSSplitViewController {

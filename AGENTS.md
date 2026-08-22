@@ -231,12 +231,17 @@ release scripts and artifact verifier enforce.
 Primary command:
 
 ```sh
-swift test
+script/test_suite.sh
 swift run MonknotSmokeTests
 swift run MonknotStoreSmokeTests
 swift run monknot-export --help
 swift run monknot-capture --help
 ```
+
+The XCTest command parallelizes only the audited editor-flow allowlist with two workers and
+runs all remaining tests serially. See `Tests/README.md` for the isolation classification.
+Use `MONKNOT_TEST_WORKERS=1 script/test_suite.sh` for a fully serial diagnostic run. Do not
+enable whole-suite parallel testing.
 
 If SwiftPM fails before test compilation with a CommandLineTools module-map issue (`SwiftBridging` redefinition and Foundation/CoreServices module build failures), record the exact output and use the manual build/smoke verification paths below until the toolchain is repaired.
 
@@ -283,7 +288,7 @@ When adding logic:
 Run unit tests:
 
 ```sh
-swift test
+script/test_suite.sh
 swift run MonknotSmokeTests
 swift run MonknotStoreSmokeTests
 swift run monknot-export --help

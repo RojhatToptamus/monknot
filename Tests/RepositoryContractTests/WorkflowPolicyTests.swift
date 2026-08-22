@@ -24,7 +24,7 @@ final class WorkflowPolicyTests: RepositoryContractTestCase {
         XCTAssertFalse(workflow.contains("Xcode_16.4.app"))
         XCTAssertTrue(workflow.contains("swift build -c release --product monknot-export"))
         XCTAssertTrue(workflow.contains("swift build -c release --product monknot-capture"))
-        XCTAssertTrue(workflow.contains("swift test"))
+        XCTAssertTrue(workflow.contains("script/test_suite.sh"))
         XCTAssertTrue(workflow.contains("swift run monknot-export --help"))
         XCTAssertTrue(workflow.contains("swift run monknot-capture --help"))
         XCTAssertTrue(workflow.contains("script/release_package.sh"))
@@ -111,12 +111,27 @@ final class WorkflowPolicyTests: RepositoryContractTestCase {
         XCTAssertFalse(workflow.contains("Xcode_16.4.app"))
         XCTAssertTrue(workflow.contains("swift build -c release --product monknot-export"))
         XCTAssertTrue(workflow.contains("swift build -c release --product monknot-capture"))
-        XCTAssertTrue(workflow.contains("swift test"))
+        XCTAssertTrue(workflow.contains("script/test_suite.sh"))
         XCTAssertTrue(workflow.contains("swift run MonknotSmokeTests"))
         XCTAssertTrue(workflow.contains("swift run MonknotStoreSmokeTests"))
         XCTAssertTrue(workflow.contains("swift run monknot-export --help"))
         XCTAssertTrue(workflow.contains("swift run monknot-capture --help"))
         XCTAssertFalse(workflow.contains("actions/checkout@v"))
+    }
+
+    func testXCTestRunnerParallelizesOnlyTheAuditedAllowlist() throws {
+        let runnerURL = repositoryRoot.appendingPathComponent("script/test_suite.sh")
+        let runner = try String(contentsOf: runnerURL, encoding: .utf8)
+
+        XCTAssertTrue(runner.contains("MONKNOT_TEST_WORKERS:-2"))
+        XCTAssertTrue(runner.contains("HostedFlowCorpusTests"))
+        XCTAssertTrue(runner.contains("ProseCompletionEditorTests"))
+        XCTAssertTrue(runner.contains("SentenceRepairCoordinatorTests"))
+        XCTAssertTrue(runner.contains("--parallel"))
+        XCTAssertTrue(runner.contains("--num-workers \"$worker_count\""))
+        XCTAssertTrue(runner.contains("--filter \"$parallel_filter\""))
+        XCTAssertTrue(runner.contains("--no-parallel"))
+        XCTAssertTrue(runner.contains("--skip \"$parallel_filter\""))
     }
 
     func testDependabotMaintainsPinnedGitHubActions() throws {
