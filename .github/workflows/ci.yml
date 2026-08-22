@@ -56,7 +56,7 @@ jobs:
           swift build -c release --product monknot-capture
 
       - name: Run XCTest suite
-        run: swift test
+        run: script/test_suite.sh
 
       - name: Run executable smoke suites and CLI entry points
         shell: bash
