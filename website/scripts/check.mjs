@@ -23,8 +23,8 @@ const expectedAssets = new Map([
   ["shots/terminal-light.jpg", "285be266ac7f12a9c2f0b345b0b0047df5e2d5763be1687cca43c5b47823503a"],
   ["shots/writing-assistance.gif", "c4b011c477b5a28979dff45233dd76b27b6f7b40e94eb1b48aa9045a8730bd8f"],
   ["shots/writing-assistance-poster.png", "a18bb4451b91d294677f7a165489e1b8d7457d2e8d9185ae742a13c90fbfa753"],
-  ["shots/writing-assistance-light.gif", "f75063a6cffb9df72d6d5d43afbda7bd761e8f6b8290c0698cd96e47b45c8e08"],
-  ["shots/writing-assistance-light-poster.png", "dab2f721d557e32f8f45ea145b4c31193085c35319622c25e2181c61ebe7c046"],
+  ["shots/writing-assistance-light.gif", "65271bcf2c9b0493e49d4dacb919aa3ded8e32b7144fe56603958d7de9c253ca"],
+  ["shots/writing-assistance-light-poster.png", "8480ff8b954662a46a114165e86980c24ffb53a9845e1e082a2f946787cd8dec"],
 ]);
 
 await Promise.all(["index.html", "support.html", "privacy.html", "styles.css", "main.js", "page.js", "theme-catalog.json", "robots.txt", "sitemap.xml", "vercel.json", ...expectedAssets.keys()].map((file) => access(resolve(root, file))));
