@@ -187,20 +187,29 @@ final class WorkspaceReplaceServiceTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: note, encoding: .utf8), "keep me")
     }
 
-    func testWriteFailureKeepsEarlierCompletedFileAndLeavesFailingFileUnchanged() throws {
+    func testWriteFailureStopsAtFailingDocumentInInputOrder() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
 
         let first = root.appendingPathComponent("first.md")
+        let second = root.appendingPathComponent("second.md")
         let lockedDirectory = root.appendingPathComponent("locked", isDirectory: true)
-        let second = lockedDirectory.appendingPathComponent("second.md")
+        let failing = lockedDirectory.appendingPathComponent("failing.md")
+        let fourth = root.appendingPathComponent("fourth.md")
+        let fifth = root.appendingPathComponent("fifth.md")
         try "replace first".write(to: first, atomically: true, encoding: .utf8)
-        try FileManager.default.createDirectory(at: lockedDirectory, withIntermediateDirectories: true)
         try "replace second".write(to: second, atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: lockedDirectory, withIntermediateDirectories: true)
+        try "replace failing".write(to: failing, atomically: true, encoding: .utf8)
+        try "replace fourth".write(to: fourth, atomically: true, encoding: .utf8)
+        try "replace fifth".write(to: fifth, atomically: true, encoding: .utf8)
 
         let documents = [
             WorkspaceDocument(url: first, rootURL: root),
             WorkspaceDocument(url: second, rootURL: root),
+            WorkspaceDocument(url: failing, rootURL: root),
+            WorkspaceDocument(url: fourth, rootURL: root),
+            WorkspaceDocument(url: fifth, rootURL: root),
         ]
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o555],
@@ -221,7 +230,10 @@ final class WorkspaceReplaceServiceTests: XCTestCase {
             documents: documents
         ))
         XCTAssertEqual(try String(contentsOf: first, encoding: .utf8), "updated first")
-        XCTAssertEqual(try String(contentsOf: second, encoding: .utf8), "replace second")
+        XCTAssertEqual(try String(contentsOf: second, encoding: .utf8), "updated second")
+        XCTAssertEqual(try String(contentsOf: failing, encoding: .utf8), "replace failing")
+        XCTAssertEqual(try String(contentsOf: fourth, encoding: .utf8), "replace fourth")
+        XCTAssertEqual(try String(contentsOf: fifth, encoding: .utf8), "replace fifth")
     }
 
     private func makeTemporaryDirectory() throws -> URL {

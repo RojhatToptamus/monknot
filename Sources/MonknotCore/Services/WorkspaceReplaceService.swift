@@ -73,9 +73,8 @@ public struct WorkspaceReplaceService: Sendable {
             limitToDocumentIDs: limitToDocumentIDs
         )
 
-        for (documentID, text) in plan.previousTexts {
-            guard let document = documents.first(where: { $0.id == documentID }) else { continue }
-            let updatedText = plan.updatedTexts[documentID] ?? text
+        for document in documents {
+            guard let updatedText = plan.updatedTexts[document.id] else { continue }
             try updatedText.write(to: document.url, atomically: true, encoding: .utf8)
             textCache.store(text: updatedText, for: document.url)
         }
