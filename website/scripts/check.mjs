@@ -23,6 +23,8 @@ const expectedAssets = new Map([
   ["shots/terminal-light.jpg", "285be266ac7f12a9c2f0b345b0b0047df5e2d5763be1687cca43c5b47823503a"],
   ["shots/writing-assistance.gif", "c4b011c477b5a28979dff45233dd76b27b6f7b40e94eb1b48aa9045a8730bd8f"],
   ["shots/writing-assistance-poster.png", "a18bb4451b91d294677f7a165489e1b8d7457d2e8d9185ae742a13c90fbfa753"],
+  ["shots/writing-assistance-light.gif", "f75063a6cffb9df72d6d5d43afbda7bd761e8f6b8290c0698cd96e47b45c8e08"],
+  ["shots/writing-assistance-light-poster.png", "dab2f721d557e32f8f45ea145b4c31193085c35319622c25e2181c61ebe7c046"],
 ]);
 
 await Promise.all(["index.html", "support.html", "privacy.html", "styles.css", "main.js", "page.js", "theme-catalog.json", "robots.txt", "sitemap.xml", "vercel.json", ...expectedAssets.keys()].map((file) => access(resolve(root, file))));
@@ -94,9 +96,12 @@ const requiredMarkup = [
     `data-view="${view}" data-mode="light"`,
     `id="tab-${view}"`,
   ]),
-  'data-view="writing" data-mode="any"',
+  'data-view="writing" data-mode="dark"',
+  'data-view="writing" data-mode="light"',
   'data-static-src="shots/writing-assistance-poster.png"',
   'data-animated-src="shots/writing-assistance.gif"',
+  'data-static-src="shots/writing-assistance-light-poster.png"',
+  'data-animated-src="shots/writing-assistance-light.gif"',
   'id="tab-writing"',
   'class="writing-demo-toggle"',
 ];
@@ -196,10 +201,10 @@ for (const marker of [
   if (!styles.includes(marker)) throw new Error(`Supplied geometry changed: ${marker}`);
 }
 
-if ((html.match(/class="product-shot/g) ?? []).length !== 11) throw new Error("Expected ten screenshots and one writing-assistance demo.");
+if ((html.match(/class="product-shot/g) ?? []).length !== 12) throw new Error("Expected ten screenshots and two writing-assistance demos.");
 if ((html.match(/role="tab"/g) ?? []).length !== 6) throw new Error("Expected six product tabs.");
-const writingMedia = html.match(/<img class="product-shot" data-view="writing"[^>]+>/)?.[0];
-if (!writingMedia || !writingMedia.includes('width="1600" height="1039"')) {
+const writingMedia = [...html.matchAll(/<img class="product-shot" data-view="writing"[^>]+>/g)].map((match) => match[0]);
+if (writingMedia.length !== 2 || writingMedia.some((media) => !media.includes('width="1600" height="1039"'))) {
   throw new Error("Writing-assistance media must keep its fixed 1600 by 1039 dimensions.");
 }
 
@@ -238,4 +243,4 @@ await Promise.all(
     .map((file) => access(resolve(root, file.replace(/^\//, ""))))
 );
 
-console.log(`Checked ${expectedAssets.size} assets, complete SEO metadata, six product views backed by 11 media elements, 49 theme presets, support and privacy routes, and deployment files.`);
+console.log(`Checked ${expectedAssets.size} assets, complete SEO metadata, six product views backed by 12 media elements, 49 theme presets, support and privacy routes, and deployment files.`);

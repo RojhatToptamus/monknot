@@ -171,7 +171,7 @@ function renderProductView() {
   });
 
   productShots.forEach((shot) => {
-    const modeMatches = shot.dataset.mode === siteMode || shot.dataset.mode === "any";
+    const modeMatches = shot.dataset.mode === siteMode;
     const selected = shot.dataset.view === view.id && modeMatches;
     if (shot.dataset.animatedSrc) {
       const shouldAnimate = selected && !reducedMotion.matches && !writingDemoStopped;

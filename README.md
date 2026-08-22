@@ -53,7 +53,11 @@ Press Tab for the next word, or hold Tab for the full completion. Apple Writing
 Tools are also available on macOS 15.2 or later.
 
 <p align="center">
-  <img src="website/shots/writing-assistance.gif" width="800" height="520" alt="Monknot writing assistance in Field-brief.txt: automatic typo fixes, a reviewed grammar correction, full autocomplete acceptance, and the Apple Writing Tools menu">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="website/shots/writing-assistance-light.gif">
+    <source media="(prefers-color-scheme: dark)" srcset="website/shots/writing-assistance.gif">
+    <img src="website/shots/writing-assistance.gif" width="800" height="520" alt="Monknot writing assistance in Field-brief.txt: automatic typo fixes, a reviewed grammar correction, full autocomplete acceptance, and the Apple Writing Tools menu">
+  </picture>
 </p>
 
 <p align="center">
