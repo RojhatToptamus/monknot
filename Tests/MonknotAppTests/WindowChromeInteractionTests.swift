@@ -49,7 +49,7 @@ final class WindowChromeInteractionTests: XCTestCase {
         XCTAssertEqual(window.standardWindowButton(.zoomButton)?.isEnabled, true)
     }
 
-    func testWindowBackgroundDoesNotTurnTopBarControlsIntoDragOrZoomTargets() {
+    func testWindowBackgroundDoesNotTurnTopBarControlsIntoDragOrZoomTargets() async {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 620),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -62,10 +62,14 @@ final class WindowChromeInteractionTests: XCTestCase {
         ))
         window.contentView = host
 
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        let didConfigureWindow = await waitForHostedWindowCondition(
+            window: window,
+            host: host,
+            until: { !window.isMovableByWindowBackground }
+        )
 
-        XCTAssertFalse(
-            window.isMovableByWindowBackground,
+        XCTAssertTrue(
+            didConfigureWindow,
             "Only explicit unused title-bar gaps may move or zoom the window"
         )
     }
@@ -383,4 +387,27 @@ final class WindowChromeInteractionTests: XCTestCase {
             )
         }
     }
+
+    private func waitForHostedWindowCondition<Content: View>(
+        window: NSWindow,
+        host: NSHostingView<Content>,
+        timeout: TimeInterval = 2,
+        until condition: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            window.layoutIfNeeded()
+            host.layoutSubtreeIfNeeded()
+            if condition() {
+                return true
+            }
+            await withCheckedContinuation { continuation in
+                DispatchQueue.main.async {
+                    continuation.resume()
+                }
+            }
+        }
+        return condition()
+    }
+
 }

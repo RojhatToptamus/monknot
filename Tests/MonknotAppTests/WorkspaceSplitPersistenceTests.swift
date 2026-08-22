@@ -6,31 +6,18 @@ import XCTest
 
 @MainActor
 final class WorkspaceSplitPersistenceTests: WorkspaceSplitViewTestCase {
-    func testAutosaveRestoresPeripheralWidthsAcrossControllerRecreation() {
+    func testAutosaveRestoresPeripheralWidthsAcrossControllerRecreation() async throws {
         let autosaveName = "Monknot.WorkspaceSplitTests.\(UUID().uuidString)"
         defer { removeSplitAutosaveDefaults(named: autosaveName) }
-        var expectedSidebarWidth: CGFloat = 0
-        var expectedTerminalWidth: CGFloat = 0
 
-        do {
-            let controller = makeController(autosaveName: autosaveName)
-            let window = mount(controller, width: 1_600)
-            controller.splitView.setPosition(365, ofDividerAt: 0)
-            controller.splitView.setPosition(controller.splitView.bounds.width - 435, ofDividerAt: 1)
-            layout(window, controller)
-            expectedSidebarWidth = paneWidth(controller.sidebarItem, in: controller)
-            expectedTerminalWidth = paneWidth(controller.terminalItem, in: controller)
-            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
-            window.contentViewController = nil
-        }
+        let restoredGeometry = try await seedAndVerifyAutosavedSplitGeometry(
+            named: autosaveName,
+            sidebarWidth: 365,
+            terminalWidth: 435
+        )
 
-        let restoredController = makeController(autosaveName: autosaveName)
-        let restoredWindow = mount(restoredController, width: 1_600)
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
-        layout(restoredWindow, restoredController)
-
-        XCTAssertEqual(paneWidth(restoredController.sidebarItem, in: restoredController), expectedSidebarWidth, accuracy: 2)
-        XCTAssertEqual(paneWidth(restoredController.terminalItem, in: restoredController), expectedTerminalWidth, accuracy: 2)
+        XCTAssertEqual(restoredGeometry.sidebar, 365, accuracy: 2)
+        XCTAssertEqual(restoredGeometry.terminal, 435, accuracy: 2)
     }
 
     func testNarrowMigrationRetainsBothLegacyPeripheralWidthsIndependently() async {

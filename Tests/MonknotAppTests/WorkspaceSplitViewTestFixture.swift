@@ -6,7 +6,6 @@ import XCTest
 
 @MainActor
 class WorkspaceSplitViewTestCase: XCTestCase {
-
     func makeController(
         sidebarPresented: Bool = true,
         terminalPresented: Bool = true,
@@ -111,15 +110,56 @@ class WorkspaceSplitViewTestCase: XCTestCase {
         return window
     }
 
-    func layoutMountedSplitHost<Content: View>(
+    func waitForMountedSplitHost<Content: View>(
         window: NSWindow,
-        host: NSHostingView<Content>
-    ) {
-        window.layoutIfNeeded()
-        host.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
-        window.layoutIfNeeded()
-        host.layoutSubtreeIfNeeded()
+        host: NSHostingView<Content>,
+        timeout: TimeInterval = 2,
+        until condition: @escaping @MainActor (WorkspaceNativeSplitView) -> Bool,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        var previousSnapshot: String?
+        var stableTurns = 0
+
+        while Date() < deadline {
+            window.layoutIfNeeded()
+            host.layoutSubtreeIfNeeded()
+            await nextMainQueueTurn()
+            window.layoutIfNeeded()
+            host.layoutSubtreeIfNeeded()
+
+            guard let splitView = firstDescendant(
+                of: WorkspaceNativeSplitView.self,
+                in: host
+            ), splitView.arrangedSubviews.count == 3 else {
+                previousSnapshot = nil
+                stableTurns = 0
+                continue
+            }
+
+            let paneSnapshot = splitView.arrangedSubviews.map {
+                "\(NSStringFromRect($0.frame)):\($0.isHidden)"
+            }.joined(separator: "|")
+            let snapshot = "host=\(NSStringFromRect(host.frame));"
+                + "split=\(NSStringFromRect(splitView.frame));panes=\(paneSnapshot)"
+            if condition(splitView), snapshot == previousSnapshot {
+                stableTurns += 1
+                if stableTurns >= 2 {
+                    return
+                }
+            } else {
+                previousSnapshot = snapshot
+                stableTurns = 0
+            }
+        }
+
+        XCTFail(
+            "Mounted SwiftUI split did not reach its expected stable state; "
+                + "last=\(previousSnapshot ?? "not mounted")",
+            file: file,
+            line: line
+        )
     }
 
     func observeSplitWidthChanges(
@@ -181,36 +221,13 @@ class WorkspaceSplitViewTestCase: XCTestCase {
         var expectedSidebarWidth: CGFloat = 340
         var expectedTerminalWidth: CGFloat = 510
         if prepopulateAutosave {
-            let seedController = makeController(autosaveName: autosaveName)
-            let seedWindow = mount(seedController, width: 1_600)
-            seedController.splitView.setPosition(expectedSidebarWidth, ofDividerAt: 0)
-            seedController.splitView.setPosition(
-                seedController.splitView.bounds.width
-                    - expectedTerminalWidth
-                    - seedController.splitView.dividerThickness,
-                ofDividerAt: 1
+            let restoredGeometry = try await seedAndVerifyAutosavedSplitGeometry(
+                named: autosaveName,
+                sidebarWidth: expectedSidebarWidth,
+                terminalWidth: expectedTerminalWidth
             )
-            let didPersistGeometry = await waitForStableSplitState(
-                controller: seedController,
-                window: seedWindow,
-                perform: {},
-                until: {
-                    abs(self.paneWidth(seedController.sidebarItem, in: seedController) - 340) <= 1
-                        && abs(self.paneWidth(seedController.terminalItem, in: seedController) - 510) <= 1
-                        && seedController.splitView.autosaveName == autosaveName
-                }
-            )
-            XCTAssertTrue(
-                didPersistGeometry,
-                splitStateDescription(seedController),
-                file: file,
-                line: line
-            )
-            expectedSidebarWidth = paneWidth(seedController.sidebarItem, in: seedController)
-            expectedTerminalWidth = paneWidth(seedController.terminalItem, in: seedController)
-            seedWindow.orderOut(nil)
-            seedWindow.contentViewController = nil
-            await nextMainQueueTurn()
+            expectedSidebarWidth = restoredGeometry.sidebar
+            expectedTerminalWidth = restoredGeometry.terminal
         }
 
         let recorder = PresentationRecorder()
@@ -257,6 +274,10 @@ class WorkspaceSplitViewTestCase: XCTestCase {
         let terminalView = paneView(controller.terminalItem, in: controller)
         let nativeSplit = try XCTUnwrap(controller.splitView as? WorkspaceNativeSplitView)
 
+        // These assertions own the controller's geometry, view identity, and
+        // persistence invariants. AppKit's animator clock is not controllable
+        // in a headless XCTest process, so use the controller's existing
+        // nonanimated boundary for deterministic end-state verification.
         let didEnterFullscreen = await waitForStableSplitState(
             controller: controller,
             window: window,
@@ -267,7 +288,7 @@ class WorkspaceSplitViewTestCase: XCTestCase {
                     terminalPresented: true,
                     isTerminalFullscreen: true,
                     recorder: recorder,
-                    animated: true
+                    animated: false
                 )
             },
             until: {
@@ -356,7 +377,7 @@ class WorkspaceSplitViewTestCase: XCTestCase {
                     terminalPresented: true,
                     isTerminalFullscreen: false,
                     recorder: recorder,
-                    animated: true
+                    animated: false
                 )
             },
             until: {
@@ -435,6 +456,151 @@ class WorkspaceSplitViewTestCase: XCTestCase {
         return false
     }
 
+    func seedAndVerifyAutosavedSplitGeometry(
+        named autosaveName: String,
+        sidebarWidth: CGFloat,
+        terminalWidth: CGFloat,
+        containerWidth: CGFloat = 1_600
+    ) async throws -> (sidebar: CGFloat, terminal: CGFloat) {
+        let seedController = makeController(autosaveName: autosaveName)
+        let seedWindow = mount(seedController, width: containerWidth)
+
+        let didFinishInitialLayout = await waitForStableSplitState(
+            controller: seedController,
+            window: seedWindow,
+            perform: {},
+            until: {
+                seedController.splitView.autosaveName == autosaveName
+                    && abs(seedController.splitView.bounds.width - containerWidth) <= 1
+                    && !seedController.sidebarItem.isCollapsed
+                    && !seedController.detailItem.isCollapsed
+                    && !seedController.terminalItem.isCollapsed
+                    && self.splitAutosaveSnapshot(named: autosaveName) != nil
+            }
+        )
+        guard didFinishInitialLayout else {
+            let diagnostic = splitStateDescription(seedController)
+            await unmountSplitWindow(seedWindow)
+            throw splitFixtureError(
+                "Initial split layout did not stabilize for \(autosaveName): \(diagnostic)"
+            )
+        }
+        guard let initialAutosaveSnapshot = splitAutosaveSnapshot(named: autosaveName) else {
+            await unmountSplitWindow(seedWindow)
+            throw splitFixtureError(
+                "Initial split layout did not create autosave state for \(autosaveName)"
+            )
+        }
+
+        // AppKit can settle the live frames before it updates the autosave
+        // entry. Move one divider at a time so each persisted transition is
+        // observable before a fresh split view attempts restoration.
+        let didPersistSidebarWidth = await waitForStableSplitState(
+            controller: seedController,
+            window: seedWindow,
+            perform: {
+                seedController.splitView.setPosition(sidebarWidth, ofDividerAt: 0)
+            },
+            until: {
+                abs(self.paneWidth(seedController.sidebarItem, in: seedController) - sidebarWidth) <= 1
+                    && self.splitAutosaveSnapshot(named: autosaveName) != initialAutosaveSnapshot
+            }
+        )
+        guard didPersistSidebarWidth,
+              let sidebarAutosaveSnapshot = splitAutosaveSnapshot(named: autosaveName) else {
+            let diagnostic = splitStateDescription(seedController)
+            await unmountSplitWindow(seedWindow)
+            throw splitFixtureError(
+                "Sidebar width was not autosaved for \(autosaveName): \(diagnostic)"
+            )
+        }
+
+        let didPersistTerminalWidth = await waitForStableSplitState(
+            controller: seedController,
+            window: seedWindow,
+            perform: {
+                seedController.splitView.setPosition(
+                    seedController.splitView.bounds.width
+                        - terminalWidth
+                        - seedController.splitView.dividerThickness,
+                    ofDividerAt: 1
+                )
+            },
+            until: {
+                abs(self.paneWidth(seedController.sidebarItem, in: seedController) - sidebarWidth) <= 1
+                    && abs(self.paneWidth(seedController.terminalItem, in: seedController) - terminalWidth) <= 1
+                    && self.splitAutosaveSnapshot(named: autosaveName) != sidebarAutosaveSnapshot
+            }
+        )
+        guard didPersistTerminalWidth else {
+            let diagnostic = splitStateDescription(seedController)
+            await unmountSplitWindow(seedWindow)
+            throw splitFixtureError(
+                "Terminal width was not autosaved for \(autosaveName): \(diagnostic)"
+            )
+        }
+
+        let persistedSidebarWidth = paneWidth(seedController.sidebarItem, in: seedController)
+        let persistedTerminalWidth = paneWidth(seedController.terminalItem, in: seedController)
+        await unmountSplitWindow(seedWindow)
+
+        let probeController = makeController(autosaveName: autosaveName)
+        let probeWindow = mount(probeController, width: containerWidth)
+        let didRestoreGeometry = await waitForStableSplitState(
+            controller: probeController,
+            window: probeWindow,
+            perform: {},
+            until: {
+                abs(
+                    self.paneWidth(probeController.sidebarItem, in: probeController)
+                        - persistedSidebarWidth
+                ) <= 1
+                    && abs(
+                        self.paneWidth(probeController.terminalItem, in: probeController)
+                            - persistedTerminalWidth
+                    ) <= 1
+                    && probeController.splitView.autosaveName == autosaveName
+            }
+        )
+        let restoredGeometry = (
+            sidebar: paneWidth(probeController.sidebarItem, in: probeController),
+            terminal: paneWidth(probeController.terminalItem, in: probeController)
+        )
+        let restoreDiagnostic = splitStateDescription(probeController)
+        await unmountSplitWindow(probeWindow)
+        guard didRestoreGeometry else {
+            throw splitFixtureError(
+                "Fresh controller did not restore \(autosaveName): \(restoreDiagnostic)"
+            )
+        }
+        return restoredGeometry
+    }
+
+    private func splitAutosaveSnapshot(named autosaveName: String) -> [String]? {
+        let defaults = UserDefaults.standard
+        guard let key = defaults.dictionaryRepresentation().keys.first(where: {
+            $0.contains(autosaveName)
+        }) else {
+            return nil
+        }
+        return defaults.stringArray(forKey: key)
+    }
+
+    func splitFixtureError(_ description: String) -> NSError {
+        NSError(
+            domain: "WorkspaceSplitViewTestFixture",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: description]
+        )
+    }
+
+    func unmountSplitWindow(_ window: NSWindow) async {
+        window.orderOut(nil)
+        window.contentViewController = nil
+        await nextMainQueueTurn()
+        await nextMainQueueTurn()
+    }
+
     func layoutImmediately(
         _ window: NSWindow,
         _ controller: TestWorkspaceSplitViewController
@@ -452,6 +618,26 @@ class WorkspaceSplitViewTestCase: XCTestCase {
         }
     }
 
+    func drainMainQueue(turns: Int = 3) async {
+        for _ in 0..<turns {
+            await nextMainQueueTurn()
+        }
+    }
+
+    func waitForMainQueueCondition(
+        timeout: TimeInterval = 2,
+        until condition: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() {
+                return true
+            }
+            await nextMainQueueTurn()
+        }
+        return condition()
+    }
+
     func splitStateDescription(_ controller: TestWorkspaceSplitViewController) -> String {
         let frames = controller.splitView.arrangedSubviews.map { NSStringFromRect($0.frame) }
         let disabledDividers = (controller.splitView as? WorkspaceNativeSplitView)?
@@ -466,6 +652,9 @@ class WorkspaceSplitViewTestCase: XCTestCase {
         window.layoutIfNeeded()
         controller.view.layoutSubtreeIfNeeded()
         controller.splitView.layoutSubtreeIfNeeded()
+        // AppKit's synthetic divider tracker needs one real run-loop pump so
+        // its queued drag/up events enter the tracking session. Assertions do
+        // not use this duration as their completion signal.
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
         window.layoutIfNeeded()
         controller.view.layoutSubtreeIfNeeded()
