@@ -25,6 +25,7 @@ const THEMES = {
 
 const VIEWS = [
   { id: "editor", caption: "Markdown source, with a formatting bar when you want one." },
+  { id: "writing", caption: "Inline typo fixes, one reviewed grammar correction, hold Tab to accept autocomplete, and Apple Writing Tools." },
   { id: "split", caption: "Source and rendered preview, scrolled together." },
   { id: "preview", caption: "The rendered document, with the outline rail at the right edge." },
   { id: "pdf", caption: "Read, search, and mark up: highlight, underline, strike through, draw." },
@@ -46,10 +47,13 @@ const previewThemeName = document.querySelector("#preview-theme-name");
 const previewThemeMeta = document.querySelector("#preview-theme-meta");
 const themePreviewWindow = document.querySelector("#theme-preview-window");
 const themeAnnouncement = document.querySelector("#theme-announcement");
+const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+const writingDemoToggle = document.querySelector(".writing-demo-toggle");
 
 let activeView = 0;
 let siteMode = "dark";
 let previewMode = "light";
+let writingDemoStopped = false;
 const activeThemeIDs = {
   light: THEMES.light.find((theme) => theme.id === "axis-light")?.id ?? THEMES.light[0].id,
   dark: THEMES.dark.find((theme) => theme.id === "axis-dark")?.id ?? THEMES.dark[0].id,
@@ -167,13 +171,25 @@ function renderProductView() {
   });
 
   productShots.forEach((shot) => {
-    const selected = shot.dataset.view === view.id && shot.dataset.mode === siteMode;
+    const modeMatches = shot.dataset.mode === siteMode;
+    const selected = shot.dataset.view === view.id && modeMatches;
+    if (shot.dataset.animatedSrc) {
+      const shouldAnimate = selected && !reducedMotion.matches && !writingDemoStopped;
+      const source = shouldAnimate ? shot.dataset.animatedSrc : shot.dataset.staticSrc;
+      if (shot.getAttribute("src") !== source) shot.setAttribute("src", source);
+    }
     shot.classList.toggle("is-visible", selected);
     shot.setAttribute("aria-hidden", String(!selected));
   });
 
   productPanel.setAttribute("aria-labelledby", `tab-${view.id}`);
   productCaption.textContent = view.caption;
+
+  writingDemoToggle.hidden = view.id !== "writing" || reducedMotion.matches;
+  const controlLabel = writingDemoStopped ? "Play writing demo" : "Stop writing demo";
+  writingDemoToggle.setAttribute("aria-label", controlLabel);
+  writingDemoToggle.setAttribute("title", controlLabel);
+  writingDemoToggle.classList.toggle("is-stopped", writingDemoStopped);
 }
 
 function setSiteMode(mode) {
@@ -311,6 +327,12 @@ document.querySelector(".product-tabs").addEventListener("keydown", (event) => {
   activeView = (activeView + direction + VIEWS.length) % VIEWS.length;
   renderProductView();
   productTabs[activeView].focus();
+});
+
+reducedMotion.addEventListener("change", renderProductView);
+writingDemoToggle.addEventListener("click", () => {
+  writingDemoStopped = !writingDemoStopped;
+  renderProductView();
 });
 
 setSiteMode("dark");
