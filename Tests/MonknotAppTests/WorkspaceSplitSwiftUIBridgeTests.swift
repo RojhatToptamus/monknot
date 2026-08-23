@@ -33,6 +33,7 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         defer { defaults.removePersistentDomain(forName: defaultsName) }
         let themeStore = ThemeSettingsStore(defaults: defaults)
         let workspaceStore = WorkspaceStore(userDefaults: defaults)
+        let workspaceLibrary = WorkspaceLibraryStore(userDefaults: defaults)
         let updaterController = SPUStandardUpdaterController(
             startingUpdater: false,
             updaterDelegate: nil,
@@ -43,6 +44,7 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
             rootView: ContentView(
                 store: workspaceStore,
                 themeStore: themeStore,
+                workspaceLibrary: workspaceLibrary,
                 terminationCoordinator: ApplicationTerminationCoordinator()
             )
                 .frame(minWidth: 920, minHeight: 620)
@@ -83,6 +85,7 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         let settingsHost = LayoutCountingHostingView(
             rootView: PreferencesView(
                 themeStore: themeStore,
+                workspaceLibrary: workspaceLibrary,
                 updater: updaterController.updater
             )
         )

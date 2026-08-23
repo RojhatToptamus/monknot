@@ -90,6 +90,15 @@ extension AppTheme {
         foregroundColor.opacity(0.24)
     }
 
+    /// Shadow hue for floating surfaces. Light themes carry 10% of the accent
+    /// so shadows stay neutral to the theme instead of turning muddy black.
+    var floatingShadowColor: Color {
+        guard !isDark else { return .black }
+        let ink = NSColor(hex: foreground)
+        let accent = NSColor(hex: accent)
+        return Color(nsColor: ink.blended(withFraction: 0.10, of: accent) ?? ink)
+    }
+
     /// Secondary sidebar ink is derived directly from the theme foreground.
     /// This avoids applying sidebar quieting to an already translucent color,
     /// which made small labels and icons illegible in light themes.

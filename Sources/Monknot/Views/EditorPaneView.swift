@@ -697,7 +697,7 @@ private struct EmptyDetailView: View {
                     .foregroundStyle(theme.foregroundColor.opacity(0.48))
                     .multilineTextAlignment(.center)
 
-                if !hasWorkspace, UserDefaults.standard.data(forKey: "Monknot.workspaceBookmark") != nil {
+                if !hasWorkspace, SavedWorkspaceStore().lastActiveWorkspace() != nil {
                     Text("Your last workspace reopens automatically on launch.")
                         .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
                         .foregroundStyle(theme.foregroundColor.opacity(0.48))

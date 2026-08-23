@@ -200,6 +200,7 @@ enum EditorWritingToolsPresentationPolicy {
 struct ContentView: View {
     @ObservedObject var store: WorkspaceStore
     @ObservedObject var themeStore: ThemeSettingsStore
+    @ObservedObject var workspaceLibrary: WorkspaceLibraryStore
     let terminationCoordinator: ApplicationTerminationCoordinator
     @AppStorage("Monknot.editorMode") private var editorModeRawValue = EditorMode.source.rawValue
     @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.defaultValue.rawValue
@@ -258,6 +259,7 @@ struct ContentView: View {
     @SceneStorage("Monknot.sidebarPreferredVisible") private var sidebarPreferredVisible = true
     @State private var sidebarRevealRequest: UInt = 0
     @State private var successNotice: SuccessNotice?
+    @State private var pendingWorkspaceRemoval: SavedWorkspaceRemoval?
     @State private var pendingPDFExportDocument: WorkspaceDocument?
     @State private var pdfExportOptions = MarkdownPDFExportOptions.loadLastUsed()
     @State private var isExportingPDF = false
@@ -265,6 +267,7 @@ struct ContentView: View {
     @State private var isKeyboardShortcutsHelpPresented = false
     @Environment(\.colorScheme) private var systemColorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.openSettings) private var openSettings
     private let tabStatePersistence = WorkspaceTabStatePersistence()
     private let viewportStatePersistence = DocumentViewportStatePersistence()
 
@@ -420,7 +423,7 @@ struct ContentView: View {
                     dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
                 )
             }
-            .onChange(of: store.workspaceURL?.standardizedFileURL.path ?? "") { previousPath, _ in
+            .onChange(of: store.workspaceURL?.standardizedFileURL.path ?? "") { previousPath, newPath in
                 cancelPDFExcerptCopy()
                 linkInspection.dismiss()
                 if !previousPath.isEmpty {
@@ -438,6 +441,16 @@ struct ContentView: View {
                 pendingMarkdownFileDropConfirmation = nil
                 documentViewportStates.removeAll()
                 publishOpenTabIDs(persistTabs: false)
+                terminalSessions.stopAll()
+                if !newPath.isEmpty {
+                    workspaceLibrary.markActive(URL(fileURLWithPath: newPath, isDirectory: true))
+                    if terminalPreferredVisible {
+                        terminalSessions.ensureActiveTerminal(
+                            in: activeTerminalDirectory,
+                            workspaceRoot: store.workspaceURL
+                        )
+                    }
+                }
             }
             .onChange(of: store.removedDirtyOpenDocumentIDs) { _, _ in
                 reconcileTabsWithStore()
@@ -575,12 +588,19 @@ struct ContentView: View {
                 SuccessToast(
                     notice: successNotice,
                     theme: activeTheme,
+                    zoomScale: zoomScale,
                     showInFinder: {
                         guard let revealURL = successNotice.revealURL else { return }
                         NSWorkspace.shared.activateFileViewerSelecting([revealURL])
                         self.successNotice = nil
                     },
-                    dismiss: { self.successNotice = nil }
+                    performAction: {
+                        undoWorkspaceRemoval()
+                    },
+                    dismiss: {
+                        self.successNotice = nil
+                        self.pendingWorkspaceRemoval = nil
+                    }
                 )
                 .padding(20)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
@@ -664,6 +684,7 @@ struct ContentView: View {
             guard !Task.isCancelled else { return }
             withAnimation(MonknotMotion.toastAnimation(reduceMotion: reduceMotion)) {
                 successNotice = nil
+                pendingWorkspaceRemoval = nil
             }
         }
     }
@@ -714,12 +735,15 @@ struct ContentView: View {
     private var sidebarContent: some View {
         SidebarView(
             store: store,
+            workspaceLibrary: workspaceLibrary,
             workspaceSearch: workspaceSearch,
             searchOptions: $searchOptions,
             theme: activeTheme,
             zoomScale: zoomScale,
             openFolder: openFolderPanel,
-            openRecentWorkspace: { url in store.openWorkspace(url) },
+            switchWorkspace: requestWorkspaceSwitch(_:),
+            removeWorkspace: removeWorkspace(_:),
+            manageWorkspaces: openWorkspaceSettings,
             newMarkdown: { store.createMarkdownFile() },
             exportPDF: exportMarkdownPDF(_:),
             openDocument: openDocumentTab(id:),
@@ -852,8 +876,21 @@ struct ContentView: View {
     }
 
     private func showSuccessNotice(_ message: String, revealURL: URL? = nil) {
+        pendingWorkspaceRemoval = nil
+        showSuccessNotice(message, revealURL: revealURL, actionTitle: nil)
+    }
+
+    private func showSuccessNotice(
+        _ message: String,
+        revealURL: URL? = nil,
+        actionTitle: String?
+    ) {
         withAnimation(MonknotMotion.toastAnimation(reduceMotion: reduceMotion)) {
-            successNotice = SuccessNotice(message: message, revealURL: revealURL)
+            successNotice = SuccessNotice(
+                message: message,
+                revealURL: revealURL,
+                actionTitle: actionTitle
+            )
         }
         NSAccessibility.post(
             element: NSApp as Any,
@@ -871,15 +908,105 @@ struct ContentView: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.canCreateDirectories = false
-        panel.prompt = "Open"
-        panel.message = "Choose a folder containing Markdown or PDF documents."
+        panel.prompt = "Add"
+        panel.message = "Choose a folder to add as a workspace."
 
         if panel.runModal() == .OK, let url = panel.url {
             Task { @MainActor in
                 guard await resolveAllOpenUnsavedChanges() else { return }
+                flushWorkspacePresentationState()
+                _ = workspaceLibrary.add(url)
                 store.openWorkspace(url)
             }
         }
+    }
+
+    private func requestWorkspaceSwitch(_ entry: SavedWorkspaceEntry) {
+        Task { @MainActor in
+            await switchWorkspace(entry)
+        }
+    }
+
+    private func switchWorkspace(_ entry: SavedWorkspaceEntry) async {
+        if store.workspaceURL?.standardizedFileURL.path == entry.path {
+            return
+        }
+
+        let workspaceURL: URL
+        do {
+            workspaceURL = try workspaceLibrary.resolveURL(for: entry)
+        } catch {
+            handleUnavailableWorkspace(entry)
+            return
+        }
+
+        guard await resolveAllOpenUnsavedChanges() else { return }
+        flushWorkspacePresentationState()
+        store.openWorkspace(workspaceURL)
+    }
+
+    private func flushWorkspacePresentationState() {
+        flushPendingTabStatePersistence()
+        flushPendingViewportStatePersistence()
+    }
+
+    private func handleUnavailableWorkspace(_ entry: SavedWorkspaceEntry) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Workspace Folder Not Found"
+        alert.informativeText = "Locate the folder for \(entry.displayName), or remove it from Monknot."
+        alert.addButton(withTitle: "Locate Folder…")
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            locateWorkspaceFolder(entry)
+        case .alertSecondButtonReturn:
+            removeWorkspace(entry)
+        default:
+            break
+        }
+    }
+
+    private func locateWorkspaceFolder(_ entry: SavedWorkspaceEntry) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = false
+        panel.prompt = "Locate"
+        panel.message = "Choose the folder for \(entry.displayName)."
+
+        guard panel.runModal() == .OK, let url = panel.url,
+              let relocated = workspaceLibrary.relocate(id: entry.id, to: url)
+        else {
+            return
+        }
+        requestWorkspaceSwitch(relocated)
+    }
+
+    private func removeWorkspace(_ entry: SavedWorkspaceEntry) {
+        guard let removal = workspaceLibrary.remove(id: entry.id) else { return }
+        pendingWorkspaceRemoval = removal
+        showSuccessNotice(
+            "Removed “\(entry.displayName)”",
+            actionTitle: "Undo"
+        )
+    }
+
+    private func undoWorkspaceRemoval() {
+        guard let removal = pendingWorkspaceRemoval else { return }
+        workspaceLibrary.restore(removal)
+        pendingWorkspaceRemoval = nil
+        withAnimation(MonknotMotion.toastAnimation(reduceMotion: reduceMotion)) {
+            successNotice = nil
+        }
+    }
+
+    private func openWorkspaceSettings() {
+        UserDefaults.standard.set("Workspaces", forKey: "Monknot.settingsSection")
+        openSettings()
     }
 
     private enum UnsavedChangesResolution {
@@ -1786,6 +1913,11 @@ struct ContentView: View {
             newMarkdown: { store.createMarkdownFile() },
             newDailyNote: { store.createDailyNote() },
             openFolder: openFolderPanel,
+            workspaceNames: workspaceLibrary.entries.map(\.displayName),
+            switchWorkspaceAtIndex: { index in
+                guard workspaceLibrary.entries.indices.contains(index) else { return }
+                requestWorkspaceSwitch(workspaceLibrary.entries[index])
+            },
             exportPDF: { exportSelectedMarkdownPDF() },
             canExportPDF: store.selectedDocument?.capabilities.canExportPDF == true,
             exportPDFAnnotationsMarkdown: {
@@ -2783,62 +2915,97 @@ private struct SuccessNotice: Identifiable, Equatable {
     let id = UUID()
     let message: String
     let revealURL: URL?
+    let actionTitle: String?
 }
 
 private struct SuccessToast: View {
     let notice: SuccessNotice
     let theme: AppTheme
+    let zoomScale: Double
     let showInFinder: () -> Void
+    let performAction: () -> Void
     let dismiss: () -> Void
 
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+    }
+
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Color(hex: theme.semanticColors.diffAdded))
-                .accessibilityHidden(true)
+        HStack(spacing: scaled(8)) {
+            MonknotSystemGlyph(
+                systemImage: "checkmark",
+                nominalPointSizeBase: 15,
+                theme: theme,
+                zoomScale: zoomScale
+            )
+            .foregroundStyle(Color(hex: theme.semanticColors.diffAdded))
+            .accessibilityHidden(true)
 
             Text(notice.message)
-                .font(.system(size: 12.5))
+                .font(.system(
+                    size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale),
+                    weight: .regular
+                ))
                 .foregroundStyle(theme.foregroundColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(maxWidth: 230, alignment: .leading)
+                .frame(maxWidth: scaled(230), alignment: .leading)
                 .accessibilityLabel(notice.message)
 
             if notice.revealURL != nil {
-                Button("Show in Finder", action: showInFinder)
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(theme.accentColor)
-                    .monknotPointerCursor()
+                MonknotActionButton(
+                    title: "Show in Finder",
+                    role: .quiet,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    size: .bar,
+                    action: showInFinder
+                )
             }
 
-            Button(action: dismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(theme.mutedForegroundColor)
-                    .frame(width: 20, height: 20)
-                    .contentShape(Rectangle())
+            if let actionTitle = notice.actionTitle {
+                MonknotActionButton(
+                    title: actionTitle,
+                    role: .quiet,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    size: .bar,
+                    action: performAction
+                )
             }
-            .buttonStyle(.plain)
-            .help("Dismiss")
-            .accessibilityLabel("Dismiss notification")
-            .monknotPointerCursor()
+
+            MonknotIconButton(
+                systemImage: "xmark",
+                label: "Dismiss notification",
+                theme: theme,
+                zoomScale: zoomScale,
+                size: .smallAction,
+                focusRingPlacement: .contained,
+                action: dismiss
+            )
         }
-        .padding(.leading, 12)
-        .padding(.trailing, 6)
-        .padding(.vertical, 8)
+        .padding(.leading, scaled(12))
+        .padding(.trailing, scaled(8))
+        .padding(.vertical, scaled(8))
         .background(
-            RoundedRectangle(cornerRadius: theme.chromeRadius(9, zoomScale: 1))
+            RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
                 .fill(theme.elevatedSurfaceColor)
                 .overlay {
-                    RoundedRectangle(cornerRadius: theme.chromeRadius(9, zoomScale: 1))
+                    RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
                         .strokeBorder(theme.borderColor, lineWidth: 1)
                 }
-                .shadow(color: .black.opacity(theme.isDark ? 0.38 : 0.16), radius: 18, y: 8)
+                .shadow(
+                    color: theme.floatingShadowColor.opacity(theme.isDark ? 0.50 : 0.08),
+                    radius: theme.isDark ? 12 : 6,
+                    y: theme.isDark ? 8 : 4
+                )
+                .shadow(
+                    color: theme.floatingShadowColor.opacity(theme.isDark ? 0.34 : 0.05),
+                    radius: theme.isDark ? 3 : 1.5,
+                    y: theme.isDark ? 2 : 1
+                )
         )
-        .frame(maxWidth: 420)
+        .frame(maxWidth: scaled(420))
         .accessibilityElement(children: .contain)
     }
 }

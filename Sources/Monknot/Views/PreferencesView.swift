@@ -1,3 +1,4 @@
+import Foundation
 import MonknotCore
 import Sparkle
 import SwiftUI
@@ -9,12 +10,14 @@ struct PreferencesView: View {
         case editor = "Editor"
         case export = "Export"
         case shortcuts = "Shortcuts"
+        case workspaces = "Workspaces"
 
         var id: String { rawValue }
 
         var systemImage: String {
             switch self {
             case .general: return "gearshape"
+            case .workspaces: return "folder"
             case .appearance: return "circle.lefthalf.filled"
             case .editor: return "text.alignleft"
             case .export: return "square.and.arrow.up"
@@ -24,6 +27,7 @@ struct PreferencesView: View {
     }
 
     @ObservedObject var themeStore: ThemeSettingsStore
+    @ObservedObject var workspaceLibrary: WorkspaceLibraryStore
     let updater: SPUUpdater
     @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.defaultValue.rawValue
     @AppStorage("Monknot.settingsSection") private var selectedSectionRawValue = Section.general.rawValue
@@ -160,6 +164,8 @@ struct PreferencesView: View {
         switch selectedSection {
         case .general:
             GeneralSettingsView(uiTheme: panelTheme, updater: updater)
+        case .workspaces:
+            WorkspacesSettingsView(workspaceLibrary: workspaceLibrary, uiTheme: panelTheme)
         case .appearance:
             AppearanceSettingsView(themeStore: themeStore, uiTheme: panelTheme)
         case .editor:
@@ -169,6 +175,196 @@ struct PreferencesView: View {
         case .shortcuts:
             ShortcutSettingsView(uiTheme: panelTheme)
         }
+    }
+}
+
+private struct WorkspacesSettingsView: View {
+    @ObservedObject var workspaceLibrary: WorkspaceLibraryStore
+    let uiTheme: AppTheme
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+    @State private var originalEntries: [SavedWorkspaceEntry]?
+    @State private var revertSerial: UInt = 0
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: uiTheme, zoomScale: settingsZoomScale)
+    }
+
+    var body: some View {
+        SettingsPage(theme: uiTheme) {
+            HStack(alignment: .center) {
+                SettingsSectionHeader(theme: uiTheme, title: "Workspaces")
+                Spacer()
+                SettingsOutlineButton(
+                    title: "Revert",
+                    theme: uiTheme,
+                    isDisabled: originalEntries == nil || originalEntries == workspaceLibrary.entries
+                ) {
+                    if let originalEntries {
+                        workspaceLibrary.replaceEntries(originalEntries)
+                        revertSerial &+= 1
+                    }
+                }
+                .padding(.bottom, scaled(7))
+            }
+
+            SettingsGroupCard(theme: uiTheme) {
+                if workspaceLibrary.entries.isEmpty {
+                    SettingsRow(
+                        theme: uiTheme,
+                        title: "No saved workspaces",
+                        detail: "Add a workspace from the sidebar header.",
+                        showsDivider: false
+                    ) {
+                        EmptyView()
+                    }
+                } else {
+                    ForEach(Array(workspaceLibrary.entries.enumerated()), id: \.element.id) { index, entry in
+                        WorkspaceSettingsRow(
+                            workspaceLibrary: workspaceLibrary,
+                            entryID: entry.id,
+                            index: index,
+                            count: workspaceLibrary.entries.count,
+                            revertSerial: revertSerial,
+                            theme: uiTheme,
+                            showsDivider: index < workspaceLibrary.entries.count - 1
+                        )
+                    }
+                }
+            }
+        }
+        .onAppear {
+            if originalEntries == nil {
+                originalEntries = workspaceLibrary.entries
+            }
+        }
+    }
+}
+
+private struct WorkspaceSettingsRow: View {
+    @ObservedObject var workspaceLibrary: WorkspaceLibraryStore
+    let entryID: UUID
+    let index: Int
+    let count: Int
+    let revertSerial: UInt
+    let theme: AppTheme
+    let showsDivider: Bool
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+    @FocusState private var isNameFocused: Bool
+    @State private var draftName = ""
+
+    private var entry: SavedWorkspaceEntry? {
+        workspaceLibrary.entries.first { $0.id == entryID }
+    }
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+    }
+
+    var body: some View {
+        HStack(spacing: scaled(12)) {
+            MonknotSystemGlyph(
+                systemImage: "folder",
+                nominalPointSizeBase: 15,
+                theme: theme,
+                zoomScale: settingsZoomScale
+            )
+            .foregroundStyle(theme.tertiaryForegroundColor)
+            .frame(width: scaled(18))
+
+            VStack(alignment: .leading, spacing: scaled(3)) {
+                TextField("Display name", text: $draftName)
+                    .textFieldStyle(.plain)
+                    .focused($isNameFocused)
+                    .font(MonknotTypography.settingsRowTitle(theme: theme, zoomScale: settingsZoomScale))
+                    .foregroundStyle(theme.foregroundColor)
+                    .padding(.horizontal, scaled(9))
+                    .frame(height: scaled(28), alignment: .leading)
+                    .background(theme.insetFillColor, in: RoundedRectangle(cornerRadius: scaled(8)))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: scaled(8))
+                            .strokeBorder(
+                                isNameFocused ? theme.accentColor : theme.borderColor,
+                                lineWidth: 1
+                            )
+                    }
+
+                Text(((entry?.path ?? "") as NSString).abbreviatingWithTildeInPath)
+                    .font(.system(
+                        size: MonknotMetrics.interfaceText(11, theme: theme, zoomScale: settingsZoomScale),
+                        weight: .regular,
+                        design: .monospaced
+                    ))
+                    .foregroundStyle(theme.tertiaryForegroundColor)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            workspaceMoveButton(
+                systemImage: "chevron.up",
+                label: "Move workspace up",
+                isDisabled: index == 0
+            ) {
+                workspaceLibrary.move(id: entryID, to: index - 1)
+            }
+
+            workspaceMoveButton(
+                systemImage: "chevron.down",
+                label: "Move workspace down",
+                isDisabled: index >= count - 1
+            ) {
+                workspaceLibrary.move(id: entryID, to: index + 1)
+            }
+        }
+        .padding(.horizontal, scaled(14))
+        .padding(.vertical, scaled(10))
+        .overlay(alignment: .bottom) {
+            if showsDivider {
+                Rectangle()
+                    .fill(theme.separatorColor)
+                    .frame(height: 1)
+                    .padding(.leading, scaled(14))
+            }
+        }
+        .onAppear {
+            draftName = entry?.displayName ?? ""
+        }
+        .onChange(of: draftName) { _, name in
+            workspaceLibrary.rename(id: entryID, to: name)
+        }
+        .onChange(of: entry?.customName) { _, _ in
+            if !isNameFocused {
+                draftName = entry?.displayName ?? ""
+            }
+        }
+        .onChange(of: revertSerial) { _, _ in
+            isNameFocused = false
+            draftName = entry?.displayName ?? ""
+        }
+        .onChange(of: isNameFocused) { _, isFocused in
+            if !isFocused,
+               draftName.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty {
+                draftName = entry?.displayName ?? ""
+            }
+        }
+    }
+
+    private func workspaceMoveButton(
+        systemImage: String,
+        label: String,
+        isDisabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        MonknotIconButton(
+            systemImage: systemImage,
+            label: label,
+            theme: theme,
+            zoomScale: settingsZoomScale,
+            isDisabled: isDisabled,
+            size: .settings,
+            drawsBorder: true,
+            action: action
+        )
     }
 }
 

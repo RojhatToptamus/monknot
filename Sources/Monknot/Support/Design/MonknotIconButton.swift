@@ -49,6 +49,8 @@ struct MonknotIconButton: View {
         case windowNavigation
         case sidebarHeader
         case compact
+        case settings
+        case smallAction
         case editorToolbar
         case findBar
         case segmented
@@ -61,6 +63,10 @@ struct MonknotIconButton: View {
                 return MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)
             case .compact:
                 return MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale)
+            case .settings:
+                return MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)
+            case .smallAction:
+                return MonknotMetrics.interfaceControl(22, theme: theme, zoomScale: zoomScale)
             case .editorToolbar:
                 return MonknotMetrics.interfaceControl(30, theme: theme, zoomScale: zoomScale)
             case .sidebarHeader:
@@ -76,7 +82,7 @@ struct MonknotIconButton: View {
             switch self {
             case .windowNavigation:
                 return MonknotMetrics.interfaceControl(22, theme: theme, zoomScale: zoomScale)
-            case .chrome, .sidebarHeader, .compact, .editorToolbar, .findBar, .segmented:
+            case .chrome, .sidebarHeader, .compact, .settings, .smallAction, .editorToolbar, .findBar, .segmented:
                 return dimension(theme: theme, zoomScale: zoomScale)
             }
         }
@@ -99,6 +105,10 @@ struct MonknotIconButton: View {
                 return 16
             case .compact:
                 return 16
+            case .settings:
+                return 15
+            case .smallAction:
+                return 11
             case .findBar:
                 return 17
             case .editorToolbar:
@@ -116,7 +126,7 @@ struct MonknotIconButton: View {
             switch self {
             case .chrome:
                 return theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
-            case .sidebarHeader, .compact, .editorToolbar, .findBar:
+            case .sidebarHeader, .compact, .settings, .smallAction, .editorToolbar, .findBar:
                 return theme.chromeRadius(8, zoomScale: zoomScale)
             case .windowNavigation:
                 return theme.chromeRadius(6, zoomScale: zoomScale)
@@ -129,7 +139,7 @@ struct MonknotIconButton: View {
             switch self {
             case .windowNavigation:
                 return isDark ? 0.06 : 0.055
-            case .chrome, .sidebarHeader, .compact, .editorToolbar, .findBar, .segmented:
+            case .chrome, .sidebarHeader, .compact, .settings, .smallAction, .editorToolbar, .findBar, .segmented:
                 return isDark ? 0.06 : 0.055
             }
         }
@@ -159,6 +169,8 @@ struct MonknotIconButton: View {
             switch self {
             case .windowNavigation:
                 return 0.24
+            case .settings, .smallAction:
+                return 0.4
             case .chrome, .sidebarHeader, .compact, .editorToolbar, .findBar, .segmented:
                 return 0.24
             }
