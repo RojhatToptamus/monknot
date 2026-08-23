@@ -77,6 +77,8 @@ Prefer putting logic in `MonknotCore` when it can be tested without SwiftUI/AppK
   - `WorkspaceDocument`: document identity, path, relative path, kind, content type metadata, capabilities, and depth.
   - `WorkspaceDocumentCapabilities`: explicit preview/edit/search/export/outline capability flags.
   - `WorkspaceTabState`: lightweight tab order, active document ID, pinned state, document snapshots, close behavior, and rename/move ID remapping.
+  - `SavedWorkspaceStore`: ordered saved-folder metadata, custom labels, opaque bookmark data, last-active workspace, and legacy recent-workspace migration.
+  - `WorkspaceTreeExpansionPersistence`: per-workspace expanded sidebar folder IDs.
   - `WorkspaceDocumentSupport`: UTType-backed classification, conservative extension fallback groups, capability mapping, and relative path helpers.
   - `SidebarNode`: folder/file tree model for the sidebar.
 - Markdown rendering:
@@ -112,6 +114,7 @@ App-layer code should stay in `Sources/Monknot` when it uses SwiftUI state, AppK
 ## Important App-Layer Owners
 
 - `WorkspaceStore`: central workspace state machine. It uses generation counters and cancellable tasks to prevent stale async results from overwriting newer state. Preserve this pattern when adding async workspace, document, save, or refresh behavior.
+- `WorkspaceLibraryStore`: app-wide observable owner for saved workspace order, labels, bookmark resolution, and reversible removal. Saved workspaces are folder references, not on-disk manifests.
 - Tab state is owned by `ContentView`, but `WorkspaceStore` remains the source of truth for the active document text, dirty buffers, save state, external refresh, and file operations. Do not create per-tab editor state or per-tab preview instances.
 - `WorkspaceStore` publishes document-ID remap events for rename/cut-paste operations so inactive tabs can survive path changes.
 - `WorkspaceStore` tracks open document IDs so dirty open documents removed externally are not silently pruned before the UI can surface the conflict.
@@ -136,7 +139,7 @@ Use Apple-native APIs where they fit the feature:
 - File type detection: `UniformTypeIdentifiers.UTType` in `WorkspaceDocumentSupport`, with extension fallbacks for formats UTType may not classify consistently.
 - Text editing: `NSTextView` through `MarkdownTextEditor`, used for Markdown source and generic editable text/source/data files. Interactive editor opens are capped by `WorkspaceStore.interactiveTextOpenMaxBytes` so very large text files do not block file switching; search/export services can still use their own guarded limits.
 - File watching: FSEvents in `WorkspaceFileWatcher`.
-- Folder access persistence: security-scoped bookmarks in `WorkspaceStore`.
+- Saved folder access: `WorkspaceLibraryStore` creates and resolves Foundation security-scoped bookmarks; `WorkspaceStore` owns only the active access scope. Relevant docs: https://developer.apple.com/documentation/foundation/nsurl/bookmarkcreationoptions/withsecurityscope and https://developer.apple.com/documentation/foundation/url/init%28resolvingbookmarkdata%3Aoptions%3Arelativeto%3Abookmarkdataisstale%3A%29-3ic6f.
 - File/folder open panels, reveal in Finder, and pasteboard interactions: AppKit in the app layer.
 - Terminal: Darwin PTY APIs in `TerminalPTYSession`.
 

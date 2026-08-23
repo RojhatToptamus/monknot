@@ -5,6 +5,8 @@ struct MonknotCommandActions {
     let newMarkdown: () -> Void
     let newDailyNote: () -> Void
     let openFolder: () -> Void
+    let workspaceNames: [String]
+    let switchWorkspaceAtIndex: (Int) -> Void
     let exportPDF: () -> Void
     let canExportPDF: Bool
     let exportPDFAnnotationsMarkdown: () -> Void
@@ -123,7 +125,7 @@ struct MonknotCommandMenu: Commands {
             .keyboardShortcut("n", modifiers: [.command, .shift])
             .disabled(actions == nil)
 
-            Button("Open Folder...") {
+            Button("Add Workspace...") {
                 actions?.openFolder()
             }
             .keyboardShortcut("o", modifiers: [.command])
@@ -131,6 +133,22 @@ struct MonknotCommandMenu: Commands {
         }
 
         CommandMenu("Workspace") {
+            if let actions {
+                ForEach(Array(actions.workspaceNames.prefix(9).enumerated()), id: \.offset) { index, name in
+                    Button(name) {
+                        actions.switchWorkspaceAtIndex(index)
+                    }
+                    .keyboardShortcut(
+                        KeyEquivalent(Character(String(index + 1))),
+                        modifiers: [.control, .command]
+                    )
+                }
+
+                if !actions.workspaceNames.isEmpty {
+                    Divider()
+                }
+            }
+
             Button("Refresh") {
                 actions?.refreshWorkspace()
             }

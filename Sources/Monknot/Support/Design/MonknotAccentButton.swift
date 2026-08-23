@@ -14,6 +14,18 @@ enum MonknotActionRole {
     case quiet
 }
 
+enum MonknotActionButtonSize {
+    case bar
+    case sheet
+
+    var heightBase: CGFloat {
+        switch self {
+        case .bar: return 28
+        case .sheet: return 30
+        }
+    }
+}
+
 /// A compact macOS action with an explicit semantic role.
 ///
 /// This keeps primary, secondary, and quiet text actions on the same geometry
@@ -26,6 +38,7 @@ struct MonknotActionButton: View {
     let role: MonknotActionRole
     let theme: AppTheme
     var zoomScale: Double = 1
+    var size: MonknotActionButtonSize = .sheet
     var isDisabled: Bool = false
     let action: () -> Void
 
@@ -47,7 +60,7 @@ struct MonknotActionButton: View {
                     Image(systemName: systemImage)
                         .font(.system(
                             size: MonknotMetrics.interfaceGlyph(11, theme: theme, zoomScale: zoomScale),
-                            weight: .semibold
+                            weight: .regular
                         ))
                         .accessibilityHidden(true)
                 }
@@ -61,7 +74,7 @@ struct MonknotActionButton: View {
             ))
             .foregroundStyle(foregroundColor)
             .padding(.horizontal, scaled(MonknotMetrics.Spacing.l))
-            .frame(height: MonknotMetrics.interfaceControl(30, theme: theme, zoomScale: zoomScale))
+            .frame(height: MonknotMetrics.interfaceControl(size.heightBase, theme: theme, zoomScale: zoomScale))
             .background {
                 shape.fill(backgroundColor)
             }

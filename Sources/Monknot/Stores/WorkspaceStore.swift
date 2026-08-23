@@ -4,6 +4,7 @@ import MonknotCore
 @MainActor
 final class WorkspaceStore: ObservableObject {
     @Published private(set) var workspaceURL: URL?
+    @Published private(set) var openingWorkspaceURL: URL?
     @Published private(set) var rootNode: SidebarNode?
     @Published private(set) var documents: [WorkspaceDocument] = []
     private(set) var markdownDocuments: [WorkspaceDocument] = []
@@ -36,10 +37,8 @@ final class WorkspaceStore: ObservableObject {
     private var replaceUndoSnapshot: WorkspaceReplaceUndoSnapshot?
 
     private let scanner: any WorkspaceDocumentScanning
-    private let userDefaults: UserDefaults
     private let recentDocumentStore: RecentDocumentStore
     private let fileWatcher = WorkspaceFileWatcher()
-    private let bookmarkKey = "Monknot.workspaceBookmark"
     private var lastSavedText = ""
     private var dirtyDocumentTexts: [String: String] = [:]
     private var dirtyDocumentBaselines: [String: String] = [:]
@@ -80,7 +79,6 @@ final class WorkspaceStore: ObservableObject {
         userDefaults: UserDefaults = .standard
     ) {
         self.scanner = scanner
-        self.userDefaults = userDefaults
         recentDocumentStore = RecentDocumentStore(userDefaults: userDefaults)
     }
 
@@ -90,7 +88,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var isWorkspaceOpening: Bool {
-        workspaceURL != nil && (isBusy || rootNode == nil)
+        openingWorkspaceURL != nil || (workspaceURL != nil && rootNode == nil)
     }
 
     var canBootstrapStarterWorkspace: Bool {
@@ -113,32 +111,12 @@ final class WorkspaceStore: ObservableObject {
         writingToolsDocumentID
     }
 
-    func restoreWorkspace() {
-        guard workspaceURL == nil, let bookmarkData = userDefaults.data(forKey: bookmarkKey) else {
-            return
-        }
-
-        do {
-            var isStale = false
-            let url = try URL(
-                resolvingBookmarkData: bookmarkData,
-                options: [.withSecurityScope],
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            )
-            startWorkspaceLoad(url, selecting: nil, persistBookmark: isStale, preserveSelection: nil, reloadSelection: true)
-        } catch {
-            userDefaults.removeObject(forKey: bookmarkKey)
-            errorMessage = "Could not restore the previous workspace: \(error.localizedDescription)"
-        }
-    }
-
     func openWorkspace(_ url: URL) {
         openWorkspace(url, selecting: nil)
     }
 
     func openWorkspace(_ url: URL, selecting selectedURL: URL?) {
-        startWorkspaceLoad(url, selecting: selectedURL, persistBookmark: true, preserveSelection: nil, reloadSelection: true)
+        startWorkspaceLoad(url, selecting: selectedURL, preserveSelection: nil, reloadSelection: true)
     }
 
     func handleDroppedURL(_ url: URL) {
@@ -149,9 +127,9 @@ final class WorkspaceStore: ObservableObject {
 
                 switch target {
                 case .workspace(let workspaceURL):
-                    self.startWorkspaceLoad(workspaceURL, selecting: nil, persistBookmark: true, preserveSelection: nil, reloadSelection: true)
+                    self.startWorkspaceLoad(workspaceURL, selecting: nil, preserveSelection: nil, reloadSelection: true)
                 case .document(let workspaceURL, let selectedURL):
-                    self.startWorkspaceLoad(workspaceURL, selecting: selectedURL, persistBookmark: true, preserveSelection: nil, reloadSelection: true)
+                    self.startWorkspaceLoad(workspaceURL, selecting: selectedURL, preserveSelection: nil, reloadSelection: true)
                 case .unsupported:
                     break
                 }
@@ -1179,7 +1157,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func setDocumentText(_ text: String) {
-        guard selectedDocument?.capabilities.canEditText == true else { return }
+        guard !isBusy, selectedDocument?.capabilities.canEditText == true else { return }
         guard text != documentText else { return }
 
         let shouldAdoptExternalDiskVersion = text == lastSavedText
@@ -2089,68 +2067,38 @@ final class WorkspaceStore: ObservableObject {
     private func startWorkspaceLoad(
         _ url: URL,
         selecting selectedURL: URL?,
-        persistBookmark: Bool,
         preserveSelection: String?,
-        reloadSelection: Bool,
-        recordRecentWorkspace: Bool = true
+        reloadSelection: Bool
     ) {
         guard writingToolsDocumentID == nil else {
             errorMessage = "Finish Writing Tools before opening another workspace."
             return
         }
         let standardizedURL = url.standardizedFileURL
+        let previousWorkspaceURL = workspaceURL?.standardizedFileURL
         cancelExternalDocumentReview()
         updateSecurityScope(for: standardizedURL)
-
-        if persistBookmark {
-            do {
-                let bookmarkData = try standardizedURL.bookmarkData(
-                    options: [.withSecurityScope],
-                    includingResourceValuesForKeys: nil,
-                    relativeTo: nil
-                )
-                userDefaults.set(bookmarkData, forKey: bookmarkKey)
-            } catch {
-                errorMessage = "Could not persist workspace access: \(error.localizedDescription)"
-            }
-        }
-
-        if workspaceURL?.standardizedFileURL != standardizedURL {
-            pendingDocumentTransfer = nil
-            dirtyDocumentTexts = [:]
-            dirtyDocumentBaselines = [:]
-            dirtyDocumentRevisionExpectations = [:]
-            pdfDocumentBaselines = [:]
-            dirtyPDFDocumentData = [:]
-            dirtyPDFDocumentVersions = [:]
-            dirtyPDFDocumentEditCheckpoints = [:]
-            pdfDocumentSavedEditCheckpoints = [:]
-            pdfDocumentContentVersions = [:]
-            removedDirtyDocuments = [:]
-            removedDirtyOpenDocumentIDs = []
-            openDocumentIDs = []
-            documentSaveStates = [:]
-            invalidateAllWorkspaceSearchCaches()
-        }
-
-        workspaceURL = standardizedURL
         let generation = beginWorkspaceOperation()
+        openingWorkspaceURL = standardizedURL
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
             do {
                 let result = try await Self.scanWorkspace(standardizedURL, scanner: scanner)
                 guard !Task.isCancelled else { return }
-                await self?.finishWorkspaceLoad(
+                await self?.finishOpenedWorkspaceLoad(
                     result: result,
                     workspaceURL: standardizedURL,
                     selectedURL: selectedURL,
                     preserveSelection: preserveSelection,
                     reloadSelection: reloadSelection,
-                    recordRecentWorkspace: recordRecentWorkspace,
                     generation: generation
                 )
             } catch {
-                await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not open workspace")
+                await self?.finishWorkspaceOpenFailure(
+                    error,
+                    previousWorkspaceURL: previousWorkspaceURL,
+                    generation: generation
+                )
             }
         }
     }
@@ -2161,6 +2109,7 @@ final class WorkspaceStore: ObservableObject {
         recentDocumentRecordTask?.cancel()
         pendingMarkdownLinkMoveReview = nil
         workspaceGeneration += 1
+        openingWorkspaceURL = nil
         isBusy = true
         setDocumentLoadingIfChanged(false)
         errorMessage = nil
@@ -2181,7 +2130,6 @@ final class WorkspaceStore: ObservableObject {
         selectedURL: URL?,
         preserveSelection: String?,
         reloadSelection: Bool,
-        recordRecentWorkspace: Bool = false,
         generation: Int
     ) {
         guard generation == workspaceGeneration else { return }
@@ -2191,9 +2139,6 @@ final class WorkspaceStore: ObservableObject {
         replaceDocuments(with: result.documents)
         pruneSaveStates(previousDocuments: previousDocuments)
         ensureFileWatcher(for: workspaceURL)
-        if recordRecentWorkspace {
-            RecentWorkspaceStore().record(workspaceURL)
-        }
 
         if let selectedURL,
            let selectedDocument = documentsByID[selectedURL.standardizedFileURL.path] {
@@ -2210,6 +2155,74 @@ final class WorkspaceStore: ObservableObject {
             loadSelectedDocument()
         }
         refreshGitStatus()
+    }
+
+    private func finishOpenedWorkspaceLoad(
+        result: WorkspaceDocumentScanResult,
+        workspaceURL: URL,
+        selectedURL: URL?,
+        preserveSelection: String?,
+        reloadSelection: Bool,
+        generation: Int
+    ) {
+        guard generation == workspaceGeneration else { return }
+
+        if self.workspaceURL?.standardizedFileURL != workspaceURL.standardizedFileURL {
+            clearStateForWorkspaceTransition()
+        }
+        self.workspaceURL = workspaceURL.standardizedFileURL
+        openingWorkspaceURL = nil
+        finishWorkspaceLoad(
+            result: result,
+            workspaceURL: workspaceURL,
+            selectedURL: selectedURL,
+            preserveSelection: preserveSelection,
+            reloadSelection: reloadSelection,
+            generation: generation
+        )
+    }
+
+    private func finishWorkspaceOpenFailure(
+        _ error: Error,
+        previousWorkspaceURL: URL?,
+        generation: Int
+    ) {
+        guard generation == workspaceGeneration else { return }
+
+        openingWorkspaceURL = nil
+        if let previousWorkspaceURL {
+            updateSecurityScope(for: previousWorkspaceURL)
+            ensureFileWatcher(for: previousWorkspaceURL)
+        } else {
+            clearSecurityScope()
+        }
+        finishWorkspaceFailure(error, generation: generation, message: "Could not open workspace")
+    }
+
+    private func clearStateForWorkspaceTransition() {
+        pendingDocumentTransfer = nil
+        dirtyDocumentTexts = [:]
+        dirtyDocumentBaselines = [:]
+        dirtyDocumentRevisionExpectations = [:]
+        pdfDocumentBaselines = [:]
+        dirtyPDFDocumentData = [:]
+        dirtyPDFDocumentVersions = [:]
+        dirtyPDFDocumentEditCheckpoints = [:]
+        pdfDocumentSavedEditCheckpoints = [:]
+        pdfDocumentContentVersions = [:]
+        removedDirtyDocuments = [:]
+        removedDirtyOpenDocumentIDs = []
+        openDocumentIDs = []
+        documentSaveStates = [:]
+        selectedDocumentID = nil
+        setDocumentTextIfChanged("")
+        lastSavedText = ""
+        setHasUnsavedChangesIfChanged(false)
+        setSelectedDocumentExternalChangeIfChanged(false)
+        setSelectedDocumentSignatureIfChanged(nil)
+        clearReplaceUndoSnapshot()
+        workspaceReplaceSummary = nil
+        invalidateAllWorkspaceSearchCaches()
     }
 
     private func finishCreatedFile(
@@ -2363,18 +2376,20 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
+        clearSecurityScope()
+        securityScopedURL = url.startAccessingSecurityScopedResource() ? url : nil
+    }
+
+    private func clearSecurityScope() {
         fileWatcher.stop()
         externalRefreshWorkItem?.cancel()
         externalRefreshWorkItem = nil
         externalRefreshTask?.cancel()
         externalRefreshTask = nil
         externalReviewTask?.cancel()
-
-        if let securityScopedURL {
-            securityScopedURL.stopAccessingSecurityScopedResource()
-        }
-
-        securityScopedURL = url.startAccessingSecurityScopedResource() ? url : nil
+        externalReviewTask = nil
+        securityScopedURL?.stopAccessingSecurityScopedResource()
+        securityScopedURL = nil
     }
 
     private func loadSelectedDocument() {

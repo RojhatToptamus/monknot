@@ -5,6 +5,38 @@ import MonknotCore
 
 @MainActor
 final class WorkspaceStoreLoadingTests: WorkspaceStoreConflictTestCase {
+    func testFailedWorkspaceSwitchKeepsPreviousWorkspaceLoaded() async throws {
+        let firstRoot = try makeTemporaryDirectory()
+        let secondRoot = try makeTemporaryDirectory()
+        try "# First\n".write(
+            to: firstRoot.appendingPathComponent("First.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "# Second\n".write(
+            to: secondRoot.appendingPathComponent("Second.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let store = makeWorkspaceStore(scanner: FailingWorkspaceScanner(failOnCall: 2))
+        store.openWorkspace(firstRoot)
+        let didLoadFirst = await waitUntil {
+            !store.isBusy && store.documentText == "# First\n"
+        }
+        XCTAssertTrue(didLoadFirst)
+
+        store.openWorkspace(secondRoot)
+        let didFailSecond = await waitUntil {
+            !store.isBusy && store.errorMessage?.contains("Injected scan failure") == true
+        }
+        XCTAssertTrue(didFailSecond)
+
+        XCTAssertEqual(store.workspaceURL, firstRoot.standardizedFileURL)
+        XCTAssertEqual(store.documents.map(\.displayName), ["First.md"])
+        XCTAssertEqual(store.documentText, "# First\n")
+    }
+
     func testStarterWorkspaceEligibilityWaitsForCompletedEmptyWorkspaceScan() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

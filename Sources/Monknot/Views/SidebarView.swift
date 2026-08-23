@@ -4,12 +4,15 @@ import SwiftUI
 
 struct SidebarView: View {
     @ObservedObject var store: WorkspaceStore
+    @ObservedObject var workspaceLibrary: WorkspaceLibraryStore
     @ObservedObject var workspaceSearch: WorkspaceSearchState
     @Binding var searchOptions: MonknotSearchOptions
     let theme: AppTheme
     let zoomScale: Double
     let openFolder: () -> Void
-    let openRecentWorkspace: (URL) -> Void
+    let switchWorkspace: (SavedWorkspaceEntry) -> Void
+    let removeWorkspace: (SavedWorkspaceEntry) -> Void
+    let manageWorkspaces: () -> Void
     let newMarkdown: () -> Void
     let exportPDF: (WorkspaceDocument) -> Void
     let openDocument: (String) -> Void
@@ -20,6 +23,7 @@ struct SidebarView: View {
     let copyRelativePath: (URL) -> Void
     @State private var isDropTargeted = false
     @State private var expandedFolderIDs: Set<String> = []
+    @State private var expandedWorkspacePath: String?
     @State private var sidebarPrompt: SidebarNamePrompt?
     @State private var sidebarTreeFrame: CGRect = .zero
     @State private var sidebarNodeFrames: [String: CGRect] = [:]
@@ -28,6 +32,7 @@ struct SidebarView: View {
     @State private var isMoveDropTargetingRoot = false
     @State private var recentDocuments: [RecentDocumentEntry] = []
     @State private var visibleNodes: [VisibleSidebarNode] = []
+    private let treeExpansionPersistence = WorkspaceTreeExpansionPersistence()
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
@@ -67,10 +72,16 @@ struct SidebarView: View {
                 if !workspaceSearch.isPresented {
                     SidebarProjectHeader(
                         workspaceURL: store.workspaceURL,
+                        workspaces: workspaceLibrary.entries,
+                        isBusy: store.isBusy,
                         canCreateMarkdown: store.workspaceURL != nil && !store.isBusy,
                         canSearch: store.workspaceURL != nil,
                         theme: theme,
                         zoomScale: zoomScale,
+                        switchWorkspace: switchWorkspace,
+                        addWorkspace: openFolder,
+                        removeWorkspace: removeWorkspace,
+                        manageWorkspaces: manageWorkspaces,
                         createMarkdown: newMarkdown,
                         showWorkspaceSearch: showWorkspaceSearch
                     )
@@ -103,8 +114,7 @@ struct SidebarView: View {
             }
         }
         .onChange(of: store.rootNode?.id ?? "") {
-            expandedFolderIDs = initialExpandedFolderIDs()
-            refreshVisibleNodes()
+            restoreExpandedFoldersIfNeeded()
         }
         .onChange(of: store.selectedDocumentID ?? "") {
             expandAncestorsForSelectedDocument()
@@ -116,13 +126,14 @@ struct SidebarView: View {
             refreshRecentDocuments()
         }
         .onChange(of: store.workspaceURL?.standardizedFileURL.path ?? "") { _, _ in
+            expandedWorkspacePath = nil
+            restoreExpandedFoldersIfNeeded()
             refreshRecentDocuments()
         }
-        .onAppear {
-            expandedFolderIDs = initialExpandedFolderIDs()
-            refreshVisibleNodes()
-            refreshRecentDocuments()
+        .onChange(of: expandedFolderIDs) { _, _ in
+            persistExpandedFolders()
         }
+        .onAppear(perform: handleSidebarAppear)
         .background {
             FileURLDropTarget(isTargeted: $isDropTargeted) { urls in
                 handleDroppedURLs(urls)
@@ -280,9 +291,10 @@ struct SidebarView: View {
                     theme: theme,
                     zoomScale: zoomScale,
                     workspaceURL: store.workspaceURL,
+                    workspaces: workspaceLibrary.entries,
                     hasWorkspace: store.workspaceURL != nil,
                     isLoadingWorkspace: store.isWorkspaceOpening,
-                    openRecentWorkspace: openRecentWorkspace
+                    switchWorkspace: switchWorkspace
                 )
                     .contextMenu {
                         sidebarContextMenu
@@ -300,11 +312,42 @@ struct SidebarView: View {
         )
     }
 
+    private func handleSidebarAppear() {
+        restoreExpandedFoldersIfNeeded()
+        refreshRecentDocuments()
+    }
+
     private func refreshVisibleNodes() {
         visibleNodes = SidebarTreePresentation.visibleNodes(
             from: store.rootNode?.children ?? [],
             expandedFolderIDs: expandedFolderIDs
         )
+    }
+
+    private func restoreExpandedFoldersIfNeeded() {
+        guard let workspaceURL = store.workspaceURL?.standardizedFileURL else {
+            expandedWorkspacePath = nil
+            expandedFolderIDs = []
+            refreshVisibleNodes()
+            return
+        }
+
+        let path = workspaceURL.path
+        if expandedWorkspacePath != path {
+            expandedWorkspacePath = path
+            expandedFolderIDs = treeExpansionPersistence.load(for: workspaceURL)
+                ?? initialExpandedFolderIDs()
+        }
+        refreshVisibleNodes()
+    }
+
+    private func persistExpandedFolders() {
+        guard let workspaceURL = store.workspaceURL?.standardizedFileURL,
+              expandedWorkspacePath == workspaceURL.path
+        else {
+            return
+        }
+        treeExpansionPersistence.save(expandedFolderIDs, for: workspaceURL)
     }
 
     private func initialExpandedFolderIDs() -> Set<String> {
@@ -744,12 +787,20 @@ private struct SidebarNodeFrameReader: View {
 /// Workspace identity and its contextual search action.
 private struct SidebarProjectHeader: View {
     let workspaceURL: URL?
+    let workspaces: [SavedWorkspaceEntry]
+    let isBusy: Bool
     let canCreateMarkdown: Bool
     let canSearch: Bool
     let theme: AppTheme
     let zoomScale: Double
+    let switchWorkspace: (SavedWorkspaceEntry) -> Void
+    let addWorkspace: () -> Void
+    let removeWorkspace: (SavedWorkspaceEntry) -> Void
+    let manageWorkspaces: () -> Void
     let createMarkdown: () -> Void
     let showWorkspaceSearch: () -> Void
+    @State private var isWorkspaceTitleHovered = false
+    @State private var isSwitcherPresented = false
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
@@ -759,20 +810,89 @@ private struct SidebarProjectHeader: View {
         MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
     }
 
+    private var activeWorkspace: SavedWorkspaceEntry? {
+        guard let path = workspaceURL?.standardizedFileURL.path else { return nil }
+        return workspaces.first { $0.path == path }
+    }
+
+    private var workspaceName: String {
+        activeWorkspace?.displayName ?? workspaceURL?.lastPathComponent ?? "No Workspace"
+    }
+
+    private var showsChevron: Bool {
+        workspaces.count > 1 || isWorkspaceTitleHovered || isSwitcherPresented
+    }
+
     var body: some View {
         HStack(spacing: scaled(6)) {
-            HStack(spacing: scaled(3)) {
-                Text(workspaceURL?.lastPathComponent ?? "Monknot")
-                    .font(.system(size: textScaled(13), weight: .semibold))
-                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.92))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+            if workspaceURL != nil {
+                Button {
+                    isSwitcherPresented.toggle()
+                } label: {
+                    HStack(spacing: 0) {
+                        Text(workspaceName)
+                            .font(.system(size: textScaled(13), weight: .semibold))
+                            .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.92))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
 
-                Image(systemName: "chevron.down")
-                    .font(.system(size: textScaled(8), weight: .medium))
+                        Spacer(minLength: scaled(8))
+
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: textScaled(10), weight: .regular))
+                            .symbolRenderingMode(.monochrome)
+                            .foregroundStyle(
+                                isWorkspaceTitleHovered || isSwitcherPresented
+                                    ? theme.foregroundColor
+                                    : theme.tertiaryForegroundColor
+                            )
+                            .opacity(showsChevron ? 1 : 0)
+                            .frame(width: scaled(11))
+                            .animation(MonknotMotion.hoverAnimation, value: showsChevron)
+                    }
+                    .padding(.horizontal, scaled(10))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: scaled(30))
+                }
+                .buttonStyle(MonknotRowButtonStyle(
+                    theme: theme,
+                    isSelected: false,
+                    isActive: isSwitcherPresented,
+                    cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
+                ))
+                .disabled(isBusy)
+                .onHover { isWorkspaceTitleHovered = $0 }
+                .popover(isPresented: $isSwitcherPresented, arrowEdge: .top) {
+                    WorkspaceSwitcherPopover(
+                        workspaces: workspaces,
+                        activeWorkspacePath: workspaceURL?.standardizedFileURL.path,
+                        isBusy: isBusy,
+                        theme: theme,
+                        zoomScale: zoomScale,
+                        switchWorkspace: { workspace in
+                            isSwitcherPresented = false
+                            switchWorkspace(workspace)
+                        },
+                        addWorkspace: {
+                            isSwitcherPresented = false
+                            addWorkspace()
+                        },
+                        removeWorkspace: removeWorkspace,
+                        manageWorkspaces: {
+                            isSwitcherPresented = false
+                            manageWorkspaces()
+                        }
+                    )
+                }
+                .help(workspaceURL?.path ?? "No workspace open")
+                .layoutPriority(1)
+            } else {
+                Text(workspaceName)
+                    .font(.system(size: textScaled(13), weight: .semibold))
                     .foregroundStyle(theme.tertiaryForegroundColor)
+                    .lineLimit(1)
+                    .padding(.horizontal, scaled(2))
             }
-            .help(workspaceURL?.path ?? "No workspace open")
 
             Spacer(minLength: scaled(4))
 
@@ -799,6 +919,236 @@ private struct SidebarProjectHeader: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, scaled(10))
         .frame(height: scaled(40))
+    }
+}
+
+private struct WorkspaceSwitcherPopover: View {
+    let workspaces: [SavedWorkspaceEntry]
+    let activeWorkspacePath: String?
+    let isBusy: Bool
+    let theme: AppTheme
+    let zoomScale: Double
+    let switchWorkspace: (SavedWorkspaceEntry) -> Void
+    let addWorkspace: () -> Void
+    let removeWorkspace: (SavedWorkspaceEntry) -> Void
+    let manageWorkspaces: () -> Void
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    private func textScaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    private var workspaceListHeight: CGFloat {
+        let visibleCount = CGFloat(min(workspaces.count, 7))
+        return scaled(visibleCount * 56 + 8)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("WORKSPACES")
+                .font(.system(size: textScaled(10), weight: .semibold))
+                .tracking(scaled(0.9))
+                .foregroundStyle(theme.tertiaryForegroundColor)
+                .padding(.horizontal, scaled(14))
+                .frame(height: scaled(28), alignment: .bottomLeading)
+
+            if workspaces.isEmpty {
+                Text("No saved workspaces")
+                    .font(.system(size: textScaled(12), weight: .regular))
+                    .foregroundStyle(theme.tertiaryForegroundColor)
+                    .padding(.horizontal, scaled(14))
+                    .frame(height: scaled(42), alignment: .leading)
+            } else {
+                ScrollView(.vertical, showsIndicators: workspaces.count > 7) {
+                    LazyVStack(spacing: scaled(4)) {
+                        ForEach(Array(workspaces.enumerated()), id: \.element.id) { index, workspace in
+                            WorkspaceSwitcherRow(
+                                workspace: workspace,
+                                shortcutIndex: index < 9 ? index + 1 : nil,
+                                isActive: workspace.path == activeWorkspacePath,
+                                isBusy: isBusy,
+                                theme: theme,
+                                zoomScale: zoomScale,
+                                open: { switchWorkspace(workspace) },
+                                remove: { removeWorkspace(workspace) }
+                            )
+                        }
+                    }
+                    .padding(.horizontal, scaled(8))
+                    .padding(.vertical, scaled(6))
+                }
+                .frame(height: workspaceListHeight)
+            }
+
+            Rectangle()
+                .fill(theme.separatorColor)
+                .frame(height: 1)
+                .padding(.horizontal, scaled(14))
+                .padding(.vertical, scaled(6))
+
+            WorkspaceSwitcherActionRow(
+                title: "Add Workspace…",
+                systemImage: "folder.badge.plus",
+                theme: theme,
+                zoomScale: zoomScale,
+                action: addWorkspace
+            )
+
+            WorkspaceSwitcherActionRow(
+                title: "Manage Workspaces…",
+                systemImage: "gearshape",
+                theme: theme,
+                zoomScale: zoomScale,
+                action: manageWorkspaces
+            )
+        }
+        .padding(.bottom, scaled(8))
+        .frame(width: scaled(414))
+        .background(theme.elevatedSurfaceColor)
+    }
+}
+
+private struct WorkspaceSwitcherRow: View {
+    let workspace: SavedWorkspaceEntry
+    let shortcutIndex: Int?
+    let isActive: Bool
+    let isBusy: Bool
+    let theme: AppTheme
+    let zoomScale: Double
+    let open: () -> Void
+    let remove: () -> Void
+    @State private var isHovered = false
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    private func textScaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            Button(action: open) {
+                HStack(spacing: scaled(8)) {
+                    MonknotSystemGlyph(
+                        systemImage: isActive ? "folder.fill" : "folder",
+                        nominalPointSizeBase: 15,
+                        theme: theme,
+                        zoomScale: zoomScale
+                    )
+                    .foregroundStyle(
+                        isActive
+                            ? theme.accentColor
+                            : (isHovered ? theme.foregroundColor : theme.tertiaryForegroundColor)
+                    )
+                    .animation(MonknotMotion.hoverAnimation, value: isHovered)
+                    .frame(width: scaled(18))
+
+                    VStack(alignment: .leading, spacing: scaled(3)) {
+                        Text(workspace.displayName)
+                            .font(.system(size: textScaled(13), weight: .regular))
+                            .foregroundStyle(
+                                isActive || isHovered
+                                    ? theme.foregroundColor
+                                    : theme.mutedForegroundColor
+                            )
+                            .animation(MonknotMotion.hoverAnimation, value: isHovered)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+
+                        Text((workspace.path as NSString).abbreviatingWithTildeInPath)
+                            .font(.system(size: textScaled(11), weight: .regular, design: .monospaced))
+                            .foregroundStyle(
+                                isHovered ? theme.mutedForegroundColor : theme.tertiaryForegroundColor
+                            )
+                            .animation(MonknotMotion.hoverAnimation, value: isHovered)
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                    }
+
+                    Spacer(minLength: scaled(8))
+
+                    if !isHovered, let shortcutIndex {
+                        MonknotShortcutLabel(
+                            shortcut: "⌃⌘\(shortcutIndex)",
+                            theme: theme,
+                            zoomScale: zoomScale
+                        )
+                    } else {
+                        Color.clear.frame(width: scaled(22), height: scaled(22))
+                    }
+                }
+                .padding(.horizontal, scaled(10))
+                .frame(height: scaled(52))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(MonknotRowButtonStyle(
+                theme: theme,
+                isSelected: isActive,
+                cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
+            ))
+            .disabled(isBusy || isActive)
+
+            if isHovered {
+                MonknotIconButton(
+                    systemImage: "xmark",
+                    label: "Remove \(workspace.displayName)",
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    isDisabled: isBusy,
+                    size: .smallAction,
+                    focusRingPlacement: .contained,
+                    action: remove
+                )
+                .padding(.trailing, scaled(10))
+            }
+        }
+        .onHover { isHovered = $0 }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct WorkspaceSwitcherActionRow: View {
+    let title: String
+    let systemImage: String
+    let theme: AppTheme
+    let zoomScale: Double
+    let action: () -> Void
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: scaled(8)) {
+                MonknotSystemGlyph(
+                    systemImage: systemImage,
+                    nominalPointSizeBase: 15,
+                    theme: theme,
+                    zoomScale: zoomScale
+                )
+                .frame(width: scaled(18))
+
+                Text(title)
+                    .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
+
+                Spacer()
+            }
+            .padding(.horizontal, scaled(10))
+            .frame(height: scaled(30))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(MonknotRowButtonStyle(
+            theme: theme,
+            isSelected: false,
+            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
+        ))
+        .padding(.horizontal, scaled(8))
     }
 }
 
@@ -1254,57 +1604,6 @@ private struct SidebarHoverRowModifier: ViewModifier {
     }
 }
 
-private struct SidebarHoverButtonStyle: ButtonStyle {
-    let theme: AppTheme
-    let isSelected: Bool
-    let cornerRadius: CGFloat
-
-    func makeBody(configuration: Configuration) -> Body {
-        Body(configuration: configuration, theme: theme, isSelected: isSelected, cornerRadius: cornerRadius)
-    }
-
-    fileprivate struct Body: View {
-        let configuration: Configuration
-        let theme: AppTheme
-        let isSelected: Bool
-        let cornerRadius: CGFloat
-        @Environment(\.isEnabled) private var isEnabled
-        @State private var isHovered = false
-
-        var body: some View {
-            configuration.label
-                .background(selectionBackground)
-                .opacity(configuration.isPressed ? 0.88 : 1)
-                .animation(.easeOut(duration: 0.12), value: isHovered)
-                .animation(.easeOut(duration: 0.10), value: configuration.isPressed)
-                .onHover { isHovered = $0 }
-                .monknotPointerCursor(enabled: isEnabled)
-        }
-
-        @ViewBuilder
-        private var selectionBackground: some View {
-            ZStack {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(underlayFill)
-                if isSelected {
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(theme.selectedRowColor)
-                }
-            }
-        }
-
-        private var underlayFill: Color {
-            if isSelected {
-                return theme.elevatedSurfaceColor
-            }
-            if isHovered {
-                return theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.055)
-            }
-            return .clear
-        }
-    }
-}
-
 private struct SaveStateIndicator: View {
     let state: DocumentSaveState
     let theme: AppTheme
@@ -1380,7 +1679,7 @@ private struct SidebarSettingsButton: View {
             .padding(.vertical, scaled(8))
             .contentShape(Rectangle())
         }
-        .buttonStyle(SidebarHoverButtonStyle(theme: theme, isSelected: false, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)))
+        .buttonStyle(MonknotRowButtonStyle(theme: theme, isSelected: false, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)))
         .padding(.horizontal, scaled(5))
         .padding(.vertical, scaled(4))
         .help("Open Settings (⌘,)")
@@ -1503,7 +1802,7 @@ private struct SidebarRecentDocumentsSection: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(SidebarHoverButtonStyle(
+            .buttonStyle(MonknotRowButtonStyle(
                 theme: theme,
                 isSelected: false,
                 cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
@@ -1537,7 +1836,7 @@ private struct SidebarRecentDocumentsSection: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
                             }
-                            .buttonStyle(SidebarHoverButtonStyle(
+                            .buttonStyle(MonknotRowButtonStyle(
                                 theme: theme,
                                 isSelected: entry.documentID == selectedDocumentID,
                                 cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
@@ -1597,11 +1896,10 @@ private struct EmptySidebarView: View {
     let theme: AppTheme
     let zoomScale: Double
     let workspaceURL: URL?
+    let workspaces: [SavedWorkspaceEntry]
     let hasWorkspace: Bool
     let isLoadingWorkspace: Bool
-    let openRecentWorkspace: (URL) -> Void
-
-    @State private var recentWorkspaces: [RecentWorkspaceEntry] = []
+    let switchWorkspace: (SavedWorkspaceEntry) -> Void
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
@@ -1628,24 +1926,24 @@ private struct EmptySidebarView: View {
                             .multilineTextAlignment(.center)
                     }
 
-                    if !isLoadingWorkspace, !recentWorkspaces.isEmpty {
+                    if !isLoadingWorkspace, !availableWorkspaces.isEmpty {
                         VStack(alignment: .leading, spacing: scaled(4)) {
-                            Text("RECENT WORKSPACES")
+                            Text("WORKSPACES")
                                 .font(.system(size: scaled(10), weight: .semibold))
                                 .tracking(scaled(0.7))
                                 .foregroundStyle(theme.sidebarMutedColor(prominence: 0.76))
                                 .padding(.horizontal, scaled(10))
                                 .padding(.bottom, scaled(3))
 
-                            ForEach(recentWorkspaces.prefix(5), id: \.path) { entry in
+                            ForEach(availableWorkspaces.prefix(5)) { entry in
                                 Button {
-                                    openRecentWorkspace(URL(fileURLWithPath: entry.path, isDirectory: true))
+                                    switchWorkspace(entry)
                                 } label: {
                                     HStack(spacing: scaled(8)) {
-                                        Image(systemName: "clock.arrow.circlepath")
+                                        Image(systemName: "folder")
                                             .font(.system(size: scaled(12)))
                                         Text(entry.displayName)
-                                            .font(.system(size: scaled(13), weight: .medium))
+                                            .font(.system(size: scaled(13), weight: .regular))
                                             .lineLimit(1)
                                         Spacer(minLength: 0)
                                     }
@@ -1654,7 +1952,7 @@ private struct EmptySidebarView: View {
                                     .padding(.vertical, scaled(6))
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                 }
-                                .buttonStyle(SidebarHoverButtonStyle(
+                                .buttonStyle(MonknotRowButtonStyle(
                                     theme: theme,
                                     isSelected: false,
                                     cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
@@ -1674,19 +1972,13 @@ private struct EmptySidebarView: View {
             }
             .scrollContentBackground(.hidden)
         }
-        .onAppear(perform: refreshRecentWorkspaces)
-        .onChange(of: workspaceURL?.standardizedFileURL.path ?? "") { _, _ in
-            refreshRecentWorkspaces()
-        }
     }
 
-    private func refreshRecentWorkspaces() {
-        let store = RecentWorkspaceStore()
+    private var availableWorkspaces: [SavedWorkspaceEntry] {
         let activePath = workspaceURL?.standardizedFileURL.path
-        recentWorkspaces = store.entries().filter { entry in
+        return workspaces.filter { entry in
             var isDirectory = ObjCBool(false)
-            let entryPath = URL(fileURLWithPath: entry.path, isDirectory: true).standardizedFileURL.path
-            return entryPath != activePath
+            return entry.path != activePath
                 && FileManager.default.fileExists(atPath: entry.path, isDirectory: &isDirectory)
                 && isDirectory.boolValue
         }

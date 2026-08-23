@@ -11,6 +11,7 @@ import SwiftUI
 struct MonknotApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var workspaceRestoration = InitialWorkspaceRestorationCoordinator()
+    @StateObject private var workspaceLibrary = WorkspaceLibraryStore()
     @StateObject private var themeStore = ThemeSettingsStore()
     private let workspaceWindowRequests = WorkspaceWindowRequestCenter.shared
     private let updaterController = SPUStandardUpdaterController(
@@ -28,6 +29,7 @@ struct MonknotApp: App {
             MonknotWindowRootView(
                 request: request.wrappedValue,
                 themeStore: themeStore,
+                workspaceLibrary: workspaceLibrary,
                 workspaceRestoration: workspaceRestoration,
                 workspaceWindowRequests: workspaceWindowRequests,
                 terminationCoordinator: appDelegate.terminationCoordinator
@@ -48,6 +50,7 @@ struct MonknotApp: App {
         Settings {
             PreferencesView(
                 themeStore: themeStore,
+                workspaceLibrary: workspaceLibrary,
                 updater: updaterController.updater
             )
         }
@@ -92,6 +95,7 @@ private struct MonknotWindowRootView: View {
     @StateObject private var workspaceStore = WorkspaceStore()
     let request: MonknotWorkspaceWindowRequest
     @ObservedObject var themeStore: ThemeSettingsStore
+    @ObservedObject var workspaceLibrary: WorkspaceLibraryStore
     @ObservedObject var workspaceRestoration: InitialWorkspaceRestorationCoordinator
     let workspaceWindowRequests: WorkspaceWindowRequestCenter
     let terminationCoordinator: ApplicationTerminationCoordinator
@@ -103,6 +107,7 @@ private struct MonknotWindowRootView: View {
         ContentView(
             store: workspaceStore,
             themeStore: themeStore,
+            workspaceLibrary: workspaceLibrary,
             terminationCoordinator: terminationCoordinator
         )
             .onAppear {
@@ -114,6 +119,7 @@ private struct MonknotWindowRootView: View {
                         return false
                     }
 
+                    _ = workspaceLibrary.add(workspaceURL)
                     workspaceStore.openWorkspace(workspaceURL, selecting: request.selectedDocumentURL)
                     Task { @MainActor in
                         await importCaptureIfNeeded(from: request)
@@ -129,14 +135,22 @@ private struct MonknotWindowRootView: View {
                 didHandleInitialRequest = true
 
                 if let workspaceURL = request.workspaceURL {
+                    _ = workspaceLibrary.add(workspaceURL)
                     workspaceStore.openWorkspace(workspaceURL, selecting: request.selectedDocumentURL)
                     await importCaptureIfNeeded(from: request)
                 } else if let pendingRequest = workspaceWindowRequests.consumePendingInitialWorkspaceRequest(),
                           let workspaceURL = pendingRequest.workspaceURL {
+                    _ = workspaceLibrary.add(workspaceURL)
                     workspaceStore.openWorkspace(workspaceURL, selecting: pendingRequest.selectedDocumentURL)
                     await importCaptureIfNeeded(from: pendingRequest)
                 } else if reopenLastWorkspace, workspaceRestoration.claimInitialRestore() {
-                    workspaceStore.restoreWorkspace()
+                    do {
+                        if let workspaceURL = try workspaceLibrary.lastActiveWorkspaceURL() {
+                            workspaceStore.openWorkspace(workspaceURL)
+                        }
+                    } catch {
+                        workspaceStore.errorMessage = "Could not restore the previous workspace: \(error.localizedDescription)"
+                    }
                 }
 
                 workspaceWindowRequests.finishInitialWorkspaceRequestHandling()
@@ -184,7 +198,7 @@ private struct WorkspaceWindowRequestInstaller: View {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let recentWorkspaceStore = RecentWorkspaceStore()
+    private let savedWorkspaceStore = SavedWorkspaceStore()
     let terminationCoordinator = ApplicationTerminationCoordinator()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -213,14 +227,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
-        let recentWorkspaces = existingRecentWorkspaces()
-        guard !recentWorkspaces.isEmpty else { return nil }
+        let savedWorkspaces = existingSavedWorkspaces()
+        guard !savedWorkspaces.isEmpty else { return nil }
 
         let menu = NSMenu()
-        for workspace in recentWorkspaces {
+        for workspace in savedWorkspaces {
             let item = NSMenuItem(
                 title: workspace.displayName,
-                action: #selector(openRecentWorkspaceFromDockMenu(_:)),
+                action: #selector(openSavedWorkspaceFromDockMenu(_:)),
                 keyEquivalent: ""
             )
             item.target = self
@@ -233,7 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return menu
     }
 
-    @objc private func openRecentWorkspaceFromDockMenu(_ sender: NSMenuItem) {
+    @objc private func openSavedWorkspaceFromDockMenu(_ sender: NSMenuItem) {
         guard let path = sender.representedObject as? String else { return }
 
         NSApp.activate(ignoringOtherApps: true)
@@ -314,8 +328,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return nil
     }
 
-    private func existingRecentWorkspaces() -> [RecentWorkspaceEntry] {
-        recentWorkspaceStore.entries().filter { entry in
+    private func existingSavedWorkspaces() -> [SavedWorkspaceEntry] {
+        savedWorkspaceStore.entries().filter { entry in
             var isDirectory = ObjCBool(false)
             return FileManager.default.fileExists(atPath: entry.path, isDirectory: &isDirectory) &&
                 isDirectory.boolValue
