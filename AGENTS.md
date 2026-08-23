@@ -175,10 +175,9 @@ Before adding custom parsing, indexing, PDF handling, file watching, or renderin
 
 - `design.md` is the authoritative design-language and interface-metrics guide. Read it before
   implementing, refining, or reviewing material UI changes, then compare the rendered app with
-  `spec/Monknot Refinement.dc.html`. Treat the guide as design intent and the specimen board as
-  the artifact under review; reconcile conflicts explicitly instead of silently choosing one.
-- Preserve the current native outline rail and peek UI when older specimen states disagree with
-  the working implementation, unless an explicit product decision replaces it.
+  the guide and reconcile conflicts explicitly.
+- Preserve the current native outline rail and peek UI unless an explicit product decision
+  replaces it.
 
 - Main layout is owned by `WorkspaceSplitView`, an `NSSplitViewController`
   bridge in `ContentView`. The existing `SidebarView` remains the leading pane;

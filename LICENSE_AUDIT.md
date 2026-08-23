@@ -93,16 +93,11 @@ These items are not copied by `script/build_and_run.sh` into `Monknot.app`:
 
 | Component | Location/use | License/provenance | Status |
 | --- | --- | --- | --- |
-| `dc-runtime` generated output | `spec/support.js` | Header identifies generation from absent `dc-runtime/src/*.ts`; no source URL or license notice is present | **Manual review required** |
-| React and ReactDOM | 18.3.1, loaded from unpkg only by `spec/support.js` | MIT, [official React repository](https://github.com/facebook/react) | Verified as development/spec runtime; not an app-bundle notice |
-| `@babel/standalone` | 7.29.0, loaded from unpkg only by `spec/support.js` when needed | MIT, [official Babel repository](https://github.com/babel/babel) | Verified as development/spec runtime; not an app-bundle notice |
 | GitHub-maintained workflow action | SHA-pinned [`actions/checkout`](https://github.com/actions/checkout) | MIT in the official action repository | Build-service dependency only; not an app-bundle notice |
-| Historical Store-marketing compositions | `app-store/` | Designer-delivered captures retained as repository-only marketing source material | Not copied into the app, DMG, or website; review publication rights before reuse |
 | README workspace screenshot and non-logo website captures | `docs/images`, `website/shots` | Repository contains no separate source/ownership record for every image | Not copied into the app bundle; review publication rights before reuse outside their current project context |
 
-The design specimen references system font-family names but bundles no font
-files. GitHub-hosted runners, Xcode, Swift, macOS command-line tools, and App
-Store services are build/platform tooling rather than components distributed in
+GitHub-hosted runners, Xcode, Swift, macOS command-line tools, and App Store
+services are build/platform tooling rather than components distributed in
 the app.
 
 ## License obligations and risk summary

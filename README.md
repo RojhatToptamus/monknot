@@ -76,8 +76,8 @@ freehand marks. Markdown exports to PDF.
 between them, and search bounded scrollback without leaving Monknot.
 
 <p align="center">
-  <img src="app-store/screenshots/macos/en-US/03-pdf-dark.png" width="49%" alt="Monknot PDF reader with annotation tools">
-  <img src="app-store/screenshots/macos/en-US/04-terminal-dark.png" width="49%" alt="Monknot with terminal sessions beside the active document">
+  <img src="docs/images/monknot-pdf-dark.png" width="49%" alt="Monknot PDF reader with annotation tools">
+  <img src="docs/images/monknot-terminal-dark.png" width="49%" alt="Monknot with terminal sessions beside the active document">
 </p>
 
 <p align="center">
