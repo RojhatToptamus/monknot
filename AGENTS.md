@@ -27,6 +27,119 @@ The package declares these test targets:
 - `MonknotSmokeTests`: one scanner-to-search-to-render executable smoke path.
 - `MonknotStoreSmokeTests`: one executable `WorkspaceStore` open, edit, save, and external-change path.
 
+## Copy and Documentation
+
+All user-facing copy must describe Monknot concretely. This applies to the website, README, documentation, release notes, onboarding text, feature descriptions, empty states, and other product copy.
+
+### Core rule
+
+Do not write text simply because a section has space for text. Every sentence must either:
+
+- explain what Monknot does,
+- explain why a feature is useful,
+- help the user complete a task,
+- communicate an important limitation or behavior, or
+- provide information the user genuinely needs.
+
+If a sentence does none of these, remove it instead of replacing it with different filler.
+
+### Avoid generic marketing copy
+
+Do not use vague statements that could describe hundreds of unrelated products.
+
+Avoid copy such as:
+
+- "Open a folder and start."
+- "Built for focus."
+- "Everything you need in one place."
+- "Your workspace, your way."
+- "Stay in flow."
+- "A seamless experience."
+- "Powerful yet simple."
+- "Designed for productivity."
+- "Take your workflow to the next level."
+
+Do not replace bad copy with a different version of the same idea.
+
+### Describe the real product
+
+Copy must be based on the current implementation, not assumptions or old marketing text.
+
+Monknot is a native macOS application for working with local files. Its capabilities include, where relevant:
+
+- Markdown editing
+- Markdown preview and export
+- PDF tools
+- an integrated terminal
+- local/offline AI writing features such as autocomplete and autocorrection
+
+Only mention features that actually exist in the current repository.
+
+Prefer concrete wording such as:
+
+> Native macOS Markdown editor with PDF tools, an integrated terminal, and offline AI writing assistance.
+
+over abstract positioning such as:
+
+> A native workspace for the files already on your disk.
+
+### Headlines and feature copy
+
+Headlines should communicate the feature or benefit directly.
+
+Bad:
+
+> Work without interruptions
+
+Better:
+
+> Edit Markdown beside your terminal
+
+Bad:
+
+> Smarter writing
+
+Better:
+
+> Offline autocomplete and autocorrection
+
+Supporting text should add information that is not already obvious from the heading or screenshot.
+
+### README
+
+The README is technical product documentation, not a landing page.
+
+It should quickly communicate:
+
+1. what Monknot is,
+2. its main capabilities,
+3. what platforms it supports,
+4. how to install or run it,
+5. anything contributors or users need to know.
+
+Keep it factual and easy to scan. Do not fill it with slogans or repeat website copy unnecessarily.
+
+### Website
+
+Website copy may be more concise than documentation, but it must still communicate real product value.
+
+Prefer screenshots, demonstrations, and concrete feature descriptions over paragraphs of positioning language.
+
+Do not explain obvious interactions such as clicking a button, opening a folder, or starting the app unless the instruction is genuinely necessary.
+
+### Editing existing copy
+
+When modifying existing product copy:
+
+1. Read the surrounding page or document first.
+2. Check the implementation when necessary to verify claims.
+3. Remove redundant, vague, or repeated text.
+4. Preserve useful information even if the wording changes.
+5. Keep terminology consistent across the website, README, and application.
+6. Review the final page as a whole rather than optimizing sentences independently.
+
+Shorter and more specific is preferable to polished but meaningless copy.
+
 ## Repository Map
 
 - `Package.swift`: SwiftPM manifest. Add new compile targets or resources here if they should be part of SwiftPM builds/tests.

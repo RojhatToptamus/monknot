@@ -3,28 +3,30 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Get help with Monknot, report problems, or send feedback." />
+    <meta name="application-name" content="Monknot" />
+    <meta name="description" content="Get help with file access, PDF search, terminal errors, feedback, and bug reports in Monknot." />
     <meta name="robots" content="index, follow, max-image-preview:large" />
     <meta name="theme-color" content="#121212" id="theme-color" />
-    <title>Monknot Support</title>
+    <title>Monknot Support: Files, PDFs, and Terminal</title>
     <link rel="canonical" href="https://monknot.app/support" />
 
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Monknot" />
     <meta property="og:locale" content="en_US" />
-    <meta property="og:title" content="Monknot Support" />
-    <meta property="og:description" content="Get help with Monknot, report problems, or send feedback." />
+    <meta property="og:title" content="Monknot Support: Files, PDFs, and Terminal" />
+    <meta property="og:description" content="Get help with file access, PDF search, terminal errors, feedback, and bug reports in Monknot." />
     <meta property="og:url" content="https://monknot.app/support" />
     <meta property="og:image" content="https://monknot.app/social/monknot-social.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Monknot showing Markdown source and its rendered preview side by side in a dark macOS workspace." />
+    <meta property="og:image:alt" content="Monknot with Markdown source and rendered preview side by side in dark mode." />
 
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Monknot Support" />
-    <meta name="twitter:description" content="Get help with Monknot, report problems, or send feedback." />
+    <meta name="twitter:title" content="Monknot Support: Files, PDFs, and Terminal" />
+    <meta name="twitter:description" content="Get help with file access, PDF search, terminal errors, feedback, and bug reports in Monknot." />
     <meta name="twitter:image" content="https://monknot.app/social/monknot-social.jpg" />
-    <meta name="twitter:image:alt" content="Monknot showing Markdown source and its rendered preview side by side in a dark macOS workspace." />
+    <meta name="twitter:image:alt" content="Monknot with Markdown source and rendered preview side by side in dark mode." />
 
     <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png" />
@@ -63,40 +65,37 @@
       <main class="document-main" id="main">
         <article class="document-page">
           <header class="document-heading">
-            <p class="document-kicker">Support</p>
             <h1>Monknot Support</h1>
-            <p class="document-lede">Need help with Monknot or want to report a problem?</p>
+            <p class="document-lede">Email <a href="mailto:support@monknot.app">support@monknot.app</a> for help, bug reports, or feature requests.</p>
           </header>
 
           <section class="document-section" aria-label="Contact support">
-            <p>Email <a href="mailto:support@monknot.app">support@monknot.app</a>.</p>
-            <p>When reporting an issue, please include:</p>
+            <p>For a bug report, include:</p>
             <ul>
               <li>Your macOS version</li>
               <li>Your Monknot version</li>
-              <li>What you were trying to do</li>
-              <li>The steps needed to reproduce the problem</li>
+              <li>What happened and what you expected</li>
+              <li>Steps that reproduce the problem</li>
               <li>A screenshot or error message, if relevant</li>
             </ul>
-            <p>You can also contact us with feedback or feature requests.</p>
           </section>
 
           <section class="document-section common-issues" aria-labelledby="common-issues">
-            <h2 id="common-issues">Common Issues</h2>
+            <h2 id="common-issues">Common problems</h2>
 
             <div class="issue">
-              <h3>Files or folders cannot be opened</h3>
-              <p>Make sure Monknot has permission to access the selected file or folder. You can review its permissions in macOS System Settings under Privacy &amp; Security.</p>
+              <h3>A folder no longer opens</h3>
+              <p>Select the folder again in Monknot. If macOS still blocks access, review Monknot under System Settings &gt; Privacy &amp; Security.</p>
             </div>
 
             <div class="issue">
               <h3>PDF text cannot be searched</h3>
-              <p>Text search works with PDFs that contain selectable text. Scanned PDFs may need OCR before their contents can be searched.</p>
+              <p>Text search works with PDFs that contain selectable text. A scanned PDF without selectable text requires OCR before Monknot can search it.</p>
             </div>
 
             <div class="issue">
-              <h3>Terminal sessions are not working</h3>
-              <p>Include the displayed error message and the command or shell being used when contacting support.</p>
+              <h3>A terminal session does not start</h3>
+              <p>Include the displayed error, command, and terminal configuration in your bug report.</p>
             </div>
           </section>
 

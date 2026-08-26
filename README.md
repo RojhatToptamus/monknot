@@ -4,14 +4,13 @@
 
 <h1 align="center">Monknot</h1>
 
-<p align="center">
-  <strong>Markdown, PDFs, and a terminal. One window.</strong>
-</p>
+Monknot is a native macOS app for editing Markdown, HTML, source code, and plain
+text directly in local folders. It also previews and exports Markdown, searches
+and annotates PDFs, and runs multiple terminal sessions.
 
-<p align="center">
-  Write in Editor. Keep source and output together in Split. Read in Preview.<br>
-  Search and annotate PDFs. Run Terminal sessions beside the active document.
-</p>
+Optional writing assistance corrects spelling and grammar inline. On supported
+Macs with macOS 26, Apple’s on-device model adds reviewed sentence repairs and
+short completions.
 
 <p align="center">
   <a href="https://github.com/RojhatToptamus/monknot/releases">
@@ -41,39 +40,48 @@
   <sub>Split · Markdown source and rendered output, scrolling in sync</sub>
 </p>
 
-## Features
+## Capabilities
 
-**Editor:** Write Markdown and plain text with syntax highlighting, document
-tabs, search, and a formatting bar when you want one.
+- **Local files:** Monknot reads and writes supported files in place. It does
+  not import them into a separate library.
+- **Markdown:** Edit with syntax highlighting, formatting controls, tabs, Quick
+  Open, heading navigation, daily notes, and wikilinks.
+- **Preview and export:** Render Markdown beside the source with synchronized
+  scrolling, or use a full-width preview. Export Markdown to PDF with page and
+  layout controls.
+- **Search and replace:** Search text files and selectable PDF text across a
+  folder. Preview and scope multi-file replacements, then undo the last batch.
+- **PDF:** Add highlights, underlines, strikeouts, drawings, and text boxes.
+  Export annotations to Markdown or save an annotated PDF copy.
+- **Terminal:** Run multiple `zsh` sessions in the active document or workspace
+  folder. Search the bounded scrollback for each session.
 
-**Writing assistance:** Fix spelling and grammar inline in Markdown, `.txt`,
-and `.text` files. On supported Macs with macOS 26, private AI suggestions and
-completions run on-device. They need no internet connection or AI subscription.
-Press Tab for the next word, or hold Tab for the full completion. Apple Writing
-Tools are also available on macOS 15.2 or later.
+### Writing assistance
+
+Monknot uses macOS spelling and grammar services for inline typo fixes and
+reviewed corrections in Markdown, `.txt`, and `.text` files. System inline
+predictions can also suggest text as you type.
+
+On macOS 26, you can enable **On-device writing assistance (Beta)**. It uses
+Apple Intelligence for reviewed sentence repairs and short completions. The
+option is off by default and requires a supported Mac, language, and enabled
+model. Press Tab to accept the next word, or hold Tab to accept the full
+completion.
+
+Apple Writing Tools are available on macOS 15.2 or later when macOS reports
+that they are ready.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="website/shots/writing-assistance-light.gif">
     <source media="(prefers-color-scheme: dark)" srcset="website/shots/writing-assistance.gif">
-    <img src="website/shots/writing-assistance.gif" width="800" height="520" alt="Monknot writing assistance in Field-brief.txt: automatic typo fixes, a reviewed grammar correction, full autocomplete acceptance, and the Apple Writing Tools menu">
+    <img src="website/shots/writing-assistance.gif" width="800" height="520" alt="Monknot editing Field-brief.txt. The demo corrects a typo, presents a grammar repair for review, accepts a full on-device completion, and opens Apple Writing Tools.">
   </picture>
 </p>
 
 <p align="center">
-  <sub>Inline fixes · Reviewed grammar · On-device autocomplete · Apple Writing Tools</sub>
+  <sub>Inline typo fixes · Reviewed sentence repairs · On-device completions · Apple Writing Tools</sub>
 </p>
-
-**Split:** Keep source and rendered output side by side, scrolling in sync.
-
-**Preview:** Read the rendered document full width, including tables, task
-lists, code blocks, links, and images.
-
-**PDF:** Search documents and add highlights, underlines, strike-throughs, and
-freehand marks. Markdown exports to PDF.
-
-**Terminal:** Run several shell sessions beside the active document, switch
-between them, and search bounded scrollback without leaving Monknot.
 
 <p align="center">
   <img src="docs/images/monknot-pdf-dark.png" width="49%" alt="Monknot PDF reader with annotation tools">
