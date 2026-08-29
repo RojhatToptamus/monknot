@@ -4,13 +4,11 @@
 
 <h1 align="center">Monknot</h1>
 
-Monknot is a native macOS app for editing Markdown, HTML, source code, and plain
-text directly in local folders. It also previews and exports Markdown, searches
-and annotates PDFs, and runs multiple terminal sessions.
+Monknot is a native macOS Markdown editor with PDF tools, an integrated
+terminal, workspace-wide search and replace, and offline writing assistance.
 
-Optional writing assistance corrects spelling and grammar inline. On supported
-Macs with macOS 26, Apple’s on-device model adds reviewed sentence repairs and
-short completions.
+Edit and preview Markdown side by side, search across files and searchable PDFs,
+annotate PDFs, export Markdown to PDF, and keep a terminal beside your documents.
 
 <p align="center">
   <a href="https://github.com/RojhatToptamus/monknot/releases">
@@ -36,40 +34,29 @@ short completions.
   <img src="docs/images/monknot-workspace.png" alt="Monknot showing Markdown source and its rendered preview side by side">
 </p>
 
-<p align="center">
-  <sub>Split · Markdown source and rendered output, scrolling in sync</sub>
-</p>
-
 ## Capabilities
 
-- **Local files:** Monknot reads and writes supported files in place. It does
-  not import them into a separate library.
-- **Markdown:** Edit with syntax highlighting, formatting controls, tabs, Quick
-  Open, heading navigation, daily notes, and wikilinks.
-- **Preview and export:** Render Markdown beside the source with synchronized
-  scrolling, or use a full-width preview. Export Markdown to PDF with page and
-  layout controls.
-- **Search and replace:** Search text files and selectable PDF text across a
-  folder. Preview and scope multi-file replacements, then undo the last batch.
-- **PDF:** Add highlights, underlines, strikeouts, drawings, and text boxes.
-  Export annotations to Markdown or save an annotated PDF copy.
-- **Terminal:** Run multiple `zsh` sessions in the active document or workspace
-  folder. Search the bounded scrollback for each session.
+- **Markdown:** Edit Markdown with live preview, synchronized scrolling, daily
+  notes, wikilinks, and document navigation.
+- **Search and replace:** Search across text files and searchable PDFs. Preview
+  scoped multi-file replacements before applying them and undo the last batch.
+- **PDF:** Search and read PDFs, add highlights, underlines, strikeouts, drawings,
+  and text boxes, then export annotations to Markdown or save an annotated copy.
+- **Terminal:** Run terminal sessions beside your documents without leaving
+  Monknot.
+- **Export:** Export Markdown to PDF with page and layout controls.
 
 ### Writing assistance
 
-Monknot uses macOS spelling and grammar services for inline typo fixes and
-reviewed corrections in Markdown, `.txt`, and `.text` files. System inline
-predictions can also suggest text as you type.
+Monknot provides inline spelling and grammar corrections for Markdown and text
+files.
 
-On macOS 26, you can enable **On-device writing assistance (Beta)**. It uses
-Apple Intelligence for reviewed sentence repairs and short completions. The
-option is off by default and requires a supported Mac, language, and enabled
-model. Press Tab to accept the next word, or hold Tab to accept the full
-completion.
+On supported Macs with macOS 26, optional on-device writing assistance can
+propose sentence corrections and short completions using Apple's on-device
+models. Suggestions remain optional and can be reviewed before they are applied.
 
-Apple Writing Tools are available on macOS 15.2 or later when macOS reports
-that they are ready.
+Apple Writing Tools are also available on supported systems when enabled by
+macOS.
 
 <p align="center">
   <picture>
@@ -80,16 +67,8 @@ that they are ready.
 </p>
 
 <p align="center">
-  <sub>Inline typo fixes · Reviewed sentence repairs · On-device completions · Apple Writing Tools</sub>
-</p>
-
-<p align="center">
   <img src="docs/images/monknot-pdf-dark.png" width="49%" alt="Monknot PDF reader with annotation tools">
   <img src="docs/images/monknot-terminal-dark.png" width="49%" alt="Monknot with terminal sessions beside the active document">
-</p>
-
-<p align="center">
-  <sub>PDF · Terminal</sub>
 </p>
 
 ## Install
@@ -98,7 +77,7 @@ that they are ready.
 2. Open the DMG and drag **Monknot** into **Applications**.
 3. Open Monknot.
 
-Release downloads are signed with a Developer ID certificate and notarized by Apple.
+Releases are signed with a Developer ID certificate and notarized by Apple.
 
 ## Useful shortcuts
 
@@ -113,5 +92,4 @@ Release downloads are signed with a Developer ID certificate and notarized by Ap
 ## License
 
 Monknot is available under the [MIT License](LICENSE). Third-party components
-remain subject to their respective license terms in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+remain subject to their [respective license terms](THIRD_PARTY_NOTICES.md).

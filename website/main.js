@@ -24,12 +24,12 @@ const THEMES = {
 };
 
 const VIEWS = [
-  { id: "editor", caption: "Edit Markdown and plain text with tabs, document search, and Markdown syntax highlighting." },
-  { id: "writing", caption: "Correct spelling and grammar inline. On macOS 26, optional on-device assistance proposes reviewed sentence repairs and short completions." },
-  { id: "split", caption: "Edit Markdown or HTML beside its preview, with synchronized scrolling." },
-  { id: "preview", caption: "Render tables, task lists, code blocks, links, and local images." },
-  { id: "pdf", caption: "Search PDFs and add highlights, underlines, strikeouts, drawings, or text boxes." },
-  { id: "terminal", caption: "Run multiple terminal sessions in the current document or workspace folder." },
+  { id: "editor", caption: "Write Markdown with a rendered preview beside it and move between documents without leaving the workspace." },
+  { id: "writing", caption: "Fix spelling and grammar inline. On supported Macs, optional on-device assistance can also suggest sentence corrections and short completions." },
+  { id: "split", caption: "Edit Markdown or HTML beside its rendered output with synchronized scrolling." },
+  { id: "preview", caption: "Read rendered Markdown without the editor when you only need the finished document." },
+  { id: "pdf", caption: "Search, read, and annotate PDFs alongside the rest of your workspace." },
+  { id: "terminal", caption: "Keep terminal sessions beside the documents and project you are working on." },
 ];
 
 const root = document.documentElement;

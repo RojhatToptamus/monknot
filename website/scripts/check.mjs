@@ -62,14 +62,14 @@ if (vercel.redirects?.length !== 1 || Object.entries(expectedAppcastRedirect).so
 }
 
 const requiredMarkup = [
-  "Edit Markdown, annotate PDFs, and run terminal sessions.",
-  "19 light presets. 30 dark.",
+  "Markdown, PDFs, and a terminal in one screen.",
+  "<h2>Themes</h2>",
   "<title>Monknot: Markdown Editor, PDF Tools, and Terminal</title>",
   'name="application-name" content="Monknot"',
   'name="description"',
-  'content="Edit local Markdown and text files, preview and export Markdown, annotate PDFs, and run terminal sessions with optional on-device writing assistance."',
+  'content="A native macOS Markdown editor with PDF annotation, workspace-wide search, an integrated terminal, and offline writing assistance."',
   'property="og:title" content="Monknot: Markdown Editor, PDF Tools, and Terminal"',
-  'property="og:description" content="Edit local Markdown and text files, preview and export Markdown, annotate PDFs, and run terminal sessions with optional on-device writing assistance."',
+  'property="og:description" content="A native macOS Markdown editor with PDF annotation, workspace-wide search, an integrated terminal, and offline writing assistance."',
   'name="robots" content="index, follow, max-image-preview:large"',
   `rel="canonical" href="${canonicalURL}"`,
   'property="og:type" content="website"',
@@ -83,7 +83,7 @@ const requiredMarkup = [
   'property="og:image:alt" content="Monknot with Markdown source and rendered preview side by side in dark mode."',
   'name="twitter:card" content="summary_large_image"',
   'name="twitter:title" content="Monknot: Markdown Editor, PDF Tools, and Terminal"',
-  'name="twitter:description" content="Edit local Markdown and text files, preview and export Markdown, annotate PDFs, and run terminal sessions with optional on-device writing assistance."',
+  'name="twitter:description" content="A native macOS Markdown editor with PDF annotation, workspace-wide search, an integrated terminal, and offline writing assistance."',
   'name="twitter:image" content="https://monknot.app/social/monknot-social.jpg"',
   'name="twitter:image:alt" content="Monknot with Markdown source and rendered preview side by side in dark mode."',
   'rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png"',
