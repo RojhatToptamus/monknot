@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const canonicalURL = "https://monknot.app/";
+const releasesURL = "https://github.com/RojhatToptamus/monknot/releases";
 const expectedAssets = new Map([
   ["icons/apple-touch-icon.png", "1e95f8ecd2186e67e1c33dd37dee8ad8ebab2f480c8091c775bfa9f9b89bc55e"],
   ["icons/brand-icon.png", "8a63a843862321a96613f0a619ae2687153e968daa467af432e6b0d47f69336d"],
@@ -140,6 +141,32 @@ for (const marker of [
   if (!html.includes(marker)) throw new Error(`Missing homepage footer element: ${marker}`);
 }
 
+for (const marker of [
+  'class="download-meta"',
+  'class="download-version" hidden',
+  'class="download-started" hidden',
+  'class="closing-download"',
+  'class="closing-version"',
+  '<a href="https://github.com/RojhatToptamus/monknot/releases">Releases</a>',
+]) {
+  if (!html.includes(marker)) throw new Error(`Missing direct-download element: ${marker}`);
+}
+
+if ((html.match(/class="primary-download"/g) ?? []).length !== 2) throw new Error("Expected a download button in the hero and at the end of the page.");
+
+const downloadControls = Array.from(html.matchAll(/<a\b[^>]*class="(?:header-download|primary-download)"[^>]*>/g), (match) => match[0]);
+if (downloadControls.length !== 3 || downloadControls.some((control) => !control.includes(`href="${releasesURL}"`))) {
+  throw new Error("Each download control must ship pointing at the releases page until the latest build resolves.");
+}
+
+for (const marker of [
+  "https://api.github.com/repos/RojhatToptamus/monknot/releases/latest",
+  "browser_download_url",
+  "dataset.directDownload",
+]) {
+  if (!script.includes(marker)) throw new Error(`Missing direct-download behavior: ${marker}`);
+}
+
 const requiredPages = [
   {
     name: "support",
@@ -262,4 +289,4 @@ await Promise.all(
     .map((file) => access(resolve(root, file.replace(/^\//, ""))))
 );
 
-console.log(`Checked ${expectedAssets.size} assets, complete SEO metadata, six product views backed by 12 media elements, 49 theme presets, support and privacy routes, and deployment files.`);
+console.log(`Checked ${expectedAssets.size} assets, complete SEO metadata, six product views backed by 12 media elements, 49 theme presets, the direct-download flow and its releases-page fallback, support and privacy routes, and deployment files.`);

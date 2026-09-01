@@ -1,3 +1,48 @@
+const RELEASES_URL = "https://github.com/RojhatToptamus/monknot/releases";
+const LATEST_RELEASE_URL = "https://api.github.com/repos/RojhatToptamus/monknot/releases/latest";
+const DOWNLOAD_ASSET = /^Monknot-\d+\.\d+\.\d+-arm64\.dmg$/;
+
+const downloadLinks = Array.from(document.querySelectorAll(".primary-download, .header-download"));
+const downloadVersions = Array.from(document.querySelectorAll(".download-version"));
+const closingVersion = document.querySelector(".closing-version");
+const releasesLink = document.querySelector(".download-releases");
+const downloadStarted = document.querySelector(".download-started");
+
+downloadLinks.forEach((link) => {
+  link.addEventListener("click", () => {
+    if (link.dataset.directDownload !== "true" || !releasesLink || !downloadStarted) return;
+    releasesLink.hidden = true;
+    downloadStarted.hidden = false;
+  });
+});
+
+// The release asset carries its version in the filename, so GitHub's stable
+// /releases/latest/download/ path cannot reach it, and the Sparkle appcast is
+// served without CORS headers. The releases API answers both questions and is
+// readable from a browser. Until it answers, every button keeps the markup's
+// href to the releases page and the version stays hidden.
+async function resolveLatestDownload() {
+  const response = await fetch(LATEST_RELEASE_URL, { headers: { Accept: "application/vnd.github+json" } });
+  if (!response.ok) return;
+
+  const release = await response.json();
+  const version = typeof release.tag_name === "string" ? release.tag_name.replace(/^v/, "") : "";
+  const asset = Array.isArray(release.assets) ? release.assets.find((candidate) => DOWNLOAD_ASSET.test(candidate.name)) : undefined;
+  if (!asset || !/^\d+\.\d+\.\d+$/.test(version) || !asset.browser_download_url.startsWith(`${RELEASES_URL}/download/`)) return;
+
+  downloadLinks.forEach((link) => {
+    link.href = asset.browser_download_url;
+    link.dataset.directDownload = "true";
+  });
+  downloadVersions.forEach((element) => {
+    element.textContent = `Version ${version}`;
+    element.hidden = false;
+  });
+  if (closingVersion) closingVersion.textContent = ` ${version}`;
+}
+
+resolveLatestDownload().catch(() => {});
+
 const themeCatalogResponse = await fetch("theme-catalog.json");
 if (!themeCatalogResponse.ok) throw new Error("Unable to load the Monknot theme catalog.");
 
