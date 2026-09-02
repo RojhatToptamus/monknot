@@ -1,11 +1,16 @@
-# Monknot 0.1.6
+# Monknot 0.1.7
 
-This release adds fullscreen mode to the terminal panel.
+This release adds saved workspaces, so multiple local folders stay ready in Monknot.
 
-## Terminal fullscreen
+## Multiple workspaces
 
-- Expands the terminal across the content area while the sidebar and title bar stay in place.
-- Restores the previous terminal width when fullscreen mode ends.
-- Keeps the document mounted, including its scroll position, cursor, and selection.
-- Disables terminal resizing while fullscreen mode is active.
-- Adds Control-Command-Return to switch between docked and fullscreen modes.
+- Adds and switches workspaces from the sidebar without reopening each folder.
+- Restores the last active workspace when Monknot opens.
+- Keeps tabs, folder expansion, document position, and terminal working directories with their workspace.
+- Switches among the first nine saved workspaces with Control-Command-1 through Control-Command-9.
+
+## Workspace management
+
+- Renames and reorders saved workspaces in Settings.
+- Removes a workspace from Monknot without changing its files on disk.
+- Restores a removed workspace with the sidebar undo action.
