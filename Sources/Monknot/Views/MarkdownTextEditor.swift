@@ -1841,7 +1841,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.syncScrollEnabled = syncScrollEnabled
         let visibleOrigin = scrollView.contentView.bounds.origin
 
-        if !context.coordinator.isWritingToolsActive, textView.string != text {
+        if !context.coordinator.isWritingToolsActive, context.coordinator.nativeText(of: textView) != text {
             let selectedRanges = didChangeDocument ? [] : textView.selectedRanges
             textView.string = text
             if selectedRanges.isEmpty {
@@ -1978,7 +1978,15 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private let protectedRangeProvider: @Sendable (String, FlowSourceMode) -> [NSRange]
         private let writingToolsAvailability: () -> Bool
         private let writingToolsPresenter: (MarkdownNSTextView) -> Void
-        weak var textView: MarkdownNSTextView?
+        weak var textView: MarkdownNSTextView? {
+            didSet { observeTextStorage(of: textView) }
+        }
+        /// Counts character edits in the text view's storage. It is fed by AppKit's own processing
+        /// notification, so it also sees edits that bypass `textDidChange`, and it replaces
+        /// whole-document string comparisons as the "has the text changed?" check.
+        private(set) var storageEditCount = 0
+        private weak var observedTextStorage: NSTextStorage?
+        private var nativeTextCache: (editCount: Int, utf16Length: Int, text: String)?
         var documentID: String?
         var onScrollPositionChange: (DocumentScrollPosition) -> Void = { _ in }
         var onVisibleTopLineChange: ((Int) -> Void)?
@@ -2012,7 +2020,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private var lastAppliedTheme: AppTheme?
         private var lastAppliedFontSmoothing: Bool?
         private var lastAppliedMarkdownShortcuts: Bool?
-        private var lastSyntaxText: String?
+        private var lastSyntaxEditCount: Int?
+        /// Range of the single character edit made since the last styling pass, if there was exactly one.
+        private var pendingSyntaxEditRange: NSRange?
         private var lastSyntaxTheme: AppTheme?
         private var lastSyntaxFontName: String?
         private var lastSyntaxFontSize: CGFloat?
@@ -2049,7 +2059,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private var pendingFlowProtectedRangesRetry: PendingFlowProtectedRangesRetry?
         private struct ProtectedRangesSnapshot {
             let revision: Int
-            let text: String
+            let storageEditCount: Int
             let mode: FlowSourceMode
             let ranges: [NSRange]
         }
@@ -2277,6 +2287,54 @@ struct MarkdownTextEditor: NSViewRepresentable {
             )
         }
 
+        private func observeTextStorage(of textView: NSTextView?) {
+            let storage = textView?.textStorage
+            guard storage !== observedTextStorage else { return }
+            if let observedTextStorage {
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: NSTextStorage.didProcessEditingNotification,
+                    object: observedTextStorage
+                )
+            }
+            observedTextStorage = storage
+            nativeTextCache = nil
+            guard let storage else { return }
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(observedStorageDidProcessEditing(_:)),
+                name: NSTextStorage.didProcessEditingNotification,
+                object: storage
+            )
+        }
+
+        @objc private func observedStorageDidProcessEditing(_ notification: Notification) {
+            guard let storage = notification.object as? NSTextStorage,
+                  storage.editedMask.contains(.editedCharacters)
+            else { return }
+            // One edit since the last styling pass can be restyled locally. After a second edit the
+            // recorded range may have shifted, so styling falls back to a full pass.
+            pendingSyntaxEditRange = lastSyntaxEditCount == storageEditCount ? storage.editedRange : nil
+            storageEditCount &+= 1
+        }
+
+        /// The text view's text as native UTF-8, converted at most once per character edit.
+        /// SwiftUI and `WorkspaceStore` compare the document text on every update; with the bridged
+        /// `NSTextView.string` each of those comparisons walked the text up to the caret.
+        func nativeText(of textView: NSTextView) -> String {
+            guard let storage = textView.textStorage, storage === observedTextStorage else {
+                return NativeUTF8Text.copy(of: textView.string)
+            }
+            if let nativeTextCache,
+               nativeTextCache.editCount == storageEditCount,
+               nativeTextCache.utf16Length == storage.length {
+                return nativeTextCache.text
+            }
+            let text = NativeUTF8Text.copy(of: storage.mutableString) ?? textView.string
+            nativeTextCache = (storageEditCount, storage.length, text)
+            return text
+        }
+
         func detach() {
             sentenceRepairGate = .blocked
             pendingFlowTrailingSpace = nil
@@ -2390,7 +2448,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             lastPublishedSelection = nil
             shouldRestoreSelection = true
             lastPublishedScrollPosition = nil
-            lastSyntaxText = nil
+            lastSyntaxEditCount = nil
             return true
         }
 
@@ -2435,22 +2493,38 @@ struct MarkdownTextEditor: NSViewRepresentable {
             in textView: NSTextView
         ) {
             guard !isWritingToolsActive else { return }
-            let source = textView.string
-            guard lastSyntaxText != source ||
-                    lastSyntaxTheme != theme ||
-                    lastSyntaxFontName != font.fontName ||
-                    abs((lastSyntaxFontSize ?? -1) - font.pointSize) > 0.001 ||
-                    lastSyntaxEnabled != enabled
-            else { return }
+            // Character edits are counted, not compared: comparing the whole bridged document on every
+            // update cost time proportional to the caret position.
+            let editCount = textView.textStorage === observedTextStorage ? storageEditCount : nil
+            let styleUnchanged = lastSyntaxTheme == theme &&
+                lastSyntaxFontName == font.fontName &&
+                abs((lastSyntaxFontSize ?? -1) - font.pointSize) <= 0.001 &&
+                lastSyntaxEnabled == enabled
+            guard editCount == nil || lastSyntaxEditCount != editCount || !styleUnchanged else { return }
+
+            // A single typed edit restyles only the lines it touched; the syntax patterns never span
+            // a line break, so the result matches a full pass without invalidating the whole layout.
+            var paragraphs: NSRange?
+            if styleUnchanged,
+               let editCount,
+               let lastSyntaxEditCount,
+               editCount == lastSyntaxEditCount &+ 1,
+               let editedRange = pendingSyntaxEditRange,
+               let storage = textView.textStorage,
+               NSMaxRange(editedRange) <= storage.length {
+                paragraphs = storage.mutableString.paragraphRange(for: editedRange)
+            }
 
             MarkdownSyntaxHighlighter.apply(
-                source,
+                textView.string,
                 enabled: enabled,
                 theme: theme,
                 font: font,
+                paragraphs: paragraphs,
                 to: textView
             )
-            lastSyntaxText = source
+            lastSyntaxEditCount = editCount
+            pendingSyntaxEditRange = nil
             lastSyntaxTheme = theme
             lastSyntaxFontName = font.fontName
             lastSyntaxFontSize = font.pointSize
@@ -2832,7 +2906,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             if preservesRepair, let trailingSpace {
                 protectedRangesSnapshot = ProtectedRangesSnapshot(
                     revision: revision,
-                    text: textView.string,
+                    storageEditCount: storageEditCount,
                     mode: trailingSpace.mode,
                     ranges: trailingSpace.rebasedProtectedRanges
                 )
@@ -2849,7 +2923,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
             refreshNativeFlowAvailability()
             guard !isWritingToolsActive else { return }
-            text = textView.string
+            text = nativeText(of: textView)
             publishSelection()
             if preservesRepair || matchingProseRemainder != nil { return }
             scheduleFlowCheck(
@@ -2974,7 +3048,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
                   let textView,
                   let snapshot = protectedRangesSnapshot,
                   snapshot.revision == revision,
-                  snapshot.text == textView.string,
+                  snapshot.storageEditCount == storageEditCount,
+                  textView.textStorage === observedTextStorage,
                   snapshot.mode == mode
             else { return nil }
             return snapshot.ranges
@@ -4689,7 +4764,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         ) -> [NSRange]? {
             protectedRangesSnapshot.flatMap { protectedSnapshot -> [NSRange]? in
                 guard protectedSnapshot.revision == snapshot.revision,
-                      protectedSnapshot.text == textView.string,
+                      protectedSnapshot.storageEditCount == storageEditCount,
+                      textView.textStorage === observedTextStorage,
                       protectedSnapshot.mode == snapshot.sourceMode
                 else { return nil }
                 return protectedSnapshot.ranges
@@ -5263,7 +5339,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             ))
             protectedRangesSnapshot = ProtectedRangesSnapshot(
                 revision: revision,
-                text: textView.string,
+                storageEditCount: storageEditCount,
                 mode: mode,
                 ranges: rebasedProtectedRanges
             )
@@ -5569,6 +5645,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     }
                     let text = textView.string
                     let capturedRevision = self.revision
+                    let capturedEditCount = self.storageEditCount
                     let worker = Task.detached(priority: .utility) {
                         provider(text, mode)
                     }
@@ -5584,13 +5661,15 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     guard generation == self.protectedRangesGeneration,
                           capturedRevision == self.revision,
                           self.flowSourceMode == mode,
-                          self.textView?.string == text
+                          self.textView === textView,
+                          textView.textStorage === self.observedTextStorage,
+                          capturedEditCount == self.storageEditCount
                     else {
                         continue
                     }
                     self.protectedRangesSnapshot = ProtectedRangesSnapshot(
                         revision: capturedRevision,
-                        text: text,
+                        storageEditCount: capturedEditCount,
                         mode: mode,
                         ranges: ranges
                     )
@@ -5652,7 +5731,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             inlinePredictionContinuation = nil
             sentenceRepairGate = .blocked
             cancelFlowSuggestion()
-            lastSyntaxText = nil
+            lastSyntaxEditCount = nil
             lastPublishedSelection = nil
             scheduleProtectedRangesRefresh(delayNanoseconds: 0)
 
@@ -6122,8 +6201,10 @@ enum MarkdownSyntaxTokenizer {
         )
     ]
 
-    static func tokens(in source: String) -> [MarkdownSyntaxToken] {
-        let range = NSRange(location: 0, length: (source as NSString).length)
+    /// Every pattern is confined to one line, so tokens never cross a line break and any range
+    /// that starts and ends on line boundaries can be tokenized on its own.
+    static func tokens(in source: String, range: NSRange? = nil) -> [MarkdownSyntaxToken] {
+        let range = range ?? NSRange(location: 0, length: (source as NSString).length)
         return patterns.flatMap { pattern in
             pattern.expression.matches(in: source, range: range).map {
                 MarkdownSyntaxToken(range: $0.range, style: pattern.style)
@@ -6139,15 +6220,18 @@ enum MarkdownEditorLayout {
 }
 
 private enum MarkdownSyntaxHighlighter {
+    /// Styles `paragraphs` (whole lines; the entire text when nil). Restyling only the lines an edit
+    /// touched keeps the rest of the document's layout valid; a full pass invalidated it all.
     static func apply(
         _ source: String,
         enabled: Bool,
         theme: AppTheme,
         font: NSFont,
+        paragraphs: NSRange? = nil,
         to textView: NSTextView
     ) {
         guard let storage = textView.textStorage else { return }
-        let fullRange = NSRange(location: 0, length: (source as NSString).length)
+        let fullRange = paragraphs ?? NSRange(location: 0, length: (source as NSString).length)
         let paragraphStyle = NSMutableParagraphStyle()
         if enabled {
             let lineHeight = MarkdownEditorLayout.lineHeight(forFontSize: font.pointSize)
@@ -6168,7 +6252,7 @@ private enum MarkdownSyntaxHighlighter {
 
         if enabled {
             let boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
-            for token in MarkdownSyntaxTokenizer.tokens(in: source) {
+            for token in MarkdownSyntaxTokenizer.tokens(in: source, range: fullRange) {
                 let attributes: [NSAttributedString.Key: Any]
                 switch token.style {
                 case .heading:

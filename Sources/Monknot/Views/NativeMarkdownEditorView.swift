@@ -165,10 +165,23 @@ struct MarkdownToolbarActionDescriptor: Identifiable {
     var id: String { label }
 }
 
+/// The toolbar redraws when its theme, zoom or statistics change, not on every keystroke in the
+/// pane around it (its `ViewThatFits` re-measured all three layouts per key). `sendCommand`
+/// forwards to the pane and is deliberately not compared.
+extension MarkdownSourceToolbar: Equatable {
+    nonisolated static func == (lhs: MarkdownSourceToolbar, rhs: MarkdownSourceToolbar) -> Bool {
+        MainActor.assumeIsolated {
+            lhs.zoomScale == rhs.zoomScale &&
+                lhs.statistics == rhs.statistics &&
+                lhs.theme == rhs.theme
+        }
+    }
+}
+
 struct MarkdownSourceToolbar: View {
     let theme: AppTheme
     let zoomScale: Double
-    let text: String
+    let statistics: MarkdownTextStatistics?
     let sendCommand: (MarkdownTextEditorCommand) -> Void
 
     static let controlSize = MonknotIconButton.IconButtonSize.editorToolbar
@@ -215,12 +228,16 @@ struct MarkdownSourceToolbar: View {
 
             Spacer(minLength: 0)
 
-            Text("\(lineCount)/\(wordCount)")
-                .font(.system(size: textScaled(12), weight: .regular, design: .monospaced))
-                .foregroundStyle(theme.tertiaryForegroundColor)
-                .lineLimit(1)
-                .fixedSize()
-                .accessibilityLabel("\(lineCount) lines, \(wordCount) words")
+            if let statistics {
+                Text(Self.wordCountLabel(statistics.wordCount))
+                    .font(.system(size: textScaled(12), weight: .regular))
+                    .monospacedDigit()
+                    .foregroundStyle(theme.tertiaryForegroundColor)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .help(Self.statisticsDescription(statistics))
+                    .accessibilityLabel(Self.statisticsDescription(statistics))
+            }
         }
         .monknotChromeSubrowLayout(theme: theme, zoomScale: zoomScale)
     }
@@ -424,13 +441,12 @@ struct MarkdownSourceToolbar: View {
         )
     }
 
-    private var lineCount: Int {
-        max(1, text.reduce(into: 1) { count, character in
-            if character == "\n" { count += 1 }
-        })
+    static func wordCountLabel(_ wordCount: Int) -> String {
+        wordCount == 1 ? "1 word" : "\(wordCount.formatted()) words"
     }
 
-    private var wordCount: Int {
-        text.split { $0.isWhitespace || $0.isPunctuation }.count
+    static func statisticsDescription(_ statistics: MarkdownTextStatistics) -> String {
+        let lines = statistics.lineCount == 1 ? "1 line" : "\(statistics.lineCount.formatted()) lines"
+        return "\(lines), \(wordCountLabel(statistics.wordCount))"
     }
 }

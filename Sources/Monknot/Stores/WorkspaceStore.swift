@@ -1156,8 +1156,11 @@ final class WorkspaceStore: ObservableObject {
         return true
     }
 
-    func setDocumentText(_ text: String) {
+    func setDocumentText(_ editedText: String) {
         guard !isBusy, selectedDocument?.capabilities.canEditText == true else { return }
+        // Views and this store compare the document text on every update; native UTF-8 keeps
+        // those comparisons from walking a bridged text-view string character by character.
+        let text = NativeUTF8Text.copy(of: editedText)
         guard text != documentText else { return }
 
         let shouldAdoptExternalDiskVersion = text == lastSavedText
@@ -1212,12 +1215,13 @@ final class WorkspaceStore: ObservableObject {
         return true
     }
 
-    func commitWritingToolsText(_ text: String, documentID: String) {
+    func commitWritingToolsText(_ committedText: String, documentID: String) {
         guard writingToolsDocumentID == documentID,
               selectedDocumentID == documentID,
               let document = document(id: documentID),
               document.capabilities.canEditText
         else { return }
+        let text = NativeUTF8Text.copy(of: committedText)
         guard text != documentText else { return }
 
         if Self.fileSignature(for: document.url) != selectedDocumentSignature {
@@ -1501,6 +1505,9 @@ final class WorkspaceStore: ObservableObject {
         }
 
         guard selectedDocument.capabilities.canEditText else { return }
+        // A clean document has no dirty baseline to write against; treating that as a disk
+        // conflict made ⌘S on an untouched file raise a false "changed on disk" review.
+        guard !saveState(for: selectedDocument.id).isClean else { return }
 
         let file = selectedDocument
         let text = documentText

@@ -369,6 +369,7 @@ CORE_SOURCES=(
   "Sources/MonknotCore/Services/WorkspaceTreeExpansionPersistence.swift"
   "Sources/MonknotCore/Services/WorkspaceTreeFormatter.swift"
   "Sources/MonknotCore/Support/MonknotSignposting.swift"
+  "Sources/MonknotCore/Support/NativeUTF8Text.swift"
 )
 
 APP_SOURCES=(

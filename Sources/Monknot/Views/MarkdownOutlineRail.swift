@@ -37,9 +37,36 @@ enum MarkdownOutlineRailLayout {
     }
 }
 
+/// The source line at the top of the visible document. Only the outline rail observes it: scrolling
+/// changes it on nearly every frame, and keeping it in the editor pane's state re-rendered the
+/// formatting toolbar and the editor bridge on every scroll tick.
+@MainActor
+final class MarkdownOutlinePosition: ObservableObject {
+    @Published private(set) var visibleLine = 1
+
+    func update(_ line: Int) {
+        guard line != visibleLine else { return }
+        visibleLine = line
+    }
+}
+
+/// The rail re-renders when its headings, theme or zoom change, or when `position` publishes. It
+/// is not re-evaluated for every keystroke in the editor pane around it; `select` forwards to the
+/// pane and is deliberately not compared.
+extension MarkdownOutlineRail: Equatable {
+    nonisolated static func == (lhs: MarkdownOutlineRail, rhs: MarkdownOutlineRail) -> Bool {
+        MainActor.assumeIsolated {
+            lhs.position === rhs.position &&
+                lhs.zoomScale == rhs.zoomScale &&
+                lhs.items == rhs.items &&
+                lhs.theme == rhs.theme
+        }
+    }
+}
+
 struct MarkdownOutlineRail: View {
     let items: [MarkdownOutlineItem]
-    let visibleLine: Int
+    @ObservedObject var position: MarkdownOutlinePosition
     let theme: AppTheme
     let zoomScale: Double
     let select: (MarkdownOutlineItem) -> Void
@@ -51,7 +78,7 @@ struct MarkdownOutlineRail: View {
 
     private var activeIndex: Int? {
         MarkdownOutlineRailLayout.activeIndex(
-            forVisibleLine: visibleLine,
+            forVisibleLine: position.visibleLine,
             items: items
         )
     }

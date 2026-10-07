@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 import Combine
 import MonknotCore
@@ -46,6 +47,49 @@ final class WorkspaceStoreExternalReviewTests: WorkspaceStoreConflictTestCase {
         XCTAssertNil(review.mergedText)
         XCTAssertFalse(state.canMerge)
         XCTAssertTrue(state.hasMergeConflict)
+    }
+
+    func testSavingAnUnchangedDocumentIsANoOpNotADiskConflict() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let fileURL = root.appendingPathComponent("Untouched.md")
+        try "# Untouched\n".write(to: fileURL, atomically: true, encoding: .utf8)
+        let modifiedBefore = try FileManager.default.attributesOfItem(atPath: fileURL.path)[.modificationDate] as? Date
+
+        let store = makeWorkspaceStore()
+        store.openWorkspace(root)
+        _ = await waitUntil { !store.isBusy && !store.isDocumentLoading && store.selectedDocument != nil }
+
+        store.saveSelectedFile()
+
+        XCTAssertNil(store.errorMessage)
+        XCTAssertFalse(store.selectedDocumentExternalChange)
+        XCTAssertFalse(store.isSaving)
+        XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8), "# Untouched\n")
+        let modifiedAfter = try FileManager.default.attributesOfItem(atPath: fileURL.path)[.modificationDate] as? Date
+        XCTAssertEqual(modifiedAfter, modifiedBefore)
+    }
+
+    func testEditedTextIsStoredNativelySoComparisonsStayCheap() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let fileURL = root.appendingPathComponent("Native.md")
+        try "# Native\n".write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let store = makeWorkspaceStore()
+        store.openWorkspace(root)
+        _ = await waitUntil { !store.isBusy && !store.isDocumentLoading && store.selectedDocument != nil }
+
+        // NSTextView hands out a bridged NSBigMutableString; the store must keep a native copy.
+        let storage = NSTextStorage(string: "# Native\n")
+        storage.replaceCharacters(in: NSRange(location: 9, length: 0), with: "Café — edited\n")
+        store.setDocumentText(storage.string)
+
+        XCTAssertEqual(store.documentText, "# Native\nCafé — edited\n")
+        XCTAssertEqual(store.documentText.utf8.withContiguousStorageIfAvailable { _ in true }, true)
+        XCTAssertTrue(store.hasUnsavedChanges)
     }
 
     func testKeepLocalExternalReviewKeepsDirtyBuffer() async throws {

@@ -250,6 +250,7 @@ struct SidebarView: View {
                                         cutDocument: cutDocument(_:),
                                         deleteDocument: store.deleteDocument(_:)
                                     )
+                                    .equatable()
                                 }
                             }
                             .padding(.horizontal, scaled(8))
@@ -1153,6 +1154,30 @@ private struct WorkspaceSwitcherActionRow: View {
 }
 
 // MARK: - Sidebar Row
+
+/// Rows compare only what they draw. Typing publishes the store on every keystroke, and without
+/// this every row in the tree re-evaluated its body (glyph, help text and context menu) per key.
+/// The action closures forward into the sidebar and the store, so they are deliberately ignored.
+extension SidebarNodeRow: Equatable {
+    static func == (lhs: SidebarNodeRow, rhs: SidebarNodeRow) -> Bool {
+        lhs.visibleNode.depth == rhs.visibleNode.depth &&
+            lhs.visibleNode.folderNodeIDs == rhs.visibleNode.folderNodeIDs &&
+            lhs.visibleNode.node.id == rhs.visibleNode.node.id &&
+            lhs.visibleNode.node.name == rhs.visibleNode.node.name &&
+            lhs.visibleNode.node.relativePath == rhs.visibleNode.node.relativePath &&
+            lhs.visibleNode.node.kind == rhs.visibleNode.node.kind &&
+            lhs.visibleNode.node.document == rhs.visibleNode.node.document &&
+            lhs.isSelected == rhs.isSelected &&
+            lhs.saveState == rhs.saveState &&
+            lhs.gitStatus == rhs.gitStatus &&
+            lhs.isExpanded == rhs.isExpanded &&
+            lhs.tracksMoveFrame == rhs.tracksMoveFrame &&
+            lhs.isMoveSource == rhs.isMoveSource &&
+            lhs.isMoveTarget == rhs.isMoveTarget &&
+            lhs.zoomScale == rhs.zoomScale &&
+            lhs.theme == rhs.theme
+    }
+}
 
 private struct SidebarNodeRow: View {
     let visibleNode: VisibleSidebarNode

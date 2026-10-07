@@ -35,7 +35,7 @@ struct EditorPaneView: View {
     @State private var splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
     @State private var previewSyncLine: Int?
     @State private var sourceSyncLine: Int?
-    @State private var currentVisibleSourceLine = 1
+    @StateObject private var outlinePosition = MarkdownOutlinePosition()
     let theme: AppTheme
     let zoomScale: Double
     let codeFontSize: CGFloat
@@ -61,6 +61,7 @@ struct EditorPaneView: View {
     let openFolder: () -> Void
     let saveDocument: () -> Void
     let outlineItems: [MarkdownOutlineItem]
+    let textStatistics: MarkdownTextStatistics?
     let selectOutlineItem: (MarkdownOutlineItem) -> Void
     let onPreviewSourceJump: (MarkdownSourceLocation) -> Void
     let copyPDFLinkedExcerpt: (PDFSelectionSnapshot) -> Void
@@ -94,7 +95,7 @@ struct EditorPaneView: View {
                 }
             }
             .onChange(of: store.selectedDocument?.id) { oldDocumentID, newDocumentID in
-                currentVisibleSourceLine = 1
+                outlinePosition.update(1)
                 if let oldDocumentID,
                    supportsSplitViewRatioPersistence(forDocumentID: oldDocumentID) {
                     DocumentSplitViewPersistence.setSourcePaneRatio(
@@ -153,9 +154,10 @@ struct EditorPaneView: View {
                     MarkdownSourceToolbar(
                         theme: theme,
                         zoomScale: zoomScale,
-                        text: store.documentText,
+                        statistics: textStatistics,
                         sendCommand: sendMarkdownCommand
                     )
+                    .equatable()
                     .disabled(store.activeWritingToolsDocumentID != nil)
                 }
             }
@@ -458,14 +460,15 @@ struct EditorPaneView: View {
             if showsDocumentOutline, outlineItems.count >= 2 {
                 MarkdownOutlineRail(
                     items: outlineItems,
-                    visibleLine: currentVisibleSourceLine,
+                    position: outlinePosition,
                     theme: theme,
                     zoomScale: zoomScale,
                     select: { item in
-                        currentVisibleSourceLine = item.location.line
+                        outlinePosition.update(item.location.line)
                         selectOutlineItem(item)
                     }
                 )
+                .equatable()
                 .frame(maxHeight: .infinity)
                 .zIndex(5)
             }
@@ -510,7 +513,7 @@ struct EditorPaneView: View {
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
             },
             onVisibleTopLineChange: { line in
-                currentVisibleSourceLine = line
+                outlinePosition.update(line)
                 syncPreviewScroll(to: line)
             }
         )
@@ -540,7 +543,7 @@ struct EditorPaneView: View {
                 updateViewportState(selectedDocument.id, .markdownPreviewScrollPosition(position))
             },
             onVisibleSourceLineChange: { line in
-                currentVisibleSourceLine = line
+                outlinePosition.update(line)
                 syncSourceScroll(to: line)
             }
         )

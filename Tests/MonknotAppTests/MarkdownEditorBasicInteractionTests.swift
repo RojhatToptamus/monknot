@@ -21,6 +21,105 @@ final class MarkdownEditorBasicInteractionTests: FlowEditorTestCase {
         XCTAssertNil(EditorFlowEligibility.sourceMode(for: html))
     }
 
+    func testEditedTextReachesTheBindingAsNativeUTF8() {
+        let box = EditorTextBox("Café — notes\n")
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: box.value)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+
+        textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
+        textView.insertText("x", replacementRange: textView.selectedRange())
+
+        XCTAssertEqual(box.value, "Café — notes\nx")
+        XCTAssertEqual(box.value.utf8.withContiguousStorageIfAvailable { _ in true }, true)
+    }
+
+    func testStorageEditCountTracksCharacterEditsIncludingDirectStorageEdits() throws {
+        let box = EditorTextBox("alpha beta\n")
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: box.value)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let storage = try XCTUnwrap(textView.textStorage)
+
+        let initialCount = coordinator.storageEditCount
+        XCTAssertEqual(coordinator.nativeText(of: textView), "alpha beta\n")
+
+        storage.addAttribute(.foregroundColor, value: NSColor.red, range: NSRange(location: 0, length: 5))
+        XCTAssertEqual(coordinator.storageEditCount, initialCount, "Styling must not count as a text edit")
+
+        textView.insertText("!", replacementRange: NSRange(location: 5, length: 0))
+        XCTAssertEqual(coordinator.storageEditCount, initialCount + 1)
+
+        // Same-length replacement straight into the storage, bypassing textDidChange.
+        storage.replaceCharacters(in: NSRange(location: 0, length: 5), with: "gamma")
+        XCTAssertEqual(coordinator.storageEditCount, initialCount + 2)
+        XCTAssertEqual(coordinator.nativeText(of: textView), "gamma! beta\n")
+    }
+
+    func testLineLocalRestylingMatchesAFullPassAfterEachKindOfEdit() throws {
+        let source = "# Title\n\nplain line with `code`\n> quote\nsee [[note]] and [link](x.md)\n**bold** tail\n"
+        let edits: [(range: NSRange, replacement: String)] = [
+            (NSRange(location: 9, length: 0), "## "),            // a plain line becomes a heading
+            (NSRange(location: 0, length: 2), ""),               // a heading stops being one
+            (NSRange(location: 20, length: 0), "\n"),           // split a line inside inline code
+            (NSRange(location: 35, length: 1), ""),              // join two lines
+            (NSRange(location: 40, length: 0), "**more**"),       // add strong text mid-line
+        ]
+        let font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+
+        for edit in edits {
+            let box = EditorTextBox(source)
+            let coordinator = makeCoordinator(box)
+            let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+            defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+            coordinator.applySyntaxHighlighting(enabled: true, theme: .defaultDark, font: font, in: textView)
+
+            textView.insertText(edit.replacement, replacementRange: edit.range)
+            coordinator.applySyntaxHighlighting(enabled: true, theme: .defaultDark, font: font, in: textView)
+
+            let referenceBox = EditorTextBox(textView.string)
+            let reference = makeCoordinator(referenceBox)
+            let (referenceWindow, referenceScrollView, referenceTextView) = makeHostedTextView(
+                coordinator: reference,
+                text: textView.string
+            )
+            defer {
+                dismantleHostedTextView(referenceWindow, scrollView: referenceScrollView, coordinator: reference)
+            }
+            reference.applySyntaxHighlighting(enabled: true, theme: .defaultDark, font: font, in: referenceTextView)
+
+            let storage = try XCTUnwrap(textView.textStorage)
+            let expected = try XCTUnwrap(referenceTextView.textStorage)
+            XCTAssertEqual(storage.string, expected.string)
+            for location in 0..<storage.length {
+                XCTAssertEqual(
+                    storage.attribute(.foregroundColor, at: location, effectiveRange: nil) as? NSColor,
+                    expected.attribute(.foregroundColor, at: location, effectiveRange: nil) as? NSColor,
+                    "colour differs at \(location) after replacing \(edit.range) with \(edit.replacement.debugDescription)"
+                )
+                XCTAssertEqual(
+                    storage.attribute(.font, at: location, effectiveRange: nil) as? NSFont,
+                    expected.attribute(.font, at: location, effectiveRange: nil) as? NSFont,
+                    "font differs at \(location) after replacing \(edit.range) with \(edit.replacement.debugDescription)"
+                )
+            }
+        }
+    }
+
+    func testTextStatisticsCountLinesAndWords() {
+        XCTAssertEqual(MarkdownTextStatistics(text: ""), MarkdownTextStatistics(lineCount: 1, wordCount: 0))
+        XCTAssertEqual(
+            MarkdownTextStatistics(text: "# Title\n\nOne two, three.\n"),
+            MarkdownTextStatistics(lineCount: 4, wordCount: 4)
+        )
+        XCTAssertEqual(MarkdownTextStatistics(text: "a\r\nb\r\nc").lineCount, 3, "CRLF lines are counted")
+        XCTAssertEqual(MarkdownSourceToolbar.wordCountLabel(1), "1 word")
+        XCTAssertEqual(
+            MarkdownSourceToolbar.statisticsDescription(MarkdownTextStatistics(lineCount: 1, wordCount: 0)),
+            "1 line, 0 words"
+        )
+    }
+
     func testMarkdownContextMenuExposesLinkInspectionWithoutASelection() throws {
         let textView = MarkdownNSTextView()
         textView.string = "[Guide](Guide.md)"

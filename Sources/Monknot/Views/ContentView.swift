@@ -234,7 +234,9 @@ struct ContentView: View {
     @State private var pdfNavigatorToggleCommandSerial = 0
     @State private var pdfSelectionSnapshot: PDFSelectionSnapshot?
     @State private var pdfExcerptCopyTask: Task<Void, Never>?
-    @State private var markdownEditorSelection: MarkdownEditorSelectionSnapshot?
+    /// Observable only when the editor selection goes between empty and non-empty, which is all the
+    /// menu needs; the snapshot itself lives in `viewportCache`.
+    @State private var hasMarkdownEditorSelection = false
     @State private var deferredWorkspaceHeadingJump: DeferredWorkspaceHeadingJump?
     @State private var ambiguousMarkdownLinkRequest: AmbiguousMarkdownLinkRequest?
     @State private var missingWikilinkCreationRequest: MissingWikilinkCreationRequest?
@@ -245,9 +247,8 @@ struct ContentView: View {
     @State private var documentNavigationHistory = DocumentNavigationHistory()
     @State private var restoredTabStateWorkspacePath: String?
     @State private var pendingTabStatePersistenceTask: Task<Void, Never>?
-    @State private var documentViewportStates: [String: DocumentViewportState] = [:]
+    @State private var viewportCache = DocumentViewportStateCache()
     @State private var restoredViewportStateWorkspacePath: String?
-    @State private var pendingViewportStatePersistenceTask: Task<Void, Never>?
     @StateObject private var pdfViewportCaptureBridge = PDFViewportCaptureBridge()
     @State private var pdfUndoCommandSerial = 0
     @State private var pdfRedoCommandSerial = 0
@@ -361,7 +362,8 @@ struct ContentView: View {
                 pendingPDFSearchTarget = nil
                 cancelPDFExcerptCopy()
                 pdfSelectionSnapshot = nil
-                markdownEditorSelection = nil
+                viewportCache.markdownEditorSelection = nil
+                hasMarkdownEditorSelection = false
                 if let oldDocumentID, supportsSplitView(store.document(id: oldDocumentID)) {
                     DocumentSplitViewPersistence.setEnabled(
                         isMarkdownSplitViewEnabled,
@@ -436,10 +438,10 @@ struct ContentView: View {
                 documentNavigationHistory.reset()
                 restoredTabStateWorkspacePath = nil
                 restoredViewportStateWorkspacePath = nil
-                pendingViewportStatePersistenceTask?.cancel()
-                pendingViewportStatePersistenceTask = nil
+                viewportCache.pendingPersistenceTask?.cancel()
+                viewportCache.pendingPersistenceTask = nil
                 pendingMarkdownFileDropConfirmation = nil
-                documentViewportStates.removeAll()
+                viewportCache.states.removeAll()
                 publishOpenTabIDs(persistTabs: false)
                 terminalSessions.stopAll()
                 if !newPath.isEmpty {
@@ -790,6 +792,7 @@ struct ContentView: View {
                 openFolder: openFolderPanel,
                 saveDocument: saveSelectedDocument,
                 outlineItems: outlineStore.items,
+                textStatistics: outlineStore.statistics,
                 selectOutlineItem: openOutlineItem(_:),
                 onPreviewSourceJump: openSourceFromPreview(location:),
                 copyPDFLinkedExcerpt: { selection in
@@ -1266,7 +1269,7 @@ struct ContentView: View {
             closedTabHistory.record(closedTab)
         }
         documentNavigationHistory.remove(documentID: documentID)
-        documentViewportStates.removeValue(forKey: documentID)
+        viewportCache.states.removeValue(forKey: documentID)
         persistViewportStates()
         publishOpenTabIDs()
 
@@ -1409,8 +1412,8 @@ struct ContentView: View {
                 to: mapping.destinationID,
                 document: store.document(id: mapping.destinationID)
             )
-            if let viewportState = documentViewportStates.removeValue(forKey: mapping.sourceID) {
-                documentViewportStates[mapping.destinationID] = viewportState
+            if let viewportState = viewportCache.states.removeValue(forKey: mapping.sourceID) {
+                viewportCache.states[mapping.destinationID] = viewportState
             }
             documentNavigationHistory.remapDocumentID(
                 from: mapping.sourceID,
@@ -1500,19 +1503,19 @@ struct ContentView: View {
         restoredViewportStateWorkspacePath = workspacePath
 
         let availableDocumentIDs = Set(store.documents.map(\.id))
-        documentViewportStates = viewportStatePersistence
+        viewportCache.states = viewportStatePersistence
             .load(for: workspaceURL)
             .filter { availableDocumentIDs.contains($0.key) }
     }
 
     private func persistViewportStates() {
         guard let workspaceURL = store.workspaceURL?.standardizedFileURL else { return }
-        let states = documentViewportStates
+        let states = viewportCache.states
         let retainedDocumentIDs = tabState.tabs.map(\.documentID)
         let persistence = viewportStatePersistence
 
-        pendingViewportStatePersistenceTask?.cancel()
-        pendingViewportStatePersistenceTask = Task { @MainActor in
+        viewportCache.pendingPersistenceTask?.cancel()
+        viewportCache.pendingPersistenceTask = Task { @MainActor in
             do {
                 try await Task.sleep(nanoseconds: 500_000_000)
             } catch {
@@ -1525,13 +1528,13 @@ struct ContentView: View {
 
     private func flushPendingViewportStatePersistence(for explicitWorkspaceURL: URL? = nil) {
         captureLivePDFViewportState()
-        pendingViewportStatePersistenceTask?.cancel()
-        pendingViewportStatePersistenceTask = nil
+        viewportCache.pendingPersistenceTask?.cancel()
+        viewportCache.pendingPersistenceTask = nil
         guard let workspaceURL = explicitWorkspaceURL?.standardizedFileURL
             ?? store.workspaceURL?.standardizedFileURL
         else { return }
         viewportStatePersistence.save(
-            documentViewportStates,
+            viewportCache.states,
             retaining: tabState.tabs.map(\.documentID),
             for: workspaceURL
         )
@@ -1586,7 +1589,7 @@ struct ContentView: View {
 
     private var activeDocumentViewportState: DocumentViewportState? {
         guard let selectedDocumentID = tabState.selectedDocumentID else { return nil }
-        return documentViewportStates[selectedDocumentID]
+        return viewportCache.states[selectedDocumentID]
     }
 
     private func updateDocumentViewportState(documentID: String, change: DocumentViewportStateChange) {
@@ -1596,7 +1599,7 @@ struct ContentView: View {
             removedDirtyDocumentIDs: store.removedDirtyOpenDocumentIDs
         ) else { return }
 
-        var state = documentViewportStates[documentID] ?? DocumentViewportState()
+        var state = viewportCache.states[documentID] ?? DocumentViewportState()
 
         switch change {
         case .textScrollPosition(let position):
@@ -1616,7 +1619,7 @@ struct ContentView: View {
             state.pdfViewportState = viewportState
         }
 
-        documentViewportStates[documentID] = state
+        viewportCache.states[documentID] = state
         persistViewportStates()
     }
 
@@ -1624,7 +1627,7 @@ struct ContentView: View {
         let retainedDocumentIDs = tabState.openDocumentIDs
             .union(store.removedDirtyOpenDocumentIDs)
             .union(store.selectedDocumentID.map { [$0] } ?? [])
-        documentViewportStates = documentViewportStates.filter { retainedDocumentIDs.contains($0.key) }
+        viewportCache.states = viewportCache.states.filter { retainedDocumentIDs.contains($0.key) }
         persistViewportStates()
     }
 
@@ -1635,7 +1638,11 @@ struct ContentView: View {
 
     private func handleMarkdownEditorSelection(_ selection: MarkdownEditorSelectionSnapshot) {
         guard selection.documentID == store.selectedDocumentID else { return }
-        markdownEditorSelection = selection
+        viewportCache.markdownEditorSelection = selection
+        let hasSelection = selection.selectedRange.length > 0
+        if hasMarkdownEditorSelection != hasSelection {
+            hasMarkdownEditorSelection = hasSelection
+        }
         updateDocumentViewportState(
             documentID: selection.documentID,
             change: .textSelection(DocumentTextSelection(
@@ -2027,7 +2034,8 @@ struct ContentView: View {
 
     private var canCopyRenderedMarkdown: Bool {
         guard MonknotNativeMarkdownCommand.canCopyRenderedSelection,
-              let selection = markdownEditorSelection,
+              hasMarkdownEditorSelection,
+              let selection = viewportCache.markdownEditorSelection,
               selection.documentID == store.selectedDocumentID,
               selection.selectedRange.length > 0,
               NSMaxRange(selection.selectedRange) <= (store.documentText as NSString).length
@@ -2688,7 +2696,8 @@ struct ContentView: View {
     private func updateOutline() {
         outlineStore.update(
             markdown: store.documentText,
-            isMarkdown: store.selectedDocument?.kind == .markdown && !store.isDocumentLoading
+            isMarkdown: store.selectedDocument?.kind == .markdown && !store.isDocumentLoading,
+            documentID: store.selectedDocumentID
         )
     }
 
