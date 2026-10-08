@@ -611,7 +611,7 @@ private struct SettingsWorkspaceZoomRow: View {
             showsDivider: showsDivider
         ) {
             HStack(spacing: scaled(8)) {
-                zoomButton(systemImage: "minus", label: "Zoom out") {
+                SettingsZoomStepButton(systemImage: "minus", label: "Zoom out", theme: theme) {
                     value = WorkspaceZoomPolicy.stepped(value, by: -1)
                 }
 
@@ -624,34 +624,61 @@ private struct SettingsWorkspaceZoomRow: View {
                     .foregroundStyle(theme.foregroundColor)
                     .frame(width: scaled(48))
 
-                zoomButton(systemImage: "plus", label: "Zoom in") {
+                SettingsZoomStepButton(systemImage: "plus", label: "Zoom in", theme: theme) {
                     value = WorkspaceZoomPolicy.stepped(value, by: 1)
                 }
             }
         }
     }
+}
 
-    private func zoomButton(
-        systemImage: String,
-        label: String,
-        action: @escaping () -> Void
-    ) -> some View {
+/// A Settings zoom step: inset fill and border at rest, with the shared hover and press fills, the glyph
+/// one step up the ink ladder while hovered or held, and the standard focus ring (design.md §1.4, §5.1).
+private struct SettingsZoomStepButton: View {
+    let systemImage: String
+    let label: String
+    let theme: AppTheme
+    let action: () -> Void
+
+    @State private var isHovered = false
+    @State private var isPressed = false
+    @FocusState private var isFocused: Bool
+    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+    }
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: scaled(8))
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.system(
                     size: MonknotMetrics.interfaceGlyph(13, theme: theme, zoomScale: settingsZoomScale),
                     weight: .regular
                 ))
-                .foregroundStyle(theme.mutedForegroundColor)
+                .foregroundStyle(isHovered || isPressed ? theme.foregroundColor : theme.mutedForegroundColor)
                 .frame(width: scaled(26), height: scaled(26))
-                .background(theme.insetFillColor, in: RoundedRectangle(cornerRadius: scaled(8)))
-                .overlay {
-                    RoundedRectangle(cornerRadius: scaled(8))
-                        .strokeBorder(theme.borderColor, lineWidth: 1)
+                .background {
+                    shape.fill(theme.insetFillColor)
+                    if isPressed {
+                        shape.fill(theme.pressedFillColor)
+                    } else if isHovered {
+                        shape.fill(theme.hoverFillColor)
+                    }
                 }
+                .overlay {
+                    shape.strokeBorder(theme.borderColor, lineWidth: 1)
+                }
+                .monknotFocusRing(isVisible: isFocused, cornerRadius: scaled(8), theme: theme)
+                .contentShape(shape)
         }
-        .buttonStyle(MonknotControlPressStyle())
+        .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
+        .focusable(NSApp.isFullKeyboardAccessEnabled)
+        .focused($isFocused)
         .focusEffectDisabled()
+        .onHover { isHovered = $0 }
+        .animation(MonknotMotion.hoverAnimation, value: isHovered)
         .help(label)
         .accessibilityLabel(label)
         .monknotPointerCursor()

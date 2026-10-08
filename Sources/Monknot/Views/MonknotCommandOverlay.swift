@@ -73,6 +73,7 @@ struct MonknotCommandOverlayEscapeButton: View {
     let close: () -> Void
 
     @State private var isHovered = false
+    @State private var isPressed = false
     @FocusState private var isFocused: Bool
 
     private var dimension: CGFloat {
@@ -92,24 +93,20 @@ struct MonknotCommandOverlayEscapeButton: View {
             )
             .frame(minWidth: dimension, minHeight: dimension)
             .background {
-                if isHovered {
+                if isPressed {
+                    shape.fill(theme.pressedFillColor)
+                } else if isHovered {
                     shape.fill(theme.hoverFillColor)
                 }
             }
-            .overlay {
-                if isFocused {
-                    shape
-                        .stroke(
-                            theme.accentColor.opacity(MonknotIconButton.focusRingOpacity),
-                            lineWidth: MonknotIconButton.focusRingLineWidth
-                        )
-                        .padding(-MonknotIconButton.focusRingOutset)
-                        .allowsHitTesting(false)
-                }
-            }
+            .monknotFocusRing(
+                isVisible: isFocused,
+                cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale),
+                theme: theme
+            )
             .contentShape(shape)
         }
-        .buttonStyle(MonknotControlPressStyle())
+        .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
         .focusable(NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
         .focusEffectDisabled()

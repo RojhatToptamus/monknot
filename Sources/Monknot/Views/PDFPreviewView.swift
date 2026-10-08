@@ -634,6 +634,7 @@ private struct PDFFreeTextFormattingPopover: View {
 
     @State private var isFontMenuHovered = false
     @State private var hoveredSizeStep: Int?
+    @State private var pressedSizeStep: Int?
     @FocusState private var focusedControl: PDFFreeTextPopoverFocus?
 
     private var metrics: PDFFreeTextPopoverMetrics {
@@ -811,13 +812,26 @@ private struct PDFFreeTextFormattingPopover: View {
                 .foregroundStyle(isDisabled ? theme.disabledForegroundColor : theme.mutedForegroundColor)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background {
-                    if hoveredSizeStep == Int(delta), !isDisabled {
-                        theme.hoverFillColor
+                    if !isDisabled {
+                        if pressedSizeStep == Int(delta) {
+                            theme.pressedFillColor
+                        } else if hoveredSizeStep == Int(delta) {
+                            theme.hoverFillColor
+                        }
                     }
                 }
                 .contentShape(Rectangle())
         }
-        .buttonStyle(MonknotControlPressStyle())
+        .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: Binding(
+            get: { pressedSizeStep == Int(delta) },
+            set: { isPressed in
+                if isPressed {
+                    pressedSizeStep = Int(delta)
+                } else if pressedSizeStep == Int(delta) {
+                    pressedSizeStep = nil
+                }
+            }
+        )))
         .disabled(isDisabled)
         .focusable(!isDisabled && NSApp.isFullKeyboardAccessEnabled)
         .focused($focusedControl, equals: focus)
@@ -1792,6 +1806,7 @@ private struct PDFColorSwatchButton: View {
     let action: () -> Void
 
     @State private var isHovered = false
+    @State private var isPressed = false
     @FocusState private var isFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -1799,11 +1814,19 @@ private struct PDFColorSwatchButton: View {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
+    private var backgroundFill: Color {
+        if isPressed {
+            return theme.pressedFillColor
+        }
+        return isSelected || isHovered ? theme.hoverFillColor : .clear
+    }
+
     var body: some View {
+        let dimension = MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale)
         Button(action: action) {
             ZStack {
                 Circle()
-                    .fill(isSelected || isHovered ? theme.controlTrackFillColor : Color.clear)
+                    .fill(backgroundFill)
 
                 Circle()
                     .fill(color.color)
@@ -1816,25 +1839,20 @@ private struct PDFColorSwatchButton: View {
                             .strokeBorder(theme.surfaceColor.opacity(0.85), lineWidth: 1)
                     }
             }
-            .frame(
-                width: MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale),
-                height: MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale)
-            )
+            .frame(width: dimension, height: dimension)
             .overlay {
-                if isFocused {
-                    Circle()
-                        .strokeBorder(theme.accentColor.opacity(0.9), lineWidth: 1.5)
-                        .padding(1)
-                } else if isSelected {
+                if isSelected {
                     Circle()
                         .strokeBorder(theme.borderColor, lineWidth: 1)
                 }
             }
+            .monknotFocusRing(isVisible: isFocused, cornerRadius: dimension / 2, theme: theme)
             .contentShape(Circle())
         }
-        .buttonStyle(MonknotControlPressStyle())
+        .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
         .focusable(NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
+        .focusEffectDisabled()
         .onHover { isHovered = $0 }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: isHovered)
         .animation(.easeOut(duration: 0.12), value: isSelected)

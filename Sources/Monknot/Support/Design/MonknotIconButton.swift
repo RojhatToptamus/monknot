@@ -310,14 +310,6 @@ struct MonknotPressTrackingButtonStyle: ButtonStyle {
     }
 }
 
-struct MonknotControlPressStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .opacity(configuration.isPressed ? 0.78 : 1)
-            .animation(MonknotMotion.hoverAnimation, value: configuration.isPressed)
-    }
-}
-
 /// Shared trailing close affordance for document and terminal tabs.
 struct MonknotTabCloseButton: View {
     let label: String
