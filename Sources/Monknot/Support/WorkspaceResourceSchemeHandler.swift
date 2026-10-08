@@ -31,12 +31,8 @@ final class WorkspaceResourceSchemeHandler: NSObject, WKURLSchemeHandler {
         return URL(fileURLWithPath: resourceURL.path)
     }
 
-    /// The file a request may read, or nil when it lies outside the root.
-    func servableFileURL(for resourceURL: URL) -> URL? {
-        Self.servableFileURL(for: resourceURL, within: rootURL)
-    }
-
-    /// Resolves symbolic links, so it touches the file system: call it off the main thread.
+    /// The file a request may read, or nil when it lies outside the root. Resolves symbolic links, so
+    /// it touches the file system: call it off the main thread.
     static func servableFileURL(for resourceURL: URL, within rootURL: URL?) -> URL? {
         guard let fileURL = fileURL(for: resourceURL), let rootURL else { return nil }
         let rootPath = rootURL.resolvingSymlinksInPath().standardizedFileURL.path

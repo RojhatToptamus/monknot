@@ -31,12 +31,11 @@ final class WorkspaceResourceSchemeHandlerTests: XCTestCase {
             withDestinationURL: outside
         )
 
-        let handler = WorkspaceResourceSchemeHandler()
-        handler.rootURL = workspace
+        var root: URL? = workspace
         let base = try XCTUnwrap(WorkspaceResourceSchemeHandler.pageBaseURL(forDirectory: workspace))
         func servable(_ relative: String) throws -> Bool {
             let url = try XCTUnwrap(URL(string: relative, relativeTo: base)).absoluteURL
-            return handler.servableFileURL(for: url) != nil
+            return WorkspaceResourceSchemeHandler.servableFileURL(for: url, within: root) != nil
         }
 
         XCTAssertTrue(try servable("assets/image.png"))
@@ -46,7 +45,7 @@ final class WorkspaceResourceSchemeHandlerTests: XCTestCase {
         XCTAssertFalse(try servable("%2e%2e/outside/secret.png"), "percent-encoded dot segments")
         XCTAssertFalse(try servable("assets/..%2F..%2Foutside/secret.png"), "percent-encoded separators")
 
-        handler.rootURL = nil
+        root = nil
         XCTAssertFalse(try servable("assets/image.png"), "nothing is served without a workspace")
     }
 }
