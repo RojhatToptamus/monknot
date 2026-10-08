@@ -64,6 +64,9 @@ final class MarkdownEditorBasicInteractionTests: FlowEditorTestCase {
             (NSRange(location: 20, length: 0), "\n"),           // split a line inside inline code
             (NSRange(location: 35, length: 1), ""),              // join two lines
             (NSRange(location: 40, length: 0), "**more**"),       // add strong text mid-line
+            (NSRange(location: 3, length: 0), "\n"),            // split a heading: its tail is plain
+            (NSRange(location: 2, length: 0), "x\n"),           // insert a line break mid-heading
+            (NSRange(location: 1, length: 0), "\n## "),         // the moved tail becomes a heading
         ]
         let font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
 

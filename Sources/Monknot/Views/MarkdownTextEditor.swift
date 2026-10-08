@@ -2514,7 +2514,13 @@ struct MarkdownTextEditor: NSViewRepresentable {
                let editedRange = pendingSyntaxEditRange,
                let storage = textView.textStorage,
                NSMaxRange(editedRange) <= storage.length {
-                paragraphs = storage.mutableString.paragraphRange(for: editedRange)
+                // A typed or pasted line break moves the rest of its line into a new paragraph
+                // that starts right after the edit; reach one character further to restyle it.
+                let reach = NSRange(
+                    location: editedRange.location,
+                    length: min(editedRange.length + 1, storage.length - editedRange.location)
+                )
+                paragraphs = storage.mutableString.paragraphRange(for: reach)
             }
 
             MarkdownSyntaxHighlighter.apply(
