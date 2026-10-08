@@ -4,17 +4,69 @@ import OSLog
 public struct WorkspaceSearchBatch: Sendable {
     public let results: [WorkspaceSearchResult]
     public let skippedLargeFileCount: Int
-    /// The search stopped at its total or per-file match limit, so there may be more matches.
+    /// There are more matches than `results`: a total or per-file limit cut them off.
     public let reachedMatchLimit: Bool
+    /// Documents that have more matches than `results` lists for them.
+    public let truncatedDocumentIDs: Set<String>
 
     public init(
         results: [WorkspaceSearchResult],
         skippedLargeFileCount: Int = 0,
-        reachedMatchLimit: Bool = false
+        reachedMatchLimit: Bool = false,
+        truncatedDocumentIDs: Set<String> = []
     ) {
         self.results = results
         self.skippedLargeFileCount = skippedLargeFileCount
         self.reachedMatchLimit = reachedMatchLimit
+        self.truncatedDocumentIDs = truncatedDocumentIDs
+    }
+}
+
+/// Gathers matches file by file up to a total and a per-file limit, and notes what the limits cut off.
+struct WorkspaceSearchCollector {
+    let maxMatches: Int
+    let maxMatchesPerFile: Int
+    private(set) var results: [WorkspaceSearchResult] = []
+    private var truncatedDocumentIDs: Set<String> = []
+    private var reachedMatchLimit = false
+
+    init(maxMatches: Int, maxMatchesPerFile: Int) {
+        self.maxMatches = maxMatches
+        self.maxMatchesPerFile = maxMatchesPerFile
+    }
+
+    /// Ask each file for one match more than its limit, so a file with exactly the limit is not
+    /// reported as cut short.
+    var perFileQueryLimit: Int { maxMatchesPerFile + 1 }
+
+    /// Adds one file's matches. Returns false once the total limit is reached and the search can stop.
+    mutating func add(_ fileMatches: [WorkspaceSearchResult], documentID: String) -> Bool {
+        var matches = fileMatches
+        if matches.count > maxMatchesPerFile {
+            matches = Array(matches.prefix(maxMatchesPerFile))
+            truncatedDocumentIDs.insert(documentID)
+            reachedMatchLimit = true
+        }
+        let room = maxMatches - results.count
+        guard matches.count > room else {
+            results.append(contentsOf: matches)
+            return true
+        }
+        if room > 0 {
+            truncatedDocumentIDs.insert(documentID)
+        }
+        results.append(contentsOf: matches.prefix(room))
+        reachedMatchLimit = true
+        return false
+    }
+
+    func batch(skippedLargeFileCount: Int) -> WorkspaceSearchBatch {
+        WorkspaceSearchBatch(
+            results: results,
+            skippedLargeFileCount: skippedLargeFileCount,
+            reachedMatchLimit: reachedMatchLimit,
+            truncatedDocumentIDs: truncatedDocumentIDs
+        )
     }
 }
 
@@ -64,9 +116,8 @@ public struct WorkspaceSearchService: Sendable {
         let signpostID = MonknotSignposting.workspaceSearch.beginInterval("WorkspaceSearch")
         defer { MonknotSignposting.workspaceSearch.endInterval("WorkspaceSearch", signpostID) }
 
-        var results: [WorkspaceSearchResult] = []
+        var collector = WorkspaceSearchCollector(maxMatches: maxMatches, maxMatchesPerFile: maxMatchesPerFile)
         var skippedLargeFileCount = 0
-        var reachedMatchLimit = false
         var remainingAutoIndexedTextBytes = maxAutoIndexedTextBytes
         var remainingAutoIndexedTextDocuments = textIndex.maxEntryCount
         for document in documents {
@@ -81,7 +132,7 @@ public struct WorkspaceSearchService: Sendable {
                         options: options,
                         document: document,
                         text: dirtyText,
-                        limit: maxMatchesPerFile
+                        limit: collector.perFileQueryLimit
                     ).results
                     break
                 }
@@ -101,14 +152,14 @@ public struct WorkspaceSearchService: Sendable {
                         query: needle,
                         options: options,
                         document: document,
-                        limit: maxMatchesPerFile,
+                        limit: collector.perFileQueryLimit,
                         maxBytes: maxTextFileBytes
                     )
                     : uncachedTextMatches(
                         query: needle,
                         options: options,
                         document: document,
-                        limit: maxMatchesPerFile
+                        limit: collector.perFileQueryLimit
                     )
                 skippedLargeFileCount += batch.skippedLargeFileCount
                 matches = batch.results
@@ -117,31 +168,17 @@ public struct WorkspaceSearchService: Sendable {
                     query: needle,
                     options: options,
                     document: document,
-                    limit: maxMatchesPerFile,
+                    limit: collector.perFileQueryLimit,
                     pdfData: dirtyPDFDataByDocumentID[document.id]
                 )
             case .media, .nativePreview, .unsupported:
                 continue
             }
 
-            results.append(contentsOf: matches)
-            if matches.count >= maxMatchesPerFile {
-                reachedMatchLimit = true
-            }
-            if results.count >= maxMatches {
-                return WorkspaceSearchBatch(
-                    results: Array(results.prefix(maxMatches)),
-                    skippedLargeFileCount: skippedLargeFileCount,
-                    reachedMatchLimit: true
-                )
-            }
+            guard collector.add(matches, documentID: document.id) else { break }
         }
 
-        return WorkspaceSearchBatch(
-            results: results,
-            skippedLargeFileCount: skippedLargeFileCount,
-            reachedMatchLimit: reachedMatchLimit
-        )
+        return collector.batch(skippedLargeFileCount: skippedLargeFileCount)
     }
 
     private func uncachedTextMatches(

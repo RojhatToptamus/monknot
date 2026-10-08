@@ -588,7 +588,7 @@ struct WorkspaceSearchView: View {
     }
 
     private func groupCountText(_ group: WorkspaceSearchResultGroup) -> String {
-        group.matches.count >= state.maxMatchesPerFile ? "\(group.matches.count)+" : "\(group.matches.count)"
+        state.truncatedDocumentIDs.contains(group.documentID) ? "\(group.matches.count)+" : "\(group.matches.count)"
     }
 
     private var loadingState: some View {

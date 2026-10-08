@@ -53,21 +53,46 @@ final class WorkspaceTextSearchServiceTests: WorkspaceSearchServiceTestCase {
         XCTAssertEqual(results.filter { $0.relativePath == "second.md" }.count, 1)
     }
 
-    func testBatchSaysWhenAMatchLimitCutTheResultsShort() throws {
+    func testBatchSaysExactlyWhenAndWhereAMatchLimitCutTheResultsShort() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let first = root.appendingPathComponent("first.md")
         let second = root.appendingPathComponent("second.md")
-        try "needle needle needle".write(to: first, atomically: true, encoding: .utf8)
-        try "needle".write(to: second, atomically: true, encoding: .utf8)
+        try "needle needle".write(to: first, atomically: true, encoding: .utf8)
+        try "needle needle needle".write(to: second, atomically: true, encoding: .utf8)
         let documents = [
             WorkspaceDocument(url: first, rootURL: root),
             WorkspaceDocument(url: second, rootURL: root)
         ]
+        func search(maxMatches: Int = 500, maxMatchesPerFile: Int = 50) throws -> WorkspaceSearchBatch {
+            try WorkspaceSearchService(maxMatches: maxMatches, maxMatchesPerFile: maxMatchesPerFile)
+                .search(query: "needle", documents: documents)
+        }
+        let firstID = documents[0].id
+        let secondID = documents[1].id
 
-        XCTAssertFalse(try WorkspaceSearchService().search(query: "needle", documents: documents).reachedMatchLimit)
-        XCTAssertTrue(try WorkspaceSearchService(maxMatchesPerFile: 2).search(query: "needle", documents: documents).reachedMatchLimit)
-        XCTAssertTrue(try WorkspaceSearchService(maxMatches: 2).search(query: "needle", documents: documents).reachedMatchLimit)
+        let unlimited = try search()
+        XCTAssertFalse(unlimited.reachedMatchLimit)
+        XCTAssertEqual(unlimited.truncatedDocumentIDs, [])
+
+        // Exactly at a limit is not past it: first.md has exactly 2, the total is exactly 5.
+        let perFile = try search(maxMatchesPerFile: 2)
+        XCTAssertTrue(perFile.reachedMatchLimit)
+        XCTAssertEqual(perFile.truncatedDocumentIDs, [secondID])
+        XCTAssertFalse(try search(maxMatches: 5).reachedMatchLimit)
+
+        // The total limit falls inside second.md: it is listed in part and marked.
+        let total = try search(maxMatches: 3)
+        XCTAssertEqual(total.results.count, 3)
+        XCTAssertTrue(total.reachedMatchLimit)
+        XCTAssertEqual(total.truncatedDocumentIDs, [secondID])
+
+        // The total limit falls between files: second.md is not listed, so nothing is marked, but
+        // the batch still says there is more.
+        let between = try search(maxMatches: 2)
+        XCTAssertEqual(between.results.map(\.documentID), [firstID, firstID])
+        XCTAssertTrue(between.reachedMatchLimit)
+        XCTAssertEqual(between.truncatedDocumentIDs, [])
     }
 
     func testSearchIsCaseAndDiacriticInsensitive() throws {

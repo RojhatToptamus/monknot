@@ -11,6 +11,8 @@ final class WorkspaceSearchState: ObservableObject {
     @Published private(set) var skippedLargeFileCount = 0
     /// The results stop at a match limit; counts are shown as "500+".
     @Published private(set) var reachedMatchLimit = false
+    /// Files with more matches than listed; their counts are shown as "50+".
+    @Published private(set) var truncatedDocumentIDs: Set<String> = []
     @Published private(set) var query = ""
     @Published var replaceText = ""
     @Published var replaceScope: WorkspaceReplaceScope = .entireWorkspace
@@ -49,8 +51,6 @@ final class WorkspaceSearchState: ObservableObject {
     }
 
     private let service = WorkspaceSearchService()
-
-    var maxMatchesPerFile: Int { service.maxMatchesPerFile }
     private var searchTask: Task<Void, Never>?
     private var searchGeneration = 0
 
@@ -161,6 +161,7 @@ final class WorkspaceSearchState: ObservableObject {
         errorMessage = nil
         skippedLargeFileCount = 0
         reachedMatchLimit = false
+        truncatedDocumentIDs = []
 
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             if isSearching {
@@ -200,6 +201,7 @@ final class WorkspaceSearchState: ObservableObject {
                     self.results = batch.results
                     self.skippedLargeFileCount = batch.skippedLargeFileCount
                     self.reachedMatchLimit = batch.reachedMatchLimit
+                    self.truncatedDocumentIDs = batch.truncatedDocumentIDs
                     self.selectedResultIndex = 0
                     self.isSearching = false
                 }

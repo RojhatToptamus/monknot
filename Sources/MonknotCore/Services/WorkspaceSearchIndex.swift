@@ -93,9 +93,8 @@ public final class WorkspaceSearchIndex: @unchecked Sendable {
     ) throws -> WorkspaceSearchBatch {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return WorkspaceSearchBatch(results: []) }
-        var results: [WorkspaceSearchResult] = []
+        var collector = WorkspaceSearchCollector(maxMatches: maxMatches, maxMatchesPerFile: maxMatchesPerFile)
         var skippedLargeFileCount = 0
-        var reachedMatchLimit = false
 
         for document in documents where document.kind == .markdown || document.kind == .text {
             try Task.checkCancellation()
@@ -103,29 +102,14 @@ public final class WorkspaceSearchIndex: @unchecked Sendable {
                 query: needle,
                 options: options,
                 document: document,
-                limit: maxMatchesPerFile,
+                limit: collector.perFileQueryLimit,
                 maxBytes: maxTextFileBytes
             )
             skippedLargeFileCount += batch.skippedLargeFileCount
-            results.append(contentsOf: batch.results)
-            if batch.results.count >= maxMatchesPerFile {
-                reachedMatchLimit = true
-            }
-
-            if results.count >= maxMatches {
-                return WorkspaceSearchBatch(
-                    results: Array(results.prefix(maxMatches)),
-                    skippedLargeFileCount: skippedLargeFileCount,
-                    reachedMatchLimit: true
-                )
-            }
+            guard collector.add(batch.results, documentID: document.id) else { break }
         }
 
-        return WorkspaceSearchBatch(
-            results: results,
-            skippedLargeFileCount: skippedLargeFileCount,
-            reachedMatchLimit: reachedMatchLimit
-        )
+        return collector.batch(skippedLargeFileCount: skippedLargeFileCount)
     }
 
     func matches(
