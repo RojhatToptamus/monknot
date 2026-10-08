@@ -90,6 +90,46 @@ final class MarkdownPDFExportIntegrationTests: XCTestCase {
         XCTAssertGreaterThan(imageXObjectCount(in: page), 0, "the note's image is drawn into the PDF")
     }
 
+    func testRelativeLinksInTheExportPointAtFilesNotTheAppScheme() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MarkdownPDFExportIntegrationTests-\(UUID().uuidString)", isDirectory: true)
+        let notes = root.appendingPathComponent("Notes", isDirectory: true)
+        try FileManager.default.createDirectory(at: notes, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let destination = root.appendingPathComponent("Links.pdf")
+
+        try await MarkdownPDFExportService.makeDefault().exportPDF(
+            for: MarkdownPDFExportRequest(
+                markdown: "# Links\n\nSee [the plan](Plan%20B.md#goals) and [the site](https://example.com/).",
+                baseURL: notes,
+                resourceRoot: root,
+                theme: .defaultLight,
+                usePointerCursors: false,
+                fontSmoothing: true,
+                options: MarkdownPDFExportOptions(
+                    pageSize: .letter,
+                    marginPreset: .normal,
+                    themeMode: .light,
+                    scalePercent: 100,
+                    textSizePoints: 12,
+                    contentWidthPercent: 92
+                )
+            ),
+            to: destination
+        )
+
+        let page = try XCTUnwrap(PDFDocument(url: destination)?.page(at: 0))
+        let linkURLs = page.annotations.compactMap(\.url)
+        // The page loads under Monknot's private scheme; a PDF opened anywhere else needs file: links.
+        XCTAssertEqual(
+            linkURLs.map(\.absoluteString).sorted(),
+            [
+                "https://example.com/",
+                notes.appendingPathComponent("Plan B.md").absoluteString + "#goals",
+            ].sorted()
+        )
+    }
+
     private func imageXObjectCount(in page: CGPDFPage) -> Int {
         var count = 0
         func visit(_ resources: CGPDFDictionaryRef) {
