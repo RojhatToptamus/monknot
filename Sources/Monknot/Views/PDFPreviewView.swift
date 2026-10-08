@@ -720,13 +720,11 @@ private struct PDFFreeTextFormattingPopover: View {
             .overlay {
                 controlShape.strokeBorder(theme.borderColor, lineWidth: 1)
             }
-            .overlay {
-                if focusedControl == .fontFamily {
-                    controlShape
-                        .stroke(theme.accentColor.opacity(0.35), lineWidth: 3)
-                        .padding(-2)
-                }
-            }
+            .monknotFocusRing(
+                isVisible: focusedControl == .fontFamily,
+                cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale),
+                theme: theme
+            )
             .contentShape(controlShape)
         }
         .menuStyle(.borderlessButton)
@@ -786,13 +784,11 @@ private struct PDFFreeTextFormattingPopover: View {
         .overlay {
             controlShape.strokeBorder(theme.borderColor, lineWidth: 1)
         }
-        .overlay {
-            if focusedControl == .increaseSize || focusedControl == .decreaseSize {
-                controlShape
-                    .stroke(theme.accentColor.opacity(0.35), lineWidth: 3)
-                    .padding(-2)
-            }
-        }
+        .monknotFocusRing(
+            isVisible: focusedControl == .increaseSize || focusedControl == .decreaseSize,
+            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale),
+            theme: theme
+        )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Font Size")
         .accessibilityValue("\(Int(formatting.fontSize.rounded())) points")
@@ -1734,22 +1730,23 @@ struct PDFZoomToolbarGroup: View {
             .padding(.trailing, scaled(9))
             .frame(height: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale))
             .background {
-                zoomControlShape.fill(zoomControlBackgroundColor)
+                zoomControlShape.fill(theme.controlTrackFillColor)
                 if isMenuHovered, status.isAvailable {
                     zoomControlShape.fill(theme.hoverFillColor)
                 }
             }
             .overlay {
-                zoomControlShape
-                    .strokeBorder(theme.borderColor, lineWidth: 1)
+                // design.md §5.1: disabled dims the border and uses `ink4`; nothing multiplies on top.
+                zoomControlShape.strokeBorder(
+                    theme.borderColor.opacity(status.isAvailable ? 1 : MonknotIconButton.disabledBorderOpacity),
+                    lineWidth: 1
+                )
             }
-            .overlay {
-                if isMenuFocused, status.isAvailable {
-                    zoomControlShape
-                        .stroke(theme.accentColor.opacity(0.35), lineWidth: 3)
-                        .padding(-2)
-                }
-            }
+            .monknotFocusRing(
+                isVisible: isMenuFocused && status.isAvailable,
+                cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale),
+                theme: theme
+            )
             .contentShape(zoomControlShape)
         }
         .menuStyle(.button)
@@ -1759,7 +1756,6 @@ struct PDFZoomToolbarGroup: View {
         .focusable(status.isAvailable && NSApp.isFullKeyboardAccessEnabled)
         .focused($isMenuFocused)
         .focusEffectDisabled()
-        .opacity(status.isAvailable ? 1 : 0.42)
         .onHover { isMenuHovered = $0 }
         .help("PDF Zoom")
         .accessibilityLabel("PDF Zoom")
@@ -1775,11 +1771,6 @@ struct PDFZoomToolbarGroup: View {
     private var zoomControlForegroundColor: Color {
         guard status.isAvailable else { return theme.disabledForegroundColor }
         return isMenuHovered ? theme.foregroundColor : theme.mutedForegroundColor
-    }
-
-    private var zoomControlBackgroundColor: Color {
-        guard status.isAvailable else { return theme.controlTrackFillColor }
-        return theme.controlTrackFillColor
     }
 }
 

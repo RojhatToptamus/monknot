@@ -57,6 +57,7 @@ struct SettingsOutlineButton: View {
     let action: () -> Void
 
     @State private var isHovered = false
+    @State private var isPressed = false
     @FocusState private var isFocused: Bool
     @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
 
@@ -68,32 +69,37 @@ struct SettingsOutlineButton: View {
         theme.chromeRadius(theme.settingsControlCornerRadius, zoomScale: settingsZoomScale)
     }
 
+    // design.md §5.1: press replaces hover; disabled is `ink4` with the border at 40 % and no fill.
+    private var stateFill: Color {
+        guard !isDisabled else { return .clear }
+        if isPressed { return theme.pressedFillColor }
+        return isHovered ? theme.hoverFillColor : .clear
+    }
+
     var body: some View {
         Button(action: action) {
             Text(title)
                 .font(MonknotTypography.settingsButton(theme: theme, zoomScale: settingsZoomScale))
                 .padding(.horizontal, scaled(14))
                 .padding(.vertical, scaled(6))
-                .foregroundStyle(theme.foregroundColor.opacity(isDisabled ? 0.38 : 0.92))
-                .background(
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(theme.insetFillColor)
-                        .overlay {
-                            RoundedRectangle(cornerRadius: cornerRadius)
-                                .fill(theme.foregroundColor.opacity(isHovered && !isDisabled ? 0.045 : 0))
-                        }
-                )
+                .foregroundStyle(isDisabled ? theme.disabledForegroundColor : theme.foregroundColor.opacity(0.92))
+                .background {
+                    RoundedRectangle(cornerRadius: cornerRadius).fill(theme.insetFillColor)
+                    RoundedRectangle(cornerRadius: cornerRadius).fill(stateFill)
+                }
                 .overlay(
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .strokeBorder(isFocused ? theme.accentColor.opacity(0.9) : theme.borderColor, lineWidth: isFocused ? 1.5 : 1)
+                    RoundedRectangle(cornerRadius: cornerRadius).strokeBorder(
+                        theme.borderColor.opacity(isDisabled ? MonknotIconButton.disabledBorderOpacity : 1),
+                        lineWidth: 1
+                    )
                 )
+                .monknotFocusRing(isVisible: isFocused && !isDisabled, cornerRadius: cornerRadius, theme: theme)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
         .disabled(isDisabled)
         .focusable(!isDisabled && NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
         .focusEffectDisabled()
-        .opacity(isDisabled ? 0.55 : 1)
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovered)
         .monknotPointerCursor(enabled: !isDisabled)
