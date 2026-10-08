@@ -4,10 +4,17 @@ import OSLog
 public struct WorkspaceSearchBatch: Sendable {
     public let results: [WorkspaceSearchResult]
     public let skippedLargeFileCount: Int
+    /// The search stopped at its total or per-file match limit, so there may be more matches.
+    public let reachedMatchLimit: Bool
 
-    public init(results: [WorkspaceSearchResult], skippedLargeFileCount: Int = 0) {
+    public init(
+        results: [WorkspaceSearchResult],
+        skippedLargeFileCount: Int = 0,
+        reachedMatchLimit: Bool = false
+    ) {
         self.results = results
         self.skippedLargeFileCount = skippedLargeFileCount
+        self.reachedMatchLimit = reachedMatchLimit
     }
 }
 
@@ -59,6 +66,7 @@ public struct WorkspaceSearchService: Sendable {
 
         var results: [WorkspaceSearchResult] = []
         var skippedLargeFileCount = 0
+        var reachedMatchLimit = false
         var remainingAutoIndexedTextBytes = maxAutoIndexedTextBytes
         var remainingAutoIndexedTextDocuments = textIndex.maxEntryCount
         for document in documents {
@@ -117,15 +125,23 @@ public struct WorkspaceSearchService: Sendable {
             }
 
             results.append(contentsOf: matches)
+            if matches.count >= maxMatchesPerFile {
+                reachedMatchLimit = true
+            }
             if results.count >= maxMatches {
                 return WorkspaceSearchBatch(
                     results: Array(results.prefix(maxMatches)),
-                    skippedLargeFileCount: skippedLargeFileCount
+                    skippedLargeFileCount: skippedLargeFileCount,
+                    reachedMatchLimit: true
                 )
             }
         }
 
-        return WorkspaceSearchBatch(results: results, skippedLargeFileCount: skippedLargeFileCount)
+        return WorkspaceSearchBatch(
+            results: results,
+            skippedLargeFileCount: skippedLargeFileCount,
+            reachedMatchLimit: reachedMatchLimit
+        )
     }
 
     private func uncachedTextMatches(

@@ -95,6 +95,7 @@ public final class WorkspaceSearchIndex: @unchecked Sendable {
         guard !needle.isEmpty else { return WorkspaceSearchBatch(results: []) }
         var results: [WorkspaceSearchResult] = []
         var skippedLargeFileCount = 0
+        var reachedMatchLimit = false
 
         for document in documents where document.kind == .markdown || document.kind == .text {
             try Task.checkCancellation()
@@ -107,16 +108,24 @@ public final class WorkspaceSearchIndex: @unchecked Sendable {
             )
             skippedLargeFileCount += batch.skippedLargeFileCount
             results.append(contentsOf: batch.results)
+            if batch.results.count >= maxMatchesPerFile {
+                reachedMatchLimit = true
+            }
 
             if results.count >= maxMatches {
                 return WorkspaceSearchBatch(
                     results: Array(results.prefix(maxMatches)),
-                    skippedLargeFileCount: skippedLargeFileCount
+                    skippedLargeFileCount: skippedLargeFileCount,
+                    reachedMatchLimit: true
                 )
             }
         }
 
-        return WorkspaceSearchBatch(results: results, skippedLargeFileCount: skippedLargeFileCount)
+        return WorkspaceSearchBatch(
+            results: results,
+            skippedLargeFileCount: skippedLargeFileCount,
+            reachedMatchLimit: reachedMatchLimit
+        )
     }
 
     func matches(

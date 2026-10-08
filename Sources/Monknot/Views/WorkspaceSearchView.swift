@@ -494,7 +494,10 @@ struct WorkspaceSearchView: View {
 
         let matchCount = state.results.count
         let fileCount = groupedResults.count
-        var text = "\(matchCount) match\(matchCount == 1 ? "" : "es") in \(fileCount) file\(fileCount == 1 ? "" : "s")"
+        let matches = state.reachedMatchLimit
+            ? "\(matchCount)+ matches"
+            : "\(matchCount) match\(matchCount == 1 ? "" : "es")"
+        var text = "\(matches) in \(fileCount) file\(fileCount == 1 ? "" : "s")"
         if state.skippedLargeFileCount > 0 {
             text += " · \(state.skippedLargeFileCount) large file\(state.skippedLargeFileCount == 1 ? "" : "s") skipped"
         }
@@ -515,27 +518,42 @@ struct WorkspaceSearchView: View {
                     resultList
                 }
                 .onChange(of: state.selectedResultIndex) { _, index in
-                    proxy.scrollTo(index)
+                    proxy.scrollTo(WorkspaceSearchListItem.ID.match(index))
                 }
             }
             .scrollContentBackground(.hidden)
         }
     }
 
+    /// One flat list in which every file header and every match is its own lazy item, with one fixed
+    /// height per kind. A lazy stack estimates the items it has not built from the ones it has, so
+    /// grouping matches per file made it guess whole files from the first one and the scroll knob
+    /// jumped. Rows are equatable: moving the selection redraws only the two rows involved.
     private var resultList: some View {
-        LazyVStack(alignment: .leading, spacing: scaled(MonknotMetrics.Spacing.m)) {
-            ForEach(groupedResults) { group in
-                VStack(alignment: .leading, spacing: scaled(2)) {
+        let query = state.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return LazyVStack(alignment: .leading, spacing: scaled(MonknotMetrics.Spacing.xxs)) {
+            ForEach(WorkspaceSearchResultGrouping.listItems(from: groupedResults)) { item in
+                switch item {
+                case .header(let group):
                     resultGroupHeader(group)
-
-                    ForEach(group.matches) { match in
-                        resultRow(match)
+                case .match(let match):
+                    WorkspaceSearchResultRow(
+                        match: match,
+                        query: query,
+                        searchOptions: searchOptions,
+                        isSelected: match.index == state.selectedResultIndex,
+                        theme: theme,
+                        zoomScale: zoomScale
+                    ) {
+                        state.selectResult(at: match.index)
+                        openResult(match.result)
                     }
+                    .equatable()
                 }
             }
         }
         .padding(.horizontal, scaled(MonknotMetrics.Spacing.xs))
-        .padding(.vertical, scaled(MonknotMetrics.Spacing.s))
+        .padding(.bottom, scaled(MonknotMetrics.Spacing.s))
     }
 
     private func resultGroupHeader(_ group: WorkspaceSearchResultGroup) -> some View {
@@ -558,69 +576,19 @@ struct WorkspaceSearchView: View {
 
             Spacer(minLength: 0)
 
-            Text("\(group.matches.count)")
+            Text(groupCountText(group))
                 .font(.system(size: textScaled(10), weight: .medium, design: .monospaced))
                 .foregroundStyle(theme.sidebarMutedColor(prominence: 0.7))
-                .accessibilityLabel("\(group.matches.count) matches")
+                .accessibilityLabel("\(groupCountText(group)) matches")
         }
         .padding(.horizontal, scaled(MonknotMetrics.Spacing.s))
-        .padding(.top, scaled(MonknotMetrics.Spacing.xs))
+        // The gap between files (m) plus the header's own inset (xs), less the row spacing.
+        .padding(.top, scaled(MonknotMetrics.Spacing.m + MonknotMetrics.Spacing.xs - MonknotMetrics.Spacing.xxs))
         .padding(.bottom, scaled(2))
     }
 
-    private func resultRow(_ match: IndexedWorkspaceSearchResult) -> some View {
-        Button {
-            state.selectResult(at: match.index)
-            openResult(match.result)
-        } label: {
-            HStack(alignment: .firstTextBaseline, spacing: scaled(MonknotMetrics.Spacing.s)) {
-                Text(resultLocationLabel(match.result))
-                    .font(.system(size: textScaled(10), weight: .medium, design: .monospaced))
-                    .foregroundStyle(theme.sidebarMutedColor(prominence: 0.72))
-                    .frame(width: scaled(30), alignment: .trailing)
-
-                Text(highlightedPreview(for: match.result))
-                    .font(.system(size: textScaled(12)))
-                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.76))
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.horizontal, scaled(MonknotMetrics.Spacing.s))
-            .padding(.vertical, scaled(7))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(SidebarSearchResultButtonStyle(
-            theme: theme,
-            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale),
-            isSelected: match.index == state.selectedResultIndex
-        ))
-        .id(match.index)
-        .accessibilityLabel(
-            "\(match.result.displayName), \(resultLocationLabel(match.result)), \(match.result.preview)"
-        )
-    }
-
-    private func resultLocationLabel(_ result: WorkspaceSearchResult) -> String {
-        result.kind == .text ? "L\(result.line)" : result.locationLabel
-    }
-
-    private func highlightedPreview(for result: WorkspaceSearchResult) -> AttributedString {
-        let text = result.preview
-        let query = state.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let attributed = NSMutableAttributedString(string: text)
-
-        guard !query.isEmpty else {
-            return AttributedString(attributed)
-        }
-
-        let highlightColor = NSColor(hex: theme.accent).withAlphaComponent(theme.isDark ? 0.32 : 0.22)
-
-        for found in MonknotTextSearch.matchingRanges(of: query, in: text, options: searchOptions) {
-            attributed.addAttribute(.backgroundColor, value: highlightColor, range: found)
-        }
-
-        return AttributedString(attributed)
+    private func groupCountText(_ group: WorkspaceSearchResultGroup) -> String {
+        group.matches.count >= state.maxMatchesPerFile ? "\(group.matches.count)+" : "\(group.matches.count)"
     }
 
     private var loadingState: some View {
@@ -852,7 +820,31 @@ struct WorkspaceSearchResultGroup: Identifiable {
     var id: String { documentID }
 }
 
+enum WorkspaceSearchListItem: Identifiable {
+    enum ID: Hashable {
+        case file(String)
+        case match(Int)
+    }
+
+    case header(WorkspaceSearchResultGroup)
+    case match(IndexedWorkspaceSearchResult)
+
+    var id: ID {
+        switch self {
+        case .header(let group): .file(group.documentID)
+        case .match(let match): .match(match.index)
+        }
+    }
+}
+
 enum WorkspaceSearchResultGrouping {
+    /// Each file's header followed by its matches, as one flat sequence.
+    static func listItems(from groups: [WorkspaceSearchResultGroup]) -> [WorkspaceSearchListItem] {
+        groups.flatMap { group in
+            [.header(group)] + group.matches.map { .match($0) }
+        }
+    }
+
     static func groups(from results: [WorkspaceSearchResult]) -> [WorkspaceSearchResultGroup] {
         var groups: [WorkspaceSearchResultGroup] = []
         var groupIndexByDocumentID: [String: Int] = [:]
@@ -874,6 +866,77 @@ enum WorkspaceSearchResultGrouping {
         }
 
         return groups
+    }
+}
+
+private struct WorkspaceSearchResultRow: View, Equatable {
+    let match: IndexedWorkspaceSearchResult
+    let query: String
+    let searchOptions: MonknotSearchOptions
+    let isSelected: Bool
+    let theme: AppTheme
+    let zoomScale: Double
+    let open: () -> Void
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.match.index == rhs.match.index
+            && lhs.match.result == rhs.match.result
+            && lhs.query == rhs.query
+            && lhs.searchOptions == rhs.searchOptions
+            && lhs.isSelected == rhs.isSelected
+            && lhs.theme == rhs.theme
+            && lhs.zoomScale == rhs.zoomScale
+    }
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    private func textScaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
+        Button(action: open) {
+            HStack(alignment: .firstTextBaseline, spacing: scaled(MonknotMetrics.Spacing.s)) {
+                Text(locationLabel)
+                    .font(.system(size: textScaled(10), weight: .medium, design: .monospaced))
+                    .foregroundStyle(theme.sidebarMutedColor(prominence: 0.72))
+                    .frame(width: scaled(30), alignment: .trailing)
+
+                Text(highlightedPreview)
+                    .font(.system(size: textScaled(12)))
+                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.76))
+                    .lineLimit(2, reservesSpace: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, scaled(MonknotMetrics.Spacing.s))
+            .padding(.vertical, scaled(7))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(SidebarSearchResultButtonStyle(
+            theme: theme,
+            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale),
+            isSelected: isSelected
+        ))
+        .accessibilityLabel("\(match.result.displayName), \(locationLabel), \(match.result.preview)")
+    }
+
+    private var locationLabel: String {
+        match.result.kind == .text ? "L\(match.result.line)" : match.result.locationLabel
+    }
+
+    private var highlightedPreview: AttributedString {
+        let text = match.result.preview
+        let attributed = NSMutableAttributedString(string: text)
+        guard !query.isEmpty else { return AttributedString(attributed) }
+
+        let highlightColor = NSColor(hex: theme.accent).withAlphaComponent(theme.isDark ? 0.32 : 0.22)
+        for found in MonknotTextSearch.matchingRanges(of: query, in: text, options: searchOptions) {
+            attributed.addAttribute(.backgroundColor, value: highlightColor, range: found)
+        }
+        return AttributedString(attributed)
     }
 }
 

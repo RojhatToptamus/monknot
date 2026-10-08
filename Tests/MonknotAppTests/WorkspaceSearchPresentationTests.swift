@@ -54,6 +54,21 @@ final class WorkspaceSearchPresentationTests: XCTestCase {
         XCTAssertEqual(groups[1].kind, .pdf)
     }
 
+    func testListItemsFlattenEachFileHeaderBeforeItsMatches() {
+        let results = [
+            result(id: "notes-1", documentID: "/Notes.md", relativePath: "Notes.md", line: 4),
+            result(id: "brief-1", documentID: "/Brief.pdf", relativePath: "Reference/Brief.pdf", kind: .pdf, line: 2),
+            result(id: "notes-2", documentID: "/Notes.md", relativePath: "Notes.md", line: 18)
+        ]
+
+        let items = WorkspaceSearchResultGrouping.listItems(
+            from: WorkspaceSearchResultGrouping.groups(from: results)
+        )
+
+        // One lazy item per header and per match, so the stack never estimates a whole file at once.
+        XCTAssertEqual(items.map(\.id), [.file("/Notes.md"), .match(0), .match(2), .file("/Brief.pdf"), .match(1)])
+    }
+
     func testGroupingReturnsNoPlaceholderGroupForAnEmptySearch() {
         XCTAssertTrue(WorkspaceSearchResultGrouping.groups(from: []).isEmpty)
     }

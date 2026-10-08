@@ -53,6 +53,23 @@ final class WorkspaceTextSearchServiceTests: WorkspaceSearchServiceTestCase {
         XCTAssertEqual(results.filter { $0.relativePath == "second.md" }.count, 1)
     }
 
+    func testBatchSaysWhenAMatchLimitCutTheResultsShort() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = root.appendingPathComponent("first.md")
+        let second = root.appendingPathComponent("second.md")
+        try "needle needle needle".write(to: first, atomically: true, encoding: .utf8)
+        try "needle".write(to: second, atomically: true, encoding: .utf8)
+        let documents = [
+            WorkspaceDocument(url: first, rootURL: root),
+            WorkspaceDocument(url: second, rootURL: root)
+        ]
+
+        XCTAssertFalse(try WorkspaceSearchService().search(query: "needle", documents: documents).reachedMatchLimit)
+        XCTAssertTrue(try WorkspaceSearchService(maxMatchesPerFile: 2).search(query: "needle", documents: documents).reachedMatchLimit)
+        XCTAssertTrue(try WorkspaceSearchService(maxMatches: 2).search(query: "needle", documents: documents).reachedMatchLimit)
+    }
+
     func testSearchIsCaseAndDiacriticInsensitive() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
