@@ -38,8 +38,8 @@ final class WorkspaceWindowCoordinationTests: XCTestCase {
         let center = WorkspaceWindowRequestCenter()
         var reusedPaths: [String] = []
         var openedPaths: [String] = []
-        center.installReusableWindowHandler(id: UUID()) { request in
-            guard reusedPaths.isEmpty else { return false }
+        center.installReusableWindowHandler(id: UUID()) { request, claim in
+            guard claim == .empty, reusedPaths.isEmpty else { return false }
             reusedPaths.append(request.workspaceURL?.path ?? "")
             return true
         }
@@ -53,5 +53,28 @@ final class WorkspaceWindowCoordinationTests: XCTestCase {
 
         XCTAssertEqual(reusedPaths, [first.path])
         XCTAssertEqual(openedPaths, [second.path])
+    }
+
+    func testAWindowAlreadyShowingTheWorkspaceIsPreferredOverAnEmptyWindow() {
+        let workspace = URL(fileURLWithPath: "/tmp/Monknot/Notes", isDirectory: true)
+        let center = WorkspaceWindowRequestCenter()
+        var claimedBy: [String] = []
+        // Handlers are unordered; the claim order alone must decide.
+        center.installReusableWindowHandler(id: UUID()) { _, claim in
+            guard claim == .empty else { return false }
+            claimedBy.append("empty")
+            return true
+        }
+        center.installReusableWindowHandler(id: UUID()) { request, claim in
+            guard claim == .showsWorkspace, request.workspaceURL == workspace else { return false }
+            claimedBy.append("showing")
+            return true
+        }
+        center.installOpenWindowAction { _ in claimedBy.append("new window") }
+        center.finishInitialWorkspaceRequestHandling()
+
+        center.openWorkspaceWindow(at: workspace)
+
+        XCTAssertEqual(claimedBy, ["showing"])
     }
 }

@@ -40,6 +40,10 @@ struct MonknotApp: App {
             MonknotWorkspaceWindowRequest()
         }
         .windowStyle(.hiddenTitleBar)
+        // Finder opens arrive through AppDelegate, which routes each to the right window
+        // (WorkspaceWindowRequestCenter). Without this, SwiftUI also opened a new, empty window
+        // for every external open event.
+        .handlesExternalEvents(matching: [])
         .commands {
             MonknotCommandMenu()
             CommandGroup(after: .appInfo) {
@@ -92,6 +96,7 @@ private struct CheckForUpdatesView: View {
 }
 
 private struct MonknotWindowRootView: View {
+    @Environment(\.openWindow) private var openWindow
     @StateObject private var workspaceStore = WorkspaceStore()
     let request: MonknotWorkspaceWindowRequest
     @ObservedObject var themeStore: ThemeSettingsStore
@@ -110,17 +115,30 @@ private struct MonknotWindowRootView: View {
             workspaceLibrary: workspaceLibrary,
             terminationCoordinator: terminationCoordinator
         )
+            // Names the window in the Window menu, Mission Control and the Dock; the titlebar
+            // itself shows no title (design.md §10.1).
+            .navigationTitle(workspaceStore.workspaceURL?.lastPathComponent ?? "Monknot")
             .onAppear {
-                workspaceWindowRequests.installReusableWindowHandler(id: reusableWindowHandlerID) { request in
-                    guard workspaceStore.workspaceURL == nil,
-                          !workspaceStore.isBusy,
-                          let workspaceURL = request.workspaceURL
-                    else {
-                        return false
-                    }
+                workspaceWindowRequests.installReusableWindowHandler(id: reusableWindowHandlerID) { request, claim in
+                    switch claim {
+                    case .showsWorkspace:
+                        guard showsTarget(of: request) else { return false }
+                        if let documentURL = request.selectedDocumentURL {
+                            _ = workspaceStore.selectDocument(id: documentURL.standardizedFileURL.path)
+                        }
+                        // SwiftUI brings the window holding this value to the front.
+                        openWindow(id: MonknotWorkspaceWindowRequest.windowGroupID, value: self.request)
+                    case .empty:
+                        guard workspaceStore.workspaceURL == nil,
+                              !workspaceStore.isBusy,
+                              let workspaceURL = request.workspaceURL
+                        else {
+                            return false
+                        }
 
-                    _ = workspaceLibrary.add(workspaceURL)
-                    workspaceStore.openWorkspace(workspaceURL, selecting: request.selectedDocumentURL)
+                        _ = workspaceLibrary.add(workspaceURL)
+                        workspaceStore.openWorkspace(workspaceURL, selecting: request.selectedDocumentURL)
+                    }
                     Task { @MainActor in
                         await importCaptureIfNeeded(from: request)
                     }
@@ -155,6 +173,17 @@ private struct MonknotWindowRootView: View {
 
                 workspaceWindowRequests.finishInitialWorkspaceRequestHandling()
             }
+    }
+
+    /// True when this window already shows the requested workspace, or contains the requested file.
+    private func showsTarget(of request: MonknotWorkspaceWindowRequest) -> Bool {
+        guard !workspaceStore.isBusy,
+              let rootPath = workspaceStore.workspaceURL?.standardizedFileURL.path
+        else { return false }
+        if let documentPath = request.selectedDocumentURL?.standardizedFileURL.path {
+            return documentPath.hasPrefix(rootPath + "/")
+        }
+        return request.workspaceURL?.standardizedFileURL.path == rootPath
     }
 
     private func importCaptureIfNeeded(from request: MonknotWorkspaceWindowRequest) async {
@@ -200,6 +229,12 @@ private struct WorkspaceWindowRequestInstaller: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let savedWorkspaceStore = SavedWorkspaceStore()
     let terminationCoordinator = ApplicationTerminationCoordinator()
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Monknot has its own document tabs; the system's window tabs (Show Tab Bar, Merge All
+        // Windows) offered a second, conflicting kind.
+        NSWindow.allowsAutomaticWindowTabbing = false
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)

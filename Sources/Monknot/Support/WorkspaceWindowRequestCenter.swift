@@ -43,13 +43,21 @@ struct MonknotWorkspaceWindowRequest: Codable, Hashable, Sendable {
     }
 }
 
+/// How an open window can take a request. Windows that already show the workspace (or contain the
+/// requested file) are asked before empty ones, so reopening a workspace or one of its files from
+/// Finder brings its window forward instead of opening a second window on the same folder.
+enum WorkspaceWindowClaim: CaseIterable {
+    case showsWorkspace
+    case empty
+}
+
 @MainActor
 final class WorkspaceWindowRequestCenter {
     static let shared = WorkspaceWindowRequestCenter()
 
     private var openWindow: ((MonknotWorkspaceWindowRequest) -> Void)?
     private var pendingRequests: [MonknotWorkspaceWindowRequest] = []
-    private var reusableWindowHandlers: [UUID: (MonknotWorkspaceWindowRequest) -> Bool] = [:]
+    private var reusableWindowHandlers: [UUID: (MonknotWorkspaceWindowRequest, WorkspaceWindowClaim) -> Bool] = [:]
     private var didHandleInitialWorkspaceRequest = false
 
     func installOpenWindowAction(_ action: @escaping (MonknotWorkspaceWindowRequest) -> Void) {
@@ -59,7 +67,7 @@ final class WorkspaceWindowRequestCenter {
 
     func installReusableWindowHandler(
         id: UUID,
-        handler: @escaping (MonknotWorkspaceWindowRequest) -> Bool
+        handler: @escaping (MonknotWorkspaceWindowRequest, WorkspaceWindowClaim) -> Bool
     ) {
         reusableWindowHandlers[id] = handler
         flushPendingWorkspaceRequestsIfReady()
@@ -111,8 +119,10 @@ final class WorkspaceWindowRequestCenter {
     }
 
     private func openInReusableWindow(_ request: MonknotWorkspaceWindowRequest) -> Bool {
-        for handler in reusableWindowHandlers.values where handler(request) {
-            return true
+        for claim in WorkspaceWindowClaim.allCases {
+            for handler in reusableWindowHandlers.values where handler(request, claim) {
+                return true
+            }
         }
 
         return false
