@@ -265,6 +265,10 @@ enum MonknotNativeUndoCommand {
     static var canUndo: Bool { currentUndoManager?.canUndo == true }
     static var canRedo: Bool { currentUndoManager?.canRedo == true }
 
+    @MainActor static var terminalHasFocus: Bool {
+        TerminalFocusRestorer.firstResponder(in: NSApp.keyWindow, isInside: .monknotTerminalFocusRegion)
+    }
+
     static func performUndoIfAvailable() -> Bool {
         guard let undoManager = currentUndoManager, undoManager.canUndo else { return false }
         undoManager.undo()

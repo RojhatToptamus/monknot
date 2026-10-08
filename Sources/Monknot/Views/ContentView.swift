@@ -2171,10 +2171,10 @@ struct ContentView: View {
         }
 
         // Focused text keeps its own undo. A workspace Replace All is undone from it too once the
-        // text has nothing left to undo, matching the Edit menu.
+        // text has nothing left to undo, matching the Edit menu; the terminal keeps ⌘Z to itself.
         if action == .undoWorkspaceReplace,
            MonknotNativePasteboardCommand.hasNativeEditingFocus,
-           MonknotNativeUndoCommand.canUndo {
+           MonknotNativeUndoCommand.canUndo || MonknotNativeUndoCommand.terminalHasFocus {
             return false
         }
 
