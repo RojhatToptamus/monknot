@@ -2214,6 +2214,10 @@ struct ContentView: View {
             return true
         }
 
+        if documentViewOwnsFocus {
+            return NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
+        }
+
         return cutSelectedDocumentFromCommand()
     }
 
@@ -2226,6 +2230,10 @@ struct ContentView: View {
             return true
         }
 
+        if documentViewOwnsFocus {
+            return NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+        }
+
         return copySelectedDocumentFromCommand()
     }
 
@@ -2236,6 +2244,10 @@ struct ContentView: View {
 
         if MonknotNativePasteboardCommand.hasNativeEditingFocus {
             return true
+        }
+
+        if documentViewOwnsFocus {
+            return NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
         }
 
         if WorkspacePasteboardExportService.ownsPasteboard(), store.canPasteDocumentTransfer {
@@ -2557,6 +2569,13 @@ struct ContentView: View {
                 in: responderWindow,
                 isInside: .monknotSidebarFocusRegion
             )
+    }
+
+    /// A focused document view that is not a text view (the PDF view) handles Cut, Copy and
+    /// Paste itself: ⌘C with PDF text selected copied the PDF *file*. Files are cut, copied and
+    /// pasted only from the sidebar or when nothing has focus.
+    private var documentViewOwnsFocus: Bool {
+        TerminalFocusRestorer.firstResponder(in: responderWindow, isInside: .monknotDocumentFocusTarget)
     }
 
     private var terminalPanelOwnsFocus: Bool {
