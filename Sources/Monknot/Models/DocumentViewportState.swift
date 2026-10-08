@@ -1,8 +1,7 @@
 import CoreGraphics
 import Foundation
 
-/// One window's per-document scroll positions, selections and PDF viewports, plus the editor's
-/// latest selection snapshot.
+/// One window's per-document scroll positions, selections and PDF viewports.
 ///
 /// Scrolling and caret movement update these many times per second, so they are deliberately not
 /// SwiftUI state. Storing them in `@State` re-rendered the whole window on every scroll tick, and an
@@ -12,7 +11,6 @@ import Foundation
 @MainActor
 final class DocumentViewportStateCache {
     var states: [String: DocumentViewportState] = [:]
-    var markdownEditorSelection: MarkdownEditorSelectionSnapshot?
     /// Debounced write of `states` to user defaults.
     var pendingPersistenceTask: Task<Void, Never>?
 }

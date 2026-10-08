@@ -389,7 +389,6 @@ struct ContentView: View {
                 pendingPDFSearchTarget = nil
                 cancelPDFExcerptCopy()
                 pdfSelectionSnapshot = nil
-                viewportCache.markdownEditorSelection = nil
                 hasMarkdownEditorSelection = false
                 if let oldDocumentID, supportsSplitView(store.document(id: oldDocumentID)) {
                     DocumentSplitViewPersistence.setEnabled(
@@ -1670,7 +1669,6 @@ struct ContentView: View {
 
     private func handleMarkdownEditorSelection(_ selection: MarkdownEditorSelectionSnapshot) {
         guard selection.documentID == store.selectedDocumentID else { return }
-        viewportCache.markdownEditorSelection = selection
         let hasSelection = selection.selectedRange.length > 0
         if hasMarkdownEditorSelection != hasSelection {
             hasMarkdownEditorSelection = hasSelection
@@ -2065,16 +2063,11 @@ struct ContentView: View {
         return supportsSplitView(store.selectedDocument)
     }
 
+    /// The command copies the focused text view's live selection, so enablement only needs to
+    /// know one exists. Comparing the cached snapshot with the store's text could leave the item
+    /// disabled after a reload kept the selection, since a changed snapshot does not re-render.
     private var canCopyRenderedMarkdown: Bool {
-        guard MonknotNativeMarkdownCommand.canCopyRenderedSelection,
-              hasMarkdownEditorSelection,
-              let selection = viewportCache.markdownEditorSelection,
-              selection.documentID == store.selectedDocumentID,
-              selection.selectedRange.length > 0,
-              NSMaxRange(selection.selectedRange) <= (store.documentText as NSString).length
-        else { return false }
-        return (store.documentText as NSString).substring(with: selection.selectedRange)
-            == selection.selectedMarkdown
+        hasMarkdownEditorSelection && MonknotNativeMarkdownCommand.canCopyRenderedSelection
     }
 
     private func supportsSplitView(_ document: WorkspaceDocument?) -> Bool {
