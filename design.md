@@ -221,6 +221,8 @@ takes a fill plus one step up the ink ladder — fill is a far louder signal tha
 |---|---|
 | Document h1 | 22 / 1.2, tracking −0.02em, weight 600 |
 | Row + tab + button label | 13 / 1 |
+| Field text, overlay queries included | 13 / 1 |
+| Panel, sheet, overlay and empty-state title | 13 / 1, weight 600 |
 | Body prose | 13.5 / 1.6 |
 | Secondary + caption | 12 / 1.4 |
 | Eyebrow / group header | 10 / 1, tracking 0.09em, uppercase, weight 600 |
@@ -234,7 +236,9 @@ the monospaced code face or a smaller local font for these labels. The component
 presentations. A **quiet hint** uses `ink3` with no fill, border or padding. A **reference key cap**
 in Settings or the Keyboard Shortcuts reference uses `ink2`, 9 horizontal and 4 vertical padding,
 radius 6 and `surf3`/inset fill. A key cap contains only the key or modifier sequence; trigger
-context such as “after [[” belongs in the action label. Shortcut text embedded in prose, help
+context such as “after [[” belongs in the action label. A list footer pairs each quiet hint with its
+action in plain 12 `ink3` beside it (`↑↓` Choose · `↩` Open · `Esc` Close); words never go inside
+the label. Modifiers and named keys use Apple's symbols (⌘ ⇧ ⌥ ⌃ ↩ ⇥ −); Escape is written “Esc”. Shortcut text embedded in prose, help
 strings, tooltips and native menu items keeps the surrounding native text treatment.
 
 ---
@@ -313,6 +317,13 @@ target look smaller than it is.
 
 Field 28 · toggle 34×20 with a 16 knob, capsule track · stepper 26 · slider track 4 / knob 16 ·
 overlay row 34 · badge 22.
+
+**Empty states.** One layout everywhere: a 34 glyph in `ink3`, a 13/600 title, one 12 `ink3`
+line, and at most two actions. A primary action shows its shortcut as a quiet hint beside it. No
+paragraphs of explanation and no decorative glyphs.
+
+**Sheets.** 20 padding, the 13/600 title with an optional 12 `ink2` line under it, the content, then
+trailing 30 push buttons, Cancel before the default action.
 
 **Scroll thumbs.** Chrome lists (sidebar, search results, palettes, panels, Settings) always use the
 overlay thumb, whatever "Show scroll bars" says: no track, a 4pt radius-2 thumb at `ink` 35 % that
