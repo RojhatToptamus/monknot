@@ -279,8 +279,9 @@ struct TopNavigationBar: View {
             RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
                 .fill(theme.insetFillColor)
                 .overlay {
+                    // design.md §3: a focused field takes the 1px accent stroke.
                     RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                        .strokeBorder(theme.borderColor, lineWidth: 1)
+                        .strokeBorder(isSearchFocused ? theme.accentColor : theme.borderColor, lineWidth: 1)
                 }
         )
         .onAppear {

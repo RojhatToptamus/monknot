@@ -79,6 +79,43 @@ final class WorkspaceSearchPresentationTests: XCTestCase {
         XCTAssertEqual(matches.map(\.occurrenceInLine), [0, 1, 0])
     }
 
+    func testPDFMatchesOnDifferentLinesOfOnePageCountTheirOwnOccurrences() {
+        func pdfResult(_ id: String, preview: String) -> WorkspaceSearchResult {
+            WorkspaceSearchResult(
+                id: id,
+                documentID: "/Brief.pdf",
+                relativePath: "Brief.pdf",
+                displayName: "Brief.pdf",
+                kind: .pdf,
+                line: 3,
+                column: 0,
+                preview: preview
+            )
+        }
+        let results = [
+            pdfResult("a", preview: "first review here"),
+            pdfResult("b", preview: "second review and review"),
+            pdfResult("c", preview: "second review and review"),
+        ]
+        let matches = WorkspaceSearchResultGrouping.groups(from: results)[0].matches
+        XCTAssertEqual(matches.map(\.occurrenceInLine), [0, 0, 1])
+    }
+
+    func testSnippetKeepsSomeContextWhenTheOnlySpaceSitsRightBeforeTheMatch() throws {
+        let preview = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx lorem review"
+        let snippet = WorkspaceSearchSnippet.make(
+            preview: preview,
+            query: "review",
+            options: MonknotSearchOptions(),
+            occurrence: 0
+        )
+        let match = try XCTUnwrap(snippet.match)
+        XCTAssertGreaterThan(
+            snippet.text.distance(from: snippet.text.startIndex, to: match.lowerBound),
+            WorkspaceSearchSnippet.minimumContext
+        )
+    }
+
     func testSnippetKeepsItsOwnOccurrenceInViewAndMarksOnlyIt() throws {
         let line = "See [[Zettelkasten/note-001]] and the incident review, then the follow-up review"
         let options = MonknotSearchOptions()

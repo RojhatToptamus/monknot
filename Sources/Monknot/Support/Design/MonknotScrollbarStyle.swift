@@ -201,6 +201,12 @@ final class MonknotChromeScrollerBehavior: NSResponder {
         if let styleObserver {
             NotificationCenter.default.removeObserver(styleObserver)
         }
+        // A tracking area does not retain its owner; it must not outlive this object.
+        if let trackingArea, let scrollView {
+            MainActor.assumeIsolated {
+                scrollView.removeTrackingArea(trackingArea)
+            }
+        }
     }
 
     override func mouseEntered(with event: NSEvent) {

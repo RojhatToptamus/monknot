@@ -2251,7 +2251,7 @@ private struct SidebarNameInputSheet: View {
                 )
                 .overlay {
                     RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                        .strokeBorder(theme.borderColor, lineWidth: 1)
+                        .strokeBorder(isNameFocused ? theme.accentColor : theme.borderColor, lineWidth: 1)
                 }
         } buttons: {
             MonknotActionButton(

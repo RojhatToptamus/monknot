@@ -200,10 +200,21 @@ struct HorizontalTabWheelScrolling: NSViewRepresentable {
                   let documentView = scrollView.documentView,
                   documentView.frame.width > scrollView.contentView.bounds.width + 1,
                   scrollView.bounds.contains(scrollView.convert(locationInWindow, from: nil)),
+                  // Nothing (an overlay's scrim, a popover) may cover the strip at that point.
+                  isUncovered(locationInWindow, in: scrollView),
                   let horizontalEvent = HorizontalTabWheelScrolling.horizontalEvent(for: event)
             else { return false }
             scrollView.scrollWheel(with: horizontalEvent)
             return true
+        }
+
+        /// The window's frame view has no superview, so it hit-tests in window coordinates; it also
+        /// covers the titlebar, where the strips live.
+        private func isUncovered(_ locationInWindow: NSPoint, in scrollView: NSScrollView) -> Bool {
+            guard let frameView = window?.contentView?.superview,
+                  let hitView = frameView.hitTest(locationInWindow)
+            else { return true }
+            return hitView.isDescendant(of: scrollView)
         }
 
         private func removeMonitor() {

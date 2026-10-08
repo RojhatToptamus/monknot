@@ -256,8 +256,12 @@ struct WorkspaceSearchView: View {
             in: RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
         )
         .overlay {
+            // design.md §3: the one place a 1px accent stroke belongs is a focused field.
             RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                .strokeBorder(theme.borderColor, lineWidth: WorkspaceSearchLayoutPolicy.fieldBorderWidth)
+                .strokeBorder(
+                    focusedField == .query ? theme.accentColor : theme.borderColor,
+                    lineWidth: WorkspaceSearchLayoutPolicy.fieldBorderWidth
+                )
         }
     }
 
@@ -336,7 +340,9 @@ struct WorkspaceSearchView: View {
         .overlay {
             RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
                 .strokeBorder(
-                    theme.borderColor.opacity(canConfigureReplace ? 1 : MonknotIconButton.disabledBorderOpacity),
+                    focusedField == .replacement
+                        ? theme.accentColor
+                        : theme.borderColor.opacity(canConfigureReplace ? 1 : MonknotIconButton.disabledBorderOpacity),
                     lineWidth: WorkspaceSearchLayoutPolicy.fieldBorderWidth
                 )
         }
@@ -703,8 +709,11 @@ enum WorkspaceSearchResultGrouping {
             var indexedResult = IndexedWorkspaceSearchResult(index: index, result: result)
 
             if let groupIndex = groupIndexByDocumentID[result.documentID] {
-                if let previous = groups[groupIndex].matches.last, previous.result.line == result.line,
-                   previous.result.kind == result.kind {
+                // For a PDF `line` is the page, so the line's text has to match too.
+                if let previous = groups[groupIndex].matches.last,
+                   previous.result.line == result.line,
+                   previous.result.kind == result.kind,
+                   previous.result.preview == result.preview {
                     indexedResult.occurrenceInLine = previous.occurrenceInLine + 1
                 }
                 groups[groupIndex].matches.append(indexedResult)
@@ -794,8 +803,9 @@ private struct WorkspaceSearchFileRow: View {
 /// The text shown for a match: its line, clipped at the front so this occurrence is in view, with the
 /// occurrence's range. Two matches on one line therefore read differently.
 enum WorkspaceSearchSnippet {
-    /// Characters of context kept before the match when the line is clipped.
+    /// Characters of context kept before the match when the line is clipped, and the least it keeps.
     static let leadingContext = 18
+    static let minimumContext = 8
 
     static func make(
         preview: String,
@@ -811,9 +821,11 @@ enum WorkspaceSearchSnippet {
         let offset = preview.distance(from: preview.startIndex, to: match.lowerBound)
         guard offset > leadingContext else { return (preview, match) }
 
-        // Clip at a word boundary shortly before the match, then mark the cut with an ellipsis.
+        // Clip at a word boundary shortly before the match, keeping a few words of context, then mark
+        // the cut with an ellipsis.
         var start = preview.index(match.lowerBound, offsetBy: -leadingContext)
-        if let space = preview[start..<match.lowerBound].firstIndex(of: " ") {
+        if let space = preview[start..<match.lowerBound].firstIndex(of: " "),
+           preview.distance(from: space, to: match.lowerBound) > minimumContext {
             start = preview.index(after: space)
         }
         let text = "…" + preview[start...]
