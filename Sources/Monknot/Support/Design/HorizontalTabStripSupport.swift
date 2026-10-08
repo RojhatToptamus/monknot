@@ -1,3 +1,4 @@
+import AppKit
 import MonknotCore
 import SwiftUI
 
@@ -130,6 +131,86 @@ struct HorizontalTabFrameReader: View {
             Color.clear.preference(key: HorizontalTabFramePreferenceKey.self, value: [
                 id: proxy.frame(in: .named(coordinateSpace))
             ])
+        }
+    }
+}
+
+/// Lets a mouse wheel scroll a horizontal tab strip (design.md §10.3). A wheel has no horizontal axis,
+/// so a vertical notch over the strip moves it sideways, as in Safari and Xcode. Trackpad gestures
+/// keep their own axes, so a vertical swipe over the strip still does nothing, and ⇧-wheel is already
+/// horizontal. Place it in the strip's scrolling content, for example as a `.background`.
+struct HorizontalTabWheelScrolling: NSViewRepresentable {
+    func makeNSView(context: Context) -> MonitorView {
+        MonitorView()
+    }
+
+    func updateNSView(_ nsView: MonitorView, context: Context) {}
+
+    /// The same notch on the horizontal axis, or `nil` when the event is not a plain vertical
+    /// mouse-wheel notch and should pass through untouched.
+    static func horizontalEvent(for event: NSEvent) -> NSEvent? {
+        guard event.type == .scrollWheel,
+              !event.hasPreciseScrollingDeltas,
+              event.scrollingDeltaX == 0,
+              event.scrollingDeltaY != 0,
+              event.modifierFlags.intersection([.shift, .command, .option, .control]).isEmpty,
+              let cgEvent = event.cgEvent?.copy()
+        else { return nil }
+
+        let integerAxes: [(CGEventField, CGEventField)] = [
+            (.scrollWheelEventDeltaAxis1, .scrollWheelEventDeltaAxis2),
+            (.scrollWheelEventPointDeltaAxis1, .scrollWheelEventPointDeltaAxis2),
+        ]
+        for (vertical, horizontal) in integerAxes {
+            cgEvent.setIntegerValueField(horizontal, value: cgEvent.getIntegerValueField(vertical))
+            cgEvent.setIntegerValueField(vertical, value: 0)
+        }
+        cgEvent.setDoubleValueField(
+            .scrollWheelEventFixedPtDeltaAxis2,
+            value: cgEvent.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1)
+        )
+        cgEvent.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: 0)
+        return NSEvent(cgEvent: cgEvent)
+    }
+
+    final class MonitorView: NSView {
+        private var monitor: Any?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            removeMonitor()
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                guard let self,
+                      event.window === self.window,
+                      self.scrollStrip(for: event, at: event.locationInWindow)
+                else { return event }
+                return nil
+            }
+        }
+
+        deinit {
+            removeMonitor()
+        }
+
+        /// Scrolls the enclosing strip for a mouse-wheel notch at `locationInWindow`, when that point is
+        /// over the strip and the strip overflows; returns whether it did.
+        func scrollStrip(for event: NSEvent, at locationInWindow: NSPoint) -> Bool {
+            guard let scrollView = enclosingScrollView,
+                  let documentView = scrollView.documentView,
+                  documentView.frame.width > scrollView.contentView.bounds.width + 1,
+                  scrollView.bounds.contains(scrollView.convert(locationInWindow, from: nil)),
+                  let horizontalEvent = HorizontalTabWheelScrolling.horizontalEvent(for: event)
+            else { return false }
+            scrollView.scrollWheel(with: horizontalEvent)
+            return true
+        }
+
+        private func removeMonitor() {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+            }
+            monitor = nil
         }
     }
 }

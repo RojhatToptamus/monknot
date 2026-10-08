@@ -975,7 +975,7 @@ private struct WorkspaceSwitcherPopover: View {
                     .padding(.horizontal, scaled(14))
                     .frame(height: scaled(42), alignment: .leading)
             } else {
-                ScrollView(.vertical, showsIndicators: workspaces.count > 7) {
+                MonknotScrollView {
                     LazyVStack(spacing: scaled(4)) {
                         ForEach(Array(workspaces.enumerated()), id: \.element.id) { index, workspace in
                             WorkspaceSwitcherRow(
@@ -1548,6 +1548,8 @@ private final class SidebarClipView: NSClipView {
 }
 
 private final class SidebarNativeScrollView<Content: View>: NSScrollView {
+    private let chromeScrollerBehavior = MonknotChromeScrollerBehavior()
+
     override var mouseDownCanMoveWindow: Bool {
         false
     }
@@ -1573,7 +1575,7 @@ private final class SidebarNativeScrollView<Content: View>: NSScrollView {
         hasHorizontalScroller = false
         horizontalScrollElasticity = .none
         verticalScrollElasticity = .allowed
-        MonknotScrollbarStyle.apply(to: self)
+        chromeScrollerBehavior.attach(to: self)
     }
 }
 
@@ -2153,7 +2155,7 @@ private struct MarkdownLinkMoveReviewSheet: View {
             .foregroundStyle(theme.foregroundColor)
             .lineLimit(1)
 
-            ScrollView {
+            MonknotScrollView {
                 LazyVStack(alignment: .leading, spacing: scaled(12)) {
                     ForEach(Array(review.plan.rewriteFiles.enumerated()), id: \.offset) { _, filePlan in
                         VStack(alignment: .leading, spacing: scaled(6)) {

@@ -111,6 +111,7 @@ struct DocumentTabBar: View {
                                 reorderTab: reorderTab,
                                 minimumContentWidth: viewportWidth
                             )
+                            .background(HorizontalTabWheelScrolling())
                         }
                         .coordinateSpace(name: HorizontalTabViewport.documentTabs)
                         .onAppear {

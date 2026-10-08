@@ -3,18 +3,34 @@ import SwiftUI
 
 enum MonknotScrollbarStyle {
     static let trackWidth: CGFloat = 12
-    static let restingThumbWidth: CGFloat = 6
-    static let hoveredThumbWidth: CGFloat = 8
-    // At 18 % the thumb measured 1.8:1 against the canvas; half strength clears the 3:1 minimum for
-    // non-text indicators in both appearances.
-    static let restingOpacity: CGFloat = 0.5
+    /// The thumb is a mark, not a control surface (design.md §7: scroll thumbs take radius 2). It rests
+    /// slim and quiet while the list scrolls or the pointer is over it, and widens and darkens under
+    /// the pointer so it is easy to grab with a mouse.
+    static let restingThumbWidth: CGFloat = 4
+    static let hoveredThumbWidth: CGFloat = 6
+    static let thumbRadius: CGFloat = 2
+    static let restingOpacity: CGFloat = 0.35
     static let hoveredOpacity: CGFloat = 0.7
 
-    /// The scroller style follows System Settings › Appearance › Show scroll bars; AppKit applies it.
+    /// Documents (editor, PDF): the scroller style follows System Settings › Appearance › Show scroll
+    /// bars, which AppKit applies.
     static func apply(to scrollView: NSScrollView) {
         scrollView.autohidesScrollers = true
         if !(scrollView.verticalScroller is MonknotScroller) {
             scrollView.verticalScroller = MonknotScroller(frame: .zero)
+        }
+    }
+
+    /// Chrome lists (sidebar, search results, palettes, panels, Settings) always use the slim overlay
+    /// thumb. With a mouse attached, AppKit would otherwise give each one a 17pt bar with an opaque
+    /// track, the loudest thing in a 248pt sidebar. Keep the style with `MonknotChromeScrollerBehavior`,
+    /// because AppKit resets it whenever the system setting or the attached mouse changes.
+    static func applyChrome(to scrollView: NSScrollView) {
+        apply(to: scrollView)
+        if scrollView.scrollerStyle != .overlay {
+            scrollView.scrollerStyle = .overlay
+            // Give the list back the width the legacy bar took.
+            scrollView.tile()
         }
     }
 
@@ -57,8 +73,8 @@ enum MonknotScrollbarStyle {
     }
 }
 
-/// The thin rounded thumb used while overlay scroll bars are active. With "Show scroll bars: Always"
-/// the user asked for the standard scroll bar, so legacy style draws AppKit's own knob and track.
+/// The thin thumb used while overlay scroll bars are active. Documents with "Show scroll bars: Always"
+/// draw AppKit's own legacy knob and track, because the user asked for the standard scroll bar there.
 final class MonknotScroller: NSScroller {
     /// Without this AppKit treats every scroller subclass as legacy-only (see NSScroller.h), so
     /// documents never got overlay scroll bars on any Mac.
@@ -117,7 +133,8 @@ final class MonknotScroller: NSScroller {
             ? MonknotScrollbarStyle.hoveredOpacity
             : MonknotScrollbarStyle.restingOpacity
         NSColor.labelColor.withAlphaComponent(opacity).setFill()
-        NSBezierPath(roundedRect: visibleRect, xRadius: width / 2, yRadius: width / 2).fill()
+        let radius = MonknotScrollbarStyle.thumbRadius
+        NSBezierPath(roundedRect: visibleRect, xRadius: radius, yRadius: radius).fill()
     }
 
     override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {
@@ -125,6 +142,82 @@ final class MonknotScroller: NSScroller {
             super.drawKnobSlot(in: slotRect, highlight: flag)
             return
         }
+    }
+}
+
+/// Keeps a chrome scroll view on the overlay thumb and shows the thumb while the pointer is over the
+/// list, so a mouse user can see there is more and grab it. It fades again like any overlay scroller.
+final class MonknotChromeScrollerBehavior: NSResponder {
+    private weak var scrollView: NSScrollView?
+    private var trackingArea: NSTrackingArea?
+    private var styleObserver: NSObjectProtocol?
+    private var lastReveal: TimeInterval = 0
+
+    func attach(to scrollView: NSScrollView) {
+        if self.scrollView !== scrollView {
+            detach()
+            self.scrollView = scrollView
+            let trackingArea = NSTrackingArea(
+                rect: .zero,
+                options: [.activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved],
+                owner: self,
+                userInfo: nil
+            )
+            scrollView.addTrackingArea(trackingArea)
+            self.trackingArea = trackingArea
+            // AppKit puts every scroll view back on the system style after posting this.
+            styleObserver = NotificationCenter.default.addObserver(
+                forName: NSScroller.preferredScrollerStyleDidChangeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                DispatchQueue.main.async {
+                    guard let scrollView = self?.scrollView else { return }
+                    MonknotScrollbarStyle.applyChrome(to: scrollView)
+                }
+            }
+        }
+        MonknotScrollbarStyle.applyChrome(to: scrollView)
+    }
+
+    func detach() {
+        if let trackingArea, let scrollView {
+            scrollView.removeTrackingArea(trackingArea)
+        }
+        trackingArea = nil
+        if let styleObserver {
+            NotificationCenter.default.removeObserver(styleObserver)
+        }
+        styleObserver = nil
+        scrollView = nil
+    }
+
+    deinit {
+        if let styleObserver {
+            NotificationCenter.default.removeObserver(styleObserver)
+        }
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        revealThumb()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        revealThumb()
+    }
+
+    private func revealThumb() {
+        guard let scrollView,
+              scrollView.scrollerStyle == .overlay,
+              let documentView = scrollView.documentView,
+              documentView.frame.height > scrollView.contentView.bounds.height + 1
+        else { return }
+        // Flashing restarts the overlay fade; once every 0.4s is enough to keep it up while the
+        // pointer moves.
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastReveal > 0.4 else { return }
+        lastReveal = now
+        scrollView.flashScrollers()
     }
 }
 
@@ -152,15 +245,21 @@ private struct MonknotScrollbarConfigurator: NSViewRepresentable {
     }
 
     final class ConfigurationView: NSView {
+        private let behavior = MonknotChromeScrollerBehavior()
+
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            guard window != nil else {
+                behavior.detach()
+                return
+            }
             applyStyle()
         }
 
         func applyStyle() {
             DispatchQueue.main.async { [weak self] in
-                guard let scrollView = self?.enclosingScrollView else { return }
-                MonknotScrollbarStyle.apply(to: scrollView)
+                guard let self, let scrollView = self.enclosingScrollView else { return }
+                self.behavior.attach(to: scrollView)
             }
         }
     }

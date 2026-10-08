@@ -314,6 +314,13 @@ target look smaller than it is.
 Field 28 · toggle 34×20 with a 16 knob, capsule track · stepper 26 · slider track 4 / knob 16 ·
 overlay row 34 · badge 22.
 
+**Scroll thumbs.** Chrome lists (sidebar, search results, palettes, panels, Settings) always use the
+overlay thumb, whatever "Show scroll bars" says: no track, a 4pt radius-2 thumb at `ink` 35 % that
+widens to 6pt at 70 % under the pointer. It appears while the list scrolls and while the pointer is
+over the list, and fades like any overlay scroller. With a mouse attached AppKit would otherwise give
+each list a 17pt bar with an opaque track, the loudest object in a 248pt sidebar, and take 17pt of
+every row. The document (editor, PDF) follows the system setting, as Notes and Xcode do.
+
 ---
 
 ## 6. Proportion — every ratio, so nothing is eyeballed
@@ -567,10 +574,12 @@ padding`.
 - **Width:** hug the label, cap at **220 outer**. No minimum, no floor, no shrinking. A tab is the
   same width with thirty open as with two, so the strip the user learned stays put. The 16 trailing
   slot is reserved at every width so nothing shifts when the pointer enters.
-- **Scroll:** horizontal scroller. Two-finger horizontal and ⇧-wheel scroll it. A plain vertical
-  wheel over the titlebar does nothing and is **never** forwarded to the document. Momentum and
-  rubber-band come from the platform scroller — do not reimplement them. No scrollbar is drawn: the
-  strip is 30 tall and a bar would take a third of it.
+- **Scroll:** horizontal scroller. Two-finger horizontal, ⇧-wheel **and a plain mouse wheel**
+  scroll it: a wheel has no horizontal axis, so each vertical notch over the strip moves it
+  sideways, as in Safari and Xcode, and a mouse-only user can reach every tab. A trackpad's vertical
+  swipe over the titlebar does nothing, and nothing over the strip is **ever** forwarded to the
+  document. Momentum and rubber-band come from the platform scroller — do not reimplement them. No
+  scrollbar is drawn: the strip is 30 tall and a bar would take a third of it.
 - **Reveal:** activating, opening or restoring a tab scrolls it just inside the strip by the
   **nearest edge**, plus one 3pt gap. **Never centre it** — re-centring moves every other tab out
   from under the pointer, so the tab you meant to click next is somewhere else. If already fully
@@ -637,8 +646,9 @@ the strip. The number is what tells them apart. No hug, no cap, no condensed for
 Run state tints the glyph, the only coloured element in the header:
 `ok` running · `accent` awaiting input · `ink3` idle or exited 0 · `danger` exited non-zero.
 
-Close: 10pt `xmark` in a 14 target, on the active pill and on hover. The strip scrolls with the same
-24pt trailing fade; being clipped by the panel edge is correct.
+Close: 10pt `xmark` in a 14 target, on the active pill and on hover. The strip scrolls like the tab
+strip, mouse wheel included, with the same 24pt trailing fade; being clipped by the panel edge is
+correct.
 
 The header order is session scroller → 13pt divider → fullscreen → new session → close panel.
 Fullscreen is one 26/14 optical control: diagonal arrows point out when docked and in when expanded.

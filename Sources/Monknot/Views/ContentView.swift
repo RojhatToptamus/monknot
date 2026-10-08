@@ -3226,7 +3226,7 @@ private struct AmbiguousMarkdownLinkPicker: View {
 
                 Divider().overlay(theme.separatorColor)
 
-                ScrollView {
+                MonknotScrollView {
                     LazyVStack(spacing: scaled(2)) {
                         ForEach(documents) { document in
                             Button {

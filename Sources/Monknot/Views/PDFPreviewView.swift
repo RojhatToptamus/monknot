@@ -2317,6 +2317,8 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
     private let contentView = NSView()
     private let outlineScrollView = NSScrollView()
     private let annotationScrollView = NSScrollView()
+    private let outlineScrollerBehavior = MonknotChromeScrollerBehavior()
+    private let annotationScrollerBehavior = MonknotChromeScrollerBehavior()
     private let emptyLabel = NSTextField(labelWithString: "")
     private var headerHeightConstraint: NSLayoutConstraint!
     private var sectionControlHeightConstraint: NSLayoutConstraint!
@@ -2572,6 +2574,7 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         outlineScrollView.documentView = outlineView
         outlineScrollView.drawsBackground = false
         outlineScrollView.hasVerticalScroller = true
+        outlineScrollerBehavior.attach(to: outlineScrollView)
         contentView.addSubview(outlineScrollView)
         NSLayoutConstraint.activate([
             outlineScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
@@ -2596,6 +2599,7 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         annotationScrollView.documentView = annotationTableView
         annotationScrollView.drawsBackground = false
         annotationScrollView.hasVerticalScroller = true
+        annotationScrollerBehavior.attach(to: annotationScrollView)
         contentView.addSubview(annotationScrollView)
         NSLayoutConstraint.activate([
             annotationScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),

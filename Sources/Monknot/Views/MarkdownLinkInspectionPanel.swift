@@ -105,7 +105,7 @@ struct MarkdownLinkInspectionPanel: View {
                     .buttonStyle(.bordered)
             }
         } else if let inspection = state.inspection {
-            ScrollView {
+            MonknotScrollView {
                 LazyVStack(alignment: .leading, spacing: scaled(16)) {
                     incomingSection(inspection.incomingLinks)
                     outgoingSection(inspection.outgoingIssues)

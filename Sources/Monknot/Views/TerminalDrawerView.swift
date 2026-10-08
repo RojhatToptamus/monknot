@@ -190,6 +190,7 @@ private struct TerminalDrawerTabGroup: View {
                                     .accessibilityHidden(true)
                             }
                             .frame(minWidth: viewportWidth, alignment: .leading)
+                            .background(HorizontalTabWheelScrolling())
                         }
                         .coordinateSpace(name: HorizontalTabViewport.terminalTabs)
                         .onAppear {

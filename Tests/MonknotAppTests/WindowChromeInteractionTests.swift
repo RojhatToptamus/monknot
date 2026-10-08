@@ -142,6 +142,32 @@ final class WindowChromeInteractionTests: XCTestCase {
         XCTAssertEqual(MonknotIconButton.disabledBorderOpacity, 0.4, accuracy: 0.001)
     }
 
+    func testChromeListsKeepTheSlimOverlayThumbWhenTheSystemSwitchesToLegacyScrollBars() async {
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 248, height: 300))
+        scrollView.hasVerticalScroller = true
+        scrollView.documentView = NSView(frame: NSRect(x: 0, y: 0, width: 248, height: 1200))
+        let behavior = MonknotChromeScrollerBehavior()
+        behavior.attach(to: scrollView)
+        XCTAssertEqual(scrollView.scrollerStyle, .overlay)
+        XCTAssertTrue(scrollView.verticalScroller is MonknotScroller)
+        XCTAssertEqual(scrollView.contentView.bounds.width, 248, "An overlay thumb takes no width from the list")
+
+        // What AppKit does when "Show scroll bars" changes or a mouse is plugged in.
+        scrollView.scrollerStyle = .legacy
+        NotificationCenter.default.post(name: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil)
+        for _ in 0..<10 where scrollView.scrollerStyle != .overlay {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(scrollView.scrollerStyle, .overlay)
+        behavior.detach()
+    }
+
+    func testScrollThumbsAreSlimRadiusTwoMarks() {
+        XCTAssertEqual(MonknotScrollbarStyle.thumbRadius, 2, "design.md §7: scroll thumbs are radius-2 marks")
+        XCTAssertLessThan(MonknotScrollbarStyle.restingThumbWidth, MonknotScrollbarStyle.hoveredThumbWidth)
+        XCTAssertLessThan(MonknotScrollbarStyle.restingOpacity, MonknotScrollbarStyle.hoveredOpacity)
+    }
+
     func testDisabledRowsDrawNoHoverOrPressFillButKeepTheirSelection() {
         for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             func fill(selected: Bool = false, hovered: Bool = false, pressed: Bool = false, enabled: Bool) -> Color {
