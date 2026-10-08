@@ -237,7 +237,7 @@ private struct ThemeEditorSection: View {
             SettingsToggleRow(
                 theme: uiTheme,
                 title: "Quiet sidebar",
-                detail: "Subdue sidebar text and icons by 20%",
+                detail: "Subdue sidebar text and icons",
                 showsDivider: false,
                 isOn: quietSidebar
             )

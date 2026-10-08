@@ -1666,14 +1666,20 @@ private struct SidebarRowLabel<Trailing: View>: View {
     // design.md §1.4: label `ink2` and glyph `ink3` at rest, both `ink` when hovered or held. The
     // selected row's label is `ink` and its glyph `accent` (§1.3). Quiet Sidebar subdues all of it.
     private var labelColor: Color {
-        theme.sidebarColor(isSelected || isHighlighted ? theme.foregroundColor : theme.mutedForegroundColor)
+        theme.sidebarColor(
+            theme.foregroundColor,
+            opacity: isSelected || isHighlighted ? 1 : AppTheme.mutedInkOpacity
+        )
     }
 
     private var glyphColor: Color {
         if isSelected {
             return theme.sidebarColor(theme.accentColor)
         }
-        return theme.sidebarColor(isHighlighted ? theme.foregroundColor : theme.tertiaryForegroundColor)
+        return theme.sidebarColor(
+            theme.foregroundColor,
+            opacity: isHighlighted ? 1 : AppTheme.tertiaryInkOpacity
+        )
     }
 }
 
@@ -1916,7 +1922,10 @@ private struct SidebarGroupHeaderLabel: View {
     }
 
     var body: some View {
-        let ink = theme.sidebarColor(isHighlighted ? theme.foregroundColor : theme.tertiaryForegroundColor)
+        let ink = theme.sidebarColor(
+            theme.foregroundColor,
+            opacity: isHighlighted ? 1 : AppTheme.tertiaryInkOpacity
+        )
         HStack(spacing: scaled(8)) {
             Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                 .font(.system(size: MonknotMetrics.interfaceGlyph(10, theme: theme, zoomScale: zoomScale), weight: .regular))

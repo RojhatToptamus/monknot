@@ -80,12 +80,16 @@ extension AppTheme {
         Color(hex: recessedSurfaceHex(amount: isDark ? 0.17 : 0.09))
     }
 
+    /// design.md §1.2 `ink2` and `ink3` as opacities of the theme foreground.
+    static let mutedInkOpacity = 0.62
+    static let tertiaryInkOpacity = 0.40
+
     var mutedForegroundColor: Color {
-        foregroundColor.opacity(0.62)
+        foregroundColor.opacity(Self.mutedInkOpacity)
     }
 
     var tertiaryForegroundColor: Color {
-        foregroundColor.opacity(0.40)
+        foregroundColor.opacity(Self.tertiaryInkOpacity)
     }
 
     var disabledForegroundColor: Color {
@@ -113,8 +117,12 @@ extension AppTheme {
         let base = (isDark ? 0.58 : 0.60) + normalizedContrast * 0.12
         let tertiaryReduction = (1 - clampedProminence) * 0.18
         let quietReduction = quietSidebar ? 0.08 : 0
-        let minimum = isDark ? 0.48 : 0.52
-        return max(minimum, min(0.76, base - tertiaryReduction - quietReduction))
+        return max(sidebarLegibleInkFloor, min(0.76, base - tertiaryReduction - quietReduction))
+    }
+
+    /// Below this opacity small sidebar labels and icons stop being legible in light themes.
+    private var sidebarLegibleInkFloor: Double {
+        isDark ? 0.48 : 0.52
     }
 
     var selectedRowColor: Color {
@@ -148,8 +156,17 @@ extension AppTheme {
         Color.black.opacity(isDark ? 0.32 : 0.16)
     }
 
+    /// Sidebar ink: `color` at `opacity`, which Quiet Sidebar subdues (see `sidebarOpacity`). Pass an
+    /// opaque color and the ink level as `opacity`, never an already translucent color.
     func sidebarColor(_ color: Color, opacity: Double = 1) -> Color {
-        color.opacity(opacity * (quietSidebar ? 0.8 : 1))
+        color.opacity(sidebarOpacity(opacity))
+    }
+
+    /// Quiet Sidebar takes a fifth off the opacity once, never below the legibility floor, and leaves
+    /// ink already under the floor (resting glyphs at `ink3`) where it is, clear of the disabled `ink4`.
+    func sidebarOpacity(_ opacity: Double) -> Double {
+        guard quietSidebar else { return opacity }
+        return max(min(opacity, sidebarLegibleInkFloor), opacity * 0.8)
     }
 
     // MARK: - Layout (scales with UI font size; no hard-coded theme colors)

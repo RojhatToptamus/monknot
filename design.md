@@ -605,7 +605,8 @@ Names at one depth therefore share a left edge, and a child steps right by exact
 chevron beside a monochrome folder outline says the same thing twice and pushes every name right.
 
 Label `ink2` and glyph `ink3` at rest, both `ink` on hover or press; the selected file's label is `ink`
-and its glyph `accent` (§1.3, §1.4). Quiet Sidebar subdues all of it by a fifth.
+and its glyph `accent` (§1.3, §1.4). Quiet Sidebar takes a fifth off each opacity, once, never below
+52% light / 48% dark; ink already under that floor (resting glyphs at `ink3`) stays put, clear of `ink4`.
 
 **Recents** is a collapsible group between the tree and the footer: the chevron in the glyph column, an
 eyebrow title (§4.3) and a trailing count in 12 `ink3`. Its entries are file rows one level in. It never
