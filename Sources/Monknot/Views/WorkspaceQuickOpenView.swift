@@ -117,7 +117,7 @@ struct WorkspaceQuickOpenView: View {
                                             .lineLimit(1)
 
                                         Text(document.relativePath)
-                                            .font(.system(size: scaled(10.5)))
+                                            .font(.system(size: scaled(12)))
                                             .foregroundStyle(theme.tertiaryForegroundColor)
                                             .lineLimit(1)
                                     }
@@ -164,7 +164,7 @@ struct WorkspaceQuickOpenView: View {
             )
             Spacer(minLength: 0)
             Text("\(state.matches.count) of \(documents.count) files")
-                .font(.system(size: scaled(10.5), weight: .regular))
+                .font(.system(size: scaled(12), weight: .regular))
                 .foregroundStyle(theme.tertiaryForegroundColor)
         }
         .padding(.horizontal, scaled(14))

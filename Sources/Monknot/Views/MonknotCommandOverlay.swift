@@ -58,7 +58,7 @@ struct MonknotCommandOverlayEmptyState: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(theme.foregroundColor)
             Text(message)
-                .font(.system(size: 11.5, weight: .regular))
+                .font(.system(size: 12, weight: .regular))
                 .foregroundStyle(theme.tertiaryForegroundColor)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

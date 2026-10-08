@@ -290,7 +290,7 @@ private struct WorkspaceSettingsRow: View {
 
                 Text(((entry?.path ?? "") as NSString).abbreviatingWithTildeInPath)
                     .font(.system(
-                        size: MonknotMetrics.interfaceText(11, theme: theme, zoomScale: settingsZoomScale),
+                        size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: settingsZoomScale),
                         weight: .regular,
                         design: .monospaced
                     ))

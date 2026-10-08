@@ -21,7 +21,7 @@ enum MonknotTypography {
     }
 
     static func rowDetail(theme: AppTheme, zoomScale: Double) -> Font {
-        .system(size: MonknotMetrics.interfaceText(11.5, theme: theme, zoomScale: zoomScale))
+        .system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale))
     }
 
     static func panelTitle(theme: AppTheme) -> Font {
@@ -37,7 +37,7 @@ enum MonknotTypography {
     }
 
     static func emptyStateDetail(theme: AppTheme, zoomScale: Double) -> Font {
-        .system(size: MonknotMetrics.interfaceText(12.5, theme: theme, zoomScale: zoomScale))
+        .system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale))
     }
 
     static func tabLabel(theme: AppTheme, zoomScale: Double) -> Font {
@@ -49,7 +49,7 @@ enum MonknotTypography {
     }
 
     static func settingsRowDetail(theme: AppTheme, zoomScale: Double = 1) -> Font {
-        .system(size: MonknotMetrics.interfaceText(11.5, theme: theme, zoomScale: zoomScale))
+        .system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale))
     }
 
     static func settingsButton(theme: AppTheme, zoomScale: Double = 1) -> Font {

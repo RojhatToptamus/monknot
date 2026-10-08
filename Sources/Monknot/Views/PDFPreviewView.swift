@@ -92,7 +92,7 @@ struct PDFPreviewView: View {
 
                     Text(markupHint)
                         .font(.system(
-                            size: MonknotMetrics.interfaceText(12.5, theme: theme, zoomScale: zoomScale),
+                            size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale),
                             weight: .regular
                         ))
                         .foregroundStyle(theme.foregroundColor)
@@ -1596,7 +1596,7 @@ private struct PDFAnnotationToolbar: View {
 
                 Text("\(Int(strokeWidth)) pt")
                     .font(.system(
-                        size: MonknotMetrics.interfaceText(11, theme: theme, zoomScale: zoomScale),
+                        size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale),
                         weight: .regular,
                         design: .monospaced
                     ))
@@ -1615,7 +1615,7 @@ private struct PDFAnnotationToolbar: View {
         HStack(spacing: scaled(8)) {
             Text("Thickness")
                 .font(.system(
-                    size: MonknotMetrics.interfaceText(11, theme: theme, zoomScale: zoomScale),
+                    size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale),
                     weight: .regular
                 ))
                 .foregroundStyle(theme.mutedForegroundColor)

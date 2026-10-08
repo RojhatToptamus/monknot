@@ -492,11 +492,8 @@ struct SettingsSectionHeader: View {
 
     var body: some View {
         Text(title)
-            .font(.system(
-                size: MonknotMetrics.interfaceText(11, theme: theme, zoomScale: settingsZoomScale),
-                weight: .semibold
-            ))
-            .tracking(scaled(1.1))
+            .font(MonknotTypography.eyebrow(theme: theme, zoomScale: settingsZoomScale))
+            .tracking(MonknotTypography.eyebrowTracking(theme: theme, zoomScale: settingsZoomScale))
             .foregroundStyle(theme.mutedForegroundColor)
             .textCase(.uppercase)
             .padding(.horizontal, scaled(2))

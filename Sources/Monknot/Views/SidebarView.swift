@@ -1066,7 +1066,7 @@ private struct WorkspaceSwitcherRow: View {
                             .truncationMode(.tail)
 
                         Text((workspace.path as NSString).abbreviatingWithTildeInPath)
-                            .font(.system(size: textScaled(11), weight: .regular, design: .monospaced))
+                            .font(.system(size: textScaled(12), weight: .regular, design: .monospaced))
                             .foregroundStyle(
                                 isHovered ? theme.mutedForegroundColor : theme.tertiaryForegroundColor
                             )

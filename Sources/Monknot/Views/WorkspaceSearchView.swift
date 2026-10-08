@@ -302,7 +302,7 @@ struct WorkspaceSearchView: View {
 
                 if let message = state.replaceStatusMessage {
                     Text(message)
-                        .font(.system(size: textScaled(11), weight: .regular))
+                        .font(.system(size: textScaled(12), weight: .regular))
                         .foregroundStyle(theme.sidebarMutedColor())
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -454,7 +454,7 @@ struct WorkspaceSearchView: View {
                 }
 
                 Text(searchStatusText)
-                    .font(.system(size: textScaled(11), weight: .regular))
+                    .font(.system(size: textScaled(12), weight: .regular))
                     .foregroundStyle(
                         state.errorMessage == nil
                             ? theme.sidebarMutedColor()
@@ -676,7 +676,7 @@ struct WorkspaceSearchView: View {
                 .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
 
             Text(detail)
-                .font(.system(size: textScaled(11)))
+                .font(.system(size: textScaled(12)))
                 .foregroundStyle(theme.sidebarMutedColor())
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -720,7 +720,7 @@ private struct WorkspaceReplaceConfirmationSheet: View {
                     .foregroundStyle(theme.foregroundColor)
 
                 Text("The scope was chosen in Find in Workspace. This action changes the files listed below and can be undone with ⌘Z while Monknot stays open.")
-                    .font(.system(size: 12.5))
+                    .font(.system(size: 12))
                     .foregroundStyle(theme.mutedForegroundColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -763,7 +763,7 @@ private struct WorkspaceReplaceConfirmationSheet: View {
 
             if preview.skippedDirtyCount > 0 || preview.skippedLargeFileCount > 0 {
                 Text(skippedMessage)
-                    .font(.system(size: 11.5))
+                    .font(.system(size: 12))
                     .foregroundStyle(theme.tertiaryForegroundColor)
             }
 

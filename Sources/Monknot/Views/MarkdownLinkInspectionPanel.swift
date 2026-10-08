@@ -50,7 +50,7 @@ struct MarkdownLinkInspectionPanel: View {
                     .font(.system(size: textScaled(13), weight: .semibold))
                     .foregroundStyle(theme.foregroundColor)
                 Text(document.relativePath)
-                    .font(.system(size: textScaled(10.5)))
+                    .font(.system(size: textScaled(12)))
                     .foregroundStyle(theme.mutedForegroundColor)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -111,7 +111,7 @@ struct MarkdownLinkInspectionPanel: View {
                     outgoingSection(inspection.outgoingIssues)
                     if inspection.skippedDocumentCount > 0 {
                         Text("Skipped \(inspection.skippedDocumentCount) unreadable or large Markdown file\(inspection.skippedDocumentCount == 1 ? "" : "s").")
-                            .font(.system(size: textScaled(10.5)))
+                            .font(.system(size: textScaled(12)))
                             .foregroundStyle(theme.mutedForegroundColor)
                             .padding(.horizontal, scaled(12))
                     }
@@ -144,7 +144,7 @@ struct MarkdownLinkInspectionPanel: View {
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                                 Text("Line \(link.location.line), column \(link.column) · \(link.label)")
-                                    .font(.system(size: textScaled(10.5)))
+                                    .font(.system(size: textScaled(12)))
                                     .foregroundStyle(theme.mutedForegroundColor)
                                     .lineLimit(1)
                             }
@@ -179,7 +179,7 @@ struct MarkdownLinkInspectionPanel: View {
                                         .foregroundStyle(theme.foregroundColor)
                                         .lineLimit(1)
                                     Text("\(issueTitle(issue.kind)) · line \(issue.location.line), column \(issue.column)")
-                                        .font(.system(size: textScaled(10.5)))
+                                        .font(.system(size: textScaled(12)))
                                         .foregroundStyle(theme.mutedForegroundColor)
                                         .lineLimit(1)
                                 }
@@ -224,12 +224,14 @@ struct MarkdownLinkInspectionPanel: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: scaled(5)) {
             HStack {
-                Text(title.uppercased())
+                Text(title)
+                    .textCase(.uppercase)
+                    .tracking(MonknotTypography.eyebrowTracking(theme: theme, zoomScale: zoomScale))
                 Spacer()
                 Text("\(count)")
                     .monospacedDigit()
             }
-            .font(.system(size: textScaled(10), weight: .semibold))
+            .font(MonknotTypography.eyebrow(theme: theme, zoomScale: zoomScale))
             .foregroundStyle(theme.mutedForegroundColor)
             .padding(.horizontal, scaled(12))
             rows()
@@ -238,7 +240,7 @@ struct MarkdownLinkInspectionPanel: View {
 
     private func emptyRow(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: textScaled(11.5)))
+            .font(.system(size: textScaled(12)))
             .foregroundStyle(theme.mutedForegroundColor)
             .padding(.horizontal, scaled(12))
             .padding(.vertical, scaled(6))

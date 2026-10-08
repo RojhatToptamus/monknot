@@ -317,7 +317,7 @@ struct TopNavigationBar: View {
 
             if showsCount {
                 Text(documentSearch.countText)
-                    .font(.system(size: textScaled(11), weight: .regular, design: .rounded))
+                    .font(.system(size: textScaled(12), weight: .regular, design: .rounded))
                     .foregroundStyle(theme.mutedForegroundColor)
                     .monospacedDigit()
                     .frame(minWidth: scaled(42), alignment: .trailing)

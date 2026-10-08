@@ -85,11 +85,8 @@ struct AppearanceSettingsView: View {
 
         return HStack(alignment: .center, spacing: scaled(10)) {
             Text(activeSlot.title)
-                .font(.system(
-                    size: MonknotMetrics.interfaceText(11, theme: uiTheme, zoomScale: settingsZoomScale),
-                    weight: .semibold
-                ))
-                .tracking(scaled(1.1))
+                .font(MonknotTypography.eyebrow(theme: uiTheme, zoomScale: settingsZoomScale))
+                .tracking(MonknotTypography.eyebrowTracking(theme: uiTheme, zoomScale: settingsZoomScale))
                 .foregroundStyle(uiTheme.mutedForegroundColor)
                 .textCase(.uppercase)
 
@@ -97,7 +94,7 @@ struct AppearanceSettingsView: View {
 
             HStack(alignment: .center, spacing: scaled(10)) {
                 Text("Edited")
-                    .font(.system(size: MonknotMetrics.interfaceText(11, theme: uiTheme, zoomScale: settingsZoomScale)))
+                    .font(.system(size: MonknotMetrics.interfaceText(12, theme: uiTheme, zoomScale: settingsZoomScale)))
                     .foregroundStyle(uiTheme.mutedForegroundColor)
 
                 SettingsOutlineButton(title: "Revert", theme: uiTheme) {
@@ -338,7 +335,7 @@ private struct ThemeLivePreview: View {
                         ))
                         .foregroundStyle(theme.foregroundColor)
                     Text("Calm writing environment.")
-                        .font(.system(size: MonknotMetrics.interfaceText(11, theme: chromeTheme, zoomScale: settingsZoomScale)))
+                        .font(.system(size: MonknotMetrics.interfaceText(12, theme: chromeTheme, zoomScale: settingsZoomScale)))
                         .foregroundStyle(theme.mutedForegroundColor)
                 }
                 .padding(.horizontal, scaled(14))

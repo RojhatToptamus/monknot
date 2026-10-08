@@ -61,7 +61,7 @@ struct GoToLineView: View {
                         .overlay(theme.separatorColor)
 
                     Text(errorMessage)
-                        .font(.system(size: scaled(11.5)))
+                        .font(.system(size: scaled(12)))
                         .foregroundStyle(Color(hex: theme.semanticColors.diffRemoved))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, scaled(14))
