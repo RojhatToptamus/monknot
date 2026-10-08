@@ -182,11 +182,43 @@ extension MarkdownSourceToolbar: Equatable {
     }
 }
 
+/// An icon menu in the Markdown toolbar, with the same states as the icon buttons beside it.
+private struct MarkdownToolbarMenuLabel: View {
+    let systemImage: String
+    let theme: AppTheme
+    let zoomScale: Double
+    @State private var isHovered = false
+
+    var body: some View {
+        let size = MarkdownSourceToolbar.controlSize
+        let dimension = size.dimension(theme: theme, zoomScale: zoomScale)
+        let shape = RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
+
+        MonknotSystemGlyph(
+            systemImage: systemImage,
+            nominalPointSizeBase: size.iconPointSizeBase,
+            theme: theme,
+            zoomScale: zoomScale
+        )
+            .foregroundStyle(isHovered ? theme.foregroundColor : theme.mutedForegroundColor)
+            .frame(width: dimension, height: dimension)
+            .background {
+                if isHovered {
+                    shape.fill(theme.hoverFillColor)
+                }
+            }
+            .contentShape(shape)
+            .onHover { isHovered = $0 }
+            .animation(MonknotMotion.hoverAnimation, value: isHovered)
+    }
+}
+
 struct MarkdownSourceToolbar: View {
     let theme: AppTheme
     let zoomScale: Double
     let statistics: MarkdownTextStatistics?
     let sendCommand: (MarkdownTextEditorCommand) -> Void
+    @State private var isHeadingMenuHovered = false
 
     static let controlSize = MonknotIconButton.IconButtonSize.editorToolbar
     static let expandedHeadingWidthBase: CGFloat = 100
@@ -199,7 +231,7 @@ struct MarkdownSourceToolbar: View {
         [
             MarkdownToolbarActionDescriptor(systemImage: "bold", label: "Bold", command: .bold),
             MarkdownToolbarActionDescriptor(systemImage: "italic", label: "Italic", command: .italic),
-            MarkdownToolbarActionDescriptor(systemImage: "quote.opening", label: "Quote", command: .quote),
+            MarkdownToolbarActionDescriptor(systemImage: "text.quote", label: "Quote", command: .quote),
             MarkdownToolbarActionDescriptor(systemImage: "curlybraces", label: "Inline Code", command: .code),
             MarkdownToolbarActionDescriptor(systemImage: "link", label: "Link", command: .link),
         ],
@@ -297,6 +329,8 @@ struct MarkdownSourceToolbar: View {
             cornerRadius: Self.controlSize.cornerRadius(theme: theme, zoomScale: zoomScale)
         )
 
+        // The same states as the icon buttons beside it (design.md §1.4, §5.1): no fill at rest, the
+        // shared hover fill, and the label one step up the ink ladder while hovered.
         return Menu {
             blockStyleCommands
         } label: {
@@ -305,12 +339,18 @@ struct MarkdownSourceToolbar: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, scaled(10))
                 .frame(width: width, height: dimension)
-                .background(shape.fill(theme.controlTrackFillColor))
+                .background {
+                    if isHeadingMenuHovered {
+                        shape.fill(theme.hoverFillColor)
+                    }
+                }
                 .contentShape(shape)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .buttonStyle(.plain)
+        .onHover { isHeadingMenuHovered = $0 }
+        .animation(MonknotMotion.hoverAnimation, value: isHeadingMenuHovered)
         .help("Block Style")
         .accessibilityLabel("Block Style")
     }
@@ -322,13 +362,13 @@ struct MarkdownSourceToolbar: View {
         // arrowhead's SF Pro ink sits 3.2pt below the title's optical center.
         Text("Paragraph")
             .font(.system(size: textScaled(Self.headingFontSizeBase), weight: .regular))
-            .foregroundColor(theme.foregroundColor)
+            .foregroundColor(isHeadingMenuHovered ? theme.foregroundColor : theme.mutedForegroundColor)
         + Text(verbatim: "\u{2002}")
             .font(.system(size: textScaled(Self.headingFontSizeBase), weight: .regular))
         + Text(verbatim: "⌄")
             .font(.system(size: textScaled(Self.headingChevronFontSizeBase), weight: .regular))
             .baselineOffset(textScaled(Self.headingChevronBaselineOffsetBase))
-            .foregroundColor(theme.mutedForegroundColor)
+            .foregroundColor(isHeadingMenuHovered ? theme.foregroundColor : theme.tertiaryForegroundColor)
     }
 
     private var blockStyleIconMenu: some View {
@@ -368,7 +408,7 @@ struct MarkdownSourceToolbar: View {
 
     private func overflowMenu(includesLink: Bool, includesLists: Bool) -> some View {
         Menu {
-            Button("Quote", systemImage: "quote.opening") { sendCommand(.quote) }
+            Button("Quote", systemImage: "text.quote") { sendCommand(.quote) }
             Button("Inline Code", systemImage: "curlybraces") { sendCommand(.code) }
             if includesLink {
                 Button("Link", systemImage: "link") { sendCommand(.link) }
@@ -404,20 +444,7 @@ struct MarkdownSourceToolbar: View {
     }
 
     private func toolbarMenuLabel(systemImage: String) -> some View {
-        let dimension = Self.controlSize.dimension(theme: theme, zoomScale: zoomScale)
-        let shape = RoundedRectangle(
-            cornerRadius: Self.controlSize.cornerRadius(theme: theme, zoomScale: zoomScale)
-        )
-
-        return MonknotSystemGlyph(
-            systemImage: systemImage,
-            nominalPointSizeBase: 17,
-            theme: theme,
-            zoomScale: zoomScale
-        )
-            .foregroundStyle(theme.mutedForegroundColor)
-            .frame(width: dimension, height: dimension)
-            .contentShape(shape)
+        MarkdownToolbarMenuLabel(systemImage: systemImage, theme: theme, zoomScale: zoomScale)
     }
 
     private var divider: some View {

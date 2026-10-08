@@ -318,7 +318,8 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
             "doc.text": 14,
             "doc.richtext": 14,
             "checklist": 14,
-            "photo": 14,
+            "text.quote": 14,
+            "photo": 12,
             "arrow.up.left.and.arrow.down.right": 14,
             "arrow.down.right.and.arrow.up.left": 14,
             "sidebar.left": 15,
@@ -333,7 +334,7 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
             )
         }
 
-        for systemImage in ["bold", "italic", "quote.opening", "list.bullet", "plus", "xmark"] {
+        for systemImage in ["bold", "italic", "list.bullet", "plus", "xmark"] {
             XCTAssertNil(
                 MonknotSymbolOptics.maximumPointSizeBase(for: systemImage),
                 "\(systemImage) should retain its nominal point size"

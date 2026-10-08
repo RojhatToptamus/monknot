@@ -22,13 +22,13 @@ final class MarkdownPresentationTokenTests: XCTestCase {
         let expectedPointSizes: [String: CGFloat] = [
             "bold": 17,
             "italic": 17,
-            "quote.opening": 17,
+            "text.quote": 14,
             "curlybraces": 13,
             "link": 13,
             "list.bullet": 17,
             "list.number": 17,
             "checklist": 14,
-            "photo": 14,
+            "photo": 12,
             "minus": 17,
         ]
 

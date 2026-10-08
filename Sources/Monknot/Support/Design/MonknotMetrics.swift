@@ -133,10 +133,14 @@ enum MonknotSymbolOptics {
              "doc", "doc.fill",
              "doc.text", "doc.text.fill",
              "doc.richtext", "doc.richtext.fill",
-             "checklist", "photo",
+             "checklist", "text.quote",
              "arrow.up.left.and.arrow.down.right",
              "arrow.down.right.and.arrow.up.left":
             return 14
+        // Filled glyphs are sized for ink weight, not bounds: at 14 pt the photo carries about 13 %
+        // ink in its 30 pt box against 6-9 % for its neighbours (design.md §10.7).
+        case "photo":
+            return 12
         case "sidebar.left", "sidebar.right":
             return 15
         default:

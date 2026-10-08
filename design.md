@@ -373,8 +373,10 @@ size.
   `doc.text` / `doc.richtext` contours use a 14pt optical size inside the same 18pt column.
 - **Alone in a button:** nominally 17pt in a 28pt button. Optical ceilings are measured from the
   rendered symbol bounds: whole-word search is 12.5pt; `curlybraces` and `link` are 13pt;
-  `magnifyingglass`, `checklist`, `photo`, document glyphs, and the diagonal terminal arrows are
-  14pt; the two sidebar glyphs are 15pt. Other symbols retain the nominal size.
+  `magnifyingglass`, `checklist`, `text.quote`, document glyphs, and the diagonal terminal arrows are
+  14pt; the two sidebar glyphs are 15pt. A filled glyph is sized for its ink weight instead: `photo`
+  is 12pt, so that it carries about the same ink as its outline neighbours. Other symbols retain the
+  nominal size.
 
 Both scale by the zoom factor. Weight is `.regular` **everywhere** — `.medium` on a 15pt symbol
 reads as a different icon set two rows down.
@@ -644,11 +646,12 @@ fill its box.** If an icon looks small, that is correct — macOS chrome glyphs 
 | Titlebar | bar 44 · traffic light 12 · chrome button 28 box / 17 glyph · segmented 28 outer (22 cell + 2 padding + 1 border) / 16 glyph · divider 1×16 · strip inset 3 · 3 between chips |
 | File tab | chip 30 · padding-x 10 · kind glyph 14 optical in 18 column · gap 8 · label 13 · trailing slot 16 · close 11 · dirty dot 6 · pin 11 · max width 220 · no minimum |
 | Sidebar | header 40 · row 30 · padding-x 10 · folder glyph 15 / file glyph 14 optical in 18 column · gap 8 · label 13 · chevron 10 · indent 16 · gutter 6 · 2 between rows · header action 26/16 (search 14 optical) · footer 30/15 |
-| Markdown toolbar | heading selector 100×30, radius 8, label 13 regular, trailing `⌄` 10 regular / +3.2 baseline · icon button 30 box / 17 nominal glyph · inline code and link 13 optical · task list and image 14 optical · dividers 1×20 · gaps 6 |
+| Markdown toolbar | heading selector 100×30, radius 8, label 13 regular, trailing `⌄` 10 regular / +3.2 baseline, `ink2`/`ink3` at rest and the icon-button hover · icon button 30 box / 17 nominal glyph · inline code and link 13 optical · quote (`text.quote`) and task list 14 optical · image 12 optical · dividers 1×20 · gaps 6. Every glyph carries 6–9 % ink in its 30 box except the inherently thin italic and rule; a glyph far outside that band reads as a different icon set. |
 | Terminal | header 36 · pill 43×24 · glyph 14 · gap 6 · number 12 mono · close 10 in 14 · new/close buttons 26/16 · fullscreen 26/14 optical · divider 1×13 |
 | Elsewhere | field 28 · push button 28 bars / 30 sheets · toggle 34×20, knob 16 · stepper 26 · slider track 4 / knob 16 · overlay row 34 · settings row 28/15 · outline dash 22/14/9 × 2 |
 
-**Hard ceilings.** No chrome glyph over 17. No square button over 28. No row over 34. The only glyphs
+**Hard ceilings.** No chrome glyph over 17. No square button over 28, except the Markdown toolbar's 30:
+it sits in its own sub-row under the titlebar, never beside a 28 control. No row over 34. The only glyphs
 above 17 anywhere are empty-state illustrations at 34, which are not controls.
 
 ---
