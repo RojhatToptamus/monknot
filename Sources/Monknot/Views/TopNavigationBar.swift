@@ -100,21 +100,24 @@ struct TopNavigationBar: View {
                     .accessibilityLabel("Working")
             }
 
+            // Find sits before the trailing cluster, which never disappears (design.md §10.1–10.2);
+            // the tab strip scrolls to make room.
             if documentSearch.isPresented {
                 documentSearchBar
-                    .allowsTopBarWindowActivationEvents()
-            } else {
-                viewModeControl
-                    .allowsTopBarWindowActivationEvents()
-
-                Rectangle()
-                    .fill(theme.separatorColor)
-                    .frame(width: 1, height: scaled(16))
-                    .padding(.horizontal, scaled(4))
-
-                drawerToggleButton
+                    .fixedSize(horizontal: true, vertical: false)
                     .allowsTopBarWindowActivationEvents()
             }
+
+            viewModeControl
+                .allowsTopBarWindowActivationEvents()
+
+            Rectangle()
+                .fill(theme.separatorColor)
+                .frame(width: 1, height: scaled(16))
+                .padding(.horizontal, scaled(4))
+
+            drawerToggleButton
+                .allowsTopBarWindowActivationEvents()
         }
         .monknotChromeRowLayout(theme: theme, zoomScale: zoomScale)
         .onChange(of: documentSearch.focusSerial) { _, _ in
@@ -232,10 +235,10 @@ struct TopNavigationBar: View {
 
             Rectangle()
                 .fill(theme.borderColor)
-                .frame(width: 1, height: scaled(20))
+                .frame(width: 1, height: scaled(16))
 
             TextField(
-                "Search in doc...",
+                "Find in document",
                 text: Binding(
                     get: { documentSearch.query },
                     set: { documentSearch.setQuery($0) }
@@ -249,7 +252,7 @@ struct TopNavigationBar: View {
             .onSubmit {
                 documentSearch.findNext()
             }
-            .accessibilityLabel("Search in document")
+            .accessibilityLabel("Find in document")
 
             searchOptionButton(
                 systemImage: "textformat",
@@ -268,7 +271,7 @@ struct TopNavigationBar: View {
             }
 
             Text(documentSearch.countText)
-                .font(.system(size: textScaled(11), weight: .medium, design: .rounded))
+                .font(.system(size: textScaled(11), weight: .regular, design: .rounded))
                 .foregroundStyle(theme.mutedForegroundColor)
                 .monospacedDigit()
                 .frame(minWidth: scaled(42), alignment: .trailing)
@@ -276,7 +279,7 @@ struct TopNavigationBar: View {
 
             Rectangle()
                 .fill(theme.borderColor)
-                .frame(width: 1, height: scaled(20))
+                .frame(width: 1, height: scaled(16))
 
             findBarButton(
                 systemImage: "chevron.up",
@@ -299,7 +302,7 @@ struct TopNavigationBar: View {
             }
         }
         .padding(.horizontal, scaled(MonknotMetrics.Spacing.l))
-        .frame(height: scaled(32))
+        .frame(height: scaled(28))
         .background(
             RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
                 .fill(theme.insetFillColor)
