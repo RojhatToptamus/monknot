@@ -17,6 +17,10 @@ final class PDFScrollZoomTests: PDFNavigatorTestCase {
         ))
         // ⌃-scroll stays with the system's accessibility zoom.
         XCTAssertNil(AnnotatingPDFView.commandScrollZoomFactor(for: try XCTUnwrap(scrollEvent(lines: 1, flags: .maskControl))))
+        // Caps Lock is not a held modifier.
+        XCTAssertNotNil(AnnotatingPDFView.commandScrollZoomFactor(
+            for: try XCTUnwrap(scrollEvent(lines: 1, flags: [.maskCommand, .maskAlphaShift]))
+        ))
     }
 
     func testZoomKeepsTheSpotUnderThePointerInPlace() throws {

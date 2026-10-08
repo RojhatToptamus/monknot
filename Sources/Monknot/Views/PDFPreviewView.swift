@@ -4670,7 +4670,8 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
     /// from you zooms in, whatever the natural-scrolling setting; a notch is about 10%.
     static func commandScrollZoomFactor(for event: NSEvent) -> CGFloat? {
         guard event.type == .scrollWheel,
-              event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+              // Caps Lock and the function key are states, not modifiers the user is holding.
+              event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
               event.scrollingDeltaY != 0
         else { return nil }
         let delta = event.isDirectionInvertedFromDevice ? -event.scrollingDeltaY : event.scrollingDeltaY
@@ -4687,7 +4688,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         let clipView = scrollView.contentView
         let pagePoint = convert(point, to: page)
         autoScales = false
-        scaleFactor = min(maxScaleFactor, max(minScaleFactor, scaleFactor * factor))
+        scaleFactor = clampedPDFScaleFactor(scaleFactor * factor, in: self)
         layoutDocumentView()
 
         let before = clipView.convert(point, from: self)
