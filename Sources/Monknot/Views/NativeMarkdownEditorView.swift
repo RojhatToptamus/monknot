@@ -182,34 +182,48 @@ extension MarkdownSourceToolbar: Equatable {
     }
 }
 
-/// An icon menu in the Markdown toolbar, with the same states as the icon buttons beside it.
-private struct MarkdownToolbarMenuLabel: View {
-    let systemImage: String
+/// A menu in the Markdown toolbar, with the same box and states as the icon buttons beside it: no fill
+/// at rest, the shared hover fill, the label one step up the ink ladder while hovered (design.md §1.4,
+/// §5.1) and the standard focus ring. SwiftUI draws the label: a `.borderlessButton` menu hands it to an
+/// AppKit pop-up button, which keeps only its text or image and drops the frame, fill and hover.
+private struct MarkdownToolbarMenu<Content: View, Label: View>: View {
     let theme: AppTheme
     let zoomScale: Double
+    /// The label's width; `nil` makes the menu square, like an icon button.
+    var width: CGFloat?
+    @ViewBuilder let content: () -> Content
+    @ViewBuilder let label: (_ isHovered: Bool) -> Label
     @State private var isHovered = false
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         let size = MarkdownSourceToolbar.controlSize
         let dimension = size.dimension(theme: theme, zoomScale: zoomScale)
-        let shape = RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
+        let cornerRadius = size.cornerRadius(theme: theme, zoomScale: zoomScale)
+        let shape = RoundedRectangle(cornerRadius: cornerRadius)
 
-        MonknotSystemGlyph(
-            systemImage: systemImage,
-            nominalPointSizeBase: size.iconPointSizeBase,
-            theme: theme,
-            zoomScale: zoomScale
-        )
-            .foregroundStyle(isHovered ? theme.foregroundColor : theme.mutedForegroundColor)
-            .frame(width: dimension, height: dimension)
-            .background {
-                if isHovered {
-                    shape.fill(theme.hoverFillColor)
+        Menu {
+            content()
+        } label: {
+            label(isHovered)
+                .frame(width: width ?? dimension, height: dimension)
+                .background {
+                    if isHovered {
+                        shape.fill(theme.hoverFillColor)
+                    }
                 }
-            }
-            .contentShape(shape)
-            .onHover { isHovered = $0 }
-            .animation(MonknotMotion.hoverAnimation, value: isHovered)
+                .contentShape(shape)
+                .monknotFocusRing(isVisible: isFocused, cornerRadius: cornerRadius, theme: theme)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .focusable(NSApp.isFullKeyboardAccessEnabled)
+        .focused($isFocused)
+        .focusEffectDisabled()
+        .onHover { isHovered = $0 }
+        .animation(MonknotMotion.hoverAnimation, value: isHovered)
+        .fixedSize()
     }
 }
 
@@ -218,7 +232,6 @@ struct MarkdownSourceToolbar: View {
     let zoomScale: Double
     let statistics: MarkdownTextStatistics?
     let sendCommand: (MarkdownTextEditorCommand) -> Void
-    @State private var isHeadingMenuHovered = false
 
     static let controlSize = MonknotIconButton.IconButtonSize.editorToolbar
     static let expandedHeadingWidthBase: CGFloat = 100
@@ -324,62 +337,36 @@ struct MarkdownSourceToolbar: View {
     }
 
     private func headingMenu(width: CGFloat) -> some View {
-        let dimension = Self.controlSize.dimension(theme: theme, zoomScale: zoomScale)
-        let shape = RoundedRectangle(
-            cornerRadius: Self.controlSize.cornerRadius(theme: theme, zoomScale: zoomScale)
-        )
-
-        // The same states as the icon buttons beside it (design.md §1.4, §5.1): no fill at rest, the
-        // shared hover fill, and the label one step up the ink ladder while hovered.
-        return Menu {
+        MarkdownToolbarMenu(theme: theme, zoomScale: zoomScale, width: width) {
             blockStyleCommands
-        } label: {
-            headingMenuLabel
+        } label: { isHovered in
+            headingMenuLabel(isHovered: isHovered)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, scaled(10))
-                .frame(width: width, height: dimension)
-                .background {
-                    if isHeadingMenuHovered {
-                        shape.fill(theme.hoverFillColor)
-                    }
-                }
-                .contentShape(shape)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .buttonStyle(.plain)
-        .onHover { isHeadingMenuHovered = $0 }
-        .animation(MonknotMotion.hoverAnimation, value: isHeadingMenuHovered)
         .help("Block Style")
         .accessibilityLabel("Block Style")
     }
 
-    private var headingMenuLabel: Text {
-        // macOS Menu extracts only one label value: standalone Images move to
-        // the leading icon slot and later sibling views are discarded. Keep
-        // the title, scalable spacing, and indicator in one composed Text. The
-        // arrowhead's SF Pro ink sits 3.2pt below the title's optical center.
+    private func headingMenuLabel(isHovered: Bool) -> Text {
+        // One composed Text keeps the title and indicator on one baseline. The arrowhead's SF Pro ink
+        // sits 3.2pt below the title's optical center.
         Text("Paragraph")
             .font(.system(size: textScaled(Self.headingFontSizeBase), weight: .regular))
-            .foregroundColor(isHeadingMenuHovered ? theme.foregroundColor : theme.mutedForegroundColor)
+            .foregroundColor(isHovered ? theme.foregroundColor : theme.mutedForegroundColor)
         + Text(verbatim: "\u{2002}")
             .font(.system(size: textScaled(Self.headingFontSizeBase), weight: .regular))
         + Text(verbatim: "⌄")
             .font(.system(size: textScaled(Self.headingChevronFontSizeBase), weight: .regular))
             .baselineOffset(textScaled(Self.headingChevronBaselineOffsetBase))
-            .foregroundColor(isHeadingMenuHovered ? theme.foregroundColor : theme.tertiaryForegroundColor)
+            .foregroundColor(isHovered ? theme.foregroundColor : theme.tertiaryForegroundColor)
     }
 
     private var blockStyleIconMenu: some View {
-        Menu {
+        iconMenu(systemImage: "textformat.size") {
             blockStyleCommands
-        } label: {
-            toolbarMenuLabel(systemImage: "textformat.size")
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
         .help("Block Style")
         .accessibilityLabel("Block Style")
     }
@@ -394,20 +381,15 @@ struct MarkdownSourceToolbar: View {
     }
 
     private var listsMenu: some View {
-        Menu {
+        iconMenu(systemImage: "list.bullet") {
             listCommands
-        } label: {
-            toolbarMenuLabel(systemImage: "list.bullet")
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
         .help("List Formatting")
         .accessibilityLabel("List Formatting")
     }
 
     private func overflowMenu(includesLink: Bool, includesLists: Bool) -> some View {
-        Menu {
+        iconMenu(systemImage: "ellipsis") {
             Button("Quote", systemImage: "text.quote") { sendCommand(.quote) }
             Button("Inline Code", systemImage: "curlybraces") { sendCommand(.code) }
             if includesLink {
@@ -426,12 +408,7 @@ struct MarkdownSourceToolbar: View {
                 Button("Image", systemImage: "photo") { sendCommand(.image) }
                 Button("Horizontal Rule", systemImage: "minus") { sendCommand(.horizontalRule) }
             }
-        } label: {
-            toolbarMenuLabel(systemImage: "ellipsis")
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
         .help("More formatting actions")
         .accessibilityLabel("More formatting actions")
     }
@@ -443,8 +420,19 @@ struct MarkdownSourceToolbar: View {
         Button("Task List", systemImage: "checklist") { sendCommand(.taskList) }
     }
 
-    private func toolbarMenuLabel(systemImage: String) -> some View {
-        MarkdownToolbarMenuLabel(systemImage: systemImage, theme: theme, zoomScale: zoomScale)
+    private func iconMenu<Content: View>(
+        systemImage: String,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        MarkdownToolbarMenu(theme: theme, zoomScale: zoomScale, content: content) { isHovered in
+            MonknotSystemGlyph(
+                systemImage: systemImage,
+                nominalPointSizeBase: Self.controlSize.iconPointSizeBase,
+                theme: theme,
+                zoomScale: zoomScale
+            )
+            .foregroundStyle(isHovered ? theme.foregroundColor : theme.mutedForegroundColor)
+        }
     }
 
     private var divider: some View {
