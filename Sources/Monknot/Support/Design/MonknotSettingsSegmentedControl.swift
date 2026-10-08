@@ -29,10 +29,8 @@ struct MonknotSettingsSegmentedControl: View {
             }
         }
         .padding(scaled(2))
-        .background(
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .fill(theme.controlTrackFillColor)
-        )
+        // Same treatment as the window's segmented controls: no track fill, the selected
+        // segment takes `sel`. A filled track left the dark-mode selection nearly invisible.
         .overlay(
             RoundedRectangle(cornerRadius: cornerRadius)
                 .strokeBorder(theme.borderColor, lineWidth: 1)
@@ -96,7 +94,7 @@ private struct MonknotSettingsSegmentButton: View {
 
     private var background: Color {
         if isSelected {
-            return theme.insetFillColor
+            return theme.selectedRowColor
         }
         if isHovered || isFocused {
             return theme.foregroundColor.opacity(theme.isDark ? 0.06 : 0.04)
