@@ -450,14 +450,16 @@ private struct MarkdownOutlineRowButtonStyle: ButtonStyle {
                     RoundedRectangle(cornerRadius: cornerRadius)
                         .fill(backgroundColor)
                 }
-                .opacity(configuration.isPressed ? 0.82 : 1)
                 .onHover { isHovered = $0 }
                 .monknotPointerCursor()
         }
 
         private var backgroundColor: Color {
+            if configuration.isPressed {
+                return theme.pressedFillColor
+            }
             if isHovered {
-                return theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.055)
+                return theme.hoverFillColor
             }
             if isActive {
                 return theme.accentColor.opacity(theme.isDark ? 0.10 : 0.075)

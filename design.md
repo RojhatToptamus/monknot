@@ -253,7 +253,7 @@ The 28 is the **outer** dimension including the 1px border; a 28 content box plu
 | Hover | `hover` fill, `ink` glyph, border unchanged |
 | Pressed | `press` fill |
 | On (panel open) | `accsoft` fill, `accent` glyph, **still only the `line` border** |
-| Disabled | 40% opacity, `ink4` glyph |
+| Disabled | `ink4` glyph, border at 40 %, no fill. Nothing multiplies on top: `ink4` reads as unavailable (about 1.6:1 light, 2:1 dark), while 40 % of `ink4` (1.2:1) disappears. |
 
 **Search option exception.** Match Case and Match Whole Word use the same standard `28 × 28` box
 and 17pt symbol in both search surfaces, but stay transparent at rest whether off or on. On uses an
@@ -548,9 +548,9 @@ in the cluster.**
 a view mode — it belongs in the Window menu with its own shortcut, not in a control whose other
 cells switch how one pane renders.
 
-**Disabled, not hidden.** For PDF and plain text the whole view-mode control drops to 40% opacity
-with `ink4` glyphs. Controls never appear or disappear between file kinds — the toolbar must not
-reflow.
+**Disabled, not hidden.** For PDF and plain text the view-mode control takes the disabled treatment of
+§5.1: `ink4` glyphs, its border at 40 %, and no selected cell. Controls never appear or disappear
+between file kinds — the toolbar must not reflow.
 
 ### 10.3 Tab strip — hug, cap, scroll
 

@@ -281,6 +281,7 @@ private struct DocumentTabItemView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
+    @State private var isPressed = false
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
@@ -352,7 +353,7 @@ private struct DocumentTabItemView: View {
                 )
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
             .disabled(isDisabled)
             .frame(maxWidth: .infinity)
 
@@ -403,9 +404,12 @@ private struct DocumentTabItemView: View {
                     RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
                         .strokeBorder(theme.borderColor, lineWidth: 1)
                 }
+        } else if isPressed && !isDisabled {
+            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+                .fill(theme.pressedFillColor)
         } else if isHovered && !isDisabled {
             RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                .fill(theme.foregroundColor.opacity(0.06))
+                .fill(theme.hoverFillColor)
         }
     }
 

@@ -31,9 +31,11 @@ struct MonknotSegmentedControl: View {
         .padding(MonknotMetrics.scale(2, theme: theme, zoomScale: zoomScale))
         .overlay(
             RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                .strokeBorder(theme.borderColor, lineWidth: 1)
+                .strokeBorder(
+                    theme.borderColor.opacity(isDisabled ? MonknotIconButton.disabledBorderOpacity : 1),
+                    lineWidth: 1
+                )
         )
-        .opacity(isDisabled ? 0.40 : 1)
     }
 }
 
@@ -55,6 +57,7 @@ struct MonknotSegmentButton: View {
     let action: () -> Void
 
     @State private var isHovered = false
+    @State private var isPressed = false
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -104,7 +107,7 @@ struct MonknotSegmentButton: View {
                     )
                 )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
         .focusable(NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
         .focusEffectDisabled()
@@ -119,6 +122,9 @@ struct MonknotSegmentButton: View {
     }
 
     private var foreground: Color {
+        if isDisabled {
+            return theme.disabledForegroundColor
+        }
         if isSelected {
             return theme.foregroundColor
         }
@@ -126,11 +132,18 @@ struct MonknotSegmentButton: View {
     }
 
     private var background: Color {
+        // A disabled control has no current mode to show (design.md §5.1, A3).
+        if isDisabled {
+            return .clear
+        }
         if isSelected {
             return theme.selectedRowColor
         }
+        if isPressed {
+            return theme.pressedFillColor
+        }
         if isHovered {
-            return theme.foregroundColor.opacity(theme.isDark ? 0.06 : 0.055)
+            return theme.hoverFillColor
         }
         return .clear
     }

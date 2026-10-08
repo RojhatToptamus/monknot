@@ -711,12 +711,12 @@ private struct PDFFreeTextFormattingPopover: View {
             .foregroundStyle(theme.foregroundColor)
             .padding(.horizontal, metrics.itemSpacing)
             .frame(width: metrics.fontMenuWidth, height: metrics.controlHeight)
-            .background(
-                isFontMenuHovered
-                    ? theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.055)
-                    : theme.insetFillColor,
-                in: controlShape
-            )
+            .background {
+                controlShape.fill(theme.insetFillColor)
+                if isFontMenuHovered {
+                    controlShape.fill(theme.hoverFillColor)
+                }
+            }
             .overlay {
                 controlShape.strokeBorder(theme.borderColor, lineWidth: 1)
             }
@@ -816,7 +816,7 @@ private struct PDFFreeTextFormattingPopover: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background {
                     if hoveredSizeStep == Int(delta), !isDisabled {
-                        theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.055)
+                        theme.hoverFillColor
                     }
                 }
                 .contentShape(Rectangle())
@@ -1507,16 +1507,10 @@ private struct PDFAnnotationToolbar: View {
             )
             .frame(width: dimension, height: dimension)
             .background {
-                if isActive || isHovered {
-                    shape.fill(theme.foregroundColor.opacity(
-                        isActive
-                            ? MonknotIconButton.IconButtonSize.chrome.activeBackgroundOpacity(
-                                isDark: theme.isDark
-                            )
-                            : MonknotIconButton.IconButtonSize.chrome.hoverBackgroundOpacity(
-                                isDark: theme.isDark
-                            )
-                    ))
+                if isActive {
+                    shape.fill(theme.accentSoftFillColor)
+                } else if isHovered {
+                    shape.fill(theme.hoverFillColor)
                 }
             }
             .contentShape(shape)
@@ -1549,11 +1543,7 @@ private struct PDFAnnotationToolbar: View {
         .background(theme.controlTrackFillColor, in: shape)
         .overlay {
             if isHovered {
-                shape.fill(theme.foregroundColor.opacity(
-                    MonknotIconButton.IconButtonSize.chrome.hoverBackgroundOpacity(
-                        isDark: theme.isDark
-                    )
-                ))
+                shape.fill(theme.hoverFillColor)
             }
         }
         .overlay {
@@ -1743,7 +1733,12 @@ struct PDFZoomToolbarGroup: View {
             .padding(.leading, scaled(10))
             .padding(.trailing, scaled(9))
             .frame(height: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale))
-            .background(zoomControlBackgroundColor, in: zoomControlShape)
+            .background {
+                zoomControlShape.fill(zoomControlBackgroundColor)
+                if isMenuHovered, status.isAvailable {
+                    zoomControlShape.fill(theme.hoverFillColor)
+                }
+            }
             .overlay {
                 zoomControlShape
                     .strokeBorder(theme.borderColor, lineWidth: 1)
@@ -1784,9 +1779,6 @@ struct PDFZoomToolbarGroup: View {
 
     private var zoomControlBackgroundColor: Color {
         guard status.isAvailable else { return theme.controlTrackFillColor }
-        if isMenuHovered {
-            return theme.foregroundColor.opacity(theme.isDark ? 0.085 : 0.06)
-        }
         return theme.controlTrackFillColor
     }
 }

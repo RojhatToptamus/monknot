@@ -962,22 +962,20 @@ private struct SidebarSearchResultButtonStyle: ButtonStyle {
                     RoundedRectangle(cornerRadius: cornerRadius)
                         .fill(backgroundFill)
                 )
-                .overlay {
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .strokeBorder(configuration.isPressed ? theme.borderColor : Color.clear, lineWidth: 1)
-                }
-                .opacity(configuration.isPressed ? 0.88 : 1)
                 .animation(MonknotMotion.hoverAnimation, value: isHovered)
                 .onHover { isHovered = $0 }
                 .monknotPointerCursor()
         }
 
         private var backgroundFill: Color {
-            if configuration.isPressed || isSelected {
+            if isSelected {
                 return theme.selectedRowColor
             }
+            if configuration.isPressed {
+                return theme.pressedFillColor
+            }
             if isHovered {
-                return theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.055)
+                return theme.hoverFillColor
             }
             return .clear
         }

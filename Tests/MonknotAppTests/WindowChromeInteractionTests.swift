@@ -137,10 +137,9 @@ final class WindowChromeInteractionTests: XCTestCase {
         )
     }
 
-    func testDisabledWindowNavigationAvoidsDoubleAttenuation() {
-        let size = MonknotIconButton.IconButtonSize.windowNavigation
-
-        XCTAssertEqual(size.disabledControlOpacity, 0.24, accuracy: 0.001)
+    func testDisabledControlsDimTheirBorderNotTheirGlyphAgain() {
+        // design.md §5.1 (A3): the glyph is `ink4` and the border 40 %; nothing multiplies on top.
+        XCTAssertEqual(MonknotIconButton.disabledBorderOpacity, 0.4, accuracy: 0.001)
     }
 
     func testWindowNavigationUsesReferenceSegmentGeometryAcrossSupportedZooms() {
@@ -165,26 +164,6 @@ final class WindowChromeInteractionTests: XCTestCase {
                 accuracy: 0.001,
                 "Navigation chevrons use their specified optical size"
             )
-        }
-    }
-
-    func testWindowNavigationUsesTheSharedReferenceHoverFill() {
-        let navigationSize = MonknotIconButton.IconButtonSize.windowNavigation
-        let chromeSize = MonknotIconButton.IconButtonSize.chrome
-
-        for isDark in [false, true] {
-            XCTAssertEqual(
-                navigationSize.hoverBackgroundOpacity(isDark: isDark),
-                chromeSize.hoverBackgroundOpacity(isDark: isDark)
-            )
-        }
-    }
-
-    func testOpenPanelButtonsUseTheSharedReferenceHoverSurface() {
-        let size = MonknotIconButton.IconButtonSize.chrome
-
-        for isDark in [false, true] {
-            XCTAssertEqual(size.activeBackgroundOpacity(isDark: isDark), isDark ? 0.18 : 0.14)
         }
     }
 

@@ -50,6 +50,7 @@ private struct MonknotSettingsSegmentButton: View {
     let action: () -> Void
 
     @State private var isHovered = false
+    @State private var isPressed = false
     @FocusState private var isFocused: Bool
     @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
 
@@ -73,8 +74,9 @@ private struct MonknotSettingsSegmentButton: View {
                 .frame(minHeight: scaled(28))
                 .background(background, in: RoundedRectangle(cornerRadius: max(0, cornerRadius - 1)))
                 .contentShape(RoundedRectangle(cornerRadius: max(0, cornerRadius - 1)))
+                .monknotFocusRing(isVisible: isFocused, cornerRadius: max(0, cornerRadius - 1), theme: theme)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
         .focusable(NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
         .focusEffectDisabled()
@@ -86,18 +88,19 @@ private struct MonknotSettingsSegmentButton: View {
     }
 
     private var labelColor: Color {
-        if isSelected {
-            return theme.foregroundColor
-        }
-        return theme.foregroundColor.opacity(isHovered ? 0.92 : 0.72)
+        // design.md §1.4: `ink2` at rest, `ink` hovered or selected.
+        isSelected || isHovered ? theme.foregroundColor : theme.mutedForegroundColor
     }
 
     private var background: Color {
         if isSelected {
             return theme.selectedRowColor
         }
-        if isHovered || isFocused {
-            return theme.foregroundColor.opacity(theme.isDark ? 0.06 : 0.04)
+        if isPressed {
+            return theme.pressedFillColor
+        }
+        if isHovered {
+            return theme.hoverFillColor
         }
         return .clear
     }
@@ -155,24 +158,25 @@ struct MonknotSettingsMenuPicker: View {
                     .lineLimit(1)
 
                 Image(systemName: "chevron.down")
-                    .font(.system(size: scaled(9), weight: .semibold))
+                    .font(.system(size: scaled(10), weight: .regular))
                     .foregroundStyle(theme.mutedForegroundColor)
             }
             .padding(.horizontal, scaled(12))
             .padding(.vertical, scaled(6))
             .frame(minHeight: scaled(28))
-            .background(
+            .background {
                 RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(
-                        isHovered || isFocused
-                            ? theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.055)
-                            : theme.insetFillColor
-                    )
-            )
+                    .fill(theme.insetFillColor)
+                if isHovered {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(theme.hoverFillColor)
+                }
+            }
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .strokeBorder(theme.borderColor, lineWidth: 1)
             )
+            .monknotFocusRing(isVisible: isFocused, cornerRadius: cornerRadius, theme: theme)
         }
         .buttonStyle(.plain)
         .focusable(NSApp.isFullKeyboardAccessEnabled)

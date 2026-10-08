@@ -121,6 +121,21 @@ extension AppTheme {
         Color(hex: selectionBackground)
     }
 
+    /// design.md §1.2 `hover`: the one hover fill for every row, tab, cell and button.
+    var hoverFillColor: Color {
+        foregroundColor.opacity(isDark ? 0.06 : 0.055)
+    }
+
+    /// design.md §1.2 `press`: replaces the hover fill while a control is held down.
+    var pressedFillColor: Color {
+        foregroundColor.opacity(isDark ? 0.11 : 0.10)
+    }
+
+    /// design.md §1.2 `accsoft`: the fill of an icon button whose panel is open.
+    var accentSoftFillColor: Color {
+        accentColor.opacity(isDark ? 0.18 : 0.14)
+    }
+
     /// Background for compact controls (segmented tracks, terminal tab chips).
     var controlTrackFillColor: Color {
         foregroundColor.opacity(isDark ? 0.06 : 0.055)

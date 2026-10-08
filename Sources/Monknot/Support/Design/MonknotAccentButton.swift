@@ -43,6 +43,7 @@ struct MonknotActionButton: View {
     let action: () -> Void
 
     @State private var isHovered = false
+    @State private var isPressed = false
     @FocusState private var isFocused: Bool
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -77,20 +78,18 @@ struct MonknotActionButton: View {
             .frame(height: MonknotMetrics.interfaceControl(size.heightBase, theme: theme, zoomScale: zoomScale))
             .background {
                 shape.fill(backgroundColor)
+                // design.md §5.3: hover and pressed tint the button's own fill; they never replace it.
+                if let stateFill {
+                    shape.fill(stateFill)
+                }
             }
             .overlay {
                 shape.strokeBorder(borderColor, lineWidth: borderWidth)
             }
-            .overlay {
-                if isFocused, !isDisabled {
-                    shape
-                        .strokeBorder(focusColor, lineWidth: 1.5)
-                        .padding(1)
-                }
-            }
+            .monknotFocusRing(isVisible: isFocused && !isDisabled, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale), theme: theme)
             .contentShape(shape)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
         .disabled(isDisabled)
         .focusable(!isDisabled && NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
@@ -103,7 +102,7 @@ struct MonknotActionButton: View {
 
     private var foregroundColor: Color {
         if isDisabled {
-            return theme.foregroundColor.opacity(0.38)
+            return theme.disabledForegroundColor
         }
 
         switch role {
@@ -118,7 +117,7 @@ struct MonknotActionButton: View {
 
     private var borderColor: Color {
         if isDisabled {
-            return role == .quiet ? .clear : theme.borderColor
+            return role == .quiet ? .clear : theme.borderColor.opacity(MonknotIconButton.disabledBorderOpacity)
         }
         return role == .secondary ? theme.borderColor : .clear
     }
@@ -137,27 +136,22 @@ struct MonknotActionButton: View {
 
         switch role {
         case .primary:
-            return theme.accentColor.opacity(isHovered ? 0.90 : 1)
+            return theme.accentColor
         case .destructive:
-            return Color(hex: theme.semanticColors.diffRemoved).opacity(isHovered ? 0.90 : 1)
+            return Color(hex: theme.semanticColors.diffRemoved)
         case .secondary:
-            return isHovered
-                ? theme.foregroundColor.opacity(theme.isDark ? 0.085 : 0.06)
-                : theme.insetFillColor
+            return theme.insetFillColor
         case .quiet:
-            return isHovered
-                ? theme.foregroundColor.opacity(theme.isDark ? 0.065 : 0.048)
-                : .clear
+            return .clear
         }
     }
 
-    private var focusColor: Color {
-        switch role {
-        case .primary, .destructive:
-            return theme.onAccentForegroundColor.opacity(0.92)
-        case .secondary, .quiet:
-            return theme.accentColor.opacity(0.92)
+    private var stateFill: Color? {
+        guard !isDisabled else { return nil }
+        if isPressed {
+            return theme.pressedFillColor
         }
+        return isHovered ? theme.hoverFillColor : nil
     }
 }
 

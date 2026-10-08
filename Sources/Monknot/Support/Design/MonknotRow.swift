@@ -34,7 +34,6 @@ struct MonknotRowButtonStyle: ButtonStyle {
                         .fill(background)
                 }
                 .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
-                .opacity(isEnabled || isSelected ? 1 : 0.4)
                 .animation(MonknotMotion.hoverAnimation, value: isHovered)
                 .animation(MonknotMotion.hoverAnimation, value: configuration.isPressed)
                 .onHover { isHovered = $0 }
@@ -46,10 +45,10 @@ struct MonknotRowButtonStyle: ButtonStyle {
                 return theme.selectedRowColor
             }
             if configuration.isPressed {
-                return theme.foregroundColor.opacity(theme.isDark ? 0.11 : 0.10)
+                return theme.pressedFillColor
             }
             if isActive || isHovered {
-                return theme.foregroundColor.opacity(theme.isDark ? 0.06 : 0.055)
+                return theme.hoverFillColor
             }
             return .clear
         }

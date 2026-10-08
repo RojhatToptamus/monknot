@@ -93,7 +93,7 @@ struct MonknotCommandOverlayEscapeButton: View {
             .frame(minWidth: dimension, minHeight: dimension)
             .background {
                 if isHovered {
-                    shape.fill(theme.foregroundColor.opacity(theme.isDark ? 0.06 : 0.055))
+                    shape.fill(theme.hoverFillColor)
                 }
             }
             .overlay {

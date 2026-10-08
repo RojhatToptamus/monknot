@@ -463,69 +463,47 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
         }
     }
 
-    func testChromeButtonsOnlyDrawBackgroundWhileEnabledAndHovered() {
-        for size in [
-            MonknotIconButton.IconButtonSize.chrome,
-            .windowNavigation,
-            .sidebarHeader,
-            .compact,
-            .editorToolbar,
-            .findBar,
-            .segmented
-        ] {
-            for isDark in [false, true] {
-                XCTAssertNil(
-                    size.backgroundOpacity(isHovered: false, isDisabled: false, isDark: isDark),
-                    "Idle controls must not create a background"
-                )
-                XCTAssertNil(
-                    size.backgroundOpacity(isHovered: true, isDisabled: true, isDark: isDark),
-                    "Disabled controls must not create a hover background"
-                )
-                XCTAssertNotNil(
-                    size.backgroundOpacity(isHovered: true, isDisabled: false, isDark: isDark),
-                    "Enabled controls should retain a hover affordance"
-                )
-            }
+    func testIconButtonsFillOnlyWhileEnabledAndPressedReplacesHover() {
+        func fill(active: Bool = false, drawsActive: Bool = true, hovered: Bool = false, pressed: Bool = false, disabled: Bool = false) -> MonknotIconButton.Fill? {
+            MonknotIconButton.fill(
+                isActive: active,
+                drawsActiveBackground: drawsActive,
+                isHovered: hovered,
+                isPressed: pressed,
+                isDisabled: disabled
+            )
         }
+
+        XCTAssertNil(fill(), "Idle controls must not create a background")
+        XCTAssertNil(fill(hovered: true, pressed: true, disabled: true), "Disabled controls never fill")
+        XCTAssertEqual(fill(hovered: true), .hover)
+        // design.md §5.1: pressed is its own fill, replacing hover rather than stacking on it.
+        XCTAssertEqual(fill(hovered: true, pressed: true), .pressed)
+        XCTAssertEqual(fill(active: true), .accentSoft, "An open panel's toggle uses accsoft")
+        XCTAssertEqual(fill(active: true, pressed: true), .pressed)
     }
 
     func testSearchOptionButtonsUseAccentOnlyActiveAppearance() {
-        let size = MonknotIconButton.IconButtonSize.findBar
+        XCTAssertNil(
+            MonknotIconButton.fill(isActive: true, drawsActiveBackground: false, isHovered: false, isPressed: false, isDisabled: false),
+            "An active search option must remain unfilled at rest"
+        )
+        XCTAssertEqual(
+            MonknotIconButton.fill(isActive: true, drawsActiveBackground: false, isHovered: true, isPressed: false, isDisabled: false),
+            .hover,
+            "An active search option must use the standard hover surface"
+        )
+    }
 
-        for isDark in [false, true] {
-            XCTAssertNil(
-                size.backgroundOpacity(
-                    isActive: true,
-                    drawsActiveBackground: false,
-                    isHovered: false,
-                    isDisabled: false,
-                    isDark: isDark
-                ),
-                "An active search option must remain unfilled at rest"
-            )
-            XCTAssertEqual(
-                size.backgroundOpacity(
-                    isActive: true,
-                    drawsActiveBackground: false,
-                    isHovered: true,
-                    isDisabled: false,
-                    isDark: isDark
-                ),
-                size.hoverBackgroundOpacity(isDark: isDark),
-                "An active search option must use the standard hover surface"
-            )
-            XCTAssertEqual(
-                size.backgroundOpacity(
-                    isActive: true,
-                    drawsActiveBackground: true,
-                    isHovered: false,
-                    isDisabled: false,
-                    isDark: isDark
-                ),
-                size.activeBackgroundOpacity(isDark: isDark),
-                "Panel toggles must retain their filled active appearance"
-            )
+    func testStateFillsComeFromTheDesignTokens() {
+        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
+            XCTAssertEqual(MonknotIconButton.Fill.hover.color(theme), theme.hoverFillColor)
+            XCTAssertEqual(MonknotIconButton.Fill.pressed.color(theme), theme.pressedFillColor)
+            XCTAssertEqual(MonknotIconButton.Fill.accentSoft.color(theme), theme.accentSoftFillColor)
+            // design.md §1.2: hover ink 6 / 5.5 %, press ink 11 / 10 %, accsoft accent 18 / 14 %.
+            XCTAssertEqual(theme.hoverFillColor, theme.foregroundColor.opacity(theme.isDark ? 0.06 : 0.055))
+            XCTAssertEqual(theme.pressedFillColor, theme.foregroundColor.opacity(theme.isDark ? 0.11 : 0.10))
+            XCTAssertEqual(theme.accentSoftFillColor, theme.accentColor.opacity(theme.isDark ? 0.18 : 0.14))
         }
     }
 

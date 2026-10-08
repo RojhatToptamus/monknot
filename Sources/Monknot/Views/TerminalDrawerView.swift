@@ -287,6 +287,7 @@ private struct TerminalTabChip: View {
     let kill: () -> Void
 
     @State private var isHovered = false
+    @State private var isPressed = false
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
@@ -322,7 +323,7 @@ private struct TerminalTabChip: View {
                 .frame(height: MonknotMetrics.interfaceControl(24, theme: theme, zoomScale: zoomScale))
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
             .accessibilityLabel(accessibilityLabel)
             .accessibilityAddTraits(isSelected ? .isSelected : [])
 
@@ -366,8 +367,11 @@ private struct TerminalTabChip: View {
         if isSelected {
             return theme.elevatedSurfaceColor
         }
+        if isPressed {
+            return theme.pressedFillColor
+        }
         if isHovered {
-            return theme.foregroundColor.opacity(theme.isDark ? 0.055 : 0.04)
+            return theme.hoverFillColor
         }
         return .clear
     }

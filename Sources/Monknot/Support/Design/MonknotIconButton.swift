@@ -2,6 +2,22 @@ import MonknotCore
 import SwiftUI
 
 extension View {
+    /// The keyboard focus ring, design.md §3: 3 pt `accent` at 35 % outside the control's box, in
+    /// addition to its own border and never part of layout.
+    func monknotFocusRing(isVisible: Bool, cornerRadius: CGFloat, theme: AppTheme) -> some View {
+        overlay {
+            if isVisible {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(
+                        theme.accentColor.opacity(MonknotIconButton.focusRingOpacity),
+                        lineWidth: MonknotIconButton.focusRingLineWidth
+                    )
+                    .padding(-MonknotIconButton.focusRingOutset)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
     /// Installs help only when a meaningful inactive-control hint exists.
     /// Passing `nil` avoids creating an empty tooltip surface.
     @ViewBuilder
@@ -134,49 +150,39 @@ struct MonknotIconButton: View {
                 return theme.chromeRadius(5, zoomScale: zoomScale)
             }
         }
-
-        func hoverBackgroundOpacity(isDark: Bool) -> Double {
-            switch self {
-            case .windowNavigation:
-                return isDark ? 0.06 : 0.055
-            case .chrome, .sidebarHeader, .compact, .settings, .smallAction, .editorToolbar, .findBar, .segmented:
-                return isDark ? 0.06 : 0.055
-            }
-        }
-
-        func activeBackgroundOpacity(isDark: Bool) -> Double {
-            isDark ? 0.18 : 0.14
-        }
-
-        func backgroundOpacity(
-            isActive: Bool = false,
-            drawsActiveBackground: Bool = true,
-            isHovered: Bool,
-            isDisabled: Bool,
-            isDark: Bool
-        ) -> Double? {
-            guard !isDisabled else { return nil }
-            if isActive, drawsActiveBackground {
-                return activeBackgroundOpacity(isDark: isDark)
-            }
-            if isHovered {
-                return hoverBackgroundOpacity(isDark: isDark)
-            }
-            return nil
-        }
-
-        var disabledControlOpacity: Double {
-            switch self {
-            case .windowNavigation:
-                return 0.24
-            case .settings, .smallAction:
-                return 0.4
-            case .chrome, .sidebarHeader, .compact, .editorToolbar, .findBar, .segmented:
-                return 0.24
-            }
-        }
-
     }
+
+    /// The fill behind an icon button (design.md §5.1). Pressed replaces hover rather than stacking
+    /// on it; an open panel's toggle is `accsoft`; a disabled button never fills.
+    enum Fill: Equatable {
+        case hover
+        case pressed
+        case accentSoft
+
+        func color(_ theme: AppTheme) -> Color {
+            switch self {
+            case .hover: return theme.hoverFillColor
+            case .pressed: return theme.pressedFillColor
+            case .accentSoft: return theme.accentSoftFillColor
+            }
+        }
+    }
+
+    static func fill(
+        isActive: Bool,
+        drawsActiveBackground: Bool,
+        isHovered: Bool,
+        isPressed: Bool,
+        isDisabled: Bool
+    ) -> Fill? {
+        guard !isDisabled else { return nil }
+        if isPressed { return .pressed }
+        if isActive, drawsActiveBackground { return .accentSoft }
+        return isHovered ? .hover : nil
+    }
+
+    /// A disabled button keeps its border at this opacity; its glyph is `ink4` (design.md §5.1).
+    static let disabledBorderOpacity = 0.4
 
     var body: some View {
         Button(action: action) {
@@ -191,18 +197,6 @@ struct MonknotIconButton: View {
                     width: size.dimension(theme: theme, zoomScale: zoomScale),
                     height: size.height(theme: theme, zoomScale: zoomScale)
                 )
-                .background {
-                    if let opacity = size.backgroundOpacity(
-                        isActive: isActive,
-                        drawsActiveBackground: drawsActiveBackground,
-                        isHovered: isHovered,
-                        isDisabled: isDisabled,
-                        isDark: theme.isDark
-                    ) {
-                        RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
-                            .fill(theme.foregroundColor.opacity(opacity))
-                    }
-                }
                 .overlay {
                     if Self.showsFocusRing(isFocused: isFocused, isDisabled: isDisabled) {
                         focusRing
@@ -210,23 +204,24 @@ struct MonknotIconButton: View {
                 }
                 .contentShape(RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale)))
         }
-        .buttonStyle(MonknotIconButtonPressStyle(
+        .buttonStyle(MonknotIconButtonStyle(
             theme: theme,
             cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale),
+            isActive: isActive,
+            drawsActiveBackground: drawsActiveBackground,
+            isHovered: isHovered,
             isDisabled: isDisabled
         ))
         .focusable(!isDisabled && NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
         .focusEffectDisabled()
         .disabled(isDisabled)
-        .opacity(isDisabled ? size.disabledControlOpacity : 1)
         .overlay {
+            // The border is structure: it never turns accent with state (design.md §5.2).
             if drawsBorder {
                 RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
                     .strokeBorder(
-                        isActive
-                            ? theme.accentColor.opacity(theme.isDark ? 0.38 : 0.30)
-                            : theme.borderColor,
+                        theme.borderColor.opacity(isDisabled ? Self.disabledBorderOpacity : 1),
                         lineWidth: 1
                     )
                     .allowsHitTesting(false)
@@ -248,7 +243,7 @@ struct MonknotIconButton: View {
             return theme.accentColor
         }
         if isHovered {
-            return theme.foregroundColor.opacity(0.92)
+            return theme.foregroundColor
         }
         return theme.mutedForegroundColor
     }
@@ -275,21 +270,43 @@ struct MonknotIconButton: View {
     }
 }
 
-private struct MonknotIconButtonPressStyle: ButtonStyle {
+/// Draws the icon button's one fill, so that pressed can replace hover (the style alone sees the press).
+private struct MonknotIconButtonStyle: ButtonStyle {
     let theme: AppTheme
     let cornerRadius: CGFloat
+    let isActive: Bool
+    let drawsActiveBackground: Bool
+    let isHovered: Bool
     let isDisabled: Bool
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .background {
-                if configuration.isPressed, !isDisabled {
+                if let fill = MonknotIconButton.fill(
+                    isActive: isActive,
+                    drawsActiveBackground: drawsActiveBackground,
+                    isHovered: isHovered,
+                    isPressed: configuration.isPressed,
+                    isDisabled: isDisabled
+                ) {
                     RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(theme.foregroundColor.opacity(theme.isDark ? 0.12 : 0.10))
+                        .fill(fill.color(theme))
                 }
             }
-            .opacity(configuration.isPressed && !isDisabled ? 0.88 : 1)
             .animation(MonknotMotion.hoverAnimation, value: configuration.isPressed)
+    }
+}
+
+/// A plain button style that reports its pressed state, for views that draw their own fill around more
+/// than the button's label (a tab chip, a row with trailing controls).
+struct MonknotPressTrackingButtonStyle: ButtonStyle {
+    @Binding var isPressed: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .onChange(of: configuration.isPressed) { _, pressed in
+                isPressed = pressed
+            }
     }
 }
 
@@ -311,6 +328,7 @@ struct MonknotTabCloseButton: View {
     let action: () -> Void
 
     @State private var isHovered = false
+    @State private var isPressed = false
 
     static func dimension(theme: AppTheme, zoomScale: Double) -> CGFloat {
         MonknotMetrics.interfaceControl(16, theme: theme, zoomScale: zoomScale)
@@ -327,20 +345,18 @@ struct MonknotTabCloseButton: View {
                     size: MonknotMetrics.interfaceGlyph(11, theme: theme, zoomScale: zoomScale),
                     weight: .regular
                 ))
-                .foregroundStyle(
-                    isHovered
-                        ? theme.foregroundColor.opacity(0.86)
-                        : theme.mutedForegroundColor.opacity(0.72)
-                )
+                .foregroundStyle(isHovered ? theme.foregroundColor : theme.tertiaryForegroundColor)
                 .frame(width: dimension, height: dimension)
                 .background {
-                    if isHovered {
-                        Circle().fill(theme.foregroundColor.opacity(0.11))
+                    if isPressed {
+                        Circle().fill(theme.pressedFillColor)
+                    } else if isHovered {
+                        Circle().fill(theme.hoverFillColor)
                     }
                 }
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
         .focusEffectDisabled()
         .disabled(isDisabled || !isVisible)
         .opacity(isVisible ? 1 : 0)
