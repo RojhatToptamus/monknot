@@ -47,8 +47,10 @@ struct TopNavigationBar: View {
     var canNavigateForward = false
     @FocusState private var isSearchFocused: Bool
 
-    private var showsMarkdownViewControls: Bool {
-        selectedDocument?.kind == .markdown
+    /// Markdown notes and HTML pages have a preview; other documents only have their source.
+    private var hasPreviewMode: Bool {
+        guard let selectedDocument else { return false }
+        return selectedDocument.kind == .markdown || selectedDocument.capabilities.canPreviewHTML
     }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -183,11 +185,11 @@ struct TopNavigationBar: View {
             ),
             theme: theme,
             zoomScale: zoomScale,
-            isDisabled: !showsMarkdownViewControls || isDocumentLoading
+            isDisabled: !hasPreviewMode || isDocumentLoading
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("View mode")
-        .accessibilityValue(showsMarkdownViewControls ? editorMode.rawValue : "Unavailable")
+        .accessibilityValue(hasPreviewMode ? editorMode.rawValue : "Unavailable")
     }
 
     @ViewBuilder
