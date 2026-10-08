@@ -650,6 +650,14 @@ Close: 10pt `xmark` in a 14 target, on the active pill and on hover. The strip s
 strip, mouse wheel included, with the same 24pt trailing fade; being clipped by the panel edge is
 correct.
 
+**The screen belongs to the session.** Hiding the panel or switching sessions moves the session's
+terminal view out of the window and back; it is never rebuilt from a replay, so the scrollback, the
+alternate screen, mouse modes and the scroll position come back exactly as the program left them.
+Output reaches it as raw bytes, each byte once. A program that reports the mouse (Claude Code, vim,
+less) gets one wheel report per line actually scrolled, so a flick scrolls it as far as it would
+scroll plain output. The scroll bar is the shared thumb (§5.7) at its resting strength: WebKit cannot
+fade a styled scroll bar, so it does not try.
+
 The header order is session scroller → 13pt divider → fullscreen → new session → close panel.
 Fullscreen is one 26/14 optical control: diagonal arrows point out when docked and in when expanded.
 The smaller symbol size compensates for the diagonal-arrow symbol's larger visible bounds and

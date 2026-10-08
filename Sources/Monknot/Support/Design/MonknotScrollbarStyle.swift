@@ -34,14 +34,18 @@ enum MonknotScrollbarStyle {
         }
     }
 
+    /// The same thumb for a web view's scroll bar. WebKit draws a styled scroll bar as a fixed bar and
+    /// does not repaint it when a class changes, so it cannot fade in and out like an overlay scroller:
+    /// it stays at the resting strength and brightens only under the pointer.
     static func webCSS(
         selector: String = "*",
-        restingColor: String = "color-mix(in srgb, CanvasText 18%, transparent)",
-        hoveredColor: String = "color-mix(in srgb, CanvasText 55%, transparent)"
+        restingColor: String = "color-mix(in srgb, CanvasText 35%, transparent)",
+        hoveredColor: String = "color-mix(in srgb, CanvasText 70%, transparent)"
     ) -> String {
         let restingInset = (trackWidth - restingThumbWidth) / 2
         let hoveredInset = (trackWidth - hoveredThumbWidth) / 2
 
+        // The border is the inset, so the corner radius includes it to leave `thumbRadius` on the thumb.
         return """
         \(selector)::-webkit-scrollbar {
           width: \(cssPixels(trackWidth));
@@ -55,12 +59,13 @@ enum MonknotScrollbarStyle {
           background: \(restingColor);
           background-clip: content-box;
           border: \(cssPixels(restingInset)) solid transparent;
-          border-radius: 999px;
+          border-radius: \(cssPixels(thumbRadius + restingInset));
         }
         \(selector)::-webkit-scrollbar-thumb:hover {
           background: \(hoveredColor);
           background-clip: content-box;
           border: \(cssPixels(hoveredInset)) solid transparent;
+          border-radius: \(cssPixels(thumbRadius + hoveredInset));
         }
         \(selector)::-webkit-scrollbar-corner {
           background: transparent;

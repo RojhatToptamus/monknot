@@ -376,9 +376,9 @@ final class FocusRestorationTests: XCTestCase {
         window.contentView?.addSubview(hiddenTerminalContainer)
         XCTAssertTrue(window.makeFirstResponder(documentEditor))
 
-        let coordinator = TerminalWebView.Coordinator(session: TerminalSessionStore())
+        let coordinator = TerminalWebController(session: TerminalSessionStore())
         coordinator.webView = terminalWebView
-        coordinator.requestFocusOnLoad(from: documentEditor)
+        coordinator.requestFocus(from: documentEditor)
         coordinator.webView(terminalWebView, didFinish: nil)
         await Task.yield()
 
@@ -400,9 +400,9 @@ final class FocusRestorationTests: XCTestCase {
         window.contentView?.addSubview(terminalWebView)
         XCTAssertTrue(window.makeFirstResponder(documentEditor))
 
-        let coordinator = TerminalWebView.Coordinator(session: TerminalSessionStore())
+        let coordinator = TerminalWebController(session: TerminalSessionStore())
         coordinator.webView = terminalWebView
-        coordinator.requestFocusOnLoad(from: documentEditor)
+        coordinator.requestFocus(from: documentEditor)
         coordinator.webView(terminalWebView, didFinish: nil)
         await Task.yield()
 
@@ -430,9 +430,9 @@ final class FocusRestorationTests: XCTestCase {
         window.contentView?.addSubview(terminalWebView)
         XCTAssertTrue(window.makeFirstResponder(workspaceSearchField))
 
-        let coordinator = TerminalWebView.Coordinator(session: TerminalSessionStore())
+        let coordinator = TerminalWebController(session: TerminalSessionStore())
         coordinator.webView = terminalWebView
-        coordinator.requestFocusOnLoad(from: window.firstResponder)
+        coordinator.requestFocus(from: window.firstResponder)
         XCTAssertTrue(window.makeFirstResponder(documentSearchField))
         coordinator.webView(terminalWebView, didFinish: nil)
         await Task.yield()

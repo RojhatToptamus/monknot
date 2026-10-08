@@ -12,7 +12,7 @@ final class TerminalWebViewLifecycleTests: XCTestCase {
         )
 
         XCTAssertTrue(html.contains("term.onData"))
-        XCTAssertTrue(html.contains("scrollback: 5000"))
+        XCTAssertTrue(html.contains("scrollback: 10000"))
         XCTAssertTrue(html.contains("allowProposedApi: true"))
         XCTAssertTrue(html.contains("const searchHighlightLimit = 1000"))
         XCTAssertTrue(html.contains("new SearchAddon.SearchAddon({ highlightLimit: searchHighlightLimit })"))
@@ -82,9 +82,9 @@ final class TerminalWebViewLifecycleTests: XCTestCase {
         let configuration = WKWebViewConfiguration()
         let messageHandler = IgnoringTerminalScriptMessageHandler()
         let messageHandlerNames = [
-            TerminalWebView.Coordinator.inputHandlerName,
-            TerminalWebView.Coordinator.resizeHandlerName,
-            TerminalWebView.Coordinator.searchVisibilityHandlerName,
+            TerminalWebController.inputHandlerName,
+            TerminalWebController.resizeHandlerName,
+            TerminalWebController.searchVisibilityHandlerName,
         ]
         for name in messageHandlerNames {
             configuration.userContentController.add(messageHandler, name: name)
@@ -102,9 +102,12 @@ final class TerminalWebViewLifecycleTests: XCTestCase {
         }
 
         webView.loadHTMLString(try terminalHTMLWithSourceResources(), baseURL: nil)
-        XCTAssertTrue(waitForJavaScript("typeof window.monknotWrite === 'function'", in: webView))
+        XCTAssertTrue(waitForJavaScript("typeof window.monknotWriteBytes === 'function'", in: webView))
 
-        _ = evaluateJavaScript("window.monknotWrite('UNICODE café 日本語\\r\\n')", in: webView)
+        _ = evaluateJavaScript(
+            "window.monknotWriteBytes(btoa(String.fromCharCode(...new TextEncoder().encode('UNICODE café 日本語\\r\\n'))))",
+            in: webView
+        )
         XCTAssertTrue(waitForJavaScript("term.buffer.active.cursorY > 0", in: webView))
 
         let initialResult = try XCTUnwrap(evaluateJavaScript(
@@ -142,6 +145,169 @@ final class TerminalWebViewLifecycleTests: XCTestCase {
             in: webView
         ) as? String
         XCTAssertEqual(cappedStatus, "1 of 1000+")
+    }
+
+    func testOutputLogKeepsRawBytesAndReportsWhatItDropped() {
+        var log = TerminalOutputLog(capacity: 8)
+        log.append(Data([0x61, 0xC3]))          // "a" and the first byte of "é"
+        log.append(Data([0xA9, 0x62]))          // the rest of "é", then "b"
+        XCTAssertEqual(log.bytes(from: 0), Data([0x61, 0xC3, 0xA9, 0x62]))
+        XCTAssertEqual(String(decoding: log.bytes(from: 0) ?? Data(), as: UTF8.self), "aéb")
+        XCTAssertEqual(log.bytes(from: 3), Data([0x62]))
+        XCTAssertEqual(log.bytes(from: 4), Data())
+
+        log.append(Data(repeating: 0x63, count: 6))
+        XCTAssertEqual(log.startOffset, 2, "The oldest whole chunk is dropped to stay within capacity")
+        XCTAssertEqual(log.endOffset, 10)
+        XCTAssertNil(log.bytes(from: 1), "Bytes already dropped cannot be replayed")
+        XCTAssertEqual(log.bytes(from: 4), Data(repeating: 0x63, count: 6))
+    }
+
+    @MainActor
+    func testTerminalViewBelongsToTheSessionAndOutlivesItsHost() {
+        let session = TerminalSessionStore()
+        let controller = TerminalWebController.controller(for: session)
+        XCTAssertTrue(TerminalWebController.controller(for: session) === controller)
+
+        let appearance = TerminalAppearance(
+            theme: .defaultDark,
+            fontSize: 13,
+            usePointerCursors: true,
+            fontSmoothing: true
+        )
+        let webView = controller.webView(appearance: appearance)
+        let firstHost = TerminalWebHostView()
+        firstHost.show(webView)
+        XCTAssertTrue(webView.superview === firstHost)
+
+        // Hiding the drawer dismantles its host; the view and its screen survive.
+        let secondHost = TerminalWebHostView()
+        secondHost.show(controller.webView(appearance: appearance))
+        firstHost.show(nil)
+        XCTAssertTrue(webView.superview === secondHost, "A late dismantle must not take the view from its new host")
+        XCTAssertTrue(controller.webView(appearance: appearance) === webView)
+
+        session.stop()
+        XCTAssertNil(webView.superview)
+        XCTAssertNil(controller.webView)
+        XCTAssertNil(session.presentation)
+    }
+
+    @MainActor
+    func testTerminalJoinsSplitUTF8AndDoesNotReanswerQueriesItReplaysQuietly() throws {
+        let (webView, recorder, teardown) = try loadedTerminal()
+        defer { teardown() }
+
+        _ = evaluateJavaScript("window.monknotWriteBytes(btoa(String.fromCharCode(0xC3)))", in: webView)
+        _ = evaluateJavaScript("window.monknotWriteBytes(btoa(String.fromCharCode(0xA9) + 'x'))", in: webView)
+        XCTAssertTrue(waitForJavaScript(
+            "term.buffer.active.getLine(0).translateToString(true) === 'éx'",
+            in: webView
+        ), "A character split across two reads is joined, not replaced by U+FFFD")
+
+        // Primary device attributes: answered when first shown, not when replayed.
+        _ = evaluateJavaScript("window.monknotWriteBytes(btoa('\\x1b[c'), { quiet: true })", in: webView)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.3))
+        XCTAssertTrue(recorder.inputs.isEmpty, "\(recorder.inputs)")
+
+        _ = evaluateJavaScript("window.monknotWriteBytes(btoa('\\x1b[c'))", in: webView)
+        XCTAssertTrue(waitFor { recorder.inputs.contains { $0.hasPrefix("\u{1b}[?") } }, "\(recorder.inputs)")
+
+        recorder.inputs.removeAll()
+        _ = evaluateJavaScript("window.monknotWriteBytes(btoa('\\x1b[>q'))", in: webView)
+        XCTAssertTrue(waitFor { recorder.inputs.contains("\u{1b}P>|xterm.js(5.5.0)\u{1b}\\") }, "\(recorder.inputs)")
+    }
+
+    @MainActor
+    func testWheelSendsOneReportPerLineScrolledWhileAProgramReportsTheMouse() throws {
+        let (webView, recorder, teardown) = try loadedTerminal()
+        defer { teardown() }
+
+        func wheel(lines: Double) {
+            _ = evaluateJavaScript(
+                """
+                (() => {
+                  const screen = document.querySelector('.xterm-screen');
+                  const rect = screen.getBoundingClientRect();
+                  const cellHeight = rect.height / term.rows;
+                  document.querySelector('.xterm').dispatchEvent(new WheelEvent('wheel', {
+                    deltaY: cellHeight * \(lines), deltaMode: 0,
+                    clientX: rect.left + 5, clientY: rect.top + 5,
+                    bubbles: true, cancelable: true
+                  }));
+                })()
+                """,
+                in: webView
+            )
+        }
+
+        // No mouse reporting: xterm.js scrolls its own scrollback and nothing is sent.
+        wheel(lines: 3)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+        XCTAssertTrue(recorder.inputs.isEmpty, "\(recorder.inputs)")
+
+        _ = evaluateJavaScript("window.monknotWriteBytes(btoa('\\x1b[?1000h\\x1b[?1006h'))", in: webView)
+        XCTAssertTrue(waitForJavaScript("term.modes.mouseTrackingMode !== 'none'", in: webView))
+        wheel(lines: 3)
+        XCTAssertTrue(waitFor { !recorder.inputs.isEmpty })
+        XCTAssertEqual(recorder.inputs.joined(), String(repeating: "\u{1b}[<65;1;1M", count: 3))
+
+        recorder.inputs.removeAll()
+        wheel(lines: -2)
+        XCTAssertTrue(waitFor { !recorder.inputs.isEmpty })
+        XCTAssertEqual(recorder.inputs.joined(), String(repeating: "\u{1b}[<64;1;1M", count: 2))
+    }
+
+    @MainActor
+    func testACollapsedPanelDoesNotShrinkTheTerminal() throws {
+        let (webView, _, teardown) = try loadedTerminal()
+        defer { teardown() }
+        XCTAssertTrue(waitForJavaScript("term.cols > 40", in: webView))
+        let columns = evaluateJavaScript("term.cols", in: webView) as? Int
+
+        _ = evaluateJavaScript(
+            "document.getElementById('terminal').style.width = '30px'; postResize();",
+            in: webView
+        )
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+        XCTAssertEqual(evaluateJavaScript("term.cols", in: webView) as? Int, columns)
+    }
+
+    @MainActor
+    private func loadedTerminal() throws -> (WKWebView, RecordingTerminalScriptMessageHandler, () -> Void) {
+        let configuration = WKWebViewConfiguration()
+        let recorder = RecordingTerminalScriptMessageHandler()
+        let names = [
+            TerminalWebController.inputHandlerName,
+            TerminalWebController.resizeHandlerName,
+            TerminalWebController.searchVisibilityHandlerName,
+        ]
+        for name in names {
+            configuration.userContentController.add(recorder, name: name)
+        }
+        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 640, height: 400), configuration: configuration)
+        webView.loadHTMLString(try terminalHTMLWithSourceResources(), baseURL: nil)
+        XCTAssertTrue(waitForJavaScript("typeof window.monknotWriteBytes === 'function'", in: webView))
+        // Let the first fit settle and its resize message arrive before measuring input.
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+        recorder.inputs.removeAll()
+        return (webView, recorder, { [weak self] in
+            _ = self?.evaluateJavaScript("window.monknotDispose && window.monknotDispose()", in: webView)
+            for name in names {
+                configuration.userContentController.removeScriptMessageHandler(forName: name)
+            }
+        })
+    }
+
+    @MainActor
+    private func waitFor(_ condition: () -> Bool, attempts: Int = 100) -> Bool {
+        for _ in 0..<attempts {
+            if condition() {
+                return true
+            }
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02))
+        }
+        return false
     }
 
     private func keyEvent(
@@ -233,4 +399,17 @@ private final class IgnoringTerminalScriptMessageHandler: NSObject, WKScriptMess
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage
     ) {}
+}
+
+private final class RecordingTerminalScriptMessageHandler: NSObject, WKScriptMessageHandler {
+    var inputs: [String] = []
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        if message.name == TerminalWebController.inputHandlerName, let text = message.body as? String {
+            inputs.append(text)
+        }
+    }
 }

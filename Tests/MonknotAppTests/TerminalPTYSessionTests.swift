@@ -132,6 +132,34 @@ final class TerminalPTYSessionTests: XCTestCase {
         )
     }
 
+    func testShellEnvironmentDropsAnotherTerminalsIdentityAndNamesThisOne() {
+        let environment = TerminalPTYSession.childEnvironment(
+            from: [
+                "PATH": "/usr/bin",
+                "HOME": "/Users/test",
+                "TERM_PROGRAM": "iTerm.app",
+                "ITERM_SESSION_ID": "w0t0p0",
+                "VSCODE_INJECTION": "1",
+                "TMUX": "/tmp/tmux",
+                "LC_TERMINAL": "iTerm2",
+            ],
+            appVersion: "2.3"
+        )
+        XCTAssertEqual(environment["PATH"], "/usr/bin")
+        XCTAssertEqual(environment["HOME"], "/Users/test")
+        XCTAssertEqual(environment["TERM"], "xterm-256color")
+        XCTAssertEqual(environment["COLORTERM"], "truecolor")
+        XCTAssertEqual(environment["TERM_PROGRAM"], "Monknot")
+        XCTAssertEqual(environment["TERM_PROGRAM_VERSION"], "2.3")
+        XCTAssertEqual(environment["LANG"], "en_US.UTF-8", "Launched from Finder there is no locale")
+        for inherited in ["ITERM_SESSION_ID", "VSCODE_INJECTION", "TMUX", "LC_TERMINAL"] {
+            XCTAssertNil(environment[inherited], inherited)
+        }
+
+        let withLocale = TerminalPTYSession.childEnvironment(from: ["LANG": "de_DE.UTF-8"], appVersion: nil)
+        XCTAssertEqual(withLocale["LANG"], "de_DE.UTF-8", "A locale the user set is kept")
+    }
+
     func testTwoTerminalSessionsRunIndependently() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("MonknotTerminalPTYMultiple-\(UUID().uuidString)", isDirectory: true)
@@ -290,9 +318,9 @@ private final class TerminalPTYRecorder: @unchecked Sendable {
         return output
     }
 
-    func append(_ text: String) {
+    func append(_ bytes: Data) {
         condition.lock()
-        output += text
+        output += String(decoding: bytes, as: UTF8.self)
         condition.broadcast()
         condition.unlock()
     }
