@@ -2221,7 +2221,7 @@ struct ContentView: View {
         }
 
         if documentViewOwnsFocus {
-            return NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
+            return performInFocusedDocument(#selector(NSText.cut(_:)))
         }
 
         return cutSelectedDocumentFromCommand()
@@ -2237,7 +2237,7 @@ struct ContentView: View {
         }
 
         if documentViewOwnsFocus {
-            return NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+            return performInFocusedDocument(#selector(NSText.copy(_:)))
         }
 
         return copySelectedDocumentFromCommand()
@@ -2253,7 +2253,7 @@ struct ContentView: View {
         }
 
         if documentViewOwnsFocus {
-            return NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
+            return performInFocusedDocument(#selector(NSText.paste(_:)))
         }
 
         if WorkspacePasteboardExportService.ownsPasteboard(), store.canPasteDocumentTransfer {
@@ -2262,6 +2262,15 @@ struct ContentView: View {
         }
 
         return importPasteboardFromCommand()
+    }
+
+    /// A focused document (a PDF) takes the clipboard command or refuses it with the system beep;
+    /// it never falls through to copying, moving or importing workspace files.
+    private func performInFocusedDocument(_ action: Selector) -> Bool {
+        if !NSApp.sendAction(action, to: nil, from: nil) {
+            NSSound.beep()
+        }
+        return true
     }
 
     private func copySelectedDocumentFromCommand() -> Bool {
