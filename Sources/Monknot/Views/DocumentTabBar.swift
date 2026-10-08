@@ -321,7 +321,7 @@ private struct DocumentTabItemView: View {
                     if tab.isPinned {
                         Image(systemName: "pin.fill")
                             .font(.system(size: metrics.pinGlyph, weight: .regular))
-                            .foregroundStyle(theme.mutedForegroundColor)
+                            .foregroundStyle(isDisabled ? theme.disabledForegroundColor : theme.mutedForegroundColor)
                             .frame(width: metrics.pinGlyph)
                             .accessibilityHidden(true)
                     }
@@ -438,20 +438,19 @@ private struct DocumentTabItemView: View {
     }
 
     private var opacity: Double {
-        if isDragging {
-            return 0.45
-        }
-        return isDisabled ? 0.55 : 1
+        isDragging ? 0.45 : 1
     }
 
+    // design.md §1.4, like a sidebar row: label `ink2` and glyph `ink3` at rest, both `ink` while
+    // hovered; disabled is `ink4` with nothing multiplied on top (§5.1).
     private var textColor: Color {
         if isSelected {
             return theme.foregroundColor
         }
-        if isHovered && !isDisabled {
-            return theme.foregroundColor.opacity(0.78)
+        if isDisabled {
+            return theme.disabledForegroundColor
         }
-        return theme.mutedForegroundColor
+        return isHovered ? theme.foregroundColor : theme.mutedForegroundColor
     }
 
     private var iconColor: Color {
@@ -461,7 +460,10 @@ private struct DocumentTabItemView: View {
         if isSelected {
             return theme.accentColor
         }
-        return isHovered ? theme.mutedForegroundColor : theme.tertiaryForegroundColor
+        if isDisabled {
+            return theme.disabledForegroundColor
+        }
+        return isHovered ? theme.foregroundColor : theme.tertiaryForegroundColor
     }
 
     private var documentIconName: String {

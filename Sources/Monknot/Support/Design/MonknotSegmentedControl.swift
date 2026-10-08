@@ -102,8 +102,9 @@ struct MonknotSegmentButton: View {
         .animation(MonknotMotion.hoverAnimation, value: isSelected)
         .help(accessibilityLabel)
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .monknotPointerCursor()
+        // Disabled, the control shows no current mode, so it reports none either.
+        .accessibilityAddTraits(isSelected && !isDisabled ? .isSelected : [])
+        .monknotPointerCursor(enabled: !isDisabled)
     }
 
     private var foreground: Color {
