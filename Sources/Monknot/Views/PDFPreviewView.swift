@@ -264,13 +264,15 @@ struct PDFPreviewView: View {
     private var pdfLoadStatus: some View {
         switch loadState {
         case .loading:
-            VStack(spacing: scaled(10)) {
-                ProgressView()
-                    .controlSize(.small)
+            VStack(spacing: scaled(12)) {
+                MonknotProgressIndicator(
+                    size: MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale),
+                    theme: theme
+                )
 
                 Text("Opening PDF…")
                     .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
-                    .foregroundStyle(theme.mutedForegroundColor)
+                    .foregroundStyle(theme.tertiaryForegroundColor)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityElement(children: .combine)

@@ -126,7 +126,7 @@ struct MonknotCommandMenu: Commands {
             .keyboardShortcut("n", modifiers: [.command, .shift])
             .disabled(actions == nil)
 
-            Button("Add Workspace...") {
+            Button("Add Workspace…") {
                 actions?.openFolder()
             }
             .keyboardShortcut("o", modifiers: [.command])
@@ -324,22 +324,22 @@ struct MonknotCommandMenu: Commands {
         }
 
         CommandGroup(replacing: .printItem) {
-            Button("Export PDF...") {
+            Button("Export PDF…") {
                 actions?.exportPDF()
             }
             .disabled(actions?.canExportPDF != true)
 
-            Button("Export PDF Annotations as Markdown...") {
+            Button("Export PDF Annotations as Markdown…") {
                 actions?.exportPDFAnnotationsMarkdown()
             }
             .disabled(actions?.canExportPDFAnnotationsMarkdown != true)
 
-            Button("Export All PDF Annotations as Markdown...") {
+            Button("Export All PDF Annotations as Markdown…") {
                 actions?.exportAllPDFAnnotationsMarkdown()
             }
             .disabled(actions?.canExportAllPDFAnnotationsMarkdown != true)
 
-            Button("Export Annotated PDF Copy...") {
+            Button("Export Annotated PDF Copy…") {
                 actions?.exportAnnotatedPDFCopy()
             }
             .disabled(actions?.canExportAnnotatedPDFCopy != true)
@@ -373,13 +373,13 @@ struct MonknotCommandMenu: Commands {
 
             Divider()
 
-            Button("Quick Open...") {
+            Button("Quick Open…") {
                 actions?.showQuickOpen()
             }
             .keyboardShortcut("p", modifiers: [.command])
             .disabled(actions?.canShowQuickOpen != true)
 
-            Button("Go to Line...") {
+            Button("Go to Line…") {
                 actions?.showGoToLine()
             }
             .disabled(actions?.canShowGoToLine != true)

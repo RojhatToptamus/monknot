@@ -662,12 +662,14 @@ private struct DocumentLoadingPlaceholder: View {
 
     var body: some View {
         VStack(spacing: scaled(12)) {
-            ProgressView()
-                .controlSize(.small)
+            MonknotProgressIndicator(
+                size: MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale),
+                theme: theme
+            )
 
             Text(documentName)
-                .font(.system(size: scaled(13), weight: .regular))
-                .foregroundStyle(theme.mutedForegroundColor)
+                .font(.system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale)))
+                .foregroundStyle(theme.tertiaryForegroundColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: scaled(280))

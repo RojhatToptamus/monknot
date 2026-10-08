@@ -581,83 +581,63 @@ private struct WorkspaceReplaceConfirmationSheet: View {
     let confirm: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 7) {
-                Text("Replace \(preview.totalReplacements) match\(preview.totalReplacements == 1 ? "" : "es") in \(preview.affectedFileCount) file\(preview.affectedFileCount == 1 ? "" : "s")?")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(theme.foregroundColor)
+        MonknotSheetLayout(
+            title: "Replace \(preview.totalReplacements) match\(preview.totalReplacements == 1 ? "" : "es") in \(preview.affectedFileCount) file\(preview.affectedFileCount == 1 ? "" : "s")?",
+            message: "These files change on disk. ⌘Z undoes the replace while Monknot stays open.",
+            theme: theme
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                MonknotScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(Array(preview.fileResults.enumerated()), id: \.element.documentID) { index, result in
+                            HStack(spacing: 8) {
+                                MonknotFileKindGlyph(systemImage: "doc.text", theme: theme, zoomScale: 1)
+                                    .foregroundStyle(theme.tertiaryForegroundColor)
 
-                Text("The scope was chosen in Find in Workspace. This action changes the files listed below and can be undone with ⌘Z while Monknot stays open.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(theme.mutedForegroundColor)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+                                Text(result.relativePath)
+                                    .font(MonknotTypography.rowTitle(theme: theme, zoomScale: 1))
+                                    .foregroundStyle(theme.foregroundColor)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
 
-            MonknotScrollView {
-                VStack(spacing: 0) {
-                    ForEach(Array(preview.fileResults.enumerated()), id: \.element.documentID) { index, result in
-                        HStack(spacing: 12) {
-                            Image(systemName: "doc.text")
-                                .font(.system(size: 14))
-                                .foregroundStyle(theme.tertiaryForegroundColor)
+                                Spacer(minLength: 12)
 
-                            Text(result.relativePath)
-                                .font(.system(size: 13))
-                                .foregroundStyle(theme.foregroundColor)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-
-                            Spacer(minLength: 12)
-
-                            Text("\(result.replacementCount)")
-                                .font(.system(size: 12, weight: .regular, design: .monospaced))
-                                .foregroundStyle(theme.mutedForegroundColor)
-                        }
-                        .padding(.horizontal, 14)
-                        .frame(height: 34)
-                        .overlay(alignment: .bottom) {
-                            if index < preview.fileResults.count - 1 {
-                                Rectangle()
-                                    .fill(theme.separatorColor)
-                                    .frame(height: 1)
-                                    .padding(.leading, 40)
+                                Text("\(result.replacementCount)")
+                                    .font(.system(size: 12))
+                                    .monospacedDigit()
+                                    .foregroundStyle(theme.tertiaryForegroundColor)
+                            }
+                            .padding(.horizontal, 10)
+                            .frame(height: 30)
+                            .overlay(alignment: .bottom) {
+                                if index < preview.fileResults.count - 1 {
+                                    Rectangle()
+                                        .fill(theme.separatorColor)
+                                        .frame(height: 1)
+                                        .padding(.leading, 36)
+                                }
                             }
                         }
                     }
                 }
+                .frame(maxHeight: 220)
+                .background(theme.elevatedSurfaceColor, in: RoundedRectangle(cornerRadius: 12))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12).strokeBorder(theme.borderColor, lineWidth: 1)
+                }
+
+                if preview.skippedDirtyCount > 0 || preview.skippedLargeFileCount > 0 {
+                    Text(skippedMessage)
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.tertiaryForegroundColor)
+                }
             }
-            .frame(maxHeight: 220)
-            .background(theme.elevatedSurfaceColor, in: RoundedRectangle(cornerRadius: 10))
-
-            if preview.skippedDirtyCount > 0 || preview.skippedLargeFileCount > 0 {
-                Text(skippedMessage)
-                    .font(.system(size: 12))
-                    .foregroundStyle(theme.tertiaryForegroundColor)
-            }
-
-            HStack(spacing: 10) {
-                Spacer()
-
-                MonknotActionButton(
-                    title: "Cancel",
-                    role: .secondary,
-                    theme: theme,
-                    action: cancel
-                )
+        } buttons: {
+            MonknotActionButton(title: "Cancel", role: .secondary, theme: theme, action: cancel)
                 .keyboardShortcut(.cancelAction)
-
-                MonknotActionButton(
-                    title: "Replace All",
-                    role: .destructive,
-                    theme: theme,
-                    action: confirm
-                )
+            MonknotActionButton(title: "Replace All", role: .destructive, theme: theme, action: confirm)
                 .keyboardShortcut(.defaultAction)
-            }
         }
-        .padding(20)
-        .frame(width: 440)
-        .background(theme.contentSurfaceColor)
     }
 
     private var skippedMessage: String {

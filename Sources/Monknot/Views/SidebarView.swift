@@ -953,9 +953,10 @@ private struct WorkspaceSwitcherPopover: View {
         MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
     }
 
+    /// Up to seven 34 rows (design.md §5.7 overlay row), 2 apart, inside the list padding.
     private var workspaceListHeight: CGFloat {
         let visibleCount = CGFloat(min(workspaces.count, 7))
-        return scaled(visibleCount * 56 + 8)
+        return scaled(visibleCount * 34 + max(0, visibleCount - 1) * 2 + 12)
     }
 
     var body: some View {
@@ -976,7 +977,7 @@ private struct WorkspaceSwitcherPopover: View {
                     .frame(height: scaled(42), alignment: .leading)
             } else {
                 MonknotScrollView {
-                    LazyVStack(spacing: scaled(4)) {
+                    LazyVStack(spacing: scaled(2)) {
                         ForEach(Array(workspaces.enumerated()), id: \.element.id) { index, workspace in
                             WorkspaceSwitcherRow(
                                 workspace: workspace,
@@ -990,7 +991,7 @@ private struct WorkspaceSwitcherPopover: View {
                             )
                         }
                     }
-                    .padding(.horizontal, scaled(8))
+                    .padding(.horizontal, scaled(6))
                     .padding(.vertical, scaled(6))
                 }
                 .frame(height: workspaceListHeight)
@@ -1018,8 +1019,8 @@ private struct WorkspaceSwitcherPopover: View {
                 action: manageWorkspaces
             )
         }
-        .padding(.bottom, scaled(8))
-        .frame(width: scaled(414))
+        .padding(.bottom, scaled(6))
+        .frame(width: scaled(380))
         .background(theme.elevatedSurfaceColor)
     }
 }
@@ -1073,29 +1074,22 @@ private struct WorkspaceSwitcherRow: View {
                     .animation(MonknotMotion.hoverAnimation, value: isHovered)
                     .frame(width: scaled(18))
 
-                    VStack(alignment: .leading, spacing: scaled(3)) {
-                        Text(workspace.displayName)
-                            .font(.system(size: textScaled(13), weight: .regular))
-                            .foregroundStyle(
-                                isActive || isHighlighted
-                                    ? theme.foregroundColor
-                                    : (isUnavailable ? theme.disabledForegroundColor : theme.mutedForegroundColor)
-                            )
-                            .animation(MonknotMotion.hoverAnimation, value: isHovered)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                    Text(workspace.displayName)
+                        .font(.system(size: textScaled(13), weight: .regular))
+                        .foregroundStyle(
+                            isActive || isHighlighted
+                                ? theme.foregroundColor
+                                : (isUnavailable ? theme.disabledForegroundColor : theme.mutedForegroundColor)
+                        )
+                        .animation(MonknotMotion.hoverAnimation, value: isHovered)
+                        .lineLimit(1)
+                        .layoutPriority(1)
 
-                        Text((workspace.path as NSString).abbreviatingWithTildeInPath)
-                            .font(.system(size: textScaled(12), weight: .regular, design: .monospaced))
-                            .foregroundStyle(
-                                isUnavailable
-                                    ? theme.disabledForegroundColor
-                                    : (isHighlighted ? theme.mutedForegroundColor : theme.tertiaryForegroundColor)
-                            )
-                            .animation(MonknotMotion.hoverAnimation, value: isHovered)
-                            .lineLimit(1)
-                            .truncationMode(.head)
-                    }
+                    Text((workspace.path as NSString).abbreviatingWithTildeInPath)
+                        .font(.system(size: textScaled(12), weight: .regular))
+                        .foregroundStyle(isUnavailable ? theme.disabledForegroundColor : theme.tertiaryForegroundColor)
+                        .lineLimit(1)
+                        .truncationMode(.head)
 
                     Spacer(minLength: scaled(8))
 
@@ -1110,7 +1104,7 @@ private struct WorkspaceSwitcherRow: View {
                     }
                 }
                 .padding(.horizontal, scaled(10))
-                .frame(height: scaled(52))
+                .frame(height: scaled(34))
                 .contentShape(Rectangle())
             }
             .buttonStyle(MonknotRowButtonStyle(
@@ -1453,7 +1447,7 @@ private struct SidebarNodeRow: View {
             Button {
                 exportPDF(document)
             } label: {
-                Label("Export PDF...", systemImage: MonknotWorkspaceIcons.exportPDF)
+                Label("Export PDF…", systemImage: MonknotWorkspaceIcons.exportPDF)
             }
         }
 
@@ -2111,90 +2105,86 @@ private struct MarkdownLinkMoveReviewSheet: View {
     let confirm: () -> Void
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: scaled(16)) {
-            VStack(alignment: .leading, spacing: scaled(5)) {
-                Text("Update Links Before Moving?")
-                    .font(.system(size: scaled(16), weight: .semibold))
-                    .foregroundStyle(theme.foregroundColor)
+        MonknotSheetLayout(
+            title: "Update Links Before Moving?",
+            message: moveSummary,
+            theme: theme,
+            zoomScale: zoomScale,
+            width: 520
+        ) {
+            VStack(alignment: .leading, spacing: scaled(12)) {
+                HStack(spacing: scaled(8)) {
+                    Text(review.plan.sourceURL.lastPathComponent)
+                    Image(systemName: "arrow.right")
+                        .foregroundStyle(theme.tertiaryForegroundColor)
+                        .accessibilityHidden(true)
+                    Text(review.plan.destinationURL.lastPathComponent)
+                }
+                .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
+                .foregroundStyle(theme.foregroundColor)
+                .lineLimit(1)
 
-                Text(moveSummary)
-                    .font(.system(size: scaled(13)))
-                    .foregroundStyle(theme.mutedForegroundColor)
-            }
+                MonknotScrollView {
+                    LazyVStack(alignment: .leading, spacing: scaled(12)) {
+                        ForEach(Array(review.plan.rewriteFiles.enumerated()), id: \.offset) { _, filePlan in
+                            VStack(alignment: .leading, spacing: scaled(6)) {
+                                Text(relativePath(for: filePlan.finalURL))
+                                    .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
+                                    .foregroundStyle(theme.foregroundColor)
 
-            HStack(spacing: scaled(8)) {
-                Text(review.plan.sourceURL.lastPathComponent)
-                Image(systemName: "arrow.right")
-                    .foregroundStyle(theme.mutedForegroundColor)
-                    .accessibilityHidden(true)
-                Text(review.plan.destinationURL.lastPathComponent)
-            }
-            .font(.system(size: scaled(12.5), design: .monospaced))
-            .foregroundStyle(theme.foregroundColor)
-            .lineLimit(1)
-
-            MonknotScrollView {
-                LazyVStack(alignment: .leading, spacing: scaled(12)) {
-                    ForEach(Array(review.plan.rewriteFiles.enumerated()), id: \.offset) { _, filePlan in
-                        VStack(alignment: .leading, spacing: scaled(6)) {
-                            Text(relativePath(for: filePlan.finalURL))
-                                .font(.system(size: scaled(12.5)))
-                                .foregroundStyle(theme.foregroundColor)
-
-                            ForEach(Array(filePlan.rewrites.enumerated()), id: \.offset) { _, rewrite in
-                                HStack(alignment: .firstTextBaseline, spacing: scaled(6)) {
-                                    Text(rewrite.oldDestination)
-                                        .foregroundStyle(theme.mutedForegroundColor)
-                                    Image(systemName: "arrow.right")
-                                        .font(.system(size: scaled(9)))
-                                        .foregroundStyle(theme.mutedForegroundColor)
-                                        .accessibilityHidden(true)
-                                    Text(rewrite.newDestination)
-                                        .foregroundStyle(theme.foregroundColor)
+                                ForEach(Array(filePlan.rewrites.enumerated()), id: \.offset) { _, rewrite in
+                                    HStack(alignment: .firstTextBaseline, spacing: scaled(6)) {
+                                        Text(rewrite.oldDestination)
+                                            .foregroundStyle(theme.tertiaryForegroundColor)
+                                        Image(systemName: "arrow.right")
+                                            .font(.system(
+                                                size: MonknotMetrics.interfaceGlyph(10, theme: theme, zoomScale: zoomScale)
+                                            ))
+                                            .foregroundStyle(theme.tertiaryForegroundColor)
+                                            .accessibilityHidden(true)
+                                        Text(rewrite.newDestination)
+                                            .foregroundStyle(theme.foregroundColor)
+                                    }
+                                    .font(.system(
+                                        size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale),
+                                        design: .monospaced
+                                    ))
+                                    .textSelection(.enabled)
                                 }
-                                .font(.system(size: scaled(11.5), design: .monospaced))
-                                .textSelection(.enabled)
                             }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
-                        if filePlan.originalURL != review.plan.rewriteFiles.last?.originalURL {
-                            Divider()
+                            if filePlan.originalURL != review.plan.rewriteFiles.last?.originalURL {
+                                Rectangle().fill(theme.separatorColor).frame(height: 1)
+                            }
                         }
                     }
                 }
+                .frame(minHeight: scaled(110), maxHeight: scaled(300))
             }
-            .frame(minHeight: scaled(110), maxHeight: scaled(300))
+        } buttons: {
+            MonknotActionButton(
+                title: "Cancel",
+                role: .secondary,
+                theme: theme,
+                zoomScale: zoomScale,
+                action: cancel
+            )
+            .keyboardShortcut(.cancelAction)
 
-            HStack(spacing: scaled(8)) {
-                Spacer()
-
-                MonknotActionButton(
-                    title: "Cancel",
-                    role: .secondary,
-                    theme: theme,
-                    zoomScale: zoomScale,
-                    action: cancel
-                )
-                .keyboardShortcut(.cancelAction)
-
-                MonknotActionButton(
-                    title: "Move and Update",
-                    role: .primary,
-                    theme: theme,
-                    zoomScale: zoomScale,
-                    action: confirm
-                )
-                .keyboardShortcut(.defaultAction)
-            }
+            MonknotActionButton(
+                title: "Move and Update",
+                role: .primary,
+                theme: theme,
+                zoomScale: zoomScale,
+                action: confirm
+            )
+            .keyboardShortcut(.defaultAction)
         }
-        .padding(scaled(18))
-        .frame(width: scaled(520))
-        .background(theme.surfaceColor)
     }
 
     private var moveSummary: String {
@@ -2243,29 +2233,19 @@ private struct SidebarNameInputSheet: View {
     }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: scaled(16)) {
-            VStack(alignment: .leading, spacing: scaled(5)) {
-                Text(title)
-                    .font(.system(size: scaled(16), weight: .semibold))
-                    .foregroundStyle(theme.foregroundColor)
-
-                Text(message)
-                    .font(.system(size: scaled(13)))
-                    .foregroundStyle(theme.mutedForegroundColor)
-            }
-
+        MonknotSheetLayout(title: title, message: message, theme: theme, zoomScale: zoomScale, width: 360) {
             TextField(placeholder, text: $name)
                 .textFieldStyle(.plain)
-                .font(.system(size: scaled(14)))
+                .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
                 .foregroundStyle(theme.foregroundColor)
                 .focused($isNameFocused)
                 .onSubmit(submit)
                 .padding(.horizontal, scaled(10))
-                .frame(height: scaled(34))
+                .frame(height: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale))
                 .background(
                     RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
                         .fill(theme.insetFillColor)
@@ -2274,33 +2254,26 @@ private struct SidebarNameInputSheet: View {
                     RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
                         .strokeBorder(theme.borderColor, lineWidth: 1)
                 }
+        } buttons: {
+            MonknotActionButton(
+                title: "Cancel",
+                role: .secondary,
+                theme: theme,
+                zoomScale: zoomScale,
+                action: cancel
+            )
+            .keyboardShortcut(.cancelAction)
 
-            HStack(spacing: scaled(8)) {
-                Spacer()
-
-                MonknotActionButton(
-                    title: "Cancel",
-                    role: .secondary,
-                    theme: theme,
-                    zoomScale: zoomScale,
-                    action: cancel
-                )
-                .keyboardShortcut(.cancelAction)
-
-                MonknotActionButton(
-                    title: confirmTitle,
-                    role: .primary,
-                    theme: theme,
-                    zoomScale: zoomScale,
-                    isDisabled: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                    action: submit
-                )
-                .keyboardShortcut(.defaultAction)
-            }
+            MonknotActionButton(
+                title: confirmTitle,
+                role: .primary,
+                theme: theme,
+                zoomScale: zoomScale,
+                isDisabled: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                action: submit
+            )
+            .keyboardShortcut(.defaultAction)
         }
-        .padding(scaled(18))
-        .frame(width: scaled(360))
-        .background(theme.surfaceColor)
         .onAppear {
             isNameFocused = true
         }

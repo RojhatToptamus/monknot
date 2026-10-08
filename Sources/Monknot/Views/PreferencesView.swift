@@ -99,7 +99,7 @@ struct PreferencesView: View {
     }
 
     private var settingsSidebar: some View {
-        VStack(alignment: .leading, spacing: scaled(4)) {
+        VStack(alignment: .leading, spacing: scaled(2)) {
             ForEach(Section.allCases) { section in
                 Button {
                     selectedSection = section
@@ -110,14 +110,16 @@ struct PreferencesView: View {
                             .foregroundStyle(
                                 selectedSection == section
                                     ? panelTheme.accentColor
-                                    : panelTheme.tertiaryForegroundColor
+                                    : (hoveredSection == section
+                                        ? panelTheme.foregroundColor
+                                        : panelTheme.tertiaryForegroundColor)
                             )
-                            .frame(width: glyphScaled(16))
+                            .frame(width: glyphScaled(MonknotMetrics.rowIconColumnWidthBase))
 
                         Text(section.rawValue)
                             .font(.system(size: textScaled(13), weight: .regular))
                             .foregroundStyle(
-                                selectedSection == section
+                                selectedSection == section || hoveredSection == section
                                     ? panelTheme.foregroundColor
                                     : panelTheme.mutedForegroundColor
                             )
@@ -127,7 +129,12 @@ struct PreferencesView: View {
                         .frame(height: scaled(28))
                         .background(
                             sidebarRowBackground(for: section),
-                            in: RoundedRectangle(cornerRadius: scaled(8))
+                            in: RoundedRectangle(cornerRadius: panelTheme.chromeRadius(8, zoomScale: settingsZoomScale))
+                        )
+                        .monknotFocusRing(
+                            isVisible: focusedSection == section,
+                            cornerRadius: panelTheme.chromeRadius(8, zoomScale: settingsZoomScale),
+                            theme: panelTheme
                         )
                 }
                 .buttonStyle(.plain)
@@ -153,8 +160,9 @@ struct PreferencesView: View {
         if selectedSection == section {
             return panelTheme.selectedRowColor
         }
-        if hoveredSection == section || focusedSection == section {
-            return panelTheme.foregroundColor.opacity(panelTheme.isDark ? 0.055 : 0.04)
+        // design.md §1.2: the one hover fill; keyboard focus shows the ring instead (§3).
+        if hoveredSection == section {
+            return panelTheme.hoverFillColor
         }
         return .clear
     }

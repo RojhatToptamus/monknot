@@ -94,7 +94,7 @@ struct ExternalDocumentChangeBanner: View {
     }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -104,7 +104,7 @@ struct ExternalDocumentChangeBanner: View {
                     size: MonknotMetrics.interfaceGlyph(15, theme: theme, zoomScale: zoomScale),
                     weight: .regular
                 ))
-                .foregroundStyle(isRemovedExternally ? removedColor : theme.accentColor)
+                .foregroundStyle(isRemovedExternally ? removedColor : theme.mutedForegroundColor)
                 .frame(width: scaled(18))
 
             Text(message)
@@ -119,6 +119,7 @@ struct ExternalDocumentChangeBanner: View {
                     role: .secondary,
                     theme: theme,
                     zoomScale: zoomScale,
+                    size: .bar,
                     isDisabled: isSaving,
                     action: savePDFCopy
                 )
@@ -127,6 +128,7 @@ struct ExternalDocumentChangeBanner: View {
                     role: .primary,
                     theme: theme,
                     zoomScale: zoomScale,
+                    size: .bar,
                     isDisabled: isSaving || isRemovedExternally
                 ) {
                     isConfirmingPDFReload = true
@@ -137,6 +139,7 @@ struct ExternalDocumentChangeBanner: View {
                     role: .primary,
                     theme: theme,
                     zoomScale: zoomScale,
+                    size: .bar,
                     isDisabled: isSaving,
                     action: review
                 )
@@ -146,6 +149,7 @@ struct ExternalDocumentChangeBanner: View {
                     role: .secondary,
                     theme: theme,
                     zoomScale: zoomScale,
+                    size: .bar,
                     isDisabled: isSaving,
                     action: saveTextCopy
                 )
@@ -154,6 +158,7 @@ struct ExternalDocumentChangeBanner: View {
                     role: .secondary,
                     theme: theme,
                     zoomScale: zoomScale,
+                    size: .bar,
                     isDisabled: isSaving,
                     action: keepLocalText
                 )
@@ -162,19 +167,21 @@ struct ExternalDocumentChangeBanner: View {
                     role: .destructive,
                     theme: theme,
                     zoomScale: zoomScale,
+                    size: .bar,
                     isDisabled: isSaving || isRemovedExternally
                 ) {
                     isConfirmingTextUseDisk = true
                 }
             }
         }
+        // A docked bar (design.md §2, §13): 44 tall with 28 buttons, a soft equal fill, and one hairline.
         .padding(.horizontal, scaled(16))
         .padding(.vertical, scaled(8))
-        .frame(maxWidth: .infinity, minHeight: scaled(46))
-        .background(isRemovedExternally ? removedColor.opacity(theme.isDark ? 0.12 : 0.10) : theme.selectedRowColor)
+        .frame(maxWidth: .infinity, minHeight: scaled(44))
+        .background(isRemovedExternally ? removedColor.opacity(theme.isDark ? 0.12 : 0.10) : theme.elevatedSurfaceColor)
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(isRemovedExternally ? removedColor.opacity(theme.isDark ? 0.22 : 0.20) : theme.borderColor)
+                .fill(theme.borderColor)
                 .frame(height: 1)
         }
         .accessibilityElement(children: .contain)
@@ -216,7 +223,7 @@ struct ExternalDocumentReconciliationSheet: View {
     @State private var showsBaseline = false
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -264,12 +271,12 @@ struct ExternalDocumentReconciliationSheet: View {
     private var sheetHeader: some View {
         HStack(spacing: scaled(8)) {
             Text("Review External Changes")
-                .font(MonknotTypography.panelTitle(theme: theme))
+                .font(MonknotTypography.panelTitle(theme: theme, zoomScale: zoomScale))
                 .foregroundStyle(theme.foregroundColor)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, scaled(16))
-        .frame(height: scaled(48))
+        .frame(height: scaled(44))
         .overlay(alignment: .bottom) {
             Rectangle().fill(theme.borderColor).frame(height: 1)
         }
@@ -318,14 +325,14 @@ struct ExternalDocumentReconciliationSheet: View {
             diffCount("−\(summary.removedLineCount)", color: removedColor, label: "removed lines")
         }
         .padding(.horizontal, scaled(10))
-        .frame(height: scaled(38))
+        .frame(height: scaled(30))
     }
 
     private func diffCount(_ value: String, color: Color, label: String) -> some View {
         Text(value)
             .font(.system(
                 size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale),
-                weight: .semibold,
+                weight: .regular,
                 design: .monospaced
             ))
             .foregroundStyle(color)
@@ -404,14 +411,13 @@ struct ExternalDocumentReconciliationSheet: View {
             lineNumber(line.oldLineNumber, width: metrics.oldLineNumberWidth)
             lineNumber(line.newLineNumber, width: metrics.newLineNumberWidth)
             Text(line.indicator)
-                .fontWeight(line.kind == .context ? .regular : .semibold)
                 .foregroundStyle(markerColor(for: line.kind))
                 .frame(width: metrics.markerWidth)
                 .accessibilityLabel(lineAccessibilityLabel(for: line.kind))
             Text(verbatim: line.text.isEmpty ? " " : line.text)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
-                .foregroundStyle(theme.foregroundColor.opacity(0.90))
+                .foregroundStyle(theme.foregroundColor)
             if !line.hasTerminatingNewline {
                 Text("  No newline")
                     .lineLimit(1)
