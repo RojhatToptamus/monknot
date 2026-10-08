@@ -1,77 +1,67 @@
 import MonknotCore
 import SwiftUI
 
+/// Help › Keyboard Shortcuts: the same overlay as Quick Open, with the shortcuts grouped under eyebrow
+/// headers in plain 30 rows, each with its reference key cap (design.md §4.4).
 struct MonknotKeyboardShortcutsHelpView: View {
     let theme: AppTheme
     let zoomScale: Double
     let close: () -> Void
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.28)
-                .ignoresSafeArea()
-                .onTapGesture(perform: close)
+        MonknotCommandOverlay(
+            theme: theme,
+            zoomScale: zoomScale,
+            panelHeight: scaled(560),
+            width: 480,
+            close: close
+        ) {
+            VStack(spacing: 0) {
+                MonknotCommandOverlayTitle(title: "Keyboard Shortcuts", theme: theme, zoomScale: zoomScale, close: close)
 
-            VStack(alignment: .leading, spacing: scaled(12)) {
-                HStack {
-                    Text("Keyboard Shortcuts")
-                        .font(.system(size: scaled(16), weight: .semibold))
-                        .foregroundStyle(theme.foregroundColor)
-
-                    Spacer(minLength: 0)
-
-                    MonknotIconButton(
-                        systemImage: "xmark",
-                        label: "Close Shortcuts Help",
-                        theme: theme,
-                        zoomScale: zoomScale,
-                        size: .compact,
-                        action: close
-                    )
-                }
+                Rectangle().fill(theme.separatorColor).frame(height: 1)
 
                 MonknotScrollView {
-                    LazyVStack(spacing: scaled(6)) {
-                        ForEach(Array(MonknotKeyboardShortcutCatalog.entries.enumerated()), id: \.offset) { _, entry in
-                            HStack(spacing: scaled(12)) {
-                                Text(entry.title)
-                                    .font(.system(size: scaled(13)))
-                                    .foregroundStyle(theme.foregroundColor)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(MonknotKeyboardShortcutCatalog.sections, id: \.title) { section in
+                            Text(section.title)
+                                .font(MonknotTypography.eyebrow(theme: theme, zoomScale: zoomScale))
+                                .tracking(MonknotTypography.eyebrowTracking(theme: theme, zoomScale: zoomScale))
+                                .textCase(.uppercase)
+                                .foregroundStyle(theme.tertiaryForegroundColor)
+                                .padding(.top, scaled(14))
+                                .padding(.bottom, scaled(4))
+                                .accessibilityAddTraits(.isHeader)
 
-                                MonknotShortcutLabel(
-                                    shortcut: entry.shortcut,
-                                    theme: theme,
-                                    zoomScale: zoomScale,
-                                    presentation: .keyCap
-                                )
+                            ForEach(section.entries, id: \.title) { entry in
+                                HStack(spacing: scaled(12)) {
+                                    Text(entry.title)
+                                        .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
+                                        .foregroundStyle(theme.mutedForegroundColor)
+                                        .lineLimit(1)
+
+                                    Spacer(minLength: 0)
+
+                                    MonknotShortcutLabel(
+                                        shortcut: entry.shortcut,
+                                        theme: theme,
+                                        zoomScale: zoomScale,
+                                        presentation: .keyCap
+                                    )
+                                }
+                                .frame(height: scaled(30))
+                                .accessibilityElement(children: .combine)
                             }
-                            .padding(.horizontal, scaled(10))
-                            .padding(.vertical, scaled(6))
-                            .background(
-                                RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                                    .fill(theme.insetFillColor.opacity(0.55))
-                            )
                         }
                     }
+                    .padding(.horizontal, scaled(16))
+                    .padding(.bottom, scaled(12))
                 }
-                .frame(maxHeight: scaled(360))
             }
-            .padding(scaled(16))
-            .frame(width: scaled(460))
-            .background(
-                RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
-                    .fill(theme.surfaceColor)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
-                    .strokeBorder(theme.borderColor, lineWidth: 1)
-            }
-            .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
         }
     }
 }

@@ -575,17 +575,35 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
         }
     }
 
-    func testCommandOverlayEscapeHintUsesStandardControlHeight() {
+    func testCommandOverlayCloseIsTheStandardCompactCloseButton() {
         for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
-            let size = NSHostingView(rootView: MonknotCommandOverlayEscapeButton(
+            let size = NSHostingView(rootView: MonknotCommandOverlayCloseButton(
                 theme: theme,
                 zoomScale: 1,
                 close: {}
             )).fittingSize
 
-            XCTAssertGreaterThanOrEqual(size.width, 28)
-            XCTAssertEqual(size.height, 28, accuracy: 0.01)
+            XCTAssertEqual(size.width, 26, accuracy: 0.01)
+            XCTAssertEqual(size.height, 26, accuracy: 0.01)
         }
+    }
+
+    func testCommandOverlayPanelFitsItsRowsHeaderAndFooter() {
+        let theme = AppTheme.defaultDark
+        // 44 header + 1 rule + three 34 rows with 2 between + 12 list padding + 1 rule + 30 footer.
+        let threeRows: CGFloat = 44 + 1 + 118 + 31
+        XCTAssertEqual(
+            MonknotCommandOverlayMetrics.panelHeight(rows: 3, hasFooter: true, theme: theme, zoomScale: 1),
+            threeRows,
+            accuracy: 0.01
+        )
+        // At most eight rows show (8 × 34 + 7 × 2 + 12); the rest scroll.
+        let eightRows: CGFloat = 44 + 1 + 298
+        XCTAssertEqual(
+            MonknotCommandOverlayMetrics.panelHeight(rows: 20, hasFooter: false, theme: theme, zoomScale: 1),
+            eightRows,
+            accuracy: 0.01
+        )
     }
 
     func testSegmentedIconButtonsScaleFromTheThirtyPointEditorReferenceBox() {

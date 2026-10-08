@@ -3125,23 +3125,11 @@ private struct SuccessToast: View {
         .padding(.leading, scaled(12))
         .padding(.trailing, scaled(8))
         .padding(.vertical, scaled(8))
-        .background(
-            RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
-                .fill(theme.elevatedSurfaceColor)
-                .overlay {
-                    RoundedRectangle(cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale))
-                        .strokeBorder(theme.borderColor, lineWidth: 1)
-                }
-                .shadow(
-                    color: theme.floatingShadowColor.opacity(theme.isDark ? 0.50 : 0.08),
-                    radius: theme.isDark ? 12 : 6,
-                    y: theme.isDark ? 8 : 4
-                )
-                .shadow(
-                    color: theme.floatingShadowColor.opacity(theme.isDark ? 0.34 : 0.05),
-                    radius: theme.isDark ? 3 : 1.5,
-                    y: theme.isDark ? 2 : 1
-                )
+        .monknotFloatingSurface(
+            .e2,
+            cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale),
+            fill: theme.elevatedSurfaceColor,
+            theme: theme
         )
         .frame(maxWidth: scaled(420))
         .accessibilityElement(children: .contain)
@@ -3199,63 +3187,40 @@ private struct AmbiguousMarkdownLinkPicker: View {
     @FocusState private var focusedDocumentID: String?
 
     private func scaled(_ value: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(value, theme: theme, zoomScale: zoomScale)
+        MonknotMetrics.interfaceDensity(value, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
         MonknotCommandOverlay(
             theme: theme,
             zoomScale: zoomScale,
-            panelHeight: scaled(CGFloat(52 + min(max(documents.count, 1), 8) * 40)),
+            panelHeight: MonknotCommandOverlayMetrics.panelHeight(
+                rows: documents.count,
+                hasFooter: false,
+                theme: theme,
+                zoomScale: zoomScale
+            ),
             close: close
         ) {
             VStack(spacing: 0) {
-                HStack {
-                    Text("Choose Linked Note")
-                        .font(.system(size: scaled(13), weight: .semibold))
-                        .foregroundStyle(theme.foregroundColor)
-                    Spacer()
-                    MonknotCommandOverlayEscapeButton(
-                        theme: theme,
-                        zoomScale: zoomScale,
-                        close: close
-                    )
-                }
-                .padding(.horizontal, scaled(14))
-                .frame(height: scaled(44))
+                MonknotCommandOverlayTitle(title: "Choose Linked Note", theme: theme, zoomScale: zoomScale, close: close)
 
-                Divider().overlay(theme.separatorColor)
+                Rectangle().fill(theme.separatorColor).frame(height: 1)
 
                 MonknotScrollView {
                     LazyVStack(spacing: scaled(2)) {
                         ForEach(documents) { document in
-                            Button {
+                            MonknotCommandOverlayRow(
+                                leading: .glyph(document.kind.resolvedSystemImage),
+                                title: document.displayName,
+                                detail: (document.relativePath as NSString).deletingLastPathComponent,
+                                isSelected: focusedDocumentID == document.id,
+                                theme: theme,
+                                zoomScale: zoomScale
+                            ) {
                                 open(document.id)
-                            } label: {
-                                HStack(spacing: scaled(8)) {
-                                    MonknotFileKindGlyph(
-                                        systemImage: document.kind.resolvedSystemImage,
-                                        theme: theme,
-                                        zoomScale: zoomScale,
-                                        pointSizeBase: 14
-                                    )
-                                        .foregroundStyle(theme.mutedForegroundColor)
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(document.displayName)
-                                            .foregroundStyle(theme.foregroundColor)
-                                        Text(document.relativePath)
-                                            .font(.caption)
-                                            .foregroundStyle(theme.tertiaryForegroundColor)
-                                    }
-                                    Spacer()
-                                }
-                                .padding(.horizontal, scaled(12))
-                                .frame(height: scaled(38))
-                                .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain)
                             .focused($focusedDocumentID, equals: document.id)
-                            .monknotPointerCursor()
                         }
                     }
                     .padding(scaled(6))

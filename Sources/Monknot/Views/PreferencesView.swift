@@ -545,20 +545,22 @@ private struct ShortcutSettingsView: View {
 
     var body: some View {
         SettingsPage(theme: uiTheme) {
-            SettingsSectionHeader(theme: uiTheme, title: "Keyboard shortcuts")
-            SettingsGroupCard(theme: uiTheme) {
-                ForEach(Array(MonknotKeyboardShortcutCatalog.entries.enumerated()), id: \.offset) { index, entry in
-                    SettingsRow(
-                        theme: uiTheme,
-                        title: entry.title,
-                        showsDivider: index < MonknotKeyboardShortcutCatalog.entries.count - 1
-                    ) {
-                        MonknotShortcutLabel(
-                            shortcut: entry.shortcut,
+            ForEach(MonknotKeyboardShortcutCatalog.sections, id: \.title) { section in
+                SettingsSectionHeader(theme: uiTheme, title: section.title)
+                SettingsGroupCard(theme: uiTheme) {
+                    ForEach(Array(section.entries.enumerated()), id: \.element.title) { index, entry in
+                        SettingsRow(
                             theme: uiTheme,
-                            zoomScale: settingsZoomScale,
-                            presentation: .keyCap
-                        )
+                            title: entry.title,
+                            showsDivider: index < section.entries.count - 1
+                        ) {
+                            MonknotShortcutLabel(
+                                shortcut: entry.shortcut,
+                                theme: uiTheme,
+                                zoomScale: settingsZoomScale,
+                                presentation: .keyCap
+                            )
+                        }
                     }
                 }
             }

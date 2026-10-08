@@ -407,6 +407,7 @@ APP_SOURCES=(
   "Sources/Monknot/Support/Design/MonknotAccentButton.swift"
   "Sources/Monknot/Support/Design/MonknotChromePanel.swift"
   "Sources/Monknot/Support/Design/MonknotChromeSurfaceBackground.swift"
+  "Sources/Monknot/Support/Design/MonknotElevation.swift"
   "Sources/Monknot/Support/Design/MonknotIconButton.swift"
   "Sources/Monknot/Support/Design/HorizontalTabStripSupport.swift"
   "Sources/Monknot/Support/Design/MonknotMetrics.swift"

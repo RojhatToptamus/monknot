@@ -12,26 +12,55 @@ struct WorkspaceQuickOpenView: View {
     @FocusState private var isSearchFocused: Bool
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
         MonknotCommandOverlay(
             theme: theme,
             zoomScale: zoomScale,
-            panelHeight: panelHeight,
+            panelHeight: MonknotCommandOverlayMetrics.panelHeight(
+                rows: state.matches.count,
+                hasFooter: true,
+                theme: theme,
+                zoomScale: zoomScale
+            ),
             close: close
         ) {
             VStack(spacing: 0) {
-                searchField
+                MonknotCommandOverlayField(
+                    systemImage: "magnifyingglass",
+                    placeholder: "Open file by name…",
+                    text: Binding(
+                        get: { state.query },
+                        set: { state.setQuery($0, documents: documents) }
+                    ),
+                    isFocused: $isSearchFocused,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    submit: {
+                        if let selected = state.selectedMatch {
+                            openDocument(selected.id)
+                        }
+                    },
+                    close: close
+                )
 
-                Divider()
-                    .overlay(theme.separatorColor)
+                Rectangle().fill(theme.separatorColor).frame(height: 1)
 
                 resultBody
 
                 if !state.matches.isEmpty {
-                    resultFooter
+                    MonknotCommandOverlayFooter(
+                        hints: [
+                            .init(keys: "↑↓", action: "Choose"),
+                            .init(keys: "↩", action: "Open"),
+                            .init(keys: "Esc", action: "Close"),
+                        ],
+                        trailing: "\(state.matches.count) of \(documents.count) files",
+                        theme: theme,
+                        zoomScale: zoomScale
+                    )
                 }
             }
         }
@@ -41,53 +70,13 @@ struct WorkspaceQuickOpenView: View {
         }
     }
 
-    private var panelHeight: CGFloat {
-        let visibleRows = min(max(state.matches.count, 1), 8)
-        let resultHeight = state.matches.isEmpty ? CGFloat(72) : CGFloat(visibleRows) * 34 + 12
-        let footerHeight = state.matches.isEmpty ? CGFloat(0) : CGFloat(28)
-        return scaled(44 + resultHeight + footerHeight)
-    }
-
-    private var searchField: some View {
-        HStack(spacing: scaled(8)) {
-            MonknotSearchGlyph(theme: theme, zoomScale: zoomScale)
-                .foregroundStyle(theme.mutedForegroundColor)
-
-            TextField(
-                "Open file by name...",
-                text: Binding(
-                    get: { state.query },
-                    set: { state.setQuery($0, documents: documents) }
-                )
-            )
-            .textFieldStyle(.plain)
-            .focused($isSearchFocused)
-            .font(.system(size: scaled(14)))
-            .foregroundStyle(theme.foregroundColor)
-            .accessibilityLabel("Open file by name")
-            .onSubmit {
-                if let selected = state.selectedMatch {
-                    openDocument(selected.id)
-                }
-            }
-
-            MonknotCommandOverlayEscapeButton(
-                theme: theme,
-                zoomScale: zoomScale,
-                close: close
-            )
-        }
-        .padding(.horizontal, scaled(14))
-        .frame(height: scaled(44))
-    }
-
     private var resultBody: some View {
         ScrollViewReader { proxy in
             MonknotScrollView {
                 if state.matches.isEmpty {
                     MonknotCommandOverlayEmptyState(
                         title: state.query.isEmpty
-                            ? "Open a file by name…"
+                            ? "Open a file by name"
                             : "No files match “\(state.query)”",
                         message: state.query.isEmpty
                             ? "Start typing to filter workspace files."
@@ -98,47 +87,19 @@ struct WorkspaceQuickOpenView: View {
                 } else {
                     LazyVStack(alignment: .leading, spacing: scaled(2)) {
                         ForEach(Array(state.matches.enumerated()), id: \.element.id) { index, document in
-                            Button {
+                            MonknotCommandOverlayRow(
+                                leading: .glyph(document.kind.resolvedSystemImage),
+                                title: document.displayName,
+                                detail: (document.relativePath as NSString).deletingLastPathComponent,
+                                isSelected: index == state.selectedIndex,
+                                theme: theme,
+                                zoomScale: zoomScale
+                            ) {
                                 openDocument(document.id)
-                            } label: {
-                                HStack(spacing: scaled(8)) {
-                                    MonknotFileKindGlyph(
-                                        systemImage: document.kind.resolvedSystemImage,
-                                        theme: theme,
-                                        zoomScale: zoomScale,
-                                        pointSizeBase: 14
-                                    )
-                                        .foregroundStyle(theme.mutedForegroundColor)
-
-                                    VStack(alignment: .leading, spacing: scaled(1)) {
-                                        Text(document.displayName)
-                                            .font(.system(size: scaled(13), weight: .regular))
-                                            .foregroundStyle(theme.foregroundColor)
-                                            .lineLimit(1)
-
-                                        Text(document.relativePath)
-                                            .font(.system(size: scaled(12)))
-                                            .foregroundStyle(theme.tertiaryForegroundColor)
-                                            .lineLimit(1)
-                                    }
-
-                                    Spacer(minLength: 0)
-                                }
-                                .padding(.horizontal, scaled(12))
-                                .frame(maxWidth: .infinity, minHeight: scaled(34), maxHeight: scaled(34), alignment: .leading)
-                                .background(
-                                    RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                                        .fill(index == state.selectedIndex ? theme.selectedRowColor : .clear)
-                                )
-                                .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain)
-                            .monknotPointerCursor()
-                            .accessibilityAddTraits(index == state.selectedIndex ? .isSelected : [])
                         }
                     }
-                    .padding(.horizontal, scaled(8))
-                    .padding(.vertical, scaled(8))
+                    .padding(scaled(6))
                 }
             }
             .scrollContentBackground(.hidden)
@@ -147,31 +108,6 @@ struct WorkspaceQuickOpenView: View {
                     proxy.scrollTo(selected.id)
                 }
             }
-        }
-    }
-
-    private var resultFooter: some View {
-        HStack(spacing: scaled(14)) {
-            MonknotShortcutLabel(
-                shortcut: "↑↓ Navigate",
-                theme: theme,
-                zoomScale: zoomScale
-            )
-            MonknotShortcutLabel(
-                shortcut: "↩ Open",
-                theme: theme,
-                zoomScale: zoomScale
-            )
-            Spacer(minLength: 0)
-            Text("\(state.matches.count) of \(documents.count) files")
-                .font(.system(size: scaled(12), weight: .regular))
-                .foregroundStyle(theme.tertiaryForegroundColor)
-        }
-        .padding(.horizontal, scaled(14))
-        .frame(height: scaled(28))
-        .background(theme.contentSurfaceColor)
-        .overlay(alignment: .top) {
-            Rectangle().fill(theme.separatorColor).frame(height: 1)
         }
     }
 

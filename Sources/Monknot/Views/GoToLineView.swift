@@ -12,61 +12,53 @@ struct GoToLineView: View {
     @FocusState private var isInputFocused: Bool
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
+    /// Return goes; the footer says so, and an error takes the footer's place.
     var body: some View {
         MonknotCommandOverlay(
             theme: theme,
             zoomScale: zoomScale,
-            panelHeight: scaled(errorMessage == nil ? 54 : 94),
+            panelHeight: scaled(
+                MonknotCommandOverlayMetrics.headerHeightBase + 1 + MonknotCommandOverlayMetrics.footerHeightBase
+            ),
             close: close
         ) {
             VStack(spacing: 0) {
-                HStack(spacing: scaled(8)) {
-                    Image(systemName: "text.line.first.and.arrowtriangle.forward")
-                        .font(.system(size: scaled(14), weight: .regular))
-                        .foregroundStyle(theme.mutedForegroundColor)
-                        .accessibilityHidden(true)
-
-                    TextField("Line or line:column", text: $input)
-                        .textFieldStyle(.plain)
-                        .focused($isInputFocused)
-                        .font(.system(size: scaled(14)))
-                        .foregroundStyle(theme.foregroundColor)
-                        .onSubmit(submit)
-                        .accessibilityLabel("Line or line and column")
-                        .accessibilityHint("Line and column numbers start at 1")
-
-                    MonknotActionButton(
-                        title: "Go",
-                        role: .primary,
-                        theme: theme,
-                        zoomScale: zoomScale,
-                        isDisabled: input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                        action: submit
-                    )
-
-                    MonknotCommandOverlayEscapeButton(
-                        theme: theme,
-                        zoomScale: zoomScale,
-                        close: close
-                    )
-                }
-                .padding(.horizontal, scaled(14))
-                .frame(height: scaled(54))
+                MonknotCommandOverlayField(
+                    systemImage: "text.line.first.and.arrowtriangle.forward",
+                    placeholder: "Line or line:column",
+                    text: $input,
+                    isFocused: $isInputFocused,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    submit: submit,
+                    close: close
+                )
+                .accessibilityHint("Line and column numbers start at 1")
 
                 if let errorMessage {
-                    Divider()
-                        .overlay(theme.separatorColor)
-
                     Text(errorMessage)
-                        .font(.system(size: scaled(12)))
+                        .font(.system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale)))
                         .foregroundStyle(Color(hex: theme.semanticColors.diffRemoved))
+                        .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, scaled(14))
-                        .frame(height: scaled(39))
+                        .padding(.horizontal, scaled(16))
+                        .frame(height: scaled(MonknotCommandOverlayMetrics.footerHeightBase))
+                        .overlay(alignment: .top) {
+                            Rectangle().fill(theme.separatorColor).frame(height: 1)
+                        }
                         .accessibilityLabel("Go to line error: \(errorMessage)")
+                } else {
+                    MonknotCommandOverlayFooter(
+                        hints: [
+                            .init(keys: "↩", action: "Go"),
+                            .init(keys: "Esc", action: "Close"),
+                        ],
+                        theme: theme,
+                        zoomScale: zoomScale
+                    )
                 }
             }
         }

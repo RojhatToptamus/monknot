@@ -768,18 +768,18 @@ enum EditorFlowProseContextPlanner {
 
 
 private struct EditorFlowCuePalette {
+    /// The key cap's fill: `surf3`, like every reference key cap.
     let surface: NSColor
     let editorBackground: NSColor
     let primaryText: NSColor
     let secondaryText: NSColor
     let ghostText: NSColor
     let accent: NSColor
-    let border: NSColor
     let isDark: Bool
 
     static func themed(_ theme: AppTheme) -> EditorFlowCuePalette {
         EditorFlowCuePalette(
-            surface: NSColor(theme.elevatedSurfaceColor),
+            surface: NSColor(theme.insetFillColor),
             editorBackground: NSColor(hex: theme.background),
             primaryText: NSColor(theme.foregroundColor),
             secondaryText: NSColor(theme.mutedForegroundColor),
@@ -789,9 +789,6 @@ private struct EditorFlowCuePalette {
                 amount: theme.isDark ? 0.42 : 0.54
             )),
             accent: NSColor(hex: theme.accent),
-            border: NSColor(theme.foregroundColor).withAlphaComponent(
-                theme.isDark ? 0.18 : 0.14
-            ),
             isDark: theme.isDark
         )
     }
@@ -803,7 +800,6 @@ private struct EditorFlowCuePalette {
         secondaryText: .secondaryLabelColor,
         ghostText: .tertiaryLabelColor,
         accent: .controlAccentColor,
-        border: .separatorColor,
         isDark: false
     )
 }
@@ -8381,25 +8377,26 @@ class MarkdownNSTextView: NSTextView {
         after anchor: NSRect,
         revealDate: Date?
     ) {
+        // The shared shortcut label (design.md §4.4): keys in 12 rounded on a radius-6 `surf3` cap, the
+        // action beside it in plain 12. Inline in a text line, the cap keeps a slimmer padding.
         let scale = max(0.1, zoomScale)
-        let font = NSFont.monospacedSystemFont(
-            ofSize: max(8, (11 * scale * 2).rounded() / 2),
-            weight: .regular
-        )
+        let fontSize = max(9, (12 * scale * 2).rounded() / 2)
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
+        let keyFont = font.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: fontSize) } ?? font
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: flowCuePalette.secondaryText,
         ]
         let keyAttributes: [NSAttributedString.Key: Any] = [
-            .font: font,
+            .font: keyFont,
             .foregroundColor: flowCuePalette.primaryText,
         ]
         let horizontalPadding = max(4, (6 * scale).rounded())
-        let verticalPadding = max(1, (1 * scale).rounded())
+        let verticalPadding = max(1, (2 * scale).rounded())
         let keyActionGap = max(4, (6 * scale).rounded())
         let groupGap = max(7, (11 * scale).rounded())
-        let textHeight = ceil(font.ascender - font.descender + font.leading)
-        let keyHeight = textHeight + verticalPadding * 2 + max(1, (2 * scale).rounded())
+        let textHeight = ceil(keyFont.ascender - keyFont.descender + keyFont.leading)
+        let keyHeight = textHeight + verticalPadding * 2
         let widths = groups.map { key, action -> (CGFloat, CGFloat) in
             (
                 ceil((key as NSString).size(withAttributes: keyAttributes).width) + horizontalPadding * 2,
@@ -8431,29 +8428,14 @@ class MarkdownNSTextView: NSTextView {
         var x = origin.x
         for (index, group) in groups.enumerated() {
             let keyRect = NSRect(x: x, y: origin.y, width: widths[index].0, height: keyHeight)
-            let keyPath = NSBezierPath(
-                roundedRect: keyRect,
-                xRadius: max(2, (5 * scale).rounded()),
-                yRadius: max(2, (5 * scale).rounded())
-            )
+            let keyRadius = max(3, (6 * scale).rounded())
             flowCuePalette.surface.setFill()
-            keyPath.fill()
-            flowCuePalette.border.setStroke()
-            keyPath.lineWidth = 1 / max(1, window?.backingScaleFactor ?? 2)
-            keyPath.stroke()
-            let bottom = NSRect(
-                x: keyRect.minX + 1,
-                y: keyRect.maxY - max(1, (2 * scale).rounded()),
-                width: max(0, keyRect.width - 2),
-                height: max(1, (2 * scale).rounded())
-            )
-            flowCuePalette.border.withAlphaComponent(0.72).setFill()
-            NSBezierPath(rect: bottom).fill()
+            NSBezierPath(roundedRect: keyRect, xRadius: keyRadius, yRadius: keyRadius).fill()
             let keyText = NSAttributedString(string: group.0, attributes: keyAttributes)
             let keySize = keyText.size()
             keyText.draw(at: NSPoint(
                 x: keyRect.midX - keySize.width / 2,
-                y: keyRect.midY - keySize.height / 2 - 1
+                y: keyRect.midY - keySize.height / 2
             ))
             x = keyRect.maxX + keyActionGap
             let action = NSAttributedString(string: group.1, attributes: attributes)
