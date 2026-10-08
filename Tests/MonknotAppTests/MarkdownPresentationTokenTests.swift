@@ -167,6 +167,14 @@ final class MarkdownPresentationTokenTests: XCTestCase {
         XCTAssertEqual(markers, ["##", "> > ", "-", "12.", "* [x]"])
     }
 
+    func testMarkdownInlineSyntaxNeverSpansACarriageReturn() {
+        // `paragraphRange` splits at a lone CR, so a token crossing one would differ between a
+        // line-local restyle and a full pass.
+        for markdown in ["**a\rb**", "[[a\rb]]", "[a\rb](x.md)", "[a](x\r.md)", "`a\rb`"] {
+            XCTAssertTrue(MarkdownSyntaxTokenizer.tokens(in: markdown).isEmpty, markdown.debugDescription)
+        }
+    }
+
     func testMarkdownEditorLineHeightTracksHighZoomFontSize() {
         XCTAssertEqual(MarkdownEditorLayout.lineHeight(forFontSize: 13), 22)
         XCTAssertEqual(MarkdownEditorLayout.lineHeight(forFontSize: 39), 57)

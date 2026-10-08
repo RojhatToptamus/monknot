@@ -6190,19 +6190,19 @@ enum MarkdownSyntaxTokenizer {
             style: .heading
         ),
         Pattern(
-            expression: try! NSRegularExpression(pattern: #"(?:\*\*[^*\n]+\*\*|__[^_\n]+__)"#),
+            expression: try! NSRegularExpression(pattern: #"(?:\*\*[^*\r\n]+\*\*|__[^_\r\n]+__)"#),
             style: .strong
         ),
         Pattern(
-            expression: try! NSRegularExpression(pattern: #"\[\[[^\]\n]+\]\]"#),
+            expression: try! NSRegularExpression(pattern: #"\[\[[^\]\r\n]+\]\]"#),
             style: .wikilink
         ),
         Pattern(
-            expression: try! NSRegularExpression(pattern: #"\[[^\]\n]+\]\([^\)\n]+\)"#),
+            expression: try! NSRegularExpression(pattern: #"\[[^\]\r\n]+\]\([^\)\r\n]+\)"#),
             style: .link
         ),
         Pattern(
-            expression: try! NSRegularExpression(pattern: #"`[^`\n]+`"#),
+            expression: try! NSRegularExpression(pattern: #"`[^`\r\n]+`"#),
             style: .code
         ),
         // Markers come last so they override the heading colour of their line.
@@ -6225,7 +6225,8 @@ enum MarkdownSyntaxTokenizer {
         )
     ]
 
-    /// Every pattern is confined to one line, so tokens never cross a line break and any range
+    /// Every pattern is confined to one line (CR, LF or CRLF, as `paragraphRange` splits), so tokens
+    /// never cross a line break and any range
     /// that starts and ends on line boundaries can be tokenized on its own.
     static func tokens(in source: String, range: NSRange? = nil) -> [MarkdownSyntaxToken] {
         let range = range ?? NSRange(location: 0, length: (source as NSString).length)

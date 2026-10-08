@@ -12,11 +12,22 @@ struct MarkdownTextStatistics: Equatable, Sendable {
     }
 
     init(text: String) {
-        // Count line feeds on UTF-8 bytes so CRLF files count their lines too ("\r\n" is a single
-        // Character and never equals "\n").
-        lineCount = 1 + text.utf8.reduce(into: 0) { count, byte in
-            if byte == 0x0A { count += 1 }
+        // Count breaks on UTF-8 bytes ("\r\n" is a single Character and never equals "\n"):
+        // LF, CRLF and a lone CR each end one line.
+        var lineFeeds = 0
+        var carriageReturns = 0
+        var crlfPairs = 0
+        var previous: UInt8 = 0
+        for byte in text.utf8 {
+            if byte == 0x0A {
+                lineFeeds += 1
+                if previous == 0x0D { crlfPairs += 1 }
+            } else if byte == 0x0D {
+                carriageReturns += 1
+            }
+            previous = byte
         }
+        lineCount = 1 + lineFeeds + carriageReturns - crlfPairs
         wordCount = text.split { $0.isWhitespace || $0.isPunctuation }.count
     }
 }
