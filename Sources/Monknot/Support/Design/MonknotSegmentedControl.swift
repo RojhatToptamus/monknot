@@ -132,7 +132,7 @@ struct MonknotSegmentButton: View {
     }
 
     private var background: Color {
-        // A disabled control has no current mode to show (design.md §5.1, A3).
+        // A disabled control has no current mode to show (design.md §5.1).
         if isDisabled {
             return .clear
         }

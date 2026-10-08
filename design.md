@@ -279,7 +279,9 @@ Two heights, no third: **28 in bars and banners, 30 in sheets.** Padding-x 12, r
 - **Primary** — `accent` fill, `onaccent` label, no border and no bezel.
 - **Destructive** — `danger` fill, white label.
 
-Hover lightens the fill by one step. It never changes padding, size, weight or elevation.
+Hover adds the `hover` tint over the fill and press the `press` tint (§1.4), in both themes. It never
+changes padding, size, weight or elevation. Lightening instead would fade a light-theme secondary
+button into the page and drop a white label on `accent` below 3:1 (3.15:1 → 2.77:1 on §14).
 
 `bezel` (`0 1px 1px sh 5%` light, `none` dark) is the one-pixel seat that makes a macOS bezel look
 pressable without looking raised. It is the only shadow a resting surface ever gets.
@@ -374,9 +376,9 @@ size.
 - **Alone in a button:** nominally 17pt in a 28pt button. Optical ceilings are measured from the
   rendered symbol bounds: whole-word search is 12.5pt; `curlybraces` and `link` are 13pt;
   `magnifyingglass`, `checklist`, `text.quote`, document glyphs, and the diagonal terminal arrows are
-  14pt; the two sidebar glyphs are 15pt. A filled glyph is sized for its ink weight instead: `photo`
-  is 12pt, so that it carries about the same ink as its outline neighbours. Other symbols retain the
-  nominal size.
+  14pt; the two sidebar glyphs are 15pt. `photo` is sized for its ink weight instead: its solid
+  mountains and sun carry more ink than an outline, so at 12pt it matches its neighbours. Other
+  symbols retain the nominal size.
 
 Both scale by the zoom factor. Weight is `.regular` **everywhere** — `.medium` on a 15pt symbol
 reads as a different icon set two rows down.
@@ -415,9 +417,12 @@ neither changes the control or glyph-column geometry.
 
 `sidebar.left` · `chevron.left` / `chevron.right` · `chevron.right` / `chevron.down` (disclosure) ·
 `line.3.horizontal` (source) · `eye` (preview) · `sidebar.right` · `doc.text` markdown · `doc.richtext`
-PDF · `terminal` · `xmark` · `plus` · `gearshape` · `list.bullet.indent` (outline peek).
+PDF · `folder` (a workspace) · `terminal` · `xmark` · `plus` · `gearshape` · `list.bullet.indent`
+(outline peek).
 
-Use the **outline (non-fill) variant everywhere.**
+Use the **outline (non-fill) variant everywhere** except for three status marks, where the fill is the
+state: `folder.fill` for the active workspace, `pin.fill` on a pinned tab, and
+`exclamationmark.triangle.fill` for a warning.
 
 ### 8.8 Rendering mode
 
@@ -791,7 +796,7 @@ Before calling any UI work done:
 - [ ] Push buttons are 28 (bars) or 30 (sheets). No third height.
 - [ ] Rows that hold the same kind of thing use identical numbers.
 - [ ] Symbols sit in the 18pt column, `.regular`, `.monochrome`, cap-height centred.
-- [ ] No chrome glyph over 17. No square button over 28.
+- [ ] No chrome glyph over 17. No square button over 28, except the Markdown toolbar's 30 (§10.7).
 - [ ] Every metric derives from `workspaceZoom`. No `.scaleEffect`. Nothing clamped.
 - [ ] Hairlines, shadows and focus rings do not scale.
 - [ ] Tabs hug to 220 and scroll; fades appear only where content actually overflows.

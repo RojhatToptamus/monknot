@@ -138,7 +138,7 @@ final class WindowChromeInteractionTests: XCTestCase {
     }
 
     func testDisabledControlsDimTheirBorderNotTheirGlyphAgain() {
-        // design.md §5.1 (A3): the glyph is `ink4` and the border 40 %; nothing multiplies on top.
+        // design.md §5.1: the glyph is `ink4` and the border 40 %; nothing multiplies on top.
         XCTAssertEqual(MonknotIconButton.disabledBorderOpacity, 0.4, accuracy: 0.001)
     }
 
