@@ -15,7 +15,9 @@ extension Color {
 extension NSColor {
     convenience init(hex: String) {
         if let rgb = RGBHex(hex) {
-            self.init(calibratedRed: CGFloat(rgb.red), green: CGFloat(rgb.green), blue: CGFloat(rgb.blue), alpha: 1)
+            // Theme hex values are sRGB, as in `Color(hex:)`; calibrated (generic)
+            // RGB drew AppKit surfaces lighter than the SwiftUI and WebKit ones.
+            self.init(srgbRed: CGFloat(rgb.red), green: CGFloat(rgb.green), blue: CGFloat(rgb.blue), alpha: 1)
         } else {
             self.init(calibratedWhite: 1, alpha: 1)
         }
