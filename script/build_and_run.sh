@@ -327,6 +327,7 @@ CORE_SOURCES=(
   "Sources/MonknotCore/Models/WorkspaceReplacePreview.swift"
   "Sources/MonknotCore/Models/WorkspaceSearchResult.swift"
   "Sources/MonknotCore/Models/WorkspaceTabState.swift"
+  "Sources/MonknotCore/Models/DocumentTabLabel.swift"
   "Sources/MonknotCore/Models/WorkspaceTextRevision.swift"
   "Sources/MonknotCore/Services/BetaFeedbackRecorder.swift"
   "Sources/MonknotCore/Services/DailyNotePlanner.swift"
