@@ -142,6 +142,27 @@ final class WindowChromeInteractionTests: XCTestCase {
         XCTAssertEqual(MonknotIconButton.disabledBorderOpacity, 0.4, accuracy: 0.001)
     }
 
+    func testDisabledRowsDrawNoHoverOrPressFillButKeepTheirSelection() {
+        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
+            func fill(selected: Bool = false, hovered: Bool = false, pressed: Bool = false, enabled: Bool) -> Color {
+                MonknotRowButtonStyle.fill(
+                    theme: theme,
+                    isSelected: selected,
+                    isActive: false,
+                    isHovered: hovered,
+                    isPressed: pressed,
+                    isEnabled: enabled
+                )
+            }
+
+            XCTAssertEqual(fill(hovered: true, enabled: true), theme.hoverFillColor)
+            XCTAssertEqual(fill(hovered: true, pressed: true, enabled: true), theme.pressedFillColor)
+            XCTAssertEqual(fill(hovered: true, enabled: false), .clear)
+            XCTAssertEqual(fill(hovered: true, pressed: true, enabled: false), .clear)
+            XCTAssertEqual(fill(selected: true, hovered: true, enabled: false), theme.selectedRowColor)
+        }
+    }
+
     func testWindowNavigationUsesReferenceSegmentGeometryAcrossSupportedZooms() {
         let theme = AppTheme.defaultDark
         let navigationSize = MonknotIconButton.IconButtonSize.windowNavigation

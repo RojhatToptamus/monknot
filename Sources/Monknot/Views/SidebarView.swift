@@ -834,9 +834,14 @@ private struct SidebarProjectHeader: View {
                     isSwitcherPresented.toggle()
                 } label: {
                     HStack(spacing: scaled(6)) {
+                        // Disabled while a workspace loads: `ink4`, and no hover ink (design.md §5.1).
                         Text(workspaceName)
                             .font(.system(size: textScaled(13), weight: .semibold))
-                            .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.92))
+                            .foregroundStyle(
+                                isBusy
+                                    ? theme.disabledForegroundColor
+                                    : theme.sidebarColor(theme.foregroundColor, opacity: 0.92)
+                            )
                             .lineLimit(1)
                             .truncationMode(.tail)
 
@@ -845,9 +850,11 @@ private struct SidebarProjectHeader: View {
                             .font(.system(size: textScaled(10), weight: .regular))
                             .symbolRenderingMode(.monochrome)
                             .foregroundStyle(
-                                isWorkspaceTitleHovered || isSwitcherPresented
-                                    ? theme.foregroundColor
-                                    : theme.tertiaryForegroundColor
+                                isBusy
+                                    ? theme.disabledForegroundColor
+                                    : (isWorkspaceTitleHovered || isSwitcherPresented
+                                        ? theme.foregroundColor
+                                        : theme.tertiaryForegroundColor)
                             )
                             .opacity(showsChevron ? 1 : 0)
                             .frame(width: scaled(11))
@@ -1027,6 +1034,16 @@ private struct WorkspaceSwitcherRow: View {
     let remove: () -> Void
     @State private var isHovered = false
 
+    /// Another workspace is loading, so this one cannot open yet: `ink4` and no hover ink (design.md
+    /// §5.1). The active workspace keeps its selected look.
+    private var isUnavailable: Bool {
+        isBusy && !isActive
+    }
+
+    private var isHighlighted: Bool {
+        isHovered && !isUnavailable
+    }
+
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
@@ -1048,7 +1065,9 @@ private struct WorkspaceSwitcherRow: View {
                     .foregroundStyle(
                         isActive
                             ? theme.accentColor
-                            : (isHovered ? theme.foregroundColor : theme.tertiaryForegroundColor)
+                            : (isUnavailable
+                                ? theme.disabledForegroundColor
+                                : (isHighlighted ? theme.foregroundColor : theme.tertiaryForegroundColor))
                     )
                     .animation(MonknotMotion.hoverAnimation, value: isHovered)
                     .frame(width: scaled(18))
@@ -1057,9 +1076,9 @@ private struct WorkspaceSwitcherRow: View {
                         Text(workspace.displayName)
                             .font(.system(size: textScaled(13), weight: .regular))
                             .foregroundStyle(
-                                isActive || isHovered
+                                isActive || isHighlighted
                                     ? theme.foregroundColor
-                                    : theme.mutedForegroundColor
+                                    : (isUnavailable ? theme.disabledForegroundColor : theme.mutedForegroundColor)
                             )
                             .animation(MonknotMotion.hoverAnimation, value: isHovered)
                             .lineLimit(1)
@@ -1068,7 +1087,9 @@ private struct WorkspaceSwitcherRow: View {
                         Text((workspace.path as NSString).abbreviatingWithTildeInPath)
                             .font(.system(size: textScaled(12), weight: .regular, design: .monospaced))
                             .foregroundStyle(
-                                isHovered ? theme.mutedForegroundColor : theme.tertiaryForegroundColor
+                                isUnavailable
+                                    ? theme.disabledForegroundColor
+                                    : (isHighlighted ? theme.mutedForegroundColor : theme.tertiaryForegroundColor)
                             )
                             .animation(MonknotMotion.hoverAnimation, value: isHovered)
                             .lineLimit(1)
