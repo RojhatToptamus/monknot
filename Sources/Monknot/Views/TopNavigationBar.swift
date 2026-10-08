@@ -101,18 +101,13 @@ struct TopNavigationBar: View {
             }
 
             // Find sits before the trailing cluster, which never disappears (design.md §10.1–10.2).
-            // The tab strip scrolls to make room first. In a narrow, zoomed window the field narrows,
-            // then the find bar's own controls step aside rather than push the row past the window.
+            // The tab strip scrolls to make room first; in a narrow, zoomed window the find bar gives
+            // way itself (see `documentSearchBar`) rather than push the row past the window.
             if documentSearch.isPresented {
-                ViewThatFits(in: .horizontal) {
-                    documentSearchBar(.full)
-                    documentSearchBar(.withoutOptions)
-                    documentSearchBar(.withoutCount)
-                    documentSearchBar(.fieldOnly)
-                }
-                // Above the tab strip's priority: the find bar is sized first, the tabs scroll in the rest.
-                .layoutPriority(2)
-                .allowsTopBarWindowActivationEvents()
+                documentSearchBar
+                    // Above the tab strip's priority: the find bar is sized first, the tabs take the rest.
+                    .layoutPriority(2)
+                    .allowsTopBarWindowActivationEvents()
             }
 
             viewModeControl
@@ -235,17 +230,11 @@ struct TopNavigationBar: View {
         }
     }
 
-    /// What the find bar keeps when the titlebar is short of room, widest first. Matches can still be
-    /// stepped with Return, Shift-Return and Command-G when the arrows are gone.
-    private enum FindBarContent {
-        case full, withoutOptions, withoutCount, fieldOnly
-
-        var showsOptions: Bool { self == .full }
-        var showsCount: Bool { self == .full || self == .withoutOptions }
-        var showsNavigation: Bool { self != .fieldOnly }
-    }
-
-    private func documentSearchBar(_ content: FindBarContent) -> some View {
+    /// The find bar. Short of room it drops, in turn, the option toggles, the match count and the
+    /// match arrows (Return, Shift-Return and Command-G still step through matches); only then does the
+    /// field narrow. The field and Close always stay, and there is only ever one field, so focus and
+    /// typing survive the bar changing shape.
+    private var documentSearchBar: some View {
         HStack(spacing: scaled(8)) {
             MonknotSearchGlyph(theme: theme, zoomScale: zoomScale)
                 .foregroundStyle(theme.mutedForegroundColor)
@@ -266,58 +255,18 @@ struct TopNavigationBar: View {
             .font(.system(size: textScaled(13), weight: .regular))
             .foregroundStyle(theme.foregroundColor)
             .frame(minWidth: scaled(60), idealWidth: scaled(150), maxWidth: scaled(150))
+            // Sized before the optional controls, which take what is left.
+            .layoutPriority(1)
             .onSubmit {
                 documentSearch.findNext()
             }
             .accessibilityLabel("Find in document")
 
-            if content.showsOptions {
-                searchOptionButton(
-                    systemImage: "textformat",
-                    label: "Match Case",
-                    isActive: searchOptions.isCaseSensitive
-                ) {
-                    searchOptions.isCaseSensitive.toggle()
-                }
-
-                searchOptionButton(
-                    systemImage: "character.cursor.ibeam",
-                    label: "Match Whole Word",
-                    isActive: searchOptions.isWholeWord
-                ) {
-                    searchOptions.isWholeWord.toggle()
-                }
-            }
-
-            if content.showsCount {
-                Text(documentSearch.countText)
-                    .font(.system(size: textScaled(11), weight: .regular, design: .rounded))
-                    .foregroundStyle(theme.mutedForegroundColor)
-                    .monospacedDigit()
-                    .frame(minWidth: scaled(42), alignment: .trailing)
-                    .accessibilityLabel("Search result \(documentSearch.countText)")
-            }
-
-            if content.showsNavigation {
-                Rectangle()
-                    .fill(theme.borderColor)
-                    .frame(width: 1, height: scaled(16))
-
-                findBarButton(
-                    systemImage: "chevron.up",
-                    label: "Previous Match",
-                    isDisabled: documentSearch.totalCount == 0
-                ) {
-                    documentSearch.findPrevious()
-                }
-
-                findBarButton(
-                    systemImage: "chevron.down",
-                    label: "Next Match",
-                    isDisabled: documentSearch.totalCount == 0
-                ) {
-                    documentSearch.findNext()
-                }
+            ViewThatFits(in: .horizontal) {
+                findBarControls(showsOptions: true, showsCount: true, showsNavigation: true)
+                findBarControls(showsOptions: false, showsCount: true, showsNavigation: true)
+                findBarControls(showsOptions: false, showsCount: false, showsNavigation: true)
+                findBarControls(showsOptions: false, showsCount: false, showsNavigation: false)
             }
 
             findBarButton(systemImage: "xmark", label: "Close Search") {
@@ -344,6 +293,59 @@ struct TopNavigationBar: View {
             documentSearchFocusChanged(false)
         }
         .onExitCommand(perform: dismissDocumentSearch)
+    }
+
+    private func findBarControls(showsOptions: Bool, showsCount: Bool, showsNavigation: Bool) -> some View {
+        HStack(spacing: scaled(8)) {
+            if showsOptions {
+                searchOptionButton(
+                    systemImage: "textformat",
+                    label: "Match Case",
+                    isActive: searchOptions.isCaseSensitive
+                ) {
+                    searchOptions.isCaseSensitive.toggle()
+                }
+
+                searchOptionButton(
+                    systemImage: "character.cursor.ibeam",
+                    label: "Match Whole Word",
+                    isActive: searchOptions.isWholeWord
+                ) {
+                    searchOptions.isWholeWord.toggle()
+                }
+            }
+
+            if showsCount {
+                Text(documentSearch.countText)
+                    .font(.system(size: textScaled(11), weight: .regular, design: .rounded))
+                    .foregroundStyle(theme.mutedForegroundColor)
+                    .monospacedDigit()
+                    .frame(minWidth: scaled(42), alignment: .trailing)
+                    .accessibilityLabel("Search result \(documentSearch.countText)")
+            }
+
+            if showsNavigation {
+                Rectangle()
+                    .fill(theme.borderColor)
+                    .frame(width: 1, height: scaled(16))
+
+                findBarButton(
+                    systemImage: "chevron.up",
+                    label: "Previous Match",
+                    isDisabled: documentSearch.totalCount == 0
+                ) {
+                    documentSearch.findPrevious()
+                }
+
+                findBarButton(
+                    systemImage: "chevron.down",
+                    label: "Next Match",
+                    isDisabled: documentSearch.totalCount == 0
+                ) {
+                    documentSearch.findNext()
+                }
+            }
+        }
     }
 
     private func findBarButton(
