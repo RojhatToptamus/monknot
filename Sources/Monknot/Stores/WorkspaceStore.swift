@@ -865,7 +865,7 @@ final class WorkspaceStore: ObservableObject {
         documentID: String,
         commitInsertion: @escaping @MainActor (MarkdownFileDropResult) -> Bool
     ) {
-        guard ensureWritingToolsInactive(for: "inserting dropped files") else { return }
+        guard ensureWritingToolsInactive(for: "inserting files") else { return }
         guard let workspaceURL,
               let document = document(id: documentID),
               document.kind == .markdown,
@@ -874,7 +874,7 @@ final class WorkspaceStore: ObservableObject {
               plan.markdownDocumentURL.standardizedFileURL.resolvingSymlinksInPath() ==
                 document.url.standardizedFileURL.resolvingSymlinksInPath()
         else {
-            errorMessage = "Open the original Markdown document before inserting dropped files."
+            errorMessage = "Open the original Markdown document before inserting files."
             return
         }
 

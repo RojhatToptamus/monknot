@@ -173,6 +173,15 @@ final class MarkdownImageAssetServiceTests: XCTestCase {
         XCTAssertEqual(result.markdown, "![Photo one](assets/Photo%20one.jpg)\n![Scan](assets/Scan.png)")
     }
 
+    func testOnlyFormatsEveryBrowserShowsKeepTheirOriginalBytes() {
+        for name in ["photo.jpg", "photo.JPEG", "chart.png", "loop.gif", "shot.webp", "logo.svg"] {
+            XCTAssertTrue(MarkdownImageAssetService.keepsOriginalImageFormat(URL(fileURLWithPath: "/tmp/\(name)")), name)
+        }
+        for name in ["photo.heic", "scan.tiff", "old.bmp", "no-extension"] {
+            XCTAssertFalse(MarkdownImageAssetService.keepsOriginalImageFormat(URL(fileURLWithPath: "/tmp/\(name)")), name)
+        }
+    }
+
     func testDropRejectsFoldersSymlinksAndUnsupportedFilesWithoutCreatingAssets() throws {
         let container = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: container) }

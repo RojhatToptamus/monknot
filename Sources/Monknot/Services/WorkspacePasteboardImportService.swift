@@ -583,7 +583,7 @@ enum MarkdownImageAssetService {
         let temporaryURL = assetsURL.appendingPathComponent(".monknot-drop-\(UUID().uuidString).tmp")
         defer { try? FileManager.default.removeItem(at: temporaryURL) }
         if item.isImage {
-            // Decoding also rejects files that only claim to be images.
+            // Loading it also rejects a file that is not an image at all.
             guard let image = NSImage(contentsOf: item.sourceURL), image.isValid else {
                 throw MarkdownImageAssetError.couldNotReadDroppedImage(item.sourceURL.lastPathComponent)
             }
