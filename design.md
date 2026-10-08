@@ -624,7 +624,9 @@ and its glyph `accent` (§1.3, §1.4). Quiet Sidebar takes a fifth off each opac
 
 **Recents** is a collapsible group between the tree and the footer: the chevron in the glyph column, an
 eyebrow title (§4.3) and a trailing count in 12 `ink3`. Its entries are file rows one level in. It never
-grows past a third of the sidebar; the tree keeps the rest.
+grows past a third of the sidebar; the tree keeps the rest. It is a jump list and never marks a
+selection: the open document is always its first entry, the tree already marks it, and §1.3 gives the
+selected-row accent to one row.
 
 ### 10.5 Outline rail
 

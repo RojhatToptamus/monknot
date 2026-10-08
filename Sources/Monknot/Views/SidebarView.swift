@@ -274,7 +274,6 @@ struct SidebarView: View {
                         if !recentDocuments.isEmpty {
                             SidebarRecentDocumentsSection(
                                 entries: recentDocuments,
-                                selectedDocumentID: store.selectedDocumentID,
                                 theme: theme,
                                 zoomScale: zoomScale,
                                 availableSidebarHeight: geometry.size.height,
@@ -1848,9 +1847,10 @@ enum SidebarRecentDocumentsLayoutPolicy {
     }
 }
 
+/// A jump list of recently opened documents. It never marks a selection: the open document is always its
+/// first entry and the tree already marks it, and design.md §1.3 gives the selected-row accent to one row.
 private struct SidebarRecentDocumentsSection: View {
     let entries: [RecentDocumentEntry]
-    let selectedDocumentID: String?
     let theme: AppTheme
     let zoomScale: Double
     let availableSidebarHeight: CGFloat
@@ -1909,7 +1909,6 @@ private struct SidebarRecentDocumentsSection: View {
                 MonknotScrollView {
                     VStack(alignment: .leading, spacing: rowSpacing) {
                         ForEach(entries, id: \.documentID) { entry in
-                            let isSelected = entry.documentID == selectedDocumentID
                             Button {
                                 openDocument(entry.documentID)
                             } label: {
@@ -1917,7 +1916,7 @@ private struct SidebarRecentDocumentsSection: View {
                                     leading: .kind(systemImage: kindGlyph(entry)),
                                     title: entry.displayName,
                                     depth: 1,
-                                    isSelected: isSelected,
+                                    isSelected: false,
                                     theme: theme,
                                     zoomScale: zoomScale
                                 ) {
@@ -1926,7 +1925,7 @@ private struct SidebarRecentDocumentsSection: View {
                             }
                             .buttonStyle(SidebarRowButtonStyle(
                                 theme: theme,
-                                isSelected: isSelected,
+                                isSelected: false,
                                 cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
                             ))
                             .help(entry.relativePath)
