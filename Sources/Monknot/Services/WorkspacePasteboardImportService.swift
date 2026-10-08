@@ -685,15 +685,15 @@ private enum MarkdownImageAssetError: LocalizedError {
         case .assetsIsNotDirectory:
             return "The workspace assets item is not a folder."
         case .invalidDropCount(let maximum):
-            return "Drop between 1 and \(maximum) files at a time."
+            return "Insert between 1 and \(maximum) files at a time."
         case .noDroppedFiles:
-            return "The drop does not contain any new files."
+            return "There are no new files to insert."
         case .unsupportedDroppedFile(let name):
             return "\(name) is not a supported file. Folders, aliases, and binary files cannot be inserted."
         case .droppedFileTooLarge(let name):
             return "\(name) is too large to import."
         case .droppedFilesChanged:
-            return "The dropped files changed before they could be imported."
+            return "The files changed before they could be imported."
         case .couldNotReadDroppedImage(let name):
             return "\(name) could not be read as an image."
         }

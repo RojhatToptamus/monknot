@@ -905,7 +905,7 @@ final class WorkspaceStore: ObservableObject {
             } catch is CancellationError {
                 return
             } catch {
-                self?.errorMessage = "Could not insert the dropped files: \(error.localizedDescription)"
+                self?.errorMessage = "Could not insert the files: \(error.localizedDescription)"
             }
         }
     }

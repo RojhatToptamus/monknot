@@ -1748,8 +1748,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.imagePasteHandler = { [weak coordinator = context.coordinator] image in
             coordinator?.requestImagePaste(image) ?? false
         }
-        textView.fileDropHandler = onFileDropRequest == nil ? nil : { [weak coordinator = context.coordinator] urls, offset in
-            coordinator?.requestFileDrop(urls, atUTF16Offset: offset) ?? false
+        textView.fileDropHandler = onFileDropRequest == nil ? nil : { [weak coordinator = context.coordinator] urls, range in
+            coordinator?.requestFileDrop(urls, replacing: range) ?? false
         }
         textView.flowSuggestionAcceptanceHandler = { [weak coordinator = context.coordinator] suggestion in
             coordinator?.acceptFlowSuggestion(suggestion) ?? false
@@ -1840,8 +1840,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.flowSourceMode = flowSourceMode
         context.coordinator.configureFlow(mode: flowSourceMode, options: textCheckingOptions)
         textView.inspectLinksHandler = onInspectLinks
-        textView.fileDropHandler = onFileDropRequest == nil ? nil : { [weak coordinator = context.coordinator] urls, offset in
-            coordinator?.requestFileDrop(urls, atUTF16Offset: offset) ?? false
+        textView.fileDropHandler = onFileDropRequest == nil ? nil : { [weak coordinator = context.coordinator] urls, range in
+            coordinator?.requestFileDrop(urls, replacing: range) ?? false
         }
         textView.updateDragTypeRegistration()
         context.coordinator.syncScrollEnabled = syncScrollEnabled
@@ -5898,7 +5898,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             return true
         }
 
-        func requestFileDrop(_ urls: [URL], atUTF16Offset offset: Int) -> Bool {
+        func requestFileDrop(_ urls: [URL], replacing range: NSRange) -> Bool {
             guard !isWritingToolsActive,
                   !urls.isEmpty,
                   let textView,
@@ -5908,8 +5908,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
             let capturedRevision = revision
             let capturedText = textView.string
-            let boundedOffset = min(max(0, offset), (capturedText as NSString).length)
-            let capturedRange = NSRange(location: boundedOffset, length: 0)
+            let capturedRange = Self.boundedRange(range, in: capturedText)
             let request = MarkdownFileDropRequest(
                 documentID: documentID,
                 revision: capturedRevision,
@@ -6652,7 +6651,8 @@ class MarkdownNSTextView: NSTextView {
     var workspaceLinkHandler: ((MarkdownWorkspaceLink) -> Bool)?
     var inspectLinksHandler: (() -> Void)?
     var imagePasteHandler: ((NSImage) -> Bool)?
-    var fileDropHandler: (([URL], Int) -> Bool)?
+    /// Files dragged in (at the drop point) or pasted (over the selection) replace this range.
+    var fileDropHandler: (([URL], NSRange) -> Bool)?
     var flowSuggestionAcceptanceHandler: ((EditorFlowSuggestion) -> Bool)?
     var flowProseSuggestionAcceptanceHandler: ((EditorFlowProseSuggestion, Bool) -> Bool)?
     var flowSuggestionDismissalHandler: (() -> Void)?
@@ -7159,6 +7159,15 @@ class MarkdownNSTextView: NSTextView {
         return workspaceLinkHandler(link)
     }
 
+    /// Files copied in Finder take the same path as files dragged in: a copied PDF is linked
+    /// instead of pasted as a picture of its first page.
+    @discardableResult
+    func requestFilePaste(from pasteboard: NSPasteboard) -> Bool {
+        let urls = Self.fileURLs(on: pasteboard)
+        guard !urls.isEmpty, let fileDropHandler else { return false }
+        return fileDropHandler(urls, selectedRange())
+    }
+
     @discardableResult
     func requestImagePaste(from pasteboard: NSPasteboard) -> Bool {
         guard let imagePasteHandler, let image = Self.image(from: pasteboard) else { return false }
@@ -7175,10 +7184,16 @@ class MarkdownNSTextView: NSTextView {
     }
 
     override func paste(_ sender: Any?) {
-        if requestImagePaste(from: .general) {
+        if pasteFilesOrImage(from: .general) {
             return
         }
         super.paste(sender)
+    }
+
+    /// Copied files first: Finder's pasteboard also yields an image for some files (a PDF's first
+    /// page), which must not win over the file itself.
+    func pasteFilesOrImage(from pasteboard: NSPasteboard) -> Bool {
+        requestFilePaste(from: pasteboard) || requestImagePaste(from: pasteboard)
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
@@ -7208,11 +7223,15 @@ class MarkdownNSTextView: NSTextView {
         // NSTextView defines this API as the insertion position for a point in view coordinates.
         // https://developer.apple.com/documentation/appkit/nstextview/characterindexforinsertion(at:)
         let offset = characterIndexForInsertion(at: point)
-        return fileDropHandler(urls, offset)
+        return fileDropHandler(urls, NSRange(location: offset, length: 0))
     }
 
     private func droppedFileURLs(from sender: NSDraggingInfo) -> [URL] {
-        let objects = sender.draggingPasteboard.readObjects(
+        Self.fileURLs(on: sender.draggingPasteboard)
+    }
+
+    private static func fileURLs(on pasteboard: NSPasteboard) -> [URL] {
+        let objects = pasteboard.readObjects(
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]
         ) ?? []

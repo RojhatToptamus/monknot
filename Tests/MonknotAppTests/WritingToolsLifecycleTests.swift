@@ -554,7 +554,7 @@ final class WritingToolsLifecycleTests: FlowEditorTestCase {
         XCTAssertTrue(coordinator.requestImagePaste(testImage()))
         XCTAssertTrue(coordinator.requestFileDrop(
             [URL(fileURLWithPath: "/tmp/Guide.md")],
-            atUTF16Offset: (source as NSString).length
+            replacing: NSRange(location: (source as NSString).length, length: 0)
         ))
         let capturedImage = try XCTUnwrap(imageRequest)
         let capturedDrop = try XCTUnwrap(fileDropRequest)

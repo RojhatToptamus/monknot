@@ -1143,7 +1143,7 @@ final class MarkdownEditorBasicInteractionTests: FlowEditorTestCase {
         coordinator.onFileDropRequest = { request = $0 }
         let urls = [URL(fileURLWithPath: "/tmp/Guide.md"), URL(fileURLWithPath: "/tmp/Map.png")]
 
-        XCTAssertTrue(coordinator.requestFileDrop(urls, atUTF16Offset: 7))
+        XCTAssertTrue(coordinator.requestFileDrop(urls, replacing: NSRange(location: 7, length: 0)))
         XCTAssertEqual(textView.string, source)
         let captured = try XCTUnwrap(request)
         XCTAssertEqual(captured.urls, urls)
@@ -1165,12 +1165,92 @@ final class MarkdownEditorBasicInteractionTests: FlowEditorTestCase {
         var request: MarkdownFileDropRequest?
         coordinator.onFileDropRequest = { request = $0 }
 
-        XCTAssertTrue(coordinator.requestFileDrop([URL(fileURLWithPath: "/tmp/Guide.md")], atUTF16Offset: 2))
+        XCTAssertTrue(coordinator.requestFileDrop(
+            [URL(fileURLWithPath: "/tmp/Guide.md")],
+            replacing: NSRange(location: 2, length: 0)
+        ))
         let captured = try XCTUnwrap(request)
         textView.insertText(" changed", replacementRange: textView.selectedRange())
 
         XCTAssertFalse(captured.insertMarkdown("[Guide](Guide.md)"))
         XCTAssertEqual(textView.string, "draft changed")
+        withExtendedLifetime(window) {}
+    }
+
+    func testPastingCopiedFilesTakesTheFileFlowAndReplacesTheSelection() throws {
+        let source = "before selected after"
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let selection = (source as NSString).range(of: "selected")
+        textView.setSelectedRange(selection)
+        var fileRequest: MarkdownFileDropRequest?
+        var pastedImage = false
+        coordinator.onFileDropRequest = { fileRequest = $0 }
+        textView.fileDropHandler = { coordinator.requestFileDrop($0, replacing: $1) }
+        textView.imagePasteHandler = { _ in pastedImage = true; return true }
+        // Finder puts file URLs on the pasteboard; NSImage(pasteboard:) renders a copied PDF as an
+        // image of its first page, so the PDF must exist for this to catch the image path winning.
+        let pdfURL = try makeTemporaryPDF()
+        defer { try? FileManager.default.removeItem(at: pdfURL) }
+        XCTAssertNotNil(NSImage(pasteboard: try singleFilePasteboard(pdfURL)))
+        let urls = [pdfURL, URL(fileURLWithPath: "/tmp/Photo.jpg")]
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MonknotTests.filePaste.\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        pasteboard.writeObjects(urls.map { $0 as NSURL })
+
+        XCTAssertTrue(textView.pasteFilesOrImage(from: pasteboard))
+        XCTAssertFalse(pastedImage)
+        let captured = try XCTUnwrap(fileRequest)
+        XCTAssertEqual(captured.urls, urls)
+        XCTAssertEqual(captured.insertionRange, selection)
+
+        XCTAssertTrue(captured.insertMarkdown("[Paper](Paper.pdf)"))
+        XCTAssertEqual(textView.string, "before [Paper](Paper.pdf) after")
+        withExtendedLifetime(window) {}
+    }
+
+    private func makeTemporaryPDF() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MonknotPaste-\(UUID().uuidString).pdf")
+        let data = NSMutableData()
+        var mediaBox = CGRect(x: 0, y: 0, width: 200, height: 100)
+        let consumer = try XCTUnwrap(CGDataConsumer(data: data as CFMutableData))
+        let context = try XCTUnwrap(CGContext(consumer: consumer, mediaBox: &mediaBox, nil))
+        context.beginPDFPage(nil)
+        context.fill(CGRect(x: 20, y: 20, width: 60, height: 60))
+        context.endPDFPage()
+        context.closePDF()
+        try (data as Data).write(to: url)
+        return url
+    }
+
+    private func singleFilePasteboard(_ url: URL) throws -> NSPasteboard {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MonknotTests.singleFile.\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        pasteboard.writeObjects([url as NSURL])
+        addTeardownBlock { pasteboard.releaseGlobally() }
+        return pasteboard
+    }
+
+    func testPastingImageDataDoesNotTakeTheFileFlow() {
+        let source = "draft"
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        var fileRequest: MarkdownFileDropRequest?
+        coordinator.onFileDropRequest = { fileRequest = $0 }
+        textView.fileDropHandler = { coordinator.requestFileDrop($0, replacing: $1) }
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MonknotTests.imagePaste.\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        pasteboard.writeObjects([testImage()])
+
+        XCTAssertFalse(textView.requestFilePaste(from: pasteboard))
+        XCTAssertNil(fileRequest)
         withExtendedLifetime(window) {}
     }
 

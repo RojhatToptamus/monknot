@@ -1935,7 +1935,7 @@ struct ContentView: View {
                 commitMarkdownFileDrop(pending)
             }
         } catch {
-            store.errorMessage = "Could not insert the dropped files: \(error.localizedDescription)"
+            store.errorMessage = "Could not insert the files: \(error.localizedDescription)"
         }
     }
 
