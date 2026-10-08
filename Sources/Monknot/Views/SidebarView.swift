@@ -1779,25 +1779,31 @@ enum SidebarRecentDocumentsLayoutPolicy {
     static func visibleRowCount(
         entryCount: Int,
         availableSidebarHeight: CGFloat,
-        rowHeight: CGFloat
+        rowHeight: CGFloat,
+        rowSpacing: CGFloat
     ) -> Int {
         guard entryCount > 0, rowHeight > 0 else { return 0 }
 
         let heightBudget = max(rowHeight, availableSidebarHeight * availableHeightFraction)
-        let availableRows = max(1, Int(floor(heightBudget / rowHeight)))
+        let availableRows = max(1, Int(floor((heightBudget + rowSpacing) / (rowHeight + rowSpacing))))
         return min(entryCount, maximumVisibleRows, availableRows)
     }
 
+    /// The height that shows the visible rows completely: each row plus the spacing between them.
     static func viewportHeight(
         entryCount: Int,
         availableSidebarHeight: CGFloat,
-        rowHeight: CGFloat
+        rowHeight: CGFloat,
+        rowSpacing: CGFloat
     ) -> CGFloat {
-        rowHeight * CGFloat(visibleRowCount(
+        let rows = visibleRowCount(
             entryCount: entryCount,
             availableSidebarHeight: availableSidebarHeight,
-            rowHeight: rowHeight
-        ))
+            rowHeight: rowHeight,
+            rowSpacing: rowSpacing
+        )
+        guard rows > 0 else { return 0 }
+        return rowHeight * CGFloat(rows) + rowSpacing * CGFloat(rows - 1)
     }
 }
 
@@ -1820,11 +1826,16 @@ private struct SidebarRecentDocumentsSection: View {
         scaled(30)
     }
 
+    private var rowSpacing: CGFloat {
+        scaled(2)
+    }
+
     private var viewportHeight: CGFloat {
         SidebarRecentDocumentsLayoutPolicy.viewportHeight(
             entryCount: entries.count,
             availableSidebarHeight: availableSidebarHeight,
-            rowHeight: rowHeight
+            rowHeight: rowHeight,
+            rowSpacing: rowSpacing
         )
     }
 
@@ -1855,7 +1866,7 @@ private struct SidebarRecentDocumentsSection: View {
 
             if isExpanded {
                 MonknotScrollView {
-                    VStack(alignment: .leading, spacing: scaled(2)) {
+                    VStack(alignment: .leading, spacing: rowSpacing) {
                         ForEach(entries, id: \.documentID) { entry in
                             let isSelected = entry.documentID == selectedDocumentID
                             Button {
@@ -1882,8 +1893,8 @@ private struct SidebarRecentDocumentsSection: View {
                     }
                     .padding(.horizontal, scaled(6))
                 }
-                .padding(.bottom, scaled(6))
                 .frame(height: viewportHeight)
+                .padding(.bottom, scaled(6))
                 .transition(.opacity)
             }
         }

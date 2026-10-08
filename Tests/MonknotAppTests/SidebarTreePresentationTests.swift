@@ -58,34 +58,34 @@ final class SidebarTreePresentationTests: XCTestCase {
     }
 
     func testRecentDocumentsViewportUsesFiveCompleteRowsAtCommonSidebarHeight() {
-        let rowHeight: CGFloat = 30
-
         XCTAssertEqual(
             SidebarRecentDocumentsLayoutPolicy.visibleRowCount(
                 entryCount: 8,
                 availableSidebarHeight: 600,
-                rowHeight: rowHeight
+                rowHeight: 30,
+                rowSpacing: 2
             ),
             5
         )
+        // Five rows and the four gaps between them, so the fifth row is not clipped.
         XCTAssertEqual(
             SidebarRecentDocumentsLayoutPolicy.viewportHeight(
                 entryCount: 8,
                 availableSidebarHeight: 600,
-                rowHeight: rowHeight
+                rowHeight: 30,
+                rowSpacing: 2
             ),
-            rowHeight * 5
+            5 * 30 + 4 * 2
         )
     }
 
     func testRecentDocumentsViewportShrinksByWholeRowsInShortSidebar() {
-        let rowHeight: CGFloat = 30
-
         XCTAssertEqual(
             SidebarRecentDocumentsLayoutPolicy.visibleRowCount(
                 entryCount: 8,
                 availableSidebarHeight: 240,
-                rowHeight: rowHeight
+                rowHeight: 30,
+                rowSpacing: 2
             ),
             2
         )
@@ -93,26 +93,52 @@ final class SidebarTreePresentationTests: XCTestCase {
             SidebarRecentDocumentsLayoutPolicy.viewportHeight(
                 entryCount: 8,
                 availableSidebarHeight: 240,
-                rowHeight: rowHeight
+                rowHeight: 30,
+                rowSpacing: 2
             ),
-            rowHeight * 2
+            2 * 30 + 2
+        )
+    }
+
+    func testRecentDocumentsRowBudgetCountsTheSpacingBetweenRows() {
+        // 0.34 × 470 = 159.8 holds five rows with their four 2pt gaps (158). 0.34 × 460 = 156.4 holds
+        // five bare rows (150) but not the gaps, so it shows four.
+        XCTAssertEqual(
+            SidebarRecentDocumentsLayoutPolicy.visibleRowCount(
+                entryCount: 8,
+                availableSidebarHeight: 470,
+                rowHeight: 30,
+                rowSpacing: 2
+            ),
+            5
+        )
+        XCTAssertEqual(
+            SidebarRecentDocumentsLayoutPolicy.visibleRowCount(
+                entryCount: 8,
+                availableSidebarHeight: 460,
+                rowHeight: 30,
+                rowSpacing: 2
+            ),
+            4
         )
     }
 
     func testRecentDocumentsViewportDoesNotReserveBlankRows() {
         XCTAssertEqual(
-            SidebarRecentDocumentsLayoutPolicy.visibleRowCount(
+            SidebarRecentDocumentsLayoutPolicy.viewportHeight(
                 entryCount: 2,
                 availableSidebarHeight: 800,
-                rowHeight: 30
+                rowHeight: 30,
+                rowSpacing: 2
             ),
-            2
+            2 * 30 + 2
         )
         XCTAssertEqual(
-            SidebarRecentDocumentsLayoutPolicy.visibleRowCount(
+            SidebarRecentDocumentsLayoutPolicy.viewportHeight(
                 entryCount: 0,
                 availableSidebarHeight: 800,
-                rowHeight: 30
+                rowHeight: 30,
+                rowSpacing: 2
             ),
             0
         )
