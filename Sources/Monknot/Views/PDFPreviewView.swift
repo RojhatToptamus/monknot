@@ -4666,6 +4666,15 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         return true
     }
 
+    /// PDFKit's copy does nothing, silently, when no text is selected; say so the standard way.
+    override func copy(_ sender: Any?) {
+        guard currentSelection?.string?.isEmpty == false else {
+            NSSound.beep()
+            return
+        }
+        super.copy(sender)
+    }
+
     /// The zoom factor for a ⌘-scroll, or nil for any other wheel event. Rolling the wheel away
     /// from you zooms in, whatever the natural-scrolling setting; a notch is about 10%.
     static func commandScrollZoomFactor(for event: NSEvent) -> CGFloat? {
