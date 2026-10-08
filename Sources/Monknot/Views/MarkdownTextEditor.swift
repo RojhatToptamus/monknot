@@ -6110,6 +6110,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 let range = matches[currentMatchIndex]
                 textView.setSelectedRange(range)
                 textView.scrollRangeToVisible(range)
+                // The system's find indicator calls out the match each step lands on, as in
+                // TextEdit and Xcode; the underline keeps marking it afterwards.
+                if navigationChanged {
+                    textView.showFindIndicator(for: range)
+                }
             }
 
             lastSearchQuery = query
@@ -6145,16 +6150,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
             guard let layoutManager = textView.layoutManager else { return }
             (textView as? MarkdownNSTextView)?.invalidateFlowSourceHighlightCache()
-            let accent = NSColor(hex: theme.accent)
-            let matchColor = accent.withAlphaComponent(theme.isDark ? 0.24 : 0.18)
-            let currentColor = accent.withAlphaComponent(theme.isDark ? 0.44 : 0.30)
-
+            let highlightTheme = SearchHighlightTheme(theme: theme)
             for (index, range) in matches.enumerated() {
-                layoutManager.addTemporaryAttribute(
-                    .backgroundColor,
-                    value: index == currentIndex ? currentColor : matchColor,
-                    forCharacterRange: range
-                )
+                Self.highlightMatch(range, isCurrent: index == currentIndex, theme: highlightTheme, in: layoutManager)
             }
 
             highlightedRanges = matches
@@ -6174,21 +6172,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
             guard currentIndex >= 0, currentIndex < matches.count else { return }
 
             (textView as? MarkdownNSTextView)?.invalidateFlowSourceHighlightCache()
-            let accent = NSColor(hex: theme.accent)
-            let matchColor = accent.withAlphaComponent(theme.isDark ? 0.24 : 0.18)
-            let currentColor = accent.withAlphaComponent(theme.isDark ? 0.44 : 0.30)
-
-            layoutManager.addTemporaryAttribute(
-                .backgroundColor,
-                value: matchColor,
-                forCharacterRange: matches[previousIndex]
-            )
-            layoutManager.addTemporaryAttribute(
-                .backgroundColor,
-                value: currentColor,
-                forCharacterRange: matches[currentIndex]
-            )
-            lastHighlightTheme = SearchHighlightTheme(theme: theme)
+            let highlightTheme = SearchHighlightTheme(theme: theme)
+            Self.highlightMatch(matches[previousIndex], isCurrent: false, theme: highlightTheme, in: layoutManager)
+            Self.highlightMatch(matches[currentIndex], isCurrent: true, theme: highlightTheme, in: layoutManager)
+            lastHighlightTheme = highlightTheme
             (textView as? MarkdownNSTextView)?.applyFlowSourceHighlightsIfNeeded()
         }
 
@@ -6197,16 +6184,35 @@ struct MarkdownTextEditor: NSViewRepresentable {
                   let theme = lastHighlightTheme,
                   !highlightedRanges.isEmpty
             else { return }
-            let accent = NSColor(hex: theme.accent)
-            let matchColor = accent.withAlphaComponent(theme.isDark ? 0.24 : 0.18)
-            let currentColor = accent.withAlphaComponent(theme.isDark ? 0.44 : 0.30)
             for (index, range) in highlightedRanges.enumerated()
             where range.location >= 0 && NSMaxRange(range) <= (textView.string as NSString).length {
-                layoutManager.addTemporaryAttribute(
-                    .backgroundColor,
-                    value: index == currentMatchIndex ? currentColor : matchColor,
+                Self.highlightMatch(range, isCurrent: index == currentMatchIndex, theme: theme, in: layoutManager)
+            }
+        }
+
+        /// The current match is also selected, and while the find field has focus its inactive
+        /// (grey) selection covers the stronger fill; the thick accent underline stays visible.
+        private static func highlightMatch(
+            _ range: NSRange,
+            isCurrent: Bool,
+            theme: SearchHighlightTheme,
+            in layoutManager: NSLayoutManager
+        ) {
+            let accent = NSColor(hex: theme.accent)
+            let alpha: CGFloat = isCurrent ? (theme.isDark ? 0.44 : 0.30) : (theme.isDark ? 0.24 : 0.18)
+            layoutManager.addTemporaryAttribute(
+                .backgroundColor,
+                value: accent.withAlphaComponent(alpha),
+                forCharacterRange: range
+            )
+            if isCurrent {
+                layoutManager.addTemporaryAttributes(
+                    [.underlineStyle: NSUnderlineStyle.thick.rawValue, .underlineColor: accent],
                     forCharacterRange: range
                 )
+            } else {
+                layoutManager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: range)
+                layoutManager.removeTemporaryAttribute(.underlineColor, forCharacterRange: range)
             }
         }
 
@@ -6224,6 +6230,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
             for range in highlightedRanges {
                 guard range.location >= 0, NSMaxRange(range) <= length else { continue }
                 layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: range)
+                layoutManager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: range)
+                layoutManager.removeTemporaryAttribute(.underlineColor, forCharacterRange: range)
             }
             highlightedRanges = []
             if resetMatches {

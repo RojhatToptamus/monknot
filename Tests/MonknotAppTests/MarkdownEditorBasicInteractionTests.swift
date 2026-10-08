@@ -1193,6 +1193,38 @@ final class MarkdownEditorBasicInteractionTests: FlowEditorTestCase {
         withExtendedLifetime(window) {}
     }
 
+    func testOnlyTheCurrentFindMatchIsUnderlinedAndTheMarkFollowsFindNext() throws {
+        let source = "one cat, two cat"
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let layoutManager = try XCTUnwrap(textView.layoutManager)
+        let first = (source as NSString).range(of: "cat")
+        let second = (source as NSString).range(of: "cat", options: .backwards)
+        func isUnderlined(_ range: NSRange) -> Bool {
+            layoutManager.temporaryAttribute(.underlineStyle, atCharacterIndex: range.location, effectiveRange: nil) != nil
+        }
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        var search = DocumentSearchState()
+        search.present()
+        search.setQuery("cat")
+
+        _ = coordinator.applySearch(search, theme: .defaultDark, in: textView)
+        XCTAssertTrue(isUnderlined(first))
+        XCTAssertFalse(isUnderlined(second))
+
+        search.findNext()
+        _ = coordinator.applySearch(search, theme: .defaultDark, in: textView)
+        XCTAssertFalse(isUnderlined(first))
+        XCTAssertTrue(isUnderlined(second))
+
+        search.dismiss()
+        _ = coordinator.applySearch(search, theme: .defaultDark, in: textView)
+        XCTAssertFalse(isUnderlined(second))
+        withExtendedLifetime(window) {}
+    }
+
     func testFindHighlightApplyAndClearPreserveAuthoritativeFlowSourceTint() async throws {
         let source = "The lanterns is ready."
         let box = EditorTextBox(source)
