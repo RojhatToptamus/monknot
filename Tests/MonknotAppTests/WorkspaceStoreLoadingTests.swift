@@ -192,7 +192,38 @@ final class WorkspaceStoreLoadingTests: WorkspaceStoreConflictTestCase {
         XCTAssertTrue(didLoad)
         XCTAssertEqual(store.documentText, "")
         XCTAssertFalse(store.hasUnsavedChanges)
-        XCTAssertTrue(store.errorMessage?.localizedCaseInsensitiveContains("too large") == true)
+        // Shown in the pane instead of an editable editor (no modal alert).
+        let failure = try XCTUnwrap(store.documentLoadFailure)
+        XCTAssertEqual(failure.documentID, fileURL.standardizedFileURL.path)
+        XCTAssertTrue(failure.message.contains("up to 4.0 MB"))
+        XCTAssertNil(store.errorMessage)
+
+        // Saving cannot write the empty placeholder text over the file.
+        store.saveSelectedFile()
+        _ = await waitUntil { !store.isSaving }
+        XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8).count, largeText.count)
+    }
+
+    func testLoadFailureClearsWhenAnotherDocumentOpens() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let hugeURL = root.appendingPathComponent("Huge.md")
+        try String(repeating: "x", count: Int(WorkspaceStore.interactiveTextOpenMaxBytes) + 1)
+            .write(to: hugeURL, atomically: true, encoding: .utf8)
+        let smallURL = root.appendingPathComponent("Small.md")
+        try "# Small\n".write(to: smallURL, atomically: true, encoding: .utf8)
+
+        let store = makeWorkspaceStore()
+        store.openWorkspace(root)
+        _ = await waitUntil { !store.isBusy && !store.isDocumentLoading }
+        XCTAssertTrue(store.selectDocument(id: hugeURL.standardizedFileURL.path))
+        _ = await waitUntil { store.documentLoadFailure != nil }
+
+        XCTAssertTrue(store.selectDocument(id: smallURL.standardizedFileURL.path))
+        let didLoad = await waitUntil { !store.isDocumentLoading && store.documentText == "# Small\n" }
+        XCTAssertTrue(didLoad)
+        XCTAssertNil(store.documentLoadFailure)
     }
 
     func testReloadSelectedDocumentFromDiskDiscardsLocalEdits() async throws {

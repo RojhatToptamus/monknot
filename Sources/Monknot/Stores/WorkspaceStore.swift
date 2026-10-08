@@ -1,6 +1,13 @@
 import Foundation
 import MonknotCore
 
+/// A text document whose file could not be read into the editor (too large, not UTF-8). The pane
+/// shows `message` read-only instead of an empty, editable editor that could be saved over the file.
+struct DocumentLoadFailure: Equatable {
+    let documentID: String
+    let message: String
+}
+
 @MainActor
 final class WorkspaceStore: ObservableObject {
     @Published private(set) var workspaceURL: URL?
@@ -20,6 +27,7 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var hasUnsavedChanges = false
     @Published private(set) var isBusy = false
     @Published private(set) var isDocumentLoading = false
+    @Published private(set) var documentLoadFailure: DocumentLoadFailure?
     @Published private(set) var isSaving = false
     @Published private(set) var documentSaveStates: [String: DocumentSaveState] = [:]
     @Published private(set) var selectedDocumentExternalChange = false
@@ -2403,6 +2411,9 @@ final class WorkspaceStore: ObservableObject {
         documentTask?.cancel()
         documentGeneration += 1
         let generation = documentGeneration
+        if documentLoadFailure != nil {
+            documentLoadFailure = nil
+        }
 
         guard let selectedDocument else {
             setDocumentTextIfChanged("")
@@ -2544,10 +2555,20 @@ final class WorkspaceStore: ObservableObject {
         setHasUnsavedChangesIfChanged(false)
         setSelectedDocumentSignatureIfChanged(nil)
         setDocumentLoadingIfChanged(false)
-        if case WorkspaceTextFileGuard.Error.fileTooLarge = error {
-            errorMessage = "\(file.displayName) is too large to open in the editor. \(error.localizedDescription)"
-        } else {
-            errorMessage = "Could not read \(file.displayName): \(error.localizedDescription)"
+        // A file that could not be opened is not a recent document.
+        recentDocumentRecordTask?.cancel()
+        documentLoadFailure = DocumentLoadFailure(documentID: file.id, message: Self.loadFailureMessage(for: error))
+    }
+
+    nonisolated static func loadFailureMessage(for error: Error) -> String {
+        switch error {
+        case WorkspaceTextFileGuard.Error.fileTooLarge(_, let size, let maxBytes):
+            let megabytes = { (bytes: Int64) in String(format: "%.1f", Double(bytes) / (1024 * 1024)) }
+            return "This file is \(megabytes(size)) MB. The editor opens text files up to \(megabytes(maxBytes)) MB."
+        case WorkspaceTextFileGuard.Error.unreadableEncoding:
+            return "This file is not UTF-8 text, so it cannot be edited here."
+        default:
+            return "The file could not be read: \(error.localizedDescription)"
         }
     }
 

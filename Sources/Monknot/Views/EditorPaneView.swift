@@ -228,7 +228,14 @@ struct EditorPaneView: View {
             }
 
             if let selectedDocument = store.selectedDocument {
-                if store.isDocumentLoading, selectedDocument.capabilities.canEditText {
+                if let failure = store.documentLoadFailure, failure.documentID == selectedDocument.id {
+                    UnsupportedDocumentView(
+                        document: selectedDocument,
+                        detail: failure.message,
+                        theme: theme,
+                        zoomScale: zoomScale
+                    )
+                } else if store.isDocumentLoading, selectedDocument.capabilities.canEditText {
                     DocumentLoadingPlaceholder(
                         documentName: selectedDocument.displayName,
                         theme: theme,
@@ -618,6 +625,7 @@ struct EditorPaneView: View {
 
 private struct UnsupportedDocumentView: View {
     let document: WorkspaceDocument
+    var detail = "Preview is not available for this file type."
     let theme: AppTheme
     let zoomScale: Double
 
@@ -625,11 +633,19 @@ private struct UnsupportedDocumentView: View {
         MonknotEmptyState(
             systemImage: "doc",
             title: document.displayName,
-            detail: "Preview is not available for this file type.",
+            detail: detail,
             theme: theme,
             zoomScale: zoomScale
         ) {
-            EmptyView()
+            MonknotActionButton(
+                title: "Reveal in Finder",
+                systemImage: MonknotWorkspaceIcons.revealInFinder,
+                role: .secondary,
+                theme: theme,
+                zoomScale: zoomScale
+            ) {
+                NSWorkspace.shared.activateFileViewerSelecting([document.url])
+            }
         }
         .background(theme.surfaceColor)
     }
