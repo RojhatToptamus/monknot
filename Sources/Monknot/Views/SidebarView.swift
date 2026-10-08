@@ -1628,7 +1628,7 @@ private struct SidebarRowButtonStyle: ButtonStyle {
 
 /// A folder or group's disclosure chevron in the 18pt glyph column, nudged per design.md §8.6: the
 /// right chevron's ink sits left of centre in its box.
-private struct SidebarDisclosureChevron: View {
+struct SidebarDisclosureChevron: View {
     let isExpanded: Bool
     let theme: AppTheme
     let zoomScale: Double

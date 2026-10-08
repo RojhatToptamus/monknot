@@ -130,59 +130,67 @@ struct WorkspaceSearchView: View {
         }
     }
 
+    /// Same geometry as the sidebar header it replaces: 40 tall, the title where the workspace name sits
+    /// and the close button where the header actions sit (design.md §10.4).
     private var searchHeader: some View {
-        ViewThatFits(in: .horizontal) {
-            searchHeaderContent(showsShortcut: true)
-            searchHeaderContent(showsShortcut: false)
-        }
-        .padding(.horizontal, scaled(MonknotMetrics.Spacing.l))
-        .padding(.top, scaled(MonknotMetrics.Spacing.m))
-        .padding(.bottom, scaled(MonknotMetrics.Spacing.s))
-    }
-
-    private func searchHeaderContent(showsShortcut: Bool) -> some View {
-        HStack(spacing: scaled(MonknotMetrics.Spacing.s)) {
+        HStack(spacing: scaled(6)) {
             Text("Find in Workspace")
-                .font(.system(size: textScaled(14), weight: .semibold))
-                .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
+                .font(.system(size: textScaled(13), weight: .semibold))
+                .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.92))
                 .lineLimit(1)
-                .fixedSize(horizontal: showsShortcut, vertical: false)
 
-            Spacer(minLength: scaled(MonknotMetrics.Spacing.xs))
-
-            if showsShortcut {
-                MonknotShortcutLabel(
-                    shortcut: "⇧⌘F",
-                    theme: theme,
-                    zoomScale: zoomScale
-                )
-            }
+            Spacer(minLength: scaled(4))
 
             MonknotIconButton(
                 systemImage: "xmark",
                 label: "Close Workspace Search",
                 theme: theme,
                 zoomScale: zoomScale,
-                size: .compact,
+                size: .sidebarHeader,
                 action: close
             )
         }
+        .padding(.leading, scaled(20))
+        .padding(.trailing, scaled(10))
+        .frame(height: scaled(40))
     }
 
     private var searchControls: some View {
         VStack(alignment: .leading, spacing: scaled(MonknotMetrics.Spacing.s)) {
             queryField
-            replaceDisclosure
-            searchStatusRow
+                .padding(.horizontal, scaled(10))
+
+            VStack(alignment: .leading, spacing: scaled(2)) {
+                replaceDisclosure
+                if isReplaceExpanded {
+                    VStack(alignment: .leading, spacing: scaled(MonknotMetrics.Spacing.s)) {
+                        replaceField
+                        replaceActions
+                        if let message = state.replaceStatusMessage {
+                            Text(message)
+                                .font(.system(size: textScaled(12), weight: .regular))
+                                .foregroundStyle(theme.tertiaryForegroundColor)
+                                .lineLimit(3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    // With the row gutter, the same 10 inset as the query field.
+                    .padding(.horizontal, scaled(4))
+                    .padding(.bottom, scaled(MonknotMetrics.Spacing.xs))
+                }
+                searchStatusRow
+            }
+            .padding(.horizontal, scaled(6))
         }
-        .padding(.horizontal, scaled(MonknotMetrics.Spacing.l))
-        .padding(.bottom, scaled(MonknotMetrics.Spacing.l))
+        .padding(.bottom, scaled(MonknotMetrics.Spacing.xs))
     }
 
+    /// The same field as Find in the titlebar: a 28 inset field with the search glyph, the query, Clear,
+    /// and the two match options, whose glyph turns `accent` while on (design.md §1.3).
     private var queryField: some View {
-        HStack(spacing: scaled(MonknotMetrics.Spacing.s)) {
+        HStack(spacing: scaled(6)) {
             MonknotSearchGlyph(theme: theme, zoomScale: zoomScale)
-                .foregroundStyle(theme.sidebarMutedColor())
+                .foregroundStyle(theme.mutedForegroundColor)
 
             TextField(
                 "Search workspace",
@@ -202,23 +210,15 @@ struct WorkspaceSearchView: View {
             .textFieldStyle(.plain)
             .focused($focusedField, equals: .query)
             .font(.system(size: textScaled(13)))
-            .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
+            .foregroundStyle(theme.foregroundColor)
             .onSubmit {
                 if let selected = state.selectedResult ?? state.results.first {
                     openResult(selected)
                 }
             }
 
-            MonknotIconButton(
-                systemImage: "xmark.circle.fill",
-                label: "Clear Search",
-                theme: theme,
-                zoomScale: zoomScale,
-                isDisabled: state.query.isEmpty,
-                size: .compact,
-                focusRingPlacement: .contained
-            ) {
-                if !state.query.isEmpty {
+            if !state.query.isEmpty {
+                MonknotTabCloseButton(label: "Clear Search", theme: theme, zoomScale: zoomScale) {
                     state.setQuery(
                         "",
                         options: searchOptions,
@@ -229,95 +229,85 @@ struct WorkspaceSearchView: View {
                     focusSearchField()
                 }
             }
-            .opacity(state.query.isEmpty ? 0 : 1)
-            .accessibilityHidden(state.query.isEmpty)
 
-            MonknotIconButton(
-                systemImage: "textformat",
-                label: "Match Case",
-                theme: theme,
-                zoomScale: zoomScale,
-                isActive: searchOptions.isCaseSensitive,
-                size: .findBar,
-                drawsActiveBackground: false,
-                focusRingPlacement: .contained
-            ) {
-                searchOptions.isCaseSensitive.toggle()
-            }
-            .accessibilityValue(searchOptions.isCaseSensitive ? "On" : "Off")
-            .accessibilityAddTraits(searchOptions.isCaseSensitive ? .isSelected : [])
+            HStack(spacing: scaled(2)) {
+                searchOptionButton(
+                    systemImage: "textformat",
+                    label: "Match Case",
+                    isActive: searchOptions.isCaseSensitive
+                ) {
+                    searchOptions.isCaseSensitive.toggle()
+                }
 
-            MonknotIconButton(
-                systemImage: "character.cursor.ibeam",
-                label: "Match Whole Word",
-                theme: theme,
-                zoomScale: zoomScale,
-                isActive: searchOptions.isWholeWord,
-                size: .findBar,
-                drawsActiveBackground: false,
-                focusRingPlacement: .contained
-            ) {
-                searchOptions.isWholeWord.toggle()
+                searchOptionButton(
+                    systemImage: "character.cursor.ibeam",
+                    label: "Match Whole Word",
+                    isActive: searchOptions.isWholeWord
+                ) {
+                    searchOptions.isWholeWord.toggle()
+                }
             }
-            .accessibilityValue(searchOptions.isWholeWord ? "On" : "Off")
-            .accessibilityAddTraits(searchOptions.isWholeWord ? .isSelected : [])
         }
-        .padding(.horizontal, scaled(MonknotMetrics.Spacing.m))
-        .frame(
-            height: WorkspaceSearchLayoutPolicy.fieldHeight(
-                theme: theme,
-                zoomScale: zoomScale
-            )
-        )
+        .padding(.leading, scaled(MonknotMetrics.Spacing.m))
+        .padding(.trailing, scaled(3))
+        .frame(height: WorkspaceSearchLayoutPolicy.fieldHeight(theme: theme, zoomScale: zoomScale))
         .background(
             theme.insetFillColor,
             in: RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
         )
         .overlay {
             RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                .strokeBorder(
-                    focusedField == .query ? theme.accentColor.opacity(0.86) : theme.borderColor,
-                    lineWidth: WorkspaceSearchLayoutPolicy.fieldBorderWidth
-                )
+                .strokeBorder(theme.borderColor, lineWidth: WorkspaceSearchLayoutPolicy.fieldBorderWidth)
         }
-        .animation(MonknotMotion.hoverAnimation, value: focusedField == .query)
     }
 
+    private func searchOptionButton(
+        systemImage: String,
+        label: String,
+        isActive: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        MonknotIconButton(
+            systemImage: systemImage,
+            label: label,
+            theme: theme,
+            zoomScale: zoomScale,
+            isActive: isActive,
+            size: .sidebarHeader,
+            drawsActiveBackground: false,
+            focusRingPlacement: .contained,
+            action: action
+        )
+        .accessibilityValue(isActive ? "On" : "Off")
+        .accessibilityAddTraits(isActive ? .isSelected : [])
+    }
+
+    /// A disclosure row like every other in the sidebar: the chevron in the glyph column, then the label.
     private var replaceDisclosure: some View {
-        VStack(alignment: .leading, spacing: scaled(MonknotMetrics.Spacing.s)) {
-            MonknotActionButton(
-                title: "Replace",
-                systemImage: isReplaceExpanded ? "chevron.down" : "chevron.right",
-                role: .secondary,
-                theme: theme,
-                zoomScale: zoomScale
-            ) {
-                isReplaceExpanded.toggle()
+        Button {
+            isReplaceExpanded.toggle()
+        } label: {
+            HStack(spacing: scaled(8)) {
+                SidebarDisclosureChevron(isExpanded: isReplaceExpanded, theme: theme, zoomScale: zoomScale)
+                Text("Replace")
+                    .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
+                Spacer(minLength: 0)
             }
-            .accessibilityValue(isReplaceExpanded ? "Expanded" : "Collapsed")
-
-            if isReplaceExpanded {
-                replaceField
-                replaceActions
-
-                if let message = state.replaceStatusMessage {
-                    Text(message)
-                        .font(.system(size: textScaled(12), weight: .regular))
-                        .foregroundStyle(theme.sidebarMutedColor())
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+            .padding(.horizontal, scaled(10))
+            .frame(height: scaled(30))
+            .contentShape(Rectangle())
         }
+        .buttonStyle(MonknotRowButtonStyle(
+            theme: theme,
+            isSelected: false,
+            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
+        ))
+        .accessibilityLabel("Replace")
+        .accessibilityValue(isReplaceExpanded ? "Expanded" : "Collapsed")
     }
 
     private var replaceField: some View {
-        HStack(spacing: scaled(MonknotMetrics.Spacing.s)) {
-            Image(systemName: "arrow.uturn.backward")
-                .font(.system(size: glyphScaled(13), weight: .regular))
-                .foregroundStyle(theme.sidebarMutedColor())
-                .accessibilityHidden(true)
-
+        HStack(spacing: scaled(6)) {
             TextField(
                 "Replace with",
                 text: Binding(
@@ -328,56 +318,35 @@ struct WorkspaceSearchView: View {
             .textFieldStyle(.plain)
             .focused($focusedField, equals: .replacement)
             .font(.system(size: textScaled(13)))
-            .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
+            .foregroundStyle(canConfigureReplace ? theme.foregroundColor : theme.disabledForegroundColor)
             .disabled(!canConfigureReplace)
 
-            MonknotIconButton(
-                systemImage: "xmark.circle.fill",
-                label: "Clear Replacement",
-                theme: theme,
-                zoomScale: zoomScale,
-                isDisabled: !canConfigureReplace || state.replaceText.isEmpty,
-                size: .compact,
-                focusRingPlacement: .contained
-            ) {
-                if !state.replaceText.isEmpty {
+            if canConfigureReplace, !state.replaceText.isEmpty {
+                MonknotTabCloseButton(label: "Clear Replacement", theme: theme, zoomScale: zoomScale) {
                     state.setReplaceText("")
                 }
             }
-            .opacity(state.replaceText.isEmpty ? 0 : 1)
-            .accessibilityHidden(state.replaceText.isEmpty)
         }
         .padding(.horizontal, scaled(MonknotMetrics.Spacing.m))
-        .frame(
-            minHeight: WorkspaceSearchLayoutPolicy.fieldHeight(
-                theme: theme,
-                zoomScale: zoomScale
-            )
-        )
+        .frame(height: WorkspaceSearchLayoutPolicy.fieldHeight(theme: theme, zoomScale: zoomScale))
         .background(
             theme.insetFillColor,
             in: RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
         )
         .overlay {
             RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                .strokeBorder(theme.borderColor, lineWidth: 1)
+                .strokeBorder(
+                    theme.borderColor.opacity(canConfigureReplace ? 1 : MonknotIconButton.disabledBorderOpacity),
+                    lineWidth: WorkspaceSearchLayoutPolicy.fieldBorderWidth
+                )
         }
-        .opacity(canConfigureReplace ? 1 : 0.52)
     }
 
     private var replaceActions: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: scaled(MonknotMetrics.Spacing.s)) {
-                replaceScopeMenu
-                Spacer(minLength: 0)
-                reviewReplaceButton
-            }
-
-            VStack(alignment: .leading, spacing: scaled(MonknotMetrics.Spacing.s)) {
-                replaceScopeMenu
-                reviewReplaceButton
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
+        HStack(spacing: scaled(MonknotMetrics.Spacing.s)) {
+            replaceScopeMenu
+            Spacer(minLength: 0)
+            reviewReplaceButton
         }
     }
 
@@ -388,49 +357,34 @@ struct WorkspaceSearchView: View {
                     state.replaceScope = scope
                     state.clearReplaceStatus()
                 } label: {
-                    Label(
-                        scope.title,
-                        systemImage: state.replaceScope == scope ? "checkmark" : scope.systemImage
-                    )
+                    if state.replaceScope == scope {
+                        Label(scope.title, systemImage: "checkmark")
+                    } else {
+                        Text(scope.title)
+                    }
                 }
             }
         } label: {
-            HStack(spacing: scaled(MonknotMetrics.Spacing.xs)) {
-                Image(systemName: state.replaceScope.systemImage)
-                    .font(.system(size: glyphScaled(11), weight: .regular))
-
-                Text(state.replaceScope.title)
-                    .lineLimit(1)
-
-                Image(systemName: "chevron.down")
-                    .font(.system(size: glyphScaled(10), weight: .regular))
-            }
-            .font(.system(size: textScaled(12), weight: .regular))
-            .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.82))
-            .padding(.horizontal, scaled(MonknotMetrics.Spacing.m))
-            .frame(height: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale))
-            .background(
-                theme.insetFillColor,
-                in: RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                    .strokeBorder(theme.borderColor, lineWidth: 1)
-            }
+            Text(state.replaceScope.title)
         }
         .menuStyle(.borderlessButton)
-        .fixedSize(horizontal: true, vertical: false)
+        .fixedSize()
+        .font(.system(size: textScaled(12)))
+        .foregroundStyle(canConfigureReplace ? theme.mutedForegroundColor : theme.disabledForegroundColor)
         .disabled(!canConfigureReplace)
+        .help("Where Replace All applies")
         .accessibilityLabel("Replace scope")
         .accessibilityValue(state.replaceScope.title)
     }
 
+    /// Opens a confirmation listing every file first, so it is a secondary button with an ellipsis.
     private var reviewReplaceButton: some View {
         MonknotActionButton(
-            title: "Replace All",
-            role: .primary,
+            title: "Replace All…",
+            role: .secondary,
             theme: theme,
             zoomScale: zoomScale,
+            size: .bar,
             isDisabled: !canReviewReplace
         ) {
             guard let preview = makeReplacePreview() else { return }
@@ -444,8 +398,8 @@ struct WorkspaceSearchView: View {
 
     @ViewBuilder
     private var searchStatusRow: some View {
-        if !state.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            HStack(spacing: scaled(MonknotMetrics.Spacing.xs)) {
+        if hasQuery {
+            HStack(spacing: scaled(6)) {
                 if state.isSearching {
                     MonknotProgressIndicator(
                         size: MonknotMetrics.interfaceGlyph(12, theme: theme, zoomScale: zoomScale),
@@ -455,9 +409,10 @@ struct WorkspaceSearchView: View {
 
                 Text(searchStatusText)
                     .font(.system(size: textScaled(12), weight: .regular))
+                    .monospacedDigit()
                     .foregroundStyle(
                         state.errorMessage == nil
-                            ? theme.sidebarMutedColor()
+                            ? theme.tertiaryForegroundColor
                             : Color(hex: theme.semanticColors.diffRemoved)
                     )
                     .lineLimit(2)
@@ -470,26 +425,30 @@ struct WorkspaceSearchView: View {
                         label: didCopyResults ? "Results Copied" : "Copy Search Results",
                         theme: theme,
                         zoomScale: zoomScale,
-                        size: .compact,
+                        size: .sidebarHeader,
                         action: copySearchResults
                     )
                 }
             }
-            .frame(minHeight: scaled(24))
+            .padding(.leading, scaled(10))
+            .padding(.trailing, scaled(4))
+            .frame(minHeight: scaled(30))
         }
+    }
+
+    private var hasQuery: Bool {
+        !state.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var searchStatusText: String {
         if let errorMessage = state.errorMessage {
             return errorMessage
         }
-
-        if state.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "Search text and PDF files"
-        }
-
         if state.isSearching {
             return "Searching…"
+        }
+        if state.results.isEmpty {
+            return "No matches"
         }
 
         let matchCount = state.results.count
@@ -504,14 +463,42 @@ struct WorkspaceSearchView: View {
         return text
     }
 
+    /// The status row carries every state in one quiet line; the body only ever holds results, a hint
+    /// before the first search, or Try Again after an error.
     @ViewBuilder
     private var searchBody: some View {
-        if let errorMessage = state.errorMessage {
-            errorState(errorMessage)
-        } else if state.isSearching {
-            loadingState
-        } else if state.results.isEmpty {
-            emptyState
+        if state.errorMessage != nil {
+            HStack {
+                MonknotActionButton(
+                    title: "Try Again",
+                    role: .secondary,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    size: .bar
+                ) {
+                    state.refresh(
+                        options: searchOptions,
+                        documents: documents,
+                        dirtyTextByDocumentID: dirtyTextByDocumentID,
+                        dirtyPDFDataByDocumentID: dirtyPDFDataByDocumentID
+                    )
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(scaled(16))
+            .frame(maxHeight: .infinity, alignment: .top)
+        } else if !hasQuery {
+            Text("Searches the text of every note and PDF in this workspace.")
+                .font(.system(size: textScaled(12)))
+                .foregroundStyle(theme.tertiaryForegroundColor)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, scaled(16))
+                .padding(.vertical, scaled(12))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else if state.isSearching || state.results.isEmpty {
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityHidden(true)
         } else {
             ScrollViewReader { proxy in
                 MonknotScrollView {
@@ -531,11 +518,16 @@ struct WorkspaceSearchView: View {
     /// jumped. Rows are equatable: moving the selection redraws only the two rows involved.
     private var resultList: some View {
         let query = state.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return LazyVStack(alignment: .leading, spacing: scaled(MonknotMetrics.Spacing.xxs)) {
+        return LazyVStack(alignment: .leading, spacing: scaled(2)) {
             ForEach(WorkspaceSearchResultGrouping.listItems(from: groupedResults)) { item in
                 switch item {
                 case .header(let group):
-                    resultGroupHeader(group)
+                    WorkspaceSearchFileRow(
+                        group: group,
+                        countText: groupCountText(group),
+                        theme: theme,
+                        zoomScale: zoomScale
+                    )
                 case .match(let match):
                     WorkspaceSearchResultRow(
                         match: match,
@@ -552,136 +544,12 @@ struct WorkspaceSearchView: View {
                 }
             }
         }
-        .padding(.horizontal, scaled(MonknotMetrics.Spacing.xs))
-        .padding(.bottom, scaled(MonknotMetrics.Spacing.s))
-    }
-
-    private func resultGroupHeader(_ group: WorkspaceSearchResultGroup) -> some View {
-        HStack(spacing: scaled(MonknotMetrics.Spacing.xs)) {
-            MonknotFileKindGlyph(
-                systemImage: group.kind.resolvedSystemImage,
-                theme: theme,
-                zoomScale: zoomScale,
-                pointSizeBase: 12
-            )
-                .foregroundStyle(theme.sidebarMutedColor(prominence: 0.78))
-                .accessibilityHidden(true)
-
-            Text(group.relativePath)
-                .font(.system(size: textScaled(12), weight: .semibold))
-                .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.88))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .help(group.relativePath)
-
-            Spacer(minLength: 0)
-
-            Text(groupCountText(group))
-                .font(.system(size: textScaled(10), weight: .regular, design: .monospaced))
-                .foregroundStyle(theme.sidebarMutedColor(prominence: 0.7))
-                .accessibilityLabel("\(groupCountText(group)) matches")
-        }
-        .padding(.horizontal, scaled(MonknotMetrics.Spacing.s))
-        // The gap between files (m) plus the header's own inset (xs), less the row spacing.
-        .padding(.top, scaled(MonknotMetrics.Spacing.m + MonknotMetrics.Spacing.xs - MonknotMetrics.Spacing.xxs))
-        .padding(.bottom, scaled(2))
+        .padding(.horizontal, scaled(6))
+        .padding(.vertical, scaled(6))
     }
 
     private func groupCountText(_ group: WorkspaceSearchResultGroup) -> String {
         state.truncatedDocumentIDs.contains(group.documentID) ? "\(group.matches.count)+" : "\(group.matches.count)"
-    }
-
-    private var loadingState: some View {
-        VStack(alignment: .leading, spacing: scaled(MonknotMetrics.Spacing.s)) {
-            ProgressView()
-                .controlSize(.small)
-
-            Text("Searching workspace")
-                .font(.system(size: textScaled(14), weight: .semibold))
-                .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
-
-            Text("Looking through text and searchable PDF files.")
-                .font(.system(size: textScaled(12)))
-                .foregroundStyle(theme.sidebarMutedColor())
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .padding(scaled(MonknotMetrics.Spacing.xxl))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Searching workspace")
-    }
-
-    @ViewBuilder
-    private var emptyState: some View {
-        if state.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            Color.clear
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityHidden(true)
-        } else {
-            searchStateView(
-                systemImage: "magnifyingglass",
-                title: "No matches",
-                detail: "Try a different word or phrase."
-            )
-        }
-    }
-
-    private func errorState(_ message: String) -> some View {
-        VStack(alignment: .leading, spacing: scaled(MonknotMetrics.Spacing.s)) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: glyphScaled(24), weight: .regular))
-                .foregroundStyle(Color(hex: theme.semanticColors.diffRemoved))
-
-            Text("Search couldn’t finish")
-                .font(.system(size: textScaled(14), weight: .semibold))
-                .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
-
-            Text(message)
-                .font(.system(size: textScaled(12)))
-                .foregroundStyle(theme.sidebarMutedColor())
-                .fixedSize(horizontal: false, vertical: true)
-
-            MonknotActionButton(
-                title: "Try Again",
-                systemImage: "arrow.clockwise",
-                role: .quiet,
-                theme: theme,
-                zoomScale: zoomScale
-            ) {
-                state.refresh(
-                    options: searchOptions,
-                    documents: documents,
-                    dirtyTextByDocumentID: dirtyTextByDocumentID,
-                    dirtyPDFDataByDocumentID: dirtyPDFDataByDocumentID
-                )
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .padding(scaled(MonknotMetrics.Spacing.xxl))
-    }
-
-    private func searchStateView(
-        systemImage: String,
-        title: String,
-        detail: String,
-        color: Color? = nil
-    ) -> some View {
-        VStack(alignment: .leading, spacing: scaled(MonknotMetrics.Spacing.s)) {
-            Image(systemName: systemImage)
-                .font(.system(size: glyphScaled(20), weight: .regular))
-                .foregroundStyle(color ?? theme.sidebarMutedColor())
-
-            Text(title)
-                .font(.system(size: textScaled(13), weight: .semibold))
-                .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
-
-            Text(detail)
-                .font(.system(size: textScaled(12)))
-                .foregroundStyle(theme.sidebarMutedColor())
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .padding(scaled(MonknotMetrics.Spacing.xxl))
     }
 
     private func focusSearchField() {
@@ -807,6 +675,8 @@ private struct WorkspaceReplaceConfirmationSheet: View {
 struct IndexedWorkspaceSearchResult: Identifiable {
     let index: Int
     let result: WorkspaceSearchResult
+    /// Which match on its line this is (0 for the first), so a row can show its own occurrence.
+    var occurrenceInLine = 0
 
     var id: Int { index }
 }
@@ -850,9 +720,13 @@ enum WorkspaceSearchResultGrouping {
         var groupIndexByDocumentID: [String: Int] = [:]
 
         for (index, result) in results.enumerated() {
-            let indexedResult = IndexedWorkspaceSearchResult(index: index, result: result)
+            var indexedResult = IndexedWorkspaceSearchResult(index: index, result: result)
 
             if let groupIndex = groupIndexByDocumentID[result.documentID] {
+                if let previous = groups[groupIndex].matches.last, previous.result.line == result.line,
+                   previous.result.kind == result.kind {
+                    indexedResult.occurrenceInLine = previous.occurrenceInLine + 1
+                }
                 groups[groupIndex].matches.append(indexedResult)
             } else {
                 groupIndexByDocumentID[result.documentID] = groups.count
@@ -869,6 +743,109 @@ enum WorkspaceSearchResultGrouping {
     }
 }
 
+/// A file in the results: the kind glyph in the glyph column, the name, its folder, and the match count.
+private struct WorkspaceSearchFileRow: View {
+    let group: WorkspaceSearchResultGroup
+    let countText: String
+    let theme: AppTheme
+    let zoomScale: Double
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    private func textScaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    private var fileName: String {
+        (group.relativePath as NSString).lastPathComponent
+    }
+
+    private var folderPath: String {
+        (group.relativePath as NSString).deletingLastPathComponent
+    }
+
+    private var name: some View {
+        Text(fileName)
+            .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
+            .foregroundStyle(theme.foregroundColor)
+            .lineLimit(1)
+            .truncationMode(.middle)
+    }
+
+    var body: some View {
+        HStack(spacing: scaled(8)) {
+            MonknotFileKindGlyph(systemImage: group.kind.resolvedSystemImage, theme: theme, zoomScale: zoomScale)
+                .foregroundStyle(theme.tertiaryForegroundColor)
+                .accessibilityHidden(true)
+
+            // The folder only when the whole name fits beside it; a clipped stub of a path reads as noise.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: scaled(6)) {
+                    name.fixedSize()
+                    if !folderPath.isEmpty {
+                        Text(folderPath)
+                            .font(.system(size: textScaled(12)))
+                            .foregroundStyle(theme.tertiaryForegroundColor)
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                            .frame(minWidth: scaled(40), alignment: .leading)
+                    }
+                }
+                name
+            }
+            .help(group.relativePath)
+
+            Spacer(minLength: scaled(4))
+
+            Text(countText)
+                .font(.system(size: textScaled(12)))
+                .monospacedDigit()
+                .foregroundStyle(theme.tertiaryForegroundColor)
+        }
+        .padding(.horizontal, scaled(10))
+        .frame(height: scaled(30))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(group.relativePath), \(countText) matches")
+    }
+}
+
+/// The text shown for a match: its line, clipped at the front so this occurrence is in view, with the
+/// occurrence's range. Two matches on one line therefore read differently.
+enum WorkspaceSearchSnippet {
+    /// Characters of context kept before the match when the line is clipped.
+    static let leadingContext = 18
+
+    static func make(
+        preview: String,
+        query: String,
+        options: MonknotSearchOptions,
+        occurrence: Int
+    ) -> (text: String, match: Range<String.Index>?) {
+        let ranges = MonknotTextSearch.matchingRanges(of: query, in: preview, options: options)
+        guard !ranges.isEmpty,
+              let match = Range(ranges[min(occurrence, ranges.count - 1)], in: preview)
+        else { return (preview, nil) }
+
+        let offset = preview.distance(from: preview.startIndex, to: match.lowerBound)
+        guard offset > leadingContext else { return (preview, match) }
+
+        // Clip at a word boundary shortly before the match, then mark the cut with an ellipsis.
+        var start = preview.index(match.lowerBound, offsetBy: -leadingContext)
+        if let space = preview[start..<match.lowerBound].firstIndex(of: " ") {
+            start = preview.index(after: space)
+        }
+        let text = "…" + preview[start...]
+        let shift = preview.distance(from: start, to: match.lowerBound) + 1
+        let lower = text.index(text.startIndex, offsetBy: shift)
+        let upper = text.index(lower, offsetBy: preview.distance(from: match.lowerBound, to: match.upperBound))
+        return (text, lower..<upper)
+    }
+}
+
+/// One match: the line (or page) number in a fixed gutter and one line of text with this occurrence
+/// marked in `sel` (design.md §1.3 keeps accent off search matches). Row primitive, 30 tall.
 private struct WorkspaceSearchResultRow: View, Equatable {
     let match: IndexedWorkspaceSearchResult
     let query: String
@@ -881,6 +858,7 @@ private struct WorkspaceSearchResultRow: View, Equatable {
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.match.index == rhs.match.index
             && lhs.match.result == rhs.match.result
+            && lhs.match.occurrenceInLine == rhs.match.occurrenceInLine
             && lhs.query == rhs.query
             && lhs.searchOptions == rhs.searchOptions
             && lhs.isSelected == rhs.isSelected
@@ -898,86 +876,56 @@ private struct WorkspaceSearchResultRow: View, Equatable {
 
     var body: some View {
         Button(action: open) {
-            HStack(alignment: .firstTextBaseline, spacing: scaled(MonknotMetrics.Spacing.s)) {
+            HStack(spacing: scaled(8)) {
                 Text(locationLabel)
-                    .font(.system(size: textScaled(10), weight: .regular, design: .monospaced))
-                    .foregroundStyle(theme.sidebarMutedColor(prominence: 0.72))
+                    .font(.system(size: textScaled(12)))
+                    .monospacedDigit()
+                    .foregroundStyle(theme.tertiaryForegroundColor)
+                    .lineLimit(1)
                     .frame(width: scaled(30), alignment: .trailing)
 
-                Text(highlightedPreview)
-                    .font(.system(size: textScaled(12)))
-                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.76))
-                    .lineLimit(2, reservesSpace: true)
+                Text(snippet)
+                    .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, scaled(MonknotMetrics.Spacing.s))
-            .padding(.vertical, scaled(7))
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, scaled(10))
+            .frame(height: scaled(30))
             .contentShape(Rectangle())
         }
-        .buttonStyle(SidebarSearchResultButtonStyle(
+        .buttonStyle(MonknotRowButtonStyle(
             theme: theme,
-            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale),
-            isSelected: isSelected
+            isSelected: isSelected,
+            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
         ))
-        .accessibilityLabel("\(match.result.displayName), \(locationLabel), \(match.result.preview)")
+        .help(match.result.preview)
+        .accessibilityLabel("\(match.result.displayName), \(accessibilityLocation), \(match.result.preview)")
     }
 
     private var locationLabel: String {
-        match.result.kind == .text ? "L\(match.result.line)" : match.result.locationLabel
+        match.result.kind == .text ? "\(match.result.line)" : match.result.locationLabel
     }
 
-    private var highlightedPreview: AttributedString {
-        let text = match.result.preview
-        let attributed = NSMutableAttributedString(string: text)
-        guard !query.isEmpty else { return AttributedString(attributed) }
-
-        let highlightColor = NSColor(hex: theme.accent).withAlphaComponent(theme.isDark ? 0.32 : 0.22)
-        for found in MonknotTextSearch.matchingRanges(of: query, in: text, options: searchOptions) {
-            attributed.addAttribute(.backgroundColor, value: highlightColor, range: found)
-        }
-        return AttributedString(attributed)
-    }
-}
-
-private struct SidebarSearchResultButtonStyle: ButtonStyle {
-    let theme: AppTheme
-    let cornerRadius: CGFloat
-    var isSelected: Bool = false
-
-    func makeBody(configuration: Configuration) -> Body {
-        Body(configuration: configuration, theme: theme, cornerRadius: cornerRadius, isSelected: isSelected)
+    private var accessibilityLocation: String {
+        match.result.kind == .text ? "line \(match.result.line)" : "page \(match.result.line)"
     }
 
-    fileprivate struct Body: View {
-        let configuration: Configuration
-        let theme: AppTheme
-        let cornerRadius: CGFloat
-        let isSelected: Bool
-        @State private var isHovered = false
-
-        var body: some View {
-            configuration.label
-                .background(
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(backgroundFill)
-                )
-                .animation(MonknotMotion.hoverAnimation, value: isHovered)
-                .onHover { isHovered = $0 }
-                .monknotPointerCursor()
+    private var snippet: AttributedString {
+        let parts = WorkspaceSearchSnippet.make(
+            preview: match.result.preview,
+            query: query,
+            options: searchOptions,
+            occurrence: match.occurrenceInLine
+        )
+        var attributed = AttributedString(parts.text)
+        if let range = parts.match,
+           let lower = AttributedString.Index(range.lowerBound, within: attributed),
+           let upper = AttributedString.Index(range.upperBound, within: attributed) {
+            attributed[lower..<upper].foregroundColor = theme.foregroundColor
+            // On a selected row the match sits on `sel` already, so it takes the press tint instead.
+            attributed[lower..<upper].backgroundColor = isSelected ? theme.pressedFillColor : theme.selectedRowColor
         }
-
-        private var backgroundFill: Color {
-            if isSelected {
-                return theme.selectedRowColor
-            }
-            if configuration.isPressed {
-                return theme.pressedFillColor
-            }
-            if isHovered {
-                return theme.hoverFillColor
-            }
-            return .clear
-        }
+        return attributed
     }
 }
