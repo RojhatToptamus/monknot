@@ -100,7 +100,7 @@ final class MarkdownPDFExportIntegrationTests: XCTestCase {
 
         try await MarkdownPDFExportService.makeDefault().exportPDF(
             for: MarkdownPDFExportRequest(
-                markdown: "# Links\n\nSee [the plan](Plan%20B.md#goals) and [the site](https://example.com/).",
+                markdown: "# Links\n\nSee [the plan](Plan%20B.md#goals), [the site](https://example.com/) and [below](#later).\n\n## Later\n",
                 baseURL: notes,
                 resourceRoot: root,
                 theme: .defaultLight,
@@ -121,6 +121,7 @@ final class MarkdownPDFExportIntegrationTests: XCTestCase {
         let page = try XCTUnwrap(PDFDocument(url: destination)?.page(at: 0))
         let linkURLs = page.annotations.compactMap(\.url)
         // The page loads under Monknot's private scheme; a PDF opened anywhere else needs file: links.
+        // The in-page link (#later) must not become a link to the note's folder.
         XCTAssertEqual(
             linkURLs.map(\.absoluteString).sorted(),
             [
@@ -128,6 +129,7 @@ final class MarkdownPDFExportIntegrationTests: XCTestCase {
                 notes.appendingPathComponent("Plan B.md").absoluteString + "#goals",
             ].sorted()
         )
+        XCTAssertEqual(page.annotations.count, 3)
     }
 
     private func imageXObjectCount(in page: CGPDFPage) -> Int {

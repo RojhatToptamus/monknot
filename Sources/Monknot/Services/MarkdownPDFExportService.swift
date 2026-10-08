@@ -136,9 +136,11 @@ final class MarkdownPDFExportService: NSObject, WKNavigationDelegate {
               root.style.setProperty('--pdf-page-margin', '\(javaScriptNumber(margin))px');
               root.style.setProperty('--pdf-page-offset-y', '0px');
               // Relative links resolve against the page's \(WorkspaceResourceSchemeHandler.scheme): base,
-              // which only Monknot can open; the exported PDF links to the files themselves.
+              // which only Monknot can open; the exported PDF links to the files themselves. Links
+              // within the page (footnotes, headings) stay as they are.
               for (const link of document.querySelectorAll('a[href]')) {
-                if (link.protocol === '\(WorkspaceResourceSchemeHandler.scheme):') {
+                if (link.protocol === '\(WorkspaceResourceSchemeHandler.scheme):'
+                    && !link.getAttribute('href').startsWith('#')) {
                   link.href = 'file://' + link.pathname + link.search + link.hash;
                 }
               }
