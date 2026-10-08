@@ -156,7 +156,7 @@ struct EditorPaneView: View {
 
     private func supportsSplitViewRatioPersistence(forDocumentID documentID: String) -> Bool {
         guard let document = store.document(id: documentID) else { return false }
-        return document.kind == .markdown || document.capabilities.canPreviewHTML
+        return document.hasPreviewMode
     }
 
     private var editorColumn: some View {

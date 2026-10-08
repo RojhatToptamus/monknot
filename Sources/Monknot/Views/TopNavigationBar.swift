@@ -47,10 +47,8 @@ struct TopNavigationBar: View {
     var canNavigateForward = false
     @FocusState private var isSearchFocused: Bool
 
-    /// Markdown notes and HTML pages have a preview; other documents only have their source.
     private var hasPreviewMode: Bool {
-        guard let selectedDocument else { return false }
-        return selectedDocument.kind == .markdown || selectedDocument.capabilities.canPreviewHTML
+        selectedDocument?.hasPreviewMode == true
     }
 
     private func scaled(_ base: CGFloat) -> CGFloat {

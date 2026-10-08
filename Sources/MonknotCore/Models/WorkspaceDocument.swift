@@ -49,6 +49,12 @@ public struct WorkspaceDocument: Identifiable, Hashable, Codable, Sendable {
     public let capabilities: WorkspaceDocumentCapabilities
     public let depth: Int
 
+    /// Markdown notes and HTML pages have a rendered preview beside their source (Preview mode and
+    /// split view); other documents show only their source or their own viewer.
+    public var hasPreviewMode: Bool {
+        kind == .markdown || capabilities.canPreviewHTML
+    }
+
     public init(url: URL, rootURL: URL) {
         let standardizedURL = url.standardizedFileURL
         let classification = WorkspaceDocumentSupport.classification(for: standardizedURL)

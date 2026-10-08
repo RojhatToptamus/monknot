@@ -2091,7 +2091,7 @@ struct ContentView: View {
 
     private func supportsSplitView(_ document: WorkspaceDocument?) -> Bool {
         guard let document else { return false }
-        return document.kind == .markdown || document.capabilities.canPreviewHTML
+        return document.hasPreviewMode
     }
 
     private func toggleMarkdownSplitView() {
