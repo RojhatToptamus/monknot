@@ -48,7 +48,7 @@ struct MarkdownSymbolQuickOpenView: View {
     private var searchField: some View {
         HStack(spacing: scaled(8)) {
             Image(systemName: "list.bullet.indent")
-                .font(.system(size: scaled(14), weight: .medium))
+                .font(.system(size: scaled(14), weight: .regular))
                 .foregroundStyle(theme.mutedForegroundColor)
 
             TextField(
@@ -113,7 +113,7 @@ struct MarkdownSymbolQuickOpenView: View {
                                     Spacer(minLength: 0)
 
                                     Text(":\(item.location.line)")
-                                        .font(.system(size: scaled(10), weight: .medium, design: .monospaced))
+                                        .font(.system(size: scaled(10), weight: .regular, design: .monospaced))
                                         .foregroundStyle(theme.mutedForegroundColor)
                                 }
                                 .padding(.horizontal, scaled(10))

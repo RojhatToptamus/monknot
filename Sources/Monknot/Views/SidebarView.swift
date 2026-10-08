@@ -1696,7 +1696,7 @@ private struct SaveStateIndicator: View {
                 MonknotProgressIndicator(size: size * 0.82, theme: theme)
             case .failed:
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: max(9, size * 0.82), weight: .semibold))
+                    .font(.system(size: max(9, size * 0.82), weight: .regular))
                     .foregroundStyle(Color(hex: theme.semanticColors.diffRemoved))
             }
         }
@@ -1759,7 +1759,7 @@ private struct GitStatusBadge: View {
 
     var body: some View {
         Text(status.label)
-            .font(.system(size: scaled(9), weight: .bold, design: .rounded))
+            .font(.system(size: scaled(10), weight: .semibold, design: .rounded))
             .foregroundStyle(status.badgeForegroundColor(theme: theme))
             .padding(.horizontal, scaled(4))
             .padding(.vertical, scaled(2))

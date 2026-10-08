@@ -302,7 +302,7 @@ struct WorkspaceSearchView: View {
 
                 if let message = state.replaceStatusMessage {
                     Text(message)
-                        .font(.system(size: textScaled(11), weight: .medium))
+                        .font(.system(size: textScaled(11), weight: .regular))
                         .foregroundStyle(theme.sidebarMutedColor())
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -314,7 +314,7 @@ struct WorkspaceSearchView: View {
     private var replaceField: some View {
         HStack(spacing: scaled(MonknotMetrics.Spacing.s)) {
             Image(systemName: "arrow.uturn.backward")
-                .font(.system(size: glyphScaled(13), weight: .medium))
+                .font(.system(size: glyphScaled(13), weight: .regular))
                 .foregroundStyle(theme.sidebarMutedColor())
                 .accessibilityHidden(true)
 
@@ -397,15 +397,15 @@ struct WorkspaceSearchView: View {
         } label: {
             HStack(spacing: scaled(MonknotMetrics.Spacing.xs)) {
                 Image(systemName: state.replaceScope.systemImage)
-                    .font(.system(size: glyphScaled(11), weight: .medium))
+                    .font(.system(size: glyphScaled(11), weight: .regular))
 
                 Text(state.replaceScope.title)
                     .lineLimit(1)
 
                 Image(systemName: "chevron.down")
-                    .font(.system(size: glyphScaled(9), weight: .semibold))
+                    .font(.system(size: glyphScaled(10), weight: .regular))
             }
-            .font(.system(size: textScaled(12), weight: .medium))
+            .font(.system(size: textScaled(12), weight: .regular))
             .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.82))
             .padding(.horizontal, scaled(MonknotMetrics.Spacing.m))
             .frame(height: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale))
@@ -454,7 +454,7 @@ struct WorkspaceSearchView: View {
                 }
 
                 Text(searchStatusText)
-                    .font(.system(size: textScaled(11), weight: .medium))
+                    .font(.system(size: textScaled(11), weight: .regular))
                     .foregroundStyle(
                         state.errorMessage == nil
                             ? theme.sidebarMutedColor()
@@ -577,7 +577,7 @@ struct WorkspaceSearchView: View {
             Spacer(minLength: 0)
 
             Text(groupCountText(group))
-                .font(.system(size: textScaled(10), weight: .medium, design: .monospaced))
+                .font(.system(size: textScaled(10), weight: .regular, design: .monospaced))
                 .foregroundStyle(theme.sidebarMutedColor(prominence: 0.7))
                 .accessibilityLabel("\(groupCountText(group)) matches")
         }
@@ -742,7 +742,7 @@ private struct WorkspaceReplaceConfirmationSheet: View {
                             Spacer(minLength: 12)
 
                             Text("\(result.replacementCount)")
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .font(.system(size: 12, weight: .regular, design: .monospaced))
                                 .foregroundStyle(theme.mutedForegroundColor)
                         }
                         .padding(.horizontal, 14)
@@ -900,7 +900,7 @@ private struct WorkspaceSearchResultRow: View, Equatable {
         Button(action: open) {
             HStack(alignment: .firstTextBaseline, spacing: scaled(MonknotMetrics.Spacing.s)) {
                 Text(locationLabel)
-                    .font(.system(size: textScaled(10), weight: .medium, design: .monospaced))
+                    .font(.system(size: textScaled(10), weight: .regular, design: .monospaced))
                     .foregroundStyle(theme.sidebarMutedColor(prominence: 0.72))
                     .frame(width: scaled(30), alignment: .trailing)
 

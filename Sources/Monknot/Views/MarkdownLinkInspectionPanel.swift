@@ -139,7 +139,7 @@ struct MarkdownLinkInspectionPanel: View {
                                 .frame(width: scaled(16), height: scaled(18))
                             VStack(alignment: .leading, spacing: scaled(2)) {
                                 Text(link.sourceRelativePath)
-                                    .font(.system(size: textScaled(12), weight: .medium))
+                                    .font(.system(size: textScaled(12), weight: .regular))
                                     .foregroundStyle(theme.foregroundColor)
                                     .lineLimit(1)
                                     .truncationMode(.middle)
@@ -175,7 +175,7 @@ struct MarkdownLinkInspectionPanel: View {
                                     .frame(width: scaled(16), height: scaled(18))
                                 VStack(alignment: .leading, spacing: scaled(2)) {
                                     Text(issue.label)
-                                        .font(.system(size: textScaled(12), weight: .medium))
+                                        .font(.system(size: textScaled(12), weight: .regular))
                                         .foregroundStyle(theme.foregroundColor)
                                         .lineLimit(1)
                                     Text("\(issueTitle(issue.kind)) · line \(issue.location.line), column \(issue.column)")

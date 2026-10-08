@@ -25,7 +25,7 @@ struct GoToLineView: View {
             VStack(spacing: 0) {
                 HStack(spacing: scaled(8)) {
                     Image(systemName: "text.line.first.and.arrowtriangle.forward")
-                        .font(.system(size: scaled(14), weight: .medium))
+                        .font(.system(size: scaled(14), weight: .regular))
                         .foregroundStyle(theme.mutedForegroundColor)
                         .accessibilityHidden(true)
 

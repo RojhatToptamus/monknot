@@ -153,7 +153,7 @@ struct SettingsStepperRow: View {
                 Text(displayValue)
                     .font(.system(
                         size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: settingsZoomScale),
-                        weight: .medium,
+                        weight: .regular,
                         design: .monospaced
                     ))
                     .foregroundStyle(theme.foregroundColor)
@@ -218,7 +218,7 @@ struct SettingsSliderRow: View {
                 Text("\(Int(value.rounded()))\(suffix)")
                     .font(.system(
                         size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: settingsZoomScale),
-                        weight: .medium,
+                        weight: .regular,
                         design: .monospaced
                     ))
                     .foregroundStyle(theme.mutedForegroundColor)
@@ -369,7 +369,7 @@ struct EditableThemeColorRow: View {
                 .focused($isHexFieldFocused)
                 .font(.system(
                     size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: settingsZoomScale),
-                    weight: .medium,
+                    weight: .regular,
                     design: .monospaced
                 ))
                 .foregroundStyle(isHexValid ? theme.foregroundColor : validationColor)
@@ -453,7 +453,7 @@ struct ThemeValueRow: View {
                     Text(value)
                         .font(.system(
                             size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: settingsZoomScale),
-                            weight: .medium,
+                            weight: .regular,
                             design: .monospaced
                         ))
                         .foregroundStyle(theme.foregroundColor)
@@ -462,7 +462,7 @@ struct ThemeValueRow: View {
                 Text(value)
                     .font(.system(
                         size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: settingsZoomScale),
-                        weight: .medium,
+                        weight: .regular,
                         design: .monospaced
                     ))
                     .foregroundStyle(theme.mutedForegroundColor)

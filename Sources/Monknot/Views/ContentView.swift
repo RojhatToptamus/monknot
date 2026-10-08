@@ -3212,7 +3212,7 @@ private struct AmbiguousMarkdownLinkPicker: View {
             VStack(spacing: 0) {
                 HStack {
                     Text("Choose Linked Note")
-                        .font(.system(size: scaled(13), weight: .medium))
+                        .font(.system(size: scaled(13), weight: .semibold))
                         .foregroundStyle(theme.foregroundColor)
                     Spacer()
                     MonknotCommandOverlayEscapeButton(

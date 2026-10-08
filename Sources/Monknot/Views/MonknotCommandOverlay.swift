@@ -55,7 +55,7 @@ struct MonknotCommandOverlayEmptyState: View {
     var body: some View {
         VStack(alignment: .leading, spacing: scaled(4)) {
             Text(title)
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(theme.foregroundColor)
             Text(message)
                 .font(.system(size: 11.5, weight: .regular))

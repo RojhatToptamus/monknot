@@ -666,7 +666,7 @@ private struct DocumentLoadingPlaceholder: View {
                 .controlSize(.small)
 
             Text(documentName)
-                .font(.system(size: scaled(13), weight: .medium))
+                .font(.system(size: scaled(13), weight: .regular))
                 .foregroundStyle(theme.mutedForegroundColor)
                 .lineLimit(1)
                 .truncationMode(.middle)

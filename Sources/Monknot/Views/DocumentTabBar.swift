@@ -320,7 +320,7 @@ private struct DocumentTabItemView: View {
 
                     if tab.isPinned {
                         Image(systemName: "pin.fill")
-                            .font(.system(size: metrics.pinGlyph, weight: .medium))
+                            .font(.system(size: metrics.pinGlyph, weight: .regular))
                             .foregroundStyle(theme.mutedForegroundColor)
                             .frame(width: metrics.pinGlyph)
                             .accessibilityHidden(true)
@@ -336,7 +336,7 @@ private struct DocumentTabItemView: View {
 
                     if isMissing {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: metrics.warningGlyph, weight: .semibold))
+                            .font(.system(size: metrics.warningGlyph, weight: .regular))
                             .foregroundStyle(Color(hex: theme.semanticColors.diffRemoved))
                             .frame(width: metrics.warningGlyph)
                             .accessibilityHidden(true)
@@ -532,7 +532,7 @@ private struct TabSaveStateIndicator: View {
                 MonknotProgressIndicator(size: size * 0.82, theme: theme)
             case .failed:
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: max(9, size * 0.9), weight: .semibold))
+                    .font(.system(size: max(9, size * 0.9), weight: .regular))
                     .foregroundStyle(Color(hex: theme.semanticColors.diffRemoved))
             }
         }

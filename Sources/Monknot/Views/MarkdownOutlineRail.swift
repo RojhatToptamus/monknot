@@ -343,7 +343,7 @@ private struct MarkdownOutlineHoverPanel: View {
     private var header: some View {
         HStack(spacing: scaled(7)) {
             Image(systemName: MonknotWorkspaceIcons.outline)
-                .font(.system(size: textScaled(11.5), weight: .medium))
+                .font(.system(size: textScaled(11.5), weight: .regular))
                 .foregroundStyle(theme.accentColor)
                 .accessibilityHidden(true)
 
@@ -354,7 +354,7 @@ private struct MarkdownOutlineHoverPanel: View {
             Spacer(minLength: 0)
 
             Text("\(items.count)")
-                .font(.system(size: textScaled(10), weight: .medium, design: .monospaced))
+                .font(.system(size: textScaled(10), weight: .regular, design: .monospaced))
                 .foregroundStyle(theme.mutedForegroundColor)
                 .monospacedDigit()
                 .accessibilityLabel("\(items.count) headings")
@@ -371,7 +371,8 @@ private struct MarkdownOutlineHoverPanel: View {
         } label: {
             HStack(spacing: scaled(7)) {
                 Text(item.title)
-                    .font(.system(size: textScaled(11), weight: isRevealed ? .medium : .regular))
+                    // Never bolder for being current (design.md §4.2); the row's fill and ink carry it.
+                    .font(.system(size: textScaled(11), weight: .regular))
                     .foregroundStyle(isRevealed ? theme.accentColor : theme.foregroundColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -379,7 +380,7 @@ private struct MarkdownOutlineHoverPanel: View {
                 Spacer(minLength: scaled(6))
 
                 Text("\(item.location.line)")
-                    .font(.system(size: textScaled(9.5), weight: .medium, design: .monospaced))
+                    .font(.system(size: textScaled(9.5), weight: .regular, design: .monospaced))
                     .foregroundStyle(theme.mutedForegroundColor)
                     .monospacedDigit()
             }

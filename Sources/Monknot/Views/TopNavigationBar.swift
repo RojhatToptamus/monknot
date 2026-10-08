@@ -198,7 +198,7 @@ struct TopNavigationBar: View {
             HStack(spacing: scaled(8)) {
                 if !isSidebarVisible {
                     Text(emptyStateTitle)
-                        .font(.system(size: textScaled(13), weight: .medium))
+                        .font(.system(size: textScaled(13), weight: .regular))
                         .foregroundStyle(theme.mutedForegroundColor)
                         .lineLimit(1)
                         .truncationMode(.middle)
