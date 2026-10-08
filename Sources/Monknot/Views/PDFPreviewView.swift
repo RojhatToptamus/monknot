@@ -4623,6 +4623,82 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         }
     }
 
+    /// PDFKit zooms only with a trackpad pinch, so a mouse could not zoom a PDF at all. ⌘-scroll
+    /// over the document zooms around the pointer, as browsers and most document apps do. PDFKit's
+    /// internal scroll view consumes wheel events before this view sees them, so a local monitor
+    /// that lives while the view is in a window picks those out; plain scrolling and pinch are
+    /// unchanged.
+    private var commandScrollZoomMonitor: Any?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else {
+            removeCommandScrollZoomMonitor()
+            return
+        }
+        guard commandScrollZoomMonitor == nil else { return }
+        commandScrollZoomMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            // AppKit calls local event-monitor handlers on the main thread.
+            let handled = MainActor.assumeIsolated { self?.zoomForCommandScroll(event) ?? false }
+            return handled ? nil : event
+        }
+    }
+
+    deinit {
+        if let commandScrollZoomMonitor {
+            NSEvent.removeMonitor(commandScrollZoomMonitor)
+        }
+    }
+
+    private func removeCommandScrollZoomMonitor() {
+        guard let commandScrollZoomMonitor else { return }
+        NSEvent.removeMonitor(commandScrollZoomMonitor)
+        self.commandScrollZoomMonitor = nil
+    }
+
+    private func zoomForCommandScroll(_ event: NSEvent) -> Bool {
+        guard event.window === window,
+              let factor = Self.commandScrollZoomFactor(for: event),
+              let hitView = window?.contentView?.hitTest(event.locationInWindow),
+              hitView.isDescendant(of: self)
+        else { return false }
+        zoom(by: factor, keepingInPlace: convert(event.locationInWindow, from: nil))
+        return true
+    }
+
+    /// The zoom factor for a ⌘-scroll, or nil for any other wheel event. Rolling the wheel away
+    /// from you zooms in, whatever the natural-scrolling setting; a notch is about 10%.
+    static func commandScrollZoomFactor(for event: NSEvent) -> CGFloat? {
+        guard event.type == .scrollWheel,
+              event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+              event.scrollingDeltaY != 0
+        else { return nil }
+        let delta = event.isDirectionInvertedFromDevice ? -event.scrollingDeltaY : event.scrollingDeltaY
+        let step: CGFloat = event.hasPreciseScrollingDeltas ? 0.01 : 0.1
+        return exp(delta * step)
+    }
+
+    /// Zooms by `factor` within PDFKit's scale bounds and scrolls so the spot at `point` (in this
+    /// view's coordinates) stays under it.
+    func zoom(by factor: CGFloat, keepingInPlace point: NSPoint) {
+        guard let page = page(for: point, nearest: true),
+              let scrollView = documentView?.enclosingScrollView
+        else { return }
+        let clipView = scrollView.contentView
+        let pagePoint = convert(point, to: page)
+        autoScales = false
+        scaleFactor = min(maxScaleFactor, max(minScaleFactor, scaleFactor * factor))
+        layoutDocumentView()
+
+        let before = clipView.convert(point, from: self)
+        let after = clipView.convert(convert(pagePoint, from: page), from: self)
+        var origin = clipView.bounds.origin
+        origin.x += after.x - before.x
+        origin.y += after.y - before.y
+        clipView.scroll(to: origin)
+        scrollView.reflectScrolledClipView(clipView)
+    }
+
     override func keyDown(with event: NSEvent) {
         if annotationMode == .select {
             if event.keyCode == 51 || event.keyCode == 117 {
