@@ -2520,9 +2520,12 @@ final class WorkspaceStore: ObservableObject {
                 return
             }
 
+            // A file that could not be opened is not a recent document. Checked here because a
+            // too-large file fails while it is being selected, before this task exists.
             guard let self,
                   self.selectedDocumentID == documentID,
-                  self.workspaceURL?.standardizedFileURL.path == workspacePath
+                  self.workspaceURL?.standardizedFileURL.path == workspacePath,
+                  self.documentLoadFailure?.documentID != documentID
             else {
                 return
             }
@@ -2555,8 +2558,6 @@ final class WorkspaceStore: ObservableObject {
         setHasUnsavedChangesIfChanged(false)
         setSelectedDocumentSignatureIfChanged(nil)
         setDocumentLoadingIfChanged(false)
-        // A file that could not be opened is not a recent document.
-        recentDocumentRecordTask?.cancel()
         documentLoadFailure = DocumentLoadFailure(documentID: file.id, message: Self.loadFailureMessage(for: error))
     }
 
