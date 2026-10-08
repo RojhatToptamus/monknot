@@ -434,19 +434,17 @@ private struct TerminalEmptySurface: View {
     var body: some View {
         MonknotEmptyState(
             systemImage: "terminal",
-            title: "No session",
-            detail: "⌃⌘T",
+            title: "No terminal session",
+            detail: "Start a shell in this workspace.",
             theme: theme,
-            zoomScale: zoomScale,
-            iconSize: 34,
-            detailIsShortcut: true
+            zoomScale: zoomScale
         ) {
             MonknotActionButton(
                 title: "New Session",
-                systemImage: "plus",
-                role: .primary,
+                role: .secondary,
                 theme: theme,
                 zoomScale: zoomScale,
+                size: .bar,
                 action: createTerminal
             )
         }

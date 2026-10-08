@@ -2037,77 +2037,59 @@ private struct EmptySidebarView: View {
     let switchWorkspace: (SavedWorkspaceEntry) -> Void
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
+    /// The editor area carries the empty state; the sidebar only offers the saved workspaces, as rows
+    /// like every other, or a quiet line while one opens.
     var body: some View {
-        GeometryReader { geometry in
-            MonknotScrollView {
-                VStack(spacing: scaled(12)) {
-                    if isLoadingWorkspace {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
+        MonknotScrollView {
+            VStack(alignment: .leading, spacing: scaled(2)) {
+                if isLoadingWorkspace {
+                    Text("Opening workspace…")
+                        .font(.system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale)))
+                        .foregroundStyle(theme.tertiaryForegroundColor)
+                        .padding(.horizontal, scaled(10))
+                        .frame(height: scaled(30))
+                } else if !availableWorkspaces.isEmpty {
+                    Text("Workspaces")
+                        .font(MonknotTypography.eyebrow(theme: theme, zoomScale: zoomScale))
+                        .tracking(MonknotTypography.eyebrowTracking(theme: theme, zoomScale: zoomScale))
+                        .textCase(.uppercase)
+                        .foregroundStyle(theme.tertiaryForegroundColor)
+                        .padding(.horizontal, scaled(10))
+                        .frame(height: scaled(30))
+                        .accessibilityAddTraits(.isHeader)
 
-                    if isLoadingWorkspace {
-                        Text("Opening workspace…")
-                            .font(.system(size: scaled(12)))
-                            .foregroundStyle(theme.sidebarMutedColor(prominence: 0.68))
-                            .multilineTextAlignment(.center)
-                    } else if !hasWorkspace {
-                        Text("No folder open")
-                            .font(.system(size: scaled(12)))
-                            .foregroundStyle(theme.sidebarMutedColor(prominence: 0.68))
-                            .multilineTextAlignment(.center)
-                    }
-
-                    if !isLoadingWorkspace, !availableWorkspaces.isEmpty {
-                        VStack(alignment: .leading, spacing: scaled(4)) {
-                            Text("Workspaces")
-                                .font(MonknotTypography.eyebrow(theme: theme, zoomScale: zoomScale))
-                                .tracking(MonknotTypography.eyebrowTracking(theme: theme, zoomScale: zoomScale))
-                                .textCase(.uppercase)
-                                .foregroundStyle(theme.sidebarMutedColor(prominence: 0.76))
-                                .padding(.horizontal, scaled(10))
-                                .padding(.bottom, scaled(3))
-
-                            ForEach(availableWorkspaces.prefix(5)) { entry in
-                                Button {
-                                    switchWorkspace(entry)
-                                } label: {
-                                    HStack(spacing: scaled(8)) {
-                                        Image(systemName: "folder")
-                                            .font(.system(size: scaled(12)))
-                                        Text(entry.displayName)
-                                            .font(.system(size: scaled(13), weight: .regular))
-                                            .lineLimit(1)
-                                        Spacer(minLength: 0)
-                                    }
-                                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.9))
-                                    .padding(.horizontal, scaled(10))
-                                    .padding(.vertical, scaled(6))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                                .buttonStyle(MonknotRowButtonStyle(
-                                    theme: theme,
-                                    isSelected: false,
-                                    cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
-                                ))
-                                .monknotPointerCursor()
+                    ForEach(availableWorkspaces.prefix(5)) { entry in
+                        Button {
+                            switchWorkspace(entry)
+                        } label: {
+                            SidebarRowLabel(
+                                leading: .kind(systemImage: "folder"),
+                                title: entry.displayName,
+                                depth: 0,
+                                isSelected: false,
+                                theme: theme,
+                                zoomScale: zoomScale
+                            ) {
+                                EmptyView()
                             }
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, scaled(8))
+                        .buttonStyle(SidebarRowButtonStyle(
+                            theme: theme,
+                            isSelected: false,
+                            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
+                        ))
+                        .help((entry.path as NSString).abbreviatingWithTildeInPath)
                     }
                 }
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: max(0, geometry.size.height - scaled(24)), alignment: .top)
-                .padding(.horizontal, scaled(6))
-                .padding(.top, scaled(24))
-                .padding(.bottom, scaled(12))
             }
-            .scrollContentBackground(.hidden)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, scaled(6))
+            .padding(.vertical, scaled(6))
         }
+        .scrollContentBackground(.hidden)
     }
 
     private var availableWorkspaces: [SavedWorkspaceEntry] {

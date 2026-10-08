@@ -687,103 +687,73 @@ private struct EmptyDetailView: View {
     let bootstrapStarterWorkspace: () -> Void
     let openFolder: () -> Void
 
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
-    }
-
     var body: some View {
         MonknotEmptyState(
-            systemImage: emptyStateSystemImage,
+            systemImage: hasWorkspace && !isLoadingWorkspace ? "doc.text" : MonknotWorkspaceIcons.openFolder,
             title: title,
-            detail: message,
+            detail: detail,
             theme: theme,
             zoomScale: zoomScale
         ) {
             if isLoadingWorkspace {
-                ProgressView()
-                    .controlSize(.small)
-            } else {
-                HStack(spacing: scaled(MonknotMetrics.Spacing.s)) {
-                    if hasWorkspace {
+                MonknotProgressIndicator(
+                    size: MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale),
+                    theme: theme
+                )
+            } else if hasWorkspace {
+                VStack(spacing: MonknotMetrics.interfaceDensity(8, theme: theme, zoomScale: zoomScale)) {
+                    MonknotShortcutActionButton(
+                        title: "New Markdown",
+                        shortcut: "⌘N",
+                        theme: theme,
+                        zoomScale: zoomScale,
+                        action: newMarkdown
+                    )
+                    if canBootstrapStarterWorkspace {
                         MonknotActionButton(
-                            title: "New Markdown",
-                            systemImage: "square.and.pencil",
-                            role: .primary,
+                            title: "Add Starter Notes",
+                            role: .quiet,
                             theme: theme,
                             zoomScale: zoomScale,
-                            action: newMarkdown
+                            size: .bar,
+                            action: bootstrapStarterWorkspace
                         )
-
-                        if canBootstrapStarterWorkspace {
-                            MonknotActionButton(
-                                title: "Starter Workspace",
-                                systemImage: "wand.and.stars",
-                                role: .secondary,
-                                theme: theme,
-                                zoomScale: zoomScale,
-                                action: bootstrapStarterWorkspace
-                            )
-                        }
-                    } else {
-                        MonknotActionButton(
-                            title: "Open Folder",
-                            systemImage: MonknotWorkspaceIcons.openFolder,
-                            role: .primary,
-                            theme: theme,
-                            zoomScale: zoomScale,
-                            action: openFolder
-                        )
+                        .help("Adds a README, a project brief and an ideas note")
                     }
                 }
-
-                Text(hasWorkspace ? "⌘N for a new note" : "⌘O to open a folder")
-                    .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
-                    .foregroundStyle(theme.foregroundColor.opacity(0.48))
-                    .multilineTextAlignment(.center)
-
-                if !hasWorkspace, SavedWorkspaceStore().lastActiveWorkspace() != nil {
-                    Text("Your last workspace reopens automatically on launch.")
-                        .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
-                        .foregroundStyle(theme.foregroundColor.opacity(0.48))
-                        .multilineTextAlignment(.center)
-                }
+            } else {
+                MonknotShortcutActionButton(
+                    title: "Open Folder…",
+                    shortcut: "⌘O",
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    action: openFolder
+                )
             }
         }
-    }
-
-    private var emptyStateSystemImage: String {
-        if isLoadingWorkspace || !hasWorkspace {
-            return MonknotWorkspaceIcons.openFolder
-        }
-        return WorkspaceDocumentKind.markdown.resolvedSystemImage
     }
 
     private var title: String {
         if isLoadingWorkspace {
             return "Opening workspace"
         }
-
         if canBootstrapStarterWorkspace {
-            return "No documents yet"
+            return "This workspace is empty"
         }
-
-        return hasWorkspace ? "Select a document" : "Open a workspace"
+        return hasWorkspace ? "No document open" : "No workspace open"
     }
 
-    private var message: String {
+    private var detail: String {
         if isLoadingWorkspace {
-            return "Scanning files..."
+            return "Reading files…"
         }
-
         if canBootstrapStarterWorkspace {
-            return "Create a note or generate starter files."
+            return "Create a note to start writing."
         }
-
         return hasWorkspace
-            ? "Choose a file from the sidebar, or start a new Markdown note."
-            : "Open a folder to browse Markdown, text, and PDF files."
+            ? "Choose a file in the sidebar, or create a note."
+            : "Open a folder of Markdown, text and PDF files."
     }
-
 }
 
 /// Gives a newly shown document keyboard focus when nothing else in the window

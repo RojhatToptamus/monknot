@@ -32,8 +32,9 @@ enum MonknotTypography {
         .system(size: 15.5, weight: .semibold)
     }
 
+    /// Empty states, panels and sheets title at the heading weight of a row label (design.md §4.3).
     static func emptyStateTitle(theme: AppTheme, zoomScale: Double) -> Font {
-        .system(size: MonknotMetrics.interfaceText(15.5, theme: theme, zoomScale: zoomScale), weight: .semibold)
+        .system(size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale), weight: .semibold)
     }
 
     static func emptyStateDetail(theme: AppTheme, zoomScale: Double) -> Font {

@@ -101,8 +101,14 @@ struct MarkdownLinkInspectionPanel: View {
                 theme: theme,
                 zoomScale: zoomScale
             ) {
-                Button("Try Again", action: refresh)
-                    .buttonStyle(.bordered)
+                MonknotActionButton(
+                    title: "Try Again",
+                    role: .secondary,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    size: .bar,
+                    action: refresh
+                )
             }
         } else if let inspection = state.inspection {
             MonknotScrollView {
