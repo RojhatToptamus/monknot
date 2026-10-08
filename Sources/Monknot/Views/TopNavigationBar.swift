@@ -118,10 +118,20 @@ struct TopNavigationBar: View {
         }
         .monknotChromeRowLayout(theme: theme, zoomScale: zoomScale)
         .onChange(of: documentSearch.focusSerial) { _, _ in
-            isSearchFocused = documentSearch.isPresented
+            focusDocumentSearchField()
         }
         .onChange(of: documentSearch.isPresented) { _, isPresented in
-            isSearchFocused = isPresented
+            if !isPresented {
+                isSearchFocused = false
+            }
+        }
+    }
+
+    /// The field is inserted by the same update that presents it; a focus
+    /// request made in that update is intermittently dropped.
+    private func focusDocumentSearchField() {
+        DispatchQueue.main.async {
+            isSearchFocused = documentSearch.isPresented
         }
     }
 
@@ -299,7 +309,7 @@ struct TopNavigationBar: View {
                 }
         )
         .onAppear {
-            isSearchFocused = true
+            focusDocumentSearchField()
         }
         .onChange(of: isSearchFocused) { _, isFocused in
             documentSearchFocusChanged(isFocused)

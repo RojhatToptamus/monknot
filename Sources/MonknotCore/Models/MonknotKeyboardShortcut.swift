@@ -131,6 +131,8 @@ public enum MonknotKeyboardShortcutAction: Equatable, Sendable {
     case dismissQuickOpen
     case showGoToSymbol
     case dismissGoToSymbol
+    case selectPreviousPickerResult
+    case selectNextPickerResult
     case workspaceSearchNext
     case workspaceSearchPrevious
     case dismissKeyboardShortcutsHelp
@@ -141,6 +143,8 @@ public enum MonknotKeyboardShortcutAction: Equatable, Sendable {
 
 public enum MonknotKeyboardShortcutRouter {
     public static let escapeKeyCode: UInt16 = 53
+    public static let upArrowKeyCode: UInt16 = 126
+    public static let downArrowKeyCode: UInt16 = 125
 
     public static func action(
         for event: MonknotKeyboardShortcutEvent,
@@ -148,6 +152,12 @@ public enum MonknotKeyboardShortcutRouter {
     ) -> MonknotKeyboardShortcutAction? {
         let key = event.key.lowercased()
         let modifiers = event.modifiers
+
+        // Quick Open and Go to Heading lists follow ↑/↓ while their search field keeps focus.
+        if context.isQuickOpenPresented || context.isSymbolQuickOpenPresented, modifiers.isEmpty {
+            if event.keyCode == upArrowKeyCode { return .selectPreviousPickerResult }
+            if event.keyCode == downArrowKeyCode { return .selectNextPickerResult }
+        }
 
         if event.keyCode == escapeKeyCode, modifiers.isEmpty {
             if context.isQuickOpenPresented { return .dismissQuickOpen }

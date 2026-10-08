@@ -311,6 +311,24 @@ final class MonknotKeyboardShortcutRouterTests: XCTestCase {
         )
     }
 
+    func testPickerArrowKeysMoveTheSelectionOnlyWhileAPickerIsOpen() {
+        let up = MonknotKeyboardShortcutRouter.upArrowKeyCode
+        let down = MonknotKeyboardShortcutRouter.downArrowKeyCode
+        for context in [
+            shortcutContext(isQuickOpenPresented: true),
+            shortcutContext(selectedDocumentKind: .markdown, isSymbolQuickOpenPresented: true, hasMarkdownOutline: true),
+        ] {
+            XCTAssertEqual(action(for: "\u{F700}", modifiers: [], keyCode: up, context: context), .selectPreviousPickerResult)
+            XCTAssertEqual(action(for: "\u{F701}", modifiers: [], keyCode: down, context: context), .selectNextPickerResult)
+            // Modified arrows keep their text-field meaning (⇧ extends, ⌘ jumps).
+            XCTAssertNil(action(for: "\u{F701}", modifiers: [.shift], keyCode: down, context: context))
+            XCTAssertNil(action(for: "\u{F700}", modifiers: [.command], keyCode: up, context: context))
+        }
+        // Without a picker the editor and lists own the arrow keys.
+        XCTAssertNil(action(for: "\u{F701}", modifiers: [], keyCode: down, context: shortcutContext(hasWorkspace: true)))
+        XCTAssertNil(action(for: "\u{F700}", modifiers: [], keyCode: up, context: shortcutContext(isWorkspaceSearchPresented: true)))
+    }
+
     func testDailyNoteAndGoToSymbolShortcuts() {
         XCTAssertEqual(
             action(for: "n", modifiers: [.command, .shift], context: shortcutContext(hasWorkspace: true)),

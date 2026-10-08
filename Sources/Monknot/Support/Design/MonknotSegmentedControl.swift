@@ -105,7 +105,7 @@ struct MonknotSegmentButton: View {
                 )
         }
         .buttonStyle(.plain)
-        .focusable(true)
+        .focusable(NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
         .focusEffectDisabled()
         .disabled(isDisabled)

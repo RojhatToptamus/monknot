@@ -131,7 +131,7 @@ struct PreferencesView: View {
                         )
                 }
                 .buttonStyle(.plain)
-                .focusable()
+                .focusable(NSApp.isFullKeyboardAccessEnabled)
                 .focused($focusedSection, equals: section)
                 .focusEffectDisabled()
                 .onHover { isHovered in

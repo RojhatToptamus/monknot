@@ -215,7 +215,7 @@ private struct MarkdownOutlineRailContent: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .focusable()
+        .focusable(NSApp.isFullKeyboardAccessEnabled)
         .focused($focusedMarkerID, equals: item.id)
         .focusEffectDisabled()
         .onHover { hovering in

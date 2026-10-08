@@ -64,9 +64,10 @@ struct WorkspaceQuickOpenView: View {
             .focused($isSearchFocused)
             .font(.system(size: scaled(14)))
             .foregroundStyle(theme.foregroundColor)
+            .accessibilityLabel("Open file by name")
             .onSubmit {
-                if let first = state.matches.first {
-                    openDocument(first.id)
+                if let selected = state.selectedMatch {
+                    openDocument(selected.id)
                 }
             }
 
@@ -81,63 +82,72 @@ struct WorkspaceQuickOpenView: View {
     }
 
     private var resultBody: some View {
-        MonknotScrollView {
-            if state.matches.isEmpty {
-                MonknotCommandOverlayEmptyState(
-                    title: state.query.isEmpty
-                        ? "Open a file by name…"
-                        : "No files match “\(state.query)”",
-                    message: state.query.isEmpty
-                        ? "Start typing to filter workspace files."
-                        : "Try part of a name, or ⇧⌘F to search contents.",
-                    theme: theme,
-                    zoomScale: zoomScale
-                )
-            } else {
-                LazyVStack(alignment: .leading, spacing: scaled(2)) {
-                    ForEach(Array(state.matches.enumerated()), id: \.element.id) { index, document in
-                        Button {
-                            openDocument(document.id)
-                        } label: {
-                            HStack(spacing: scaled(8)) {
-                                MonknotFileKindGlyph(
-                                    systemImage: document.kind.resolvedSystemImage,
-                                    theme: theme,
-                                    zoomScale: zoomScale,
-                                    pointSizeBase: 14
-                                )
-                                    .foregroundStyle(theme.mutedForegroundColor)
+        ScrollViewReader { proxy in
+            MonknotScrollView {
+                if state.matches.isEmpty {
+                    MonknotCommandOverlayEmptyState(
+                        title: state.query.isEmpty
+                            ? "Open a file by name…"
+                            : "No files match “\(state.query)”",
+                        message: state.query.isEmpty
+                            ? "Start typing to filter workspace files."
+                            : "Try part of a name, or ⇧⌘F to search contents.",
+                        theme: theme,
+                        zoomScale: zoomScale
+                    )
+                } else {
+                    LazyVStack(alignment: .leading, spacing: scaled(2)) {
+                        ForEach(Array(state.matches.enumerated()), id: \.element.id) { index, document in
+                            Button {
+                                openDocument(document.id)
+                            } label: {
+                                HStack(spacing: scaled(8)) {
+                                    MonknotFileKindGlyph(
+                                        systemImage: document.kind.resolvedSystemImage,
+                                        theme: theme,
+                                        zoomScale: zoomScale,
+                                        pointSizeBase: 14
+                                    )
+                                        .foregroundStyle(theme.mutedForegroundColor)
 
-                                VStack(alignment: .leading, spacing: scaled(1)) {
-                                    Text(document.displayName)
-                                        .font(.system(size: scaled(13), weight: .regular))
-                                        .foregroundStyle(theme.foregroundColor)
-                                        .lineLimit(1)
+                                    VStack(alignment: .leading, spacing: scaled(1)) {
+                                        Text(document.displayName)
+                                            .font(.system(size: scaled(13), weight: .regular))
+                                            .foregroundStyle(theme.foregroundColor)
+                                            .lineLimit(1)
 
-                                    Text(document.relativePath)
-                                        .font(.system(size: scaled(10.5)))
-                                        .foregroundStyle(theme.tertiaryForegroundColor)
-                                        .lineLimit(1)
+                                        Text(document.relativePath)
+                                            .font(.system(size: scaled(10.5)))
+                                            .foregroundStyle(theme.tertiaryForegroundColor)
+                                            .lineLimit(1)
+                                    }
+
+                                    Spacer(minLength: 0)
                                 }
-
-                                Spacer(minLength: 0)
+                                .padding(.horizontal, scaled(12))
+                                .frame(maxWidth: .infinity, minHeight: scaled(34), maxHeight: scaled(34), alignment: .leading)
+                                .background(
+                                    RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+                                        .fill(index == state.selectedIndex ? theme.selectedRowColor : .clear)
+                                )
+                                .contentShape(Rectangle())
                             }
-                            .padding(.horizontal, scaled(12))
-                            .frame(maxWidth: .infinity, minHeight: scaled(34), maxHeight: scaled(34), alignment: .leading)
-                            .background(
-                                RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                                    .fill(index == 0 ? theme.selectedRowColor : .clear)
-                            )
+                            .buttonStyle(.plain)
+                            .monknotPointerCursor()
+                            .accessibilityAddTraits(index == state.selectedIndex ? .isSelected : [])
                         }
-                        .buttonStyle(.plain)
-                        .monknotPointerCursor()
                     }
+                    .padding(.horizontal, scaled(8))
+                    .padding(.vertical, scaled(8))
                 }
-                .padding(.horizontal, scaled(8))
-                .padding(.vertical, scaled(8))
+            }
+            .scrollContentBackground(.hidden)
+            .onChange(of: state.selectedIndex) { _, _ in
+                if let selected = state.selectedMatch {
+                    proxy.scrollTo(selected.id)
+                }
             }
         }
-        .scrollContentBackground(.hidden)
     }
 
     private var resultFooter: some View {

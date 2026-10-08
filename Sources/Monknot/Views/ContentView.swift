@@ -74,16 +74,14 @@ final class TerminalFocusRestorer: ObservableObject {
         DispatchQueue.main.async { [weak self, weak window, weak responder] in
             guard let self, self.generation == restoreGeneration else { return }
             defer { self.clear() }
-            guard let window, let responder else { return }
-            if let view = responder as? NSView {
-                guard view.window === window, let root = window.contentView else { return }
-                if !Self.isVisible(view, within: root) {
-                    guard let fallback = Self.fallbackDocumentFocusTarget(in: window) else { return }
-                    window.makeFirstResponder(fallback)
-                    return
-                }
+            guard let window else { return }
+            // The saved view can leave the window before this runs (an overlay
+            // field, or a document view that was replaced); focus the document.
+            if let responder, Self.isRestorable(responder, in: window) {
+                window.makeFirstResponder(responder)
+            } else if let fallback = Self.fallbackDocumentFocusTarget(in: window) {
+                window.makeFirstResponder(fallback)
             }
-            window.makeFirstResponder(responder)
         }
     }
 
@@ -92,16 +90,44 @@ final class TerminalFocusRestorer: ObservableObject {
         clear()
     }
 
+    /// Drops the saved target and focuses the visible document instead, for
+    /// overlays whose chosen result lives in the document.
+    func focusDocument(in window: NSWindow?) {
+        discard()
+        restore(fallbackFrom: window)
+    }
+
+    /// Gives the visible document keyboard focus when nothing in the window
+    /// holds it, such as after the focused view was replaced by another one.
+    static func focusDocumentIfUnfocused(in window: NSWindow?) {
+        DispatchQueue.main.async { [weak window] in
+            guard let window,
+                  window.attachedSheet == nil,
+                  !hasVisibleContentResponder(in: window),
+                  let target = fallbackDocumentFocusTarget(in: window)
+            else {
+                return
+            }
+            window.makeFirstResponder(target)
+        }
+    }
+
     private var hasValidSavedTarget: Bool {
         guard let window, let responder else { return false }
+        return Self.isRestorable(responder, in: window)
+    }
+
+    private static func isRestorable(_ responder: NSResponder, in window: NSWindow) -> Bool {
         guard let view = responder as? NSView else { return true }
         guard view.window === window, let root = window.contentView else { return false }
-        return Self.isVisible(view, within: root)
+        return isVisible(view, within: root)
     }
 
     private static func preferredResponder(in window: NSWindow?) -> NSResponder? {
         guard let window else { return nil }
-        if let view = window.firstResponder as? NSView, view.window === window {
+        // A text field's shared field editor moves to whichever field edits
+        // next (an overlay's search field); save the field that owns it.
+        if let view = focusOwningView(for: window.firstResponder), view.window === window {
             return view
         }
         return fallbackDocumentFocusTarget(in: window)
@@ -219,6 +245,7 @@ struct ContentView: View {
     @StateObject private var terminalFocusRestorer = TerminalFocusRestorer()
     @StateObject private var goToLineFocusRestorer = TerminalFocusRestorer()
     @StateObject private var searchFocusRestorer = TerminalFocusRestorer()
+    @StateObject private var paletteFocusRestorer = TerminalFocusRestorer()
     @StateObject private var terminalSessions = TerminalSessionCollectionStore()
     @StateObject private var workspaceSearch = WorkspaceSearchState()
     @StateObject private var quickOpen = WorkspaceQuickOpenState()
@@ -453,6 +480,9 @@ struct ContentView: View {
                         )
                     }
                 }
+                // The selected-document handler may already have opened a tab
+                // in this update; the reset above discarded it.
+                syncSelectedTabWithStore()
             }
             .onChange(of: store.removedDirtyOpenDocumentIDs) { _, _ in
                 reconcileTabsWithStore()
@@ -616,10 +646,11 @@ struct ContentView: View {
                     documents: store.documents,
                     theme: activeTheme,
                     zoomScale: zoomScale,
-                    close: { quickOpen.dismiss() },
+                    close: { dismissQuickOpen(restoreFocus: true) },
                     openDocument: { documentID in
                         quickOpen.dismiss()
                         openDocumentTab(id: documentID)
+                        paletteFocusRestorer.focusDocument(in: responderWindow)
                     }
                 )
                 .transition(.opacity)
@@ -640,10 +671,11 @@ struct ContentView: View {
                     items: outlineStore.items,
                     theme: activeTheme,
                     zoomScale: zoomScale,
-                    close: { symbolQuickOpen.dismiss() },
+                    close: { dismissGoToSymbol(restoreFocus: true) },
                     selectItem: { item in
                         symbolQuickOpen.dismiss()
                         openOutlineItem(item)
+                        paletteFocusRestorer.focusDocument(in: responderWindow)
                     }
                 )
                 .transition(.opacity)
@@ -2020,6 +2052,7 @@ struct ContentView: View {
                 && pdfSelectionSnapshot?.documentID == store.selectedDocumentID,
             showKeyboardShortcutsHelp: {
                 dismissGoToLine(restoreFocus: false)
+                dismissPalettes()
                 isKeyboardShortcutsHelpPresented = true
             },
             undoWorkspaceReplace: { store.undoLastWorkspaceReplace() },
@@ -2144,6 +2177,12 @@ struct ContentView: View {
             || action == .undoPDFAnnotation
             || action == .redoPDFAnnotation),
            MonknotNativePasteboardCommand.hasNativeEditingFocus {
+            return false
+        }
+
+        // ↑/↓ choose an input-method candidate while the search field is composing.
+        if action == .selectPreviousPickerResult || action == .selectNextPickerResult,
+           (event.window?.firstResponder as? NSTextView)?.hasMarkedText() == true {
             return false
         }
 
@@ -2321,11 +2360,15 @@ struct ContentView: View {
         case .showQuickOpen:
             showQuickOpen()
         case .dismissQuickOpen:
-            quickOpen.dismiss()
+            dismissQuickOpen(restoreFocus: true)
         case .showGoToSymbol:
             showGoToSymbol()
         case .dismissGoToSymbol:
-            symbolQuickOpen.dismiss()
+            dismissGoToSymbol(restoreFocus: true)
+        case .selectPreviousPickerResult:
+            movePickerSelection(by: -1)
+        case .selectNextPickerResult:
+            movePickerSelection(by: 1)
         case .workspaceSearchNext:
             workspaceSearch.selectNextResult()
         case .workspaceSearchPrevious:
@@ -2361,6 +2404,7 @@ struct ContentView: View {
         dismissGoToLine(restoreFocus: false)
         symbolQuickOpen.dismiss()
         dismissWorkspaceSearch(restoreFocus: false)
+        paletteFocusRestorer.capture(from: responderWindow)
         quickOpen.present(documents: store.documents)
     }
 
@@ -2370,14 +2414,49 @@ struct ContentView: View {
         dismissGoToLine(restoreFocus: false)
         quickOpen.dismiss()
         dismissWorkspaceSearch(restoreFocus: false)
+        paletteFocusRestorer.capture(from: responderWindow)
         symbolQuickOpen.present(items: outlineStore.items)
+    }
+
+    private func dismissQuickOpen(restoreFocus: Bool) {
+        guard quickOpen.isPresented else { return }
+        quickOpen.dismiss()
+        finishPaletteDismissal(restoreFocus: restoreFocus)
+    }
+
+    private func dismissGoToSymbol(restoreFocus: Bool) {
+        guard symbolQuickOpen.isPresented else { return }
+        symbolQuickOpen.dismiss()
+        finishPaletteDismissal(restoreFocus: restoreFocus)
+    }
+
+    /// Another surface is taking focus; a palette left open behind it would
+    /// keep claiming ↑/↓ and Escape.
+    private func dismissPalettes() {
+        dismissQuickOpen(restoreFocus: false)
+        dismissGoToSymbol(restoreFocus: false)
+    }
+
+    private func finishPaletteDismissal(restoreFocus: Bool) {
+        if restoreFocus {
+            paletteFocusRestorer.restore(fallbackFrom: responderWindow)
+        } else {
+            paletteFocusRestorer.discard()
+        }
+    }
+
+    private func movePickerSelection(by offset: Int) {
+        if quickOpen.isPresented {
+            quickOpen.moveSelection(by: offset)
+        } else if symbolQuickOpen.isPresented {
+            symbolQuickOpen.moveSelection(by: offset)
+        }
     }
 
     private func showGoToLine() {
         guard canShowGoToLine else { return }
         isKeyboardShortcutsHelpPresented = false
-        quickOpen.dismiss()
-        symbolQuickOpen.dismiss()
+        dismissPalettes()
         dismissWorkspaceSearch(restoreFocus: false)
         goToLineFocusRestorer.capture(from: NSApp.keyWindow)
         isGoToLinePresented = true
@@ -2419,6 +2498,7 @@ struct ContentView: View {
     private func showDocumentSearch() {
         guard canShowDocumentSearch else { return }
         dismissGoToLine(restoreFocus: false)
+        dismissPalettes()
         searchFocusRestorer.capturePrimaryInput(from: responderWindow)
         documentSearch.present()
     }
@@ -2446,6 +2526,7 @@ struct ContentView: View {
     private func showWorkspaceSearch() {
         guard store.workspaceURL != nil else { return }
         dismissGoToLine(restoreFocus: false)
+        dismissPalettes()
         searchFocusRestorer.capturePrimaryInput(from: responderWindow)
         requestSidebarPresentation(true, animated: false)
         workspaceSearch.present(
@@ -2723,6 +2804,7 @@ struct ContentView: View {
         guard terminalPreferredVisible != isPresented || isTerminalVisible != isPresented else { return }
         let wasEffectivelyVisible = isTerminalVisible
         if isPresented {
+            dismissPalettes()
             terminalFocusRestorer.capture(from: responderWindow)
         }
         let terminalOwnedFocus = terminalPanelOwnsFocus

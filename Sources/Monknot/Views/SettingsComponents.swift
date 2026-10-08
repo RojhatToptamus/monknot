@@ -90,7 +90,7 @@ struct SettingsOutlineButton: View {
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
-        .focusable(!isDisabled)
+        .focusable(!isDisabled && NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
         .focusEffectDisabled()
         .opacity(isDisabled ? 0.55 : 1)

@@ -233,6 +233,10 @@ struct EditorPaneView: View {
                     )
                 } else {
                     editor(for: selectedDocument)
+                        .background(
+                            DocumentFocusClaim()
+                                .id("\(selectedDocument.id)|\(editorMode)|\(isSplitViewEnabled)")
+                        )
                 }
             } else {
                 EmptyDetailView(
@@ -757,4 +761,28 @@ private struct EmptyDetailView: View {
             : "Open a folder to browse Markdown, text, and PDF files."
     }
 
+}
+
+/// Gives a newly shown document keyboard focus when nothing else in the window
+/// holds it. It runs once AppKit attaches the view: a state-change hook runs
+/// before SwiftUI swaps the document views. The `id` remounts it per document
+/// and mode.
+private struct DocumentFocusClaim: NSViewRepresentable {
+    func makeNSView(context: Context) -> AttachmentView {
+        AttachmentView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: AttachmentView, context: Context) {}
+
+    final class AttachmentView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard window != nil else { return }
+            TerminalFocusRestorer.focusDocumentIfUnfocused(in: window)
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            nil
+        }
+    }
 }

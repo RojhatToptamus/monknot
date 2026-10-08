@@ -110,7 +110,7 @@ struct MonknotCommandOverlayEscapeButton: View {
             .contentShape(shape)
         }
         .buttonStyle(MonknotControlPressStyle())
-        .focusable()
+        .focusable(NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
         .focusEffectDisabled()
         .onHover { isHovered = $0 }

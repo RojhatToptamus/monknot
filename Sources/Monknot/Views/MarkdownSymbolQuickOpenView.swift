@@ -62,9 +62,10 @@ struct MarkdownSymbolQuickOpenView: View {
             .focused($isSearchFocused)
             .font(.system(size: scaled(14)))
             .foregroundStyle(theme.foregroundColor)
+            .accessibilityLabel("Go to heading")
             .onSubmit {
-                if let first = state.matches.first {
-                    selectItem(first)
+                if let selected = state.selectedMatch {
+                    selectItem(selected)
                 }
             }
 
@@ -79,49 +80,62 @@ struct MarkdownSymbolQuickOpenView: View {
     }
 
     private var resultBody: some View {
-        MonknotScrollView {
-            if state.matches.isEmpty {
-                MonknotCommandOverlayEmptyState(
-                    title: state.query.isEmpty
-                        ? "No headings in this document"
-                        : "No headings match “\(state.query)”",
-                    message: state.query.isEmpty
-                        ? "Add a Markdown heading, then try again."
-                        : "Try a shorter part of the heading name.",
-                    theme: theme,
-                    zoomScale: zoomScale
-                )
-            } else {
-                LazyVStack(alignment: .leading, spacing: scaled(2)) {
-                    ForEach(state.matches) { item in
-                        Button {
-                            selectItem(item)
-                        } label: {
-                            HStack(spacing: scaled(8)) {
-                                Text("H\(item.level)")
-                                    .font(.system(size: scaled(10), weight: .regular, design: .monospaced))
-                                    .foregroundStyle(theme.mutedForegroundColor)
-                                    .frame(width: scaled(18), alignment: .leading)
+        ScrollViewReader { proxy in
+            MonknotScrollView {
+                if state.matches.isEmpty {
+                    MonknotCommandOverlayEmptyState(
+                        title: state.query.isEmpty
+                            ? "No headings in this document"
+                            : "No headings match “\(state.query)”",
+                        message: state.query.isEmpty
+                            ? "Add a Markdown heading, then try again."
+                            : "Try a shorter part of the heading name.",
+                        theme: theme,
+                        zoomScale: zoomScale
+                    )
+                } else {
+                    LazyVStack(alignment: .leading, spacing: scaled(2)) {
+                        ForEach(Array(state.matches.enumerated()), id: \.element.id) { index, item in
+                            Button {
+                                selectItem(item)
+                            } label: {
+                                HStack(spacing: scaled(8)) {
+                                    Text("H\(item.level)")
+                                        .font(.system(size: scaled(10), weight: .regular, design: .monospaced))
+                                        .foregroundStyle(theme.mutedForegroundColor)
+                                        .frame(width: scaled(18), alignment: .leading)
 
-                                Text(item.title)
-                                    .font(.system(size: scaled(13), weight: .regular))
-                                    .foregroundStyle(theme.foregroundColor)
-                                    .lineLimit(1)
+                                    Text(item.title)
+                                        .font(.system(size: scaled(13), weight: .regular))
+                                        .foregroundStyle(theme.foregroundColor)
+                                        .lineLimit(1)
 
-                                Spacer(minLength: 0)
+                                    Spacer(minLength: 0)
 
-                                Text(":\(item.location.line)")
-                                    .font(.system(size: scaled(10), weight: .medium, design: .monospaced))
-                                    .foregroundStyle(theme.mutedForegroundColor)
+                                    Text(":\(item.location.line)")
+                                        .font(.system(size: scaled(10), weight: .medium, design: .monospaced))
+                                        .foregroundStyle(theme.mutedForegroundColor)
+                                }
+                                .padding(.horizontal, scaled(10))
+                                .frame(maxWidth: .infinity, minHeight: scaled(30), maxHeight: scaled(30), alignment: .leading)
+                                .background(
+                                    RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+                                        .fill(index == state.selectedIndex ? theme.selectedRowColor : .clear)
+                                )
+                                .contentShape(Rectangle())
                             }
-                            .padding(.horizontal, scaled(10))
-                            .frame(maxWidth: .infinity, minHeight: scaled(30), maxHeight: scaled(30), alignment: .leading)
-                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(index == state.selectedIndex ? .isSelected : [])
                         }
-                        .buttonStyle(.plain)
                     }
+                    .padding(.horizontal, scaled(8))
+                    .padding(.vertical, scaled(6))
                 }
-                .padding(.vertical, scaled(6))
+            }
+            .onChange(of: state.selectedIndex) { _, _ in
+                if let selected = state.selectedMatch {
+                    proxy.scrollTo(selected.id)
+                }
             }
         }
     }

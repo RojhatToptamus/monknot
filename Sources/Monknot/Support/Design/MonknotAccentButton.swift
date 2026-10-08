@@ -92,7 +92,7 @@ struct MonknotActionButton: View {
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
-        .focusable(!isDisabled)
+        .focusable(!isDisabled && NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
         .focusEffectDisabled()
         .onHover { isHovered = $0 }

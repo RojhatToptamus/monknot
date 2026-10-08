@@ -215,7 +215,7 @@ struct MonknotIconButton: View {
             cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale),
             isDisabled: isDisabled
         ))
-        .focusable(!isDisabled)
+        .focusable(!isDisabled && NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
         .focusEffectDisabled()
         .disabled(isDisabled)

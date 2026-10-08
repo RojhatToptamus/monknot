@@ -77,7 +77,7 @@ private struct MonknotSettingsSegmentButton: View {
                 .contentShape(RoundedRectangle(cornerRadius: max(0, cornerRadius - 1)))
         }
         .buttonStyle(.plain)
-        .focusable(true)
+        .focusable(NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
         .focusEffectDisabled()
         .onHover { isHovered = $0 }
@@ -177,7 +177,7 @@ struct MonknotSettingsMenuPicker: View {
             )
         }
         .buttonStyle(.plain)
-        .focusable(true)
+        .focusable(NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
         .focusEffectDisabled()
         .fixedSize()

@@ -732,7 +732,7 @@ private struct PDFFreeTextFormattingPopover: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .buttonStyle(.plain)
-        .focusable()
+        .focusable(NSApp.isFullKeyboardAccessEnabled)
         .focused($focusedControl, equals: .fontFamily)
         .focusEffectDisabled()
         .onHover { isFontMenuHovered = $0 }
@@ -823,7 +823,7 @@ private struct PDFFreeTextFormattingPopover: View {
         }
         .buttonStyle(MonknotControlPressStyle())
         .disabled(isDisabled)
-        .focusable(!isDisabled)
+        .focusable(!isDisabled && NSApp.isFullKeyboardAccessEnabled)
         .focused($focusedControl, equals: focus)
         .focusEffectDisabled()
         .onHover { isHovered in
@@ -1761,7 +1761,7 @@ struct PDFZoomToolbarGroup: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .disabled(!status.isAvailable)
-        .focusable(status.isAvailable)
+        .focusable(status.isAvailable && NSApp.isFullKeyboardAccessEnabled)
         .focused($isMenuFocused)
         .focusEffectDisabled()
         .opacity(status.isAvailable ? 1 : 0.42)
@@ -1850,7 +1850,7 @@ private struct PDFColorSwatchButton: View {
             .contentShape(Circle())
         }
         .buttonStyle(MonknotControlPressStyle())
-        .focusable()
+        .focusable(NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
         .onHover { isHovered = $0 }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: isHovered)
