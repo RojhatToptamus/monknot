@@ -1618,8 +1618,11 @@ struct ContentView: View {
         return await store.saveDocument(id: documentID)
     }
 
+    /// Keyed by the document the editor shows. The tab selection follows the store one update
+    /// later when the store selects (New Note, Daily Note, the sidebar), and the previous
+    /// document's offset was applied to the new one: a blank, over-scrolled note.
     private var activeDocumentViewportState: DocumentViewportState? {
-        guard let selectedDocumentID = tabState.selectedDocumentID else { return nil }
+        guard let selectedDocumentID = store.selectedDocumentID else { return nil }
         return viewportCache.states[selectedDocumentID]
     }
 
