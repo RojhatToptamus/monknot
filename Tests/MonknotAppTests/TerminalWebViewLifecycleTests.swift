@@ -1,3 +1,4 @@
+import MonknotCore
 import XCTest
 import WebKit
 @testable import MonknotApp
@@ -259,6 +260,52 @@ final class TerminalWebViewLifecycleTests: XCTestCase {
     }
 
     @MainActor
+    func testX10WheelReportsTravelAsBytesEvenPastColumn95() throws {
+        let (webView, recorder, teardown) = try loadedTerminal()
+        defer { teardown() }
+        // A windowless web view is never fitted; give it room for column 100.
+        _ = evaluateJavaScript("term.resize(140, 24)", in: webView)
+        XCTAssertTrue(waitForJavaScript("term.cols === 140", in: webView))
+
+        _ = evaluateJavaScript("window.monknotWriteBytes(btoa('\\x1b[?1000h'))", in: webView)
+        XCTAssertTrue(waitForJavaScript("term.modes.mouseTrackingMode !== 'none'", in: webView))
+        let column = try XCTUnwrap(evaluateJavaScript(
+            """
+            (() => {
+              const screen = document.querySelector('.xterm-screen');
+              const rect = screen.getBoundingClientRect();
+              const cellWidth = rect.width / term.cols;
+              const cellHeight = rect.height / term.rows;
+              const col = 100;
+              document.querySelector('.xterm').dispatchEvent(new WheelEvent('wheel', {
+                deltaY: cellHeight, deltaMode: 0,
+                clientX: rect.left + (col - 0.5) * cellWidth, clientY: rect.top + cellHeight * 0.5,
+                bubbles: true, cancelable: true
+              }));
+              return col;
+            })()
+            """,
+            in: webView
+        ) as? Int)
+        XCTAssertTrue(waitFor { !recorder.binaryInputs.isEmpty })
+        XCTAssertFalse(
+            recorder.inputs.contains { $0.contains("\u{1b}[M") },
+            "X10 reports must not go through the UTF-8 text channel"
+        )
+        let bytes = try XCTUnwrap(recorder.binaryInputs.joined().data(using: .isoLatin1))
+        XCTAssertEqual(Array(bytes), [0x1b, 0x5b, 0x4d, UInt8(32 + 65), UInt8(32 + column), UInt8(32 + 1)])
+    }
+
+    func testThemeChangesKeepTheWhiteMappingThePageStartedWith() {
+        let theme = AppTheme.defaultLight
+        let xterm = TerminalWebView.xtermTheme(theme)
+        XCTAssertEqual(xterm["white"], theme.foreground)
+        XCTAssertEqual(xterm["brightWhite"], theme.foreground)
+        let html = TerminalWebView.html(theme: theme, fontSize: 13, usePointerCursors: true, fontSmoothing: true)
+        XCTAssertTrue(html.contains(TerminalWebView.jsonObject(xterm)), "The page and theme changes share one theme")
+    }
+
+    @MainActor
     func testACollapsedPanelDoesNotShrinkTheTerminal() throws {
         let (webView, _, teardown) = try loadedTerminal()
         defer { teardown() }
@@ -281,11 +328,12 @@ final class TerminalWebViewLifecycleTests: XCTestCase {
             TerminalWebController.inputHandlerName,
             TerminalWebController.resizeHandlerName,
             TerminalWebController.searchVisibilityHandlerName,
+            TerminalWebController.binaryInputHandlerName,
         ]
         for name in names {
             configuration.userContentController.add(recorder, name: name)
         }
-        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 640, height: 400), configuration: configuration)
+        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1200, height: 400), configuration: configuration)
         webView.loadHTMLString(try terminalHTMLWithSourceResources(), baseURL: nil)
         XCTAssertTrue(waitForJavaScript("typeof window.monknotWriteBytes === 'function'", in: webView))
         // Let the first fit settle and its resize message arrive before measuring input.
@@ -403,13 +451,17 @@ private final class IgnoringTerminalScriptMessageHandler: NSObject, WKScriptMess
 
 private final class RecordingTerminalScriptMessageHandler: NSObject, WKScriptMessageHandler {
     var inputs: [String] = []
+    var binaryInputs: [String] = []
 
     func userContentController(
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage
     ) {
-        if message.name == TerminalWebController.inputHandlerName, let text = message.body as? String {
+        guard let text = message.body as? String else { return }
+        if message.name == TerminalWebController.inputHandlerName {
             inputs.append(text)
+        } else if message.name == TerminalWebController.binaryInputHandlerName {
+            binaryInputs.append(text)
         }
     }
 }

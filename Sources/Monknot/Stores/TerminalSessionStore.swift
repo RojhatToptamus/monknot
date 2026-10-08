@@ -78,6 +78,9 @@ final class TerminalSessionStore: ObservableObject {
     private var sessionGeneration = 0
     private var pendingOutput = Data()
     private var outputFlushTask: Task<Void, Never>?
+    /// The size the view last reported. A restarted shell starts at it: the view keeps its size across
+    /// a restart and reports only changes.
+    private var terminalSize = (columns: 100, rows: 32)
 
     init(initialDirectory: URL? = nil) {
         workingDirectory = Self.resolvedDirectory(initialDirectory) ?? Self.homeDirectory
@@ -112,7 +115,11 @@ final class TerminalSessionStore: ObservableObject {
         )
 
         do {
-            try session.start(workingDirectory: workingDirectory)
+            try session.start(
+                workingDirectory: workingDirectory,
+                columns: terminalSize.columns,
+                rows: terminalSize.rows
+            )
             ptySession = session
         } catch {
             appendStatusLine("monknot: \(error.localizedDescription)")
@@ -142,7 +149,14 @@ final class TerminalSessionStore: ObservableObject {
         ptySession?.write(text)
     }
 
+    func send(_ bytes: Data) {
+        startIfNeeded()
+        guard isRunning else { return }
+        ptySession?.write(bytes)
+    }
+
     func resize(columns: Int, rows: Int) {
+        terminalSize = (columns, rows)
         ptySession?.resize(columns: columns, rows: rows)
     }
 

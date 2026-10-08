@@ -160,6 +160,29 @@ final class TerminalPTYSessionTests: XCTestCase {
         XCTAssertEqual(withLocale["LANG"], "de_DE.UTF-8", "A locale the user set is kept")
     }
 
+    @MainActor
+    func testARestartedShellStartsAtTheSizeTheViewLastReported() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MonknotTerminalSize-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let session = TerminalSessionStore(initialDirectory: directory)
+        defer { session.stop() }
+        session.resize(columns: 77, rows: 21)
+        session.startIfNeeded()
+        session.restart()
+        session.send("stty size\n")
+
+        var output = ""
+        for _ in 0..<200 {
+            output = String(decoding: session.output.bytes(from: session.output.startOffset) ?? Data(), as: UTF8.self)
+            if output.contains("21 77") { break }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertTrue(output.contains("21 77"), output)
+    }
+
     func testTwoTerminalSessionsRunIndependently() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("MonknotTerminalPTYMultiple-\(UUID().uuidString)", isDirectory: true)

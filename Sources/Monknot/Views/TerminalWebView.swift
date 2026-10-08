@@ -337,19 +337,7 @@ struct TerminalWebView: NSViewRepresentable {
             macOptionClickForcesSelection: true,
             fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
             fontSize: \(fontSize),
-            theme: {
-              background: '\(theme.terminalSurfaceHex)',
-              foreground: '\(theme.foreground)',
-              cursor: '\(theme.accent)',
-              selectionBackground: '\(theme.selectionBackground)',
-              black: '\(theme.terminalSurfaceHex)',
-              white: '\(theme.foreground)',
-              brightWhite: '\(theme.foreground)',
-              blue: '\(theme.accent)',
-              green: '\(theme.semanticColors.diffAdded)',
-              red: '\(theme.semanticColors.diffRemoved)',
-              magenta: '\(theme.semanticColors.skill)'
-            }
+            theme: \(Self.jsonObject(Self.xtermTheme(theme)))
           });
           const fitAddon = new FitAddon.FitAddon();
           const searchHighlightLimit = 1000;
@@ -371,6 +359,12 @@ struct TerminalWebView: NSViewRepresentable {
             window.webkit.messageHandlers.\(TerminalWebController.inputHandlerName).postMessage(data);
           }
 
+          // Bytes rather than text: each character code is one byte (X10 mouse reports go above 0x7F).
+          function sendBinary(data) {
+            if (disposed || quietWrites > 0) return;
+            window.webkit.messageHandlers.\(TerminalWebController.binaryInputHandlerName).postMessage(data);
+          }
+
           // xterm.js does not expose the mouse encoding, so follow DECSET/DECRST 1006 (SGR) ourselves.
           const sgrSetDisposable = term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, params => {
             if (params.includes(1006)) sgrMouseEncoding = true;
@@ -381,24 +375,38 @@ struct TerminalWebView: NSViewRepresentable {
             return false;
           });
           // XTVERSION: programs use it to pick terminal-specific behaviour such as wheel speed.
+          // A full reset (RIS) or a soft one (DECSTR) also ends SGR mouse encoding.
+          const risDisposable = term.parser.registerEscHandler({ final: 'c' }, () => {
+            sgrMouseEncoding = false;
+            return false;
+          });
+          const decstrDisposable = term.parser.registerCsiHandler({ intermediates: '!', final: 'p' }, () => {
+            sgrMouseEncoding = false;
+            return false;
+          });
           const versionDisposable = term.parser.registerCsiHandler({ prefix: '>', final: 'q' }, params => {
             if ((params[0] || 0) === 0) sendInput('\\x1bP>|xterm.js(5.5.0)\\x1b\\\\');
             return true;
           });
 
-          function wheelReport(button, event) {
+          function sendWheelReports(button, count, event) {
             const rect = screenElement.getBoundingClientRect();
             const col = Math.min(term.cols, Math.max(1, Math.floor((event.clientX - rect.left) / (rect.width / term.cols)) + 1));
             const row = Math.min(term.rows, Math.max(1, Math.floor((event.clientY - rect.top) / (rect.height / term.rows)) + 1));
-            if (sgrMouseEncoding) return `\\x1b[<${button};${col};${row}M`;
-            return '\\x1b[M' + String.fromCharCode(32 + button, 32 + Math.min(col, 223), 32 + Math.min(row, 223));
+            if (sgrMouseEncoding) {
+              sendInput(`\\x1b[<${button};${col};${row}M`.repeat(count));
+              return;
+            }
+            const report = '\\x1b[M' + String.fromCharCode(32 + button, 32 + Math.min(col, 223), 32 + Math.min(row, 223));
+            sendBinary(report.repeat(count));
           }
 
           // With mouse reporting on, xterm.js sends one wheel report per wheel event however far it
           // scrolled, so a trackpad flick moves a program like Claude Code by a line or two. Send one
           // report per line actually scrolled instead.
           term.attachCustomWheelEventHandler(event => {
-            if (term.modes.mouseTrackingMode === 'none') return true;
+            // X10 mode (DECSET 9) reports presses only, never the wheel.
+            if (term.modes.mouseTrackingMode === 'none' || term.modes.mouseTrackingMode === 'x10') return true;
             const cellHeight = screenElement.getBoundingClientRect().height / term.rows;
             const lines = event.deltaMode === 1
               ? event.deltaY
@@ -407,7 +415,7 @@ struct TerminalWebView: NSViewRepresentable {
             const count = Math.trunc(wheelLines);
             if (count !== 0) {
               wheelLines -= count;
-              sendInput(wheelReport(count < 0 ? 64 : 65, event).repeat(Math.min(Math.abs(count), 12)));
+              sendWheelReports(count < 0 ? 64 : 65, Math.min(Math.abs(count), 12), event);
             }
             event.preventDefault();
             return false;
@@ -621,10 +629,12 @@ struct TerminalWebView: NSViewRepresentable {
           window.monknotWriteBytes = function(encoded, options = {}) {
             if (disposed) return;
             if (options.reset) {
+              // Through the stream (RIS), so output still queued from before is parsed first.
               resetTerminalSearch();
-              term.reset();
-              sgrMouseEncoding = false;
               wheelLines = 0;
+              term.write('\\x1bc');
+              lastNotifiedSize = null;
+              notifyResize();
             }
             const bytes = bytesFromBase64(encoded);
             if (!options.quiet) {
@@ -668,6 +678,7 @@ struct TerminalWebView: NSViewRepresentable {
           };
 
           const inputDisposable = term.onData(sendInput);
+          const binaryDisposable = term.onBinary(sendBinary);
           const resizeListener = () => scheduleResize({ preserveScroll: true });
           window.addEventListener('resize', resizeListener);
           const resizeObserver = new ResizeObserver(() => {
@@ -684,7 +695,10 @@ struct TerminalWebView: NSViewRepresentable {
             clearTimeout(notifyResizeTimer);
             sgrSetDisposable.dispose();
             sgrResetDisposable.dispose();
+            risDisposable.dispose();
+            decstrDisposable.dispose();
             versionDisposable.dispose();
+            binaryDisposable.dispose();
             resizeObserver.disconnect();
             window.removeEventListener('resize', resizeListener);
             searchInput.removeEventListener('input', searchInputListener);
@@ -742,6 +756,31 @@ struct TerminalWebView: NSViewRepresentable {
         """
     }
 
+    /// The xterm.js theme, for the page and for every later theme change alike. `term.options.theme`
+    /// replaces the whole theme, so a key missing from either would fall back to xterm's default.
+    static func xtermTheme(_ theme: AppTheme) -> [String: String] {
+        [
+            "background": theme.terminalSurfaceHex,
+            "foreground": theme.foreground,
+            "cursor": theme.accent,
+            "selectionBackground": theme.selectionBackground,
+            "black": theme.terminalSurfaceHex,
+            "white": theme.foreground,
+            "brightWhite": theme.foreground,
+            "blue": theme.accent,
+            "green": theme.semanticColors.diffAdded,
+            "red": theme.semanticColors.diffRemoved,
+            "magenta": theme.semanticColors.skill,
+        ]
+    }
+
+    static func jsonObject(_ value: [String: String]) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
+              let json = String(data: data, encoding: .utf8)
+        else { return "{}" }
+        return json.replacingOccurrences(of: "</", with: "<\\/")
+    }
+
     static func rgba(_ hex: String, alpha: Double) -> String {
         guard let rgb = RGBHex(hex) else {
             return String(format: "rgba(128, 128, 128, %.3f)", alpha)
@@ -793,7 +832,10 @@ final class TerminalWebController: NSObject, TerminalSessionPresentation, WKNavi
     static let inputHandlerName = "terminalInput"
     static let resizeHandlerName = "terminalResize"
     static let searchVisibilityHandlerName = "terminalSearchVisibility"
-    private static let messageHandlerNames = [inputHandlerName, resizeHandlerName, searchVisibilityHandlerName]
+    static let binaryInputHandlerName = "terminalBinaryInput"
+    private static let messageHandlerNames = [
+        inputHandlerName, resizeHandlerName, searchVisibilityHandlerName, binaryInputHandlerName,
+    ]
 
     static func controller(for session: TerminalSessionStore) -> TerminalWebController {
         if let existing = session.presentation as? TerminalWebController {
@@ -812,6 +854,8 @@ final class TerminalWebController: NSObject, TerminalSessionPresentation, WKNavi
     private var renderedOffset = 0
     private var appearance: TerminalAppearance?
     private var appliedAppearance: TerminalAppearance?
+    /// Set when WebKit's content process died: the reloaded page replays output it already answered.
+    private var replaysQuietly = false
     private weak var focusOwnerAtRequest: NSResponder?
     private var shouldFocusWhenReady = false
 
@@ -902,6 +946,25 @@ final class TerminalWebController: NSObject, TerminalSessionPresentation, WKNavi
         performRequestedFocus()
     }
 
+    /// The view outlives the drawer, so a crashed or reclaimed web process must not leave it blank:
+    /// reload the page and replay what the session printed, without answering its queries again.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard let appearance else { return }
+        isLoaded = false
+        renderedEpoch = nil
+        replaysQuietly = true
+        appliedAppearance = appearance
+        webView.loadHTMLString(
+            TerminalWebView.html(
+                theme: appearance.theme,
+                fontSize: appearance.fontSize,
+                usePointerCursors: appearance.usePointerCursors,
+                fontSmoothing: appearance.fontSmoothing
+            ),
+            baseURL: nil
+        )
+    }
+
     // MARK: Messages
 
     fileprivate func receive(_ message: WKScriptMessage) {
@@ -909,6 +972,10 @@ final class TerminalWebController: NSObject, TerminalSessionPresentation, WKNavi
         case Self.inputHandlerName:
             if let text = message.body as? String {
                 session?.send(text)
+            }
+        case Self.binaryInputHandlerName:
+            if let text = message.body as? String, let bytes = text.data(using: .isoLatin1) {
+                session?.send(bytes)
             }
         case Self.resizeHandlerName:
             if let payload = message.body as? [String: Any],
@@ -937,7 +1004,8 @@ final class TerminalWebController: NSObject, TerminalSessionPresentation, WKNavi
             let isRestart = renderedEpoch != nil
             renderedEpoch = session.outputEpoch
             renderedOffset = output.endOffset
-            write(output.bytes(from: output.startOffset) ?? Data(), reset: isRestart, quiet: false)
+            write(output.bytes(from: output.startOffset) ?? Data(), reset: isRestart, quiet: replaysQuietly)
+            replaysQuietly = false
             return
         }
 
@@ -1005,17 +1073,7 @@ final class TerminalWebController: NSObject, TerminalSessionPresentation, WKNavi
                 "activeMatchBorder": theme.foreground,
                 "activeMatchColorOverviewRuler": theme.foreground
             ],
-            "theme": [
-                "background": theme.terminalSurfaceHex,
-                "foreground": theme.foreground,
-                "cursor": theme.accent,
-                "selectionBackground": theme.selectionBackground,
-                "black": theme.terminalSurfaceHex,
-                "blue": theme.accent,
-                "green": theme.semanticColors.diffAdded,
-                "red": theme.semanticColors.diffRemoved,
-                "magenta": theme.semanticColors.skill
-            ]
+            "theme": TerminalWebView.xtermTheme(theme)
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let json = String(data: data, encoding: .utf8)
