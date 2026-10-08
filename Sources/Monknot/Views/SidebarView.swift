@@ -1612,14 +1612,35 @@ private struct SidebarRowButtonStyle: ButtonStyle {
         }
 
         private var fill: Color {
-            if isSelected {
-                return theme.selectedRowColor
-            }
-            if configuration.isPressed {
-                return theme.pressedFillColor
-            }
-            return isHovered ? theme.hoverFillColor : .clear
+            MonknotRowButtonStyle.fill(
+                theme: theme,
+                isSelected: isSelected,
+                isActive: false,
+                isHovered: isHovered,
+                isPressed: configuration.isPressed,
+                isEnabled: isEnabled
+            )
         }
+    }
+}
+
+/// A folder or group's disclosure chevron in the 18pt glyph column, nudged per design.md §8.6: the
+/// right chevron's ink sits left of centre in its box.
+private struct SidebarDisclosureChevron: View {
+    let isExpanded: Bool
+    let theme: AppTheme
+    let zoomScale: Double
+
+    private func glyphScaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
+        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+            .font(.system(size: glyphScaled(10), weight: .regular))
+            .offset(x: isExpanded ? 0 : glyphScaled(0.5))
+            .frame(width: glyphScaled(MonknotMetrics.rowIconColumnWidthBase))
+            .accessibilityHidden(true)
     }
 }
 
@@ -1643,10 +1664,6 @@ private struct SidebarRowLabel<Trailing: View>: View {
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    private func glyphScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -1675,11 +1692,7 @@ private struct SidebarRowLabel<Trailing: View>: View {
     private var leadingGlyph: some View {
         switch leading {
         case .disclosure(let isExpanded):
-            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                .font(.system(size: glyphScaled(10), weight: .regular))
-                // design.md §8.6: the right chevron's ink sits left of centre in its box.
-                .offset(x: isExpanded ? 0 : glyphScaled(0.5))
-                .frame(width: glyphScaled(MonknotMetrics.rowIconColumnWidthBase))
+            SidebarDisclosureChevron(isExpanded: isExpanded, theme: theme, zoomScale: zoomScale)
         case .kind(let systemImage):
             MonknotFileKindGlyph(systemImage: systemImage, theme: theme, zoomScale: zoomScale)
         }
@@ -1953,11 +1966,7 @@ private struct SidebarGroupHeaderLabel: View {
             opacity: isHighlighted ? 1 : AppTheme.tertiaryInkOpacity
         )
         HStack(spacing: scaled(8)) {
-            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                .font(.system(size: MonknotMetrics.interfaceGlyph(10, theme: theme, zoomScale: zoomScale), weight: .regular))
-                .offset(x: isExpanded ? 0 : MonknotMetrics.interfaceGlyph(0.5, theme: theme, zoomScale: zoomScale))
-                .frame(width: MonknotMetrics.interfaceGlyph(MonknotMetrics.rowIconColumnWidthBase, theme: theme, zoomScale: zoomScale))
-                .accessibilityHidden(true)
+            SidebarDisclosureChevron(isExpanded: isExpanded, theme: theme, zoomScale: zoomScale)
 
             Text(title)
                 .font(MonknotTypography.eyebrow(theme: theme, zoomScale: zoomScale))

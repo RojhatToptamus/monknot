@@ -263,7 +263,6 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
     func testSidebarRowIconsStayTwoPointsLargerThanAdjacentLabels() {
         XCTAssertEqual(MonknotMetrics.sidebarIconPointSizeBase, 15)
         XCTAssertEqual(MonknotMetrics.rowIconColumnWidthBase, 18)
-        XCTAssertEqual(MonknotMetrics.sidebarIconWeight, .regular)
 
         for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
@@ -365,7 +364,6 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
     func testSidebarHeaderActionsShareRowSymbolStyleWithoutShrinkingHitTargets() {
         let size = MonknotIconButton.IconButtonSize.sidebarHeader
 
-        XCTAssertEqual(size.iconWeight, MonknotMetrics.sidebarIconWeight)
         for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
                 XCTAssertEqual(

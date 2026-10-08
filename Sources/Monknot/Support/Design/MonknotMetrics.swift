@@ -23,7 +23,6 @@ enum MonknotMetrics {
     static let iconPointSizeBase: CGFloat = 17
     static let sidebarIconPointSizeBase: CGFloat = 15
     static let rowIconColumnWidthBase: CGFloat = 18
-    static let sidebarIconWeight: Font.Weight = .regular
     static let iconCornerRadiusBase: CGFloat = 8
     static let trafficLightReserveBase: CGFloat = 72
     static let windowNavigationLeadingGapBase: CGFloat = 8

@@ -134,10 +134,6 @@ struct MonknotIconButton: View {
             }
         }
 
-        var iconWeight: Font.Weight {
-            .regular
-        }
-
         func cornerRadius(theme: AppTheme, zoomScale: Double) -> CGFloat {
             switch self {
             case .chrome:
