@@ -567,8 +567,9 @@ enum MarkdownImageAssetService {
             item.sourceURL.lastPathComponent,
             fallback: item.isImage ? "Dropped Image.png" : "Dropped File"
         )
+        let convertsToPNG = item.isImage && !keepsOriginalImageFormat(item.sourceURL)
         let proposedName: String
-        if item.isImage {
+        if convertsToPNG {
             let baseName = URL(fileURLWithPath: originalName).deletingPathExtension().lastPathComponent
             proposedName = "\(baseName).png"
         } else {
@@ -582,12 +583,18 @@ enum MarkdownImageAssetService {
         let temporaryURL = assetsURL.appendingPathComponent(".monknot-drop-\(UUID().uuidString).tmp")
         defer { try? FileManager.default.removeItem(at: temporaryURL) }
         if item.isImage {
-            guard let image = NSImage(contentsOf: item.sourceURL),
-                  let data = WorkspacePasteboardImportService.pngData(for: image)
-            else {
+            // Decoding also rejects files that only claim to be images.
+            guard let image = NSImage(contentsOf: item.sourceURL), image.isValid else {
                 throw MarkdownImageAssetError.couldNotReadDroppedImage(item.sourceURL.lastPathComponent)
             }
-            try data.write(to: temporaryURL, options: .atomic)
+            if convertsToPNG {
+                guard let data = WorkspacePasteboardImportService.pngData(for: image) else {
+                    throw MarkdownImageAssetError.couldNotReadDroppedImage(item.sourceURL.lastPathComponent)
+                }
+                try data.write(to: temporaryURL, options: .atomic)
+            } else {
+                try FileManager.default.copyItem(at: item.sourceURL, to: temporaryURL)
+            }
         } else {
             try FileManager.default.copyItem(at: item.sourceURL, to: temporaryURL)
         }
@@ -603,6 +610,13 @@ enum MarkdownImageAssetService {
             isImage: item.isImage,
             wasImported: true
         )
+    }
+
+    /// Formats every browser shows are copied untouched, so a photo keeps its size and a GIF its
+    /// animation. Other images (HEIC, TIFF, BMP, …) become PNG so notes stay portable.
+    static func keepsOriginalImageFormat(_ url: URL) -> Bool {
+        guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
+        return [UTType.png, .jpeg, .gif, .webP, .svg].contains { type.conforms(to: $0) }
     }
 
     private static func validatedAssetsDirectory(workspaceURL: URL, root: URL) throws -> URL {
