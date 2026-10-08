@@ -369,6 +369,7 @@ final class ContentWidthPreferenceTests: XCTestCase {
                 documentID: "/page.html",
                 html: "<html><body><main>Rendered content</main></body></html>",
                 baseURL: nil,
+                resourceRoot: nil,
                 theme: .defaultDark,
                 zoomScale: 1,
                 contentWidthPercent: contentWidthPercent,

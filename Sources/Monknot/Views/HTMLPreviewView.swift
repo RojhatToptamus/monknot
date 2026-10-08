@@ -6,6 +6,8 @@ struct HTMLPreviewView: NSViewRepresentable {
     let documentID: String
     let html: String
     let baseURL: URL?
+    /// The workspace root; relative images and stylesheets load from inside it only.
+    let resourceRoot: URL?
     let theme: AppTheme
     let zoomScale: Double
     let contentWidthPercent: Double
@@ -29,6 +31,10 @@ struct HTMLPreviewView: NSViewRepresentable {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.userContentController.add(context.coordinator, name: Coordinator.scrollPositionHandlerName)
         configuration.userContentController.addUserScript(Coordinator.previewBehaviorScript)
+        configuration.setURLSchemeHandler(
+            context.coordinator.resourceHandler,
+            forURLScheme: WorkspaceResourceSchemeHandler.scheme
+        )
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.identifier = .monknotDocumentFocusTarget
@@ -62,9 +68,11 @@ struct HTMLPreviewView: NSViewRepresentable {
         let didChangeDocument = context.coordinator.prepareForDocument(documentID, in: webView)
         context.coordinator.setPendingScrollPosition(scrollPosition, force: didChangeDocument)
 
-        let request = HTMLPreviewContentRequest(documentID: documentID, html: html, baseURL: baseURL)
+        context.coordinator.resourceHandler.rootURL = resourceRoot
+        let pageBaseURL = WorkspaceResourceSchemeHandler.pageBaseURL(forDirectory: baseURL)
+        let request = HTMLPreviewContentRequest(documentID: documentID, html: html, baseURL: pageBaseURL)
         if context.coordinator.shouldLoad(request, pendingSearch: searchState) {
-            webView.loadHTMLString(html, baseURL: baseURL)
+            webView.loadHTMLString(html, baseURL: pageBaseURL)
             return
         }
 
@@ -80,6 +88,7 @@ struct HTMLPreviewView: NSViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         static let scrollPositionHandlerName = "monknotHTMLScrollPosition"
+        let resourceHandler = WorkspaceResourceSchemeHandler()
         static let previewBehaviorScript = WKUserScript(
             source: """
             (() => {

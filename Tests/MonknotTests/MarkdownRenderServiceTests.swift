@@ -44,11 +44,22 @@ final class MarkdownRenderServiceTests: MarkdownRenderServiceTestCase {
 
         XCTAssertTrue(html.contains(#"data-theme="dark""#))
         XCTAssertTrue(html.contains(#"<base href="file:///tmp/Monknot%20Workspace/">"#))
-        XCTAssertTrue(html.contains("img-src 'self' file: data: blob:;"))
-        XCTAssertFalse(html.contains("img-src 'self' file: data: blob: https: http:;"))
+        // Local images only: workspace files arrive through the in-app resource scheme.
+        XCTAssertTrue(html.contains("img-src 'self' monknot-file: file: data: blob:;"))
+        XCTAssertFalse(html.contains("https:"))
+        XCTAssertFalse(html.contains("http:"))
         XCTAssertTrue(html.contains("body { color: var(--fg); }"))
         XCTAssertTrue(html.contains("document.body.dataset.ready"))
         XCTAssertTrue(html.contains(#"<script>alert('x')<\/script>"#))
+    }
+
+    func testInAppResourceBaseURLKeepsItsScheme() throws {
+        let service = MarkdownRenderService(stylesheet: "", rendererJavaScript: "")
+        let baseURL = try XCTUnwrap(URL(string: "monknot-file:///tmp/Monknot%20Workspace/"))
+
+        let html = try service.htmlDocument(markdown: "", theme: .light, baseURL: baseURL)
+
+        XCTAssertTrue(html.contains(#"<base href="monknot-file:///tmp/Monknot%20Workspace/">"#))
     }
 
     func testHTMLDocumentInjectsAppThemeVariablesAfterStylesheetDefaults() throws {

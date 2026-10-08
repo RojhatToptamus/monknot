@@ -29,6 +29,8 @@ struct MarkdownPreviewView: NSViewRepresentable {
     let documentID: String
     let markdown: String
     let baseURL: URL?
+    /// The workspace root; local images and other files load from inside it only.
+    let resourceRoot: URL?
     let theme: AppTheme
     let zoomScale: Double
     let codeFontSize: Double
@@ -54,6 +56,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         documentID: String,
         markdown: String,
         baseURL: URL?,
+        resourceRoot: URL? = nil,
         theme: AppTheme,
         zoomScale: Double,
         codeFontSize: Double,
@@ -76,6 +79,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         self.documentID = documentID
         self.markdown = markdown
         self.baseURL = baseURL
+        self.resourceRoot = resourceRoot
         self.theme = theme
         self.zoomScale = zoomScale
         self.codeFontSize = codeFontSize
@@ -107,6 +111,11 @@ struct MarkdownPreviewView: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: Coordinator.scrollPositionHandlerName)
         configuration.userContentController.add(context.coordinator, name: Coordinator.interactionHandlerName)
         configuration.userContentController.addUserScript(Coordinator.scrollTrackingScript)
+
+        configuration.setURLSchemeHandler(
+            context.coordinator.resourceHandler,
+            forURLScheme: WorkspaceResourceSchemeHandler.scheme
+        )
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.identifier = .monknotDocumentFocusTarget
@@ -154,8 +163,9 @@ struct MarkdownPreviewView: NSViewRepresentable {
             return
         }
 
+        context.coordinator.resourceHandler.rootURL = resourceRoot
         let shellRequest = PreviewShellRequest(
-            baseURL: baseURL
+            baseURL: WorkspaceResourceSchemeHandler.pageBaseURL(forDirectory: baseURL)
         )
         let appearanceRequest = PreviewAppearanceRequest(
             theme: theme,
@@ -406,6 +416,8 @@ struct MarkdownPreviewView: NSViewRepresentable {
         private var pendingSyncScrollLine: Int?
         private var suppressesNextSourceLine = false
         private(set) var isShellLoaded = false
+
+        let resourceHandler = WorkspaceResourceSchemeHandler()
 
         init(onSourceJump: @escaping (MarkdownSourceLocation) -> Void) {
             self.onSourceJump = onSourceJump

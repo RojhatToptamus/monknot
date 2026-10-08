@@ -1154,6 +1154,7 @@ struct ContentView: View {
                 try await exporter.exportPDF(for: MarkdownPDFExportRequest(
                     markdown: markdown,
                     baseURL: document.url.deletingLastPathComponent(),
+                    resourceRoot: store.workspaceURL,
                     theme: exportTheme,
                     usePointerCursors: usePointerCursors,
                     fontSmoothing: fontSmoothing,
