@@ -109,6 +109,33 @@ final class MarkdownEditorBasicInteractionTests: FlowEditorTestCase {
         }
     }
 
+    func testSavedScrollOriginSurvivesBeingAppliedRightAfterTheTextIsReplaced() throws {
+        let box = EditorTextBox("short note")
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: box.value)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        textView.isVerticallyResizable = true
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = true
+
+        // A tab switch assigns the long document's text and restores its origin in the same update,
+        // before layout; the clip view used to clamp the origin to the short note's height.
+        let longText = (1...2000).map { "Line \($0) of the long document." }.joined(separator: "\n")
+        textView.string = longText
+        coordinator.restoreDocumentScrollPosition(CGPoint(x: 0, y: 8000), openingTopLine: nil, for: "long.md")
+        XCTAssertEqual(scrollView.contentView.bounds.origin.y, 8000, accuracy: 0.5)
+
+        // A jump puts its line at the top of the viewport.
+        let offset = MarkdownScrollSync.characterOffset(forLine: 1200, in: longText)
+        coordinator.scrollLineToTop(NSRange(location: offset, length: 0))
+        let layoutManager = try XCTUnwrap(textView.layoutManager)
+        let lineTop = layoutManager.lineFragmentRect(
+            forGlyphAt: layoutManager.glyphIndexForCharacter(at: offset),
+            effectiveRange: nil
+        ).minY
+        XCTAssertEqual(scrollView.contentView.bounds.origin.y, lineTop, accuracy: 0.5)
+    }
+
     func testTextStatisticsCountLinesAndWords() {
         XCTAssertEqual(MarkdownTextStatistics(text: ""), MarkdownTextStatistics(lineCount: 1, wordCount: 0))
         XCTAssertEqual(

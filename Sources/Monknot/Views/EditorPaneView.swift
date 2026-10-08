@@ -104,7 +104,10 @@ struct EditorPaneView: View {
                 documentScrollBarWidth = Self.systemScrollBarWidth()
             }
             .onChange(of: store.selectedDocument?.id) { oldDocumentID, newDocumentID in
-                outlinePosition.update(1)
+                // The new document's editor may already have reported its restored line.
+                if outlinePosition.documentID != newDocumentID {
+                    outlinePosition.update(1, documentID: nil)
+                }
                 if let oldDocumentID,
                    supportsSplitViewRatioPersistence(forDocumentID: oldDocumentID) {
                     DocumentSplitViewPersistence.setSourcePaneRatio(
@@ -477,7 +480,7 @@ struct EditorPaneView: View {
                     theme: theme,
                     zoomScale: zoomScale,
                     select: { item in
-                        outlinePosition.update(item.location.line)
+                        outlinePosition.update(item.location.line, documentID: selectedDocument.id)
                         selectOutlineItem(item)
                     }
                 )
@@ -507,6 +510,7 @@ struct EditorPaneView: View {
             textSelection: activeViewportState?.textSelection,
             syncScrollEnabled: isSplitViewEnabled,
             syncScrollTargetLine: sourceSyncLine,
+            openingTopLine: outlinePosition.visibleLine(in: selectedDocument.id),
             sourceLocation: $sourceLocation,
             searchState: $documentSearch,
             searchOptions: searchOptions,
@@ -527,7 +531,7 @@ struct EditorPaneView: View {
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
             },
             onVisibleTopLineChange: { line in
-                outlinePosition.update(line)
+                outlinePosition.update(line, documentID: selectedDocument.id)
                 syncPreviewScroll(to: line)
             }
         )
@@ -547,6 +551,7 @@ struct EditorPaneView: View {
             scrollPosition: activeViewportState?.markdownPreviewScrollPosition,
             syncScrollEnabled: isSplitViewEnabled,
             syncScrollTargetLine: previewSyncLine,
+            openingTopLine: outlinePosition.visibleLine(in: selectedDocument.id),
             sourceLocation: $previewLocation,
             searchState: $documentSearch,
             searchOptions: searchOptions,
@@ -557,7 +562,7 @@ struct EditorPaneView: View {
                 updateViewportState(selectedDocument.id, .markdownPreviewScrollPosition(position))
             },
             onVisibleSourceLineChange: { line in
-                outlinePosition.update(line)
+                outlinePosition.update(line, documentID: selectedDocument.id)
                 syncSourceScroll(to: line)
             }
         )

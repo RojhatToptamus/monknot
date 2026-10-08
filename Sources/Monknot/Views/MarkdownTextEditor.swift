@@ -1637,6 +1637,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
     let textSelection: DocumentTextSelection?
     let syncScrollEnabled: Bool
     let syncScrollTargetLine: Int?
+    /// The line to show at the top when the editor is created for a document already on screen
+    /// (Source, Preview or split changed). A saved offset was measured at another pane width.
+    let openingTopLine: Int?
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var searchState: DocumentSearchState
     let searchOptions: MonknotSearchOptions
@@ -1671,6 +1674,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         onScrollPositionChange: @escaping (DocumentScrollPosition) -> Void,
         syncScrollEnabled: Bool = false,
         syncScrollTargetLine: Int? = nil,
+        openingTopLine: Int? = nil,
         onVisibleTopLineChange: ((Int) -> Void)? = nil,
         commandRequest: MarkdownTextEditorCommandRequest? = nil,
         markdownShortcutsEnabled: Bool = false,
@@ -1696,6 +1700,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         self.textSelection = textSelection
         self.syncScrollEnabled = syncScrollEnabled
         self.syncScrollTargetLine = syncScrollTargetLine
+        self.openingTopLine = openingTopLine
         self._sourceLocation = sourceLocation
         self._searchState = searchState
         self.searchOptions = searchOptions
@@ -1890,8 +1895,13 @@ struct MarkdownTextEditor: NSViewRepresentable {
             in: textView
         )
 
-        if didChangeDocument {
-            context.coordinator.restoreScrollPosition(scrollPosition?.point ?? .zero, in: scrollView)
+        if context.coordinator.needsScrollRestore(for: documentID) {
+            // Also true for a freshly created editor (a mode switch or split toggle rebuilds it).
+            context.coordinator.restoreDocumentScrollPosition(
+                scrollPosition?.point ?? .zero,
+                openingTopLine: openingTopLine,
+                for: documentID
+            )
         } else if scrollView.contentView.bounds.origin != visibleOrigin {
             // Undo only a shift this update caused. Re-applying an unchanged origin cancelled
             // in-flight animated scrolls, such as a page click in the scroll bar track.
@@ -2032,6 +2042,15 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private(set) var revision = 0
         private var lastPublishedSelection: MarkdownEditorSelectionSnapshot?
         private var shouldRestoreSelection = true
+        private enum PendingScroll {
+            case origin(CGPoint)
+            case lineTop(NSRange)
+        }
+        /// A scroll that waits until the scroll view has a size: a freshly created editor has none
+        /// until SwiftUI lays it out.
+        private var pendingScroll: PendingScroll?
+        /// The document whose saved scroll origin has been applied (or requested).
+        private var scrollRestoreDocumentID: String?
         private var flowSourceMode: FlowSourceMode?
         private var flowCheckingOptions = EditorTextCheckingOptions.defaultValue
         private var flowCheckTask: Task<Void, Never>?
@@ -2263,10 +2282,17 @@ struct MarkdownTextEditor: NSViewRepresentable {
         func attach(to scrollView: NSScrollView) {
             self.scrollView = scrollView
             scrollView.contentView.postsBoundsChangedNotifications = true
+            scrollView.contentView.postsFrameChangedNotifications = true
             NotificationCenter.default.addObserver(
                 self,
                 selector: #selector(scrollViewBoundsDidChange(_:)),
                 name: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(clipViewFrameDidChange(_:)),
+                name: NSView.frameDidChangeNotification,
                 object: scrollView.contentView
             )
             NotificationCenter.default.addObserver(
@@ -2549,9 +2575,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
             lastAppliedSyncScrollLine = line
             let offset = MarkdownScrollSync.characterOffset(forLine: line, in: textView.string)
-            let range = NSRange(location: offset, length: 0)
+            // Align tops, as the preview does for the source's line; minimal scrolling left the
+            // line at the bottom edge when the preview moved down.
             isRestoringScrollPosition = true
-            textView.scrollRangeToVisible(range)
+            scrollLineToTop(NSRange(location: offset, length: 0))
             isRestoringScrollPosition = false
         }
 
@@ -2578,6 +2605,76 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
             if shouldPublish {
                 publish(DocumentScrollPosition(point))
+            }
+        }
+
+        func needsScrollRestore(for documentID: String) -> Bool {
+            scrollRestoreDocumentID != documentID
+        }
+
+        func restoreDocumentScrollPosition(_ point: CGPoint, openingTopLine: Int?, for documentID: String) {
+            let isNewEditor = scrollRestoreDocumentID == nil
+            scrollRestoreDocumentID = documentID
+            if isNewEditor, let openingTopLine, let textView {
+                let offset = MarkdownScrollSync.characterOffset(forLine: openingTopLine, in: textView.string)
+                pendingScroll = .lineTop(NSRange(location: offset, length: 0))
+            } else {
+                pendingScroll = .origin(point)
+            }
+            applyPendingScrollIfSized()
+        }
+
+        /// Scrolls so the line holding `range` sits where the document's first line does, which
+        /// is also the line the outline rail reads as current.
+        func scrollLineToTop(_ range: NSRange) {
+            pendingScroll = .lineTop(range)
+            applyPendingScrollIfSized()
+        }
+
+        @objc private func clipViewFrameDidChange(_ notification: Notification) {
+            applyPendingScrollIfSized()
+        }
+
+        private func applyPendingScrollIfSized() {
+            guard let pending = pendingScroll,
+                  let scrollView,
+                  let textView,
+                  let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer,
+                  scrollView.contentView.bounds.width > 0
+            else { return }
+            pendingScroll = nil
+
+            switch pending {
+            case .origin(let point):
+                // Newly assigned text is not laid out yet, so the text view still has the previous
+                // height and the clip view would clamp the saved origin to it. Lay out down to the
+                // origin first; the clip view then clamps only what is really out of range.
+                layoutManager.ensureLayout(
+                    forBoundingRect: NSRect(
+                        x: 0,
+                        y: 0,
+                        width: textContainer.size.width,
+                        height: point.y + scrollView.contentView.bounds.height
+                    ),
+                    in: textContainer
+                )
+                textView.sizeToFit()
+                restoreScrollPosition(point, in: scrollView)
+            case .lineTop(let range):
+                let length = (textView.string as NSString).length
+                guard length > 0, layoutManager.numberOfGlyphs > 0 else {
+                    scrollView.contentView.scroll(to: .zero)
+                    scrollView.reflectScrolledClipView(scrollView.contentView)
+                    return
+                }
+                let glyphIndex = layoutManager.glyphIndexForCharacter(at: min(range.location, length - 1))
+                layoutManager.ensureLayout(forGlyphRange: NSRange(location: 0, length: glyphIndex + 1))
+                textView.sizeToFit()
+                // The container's top inset stays above the line, as it does above the first line.
+                let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+                scrollView.contentView.scroll(to: NSPoint(x: scrollView.contentView.bounds.origin.x, y: lineRect.minY))
+                scrollView.reflectScrolledClipView(scrollView.contentView)
             }
         }
 
@@ -5902,7 +5999,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
             let offset = characterOffset(for: location, in: textView.string)
             let range = NSRange(location: offset, length: 0)
             textView.setSelectedRange(range)
-            textView.scrollRangeToVisible(range)
+            // A jump shows its target line at the top (minimal scrolling left a heading at the
+            // bottom edge, so the outline marked the section above it). This also supersedes a
+            // saved-origin restore still waiting for the view's size.
+            scrollLineToTop(range)
             textView.window?.makeFirstResponder(textView)
             lastNavigatedLocation = location
 

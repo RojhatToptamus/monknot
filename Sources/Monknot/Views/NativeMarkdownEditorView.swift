@@ -15,6 +15,7 @@ struct NativeMarkdownEditorView: View {
     let textSelection: DocumentTextSelection?
     let syncScrollEnabled: Bool
     let syncScrollTargetLine: Int?
+    let openingTopLine: Int?
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var searchState: DocumentSearchState
     let searchOptions: MonknotSearchOptions
@@ -44,6 +45,7 @@ struct NativeMarkdownEditorView: View {
         textSelection: DocumentTextSelection? = nil,
         syncScrollEnabled: Bool,
         syncScrollTargetLine: Int?,
+        openingTopLine: Int? = nil,
         sourceLocation: Binding<MarkdownSourceLocation?>,
         searchState: Binding<DocumentSearchState>,
         searchOptions: MonknotSearchOptions = MonknotSearchOptions(),
@@ -72,6 +74,7 @@ struct NativeMarkdownEditorView: View {
         self.textSelection = textSelection
         self.syncScrollEnabled = syncScrollEnabled
         self.syncScrollTargetLine = syncScrollTargetLine
+        self.openingTopLine = openingTopLine
         self._sourceLocation = sourceLocation
         self._searchState = searchState
         self.searchOptions = searchOptions
@@ -108,6 +111,7 @@ struct NativeMarkdownEditorView: View {
                     onScrollPositionChange: onScrollPositionChange,
                     syncScrollEnabled: syncScrollEnabled,
                     syncScrollTargetLine: syncScrollTargetLine,
+                    openingTopLine: openingTopLine,
                     onVisibleTopLineChange: onVisibleTopLineChange,
                     commandRequest: commandRequest,
                     markdownShortcutsEnabled: true,

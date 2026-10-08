@@ -38,6 +38,9 @@ struct MarkdownPreviewView: NSViewRepresentable {
     let scrollPosition: DocumentScrollPosition?
     let syncScrollEnabled: Bool
     let syncScrollTargetLine: Int?
+    /// The source line to show at the top when the preview is created for a document already on
+    /// screen (Source, Preview or split changed), instead of its own saved offset.
+    let openingTopLine: Int?
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var searchState: DocumentSearchState
     let searchOptions: MonknotSearchOptions
@@ -60,6 +63,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         scrollPosition: DocumentScrollPosition?,
         syncScrollEnabled: Bool,
         syncScrollTargetLine: Int?,
+        openingTopLine: Int? = nil,
         sourceLocation: Binding<MarkdownSourceLocation?>,
         searchState: Binding<DocumentSearchState>,
         searchOptions: MonknotSearchOptions = MonknotSearchOptions(),
@@ -81,6 +85,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         self.scrollPosition = scrollPosition
         self.syncScrollEnabled = syncScrollEnabled
         self.syncScrollTargetLine = syncScrollTargetLine
+        self.openingTopLine = openingTopLine
         self._sourceLocation = sourceLocation
         self._searchState = searchState
         self.searchOptions = searchOptions
@@ -112,7 +117,11 @@ struct MarkdownPreviewView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
+        let isNewPreview = !context.coordinator.hasDocument
         let didChangeDocument = context.coordinator.prepareForDocument(documentID, in: webView)
+        if isNewPreview {
+            context.coordinator.openAtLine(openingTopLine)
+        }
         context.coordinator.onSourceJump = onSourceJump
         context.coordinator.onScrollPositionChange = onScrollPositionChange
         context.coordinator.onVisibleSourceLineChange = onVisibleSourceLineChange
@@ -392,6 +401,9 @@ struct MarkdownPreviewView: NSViewRepresentable {
         private var lastPublishedScrollPosition: DocumentScrollPosition?
         private var lastPublishedSourceLine: Int?
         private var lastAppliedSyncScrollLine: Int?
+        /// A source line to show at the top once content has rendered: a split-view line that
+        /// arrived while the preview was loading, or a rebuilt preview's opening line.
+        private var pendingSyncScrollLine: Int?
         private var isApplyingSyncScroll = false
         private(set) var isShellLoaded = false
 
@@ -410,6 +422,8 @@ struct MarkdownPreviewView: NSViewRepresentable {
             activeRenderID = nil
             lastPublishedScrollPosition = nil
             shouldRestorePendingScrollPosition = true
+            lastAppliedSyncScrollLine = nil
+            pendingSyncScrollLine = nil
             return true
         }
 
@@ -703,10 +717,28 @@ struct MarkdownPreviewView: NSViewRepresentable {
             }
         }
 
-        fileprivate func applySyncScrollTargetLine(_ line: Int?, in webView: WKWebView) {
-            guard syncScrollEnabled, isShellLoaded, lastRenderedContent != nil else { return }
-            guard let line, line > 0, line != lastAppliedSyncScrollLine else { return }
+        var hasDocument: Bool { documentID != nil }
 
+        /// A rebuilt preview starts at this source line once its content renders.
+        fileprivate func openAtLine(_ line: Int?) {
+            guard let line, line > 0 else { return }
+            pendingSyncScrollLine = line
+        }
+
+        fileprivate func applySyncScrollTargetLine(_ line: Int?, in webView: WKWebView) {
+            guard syncScrollEnabled, let line, line > 0, line != lastAppliedSyncScrollLine else { return }
+            scrollToLine(line, in: webView)
+        }
+
+        private func scrollToLine(_ line: Int, in webView: WKWebView) {
+            // Opening split view sends the source's line while the preview is still loading;
+            // dropping it left the preview at its own stale position until the next scroll.
+            guard isShellLoaded, lastRenderedContent != nil else {
+                pendingSyncScrollLine = line
+                return
+            }
+
+            pendingSyncScrollLine = nil
             lastAppliedSyncScrollLine = line
             isApplyingSyncScroll = true
 
@@ -722,6 +754,12 @@ struct MarkdownPreviewView: NSViewRepresentable {
         }
 
         fileprivate func applyPendingScrollPositionIfNeeded(in webView: WKWebView) {
+            if let line = pendingSyncScrollLine {
+                // The source's line decides where a rebuilt or split preview starts.
+                shouldRestorePendingScrollPosition = false
+                scrollToLine(line, in: webView)
+                return
+            }
             guard shouldRestorePendingScrollPosition else { return }
             shouldRestorePendingScrollPosition = false
 

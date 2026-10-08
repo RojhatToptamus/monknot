@@ -43,10 +43,18 @@ enum MarkdownOutlineRailLayout {
 @MainActor
 final class MarkdownOutlinePosition: ObservableObject {
     @Published private(set) var visibleLine = 1
+    /// The document `visibleLine` was reported for.
+    private(set) var documentID: String?
 
-    func update(_ line: Int) {
+    func update(_ line: Int, documentID: String?) {
+        self.documentID = documentID
         guard line != visibleLine else { return }
         visibleLine = line
+    }
+
+    /// The line last shown at the top of `documentID`, if this position belongs to it.
+    func visibleLine(in documentID: String) -> Int? {
+        self.documentID == documentID ? visibleLine : nil
     }
 }
 
