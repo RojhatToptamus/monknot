@@ -43,6 +43,8 @@ final class WorkspaceResourceSchemeHandlerTests: XCTestCase {
         XCTAssertFalse(try servable("../outside/secret.png"), "a path outside the workspace")
         XCTAssertFalse(try servable("escape/secret.png"), "a symbolic link out of the workspace")
         XCTAssertFalse(try servable("../workspace-sibling/image.png"), "a sibling sharing the root's prefix")
+        XCTAssertFalse(try servable("%2e%2e/outside/secret.png"), "percent-encoded dot segments")
+        XCTAssertFalse(try servable("assets/..%2F..%2Foutside/secret.png"), "percent-encoded separators")
 
         handler.rootURL = nil
         XCTAssertFalse(try servable("assets/image.png"), "nothing is served without a workspace")

@@ -33,23 +33,34 @@ final class WorkspaceResourceSchemeHandler: NSObject, WKURLSchemeHandler {
 
     /// The file a request may read, or nil when it lies outside the root.
     func servableFileURL(for resourceURL: URL) -> URL? {
-        guard let fileURL = Self.fileURL(for: resourceURL), let rootURL else { return nil }
+        Self.servableFileURL(for: resourceURL, within: rootURL)
+    }
+
+    /// Resolves symbolic links, so it touches the file system: call it off the main thread.
+    static func servableFileURL(for resourceURL: URL, within rootURL: URL?) -> URL? {
+        guard let fileURL = fileURL(for: resourceURL), let rootURL else { return nil }
         let rootPath = rootURL.resolvingSymlinksInPath().standardizedFileURL.path
         let filePath = fileURL.resolvingSymlinksInPath().standardizedFileURL.path
         return filePath.hasPrefix(rootPath + "/") ? URL(fileURLWithPath: filePath) : nil
     }
 
     func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
-        guard let requestURL = task.request.url, let fileURL = servableFileURL(for: requestURL) else {
-            task.didFailWithError(URLError(.noPermissionsToReadFile))
+        guard let requestURL = task.request.url else {
+            task.didFailWithError(URLError(.badURL))
             return
         }
         let taskID = ObjectIdentifier(task)
+        let rootURL = rootURL
         DispatchQueue.global(qos: .userInitiated).async {
-            let data = try? Data(contentsOf: fileURL)
+            let fileURL = Self.servableFileURL(for: requestURL, within: rootURL)
+            let data = fileURL.flatMap { try? Data(contentsOf: $0) }
             DispatchQueue.main.async { [weak self] in
                 // WebKit may cancel a load (navigation, teardown) before the read finishes.
                 guard let self, self.stoppedTasks.remove(taskID) == nil else { return }
+                guard let fileURL else {
+                    task.didFailWithError(URLError(.noPermissionsToReadFile))
+                    return
+                }
                 guard let data else {
                     task.didFailWithError(URLError(.fileDoesNotExist))
                     return
