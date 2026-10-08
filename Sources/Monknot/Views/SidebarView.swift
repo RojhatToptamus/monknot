@@ -216,7 +216,7 @@ struct SidebarView: View {
                 GeometryReader { geometry in
                     VStack(spacing: 0) {
                         SidebarScrollContainer {
-                            LazyVStack(alignment: .leading, spacing: scaled(1)) {
+                            LazyVStack(alignment: .leading, spacing: scaled(2)) {
                                 ForEach(nodes) { visibleNode in
                                     SidebarNodeRow(
                                         visibleNode: visibleNode,
@@ -253,7 +253,7 @@ struct SidebarView: View {
                                     .equatable()
                                 }
                             }
-                            .padding(.horizontal, scaled(8))
+                            .padding(.horizontal, scaled(6))
                             .padding(.vertical, scaled(6))
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -278,6 +278,9 @@ struct SidebarView: View {
                                 theme: theme,
                                 zoomScale: zoomScale,
                                 availableSidebarHeight: geometry.size.height,
+                                kindGlyph: { entry in
+                                    (store.document(id: entry.documentID)?.kind ?? .markdown).resolvedSystemImage
+                                },
                                 openDocument: openDocument
                             )
                             .layoutPriority(2)
@@ -830,15 +833,14 @@ private struct SidebarProjectHeader: View {
                 Button {
                     isSwitcherPresented.toggle()
                 } label: {
-                    HStack(spacing: 0) {
+                    HStack(spacing: scaled(6)) {
                         Text(workspaceName)
                             .font(.system(size: textScaled(13), weight: .semibold))
                             .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.92))
                             .lineLimit(1)
                             .truncationMode(.tail)
 
-                        Spacer(minLength: scaled(8))
-
+                        // Beside the name, like a pop-up button (design.md §10.4 "name + chevron").
                         Image(systemName: "chevron.down")
                             .font(.system(size: textScaled(10), weight: .regular))
                             .symbolRenderingMode(.monochrome)
@@ -850,6 +852,8 @@ private struct SidebarProjectHeader: View {
                             .opacity(showsChevron ? 1 : 0)
                             .frame(width: scaled(11))
                             .animation(MonknotMotion.hoverAnimation, value: showsChevron)
+
+                        Spacer(minLength: 0)
                     }
                     .padding(.horizontal, scaled(10))
                     .frame(maxWidth: .infinity)
@@ -1222,10 +1226,6 @@ private struct SidebarNodeRow: View {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
-    private func textScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
-    }
-
     private func glyphScaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
     }
@@ -1238,45 +1238,29 @@ private struct SidebarNodeRow: View {
         }
     }
 
-    /// Folder row with a disclosure chevron.
+    /// Folder row: its disclosure chevron takes the glyph column (design.md §10.4).
     private var folderRow: some View {
         Button {
             withAnimation(MonknotMotion.outlineAnimation(reduceMotion: reduceMotion)) {
                 toggleFolder(visibleNode)
             }
         } label: {
-            HStack(spacing: scaled(8)) {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: glyphScaled(10), weight: .semibold))
-                    .foregroundStyle(theme.sidebarMutedColor())
-                    .frame(width: glyphScaled(12))
-                    .accessibilityHidden(true)
-
-                Image(systemName: "folder")
-                    .font(.system(
-                        size: glyphScaled(MonknotMetrics.sidebarIconPointSizeBase),
-                        weight: MonknotMetrics.sidebarIconWeight
-                    ))
-                    .foregroundStyle(theme.sidebarMutedColor(prominence: 0.72))
-                    .frame(width: glyphScaled(MonknotMetrics.rowIconColumnWidthBase))
-                    .accessibilityHidden(true)
-
-                Text(visibleNode.displayName)
-                    .font(.system(size: textScaled(13), weight: .regular))
-                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.88))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
-                Spacer(minLength: 0)
+            SidebarRowLabel(
+                leading: .disclosure(isExpanded: isExpanded),
+                title: visibleNode.displayName,
+                depth: visibleNode.depth,
+                isSelected: false,
+                theme: theme,
+                zoomScale: zoomScale
+            ) {
+                EmptyView()
             }
-            .padding(.leading, CGFloat(visibleNode.depth) * scaled(16))
-            .padding(.horizontal, scaled(5))
-            .frame(height: scaled(30))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .sidebarHoverRow(theme: theme, isSelected: false, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+        .buttonStyle(SidebarRowButtonStyle(
+            theme: theme,
+            isSelected: false,
+            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
+        ))
         .background {
             if tracksMoveFrame {
                 SidebarNodeFrameReader(id: node.id)
@@ -1312,26 +1296,14 @@ private struct SidebarNodeRow: View {
                 selectDocument(document.id)
             }
         } label: {
-            HStack(spacing: scaled(7)) {
-                MonknotFileKindGlyph(
-                    systemImage: documentIconName,
-                    theme: theme,
-                    zoomScale: zoomScale
-                )
-                    .foregroundStyle(
-                        isSelected
-                            ? theme.sidebarColor(theme.accentColor, opacity: 0.95)
-                            : theme.sidebarMutedColor(prominence: 0.7)
-                    )
-                    .accessibilityHidden(true)
-
-                Text(node.name)
-                    .font(.system(size: textScaled(13), weight: .regular))
-                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: isSelected ? 0.98 : 0.88))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
+            SidebarRowLabel(
+                leading: .kind(systemImage: documentIconName),
+                title: node.name,
+                depth: visibleNode.depth,
+                isSelected: isSelected,
+                theme: theme,
+                zoomScale: zoomScale
+            ) {
                 if let gitStatus {
                     GitStatusBadge(status: gitStatus, theme: theme, zoomScale: zoomScale)
                 }
@@ -1345,14 +1317,12 @@ private struct SidebarNodeRow: View {
                     )
                 }
             }
-            .padding(.leading, CGFloat(visibleNode.depth) * scaled(16) + scaled(8))
-            .padding(.trailing, scaled(10))
-            .frame(height: scaled(30))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .sidebarHoverRow(theme: theme, isSelected: isSelected, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+        .buttonStyle(SidebarRowButtonStyle(
+            theme: theme,
+            isSelected: isSelected,
+            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
+        ))
         .background {
             if tracksMoveFrame {
                 SidebarNodeFrameReader(id: node.id)
@@ -1585,47 +1555,125 @@ private final class SidebarNativeScrollView<Content: View>: NSScrollView {
     }
 }
 
-private extension View {
-    func sidebarHoverRow(theme: AppTheme, isSelected: Bool, cornerRadius: CGFloat) -> some View {
-        modifier(SidebarHoverRowModifier(theme: theme, isSelected: isSelected, cornerRadius: cornerRadius))
-    }
+private extension EnvironmentValues {
+    /// True while the pointer is over a sidebar row or the row is held down; its label and glyph
+    /// then take one step up the ink ladder (design.md §1.4).
+    @Entry var sidebarRowIsHighlighted = false
 }
 
-private struct SidebarHoverRowModifier: ViewModifier {
+/// Fills a sidebar row: `sel` when selected, `press` while held, `hover` under the pointer.
+private struct SidebarRowButtonStyle: ButtonStyle {
     let theme: AppTheme
     let isSelected: Bool
     let cornerRadius: CGFloat
-    @Environment(\.isEnabled) private var isEnabled
-    @State private var isHovered = false
 
-    func body(content: Content) -> some View {
-        content
-            .background(selectionBackground)
-            .animation(.easeOut(duration: 0.12), value: isHovered)
-            .onHover { isHovered = $0 }
-            .monknotPointerCursor(enabled: isEnabled)
+    func makeBody(configuration: Configuration) -> some View {
+        RowBody(configuration: configuration, theme: theme, isSelected: isSelected, cornerRadius: cornerRadius)
+    }
+
+    private struct RowBody: View {
+        let configuration: Configuration
+        let theme: AppTheme
+        let isSelected: Bool
+        let cornerRadius: CGFloat
+        @Environment(\.isEnabled) private var isEnabled
+        @State private var isHovered = false
+
+        var body: some View {
+            configuration.label
+                .environment(\.sidebarRowIsHighlighted, isHovered || configuration.isPressed)
+                .background(RoundedRectangle(cornerRadius: cornerRadius).fill(fill))
+                .onHover { isHovered = $0 }
+                .animation(MonknotMotion.hoverAnimation, value: isHovered)
+                .animation(MonknotMotion.hoverAnimation, value: configuration.isPressed)
+                .monknotPointerCursor(enabled: isEnabled)
+        }
+
+        private var fill: Color {
+            if isSelected {
+                return theme.selectedRowColor
+            }
+            if configuration.isPressed {
+                return theme.pressedFillColor
+            }
+            return isHovered ? theme.hoverFillColor : .clear
+        }
+    }
+}
+
+/// The sidebar's row primitive, design.md §0 and §10.4: 10 padding · 16 per depth · glyph in the 18
+/// column · 8 gap · 13 label · 10 padding. A folder's disclosure chevron takes the glyph column, so
+/// every row has one glyph, names at one depth share an edge, and a child steps right by one indent.
+private struct SidebarRowLabel<Trailing: View>: View {
+    enum Leading {
+        case disclosure(isExpanded: Bool)
+        case kind(systemImage: String)
+    }
+
+    let leading: Leading
+    let title: String
+    let depth: Int
+    let isSelected: Bool
+    let theme: AppTheme
+    let zoomScale: Double
+    @ViewBuilder let trailing: () -> Trailing
+    @Environment(\.sidebarRowIsHighlighted) private var isHighlighted
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    private func glyphScaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
+        HStack(spacing: scaled(8)) {
+            leadingGlyph
+                .foregroundStyle(glyphColor)
+                .accessibilityHidden(true)
+
+            Text(title)
+                .font(.system(size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale), weight: .regular))
+                .foregroundStyle(labelColor)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            trailing()
+        }
+        .padding(.leading, scaled(10) + CGFloat(depth) * scaled(16))
+        .padding(.trailing, scaled(10))
+        .frame(height: scaled(30))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder
-    private var selectionBackground: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .fill(underlayFill)
-            if isSelected {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(theme.selectedRowColor)
-            }
+    private var leadingGlyph: some View {
+        switch leading {
+        case .disclosure(let isExpanded):
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                .font(.system(size: glyphScaled(10), weight: .regular))
+                // design.md §8.6: the right chevron's ink sits left of centre in its box.
+                .offset(x: isExpanded ? 0 : glyphScaled(0.5))
+                .frame(width: glyphScaled(MonknotMetrics.rowIconColumnWidthBase))
+        case .kind(let systemImage):
+            MonknotFileKindGlyph(systemImage: systemImage, theme: theme, zoomScale: zoomScale)
         }
     }
 
-    private var underlayFill: Color {
+    // design.md §1.4: label `ink2` and glyph `ink3` at rest, both `ink` when hovered or held. The
+    // selected row's label is `ink` and its glyph `accent` (§1.3). Quiet Sidebar subdues all of it.
+    private var labelColor: Color {
+        theme.sidebarColor(isSelected || isHighlighted ? theme.foregroundColor : theme.mutedForegroundColor)
+    }
+
+    private var glyphColor: Color {
         if isSelected {
-            return theme.elevatedSurfaceColor
+            return theme.sidebarColor(theme.accentColor)
         }
-        if isHovered {
-            return theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.055)
-        }
-        return .clear
+        return theme.sidebarColor(isHighlighted ? theme.foregroundColor : theme.tertiaryForegroundColor)
     }
 }
 
@@ -1668,45 +1716,32 @@ private struct SidebarSettingsButton: View {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
-    private func textScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    private func glyphScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
-    }
-
     var body: some View {
         Button {
             openSettings()
         } label: {
-            HStack(spacing: scaled(8)) {
-                Image(systemName: MonknotWorkspaceIcons.settings)
-                    .font(.system(
-                        size: MonknotMetrics.chromeGlyphSize(theme: theme, zoomScale: zoomScale),
-                        weight: .medium
-                    ))
-                    .foregroundStyle(theme.sidebarMutedColor())
-
-                Text("Settings")
-                    .font(.system(size: textScaled(13), weight: .regular))
-                    .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.85))
-
-                Spacer()
-
+            SidebarRowLabel(
+                leading: .kind(systemImage: MonknotWorkspaceIcons.settings),
+                title: "Settings",
+                depth: 0,
+                isSelected: false,
+                theme: theme,
+                zoomScale: zoomScale
+            ) {
                 MonknotShortcutLabel(
                     shortcut: "⌘,",
                     theme: theme,
                     zoomScale: zoomScale
                 )
             }
-            .padding(.horizontal, scaled(10))
-            .padding(.vertical, scaled(8))
-            .contentShape(Rectangle())
         }
-        .buttonStyle(MonknotRowButtonStyle(theme: theme, isSelected: false, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)))
-        .padding(.horizontal, scaled(5))
-        .padding(.vertical, scaled(4))
+        .buttonStyle(SidebarRowButtonStyle(
+            theme: theme,
+            isSelected: false,
+            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
+        ))
+        .padding(.horizontal, scaled(6))
+        .padding(.vertical, scaled(5))
         .help("Open Settings (⌘,)")
     }
 }
@@ -1772,20 +1807,13 @@ private struct SidebarRecentDocumentsSection: View {
     let theme: AppTheme
     let zoomScale: Double
     let availableSidebarHeight: CGFloat
+    let kindGlyph: (RecentDocumentEntry) -> String
     let openDocument: (String) -> Void
     @State private var isExpanded = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    private func textScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    private func glyphScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
     }
 
     private var rowHeight: CGFloat {
@@ -1807,75 +1835,100 @@ private struct SidebarRecentDocumentsSection: View {
                     isExpanded.toggle()
                 }
             } label: {
-                HStack(spacing: scaled(7)) {
-                    Text("Recents")
-                        .font(.system(size: textScaled(13), weight: .regular))
-
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: glyphScaled(10), weight: .semibold))
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-
-                    Spacer(minLength: 0)
-
-                    Text("\(entries.count)")
-                        .font(.system(size: textScaled(11), weight: .regular, design: .monospaced))
-                        .foregroundStyle(theme.tertiaryForegroundColor)
-                }
-                .foregroundStyle(theme.sidebarMutedColor(prominence: 0.82))
-                .padding(.horizontal, scaled(10))
-                .frame(height: scaled(30))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+                SidebarGroupHeaderLabel(
+                    title: "Recents",
+                    count: entries.count,
+                    isExpanded: isExpanded,
+                    theme: theme,
+                    zoomScale: zoomScale
+                )
             }
-            .buttonStyle(MonknotRowButtonStyle(
+            .buttonStyle(SidebarRowButtonStyle(
                 theme: theme,
                 isSelected: false,
                 cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
             ))
-            .padding(.horizontal, scaled(8))
+            .padding(.horizontal, scaled(6))
             .help(isExpanded ? "Hide recent documents" : "Show recent documents")
             .accessibilityLabel("Recent documents")
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
 
             if isExpanded {
                 MonknotScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: scaled(2)) {
                         ForEach(entries, id: \.documentID) { entry in
+                            let isSelected = entry.documentID == selectedDocumentID
                             Button {
                                 openDocument(entry.documentID)
                             } label: {
-                                HStack(spacing: scaled(8)) {
-                                    Image(systemName: "clock")
-                                        .font(.system(size: glyphScaled(11)))
-                                        .foregroundStyle(theme.sidebarMutedColor(prominence: 0.75))
-
-                                    Text(entry.displayName)
-                                        .font(.system(size: textScaled(12), weight: .regular))
-                                        .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.9))
-                                        .lineLimit(1)
-
-                                    Spacer(minLength: 0)
+                                SidebarRowLabel(
+                                    leading: .kind(systemImage: kindGlyph(entry)),
+                                    title: entry.displayName,
+                                    depth: 1,
+                                    isSelected: isSelected,
+                                    theme: theme,
+                                    zoomScale: zoomScale
+                                ) {
+                                    EmptyView()
                                 }
-                                .padding(.horizontal, scaled(8))
-                                .frame(height: rowHeight)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .contentShape(Rectangle())
                             }
-                            .buttonStyle(MonknotRowButtonStyle(
+                            .buttonStyle(SidebarRowButtonStyle(
                                 theme: theme,
-                                isSelected: entry.documentID == selectedDocumentID,
+                                isSelected: isSelected,
                                 cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
                             ))
-                            .monknotPointerCursor()
+                            .help(entry.relativePath)
                         }
                     }
-                    .padding(.horizontal, scaled(5))
+                    .padding(.horizontal, scaled(6))
                 }
-                .padding(.bottom, scaled(5))
+                .padding(.bottom, scaled(6))
                 .frame(height: viewportHeight)
                 .transition(.opacity)
             }
         }
+    }
+}
+
+/// A collapsible group header in the sidebar: the disclosure chevron in the glyph column, an eyebrow
+/// title (design.md §4.3) and a trailing count, on the row primitive's geometry.
+private struct SidebarGroupHeaderLabel: View {
+    let title: String
+    let count: Int
+    let isExpanded: Bool
+    let theme: AppTheme
+    let zoomScale: Double
+    @Environment(\.sidebarRowIsHighlighted) private var isHighlighted
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
+        let ink = theme.sidebarColor(isHighlighted ? theme.foregroundColor : theme.tertiaryForegroundColor)
+        HStack(spacing: scaled(8)) {
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                .font(.system(size: MonknotMetrics.interfaceGlyph(10, theme: theme, zoomScale: zoomScale), weight: .regular))
+                .offset(x: isExpanded ? 0 : MonknotMetrics.interfaceGlyph(0.5, theme: theme, zoomScale: zoomScale))
+                .frame(width: MonknotMetrics.interfaceGlyph(MonknotMetrics.rowIconColumnWidthBase, theme: theme, zoomScale: zoomScale))
+                .accessibilityHidden(true)
+
+            Text(title)
+                .font(MonknotTypography.eyebrow(theme: theme, zoomScale: zoomScale))
+                .tracking(MonknotTypography.eyebrowTracking(theme: theme, zoomScale: zoomScale))
+                .textCase(.uppercase)
+
+            Spacer(minLength: 0)
+
+            Text("\(count)")
+                .font(.system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale), weight: .regular))
+                .monospacedDigit()
+        }
+        .foregroundStyle(ink)
+        .padding(.horizontal, scaled(10))
+        .frame(height: scaled(30))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }
 

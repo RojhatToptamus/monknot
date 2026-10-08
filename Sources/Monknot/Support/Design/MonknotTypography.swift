@@ -6,6 +6,16 @@ enum MonknotTypography {
         .system(size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale), weight: .regular)
     }
 
+    /// design.md §4.3 eyebrow / group header: 10, weight 600, uppercase, tracking 0.09 em (apply
+    /// `eyebrowTracking` and `.textCase(.uppercase)` with it).
+    static func eyebrow(theme: AppTheme, zoomScale: Double) -> Font {
+        .system(size: MonknotMetrics.interfaceText(10, theme: theme, zoomScale: zoomScale), weight: .semibold)
+    }
+
+    static func eyebrowTracking(theme: AppTheme, zoomScale: Double) -> CGFloat {
+        MonknotMetrics.interfaceText(10, theme: theme, zoomScale: zoomScale) * 0.09
+    }
+
     static func rowTitle(theme: AppTheme, zoomScale: Double) -> Font {
         .system(size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale), weight: .regular)
     }

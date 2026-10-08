@@ -413,12 +413,11 @@ neither changes the control or glyph-column geometry.
 
 ### 8.7 The set
 
-`sidebar.left` · `chevron.left` / `chevron.right` · `line.3.horizontal` (source) · `eye` (preview) ·
-`sidebar.right` · `folder` / `folder.fill` when selected · `doc.text` markdown · `doc.richtext` PDF ·
-`terminal` · `xmark` · `plus` · `gearshape` · `list.bullet.indent` (outline peek) · `clock`
-(recents).
+`sidebar.left` · `chevron.left` / `chevron.right` · `chevron.right` / `chevron.down` (disclosure) ·
+`line.3.horizontal` (source) · `eye` (preview) · `sidebar.right` · `doc.text` markdown · `doc.richtext`
+PDF · `terminal` · `xmark` · `plus` · `gearshape` · `list.bullet.indent` (outline peek).
 
-Use the **outline (non-fill) variant everywhere** except a selected folder.
+Use the **outline (non-fill) variant everywhere.**
 
 ### 8.8 Rendering mode
 
@@ -595,13 +594,22 @@ something unrelated.
 
 ### 10.4 Sidebar
 
-Header 40 (name + chevron, 22 actions) · row 30 · list gutter 6 · 2 between rows · 16 indent per
-depth · disclosure chevron 10 · footer row 30, Settings only.
+Header 40 (name + chevron beside it, 22 actions) · row 30 · list gutter 6 · 2 between rows · 16 indent
+per depth · disclosure chevron 10 · Recents group · footer row 30, Settings only.
 
 Rows are the **row primitive, identical to a tab**, on purpose.
 
-Folders use `folder`, `folder.fill` when selected. Files use `doc.text` / `doc.richtext`. Both sit in
-the 18pt column — this is what keeps the left edge of the names straight.
+**One glyph per row.** A folder's disclosure chevron (10pt, nudged per §8.6) sits in the 18pt glyph
+column, and folders carry no folder glyph. Files use `doc.text` / `doc.richtext` in the same column.
+Names at one depth therefore share a left edge, and a child steps right by exactly the 16 indent. A
+chevron beside a monochrome folder outline says the same thing twice and pushes every name right.
+
+Label `ink2` and glyph `ink3` at rest, both `ink` on hover or press; the selected file's label is `ink`
+and its glyph `accent` (§1.3, §1.4). Quiet Sidebar subdues all of it by a fifth.
+
+**Recents** is a collapsible group between the tree and the footer: the chevron in the glyph column, an
+eyebrow title (§4.3) and a trailing count in 12 `ink3`. Its entries are file rows one level in. It never
+grows past a third of the sidebar; the tree keeps the rest.
 
 ### 10.5 Outline rail
 
@@ -645,7 +653,7 @@ fill its box.** If an icon looks small, that is correct — macOS chrome glyphs 
 |---|---|
 | Titlebar | bar 44 · traffic light 12 · chrome button 28 box / 17 glyph · segmented 28 outer (22 cell + 2 padding + 1 border) / 16 glyph · divider 1×16 · strip inset 3 · 3 between chips |
 | File tab | chip 30 · padding-x 10 · kind glyph 14 optical in 18 column · gap 8 · label 13 · trailing slot 16 · close 11 · dirty dot 6 · pin 11 · max width 220 · no minimum |
-| Sidebar | header 40 · row 30 · padding-x 10 · folder glyph 15 / file glyph 14 optical in 18 column · gap 8 · label 13 · chevron 10 · indent 16 · gutter 6 · 2 between rows · header action 26/16 (search 14 optical) · footer 30/15 |
+| Sidebar | header 40 · row 30 · padding-x 10 · disclosure chevron 10 or file glyph 14 optical in the 18 column · gap 8 · label 13 · indent 16 · gutter 6 · 2 between rows · header action 22/16 (search 14 optical) · Recents header: chevron, eyebrow, count 12 · footer 30/15 |
 | Markdown toolbar | heading selector 100×30, radius 8, label 13 regular, trailing `⌄` 10 regular / +3.2 baseline, `ink2`/`ink3` at rest and the icon-button hover · icon button 30 box / 17 nominal glyph · inline code and link 13 optical · quote (`text.quote`) and task list 14 optical · image 12 optical · dividers 1×20 · gaps 6. Every glyph carries 6–9 % ink in its 30 box except the inherently thin italic and rule; a glyph far outside that band reads as a different icon set. |
 | Terminal | header 36 · pill 43×24 · glyph 14 · gap 6 · number 12 mono · close 10 in 14 · new/close buttons 26/16 · fullscreen 26/14 optical · divider 1×13 |
 | Elsewhere | field 28 · push button 28 bars / 30 sheets · toggle 34×20, knob 16 · stepper 26 · slider track 4 / knob 16 · overlay row 34 · settings row 28/15 · outline dash 22/14/9 × 2 |
