@@ -3208,6 +3208,11 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         private var lastPageNavigationRequest: PDFPageNavigationRequest?
         private var shouldRestoreViewportState = false
         private var lastPublishedViewportState: PDFDocumentViewportState?
+        /// States this view published itself, newest last. SwiftUI hands each one back a frame or more
+        /// later, by when the view may have moved on (a ⌘-scroll publishes several in a row): a state
+        /// that matches any of them is an echo of the view's own past, not a request to move it.
+        private var recentlyPublishedViewportStates: [PDFDocumentViewportState] = []
+        private static let publishedViewportStateMemory = 16
         private var lastPublishedPageStatus: PDFPageStatus?
         private var lastPublishedZoomStatus: PDFZoomStatus?
         private var lastPublishedSelectionSnapshot: PDFSelectionSnapshot?
@@ -3293,6 +3298,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
                 addFreeTextSerial: addFreeTextSerial
             )
             lastPublishedViewportState = nil
+            recentlyPublishedViewportStates.removeAll()
             lastPublishedPageStatus = nil
             lastPublishedZoomStatus = nil
             lastPublishedSelectionSnapshot = nil
@@ -3552,8 +3558,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
                 shouldRestoreViewportState = true
             }
 
-            if let state,
-               state.isMeaningfullyDifferent(from: lastPublishedViewportState) {
+            if let state, !isEchoOfPublishedViewportState(state) {
                 shouldRestoreViewportState = true
             }
 
@@ -3590,11 +3595,19 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             if let state = PDFDocumentViewportState(pdfView: pdfView),
                state.isMeaningfullyDifferent(from: lastPublishedViewportState) {
                 lastPublishedViewportState = state
+                recentlyPublishedViewportStates.append(state)
+                if recentlyPublishedViewportStates.count > Self.publishedViewportStateMemory {
+                    recentlyPublishedViewportStates.removeFirst()
+                }
                 onViewportStateChange(state)
             }
 
             publishPageStatus(from: pdfView)
             publishZoomStatus(from: pdfView)
+        }
+
+        private func isEchoOfPublishedViewportState(_ state: PDFDocumentViewportState) -> Bool {
+            recentlyPublishedViewportStates.contains { !state.isMeaningfullyDifferent(from: $0) }
         }
 
         func publishFinalViewportState(from pdfView: PDFView) {
