@@ -100,12 +100,19 @@ struct TopNavigationBar: View {
                     .accessibilityLabel("Working")
             }
 
-            // Find sits before the trailing cluster, which never disappears (design.md §10.1–10.2);
-            // the tab strip scrolls to make room.
+            // Find sits before the trailing cluster, which never disappears (design.md §10.1–10.2).
+            // The tab strip scrolls to make room first. In a narrow, zoomed window the field narrows,
+            // then the find bar's own controls step aside rather than push the row past the window.
             if documentSearch.isPresented {
-                documentSearchBar
-                    .fixedSize(horizontal: true, vertical: false)
-                    .allowsTopBarWindowActivationEvents()
+                ViewThatFits(in: .horizontal) {
+                    documentSearchBar(.full)
+                    documentSearchBar(.withoutOptions)
+                    documentSearchBar(.withoutCount)
+                    documentSearchBar(.fieldOnly)
+                }
+                // Above the tab strip's priority: the find bar is sized first, the tabs scroll in the rest.
+                .layoutPriority(2)
+                .allowsTopBarWindowActivationEvents()
             }
 
             viewModeControl
@@ -228,7 +235,17 @@ struct TopNavigationBar: View {
         }
     }
 
-    private var documentSearchBar: some View {
+    /// What the find bar keeps when the titlebar is short of room, widest first. Matches can still be
+    /// stepped with Return, Shift-Return and Command-G when the arrows are gone.
+    private enum FindBarContent {
+        case full, withoutOptions, withoutCount, fieldOnly
+
+        var showsOptions: Bool { self == .full }
+        var showsCount: Bool { self == .full || self == .withoutOptions }
+        var showsNavigation: Bool { self != .fieldOnly }
+    }
+
+    private func documentSearchBar(_ content: FindBarContent) -> some View {
         HStack(spacing: scaled(8)) {
             MonknotSearchGlyph(theme: theme, zoomScale: zoomScale)
                 .foregroundStyle(theme.mutedForegroundColor)
@@ -248,53 +265,59 @@ struct TopNavigationBar: View {
             .focused($isSearchFocused)
             .font(.system(size: textScaled(13), weight: .regular))
             .foregroundStyle(theme.foregroundColor)
-            .frame(width: scaled(150))
+            .frame(minWidth: scaled(60), idealWidth: scaled(150), maxWidth: scaled(150))
             .onSubmit {
                 documentSearch.findNext()
             }
             .accessibilityLabel("Find in document")
 
-            searchOptionButton(
-                systemImage: "textformat",
-                label: "Match Case",
-                isActive: searchOptions.isCaseSensitive
-            ) {
-                searchOptions.isCaseSensitive.toggle()
+            if content.showsOptions {
+                searchOptionButton(
+                    systemImage: "textformat",
+                    label: "Match Case",
+                    isActive: searchOptions.isCaseSensitive
+                ) {
+                    searchOptions.isCaseSensitive.toggle()
+                }
+
+                searchOptionButton(
+                    systemImage: "character.cursor.ibeam",
+                    label: "Match Whole Word",
+                    isActive: searchOptions.isWholeWord
+                ) {
+                    searchOptions.isWholeWord.toggle()
+                }
             }
 
-            searchOptionButton(
-                systemImage: "character.cursor.ibeam",
-                label: "Match Whole Word",
-                isActive: searchOptions.isWholeWord
-            ) {
-                searchOptions.isWholeWord.toggle()
+            if content.showsCount {
+                Text(documentSearch.countText)
+                    .font(.system(size: textScaled(11), weight: .regular, design: .rounded))
+                    .foregroundStyle(theme.mutedForegroundColor)
+                    .monospacedDigit()
+                    .frame(minWidth: scaled(42), alignment: .trailing)
+                    .accessibilityLabel("Search result \(documentSearch.countText)")
             }
 
-            Text(documentSearch.countText)
-                .font(.system(size: textScaled(11), weight: .regular, design: .rounded))
-                .foregroundStyle(theme.mutedForegroundColor)
-                .monospacedDigit()
-                .frame(minWidth: scaled(42), alignment: .trailing)
-                .accessibilityLabel("Search result \(documentSearch.countText)")
+            if content.showsNavigation {
+                Rectangle()
+                    .fill(theme.borderColor)
+                    .frame(width: 1, height: scaled(16))
 
-            Rectangle()
-                .fill(theme.borderColor)
-                .frame(width: 1, height: scaled(16))
+                findBarButton(
+                    systemImage: "chevron.up",
+                    label: "Previous Match",
+                    isDisabled: documentSearch.totalCount == 0
+                ) {
+                    documentSearch.findPrevious()
+                }
 
-            findBarButton(
-                systemImage: "chevron.up",
-                label: "Previous Match",
-                isDisabled: documentSearch.totalCount == 0
-            ) {
-                documentSearch.findPrevious()
-            }
-
-            findBarButton(
-                systemImage: "chevron.down",
-                label: "Next Match",
-                isDisabled: documentSearch.totalCount == 0
-            ) {
-                documentSearch.findNext()
+                findBarButton(
+                    systemImage: "chevron.down",
+                    label: "Next Match",
+                    isDisabled: documentSearch.totalCount == 0
+                ) {
+                    documentSearch.findNext()
+                }
             }
 
             findBarButton(systemImage: "xmark", label: "Close Search") {
