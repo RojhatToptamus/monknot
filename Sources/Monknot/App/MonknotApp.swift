@@ -153,17 +153,20 @@ private struct MonknotWindowRootView: View {
                 didHandleInitialRequest = true
 
                 if let workspaceURL = request.workspaceURL {
+                    workspaceRestoration.noteWorkspaceOpenedAtLaunch(workspaceURL)
                     _ = workspaceLibrary.add(workspaceURL)
                     workspaceStore.openWorkspace(workspaceURL, selecting: request.selectedDocumentURL)
                     await importCaptureIfNeeded(from: request)
                 } else if let pendingRequest = workspaceWindowRequests.consumePendingInitialWorkspaceRequest(),
                           let workspaceURL = pendingRequest.workspaceURL {
+                    workspaceRestoration.noteWorkspaceOpenedAtLaunch(workspaceURL)
                     _ = workspaceLibrary.add(workspaceURL)
                     workspaceStore.openWorkspace(workspaceURL, selecting: pendingRequest.selectedDocumentURL)
                     await importCaptureIfNeeded(from: pendingRequest)
                 } else if reopenLastWorkspace, workspaceRestoration.claimInitialRestore() {
                     do {
-                        if let workspaceURL = try workspaceLibrary.lastActiveWorkspaceURL() {
+                        if let workspaceURL = try workspaceLibrary.lastActiveWorkspaceURL(),
+                           !workspaceRestoration.wasOpenedAtLaunch(workspaceURL) {
                             workspaceStore.openWorkspace(workspaceURL)
                         }
                     } catch {

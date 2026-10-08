@@ -12,6 +12,17 @@ final class WorkspaceWindowCoordinationTests: XCTestCase {
         XCTAssertTrue(InitialWorkspaceRestorationCoordinator().claimInitialRestore())
     }
 
+    func testWorkspaceOpenedAtLaunchIsNotRestoredAgain() {
+        let coordinator = InitialWorkspaceRestorationCoordinator()
+        let opened = URL(fileURLWithPath: "/tmp/Monknot/Opened", isDirectory: true)
+
+        coordinator.noteWorkspaceOpenedAtLaunch(opened)
+
+        XCTAssertTrue(coordinator.wasOpenedAtLaunch(URL(fileURLWithPath: "/tmp/Monknot/Opened")))
+        XCTAssertTrue(coordinator.wasOpenedAtLaunch(URL(fileURLWithPath: "/tmp/Monknot/./Opened/")))
+        XCTAssertFalse(coordinator.wasOpenedAtLaunch(URL(fileURLWithPath: "/tmp/Monknot/Other")))
+    }
+
     func testWindowRequestsQueueUntilInitialHandlingAndThenFlushInOrder() {
         let first = URL(fileURLWithPath: "/tmp/Monknot/First", isDirectory: true)
         let second = URL(fileURLWithPath: "/tmp/Monknot/Second", isDirectory: true)
