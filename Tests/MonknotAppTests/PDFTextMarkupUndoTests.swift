@@ -73,7 +73,7 @@ final class PDFTextMarkupUndoTests: PDFTextMarkupTestCase {
                 canPerformWorkspaceReplace: true,
                 canPerformPDF: true
             ),
-            .unavailable
+            .workspaceReplace
         )
     }
 

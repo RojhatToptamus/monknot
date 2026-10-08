@@ -2170,9 +2170,15 @@ struct ContentView: View {
             return false
         }
 
-        if (action == .undoWorkspaceReplace
-            || action == .undoPDFAnnotation
-            || action == .redoPDFAnnotation),
+        // Focused text keeps its own undo. A workspace Replace All is undone from it too once the
+        // text has nothing left to undo, matching the Edit menu.
+        if action == .undoWorkspaceReplace,
+           MonknotNativePasteboardCommand.hasNativeEditingFocus,
+           MonknotNativeUndoCommand.canUndo {
+            return false
+        }
+
+        if (action == .undoPDFAnnotation || action == .redoPDFAnnotation),
            MonknotNativePasteboardCommand.hasNativeEditingFocus {
             return false
         }

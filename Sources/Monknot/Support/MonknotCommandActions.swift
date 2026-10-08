@@ -508,7 +508,12 @@ func monknotUndoCommandDestination(
     canPerformPDF: Bool
 ) -> MonknotUndoCommandDestination {
     if hasNativeEditingFocus {
-        return canPerformNative ? .native : .unavailable
+        if canPerformNative {
+            return .native
+        }
+        // Nothing to undo in the focused text: the workspace Replace All is next, as its
+        // confirmation promises that ⌘Z undoes it.
+        return canPerformWorkspaceReplace ? .workspaceReplace : .unavailable
     }
     if canPerformWorkspaceReplace {
         return .workspaceReplace
