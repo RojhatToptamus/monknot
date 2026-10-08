@@ -123,9 +123,11 @@ struct SettingsToggleRow: View {
             showsDivider: showsDivider,
             contentOpacity: isDisabled ? 0.55 : 1
         ) {
+            // The switch style draws no label, so name the control for VoiceOver explicitly.
             Toggle(title, isOn: $isOn)
                 .toggleStyle(MonknotSettingsSwitchStyle(theme: theme))
                 .labelsHidden()
+                .accessibilityLabel(title)
                 .accessibilityHint(detail ?? "")
                 .monknotPointerCursor(enabled: !isDisabled)
         }
