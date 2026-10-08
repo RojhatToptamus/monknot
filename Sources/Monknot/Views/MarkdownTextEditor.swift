@@ -1810,6 +1810,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.onWritingToolsStateChange = onWritingToolsStateChange
         context.coordinator.configureFlow(mode: flowSourceMode, options: textCheckingOptions)
         context.coordinator.attach(to: scrollView)
+        context.coordinator.ignoreSyncScrollLine(syncScrollTargetLine)
         applyTheme(theme, to: textView, in: scrollView)
         context.coordinator.markFontApplied(resolvedFont)
         context.coordinator.markThemeApplied(theme)
@@ -2476,6 +2477,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             lastPublishedSelection = nil
             shouldRestoreSelection = true
             lastPublishedScrollPosition = nil
+            lastPublishedTopLine = nil
             lastSyntaxEditCount = nil
             return true
         }
@@ -2588,10 +2590,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 return 1
             }
 
-            var point = scrollView.contentView.bounds.origin
-            point.x += textView.textContainerInset.width + 4
-            point.y += textView.textContainerInset.height + 4
-            let containerPoint = textView.convert(point, from: scrollView.contentView)
+            // The first line below the top padding, in container coordinates: the line `.lineTop`
+            // scrolls to sits exactly here, so a reported line opens a rebuilt pane where it was.
+            let containerPoint = NSPoint(x: 1, y: scrollView.contentView.bounds.origin.y + 1)
             let glyphIndex = layoutManager.glyphIndex(for: containerPoint, in: textContainer)
             let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
             return MarkdownScrollSync.lineNumber(forCharacterIndex: charIndex, in: textView.string)
@@ -2606,6 +2607,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
             if shouldPublish {
                 publish(DocumentScrollPosition(point))
             }
+        }
+
+        /// A rebuilt editor opens at `openingTopLine`; the split-sync line it is handed was set
+        /// for an earlier view and would otherwise override it.
+        func ignoreSyncScrollLine(_ line: Int?) {
+            lastAppliedSyncScrollLine = line
         }
 
         func needsScrollRestore(for documentID: String) -> Bool {
@@ -2663,7 +2670,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 restoreScrollPosition(point, in: scrollView)
             case .lineTop(let range):
                 let length = (textView.string as NSString).length
-                guard length > 0, layoutManager.numberOfGlyphs > 0 else {
+                guard length > 0 else {
                     scrollView.contentView.scroll(to: .zero)
                     scrollView.reflectScrolledClipView(scrollView.contentView)
                     return
@@ -6110,11 +6117,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 let range = matches[currentMatchIndex]
                 textView.setSelectedRange(range)
                 textView.scrollRangeToVisible(range)
-                // The system's find indicator calls out the match each step lands on, as in
-                // TextEdit and Xcode; the underline keeps marking it afterwards.
-                if navigationChanged {
-                    textView.showFindIndicator(for: range)
-                }
             }
 
             lastSearchQuery = query
@@ -6230,9 +6232,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
             for range in highlightedRanges {
                 guard range.location >= 0, NSMaxRange(range) <= length else { continue }
                 layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: range)
-                layoutManager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: range)
-                layoutManager.removeTemporaryAttribute(.underlineColor, forCharacterRange: range)
             }
+            // Temporary attributes move with edits, so an underline from a match the user typed
+            // into is no longer at its recorded range; only search draws underlines here.
+            let wholeText = NSRange(location: 0, length: length)
+            layoutManager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: wholeText)
+            layoutManager.removeTemporaryAttribute(.underlineColor, forCharacterRange: wholeText)
             highlightedRanges = []
             if resetMatches {
                 searchMatches = []
@@ -6406,7 +6411,7 @@ private enum MarkdownSyntaxHighlighter {
                 case .code:
                     attributes = [.foregroundColor: NSColor(hex: theme.accent).withAlphaComponent(0.88)]
                 case .marker:
-                    attributes = [.foregroundColor: primary.withAlphaComponent(0.40)]
+                    attributes = [.foregroundColor: primary.withAlphaComponent(0.40)] // ink3
                 }
                 storage.addAttributes(attributes, range: token.range)
             }

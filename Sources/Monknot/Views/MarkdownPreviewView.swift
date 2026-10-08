@@ -120,7 +120,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         let isNewPreview = !context.coordinator.hasDocument
         let didChangeDocument = context.coordinator.prepareForDocument(documentID, in: webView)
         if isNewPreview {
-            context.coordinator.openAtLine(openingTopLine)
+            context.coordinator.openAtLine(openingTopLine, ignoringSyncLine: syncScrollTargetLine)
         }
         context.coordinator.onSourceJump = onSourceJump
         context.coordinator.onScrollPositionChange = onScrollPositionChange
@@ -404,7 +404,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         /// A source line to show at the top once content has rendered: a split-view line that
         /// arrived while the preview was loading, or a rebuilt preview's opening line.
         private var pendingSyncScrollLine: Int?
-        private var isApplyingSyncScroll = false
+        private var suppressesNextSourceLine = false
         private(set) var isShellLoaded = false
 
         init(onSourceJump: @escaping (MarkdownSourceLocation) -> Void) {
@@ -719,8 +719,10 @@ struct MarkdownPreviewView: NSViewRepresentable {
 
         var hasDocument: Bool { documentID != nil }
 
-        /// A rebuilt preview starts at this source line once its content renders.
-        fileprivate func openAtLine(_ line: Int?) {
+        /// A rebuilt preview starts at this source line once its content renders. The split-sync
+        /// line it is handed was set for an earlier view and would otherwise override it.
+        fileprivate func openAtLine(_ line: Int?, ignoringSyncLine syncLine: Int?) {
+            lastAppliedSyncScrollLine = syncLine
             guard let line, line > 0 else { return }
             pendingSyncScrollLine = line
         }
@@ -733,23 +735,28 @@ struct MarkdownPreviewView: NSViewRepresentable {
         private func scrollToLine(_ line: Int, in webView: WKWebView) {
             // Opening split view sends the source's line while the preview is still loading;
             // dropping it left the preview at its own stale position until the next scroll.
-            guard isShellLoaded, lastRenderedContent != nil else {
+            guard isShellLoaded, lastRenderedContent?.documentID == documentID else {
                 pendingSyncScrollLine = line
                 return
             }
 
             pendingSyncScrollLine = nil
             lastAppliedSyncScrollLine = line
-            isApplyingSyncScroll = true
+            // The scroll reports the block now at the top, which can start a few lines above
+            // `line`; forwarded, it pulled the source back while the user scrolled it.
+            suppressesNextSourceLine = true
 
             let payload: [String: Any] = ["line": line]
             do {
                 let json = try MarkdownPreviewView.javaScriptPayload(payload)
                 webView.evaluateJavaScript("window.monknotScrollToLine && window.monknotScrollToLine(\(json));") { [weak self] _, _ in
-                    self?.isApplyingSyncScroll = false
+                    // If nothing scrolled, no report comes; stop waiting for one.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        self?.suppressesNextSourceLine = false
+                    }
                 }
             } catch {
-                isApplyingSyncScroll = false
+                suppressesNextSourceLine = false
             }
         }
 
@@ -987,6 +994,10 @@ struct MarkdownPreviewView: NSViewRepresentable {
             let sourceLine = Self.sourceLine(from: body)
             guard sourceLine > 0, sourceLine != lastPublishedSourceLine else { return }
             lastPublishedSourceLine = sourceLine
+            if suppressesNextSourceLine {
+                suppressesNextSourceLine = false
+                return
+            }
             onVisibleSourceLineChange?(sourceLine)
         }
 

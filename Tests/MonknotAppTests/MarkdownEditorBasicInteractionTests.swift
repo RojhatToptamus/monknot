@@ -134,6 +134,11 @@ final class MarkdownEditorBasicInteractionTests: FlowEditorTestCase {
             effectiveRange: nil
         ).minY
         XCTAssertEqual(scrollView.contentView.bounds.origin.y, lineTop, accuracy: 0.5)
+
+        // The reported top line round-trips, so rebuilt panes open where the reader was.
+        XCTAssertEqual(coordinator.visibleTopLine(in: textView, scrollView: scrollView), 1200)
+        coordinator.scrollLineToTop(NSRange(location: 0, length: 0))
+        XCTAssertEqual(coordinator.visibleTopLine(in: textView, scrollView: scrollView), 1)
     }
 
     func testTextStatisticsCountLinesAndWords() {

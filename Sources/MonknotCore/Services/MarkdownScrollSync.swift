@@ -9,10 +9,11 @@ public enum MarkdownScrollSync: Sendable {
         var line = 1
         var lineStart = 0
 
-        while lineStart < clampedIndex {
+        // Count the lines that start at or before the index; an index inside a line belongs to it.
+        while true {
             let lineRange = nsText.lineRange(for: NSRange(location: lineStart, length: 0))
             let nextLocation = NSMaxRange(lineRange)
-            guard nextLocation > lineStart else { break }
+            guard nextLocation > lineStart, nextLocation <= clampedIndex else { break }
             lineStart = nextLocation
             line += 1
         }
