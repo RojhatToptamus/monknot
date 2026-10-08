@@ -8,6 +8,13 @@ struct DocumentLoadFailure: Equatable {
     let message: String
 }
 
+/// A document to open in a tab, asked for from outside the window (Finder, the Dock). The window
+/// opens it once its workspace is ready, the same way as from the sidebar.
+struct DocumentOpenRequest: Equatable {
+    let serial: Int
+    let documentID: String
+}
+
 @MainActor
 final class WorkspaceStore: ObservableObject {
     @Published private(set) var workspaceURL: URL?
@@ -28,6 +35,7 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var isBusy = false
     @Published private(set) var isDocumentLoading = false
     @Published private(set) var documentLoadFailure: DocumentLoadFailure?
+    @Published private(set) var documentOpenRequest: DocumentOpenRequest?
     @Published private(set) var isSaving = false
     @Published private(set) var documentSaveStates: [String: DocumentSaveState] = [:]
     @Published private(set) var selectedDocumentExternalChange = false
@@ -300,6 +308,17 @@ final class WorkspaceStore: ObservableObject {
         guard openDocumentIDs != documentIDs else { return }
         openDocumentIDs = documentIDs
         pruneRemovedDirtyDocuments()
+    }
+
+    func requestDocumentOpen(at url: URL) {
+        documentOpenRequest = DocumentOpenRequest(
+            serial: (documentOpenRequest?.serial ?? 0) &+ 1,
+            documentID: url.standardizedFileURL.path
+        )
+    }
+
+    func finishDocumentOpenRequest() {
+        documentOpenRequest = nil
     }
 
     @discardableResult

@@ -43,11 +43,13 @@ struct MonknotWorkspaceWindowRequest: Codable, Hashable, Sendable {
     }
 }
 
-/// How an open window can take a request. Windows that already show the workspace (or contain the
-/// requested file) are asked before empty ones, so reopening a workspace or one of its files from
-/// Finder brings its window forward instead of opening a second window on the same folder.
-enum WorkspaceWindowClaim: CaseIterable {
+/// How an open window takes a request; see `WorkspaceWindowRequestCenter.claim(for:windows:)`.
+enum WorkspaceWindowClaim: Equatable {
+    /// The window shows, or is opening, the requested workspace.
     case showsWorkspace
+    /// The window's workspace contains the requested file.
+    case containsDocument
+    /// The window has no workspace yet.
     case empty
 }
 
@@ -55,9 +57,15 @@ enum WorkspaceWindowClaim: CaseIterable {
 final class WorkspaceWindowRequestCenter {
     static let shared = WorkspaceWindowRequestCenter()
 
+    private struct ReusableWindow {
+        /// The workspace the window shows or is opening; nil while it has none.
+        let workspaceURL: () -> URL?
+        let take: (MonknotWorkspaceWindowRequest, WorkspaceWindowClaim) -> Void
+    }
+
     private var openWindow: ((MonknotWorkspaceWindowRequest) -> Void)?
     private var pendingRequests: [MonknotWorkspaceWindowRequest] = []
-    private var reusableWindowHandlers: [UUID: (MonknotWorkspaceWindowRequest, WorkspaceWindowClaim) -> Bool] = [:]
+    private var reusableWindows: [UUID: ReusableWindow] = [:]
     private var didHandleInitialWorkspaceRequest = false
 
     func installOpenWindowAction(_ action: @escaping (MonknotWorkspaceWindowRequest) -> Void) {
@@ -65,16 +73,26 @@ final class WorkspaceWindowRequestCenter {
         flushPendingWorkspaceRequestsIfReady()
     }
 
-    func installReusableWindowHandler(
+    func installReusableWindow(
         id: UUID,
-        handler: @escaping (MonknotWorkspaceWindowRequest, WorkspaceWindowClaim) -> Bool
+        workspaceURL: @escaping () -> URL?,
+        take: @escaping (MonknotWorkspaceWindowRequest, WorkspaceWindowClaim) -> Void
     ) {
-        reusableWindowHandlers[id] = handler
+        reusableWindows[id] = ReusableWindow(workspaceURL: workspaceURL, take: take)
         flushPendingWorkspaceRequestsIfReady()
     }
 
-    func removeReusableWindowHandler(id: UUID) {
-        reusableWindowHandlers[id] = nil
+    func removeReusableWindow(id: UUID) {
+        reusableWindows[id] = nil
+    }
+
+    /// True when a window other than `windowID` shows or is opening this workspace. Windows starting
+    /// at launch ask this before opening one, whichever of them starts first.
+    func isWorkspaceShown(_ url: URL, excludingWindow windowID: UUID) -> Bool {
+        let path = url.standardizedFileURL.path
+        return reusableWindows.contains { id, window in
+            id != windowID && window.workspaceURL()?.standardizedFileURL.path == path
+        }
     }
 
     func consumePendingInitialWorkspaceRequest() -> MonknotWorkspaceWindowRequest? {
@@ -119,12 +137,44 @@ final class WorkspaceWindowRequestCenter {
     }
 
     private func openInReusableWindow(_ request: MonknotWorkspaceWindowRequest) -> Bool {
-        for claim in WorkspaceWindowClaim.allCases {
-            for handler in reusableWindowHandlers.values where handler(request, claim) {
-                return true
+        let workspaces = reusableWindows.mapValues { $0.workspaceURL() }
+        guard let choice = Self.claim(for: request, windows: workspaces) else { return false }
+        reusableWindows[choice.windowID]?.take(request, choice.claim)
+        return true
+    }
+
+    /// The window a request belongs in: the one showing (or opening) its workspace; otherwise the
+    /// one whose workspace most closely contains its file; otherwise an empty window. Nil means a new
+    /// window. Reopening a workspace or one of its files therefore never opens a second window on it.
+    static func claim(
+        for request: MonknotWorkspaceWindowRequest,
+        windows: [UUID: URL?]
+    ) -> (windowID: UUID, claim: WorkspaceWindowClaim)? {
+        let workspacePath = request.workspaceURL?.standardizedFileURL.path
+        let documentPath = request.selectedDocumentURL?.standardizedFileURL.path
+        var closestContainer: (windowID: UUID, rootLength: Int)?
+        var emptyWindow: UUID?
+
+        // Sorted so that a choice between equal windows does not depend on dictionary order.
+        for (windowID, workspaceURL) in windows.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
+            guard let rootPath = workspaceURL?.standardizedFileURL.path else {
+                emptyWindow = emptyWindow ?? windowID
+                continue
+            }
+            if rootPath == workspacePath {
+                return (windowID, .showsWorkspace)
+            }
+            let rootPrefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+            if let documentPath,
+               documentPath.hasPrefix(rootPrefix),
+               rootPath.count > (closestContainer?.rootLength ?? -1) {
+                closestContainer = (windowID, rootPath.count)
             }
         }
 
-        return false
+        if let closestContainer {
+            return (closestContainer.windowID, .containsDocument)
+        }
+        return emptyWindow.map { ($0, .empty) }
     }
 }

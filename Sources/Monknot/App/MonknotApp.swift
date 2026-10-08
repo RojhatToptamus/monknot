@@ -96,7 +96,6 @@ private struct CheckForUpdatesView: View {
 }
 
 private struct MonknotWindowRootView: View {
-    @Environment(\.openWindow) private var openWindow
     @StateObject private var workspaceStore = WorkspaceStore()
     let request: MonknotWorkspaceWindowRequest
     @ObservedObject var themeStore: ThemeSettingsStore
@@ -107,6 +106,7 @@ private struct MonknotWindowRootView: View {
     @AppStorage("Monknot.reopenLastWorkspace") private var reopenLastWorkspace = true
     @State private var didHandleInitialRequest = false
     @State private var reusableWindowHandlerID = UUID()
+    @State private var hostingWindow = HostingWindowReference()
 
     var body: some View {
         ContentView(
@@ -118,55 +118,43 @@ private struct MonknotWindowRootView: View {
             // Names the window in the Window menu, Mission Control and the Dock; the titlebar
             // itself shows no title (design.md §10.1).
             .navigationTitle(workspaceStore.workspaceURL?.lastPathComponent ?? "Monknot")
+            .background(HostingWindowReader(reference: hostingWindow))
             .onAppear {
-                workspaceWindowRequests.installReusableWindowHandler(id: reusableWindowHandlerID) { request, claim in
-                    switch claim {
-                    case .showsWorkspace:
-                        guard showsTarget(of: request) else { return false }
-                        if let documentURL = request.selectedDocumentURL {
-                            _ = workspaceStore.selectDocument(id: documentURL.standardizedFileURL.path)
-                        }
-                        // SwiftUI brings the window holding this value to the front.
-                        openWindow(id: MonknotWorkspaceWindowRequest.windowGroupID, value: self.request)
-                    case .empty:
-                        guard workspaceStore.workspaceURL == nil,
-                              !workspaceStore.isBusy,
-                              let workspaceURL = request.workspaceURL
-                        else {
-                            return false
-                        }
-
-                        _ = workspaceLibrary.add(workspaceURL)
-                        workspaceStore.openWorkspace(workspaceURL, selecting: request.selectedDocumentURL)
-                    }
-                    Task { @MainActor in
-                        await importCaptureIfNeeded(from: request)
-                    }
-                    return true
-                }
+                workspaceWindowRequests.installReusableWindow(
+                    id: reusableWindowHandlerID,
+                    workspaceURL: { workspaceStore.openingWorkspaceURL ?? workspaceStore.workspaceURL },
+                    take: takeWindowRequest
+                )
             }
             .onDisappear {
-                workspaceWindowRequests.removeReusableWindowHandler(id: reusableWindowHandlerID)
+                workspaceWindowRequests.removeReusableWindow(id: reusableWindowHandlerID)
             }
             .task {
                 guard !didHandleInitialRequest else { return }
                 didHandleInitialRequest = true
 
+                // Several restored windows start together at launch. Each checks that no other window
+                // shows or is opening the workspace first, so none opens a second window on it.
                 if let workspaceURL = request.workspaceURL {
-                    workspaceRestoration.noteWorkspaceOpenedAtLaunch(workspaceURL)
-                    _ = workspaceLibrary.add(workspaceURL)
-                    workspaceStore.openWorkspace(workspaceURL, selecting: request.selectedDocumentURL)
-                    await importCaptureIfNeeded(from: request)
+                    if !isShownElsewhere(workspaceURL) {
+                        _ = workspaceLibrary.add(workspaceURL)
+                        workspaceStore.openWorkspace(workspaceURL, selecting: request.selectedDocumentURL)
+                        await importCaptureIfNeeded(from: request)
+                    }
                 } else if let pendingRequest = workspaceWindowRequests.consumePendingInitialWorkspaceRequest(),
                           let workspaceURL = pendingRequest.workspaceURL {
-                    workspaceRestoration.noteWorkspaceOpenedAtLaunch(workspaceURL)
-                    _ = workspaceLibrary.add(workspaceURL)
-                    workspaceStore.openWorkspace(workspaceURL, selecting: pendingRequest.selectedDocumentURL)
-                    await importCaptureIfNeeded(from: pendingRequest)
+                    if isShownElsewhere(workspaceURL) {
+                        // Hand it back; it goes to that window once launch handling finishes.
+                        workspaceWindowRequests.openWorkspaceWindow(pendingRequest)
+                    } else {
+                        _ = workspaceLibrary.add(workspaceURL)
+                        workspaceStore.openWorkspace(workspaceURL, selecting: pendingRequest.selectedDocumentURL)
+                        await importCaptureIfNeeded(from: pendingRequest)
+                    }
                 } else if reopenLastWorkspace, workspaceRestoration.claimInitialRestore() {
                     do {
                         if let workspaceURL = try workspaceLibrary.lastActiveWorkspaceURL(),
-                           !workspaceRestoration.wasOpenedAtLaunch(workspaceURL) {
+                           !isShownElsewhere(workspaceURL) {
                             workspaceStore.openWorkspace(workspaceURL)
                         }
                     } catch {
@@ -178,15 +166,27 @@ private struct MonknotWindowRootView: View {
             }
     }
 
-    /// True when this window already shows the requested workspace, or contains the requested file.
-    private func showsTarget(of request: MonknotWorkspaceWindowRequest) -> Bool {
-        guard !workspaceStore.isBusy,
-              let rootPath = workspaceStore.workspaceURL?.standardizedFileURL.path
-        else { return false }
-        if let documentPath = request.selectedDocumentURL?.standardizedFileURL.path {
-            return documentPath.hasPrefix(rootPath + "/")
+    private func takeWindowRequest(_ request: MonknotWorkspaceWindowRequest, claim: WorkspaceWindowClaim) {
+        switch claim {
+        case .showsWorkspace, .containsDocument:
+            if let documentURL = request.selectedDocumentURL {
+                workspaceStore.requestDocumentOpen(at: documentURL)
+            }
+            // The window itself, not `openWindow(value:)`: SwiftUI does not match a window restored
+            // at launch to its value and would open a new, empty one.
+            hostingWindow.bringToFront()
+        case .empty:
+            guard let workspaceURL = request.workspaceURL else { return }
+            _ = workspaceLibrary.add(workspaceURL)
+            workspaceStore.openWorkspace(workspaceURL, selecting: request.selectedDocumentURL)
         }
-        return request.workspaceURL?.standardizedFileURL.path == rootPath
+        Task { @MainActor in
+            await importCaptureIfNeeded(from: request)
+        }
+    }
+
+    private func isShownElsewhere(_ workspaceURL: URL) -> Bool {
+        workspaceWindowRequests.isWorkspaceShown(workspaceURL, excludingWindow: reusableWindowHandlerID)
     }
 
     private func importCaptureIfNeeded(from request: MonknotWorkspaceWindowRequest) async {

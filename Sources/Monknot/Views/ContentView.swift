@@ -489,6 +489,12 @@ struct ContentView: View {
             .onChange(of: store.documentIDRemapEvent?.serial ?? 0) { _, _ in
                 applyDocumentIDRemapEvent()
             }
+            .onChange(of: store.documentOpenRequest) { _, _ in
+                openRequestedDocument()
+            }
+            .onChange(of: store.isBusy) { _, _ in
+                openRequestedDocument()
+            }
             .onDisappear {
                 cancelPDFExcerptCopy()
                 flushPendingTabStatePersistence()
@@ -1264,6 +1270,15 @@ struct ContentView: View {
         tabState.open(document)
         closedTabHistory.discard(documentID: documentID)
         publishOpenTabIDs()
+    }
+
+    /// Opens a document asked for from Finder or the Dock once the workspace is ready. The workspace's
+    /// saved tabs are restored first, so the document joins them rather than replacing them.
+    private func openRequestedDocument() {
+        guard let request = store.documentOpenRequest, !store.isBusy else { return }
+        store.finishDocumentOpenRequest()
+        syncSelectedTabWithStore()
+        openDocumentTab(id: request.documentID)
     }
 
     private func activateTab(id documentID: String) {

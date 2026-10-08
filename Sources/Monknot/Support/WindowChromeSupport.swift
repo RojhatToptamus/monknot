@@ -374,6 +374,46 @@ final class ApplicationTerminationCoordinator {
     }
 }
 
+/// The window a SwiftUI view is in, for AppKit calls the view cannot make itself.
+@MainActor
+final class HostingWindowReference {
+    fileprivate(set) weak var window: NSWindow?
+
+    func bringToFront() {
+        guard let window else { return }
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        window.makeKeyAndOrderFront(nil)
+    }
+}
+
+/// Records the window it is placed in into `reference`.
+struct HostingWindowReader: NSViewRepresentable {
+    let reference: HostingWindowReference
+
+    func makeNSView(context: Context) -> ReaderView {
+        let view = ReaderView(frame: .zero)
+        view.reference = reference
+        return view
+    }
+
+    func updateNSView(_ nsView: ReaderView, context: Context) {
+        nsView.reference = reference
+    }
+
+    final class ReaderView: NSView {
+        weak var reference: HostingWindowReference? {
+            didSet { reference?.window = window }
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            reference?.window = window
+        }
+    }
+}
+
 struct WindowCloseGuard: NSViewRepresentable {
     let terminationCoordinator: ApplicationTerminationCoordinator
     var shouldClose: () async -> Bool

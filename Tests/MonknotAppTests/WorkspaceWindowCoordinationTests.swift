@@ -12,17 +12,6 @@ final class WorkspaceWindowCoordinationTests: XCTestCase {
         XCTAssertTrue(InitialWorkspaceRestorationCoordinator().claimInitialRestore())
     }
 
-    func testWorkspaceOpenedAtLaunchIsNotRestoredAgain() {
-        let coordinator = InitialWorkspaceRestorationCoordinator()
-        let opened = URL(fileURLWithPath: "/tmp/Monknot/Opened", isDirectory: true)
-
-        coordinator.noteWorkspaceOpenedAtLaunch(opened)
-
-        XCTAssertTrue(coordinator.wasOpenedAtLaunch(URL(fileURLWithPath: "/tmp/Monknot/Opened")))
-        XCTAssertTrue(coordinator.wasOpenedAtLaunch(URL(fileURLWithPath: "/tmp/Monknot/./Opened/")))
-        XCTAssertFalse(coordinator.wasOpenedAtLaunch(URL(fileURLWithPath: "/tmp/Monknot/Other")))
-    }
-
     func testWindowRequestsQueueUntilInitialHandlingAndThenFlushInOrder() {
         let first = URL(fileURLWithPath: "/tmp/Monknot/First", isDirectory: true)
         let second = URL(fileURLWithPath: "/tmp/Monknot/Second", isDirectory: true)
@@ -47,12 +36,11 @@ final class WorkspaceWindowCoordinationTests: XCTestCase {
         let first = URL(fileURLWithPath: "/tmp/Monknot/First", isDirectory: true)
         let second = URL(fileURLWithPath: "/tmp/Monknot/Second", isDirectory: true)
         let center = WorkspaceWindowRequestCenter()
-        var reusedPaths: [String] = []
+        var shownWorkspace: URL?
         var openedPaths: [String] = []
-        center.installReusableWindowHandler(id: UUID()) { request, claim in
-            guard claim == .empty, reusedPaths.isEmpty else { return false }
-            reusedPaths.append(request.workspaceURL?.path ?? "")
-            return true
+        center.installReusableWindow(id: UUID(), workspaceURL: { shownWorkspace }) { request, claim in
+            XCTAssertEqual(claim, .empty)
+            shownWorkspace = request.workspaceURL
         }
         center.installOpenWindowAction { request in
             openedPaths.append(request.workspaceURL?.path ?? "")
@@ -62,30 +50,72 @@ final class WorkspaceWindowCoordinationTests: XCTestCase {
         center.finishInitialWorkspaceRequestHandling()
         center.openWorkspaceWindow(at: second)
 
-        XCTAssertEqual(reusedPaths, [first.path])
+        XCTAssertEqual(shownWorkspace?.path, first.path)
         XCTAssertEqual(openedPaths, [second.path])
     }
 
-    func testAWindowAlreadyShowingTheWorkspaceIsPreferredOverAnEmptyWindow() {
+    func testRequestsGoToTheWindowShowingTheWorkspaceOrTheClosestOneContainingTheFile() {
+        let projects = URL(fileURLWithPath: "/tmp/Monknot/Projects", isDirectory: true)
+        let notes = projects.appendingPathComponent("Notes", isDirectory: true)
+        let projectsWindow = UUID()
+        let notesWindow = UUID()
+        let emptyWindow = UUID()
+        let windows: [UUID: URL?] = [projectsWindow: projects, notesWindow: notes, emptyWindow: nil]
+
+        func assertClaim(
+            _ request: MonknotWorkspaceWindowRequest,
+            _ windowID: UUID,
+            _ claim: WorkspaceWindowClaim,
+            line: UInt = #line
+        ) {
+            let choice = WorkspaceWindowRequestCenter.claim(for: request, windows: windows)
+            XCTAssertEqual(choice?.windowID, windowID, line: line)
+            XCTAssertEqual(choice?.claim, claim, line: line)
+        }
+        func fileRequest(_ url: URL) -> MonknotWorkspaceWindowRequest {
+            MonknotWorkspaceWindowRequest(workspaceURL: url.deletingLastPathComponent(), selectedDocumentURL: url)
+        }
+
+        // The workspace itself, although another window's workspace contains it.
+        assertClaim(MonknotWorkspaceWindowRequest(workspaceURL: notes), notesWindow, .showsWorkspace)
+        // A file whose folder is not open goes to the deepest workspace that contains it.
+        assertClaim(fileRequest(notes.appendingPathComponent("Daily/todo.md")), notesWindow, .containsDocument)
+        assertClaim(fileRequest(projects.appendingPathComponent("plan.md")), projectsWindow, .showsWorkspace)
+        // A folder inside an open workspace is a workspace of its own: it takes the empty window.
+        assertClaim(
+            MonknotWorkspaceWindowRequest(workspaceURL: projects.appendingPathComponent("Archive", isDirectory: true)),
+            emptyWindow,
+            .empty
+        )
+        // A sibling folder that shares the name prefix is not inside the workspace.
+        assertClaim(fileRequest(URL(fileURLWithPath: "/tmp/Monknot/Projects-old/note.md")), emptyWindow, .empty)
+        // No empty window left: a new window.
+        XCTAssertNil(WorkspaceWindowRequestCenter.claim(
+            for: MonknotWorkspaceWindowRequest(workspaceURL: URL(fileURLWithPath: "/tmp/Monknot/Elsewhere")),
+            windows: [projectsWindow: projects]
+        ))
+    }
+
+    func testAWindowStillOpeningAWorkspaceCountsAsShowingIt() {
         let workspace = URL(fileURLWithPath: "/tmp/Monknot/Notes", isDirectory: true)
         let center = WorkspaceWindowRequestCenter()
-        var claimedBy: [String] = []
-        // Handlers are unordered; the claim order alone must decide.
-        center.installReusableWindowHandler(id: UUID()) { _, claim in
-            guard claim == .empty else { return false }
-            claimedBy.append("empty")
-            return true
+        let openingWindow = UUID()
+        var taken: [WorkspaceWindowClaim] = []
+        var newWindows = 0
+        // The window reports the workspace it is opening before the scan finishes.
+        center.installReusableWindow(id: openingWindow, workspaceURL: { workspace }) { _, claim in
+            taken.append(claim)
         }
-        center.installReusableWindowHandler(id: UUID()) { request, claim in
-            guard claim == .showsWorkspace, request.workspaceURL == workspace else { return false }
-            claimedBy.append("showing")
-            return true
-        }
-        center.installOpenWindowAction { _ in claimedBy.append("new window") }
+        center.installOpenWindowAction { _ in newWindows += 1 }
         center.finishInitialWorkspaceRequestHandling()
 
-        center.openWorkspaceWindow(at: workspace)
+        // Two files from one folder opened together in Finder.
+        center.openWorkspaceWindow(at: workspace, selecting: workspace.appendingPathComponent("a.md"))
+        center.openWorkspaceWindow(at: workspace, selecting: workspace.appendingPathComponent("b.md"))
 
-        XCTAssertEqual(claimedBy, ["showing"])
+        XCTAssertEqual(taken, [.showsWorkspace, .showsWorkspace])
+        XCTAssertEqual(newWindows, 0)
+        XCTAssertTrue(center.isWorkspaceShown(workspace, excludingWindow: UUID()))
+        XCTAssertFalse(center.isWorkspaceShown(workspace, excludingWindow: openingWindow))
     }
 }
