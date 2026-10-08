@@ -8,12 +8,6 @@ struct DocumentLoadFailure: Equatable {
     let message: String
 }
 
-/// A document to open in a tab, asked for from outside the window (Finder, the Dock). The window
-/// opens it once its workspace is ready, the same way as from the sidebar.
-struct DocumentOpenRequest: Equatable {
-    let serial: Int
-    let documentID: String
-}
 
 @MainActor
 final class WorkspaceStore: ObservableObject {
@@ -35,7 +29,9 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var isBusy = false
     @Published private(set) var isDocumentLoading = false
     @Published private(set) var documentLoadFailure: DocumentLoadFailure?
-    @Published private(set) var documentOpenRequest: DocumentOpenRequest?
+    /// Documents asked for from outside the window (Finder, the Dock), in order. The window opens
+    /// them as tabs once its workspace is ready, the same way as from the sidebar.
+    @Published private(set) var pendingDocumentOpenIDs: [String] = []
     @Published private(set) var isSaving = false
     @Published private(set) var documentSaveStates: [String: DocumentSaveState] = [:]
     @Published private(set) var selectedDocumentExternalChange = false
@@ -311,14 +307,14 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func requestDocumentOpen(at url: URL) {
-        documentOpenRequest = DocumentOpenRequest(
-            serial: (documentOpenRequest?.serial ?? 0) &+ 1,
-            documentID: url.standardizedFileURL.path
-        )
+        let documentID = url.standardizedFileURL.path
+        guard !pendingDocumentOpenIDs.contains(documentID) else { return }
+        pendingDocumentOpenIDs.append(documentID)
     }
 
-    func finishDocumentOpenRequest() {
-        documentOpenRequest = nil
+    func takePendingDocumentOpens() -> [String] {
+        defer { pendingDocumentOpenIDs = [] }
+        return pendingDocumentOpenIDs
     }
 
     @discardableResult

@@ -386,6 +386,10 @@ final class HostingWindowReference {
         }
         window.makeKeyAndOrderFront(nil)
     }
+
+    func close() {
+        window?.close()
+    }
 }
 
 /// Records the window it is placed in into `reference`.

@@ -133,22 +133,28 @@ private struct MonknotWindowRootView: View {
                 guard !didHandleInitialRequest else { return }
                 didHandleInitialRequest = true
 
-                // Several restored windows start together at launch. Each checks that no other window
-                // shows or is opening the workspace first, so none opens a second window on it.
+                defer { workspaceWindowRequests.finishInitialWorkspaceRequestHandling() }
+                // Windows register when they appear, so a request can reach this one before it starts.
+                guard workspaceStore.openingWorkspaceURL == nil, workspaceStore.workspaceURL == nil else { return }
+
+                // A window starting with a request (a new window, or one restored at launch) or taking a
+                // pending one first checks that no other window shows or is opening the workspace;
+                // otherwise the request goes to that window and this redundant one closes.
                 if let workspaceURL = request.workspaceURL {
-                    if !isShownElsewhere(workspaceURL) {
-                        _ = workspaceLibrary.add(workspaceURL)
-                        workspaceStore.openWorkspace(workspaceURL, selecting: request.selectedDocumentURL)
+                    if isShownElsewhere(workspaceURL) {
+                        workspaceWindowRequests.openWorkspaceWindow(request)
+                        hostingWindow.close()
+                    } else {
+                        openWorkspace(workspaceURL, for: request)
                         await importCaptureIfNeeded(from: request)
                     }
                 } else if let pendingRequest = workspaceWindowRequests.consumePendingInitialWorkspaceRequest(),
                           let workspaceURL = pendingRequest.workspaceURL {
                     if isShownElsewhere(workspaceURL) {
-                        // Hand it back; it goes to that window once launch handling finishes.
+                        // It goes to that window once launch handling finishes.
                         workspaceWindowRequests.openWorkspaceWindow(pendingRequest)
                     } else {
-                        _ = workspaceLibrary.add(workspaceURL)
-                        workspaceStore.openWorkspace(workspaceURL, selecting: pendingRequest.selectedDocumentURL)
+                        openWorkspace(workspaceURL, for: pendingRequest)
                         await importCaptureIfNeeded(from: pendingRequest)
                     }
                 } else if reopenLastWorkspace, workspaceRestoration.claimInitialRestore() {
@@ -161,9 +167,18 @@ private struct MonknotWindowRootView: View {
                         workspaceStore.errorMessage = "Could not restore the previous workspace: \(error.localizedDescription)"
                     }
                 }
-
-                workspaceWindowRequests.finishInitialWorkspaceRequestHandling()
             }
+    }
+
+    /// Opens the request's workspace in this window, synchronously so that the window reports it
+    /// before the next request is routed. Its file is also queued as a tab, so it joins the workspace's
+    /// saved tabs instead of being replaced by them when they are restored.
+    private func openWorkspace(_ workspaceURL: URL, for request: MonknotWorkspaceWindowRequest) {
+        _ = workspaceLibrary.add(workspaceURL)
+        workspaceStore.openWorkspace(workspaceURL, selecting: request.selectedDocumentURL)
+        if let documentURL = request.selectedDocumentURL {
+            workspaceStore.requestDocumentOpen(at: documentURL)
+        }
     }
 
     private func takeWindowRequest(_ request: MonknotWorkspaceWindowRequest, claim: WorkspaceWindowClaim) {
@@ -177,8 +192,7 @@ private struct MonknotWindowRootView: View {
             hostingWindow.bringToFront()
         case .empty:
             guard let workspaceURL = request.workspaceURL else { return }
-            _ = workspaceLibrary.add(workspaceURL)
-            workspaceStore.openWorkspace(workspaceURL, selecting: request.selectedDocumentURL)
+            openWorkspace(workspaceURL, for: request)
         }
         Task { @MainActor in
             await importCaptureIfNeeded(from: request)

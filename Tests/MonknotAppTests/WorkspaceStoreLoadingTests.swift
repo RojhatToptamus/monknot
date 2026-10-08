@@ -204,6 +204,20 @@ final class WorkspaceStoreLoadingTests: WorkspaceStoreConflictTestCase {
         XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8).count, largeText.count)
     }
 
+    func testDocumentsAskedForFromOutsideAreQueuedOnceInOrder() {
+        let store = makeWorkspaceStore()
+        let first = URL(fileURLWithPath: "/tmp/Monknot/Notes/a.md")
+        let second = URL(fileURLWithPath: "/tmp/Monknot/Notes/./b.md")
+
+        // Finder hands over several files in one go; none may replace another.
+        store.requestDocumentOpen(at: first)
+        store.requestDocumentOpen(at: second)
+        store.requestDocumentOpen(at: first)
+
+        XCTAssertEqual(store.takePendingDocumentOpens(), [first.path, "/tmp/Monknot/Notes/b.md"])
+        XCTAssertEqual(store.pendingDocumentOpenIDs, [])
+    }
+
     func testFilesThatCannotOpenAreNotAddedToRecents() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
