@@ -6164,11 +6164,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
 enum MarkdownSyntaxStyle: Equatable {
     case heading
-    case quote
     case strong
     case wikilink
     case link
     case code
+    /// Block syntax (`#`, `>`, list bullets and numbers, task boxes), drawn quieter than the text.
+    case marker
 }
 
 struct MarkdownSyntaxToken: Equatable {
@@ -6180,13 +6181,10 @@ enum MarkdownSyntaxTokenizer {
     private struct Pattern {
         let expression: NSRegularExpression
         let style: MarkdownSyntaxStyle
+        var captureGroup = 0
     }
 
     private static let patterns: [Pattern] = [
-        Pattern(
-            expression: try! NSRegularExpression(pattern: #"(?m)^ {0,3}>.*$"#),
-            style: .quote
-        ),
         Pattern(
             expression: try! NSRegularExpression(pattern: #"(?m)^ {0,3}#{1,6}[\t ]+.*$"#),
             style: .heading
@@ -6206,6 +6204,24 @@ enum MarkdownSyntaxTokenizer {
         Pattern(
             expression: try! NSRegularExpression(pattern: #"`[^`\n]+`"#),
             style: .code
+        ),
+        // Markers come last so they override the heading colour of their line.
+        Pattern(
+            expression: try! NSRegularExpression(pattern: #"(?m)^ {0,3}(#{1,6})(?=[\t ]+)"#),
+            style: .marker,
+            captureGroup: 1
+        ),
+        Pattern(
+            expression: try! NSRegularExpression(pattern: #"(?m)^ {0,3}((?:>[\t ]?)+)"#),
+            style: .marker,
+            captureGroup: 1
+        ),
+        Pattern(
+            expression: try! NSRegularExpression(
+                pattern: #"(?m)^[\t ]*((?:[-*+]|\d{1,9}[.)])(?:[\t ]+\[[ xX]\])?)(?=[\t ])"#
+            ),
+            style: .marker,
+            captureGroup: 1
         )
     ]
 
@@ -6215,7 +6231,7 @@ enum MarkdownSyntaxTokenizer {
         let range = range ?? NSRange(location: 0, length: (source as NSString).length)
         return patterns.flatMap { pattern in
             pattern.expression.matches(in: source, range: range).map {
-                MarkdownSyntaxToken(range: $0.range, style: pattern.style)
+                MarkdownSyntaxToken(range: $0.range(at: pattern.captureGroup), style: pattern.style)
             }
         }
     }
@@ -6247,11 +6263,12 @@ private enum MarkdownSyntaxHighlighter {
             paragraphStyle.maximumLineHeight = lineHeight
         }
 
+        // The words the user writes are `ink`, as in the preview (quotes included); Markdown
+        // block syntax steps down to `ink3`, so structure stays visible without dimming text.
         let primary = NSColor(hex: theme.foreground)
-        let baseColor = enabled ? primary.withAlphaComponent(0.62) : primary
         let baseAttributes: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: baseColor,
+            .foregroundColor: primary,
             .paragraphStyle: paragraphStyle
         ]
 
@@ -6268,8 +6285,6 @@ private enum MarkdownSyntaxHighlighter {
                         .font: boldFont,
                         .foregroundColor: NSColor(hex: theme.accent)
                     ]
-                case .quote:
-                    attributes = [.foregroundColor: primary.withAlphaComponent(0.40)]
                 case .strong:
                     attributes = [
                         .font: boldFont,
@@ -6281,6 +6296,8 @@ private enum MarkdownSyntaxHighlighter {
                     attributes = [.foregroundColor: NSColor(hex: theme.accent)]
                 case .code:
                     attributes = [.foregroundColor: NSColor(hex: theme.accent).withAlphaComponent(0.88)]
+                case .marker:
+                    attributes = [.foregroundColor: primary.withAlphaComponent(0.40)]
                 }
                 storage.addAttributes(attributes, range: token.range)
             }

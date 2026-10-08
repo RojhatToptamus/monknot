@@ -139,14 +139,32 @@ final class MarkdownPresentationTokenTests: XCTestCase {
 
         for expectedStyle in [
             MarkdownSyntaxStyle.heading,
-            .quote,
             .strong,
             .wikilink,
             .link,
             .code,
+            .marker,
         ] {
             XCTAssertTrue(styles.contains(expectedStyle))
         }
+    }
+
+    func testMarkdownSyntaxMarkersCoverOnlyTheBlockSyntax() {
+        let markdown = """
+        ## Heading
+        > > Nested quote
+        - item
+          12. numbered
+        * [x] done
+        **not a list** and #not-a-heading
+        ---
+        """
+        let source = markdown as NSString
+        let markers = MarkdownSyntaxTokenizer.tokens(in: markdown)
+            .filter { $0.style == .marker }
+            .map { source.substring(with: $0.range) }
+
+        XCTAssertEqual(markers, ["##", "> > ", "-", "12.", "* [x]"])
     }
 
     func testMarkdownEditorLineHeightTracksHighZoomFontSize() {

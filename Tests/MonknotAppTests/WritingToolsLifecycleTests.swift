@@ -325,9 +325,10 @@ final class WritingToolsLifecycleTests: FlowEditorTestCase {
             font: font,
             in: textView
         )
+        // Character 2 is the heading text; the `#` marker at 0 is drawn as quieter syntax.
         let headingColor = textView.textStorage?.attribute(
             .foregroundColor,
-            at: 0,
+            at: 2,
             effectiveRange: nil
         ) as? NSColor
         XCTAssertEqual(headingColor, NSColor(hex: AppTheme.defaultDark.accent))
