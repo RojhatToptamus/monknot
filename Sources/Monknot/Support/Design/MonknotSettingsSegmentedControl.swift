@@ -158,7 +158,10 @@ struct MonknotSettingsMenuPicker: View {
                     .lineLimit(1)
 
                 Image(systemName: "chevron.down")
-                    .font(.system(size: scaled(10), weight: .regular))
+                    .font(.system(
+                        size: MonknotMetrics.interfaceGlyph(10, theme: theme, zoomScale: settingsZoomScale),
+                        weight: .regular
+                    ))
                     .foregroundStyle(theme.mutedForegroundColor)
             }
             .padding(.horizontal, scaled(12))

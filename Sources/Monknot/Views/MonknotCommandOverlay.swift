@@ -55,10 +55,16 @@ struct MonknotCommandOverlayEmptyState: View {
     var body: some View {
         VStack(alignment: .leading, spacing: scaled(4)) {
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(
+                    size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale),
+                    weight: .semibold
+                ))
                 .foregroundStyle(theme.foregroundColor)
             Text(message)
-                .font(.system(size: 12, weight: .regular))
+                .font(.system(
+                    size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale),
+                    weight: .regular
+                ))
                 .foregroundStyle(theme.tertiaryForegroundColor)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

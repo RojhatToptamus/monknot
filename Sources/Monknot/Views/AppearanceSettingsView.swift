@@ -304,12 +304,10 @@ private struct ThemeLivePreview: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("LIVE PREVIEW")
-                .font(.system(
-                    size: MonknotMetrics.interfaceText(10, theme: chromeTheme, zoomScale: settingsZoomScale),
-                    weight: .semibold
-                ))
-                .tracking(scaled(1.1))
+            Text("Live Preview")
+                .font(MonknotTypography.eyebrow(theme: chromeTheme, zoomScale: settingsZoomScale))
+                .tracking(MonknotTypography.eyebrowTracking(theme: chromeTheme, zoomScale: settingsZoomScale))
+                .textCase(.uppercase)
                 .foregroundStyle(chromeTheme.mutedForegroundColor)
                 .padding(.horizontal, scaled(14))
                 .frame(height: scaled(28))

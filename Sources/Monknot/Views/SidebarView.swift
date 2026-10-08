@@ -960,9 +960,10 @@ private struct WorkspaceSwitcherPopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("WORKSPACES")
-                .font(.system(size: textScaled(10), weight: .semibold))
-                .tracking(scaled(0.9))
+            Text("Workspaces")
+                .font(MonknotTypography.eyebrow(theme: theme, zoomScale: zoomScale))
+                .tracking(MonknotTypography.eyebrowTracking(theme: theme, zoomScale: zoomScale))
+                .textCase(.uppercase)
                 .foregroundStyle(theme.tertiaryForegroundColor)
                 .padding(.horizontal, scaled(14))
                 .frame(height: scaled(28), alignment: .bottomLeading)
@@ -1786,7 +1787,11 @@ private struct GitStatusBadge: View {
 
     var body: some View {
         Text(status.label)
-            .font(.system(size: scaled(10), weight: .semibold, design: .rounded))
+            .font(.system(
+                size: MonknotMetrics.interfaceText(10, theme: theme, zoomScale: zoomScale),
+                weight: .semibold,
+                design: .rounded
+            ))
             .foregroundStyle(status.badgeForegroundColor(theme: theme))
             .padding(.horizontal, scaled(4))
             .padding(.vertical, scaled(2))
@@ -2047,9 +2052,10 @@ private struct EmptySidebarView: View {
 
                     if !isLoadingWorkspace, !availableWorkspaces.isEmpty {
                         VStack(alignment: .leading, spacing: scaled(4)) {
-                            Text("WORKSPACES")
-                                .font(.system(size: scaled(10), weight: .semibold))
-                                .tracking(scaled(0.7))
+                            Text("Workspaces")
+                                .font(MonknotTypography.eyebrow(theme: theme, zoomScale: zoomScale))
+                                .tracking(MonknotTypography.eyebrowTracking(theme: theme, zoomScale: zoomScale))
+                                .textCase(.uppercase)
                                 .foregroundStyle(theme.sidebarMutedColor(prominence: 0.76))
                                 .padding(.horizontal, scaled(10))
                                 .padding(.bottom, scaled(3))
