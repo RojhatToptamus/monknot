@@ -35,7 +35,13 @@ struct EditorPaneView: View {
     @State private var splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
     @State private var previewSyncLine: Int?
     @State private var sourceSyncLine: Int?
-    @StateObject private var outlinePosition = MarkdownOutlinePosition()
+    /// Held, not observed: only the outline rail observes the visible line. Observing it here
+    /// re-ran the editor bridge on every line scrolled past, which also cancelled animated
+    /// scroll-bar page clicks.
+    @State private var outlinePosition = MarkdownOutlinePosition()
+    /// The outline rail sits left of the document's vertical scroll bar; laid over it, the bar could
+    /// not be grabbed or clicked. The width follows the "Show scroll bars" preference.
+    @State private var documentScrollBarWidth = Self.systemScrollBarWidth()
     let theme: AppTheme
     let zoomScale: Double
     let codeFontSize: CGFloat
@@ -93,6 +99,9 @@ struct EditorPaneView: View {
                    supportsSplitViewRatioPersistence(forDocumentID: documentID) {
                     splitSourcePaneRatio = DocumentSplitViewPersistence.sourcePaneRatio(forDocumentPath: documentID)
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSScroller.preferredScrollerStyleDidChangeNotification)) { _ in
+                documentScrollBarWidth = Self.systemScrollBarWidth()
             }
             .onChange(of: store.selectedDocument?.id) { oldDocumentID, newDocumentID in
                 outlinePosition.update(1)
@@ -470,6 +479,7 @@ struct EditorPaneView: View {
                 )
                 .equatable()
                 .frame(maxHeight: .infinity)
+                .padding(.trailing, documentScrollBarWidth)
                 .zIndex(5)
             }
         }
@@ -574,6 +584,10 @@ struct EditorPaneView: View {
         DispatchQueue.main.async {
             splitScrollSyncLock = false
         }
+    }
+
+    private static func systemScrollBarWidth() -> CGFloat {
+        NSScroller.scrollerWidth(for: .regular, scrollerStyle: NSScroller.preferredScrollerStyle)
     }
 
     private func splitViewRatioAccessor(for document: WorkspaceDocument) -> some View {

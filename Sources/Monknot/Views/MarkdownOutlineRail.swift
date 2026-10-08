@@ -50,10 +50,16 @@ final class MarkdownOutlinePosition: ObservableObject {
     }
 }
 
-/// The rail re-renders when its headings, theme or zoom change, or when `position` publishes. It
-/// is not re-evaluated for every keystroke in the editor pane around it; `select` forwards to the
-/// pane and is deliberately not compared.
-extension MarkdownOutlineRail: Equatable {
+/// The rail is redrawn when its headings, theme or zoom change, not on every keystroke in the editor
+/// pane around it. The visible line is observed one level down, so scrolling still moves the current
+/// marker. `select` forwards to the pane and is deliberately not compared.
+struct MarkdownOutlineRail: View, Equatable {
+    let items: [MarkdownOutlineItem]
+    let position: MarkdownOutlinePosition
+    let theme: AppTheme
+    let zoomScale: Double
+    let select: (MarkdownOutlineItem) -> Void
+
     nonisolated static func == (lhs: MarkdownOutlineRail, rhs: MarkdownOutlineRail) -> Bool {
         MainActor.assumeIsolated {
             lhs.position === rhs.position &&
@@ -62,9 +68,19 @@ extension MarkdownOutlineRail: Equatable {
                 lhs.theme == rhs.theme
         }
     }
+
+    var body: some View {
+        MarkdownOutlineRailContent(
+            items: items,
+            position: position,
+            theme: theme,
+            zoomScale: zoomScale,
+            select: select
+        )
+    }
 }
 
-struct MarkdownOutlineRail: View {
+private struct MarkdownOutlineRailContent: View {
     let items: [MarkdownOutlineItem]
     @ObservedObject var position: MarkdownOutlinePosition
     let theme: AppTheme

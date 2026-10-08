@@ -98,7 +98,7 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
         )
         XCTAssertTrue(paneView(controller.sidebarItem, in: controller).isHidden)
         let splitView = controller.splitView as! WorkspaceNativeSplitView
-        let collapsedHitRect = splitView.centerBiasedHitRect(forDividerAt: 0)
+        let collapsedHitRect = splitView.hitRect(forDividerAt: 0)
         XCTAssertEqual(collapsedHitRect.minX, splitView.bounds.minX, accuracy: 0.001)
         XCTAssertEqual(collapsedHitRect.width, splitView.dividerHitWidth, accuracy: 0.001)
         XCTAssertTrue(
@@ -120,7 +120,7 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
 
         XCTAssertFalse(controller.sidebarItem.isCollapsed)
         XCTAssertEqual(paneWidth(controller.sidebarItem, in: controller), usefulWidth, accuracy: 1)
-        let restoredHitRect = splitView.centerBiasedHitRect(forDividerAt: 0)
+        let restoredHitRect = splitView.hitRect(forDividerAt: 0)
         XCTAssertEqual(restoredHitRect.minX, paneFrame(controller.sidebarItem, in: controller).maxX, accuracy: 1)
         XCTAssertGreaterThan(restoredHitRect.minX, splitView.bounds.minX)
     }
@@ -144,11 +144,20 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
         )
         XCTAssertTrue(paneView(controller.terminalItem, in: controller).isHidden)
         let splitView = controller.splitView as! WorkspaceNativeSplitView
-        let collapsedHitRect = splitView.centerBiasedHitRect(forDividerAt: 1)
-        XCTAssertEqual(collapsedHitRect.maxX, splitView.bounds.maxX, accuracy: 0.001)
+        let collapsedHitRect = splitView.hitRect(forDividerAt: 1)
+        XCTAssertEqual(
+            collapsedHitRect.minX,
+            splitView.bounds.maxX - splitView.dividerThickness,
+            accuracy: 0.001,
+            "A collapsed terminal's divider keeps only its own width inside the window"
+        )
         XCTAssertEqual(collapsedHitRect.width, splitView.dividerHitWidth, accuracy: 0.001)
         XCTAssertTrue(
-            splitView.hitTest(NSPoint(x: collapsedHitRect.midX, y: collapsedHitRect.midY)) === splitView
+            splitView.hitTest(NSPoint(x: splitView.bounds.maxX - 1, y: collapsedHitRect.midY)) === splitView
+        )
+        XCTAssertFalse(
+            splitView.hitTest(NSPoint(x: splitView.bounds.maxX - 8, y: collapsedHitRect.midY)) === splitView,
+            "The document's scroll bar at the window edge must stay reachable while the terminal is hidden"
         )
         XCTAssertEqual(paneFrame(controller.detailItem, in: controller).maxX, controller.splitView.bounds.maxX, accuracy: 1)
         XCTAssertGreaterThan(paneWidth(controller.detailItem, in: controller), detailWidthBeforeCollapse)
@@ -166,8 +175,8 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
 
         XCTAssertFalse(controller.terminalItem.isCollapsed)
         XCTAssertEqual(paneWidth(controller.terminalItem, in: controller), usefulWidth, accuracy: 1)
-        let restoredHitRect = splitView.centerBiasedHitRect(forDividerAt: 1)
-        XCTAssertEqual(restoredHitRect.maxX, paneFrame(controller.terminalItem, in: controller).minX, accuracy: 1)
+        let restoredHitRect = splitView.hitRect(forDividerAt: 1)
+        XCTAssertEqual(restoredHitRect.minX, paneFrame(controller.detailItem, in: controller).maxX, accuracy: 1)
         XCTAssertLessThan(restoredHitRect.maxX, splitView.bounds.maxX)
     }
 

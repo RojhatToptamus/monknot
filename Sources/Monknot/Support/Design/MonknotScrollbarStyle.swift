@@ -1,16 +1,17 @@
 import AppKit
 import SwiftUI
-import WebKit
 
 enum MonknotScrollbarStyle {
     static let trackWidth: CGFloat = 12
     static let restingThumbWidth: CGFloat = 6
     static let hoveredThumbWidth: CGFloat = 8
-    static let restingOpacity: CGFloat = 0.18
-    static let hoveredOpacity: CGFloat = 0.55
+    // At 18 % the thumb measured 1.8:1 against the canvas; half strength clears the 3:1 minimum for
+    // non-text indicators in both appearances.
+    static let restingOpacity: CGFloat = 0.5
+    static let hoveredOpacity: CGFloat = 0.7
 
+    /// The scroller style follows System Settings › Appearance › Show scroll bars; AppKit applies it.
     static func apply(to scrollView: NSScrollView) {
-        scrollView.scrollerStyle = .overlay
         scrollView.autohidesScrollers = true
         if !(scrollView.verticalScroller is MonknotScroller) {
             scrollView.verticalScroller = MonknotScroller(frame: .zero)
@@ -51,27 +52,20 @@ enum MonknotScrollbarStyle {
         """
     }
 
-    static func webUserScript() -> WKUserScript {
-        let css = webCSS()
-        return WKUserScript(
-            source: """
-            (() => {
-              const style = document.createElement("style");
-              style.textContent = `\(css)`;
-              (document.head || document.documentElement).appendChild(style);
-            })();
-            """,
-            injectionTime: .atDocumentEnd,
-            forMainFrameOnly: true
-        )
-    }
-
     private static func cssPixels(_ value: CGFloat) -> String {
         value.rounded() == value ? "\(Int(value))px" : "\(value)px"
     }
 }
 
+/// The thin rounded thumb used while overlay scroll bars are active. With "Show scroll bars: Always"
+/// the user asked for the standard scroll bar, so legacy style draws AppKit's own knob and track.
 final class MonknotScroller: NSScroller {
+    /// Without this AppKit treats every scroller subclass as legacy-only (see NSScroller.h), so
+    /// documents never got overlay scroll bars on any Mac.
+    override class var isCompatibleWithOverlayScrollers: Bool {
+        self == MonknotScroller.self
+    }
+
     private var isHovered = false
     private var hoverTrackingArea: NSTrackingArea?
 
@@ -103,6 +97,10 @@ final class MonknotScroller: NSScroller {
     }
 
     override func drawKnob() {
+        guard scrollerStyle == .overlay else {
+            super.drawKnob()
+            return
+        }
         let knobRect = rect(for: .knob)
         guard knobRect.width > 0, knobRect.height > 0 else { return }
 
@@ -122,7 +120,12 @@ final class MonknotScroller: NSScroller {
         NSBezierPath(roundedRect: visibleRect, xRadius: width / 2, yRadius: width / 2).fill()
     }
 
-    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {}
+    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {
+        guard scrollerStyle == .overlay else {
+            super.drawKnobSlot(in: slotRect, highlight: flag)
+            return
+        }
+    }
 }
 
 struct MonknotScrollView<Content: View>: View {

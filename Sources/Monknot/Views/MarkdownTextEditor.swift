@@ -1892,7 +1892,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         if didChangeDocument {
             context.coordinator.restoreScrollPosition(scrollPosition?.point ?? .zero, in: scrollView)
-        } else {
+        } else if scrollView.contentView.bounds.origin != visibleOrigin {
+            // Undo only a shift this update caused. Re-applying an unchanged origin cancelled
+            // in-flight animated scrolls, such as a page click in the scroll bar track.
             context.coordinator.restoreScrollPosition(visibleOrigin, in: scrollView, shouldPublish: false)
         }
 

@@ -29,7 +29,6 @@ struct HTMLPreviewView: NSViewRepresentable {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.userContentController.add(context.coordinator, name: Coordinator.scrollPositionHandlerName)
         configuration.userContentController.addUserScript(Coordinator.previewBehaviorScript)
-        configuration.userContentController.addUserScript(MonknotScrollbarStyle.webUserScript())
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.identifier = .monknotDocumentFocusTarget

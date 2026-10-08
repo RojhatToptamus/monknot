@@ -267,7 +267,7 @@ final class WorkspaceNativeSplitView: NSSplitView {
     override func resetCursorRects() {
         super.resetCursorRects()
         for index in dividerIndices where !disabledDividerIndices.contains(index) {
-            addCursorRect(centerBiasedHitRect(forDividerAt: index), cursor: horizontalResizeCursor)
+            addCursorRect(hitRect(forDividerAt: index), cursor: horizontalResizeCursor)
         }
     }
 
@@ -328,23 +328,17 @@ final class WorkspaceNativeSplitView: NSSplitView {
         super.mouseDown(with: event)
     }
 
-    func centerBiasedHitRect(forDividerAt index: Int) -> NSRect {
+    /// Both drag targets grow to the right of their divider. Every pane keeps its vertical scroll bar
+    /// against its trailing edge, so growing right never covers one: the sidebar divider extends into
+    /// the document's leading margin, and the terminal divider extends into the terminal instead of
+    /// over the document's scroll bar. With the terminal collapsed, its divider sits at the window
+    /// edge and the extra width falls outside the window.
+    func hitRect(forDividerAt index: Int) -> NSRect {
         guard dividerIndices.contains(index) else { return .zero }
         let drawnRect = dividerRect(at: index)
         let extraWidth = max(0, dividerHitWidth - drawnRect.width)
-
-        // Both targets grow into the document area. This keeps them clear of
-        // the sidebar and terminal scrollbars at their outer pane edges.
-        if index == 0 {
-            return NSRect(
-                x: drawnRect.minX,
-                y: bounds.minY,
-                width: drawnRect.width + extraWidth,
-                height: bounds.height
-            )
-        }
         return NSRect(
-            x: drawnRect.minX - extraWidth,
+            x: drawnRect.minX,
             y: bounds.minY,
             width: drawnRect.width + extraWidth,
             height: bounds.height
@@ -384,7 +378,7 @@ final class WorkspaceNativeSplitView: NSSplitView {
     private func dividerIndex(containing point: NSPoint) -> Int? {
         dividerIndices.first {
             !disabledDividerIndices.contains($0)
-                && centerBiasedHitRect(forDividerAt: $0).contains(point)
+                && hitRect(forDividerAt: $0).contains(point)
         }
     }
 
@@ -587,12 +581,12 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         guard let workspaceSplitView = splitView as? WorkspaceNativeSplitView else {
             return systemRect
         }
-        let centerBiasedRect = workspaceSplitView.centerBiasedHitRect(forDividerAt: dividerIndex)
+        let dividerHitRect = workspaceSplitView.hitRect(forDividerAt: dividerIndex)
         let verticalRect = systemRect.isEmpty ? splitView.bounds : systemRect
         return NSRect(
-            x: centerBiasedRect.minX,
+            x: dividerHitRect.minX,
             y: verticalRect.minY,
-            width: centerBiasedRect.width,
+            width: dividerHitRect.width,
             height: verticalRect.height
         ).intersection(splitView.bounds)
     }
@@ -618,7 +612,7 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         // AppKit hides a collapsed outer divider so it occupies exactly zero
         // layout width. Its additive effective rect keeps that native divider
         // reachable at the window edge without reintroducing a visible gutter.
-        return workspaceSplitView.centerBiasedHitRect(forDividerAt: dividerIndex)
+        return workspaceSplitView.hitRect(forDividerAt: dividerIndex)
     }
 
     override func splitView(

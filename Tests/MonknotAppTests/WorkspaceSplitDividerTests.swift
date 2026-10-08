@@ -6,15 +6,15 @@ import XCTest
 
 @MainActor
 final class WorkspaceSplitDividerTests: WorkspaceSplitViewTestCase {
-    func testNativeDividerHitRectsAreWiderThanTheirDividersAndGrowIntoTheCenter() throws {
+    func testNativeDividerHitRectsAreWiderThanTheirDividersAndNeverCoverAScrollBar() throws {
         let controller = makeController()
         let window = mount(controller, width: 1_600)
         let splitView = try XCTUnwrap(controller.splitView as? WorkspaceNativeSplitView)
 
         let leftBoundary = splitView.arrangedSubviews[0].frame.maxX
         let rightBoundary = splitView.arrangedSubviews[1].frame.maxX
-        let leftHitRect = splitView.centerBiasedHitRect(forDividerAt: 0)
-        let rightHitRect = splitView.centerBiasedHitRect(forDividerAt: 1)
+        let leftHitRect = splitView.hitRect(forDividerAt: 0)
+        let rightHitRect = splitView.hitRect(forDividerAt: 1)
         let leftEffectiveRect = controller.splitView(
             splitView,
             effectiveRect: .zero,
@@ -49,17 +49,18 @@ final class WorkspaceSplitDividerTests: WorkspaceSplitViewTestCase {
 
         XCTAssertGreaterThan(rightHitRect.width, splitView.dividerThickness)
         XCTAssertEqual(rightEffectiveRect, rightHitRect.intersection(splitView.bounds))
-        XCTAssertLessThan(rightHitRect.minX, rightBoundary)
         XCTAssertEqual(
-            rightHitRect.maxX,
-            rightBoundary + splitView.dividerThickness,
-            accuracy: 0.001
+            rightHitRect.minX,
+            rightBoundary,
+            accuracy: 0.001,
+            "The terminal-side target must not extend over the document's scroll bar, which sits against this divider"
         )
-        XCTAssertLessThanOrEqual(
-            rightHitRect.maxX,
-            splitView.arrangedSubviews[2].frame.minX,
-            "The terminal-side hit target must grow into the center, not over the terminal scrollbar"
+        XCTAssertGreaterThan(rightHitRect.maxX, splitView.arrangedSubviews[2].frame.minX)
+        let documentScrollBarStrip = NSPoint(
+            x: rightBoundary - NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) / 2,
+            y: splitView.bounds.midY
         )
+        XCTAssertFalse(splitView.hitTest(documentScrollBarStrip) === splitView)
         _ = window
     }
 
@@ -75,7 +76,7 @@ final class WorkspaceSplitDividerTests: WorkspaceSplitViewTestCase {
                 && trackingArea.options.contains(.mouseMoved)
         })
 
-        let leftHitRect = splitView.centerBiasedHitRect(forDividerAt: 0)
+        let leftHitRect = splitView.hitRect(forDividerAt: 0)
         let hoverEvent = try XCTUnwrap(mouseEvent(
             type: .mouseMoved,
             location: splitView.convert(

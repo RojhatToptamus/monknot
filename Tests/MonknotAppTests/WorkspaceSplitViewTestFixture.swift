@@ -835,7 +835,7 @@ class WorkspaceSplitViewTestCase: XCTestCase {
         in splitView: WorkspaceNativeSplitView,
         window: NSWindow
     ) throws {
-        let hitRect = splitView.centerBiasedHitRect(forDividerAt: dividerIndex)
+        let hitRect = splitView.hitRect(forDividerAt: dividerIndex)
         let leadingView = splitView.arrangedSubviews[dividerIndex]
         let trailingView = splitView.arrangedSubviews[dividerIndex + 1]
         let currentDividerPosition = leadingView.isHidden
