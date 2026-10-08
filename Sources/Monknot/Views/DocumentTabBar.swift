@@ -2,41 +2,125 @@ import AppKit
 import MonknotCore
 import SwiftUI
 
-enum DocumentTabWidthPolicy {
-    static func preferredWidth(
-        title: String,
-        isPinned: Bool,
-        theme: AppTheme,
-        zoomScale: Double
-    ) -> CGFloat {
-        let fontSize = MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale)
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
-        let labelWidth = ceil((title as NSString).size(withAttributes: [.font: font]).width)
-        let maximumTabWidth = MonknotMetrics.interfaceDensity(
-            MonknotMetrics.tabMaxWidthBase,
-            theme: theme,
-            zoomScale: zoomScale
-        )
-        let documentGlyphColumn = MonknotMetrics.interfaceGlyph(
+/// Tab geometry, design.md §10.3: `10 padding · kind glyph column · 8 gap · label · 8 gap · 16
+/// trailing slot · 10 padding`, capped at 220. The row is laid out from these same values, so the
+/// width a tab takes is exactly what its row needs and a label that fits is never cut.
+struct DocumentTabMetrics {
+    let padding: CGFloat
+    let gap: CGFloat
+    let glyphColumn: CGFloat
+    let pinGlyph: CGFloat
+    let warningGlyph: CGFloat
+    let trailingSlot: CGFloat
+    let maximumWidth: CGFloat
+    let labelFont: NSFont
+
+    init(theme: AppTheme, zoomScale: Double) {
+        padding = MonknotMetrics.interfaceDensity(10, theme: theme, zoomScale: zoomScale)
+        gap = MonknotMetrics.interfaceDensity(8, theme: theme, zoomScale: zoomScale)
+        glyphColumn = MonknotMetrics.interfaceGlyph(
             MonknotMetrics.rowIconColumnWidthBase,
             theme: theme,
             zoomScale: zoomScale
         )
-        let outerPadding = MonknotMetrics.interfaceDensity(20, theme: theme, zoomScale: zoomScale)
-        let labelGaps = MonknotMetrics.interfaceDensity(16, theme: theme, zoomScale: zoomScale)
-        let fixedControls: CGFloat
-        if isPinned {
-            fixedControls = MonknotMetrics.interfaceDensity(18, theme: theme, zoomScale: zoomScale)
-                + labelGaps
-                + documentGlyphColumn
-                + MonknotMetrics.interfaceGlyph(9, theme: theme, zoomScale: zoomScale)
-        } else {
-            fixedControls = outerPadding
-                + labelGaps
-                + documentGlyphColumn
-                + MonknotTabCloseButton.dimension(theme: theme, zoomScale: zoomScale)
+        pinGlyph = MonknotMetrics.interfaceGlyph(9, theme: theme, zoomScale: zoomScale)
+        warningGlyph = MonknotMetrics.interfaceGlyph(10, theme: theme, zoomScale: zoomScale)
+        trailingSlot = MonknotTabCloseButton.dimension(theme: theme, zoomScale: zoomScale)
+        maximumWidth = MonknotMetrics.interfaceDensity(
+            MonknotMetrics.tabMaxWidthBase,
+            theme: theme,
+            zoomScale: zoomScale
+        )
+        labelFont = NSFont.systemFont(
+            ofSize: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale),
+            weight: .regular
+        )
+    }
+
+    /// Everything in a tab except its label.
+    func chromeWidth(isPinned: Bool, isMissing: Bool) -> CGFloat {
+        var width = padding + glyphColumn + gap + gap
+        width += isPinned ? pinGlyph + gap : trailingSlot + padding
+        if isMissing {
+            width += gap + warningGlyph
         }
-        return min(maximumTabWidth, labelWidth + fixedControls)
+        return width
+    }
+
+    func labelWidth(_ label: String) -> CGFloat {
+        ceil((label as NSString).size(withAttributes: [.font: labelFont]).width)
+    }
+
+    /// The label as shown: whole when the tab fits under the cap, otherwise middle-elided.
+    func fittedLabel(_ label: String, isPinned: Bool, isMissing: Bool) -> String {
+        DocumentTabLabel.middleElided(
+            label,
+            toFit: maximumWidth - chromeWidth(isPinned: isPinned, isMissing: isMissing),
+            measure: labelWidth
+        )
+    }
+
+    func width(fittedLabel: String, isPinned: Bool, isMissing: Bool) -> CGFloat {
+        min(maximumWidth, chromeWidth(isPinned: isPinned, isMissing: isMissing) + labelWidth(fittedLabel))
+    }
+}
+
+/// The text of tab labels, design.md §10.3.
+enum DocumentTabLabel {
+    /// Labels by document ID. A name shared by several tabs gets the shortest parent path that tells
+    /// it apart from the others; every other tab shows its name alone.
+    static func labels(for tabs: [WorkspaceTabItem]) -> [String: String] {
+        var labels: [String: String] = [:]
+        for group in Dictionary(grouping: tabs, by: \.displayName).values {
+            guard group.count > 1 else {
+                labels[group[0].documentID] = group[0].displayName
+                continue
+            }
+            let parents = group.map { Array($0.relativePath.split(separator: "/").dropLast()) }
+            for (index, tab) in group.enumerated() {
+                let others = parents.indices.filter { $0 != index }.map { parents[$0] }
+                let ownParents = parents[index]
+                let depth = (1...max(1, ownParents.count)).first { depth in
+                    !others.contains { $0.suffix(depth) == ownParents.suffix(depth) }
+                } ?? ownParents.count
+                let prefix = ownParents.suffix(depth).joined(separator: "/")
+                labels[tab.documentID] = prefix.isEmpty ? tab.displayName : "\(prefix)/\(tab.displayName)"
+            }
+        }
+        return labels
+    }
+
+    /// Middle-elides `label` to fit `width`, keeping the extension whole: `improving-onb…rate.md`.
+    /// The head says what the file is and the end says which one, so both are kept.
+    static func middleElided(
+        _ label: String,
+        toFit width: CGFloat,
+        measure: (String) -> CGFloat
+    ) -> String {
+        guard measure(label) > width else { return label }
+        let fileExtension = (label as NSString).pathExtension
+        let tail = fileExtension.isEmpty || fileExtension.count + 1 >= label.count ? "" : ".\(fileExtension)"
+        let body = Array(label.dropLast(tail.count))
+
+        func elided(keeping kept: Int) -> String {
+            let endCount = kept / 4
+            return String(body.prefix(kept - endCount)) + "\u{2026}" + String(body.suffix(endCount)) + tail
+        }
+
+        var fitted = elided(keeping: 0)
+        var low = 1
+        var high = body.count - 1
+        while low <= high {
+            let kept = (low + high) / 2
+            let candidate = elided(keeping: kept)
+            if measure(candidate) <= width {
+                fitted = candidate
+                low = kept + 1
+            } else {
+                high = kept - 1
+            }
+        }
+        return fitted
     }
 }
 
@@ -165,10 +249,12 @@ private struct DocumentTabStripContent: View {
     }
 
     var body: some View {
+        let labels = DocumentTabLabel.labels(for: tabs)
         HStack(spacing: scaled(3)) {
             ForEach(tabs) { tab in
                 DocumentTabItemView(
                     tab: tab,
+                    label: labels[tab.documentID] ?? tab.displayName,
                     isSelected: tab.documentID == selectedDocumentID,
                     isMissing: missingDocumentIDs.contains(tab.documentID),
                     saveState: saveState(tab.documentID),
@@ -240,6 +326,7 @@ private struct DocumentTabStripContent: View {
 
 private struct DocumentTabItemView: View {
     let tab: WorkspaceTabItem
+    let label: String
     let isSelected: Bool
     let isMissing: Bool
     let saveState: DocumentSaveState
@@ -258,10 +345,6 @@ private struct DocumentTabItemView: View {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
-    private func textScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
-    }
-
     private func glyphScaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
     }
@@ -271,9 +354,11 @@ private struct DocumentTabItemView: View {
     }
 
     var body: some View {
+        let metrics = DocumentTabMetrics(theme: theme, zoomScale: zoomScale)
+        let shownLabel = metrics.fittedLabel(label, isPinned: tab.isPinned, isMissing: isMissing)
         HStack(spacing: 0) {
             Button(action: select) {
-                HStack(spacing: scaled(8)) {
+                HStack(spacing: metrics.gap) {
                     MonknotFileKindGlyph(
                         systemImage: documentIconName,
                         theme: theme,
@@ -293,33 +378,31 @@ private struct DocumentTabItemView: View {
 
                     if tab.isPinned {
                         Image(systemName: "pin.fill")
-                            .font(.system(size: glyphScaled(9), weight: .medium))
+                            .font(.system(size: metrics.pinGlyph, weight: .medium))
                             .foregroundStyle(theme.mutedForegroundColor)
+                            .frame(width: metrics.pinGlyph)
                             .accessibilityHidden(true)
                     }
 
-                    Text(tab.displayName)
-                        .font(.system(size: textScaled(13), weight: .regular))
+                    // Already fitted to the tab; never truncated again by the framework.
+                    Text(shownLabel)
+                        .font(Font(metrics.labelFont))
                         .foregroundStyle(textColor)
                         .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(
-                            maxWidth: scaled(MonknotMetrics.tabMaxWidthBase),
-                            alignment: .leading
-                        )
-                        .accessibilityLabel(tab.displayName)
-                    .layoutPriority(0)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .accessibilityLabel(label)
 
                     if isMissing {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: glyphScaled(10), weight: .semibold))
+                            .font(.system(size: metrics.warningGlyph, weight: .semibold))
                             .foregroundStyle(Color(hex: theme.semanticColors.diffRemoved))
+                            .frame(width: metrics.warningGlyph)
                             .accessibilityHidden(true)
                     }
 
                 }
-                .padding(.leading, scaled(10))
-                .padding(.trailing, scaled(8))
+                .padding(.leading, metrics.padding)
+                .padding(.trailing, metrics.gap)
                 .frame(
                     maxWidth: .infinity,
                     minHeight: MonknotMetrics.interfaceControl(30, theme: theme, zoomScale: zoomScale),
@@ -334,10 +417,13 @@ private struct DocumentTabItemView: View {
 
             if !tab.isPinned {
                 trailingSlot
-                    .padding(.trailing, scaled(10))
+                    .padding(.trailing, metrics.padding)
             }
         }
-        .frame(width: preferredTabWidth, alignment: .leading)
+        .frame(
+            width: metrics.width(fittedLabel: shownLabel, isPinned: tab.isPinned, isMissing: isMissing),
+            alignment: .leading
+        )
         .frame(height: chromeRowHeight, alignment: .center)
         .clipped()
         .background {
@@ -437,15 +523,6 @@ private struct DocumentTabItemView: View {
         tab.kind.resolvedSystemImage
     }
 
-    private var preferredTabWidth: CGFloat {
-        DocumentTabWidthPolicy.preferredWidth(
-            title: tab.displayName,
-            isPinned: tab.isPinned,
-            theme: theme,
-            zoomScale: zoomScale
-        )
-    }
-
     private var helpText: String {
         if isMissing {
             return "\(tab.relativePath) changed on disk"
@@ -454,7 +531,7 @@ private struct DocumentTabItemView: View {
     }
 
     private var accessibilityLabel: String {
-        var parts = [tab.displayName]
+        var parts = [label]
         if tab.isPinned {
             parts.append("pinned")
         }

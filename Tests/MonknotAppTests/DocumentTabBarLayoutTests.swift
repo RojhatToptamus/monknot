@@ -111,58 +111,104 @@ final class DocumentTabBarLayoutTests: XCTestCase {
     }
 
     func testLongTabTitlesUseAStableCappedWidth() {
-        let theme = AppTheme.defaultDark
-        let shortWidth = DocumentTabWidthPolicy.preferredWidth(
-            title: "README.md",
-            isPinned: false,
-            theme: theme,
-            zoomScale: 1
-        )
-        let longWidth = DocumentTabWidthPolicy.preferredWidth(
-            title: String(repeating: "Remote_Objects_", count: 40) + ".pdf",
-            isPinned: false,
-            theme: theme,
-            zoomScale: 1
-        )
+        let metrics = DocumentTabMetrics(theme: .defaultDark, zoomScale: 1)
+        let shortWidth = width(of: "README.md", metrics: metrics)
+        let longWidth = width(of: String(repeating: "Remote_Objects_", count: 40) + ".pdf", metrics: metrics)
 
         XCTAssertGreaterThan(longWidth, shortWidth)
-        XCTAssertLessThanOrEqual(longWidth - shortWidth, MonknotMetrics.tabMaxWidthBase)
+        XCTAssertLessThanOrEqual(longWidth, metrics.maximumWidth)
     }
 
     func testDocumentTabsSizeToTheirMeasuredTitles() {
-        let theme = AppTheme.defaultDark
-        let short = DocumentTabWidthPolicy.preferredWidth(
-            title: "a.json",
-            isPinned: false,
-            theme: theme,
-            zoomScale: 1
-        )
-        let long = DocumentTabWidthPolicy.preferredWidth(
-            title: "02-sockets-claude.md",
-            isPinned: false,
-            theme: theme,
-            zoomScale: 1
-        )
+        let metrics = DocumentTabMetrics(theme: .defaultDark, zoomScale: 1)
+        let short = width(of: "a.json", metrics: metrics)
+        let long = width(of: "02-sockets-claude.md", metrics: metrics)
 
         XCTAssertGreaterThan(long, short + 40)
         XCTAssertGreaterThanOrEqual(short, MonknotMetrics.tabMinWidthBase)
         XCTAssertLessThanOrEqual(long, MonknotMetrics.tabMaxWidthBase)
     }
 
+    func testLabelsThatFitAreNeverElidedAtAnyZoom() {
+        // F14: `data.csv` (pinned) and `README.md` (at 1.25×) used to render as `da…sv` and `READ…E.m`.
+        for zoomScale in [0.85, 1, 1.25, 1.5] {
+            let metrics = DocumentTabMetrics(theme: .defaultDark, zoomScale: zoomScale)
+            for name in ["data.csv", "README.md", "Untitled 4.md"] {
+                for isPinned in [false, true] {
+                    XCTAssertEqual(metrics.fittedLabel(name, isPinned: isPinned, isMissing: true), name)
+                    let tabWidth = metrics.width(fittedLabel: name, isPinned: isPinned, isMissing: false)
+                    XCTAssertEqual(
+                        tabWidth - metrics.chromeWidth(isPinned: isPinned, isMissing: false),
+                        metrics.labelWidth(name),
+                        "\(name) at \(zoomScale)× must get its whole measured width"
+                    )
+                }
+            }
+        }
+    }
+
+    func testOverlongLabelsAreMiddleElidedKeepingTheExtension() {
+        let metrics = DocumentTabMetrics(theme: .defaultDark, zoomScale: 1)
+        let name = String(repeating: "improving-onboarding-", count: 6) + "conversion-rate.md"
+
+        let fitted = metrics.fittedLabel(name, isPinned: false, isMissing: false)
+
+        XCTAssertTrue(fitted.hasPrefix("improving-onb"), fitted)
+        XCTAssertTrue(fitted.hasSuffix(".md"))
+        XCTAssertEqual(fitted.filter { $0 == "\u{2026}" }.count, 1)
+        XCTAssertLessThanOrEqual(
+            metrics.width(fittedLabel: fitted, isPinned: false, isMissing: false),
+            metrics.maximumWidth
+        )
+        // Characters as the unit; design.md's own example keeps 13 head and 4 end characters. The end
+        // before the extension survives, so `Untitled 4` and `Untitled 5` stay distinct.
+        XCTAssertEqual(
+            DocumentTabLabel.middleElided("Untitled draft number 4.md", toFit: 14) { CGFloat($0.count) },
+            "Untitled\u{2026} 4.md"
+        )
+        XCTAssertEqual(
+            DocumentTabLabel.middleElided("improving-onboarding-conversion-rate.md", toFit: 21) { CGFloat($0.count) },
+            "improving-onb\u{2026}rate.md"
+        )
+        XCTAssertEqual(DocumentTabLabel.middleElided("short.md", toFit: 14) { CGFloat($0.count) }, "short.md")
+    }
+
+    func testDuplicateNamesGetTheShortestDistinguishingParent() {
+        let paths = [
+            "README.md", "alpha/README.md", "beta/README.md",
+            "a/x/notes.md", "b/x/notes.md", "c/y/notes.md",
+            "inbox/unique.md",
+        ]
+        let tabs = paths.map { path in
+            WorkspaceTabItem(
+                documentID: "/workspace/\(path)",
+                displayName: (path as NSString).lastPathComponent,
+                relativePath: path,
+                kind: .markdown
+            )
+        }
+
+        let labels = DocumentTabLabel.labels(for: tabs)
+
+        XCTAssertEqual(
+            paths.map { labels["/workspace/\($0)"] },
+            [
+                "README.md", "alpha/README.md", "beta/README.md",
+                "a/x/notes.md", "b/x/notes.md", "y/notes.md",
+                "unique.md",
+            ]
+        )
+    }
+
+    private func width(of name: String, metrics: DocumentTabMetrics) -> CGFloat {
+        let fitted = metrics.fittedLabel(name, isPinned: false, isMissing: false)
+        return metrics.width(fittedLabel: fitted, isPinned: false, isMissing: false)
+    }
+
     func testPinnedTabsRetainTheirTitleAndPinAffordanceWidth() {
-        let theme = AppTheme.defaultDark
-        let short = DocumentTabWidthPolicy.preferredWidth(
-            title: "a.md",
-            isPinned: true,
-            theme: theme,
-            zoomScale: 1
-        )
-        let readme = DocumentTabWidthPolicy.preferredWidth(
-            title: "README.md",
-            isPinned: true,
-            theme: theme,
-            zoomScale: 1
-        )
+        let metrics = DocumentTabMetrics(theme: .defaultDark, zoomScale: 1)
+        let short = metrics.width(fittedLabel: "a.md", isPinned: true, isMissing: false)
+        let readme = metrics.width(fittedLabel: "README.md", isPinned: true, isMissing: false)
 
         XCTAssertGreaterThan(readme, short)
         XCTAssertGreaterThanOrEqual(short, MonknotMetrics.tabMinWidthBase)
