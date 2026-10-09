@@ -1227,7 +1227,6 @@ private struct SidebarNodeRow: View {
     let copyDocument: (WorkspaceDocument) -> Void
     let cutDocument: (WorkspaceDocument) -> Void
     let deleteDocument: (WorkspaceDocument) -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var node: SidebarNode {
         visibleNode.node
@@ -1256,9 +1255,9 @@ private struct SidebarNodeRow: View {
     /// Folder row: its disclosure chevron takes the glyph column (design.md §10.4).
     private var folderRow: some View {
         Button {
-            withAnimation(MonknotMotion.outlineAnimation(reduceMotion: reduceMotion)) {
-                toggleFolder(visibleNode)
-            }
+            // Only the chevron turns. Animating the lazy row list makes the rows below lurch as
+            // SwiftUI re-estimates their positions.
+            toggleFolder(visibleNode)
         } label: {
             SidebarRowLabel(
                 leading: .disclosure(isExpanded: isExpanded),
@@ -1620,20 +1619,24 @@ private struct SidebarRowButtonStyle: ButtonStyle {
 }
 
 /// A folder or group's disclosure chevron in the 18pt glyph column, nudged per design.md §8.6: the
-/// right chevron's ink sits left of centre in its box.
+/// right chevron's ink sits left of centre in its box. One glyph turns a quarter turn to open, as in
+/// Finder; swapping between two symbols cross-fades their different shapes and jumps.
 struct SidebarDisclosureChevron: View {
     let isExpanded: Bool
     let theme: AppTheme
     let zoomScale: Double
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private func glyphScaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
-        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+        Image(systemName: "chevron.right")
             .font(.system(size: glyphScaled(10), weight: .regular))
-            .offset(x: isExpanded ? 0 : glyphScaled(0.5))
+            .offset(x: glyphScaled(0.5))
+            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            .animation(MonknotMotion.disclosureAnimation(reduceMotion: reduceMotion), value: isExpanded)
             .frame(width: glyphScaled(MonknotMetrics.rowIconColumnWidthBase))
             .accessibilityHidden(true)
     }
@@ -1857,7 +1860,6 @@ private struct SidebarRecentDocumentsSection: View {
     let kindGlyph: (RecentDocumentEntry) -> String
     let openDocument: (String) -> Void
     @State private var isExpanded = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
@@ -1883,9 +1885,7 @@ private struct SidebarRecentDocumentsSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(MonknotMotion.outlineAnimation(reduceMotion: reduceMotion)) {
-                    isExpanded.toggle()
-                }
+                isExpanded.toggle()
             } label: {
                 SidebarGroupHeaderLabel(
                     title: "Recents",
@@ -1935,7 +1935,6 @@ private struct SidebarRecentDocumentsSection: View {
                 }
                 .frame(height: viewportHeight)
                 .padding(.bottom, scaled(6))
-                .transition(.opacity)
             }
         }
     }
