@@ -1255,8 +1255,6 @@ private struct SidebarNodeRow: View {
     /// Folder row: its disclosure chevron takes the glyph column (design.md §10.4).
     private var folderRow: some View {
         Button {
-            // Only the chevron turns. Animating the lazy row list makes the rows below lurch as
-            // SwiftUI re-estimates their positions.
             toggleFolder(visibleNode)
         } label: {
             SidebarRowLabel(
@@ -1619,8 +1617,7 @@ private struct SidebarRowButtonStyle: ButtonStyle {
 }
 
 /// A folder or group's disclosure chevron in the 18pt glyph column, nudged per design.md §8.6: the
-/// right chevron's ink sits left of centre in its box. One glyph turns a quarter turn to open, as in
-/// Finder; swapping between two symbols cross-fades their different shapes and jumps.
+/// right chevron's ink sits left of centre in its box. It turns a quarter turn to open.
 struct SidebarDisclosureChevron: View {
     let isExpanded: Bool
     let theme: AppTheme
@@ -1635,8 +1632,10 @@ struct SidebarDisclosureChevron: View {
         Image(systemName: "chevron.right")
             .font(.system(size: glyphScaled(10), weight: .regular))
             .offset(x: glyphScaled(0.5))
-            .rotationEffect(.degrees(isExpanded ? 90 : 0))
-            .animation(MonknotMotion.disclosureAnimation(reduceMotion: reduceMotion), value: isExpanded)
+            // Only the turn animates; the row's position never does.
+            .animation(MonknotMotion.disclosureAnimation(reduceMotion: reduceMotion)) {
+                $0.rotationEffect(.degrees(isExpanded ? 90 : 0))
+            }
             .frame(width: glyphScaled(MonknotMetrics.rowIconColumnWidthBase))
             .accessibilityHidden(true)
     }
