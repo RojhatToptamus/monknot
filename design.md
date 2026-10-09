@@ -738,11 +738,9 @@ and opens in the text editor.
   menu or the keyboard alike: AppKit's own split-view transition, opening and closing alike. The
   pane's content keeps its open width and slides under the window edge, so rows never squeeze and the
   terminal is not resized frame by frame.
-- **200ms ease-in-ease-out** for a disclosure chevron's quarter turn. Only the chevron moves; the rows
-  it reveals appear at once.
 - **fadeUp** for overlays, toasts and the outline peek card entrance.
 - Never animate size, position, elevation, border or weight except for the explicit terminal
-  fullscreen width transition, the side-pane transition and the chevron turn above.
+  fullscreen width transition and the side-pane transition above.
 - Honour Reduce Motion: entrances become instant opacity changes and side panes show and hide
   instantly; hover colour transitions may stay.
 

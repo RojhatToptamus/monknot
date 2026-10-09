@@ -30,11 +30,6 @@ enum MonknotMotion {
         .easeInOut(duration: terminalFullscreenTransitionDuration)
     }
 
-    /// A disclosure chevron's quarter turn.
-    static func disclosureAnimation(reduceMotion: Bool) -> Animation? {
-        reduceMotion ? nil : .easeInOut(duration: 0.2)
-    }
-
     static func outlineAnimation(reduceMotion: Bool) -> Animation? {
         reduceMotion
             ? nil

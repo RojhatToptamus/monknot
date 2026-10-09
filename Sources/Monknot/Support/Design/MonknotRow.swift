@@ -50,15 +50,17 @@ struct MonknotRowButtonStyle: ButtonStyle {
         @State private var isHovered = false
 
         var body: some View {
+            // Hover fades the fill and ink only; the label's layout never animates.
             configuration.label
-                .foregroundStyle(foreground)
+                .animation(MonknotMotion.hoverAnimation) {
+                    $0.foregroundStyle(foreground)
+                }
                 .background {
                     RoundedRectangle(cornerRadius: cornerRadius)
                         .fill(background)
+                        .animation(MonknotMotion.hoverAnimation, value: isHovered)
                 }
                 .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
-                .animation(MonknotMotion.hoverAnimation, value: isHovered)
-                .animation(MonknotMotion.hoverAnimation, value: configuration.isPressed)
                 .onHover { isHovered = $0 }
                 .monknotPointerCursor(enabled: isEnabled)
         }

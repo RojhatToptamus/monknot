@@ -1594,12 +1594,15 @@ private struct SidebarRowButtonStyle: ButtonStyle {
         @State private var isHovered = false
 
         var body: some View {
+            // Hover fades the fill and ink only (see SidebarRowLabel); the row's layout never animates.
             configuration.label
                 .environment(\.sidebarRowIsHighlighted, isHovered || configuration.isPressed)
-                .background(RoundedRectangle(cornerRadius: cornerRadius).fill(fill))
+                .background {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(fill)
+                        .animation(MonknotMotion.hoverAnimation, value: isHovered)
+                }
                 .onHover { isHovered = $0 }
-                .animation(MonknotMotion.hoverAnimation, value: isHovered)
-                .animation(MonknotMotion.hoverAnimation, value: configuration.isPressed)
                 .monknotPointerCursor(enabled: isEnabled)
         }
 
@@ -1617,25 +1620,20 @@ private struct SidebarRowButtonStyle: ButtonStyle {
 }
 
 /// A folder or group's disclosure chevron in the 18pt glyph column, nudged per design.md §8.6: the
-/// right chevron's ink sits left of centre in its box. It turns a quarter turn to open.
+/// right chevron's ink sits left of centre in its box.
 struct SidebarDisclosureChevron: View {
     let isExpanded: Bool
     let theme: AppTheme
     let zoomScale: Double
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private func glyphScaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
-        Image(systemName: "chevron.right")
+        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
             .font(.system(size: glyphScaled(10), weight: .regular))
-            .offset(x: glyphScaled(0.5))
-            // Only the turn animates; the row's position never does.
-            .animation(MonknotMotion.disclosureAnimation(reduceMotion: reduceMotion)) {
-                $0.rotationEffect(.degrees(isExpanded ? 90 : 0))
-            }
+            .offset(x: isExpanded ? 0 : glyphScaled(0.5))
             .frame(width: glyphScaled(MonknotMetrics.rowIconColumnWidthBase))
             .accessibilityHidden(true)
     }
@@ -1666,12 +1664,12 @@ private struct SidebarRowLabel<Trailing: View>: View {
     var body: some View {
         HStack(spacing: scaled(8)) {
             leadingGlyph
-                .foregroundStyle(glyphColor)
+                .animation(MonknotMotion.hoverAnimation) { $0.foregroundStyle(glyphColor) }
                 .accessibilityHidden(true)
 
             Text(title)
                 .font(.system(size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale), weight: .regular))
-                .foregroundStyle(labelColor)
+                .animation(MonknotMotion.hoverAnimation) { $0.foregroundStyle(labelColor) }
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
