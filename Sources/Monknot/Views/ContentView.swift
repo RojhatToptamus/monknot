@@ -2050,10 +2050,10 @@ struct ContentView: View {
             isSearchWholeWord: searchOptions.isWholeWord,
             setSearchWholeWord: { searchOptions.isWholeWord = $0 },
             canConfigureSearch: documentSearch.isPresented || workspaceSearch.isPresented,
-            toggleTerminal: { toggleTerminalDrawer(animated: false) },
+            toggleTerminal: { toggleTerminalDrawer(animated: true) },
             toggleTerminalFullscreen: { toggleTerminalFullscreen(animated: true) },
             canToggleTerminalFullscreen: isTerminalVisible,
-            toggleSidebar: { toggleSidebar(animated: false) },
+            toggleSidebar: { toggleSidebar(animated: true) },
             toggleSplitView: { toggleMarkdownSplitView() },
             canToggleSplitView: canToggleMarkdownSplitView,
             togglePDFNavigator: {
@@ -2388,11 +2388,11 @@ struct ContentView: View {
         case .importPasteboard:
             _ = pasteFromCommand()
         case .toggleTerminal:
-            toggleTerminalDrawer(animated: false)
+            toggleTerminalDrawer(animated: true)
         case .toggleTerminalFullscreen:
             toggleTerminalFullscreen(animated: true)
         case .toggleSidebar:
-            toggleSidebar(animated: false)
+            toggleSidebar(animated: true)
         case .undoPDFAnnotation:
             pdfUndoCommandSerial += 1
         case .redoPDFAnnotation:
@@ -2943,8 +2943,8 @@ struct ContentView: View {
     }
 
     private func updateChromeState(animated: Bool, updates: () -> Void) {
-        if animated && !reduceMotion {
-            withAnimation(MonknotMotion.sidebarTransition, updates)
+        if animated, let animation = MonknotMotion.paneTransition(reduceMotion: reduceMotion) {
+            withAnimation(animation, updates)
         } else {
             var transaction = Transaction()
             transaction.disablesAnimations = true

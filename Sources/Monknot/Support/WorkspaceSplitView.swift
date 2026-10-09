@@ -400,6 +400,106 @@ final class WorkspaceNativeSplitView: NSSplitView {
     }
 }
 
+/// Holds a side pane's content. At rest the content fills the pane. While the pane opens or closes,
+/// the content keeps its open width and slides under the window edge, so rows never squeeze and a
+/// terminal is not resized on every animation frame.
+final class WorkspaceSidePaneController: NSViewController {
+    enum Edge {
+        case leading
+        case trailing
+    }
+
+    let content: NSViewController
+    private let edge: Edge
+
+    init(content: NSViewController, edge: Edge) {
+        self.content = content
+        self.edge = edge
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func loadView() {
+        let paneView = PaneView(edge: edge)
+        addChild(content)
+        paneView.addSubview(content.view)
+        view = paneView
+    }
+
+    private var transitionGeneration: UInt = 0
+
+    /// Holds the content at the width it last had at rest until the matching `endTransition`. A
+    /// newer transition, such as reopening a pane while it is still closing, takes over the hold.
+    /// `fallbackWidth` covers a pane that has never been open.
+    func beginTransition(fallbackWidth: CGFloat) -> UInt {
+        transitionGeneration &+= 1
+        (view as? PaneView)?.beginHold(fallbackWidth: fallbackWidth)
+        return transitionGeneration
+    }
+
+    func endTransition(_ generation: UInt) {
+        guard generation == transitionGeneration else { return }
+        (view as? PaneView)?.endHold()
+    }
+
+    private final class PaneView: NSView {
+        private let edge: Edge
+        private var restingWidth: CGFloat?
+        private var heldWidth: CGFloat?
+
+        init(edge: Edge) {
+            self.edge = edge
+            super.init(frame: .zero)
+            clipsToBounds = true
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        func beginHold(fallbackWidth: CGFloat) {
+            heldWidth = restingWidth ?? fallbackWidth
+            layoutContent()
+        }
+
+        func endHold() {
+            heldWidth = nil
+            layoutContent()
+        }
+
+        override func resizeSubviews(withOldSize oldSize: NSSize) {
+            layoutContent()
+        }
+
+        override func layout() {
+            super.layout()
+            layoutContent()
+        }
+
+        private func layoutContent() {
+            guard let content = subviews.first else { return }
+            if heldWidth == nil, bounds.width > 0 {
+                restingWidth = bounds.width
+            }
+            let width = max(bounds.width, heldWidth ?? 0)
+            let frame = NSRect(
+                x: edge == .leading ? bounds.width - width : 0,
+                y: 0,
+                width: width,
+                height: bounds.height
+            )
+            if content.frame != frame {
+                content.frame = frame
+            }
+        }
+    }
+}
+
 @MainActor
 final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: View>: NSSplitViewController {
     private enum PressureCollapseCause {
@@ -407,9 +507,16 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         case container
     }
 
+    private enum SidePane {
+        case sidebar
+        case terminal
+    }
+
     let sidebarHostingController: NSHostingController<Sidebar>
     let detailHostingController: NSHostingController<Detail>
     let terminalHostingController: NSHostingController<Terminal>
+    private let sidebarPane: WorkspaceSidePaneController
+    private let terminalPane: WorkspaceSidePaneController
     let sidebarItem: NSSplitViewItem
     let detailItem: NSSplitViewItem
     let terminalItem: NSSplitViewItem
@@ -425,6 +532,9 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
     private var terminalRevealRequest: UInt
     private var sidebarPressureCollapseCause: PressureCollapseCause?
     private var terminalPressureCollapseCause: PressureCollapseCause?
+    // When the window cannot fit both side panes, the one shown last stays and the other steps
+    // aside until there is room. Until either is shown explicitly, the sidebar stays.
+    private var sidePaneKeptUnderPressure: SidePane = .sidebar
     private var lastReportedSidebarPresentation: Bool?
     private var lastReportedTerminalPresentation: Bool?
     private var isPresentationReportScheduled = false
@@ -468,9 +578,11 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         sidebarHostingController = NSHostingController(rootView: sidebar)
         detailHostingController = NSHostingController(rootView: detail)
         terminalHostingController = NSHostingController(rootView: terminal)
-        sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarHostingController)
+        sidebarPane = WorkspaceSidePaneController(content: sidebarHostingController, edge: .leading)
+        terminalPane = WorkspaceSidePaneController(content: terminalHostingController, edge: .trailing)
+        sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarPane)
         detailItem = NSSplitViewItem(viewController: detailHostingController)
-        terminalItem = NSSplitViewItem(inspectorWithViewController: terminalHostingController)
+        terminalItem = NSSplitViewItem(inspectorWithViewController: terminalPane)
         preferredSidebarPresentation = isSidebarPresented
         preferredTerminalPresentation = isTerminalPresented
         self.isTerminalFullscreen = isTerminalFullscreen && isTerminalPresented
@@ -807,9 +919,11 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         }
         if requestsSidebarReveal, isSidebarPresented {
             sidebarPressureCollapseCause = nil
+            sidePaneKeptUnderPressure = .sidebar
         }
         if requestsTerminalReveal, isTerminalPresented {
             terminalPressureCollapseCause = nil
+            sidePaneKeptUnderPressure = .terminal
         }
         if wasTerminalFullscreen, !self.isTerminalFullscreen {
             reconcileTerminalFullscreen(animated: animated && isTerminalPresented)
@@ -817,6 +931,11 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         reconcilePresentation(animated: animated)
         if self.isTerminalFullscreen {
             reconcileTerminalFullscreen(animated: animated)
+        }
+        // Not even the document and this one pane fit: say so, rather than doing nothing.
+        if (requestsSidebarReveal && isSidebarPresented && sidebarItem.isCollapsed)
+            || (requestsTerminalReveal && isTerminalPresented && terminalItem.isCollapsed) {
+            NSSound.beep()
         }
         if requestsSidebarReveal, isSidebarPresented, sidebarItem.isCollapsed {
             reportPresentationChanges(
@@ -903,7 +1022,8 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
 
     private func collapsePanesThatCannotFit(
         at scale: CGFloat,
-        availableWidth: CGFloat
+        availableWidth: CGFloat,
+        animated: Bool = false
     ) {
         guard availableWidth > 0 else { return }
 
@@ -922,18 +1042,25 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
 
         if isTerminalFullscreen { return }
 
-        if preferredTerminalPresentation,
-           requiredMinimumWidth(
-               sidebar: preferredSidebarPresentation,
-               terminal: true
-           ) > availableWidth {
-            terminalPressureCollapseCause = .container
-            setCollapsed(true, for: terminalItem, animated: false)
+        var keepsSidebar = preferredSidebarPresentation
+            && requiredMinimumWidth(sidebar: true, terminal: false) <= availableWidth
+        var keepsTerminal = preferredTerminalPresentation
+            && requiredMinimumWidth(sidebar: false, terminal: true) <= availableWidth
+        if keepsSidebar, keepsTerminal,
+           requiredMinimumWidth(sidebar: true, terminal: true) > availableWidth {
+            switch sidePaneKeptUnderPressure {
+            case .sidebar: keepsTerminal = false
+            case .terminal: keepsSidebar = false
+            }
         }
-        if preferredSidebarPresentation,
-           requiredMinimumWidth(sidebar: true, terminal: false) > availableWidth {
+
+        if preferredTerminalPresentation, !keepsTerminal {
+            terminalPressureCollapseCause = .container
+            setCollapsed(true, for: terminalItem, animated: animated)
+        }
+        if preferredSidebarPresentation, !keepsSidebar {
             sidebarPressureCollapseCause = .container
-            setCollapsed(true, for: sidebarItem, animated: false)
+            setCollapsed(true, for: sidebarItem, animated: animated)
         }
     }
 
@@ -1280,34 +1407,52 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
 
         collapsePanesThatCannotFit(
             at: layoutScale,
-            availableWidth: availableLayoutWidth
+            availableWidth: availableLayoutWidth,
+            animated: animated
         )
 
-        let sidebarCollapseCause = sidebarPressureCollapseCause
-        if preferredSidebarPresentation,
-           sidebarItem.isCollapsed,
-           canRestoreSidebar(
-               preservingSidebarWidth: sidebarCollapseCause == .container,
-               preservingTerminalWidth: sidebarCollapseCause == .divider
-                   || sidebarCollapseCause == .container
-           ) {
-            setCollapsed(false, for: sidebarItem, animated: animated)
-            sidebarPressureCollapseCause = nil
-            splitView.layoutSubtreeIfNeeded()
-        }
-
-        let terminalCollapseCause = terminalPressureCollapseCause
-        if preferredTerminalPresentation,
-           terminalItem.isCollapsed,
-           canRestoreTerminal(
-               preservingSidebarWidth: terminalCollapseCause == .divider
-                   || terminalCollapseCause == .container,
-               preservingTerminalWidth: terminalCollapseCause == .container
-           ) {
-            setCollapsed(false, for: terminalItem, animated: animated)
-            terminalPressureCollapseCause = nil
+        // The pane that stays under pressure gets the first claim on the room.
+        switch sidePaneKeptUnderPressure {
+        case .sidebar:
+            restoreSidebarIfItFits(animated: animated)
+            restoreTerminalIfItFits(animated: animated)
+        case .terminal:
+            restoreTerminalIfItFits(animated: animated)
+            restoreSidebarIfItFits(animated: animated)
         }
         reconcileTerminalFullscreen(animated: animated)
+    }
+
+    private func restoreSidebarIfItFits(animated: Bool) {
+        let sidebarCollapseCause = sidebarPressureCollapseCause
+        guard preferredSidebarPresentation,
+              sidebarItem.isCollapsed,
+              canRestoreSidebar(
+                  preservingSidebarWidth: sidebarCollapseCause == .container,
+                  preservingTerminalWidth: sidebarCollapseCause == .divider
+                      || sidebarCollapseCause == .container
+              ) else {
+            return
+        }
+        setCollapsed(false, for: sidebarItem, animated: animated)
+        sidebarPressureCollapseCause = nil
+        splitView.layoutSubtreeIfNeeded()
+    }
+
+    private func restoreTerminalIfItFits(animated: Bool) {
+        let terminalCollapseCause = terminalPressureCollapseCause
+        guard preferredTerminalPresentation,
+              terminalItem.isCollapsed,
+              canRestoreTerminal(
+                  preservingSidebarWidth: terminalCollapseCause == .divider
+                      || terminalCollapseCause == .container,
+                  preservingTerminalWidth: terminalCollapseCause == .container
+              ) else {
+            return
+        }
+        setCollapsed(false, for: terminalItem, animated: animated)
+        terminalPressureCollapseCause = nil
+        splitView.layoutSubtreeIfNeeded()
     }
 
     private func canRestoreSidebar(
@@ -1417,19 +1562,38 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
 
     private func setCollapsed(_ collapsed: Bool, for item: NSSplitViewItem, animated: Bool) {
         guard item.isCollapsed != collapsed else { return }
-        if !collapsed {
-            item.isCollapsed = false
-            splitView.layoutSubtreeIfNeeded()
-            return
-        }
         guard animated, view.window != nil else {
             item.isCollapsed = collapsed
+            if !collapsed {
+                splitView.layoutSubtreeIfNeeded()
+            }
             return
         }
+
+        // Opening and closing are the same native transition run in opposite directions. The
+        // content holds its open width throughout and slides under the window edge.
+        let pane = item === sidebarItem ? sidebarPane : terminalPane
+        let transition = pane.beginTransition(fallbackWidth: openingWidth(for: item))
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = MonknotMotion.sidebarTransitionDuration
+            context.duration = MonknotMotion.paneTransitionDuration
+            context.timingFunction = MonknotMotion.paneTimingFunction
             item.animator().isCollapsed = collapsed
+        } completionHandler: { [weak pane] in
+            MainActor.assumeIsolated {
+                pane?.endTransition(transition)
+            }
         }
+    }
+
+    /// The width a collapsed pane returns at: the width it had, within its limits.
+    private func openingWidth(for item: NSSplitViewItem) -> CGFloat {
+        let minimum = item === sidebarItem
+            ? WorkspaceSplitMetrics.sidebarMinimumWidth
+            : WorkspaceSplitMetrics.terminalMinimumWidth
+        let maximum = item === sidebarItem
+            ? WorkspaceSplitMetrics.sidebarMaximumWidth
+            : WorkspaceSplitMetrics.terminalMaximumWidth
+        return min(maximum * layoutScale, max(minimum * layoutScale, restorableWidth(for: item)))
     }
 
     private func restorableWidth(for item: NSSplitViewItem) -> CGFloat {

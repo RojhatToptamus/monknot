@@ -646,6 +646,12 @@ brings it back. A divider drag never opens the opposite pane, whether the drag p
 window squeezed it: when the drag ends, a pane that is out of the layout is closed and reopens from
 its toolbar button, so a pane and its toolbar button always agree.
 
+**Toolbar buttons always act.** When the window cannot fit the document and both side panes, the pane
+shown last stays and the other steps aside: its button reads closed, and it returns on its own once the
+window is wide enough or the pane that displaced it closes. With no sidebar, the terminal shows at its
+minimum beside the document's minimum; if even that does not fit (high zoom in a small window),
+the button beeps rather than doing nothing.
+
 ### 10.5 Outline rail
 
 A right-edge dash rail, always present, no toolbar button. Dash length encodes heading level: **22 /
@@ -712,10 +718,15 @@ above 17 anywhere are empty-state illustrations at 34, which are not controls.
 
 - **120ms ease** on hover: fill and foreground colour only.
 - **180ms standard ease** for terminal fullscreen: width only, with no fade or scale.
+- **250ms ease-in-ease-out** for showing and hiding the sidebar and terminal, from the toolbar, the
+  menu or the keyboard alike: AppKit's own split-view transition, opening and closing alike. The
+  pane's content keeps its open width and slides under the window edge, so rows never squeeze and the
+  terminal is not resized frame by frame.
 - **fadeUp** for overlays, toasts and the outline peek card entrance.
 - Never animate size, position, elevation, border or weight except for the explicit terminal
-  fullscreen width transition above.
-- Honour Reduce Motion: entrances become instant opacity changes; hover colour transitions may stay.
+  fullscreen width transition and the side-pane transition above.
+- Honour Reduce Motion: entrances become instant opacity changes and side panes show and hide
+  instantly; hover colour transitions may stay.
 
 ---
 

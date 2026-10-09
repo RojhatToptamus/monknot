@@ -391,8 +391,8 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
     }
 
     func testReducedMotionDisablesSidebarAndDrawerMovement() {
-        XCTAssertNil(MonknotMotion.sidebarTransition(reduceMotion: true))
-        XCTAssertNotNil(MonknotMotion.sidebarTransition(reduceMotion: false))
+        XCTAssertNil(MonknotMotion.paneTransition(reduceMotion: true))
+        XCTAssertNotNil(MonknotMotion.paneTransition(reduceMotion: false))
     }
 
     func testPrimaryAndSecondaryChromePreserveTheirDistinctReferenceBands() {
