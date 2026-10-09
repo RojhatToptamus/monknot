@@ -56,6 +56,10 @@ final class WorkspaceStore: ObservableObject {
     private var dirtyDocumentBaselines: [String: String] = [:]
     private var dirtyDocumentRevisionExpectations: [String: WorkspaceTextRevisionExpectation] = [:]
     private var pdfDocumentBaselines: [String: Data] = [:]
+    /// For a marked-up image, the file as it was when the markup began: the pixels a save draws the
+    /// markup onto. It differs from the baseline only once a save has written the markup in while
+    /// newer markup was still being added.
+    private var imageMarkupSources: [String: Data] = [:]
     private var dirtyPDFDocumentData: [String: Data] = [:]
     private var dirtyPDFDocumentVersions: [String: Int] = [:]
     private var dirtyPDFDocumentEditCheckpoints: [String: PDFAnnotationEditCheckpoint] = [:]
@@ -285,7 +289,7 @@ final class WorkspaceStore: ObservableObject {
 
     private func changeTrackedSignature(for document: WorkspaceDocument?) -> FileSignature? {
         guard let document,
-              document.capabilities.canEditText || document.kind == .pdf
+              document.capabilities.canEditText || document.kind.opensInPDFViewer
         else { return nil }
         return Self.fileSignature(for: document.url)
     }
@@ -1316,7 +1320,7 @@ final class WorkspaceStore: ObservableObject {
         data: Data?,
         editCheckpoint: PDFAnnotationEditCheckpoint? = nil
     ) {
-        guard let file = document(id: documentID), file.kind == .pdf else { return }
+        guard let file = document(id: documentID), file.kind.opensInPDFViewer else { return }
         guard let data else {
             errorMessage = "Could not prepare PDF annotation data."
             return
@@ -1332,6 +1336,9 @@ final class WorkspaceStore: ObservableObject {
             }
             pdfDocumentBaselines[documentID] = previousData
         }
+        if file.kind == .image, imageMarkupSources[documentID] == nil {
+            imageMarkupSources[documentID] = pdfDocumentBaselines[documentID]
+        }
 
         applyPDFData(data, editCheckpoint: editCheckpoint, to: file)
     }
@@ -1343,7 +1350,7 @@ final class WorkspaceStore: ObservableObject {
     ) -> Bool {
         guard pdfDocumentSavedEditCheckpoints[documentID] == checkpoint,
               let file = document(id: documentID),
-              file.kind == .pdf,
+              file.kind.opensInPDFViewer,
               let baseline = pdfDocumentBaselines[documentID]
         else { return false }
 
@@ -1522,7 +1529,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        if selectedDocument.kind == .pdf {
+        if selectedDocument.kind.opensInPDFViewer {
             saveSelectedPDF(selectedDocument)
             return
         }
@@ -1574,7 +1581,7 @@ final class WorkspaceStore: ObservableObject {
         }
         guard !saveState(for: documentID).isClean else { return true }
 
-        if file.kind == .pdf {
+        if file.kind.opensInPDFViewer {
             return await savePDFDocument(file)
         }
 
@@ -1909,12 +1916,13 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func discardUnsavedChangesWithoutWritingToolsGuard(for documentID: String) {
-        let isPDF = document(id: documentID)?.kind == .pdf
+        let isPDF = document(id: documentID)?.kind.opensInPDFViewer == true
         let hadSearchablePDFDirtyData = dirtyPDFDocumentData[documentID] != nil
         dirtyDocumentTexts.removeValue(forKey: documentID)
         dirtyDocumentBaselines.removeValue(forKey: documentID)
         dirtyDocumentRevisionExpectations.removeValue(forKey: documentID)
         pdfDocumentBaselines.removeValue(forKey: documentID)
+        imageMarkupSources.removeValue(forKey: documentID)
         dirtyPDFDocumentData.removeValue(forKey: documentID)
         dirtyPDFDocumentVersions.removeValue(forKey: documentID)
         dirtyPDFDocumentEditCheckpoints.removeValue(forKey: documentID)
@@ -1951,6 +1959,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         let savedEditCheckpoint = dirtyPDFDocumentEditCheckpoints[file.id]
+        let imageMarkupSource = file.kind == .image ? imageMarkupSources[file.id] ?? baseline : nil
 
         saveGeneration += 1
         let generation = saveGeneration
@@ -1961,7 +1970,7 @@ final class WorkspaceStore: ObservableObject {
         saveTask = Task.detached(priority: .utility) { [weak self] in
             do {
                 let writtenData = try WorkspaceConditionalDataWriter.write(
-                    pdfData,
+                    Self.fileData(forPDFViewerData: pdfData, imageMarkupSource: imageMarkupSource),
                     to: file.url,
                     expecting: .present(baseline)
                 )
@@ -1991,6 +2000,7 @@ final class WorkspaceStore: ObservableObject {
             errorMessage = "Could not safely save \(file.displayName) because its original contents are unavailable."
             return false
         }
+        let imageMarkupSource = file.kind == .image ? imageMarkupSources[file.id] ?? baseline : nil
 
         saveGeneration += 1
         let generation = saveGeneration
@@ -2001,7 +2011,7 @@ final class WorkspaceStore: ObservableObject {
         do {
             let writtenData = try await Task.detached(priority: .utility) {
                 try WorkspaceConditionalDataWriter.write(
-                    pdfData,
+                    Self.fileData(forPDFViewerData: pdfData, imageMarkupSource: imageMarkupSource),
                     to: file.url,
                     expecting: .present(baseline)
                 )
@@ -2021,6 +2031,19 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    /// What a save writes for a document in the PDF viewer: the PDF itself, or for an image, the
+    /// image with its markup drawn in, in the image's own format.
+    nonisolated private static func fileData(
+        forPDFViewerData pdfData: Data,
+        imageMarkupSource: Data?
+    ) throws -> Data {
+        guard let imageMarkupSource else { return pdfData }
+        return try ImageMarkupDocument.flattenedImageData(
+            imageData: imageMarkupSource,
+            markupData: pdfData
+        )
+    }
+
     private func currentPDFData(for file: WorkspaceDocument) -> Data? {
         if let dirtyData = dirtyPDFDocumentData[file.id] {
             return dirtyData
@@ -2037,6 +2060,7 @@ final class WorkspaceStore: ObservableObject {
             let shouldReloadExternalReplacement = selectedDocumentID == file.id
                 && selectedDocumentExternalChange
             pdfDocumentBaselines.removeValue(forKey: file.id)
+            imageMarkupSources.removeValue(forKey: file.id)
             dirtyPDFDocumentData.removeValue(forKey: file.id)
             dirtyPDFDocumentVersions.removeValue(forKey: file.id)
             dirtyPDFDocumentEditCheckpoints.removeValue(forKey: file.id)
@@ -2070,6 +2094,7 @@ final class WorkspaceStore: ObservableObject {
 
     private func publishPDFContentReplacement(for documentID: String) {
         pdfDocumentBaselines.removeValue(forKey: documentID)
+        imageMarkupSources.removeValue(forKey: documentID)
         dirtyPDFDocumentEditCheckpoints.removeValue(forKey: documentID)
         pdfDocumentSavedEditCheckpoints.removeValue(forKey: documentID)
         pdfDocumentContentVersions[documentID, default: 0] &+= 1
@@ -2450,7 +2475,7 @@ final class WorkspaceStore: ObservableObject {
             )
             setSelectedDocumentExternalChangeIfChanged(removedDirtyDocuments[selectedDocument.id] != nil)
             setDocumentLoadingIfChanged(false)
-            if selectedDocument.kind == .pdf, hasUnsavedChanges, saveState(for: selectedDocument.id).isClean {
+            if selectedDocument.kind.opensInPDFViewer, hasUnsavedChanges, saveState(for: selectedDocument.id).isClean {
                 setSaveState(.edited, for: selectedDocument.id)
             }
             return
@@ -2897,6 +2922,11 @@ final class WorkspaceStore: ObservableObject {
                 setSelectedDocumentSignatureIfChanged(Self.fileSignature(for: url))
             }
             invalidateWorkspaceSearchCaches(paths: [url.path])
+            // The saved markup is now part of the image's pixels, as in Preview: reopen the file
+            // so the next markup starts from it.
+            if document(id: fileID)?.kind == .image {
+                publishPDFContentReplacement(for: fileID)
+            }
         } else {
             pdfDocumentBaselines[fileID] = writtenData
             if let savedEditCheckpoint {
@@ -3074,6 +3104,10 @@ final class WorkspaceStore: ObservableObject {
             pdfDocumentBaselines[destinationID] = pdfBaseline
         }
 
+        if let imageMarkupSource = imageMarkupSources.removeValue(forKey: sourceID) {
+            imageMarkupSources[destinationID] = imageMarkupSource
+        }
+
         if let dirtyPDFData = dirtyPDFDocumentData.removeValue(forKey: sourceID) {
             dirtyPDFDocumentData[destinationID] = dirtyPDFData
         }
@@ -3234,7 +3268,7 @@ final class WorkspaceStore: ObservableObject {
         guard relevantPaths.contains(selectedPath) else { return }
 
         let nextSignature = Self.fileSignature(for: selectedDocument.url)
-        if selectedDocument.kind == .pdf {
+        if selectedDocument.kind.opensInPDFViewer {
             if hasUnsavedChanges {
                 setSelectedDocumentExternalChangeIfChanged(true)
                 return
@@ -3327,7 +3361,7 @@ final class WorkspaceStore: ObservableObject {
         guard !dirtySelectionRemoved else { return }
         guard let selectedDocument else { return }
         let nextSignature = Self.fileSignature(for: selectedDocument.url)
-        if selectedDocument.kind == .pdf {
+        if selectedDocument.kind.opensInPDFViewer {
             if hasUnsavedChanges,
                selectionStillExists,
                selectedDocumentSignature != nil,

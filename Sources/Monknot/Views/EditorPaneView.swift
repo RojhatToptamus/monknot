@@ -300,7 +300,8 @@ struct EditorPaneView: View {
             } else {
                 textEditor(for: selectedDocument)
             }
-        case .pdf:
+        case .pdf, .image:
+            // Images use the PDF viewer's zoom and markup tools on a page that draws the image.
             PDFPreviewView(
                 document: selectedDocument,
                 theme: theme,

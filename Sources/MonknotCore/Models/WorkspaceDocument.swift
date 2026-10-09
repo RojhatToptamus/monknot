@@ -5,9 +5,15 @@ public enum WorkspaceDocumentKind: String, Codable, Sendable {
     case markdown
     case pdf
     case text
+    case image
     case media
     case nativePreview
     case unsupported
+
+    /// PDFs, and images shown on a PDF page, open in the PDF viewer and take its markup.
+    public var opensInPDFViewer: Bool {
+        self == .pdf || self == .image
+    }
 }
 
 public struct WorkspaceDocumentCapabilities: Codable, Hashable, Sendable {
@@ -121,11 +127,14 @@ public enum WorkspaceDocumentSupport {
         "css", "scss", "sass", "less",
         "json", "jsonc", "yaml", "yml", "xml", "csv", "tsv", "toml", "ini", "env"
     ]
+    /// Raster images ImageIO decodes. SVG stays a text document: its source is the file.
+    public static let imageExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "gif", "heic", "heif", "tif", "tiff", "webp", "bmp", "ico", "avif"
+    ]
     public static let textFilenames: Set<String> = [
         "dockerfile", "makefile", "procfile", "gemfile", "rakefile", "justfile"
     ]
     public static let ignoredUnsupportedExtensions: Set<String> = [
-        "png", "jpg", "jpeg", "gif", "heic", "tif", "tiff", "webp", "bmp", "ico",
         "mov", "mp4", "m4v", "avi", "mpg", "mpeg",
         "mp3", "m4a", "aac", "wav", "aif", "aiff", "caf", "flac",
         "zip", "rar", "7z", "tar", "gz", "bz2", "xz",
@@ -137,6 +146,7 @@ public enum WorkspaceDocumentSupport {
         .union(pdfExtensions)
         .union(htmlExtensions)
         .union(textExtensions)
+        .union(imageExtensions)
 
     public static func shouldIncludeInWorkspaceScan(_ url: URL) -> Bool {
         let fileExtension = url.pathExtension.lowercased()
@@ -200,6 +210,15 @@ public enum WorkspaceDocumentSupport {
             )
         }
 
+        if imageExtensions.contains(fileExtension) {
+            return Classification(
+                kind: .image,
+                contentTypeIdentifier: contentTypeIdentifier,
+                localizedTypeDescription: localizedTypeDescription,
+                capabilities: capabilities(for: .image)
+            )
+        }
+
         if textExtensions.contains(fileExtension) || textFilenames.contains(filename) {
             return Classification(
                 kind: .text,
@@ -255,6 +274,16 @@ public enum WorkspaceDocumentSupport {
                 canPreview: true,
                 canEditText: true,
                 canSearchText: true,
+                canSearchPDF: false,
+                canExportPDF: false,
+                canShowOutline: false,
+                canPreviewHTML: false
+            )
+        case .image:
+            return WorkspaceDocumentCapabilities(
+                canPreview: true,
+                canEditText: false,
+                canSearchText: false,
                 canSearchPDF: false,
                 canExportPDF: false,
                 canShowOutline: false,

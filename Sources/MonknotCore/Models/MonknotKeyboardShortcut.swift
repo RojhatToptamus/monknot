@@ -202,7 +202,9 @@ public enum MonknotKeyboardShortcutRouter {
                 if context.canUndoWorkspaceReplace {
                     return .undoWorkspaceReplace
                 }
-                return context.selectedDocumentKind == .pdf && context.canUndoPDFAnnotation ? .undoPDFAnnotation : nil
+                return context.selectedDocumentKind?.opensInPDFViewer == true && context.canUndoPDFAnnotation
+                    ? .undoPDFAnnotation
+                    : nil
             case "v":
                 return context.hasWorkspace && !context.isBusy ? .importPasteboard : nil
             case "\\", "|":
@@ -233,7 +235,9 @@ public enum MonknotKeyboardShortcutRouter {
             case "t":
                 return context.canReopenClosedTab ? .reopenClosedTab : nil
             case "z":
-                return context.selectedDocumentKind == .pdf && context.canRedoPDFAnnotation ? .redoPDFAnnotation : nil
+                return context.selectedDocumentKind?.opensInPDFViewer == true && context.canRedoPDFAnnotation
+                    ? .redoPDFAnnotation
+                    : nil
             default:
                 return nil
             }

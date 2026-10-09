@@ -122,7 +122,7 @@ final class WorkspaceDocumentSupportTests: XCTestCase {
         XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/guide.PDF")))
         XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/notes.TXT")))
         XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/Preview.HTML")))
-        XCTAssertFalse(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/image.PNG")))
+        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/image.PNG")))
         XCTAssertFalse(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/movie.MP4")))
         XCTAssertFalse(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/sound.M4A")))
         XCTAssertTrue(WorkspaceDocumentSupport.isPDFDocument(URL(fileURLWithPath: "/tmp/guide.pdf")))
@@ -132,7 +132,7 @@ final class WorkspaceDocumentSupportTests: XCTestCase {
         XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/preview.html"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .text)
         XCTAssertTrue(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/preview.html"), rootURL: URL(fileURLWithPath: "/tmp")).capabilities.canPreviewHTML)
         XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/Makefile"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .text)
-        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/image.png"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .unsupported)
+        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/image.png"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .image)
         XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/movie.mp4"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .unsupported)
         XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/archive.zip"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .unsupported)
     }
@@ -141,7 +141,7 @@ final class WorkspaceDocumentSupportTests: XCTestCase {
         XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/README.md")))
         XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/Guide.PDF")))
         XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/Makefile")))
-        XCTAssertFalse(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/image.PNG")))
+        XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/image.PNG")))
         XCTAssertFalse(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/movie.MP4")))
         XCTAssertFalse(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/archive.zip")))
     }
@@ -170,11 +170,29 @@ final class WorkspaceDocumentSupportTests: XCTestCase {
         XCTAssertTrue(html.capabilities.canPreviewHTML)
         XCTAssertTrue(mermaid.capabilities.canEditText)
         XCTAssertTrue(mermaid.capabilities.canSearchText)
-        XCTAssertFalse(image.capabilities.canPreview)
+        XCTAssertTrue(image.capabilities.canPreview)
+        XCTAssertFalse(image.capabilities.canEditText)
+        XCTAssertFalse(image.capabilities.canSearchText)
+        XCTAssertFalse(image.capabilities.canSearchPDF)
+        XCTAssertFalse(image.hasPreviewMode, "Images have one view, so the Source/Preview control stays disabled")
         XCTAssertFalse(media.capabilities.canPreview)
         XCTAssertFalse(media.capabilities.canEditText)
         XCTAssertFalse(media.capabilities.canSearchText)
         XCTAssertFalse(archive.capabilities.canPreview)
+    }
+
+    func testRasterImagesAreImageDocumentsAndSVGStaysEditableSource() {
+        let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        for name in ["photo.JPG", "photo.jpeg", "shot.png", "anim.gif", "live.heic", "scan.tiff", "pic.webp", "icon.ico", "a.avif", "b.bmp"] {
+            let url = root.appendingPathComponent(name)
+            XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(url), name)
+            XCTAssertEqual(WorkspaceDocument(url: url, rootURL: root).kind, .image, name)
+            XCTAssertTrue(WorkspaceDocumentKind.image.opensInPDFViewer)
+        }
+
+        let svg = WorkspaceDocument(url: root.appendingPathComponent("logo.svg"), rootURL: root)
+        XCTAssertEqual(svg.kind, .text, "An SVG is markup; its source is what you edit")
+        XCTAssertTrue(svg.capabilities.canEditText)
     }
 
     func testRelativePathFallsBackToFilenameOutsideRoot() {

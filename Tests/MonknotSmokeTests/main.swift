@@ -45,7 +45,7 @@ defer { try? FileManager.default.removeItem(at: root) }
 try write("# Monknot\ntext-only-token", to: root.appendingPathComponent("README.md"))
 try write("<p>html-only-token</p>", to: root.appendingPathComponent("Notes/Preview.html"))
 try writeSearchablePDF("pdf-only-token", to: root.appendingPathComponent("Guide.pdf"))
-try write("ignored", to: root.appendingPathComponent("image.png"))
+try write("ignored", to: root.appendingPathComponent("archive.zip"))
 try FileManager.default.createSymbolicLink(
     at: root.appendingPathComponent("Loop"),
     withDestinationURL: root

@@ -34,13 +34,13 @@ final class WorkspaceScanResultPatcherTests: XCTestCase {
         try write("# Existing", to: root.appendingPathComponent("Existing.md"))
         let initial = try WorkspaceDocumentScanner().scan(rootURL: root)
 
-        let image = root.appendingPathComponent("image.png")
-        try write("not a workspace document", to: image)
+        let archive = root.appendingPathComponent("archive.zip")
+        try write("not a workspace document", to: archive)
 
         let patched = try XCTUnwrap(WorkspaceScanResultPatcher.applyingFileChanges(
             to: initial,
             rootURL: root,
-            changedPaths: [image.standardizedFileURL.path]
+            changedPaths: [archive.standardizedFileURL.path]
         ))
 
         XCTAssertEqual(patched.documents.map(\.relativePath), ["Existing.md"])
@@ -57,7 +57,7 @@ final class WorkspaceScanResultPatcherTests: XCTestCase {
         let initial = try WorkspaceDocumentScanner().scan(rootURL: root)
 
         try write("# Added", to: folder.appendingPathComponent("Added.md"))
-        try write("not a workspace document", to: folder.appendingPathComponent("image.png"))
+        try write("not a workspace document", to: folder.appendingPathComponent("archive.zip"))
 
         let patched = try XCTUnwrap(WorkspaceScanResultPatcher.applyingFileChanges(
             to: initial,

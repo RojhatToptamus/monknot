@@ -82,8 +82,9 @@ struct ExternalDocumentChangeBanner: View {
     @State private var isConfirmingPDFReload = false
     @State private var isConfirmingTextUseDisk = false
 
-    private var isPDF: Bool {
-        documentKind == .pdf
+    /// PDFs and images keep their unsaved markup apart from the file, so they reload rather than merge.
+    private var isMarkupDocument: Bool {
+        documentKind?.opensInPDFViewer == true
     }
 
     private var message: String {
@@ -113,16 +114,18 @@ struct ExternalDocumentChangeBanner: View {
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if isPDF {
-                MonknotActionButton(
-                    title: "Save a Copy…",
-                    role: .secondary,
-                    theme: theme,
-                    zoomScale: zoomScale,
-                    size: .bar,
-                    isDisabled: isSaving,
-                    action: savePDFCopy
-                )
+            if isMarkupDocument {
+                if documentKind == .pdf {
+                    MonknotActionButton(
+                        title: "Save a Copy…",
+                        role: .secondary,
+                        theme: theme,
+                        zoomScale: zoomScale,
+                        size: .bar,
+                        isDisabled: isSaving,
+                        action: savePDFCopy
+                    )
+                }
                 MonknotActionButton(
                     title: "Reload…",
                     role: .primary,
@@ -187,14 +190,16 @@ struct ExternalDocumentChangeBanner: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(message)
         .confirmationDialog(
-            "Reload PDF from Disk?",
+            documentKind == .image ? "Reload Image from Disk?" : "Reload PDF from Disk?",
             isPresented: $isConfirmingPDFReload,
             titleVisibility: .visible
         ) {
             Button("Reload from Disk", role: .destructive, action: reloadPDF)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This discards your unsaved PDF annotations. You can save them as a copy first.")
+            Text(documentKind == .image
+                ? "This discards your unsaved markup."
+                : "This discards your unsaved PDF annotations. You can save them as a copy first.")
         }
         .confirmationDialog(
             "Use the Disk Version?",

@@ -1,6 +1,6 @@
 # Monknot — design language and UI rules
 
-Authoritative reference for the Monknot macOS app (markdown, PDF and code editor). Read this
+Authoritative reference for the Monknot macOS app (markdown, PDF, image and code editor). Read this
 before implementing, refining or proposing any interface work.
 
 Monknot is a **native SwiftUI/AppKit app**. Glyphs are **SF Symbols**. Type is **SF Pro Text** for
@@ -330,7 +330,7 @@ overlay thumb, whatever "Show scroll bars" says: no track, a 4pt radius-2 thumb 
 widens to 6pt at 70 % under the pointer. It appears while the list scrolls and while the pointer is
 over the list, and fades like any overlay scroller. With a mouse attached AppKit would otherwise give
 each list a 17pt bar with an opaque track, the loudest object in a 248pt sidebar, and take 17pt of
-every row. The document (editor, PDF) follows the system setting, as Notes and Xcode do.
+every row. The document (editor, PDF, image) follows the system setting, as Notes and Xcode do.
 
 ---
 
@@ -348,7 +348,7 @@ every row. The document (editor, PDF) follows the system setting, as Notes and X
 | Bar divider | **bar height × 0.36.** 16 in a 44 titlebar, 13 in a 36 panel header. Never full height — a full-height rule turns a bar into a table. |
 | Bar height | **row height + 14.** A 30 tab in a 44 titlebar leaves 7 of air each side. |
 
-**Where the ratios stop.** Editor body text, PDF page content and empty-state illustrations are not
+**Where the ratios stop.** Editor body text, PDF page content, image pixels and empty-state illustrations are not
 chrome and follow none of this. Everything from the window rim inward to the document does.
 
 **Why this matters more than it looks.** If two rows can appear on screen at once and hold the same
@@ -435,7 +435,7 @@ neither changes the control or glyph-column geometry.
 
 `sidebar.left` · `chevron.left` / `chevron.right` · `chevron.right` / `chevron.down` (disclosure) ·
 `line.3.horizontal` (source) · `eye` (preview) · `sidebar.right` · `doc.text` markdown · `doc.richtext`
-PDF · `folder` (a workspace) · `terminal` · `xmark` · `plus` · `gearshape` · `list.bullet.indent`
+PDF · `photo` image · `folder` (a workspace) · `terminal` · `xmark` · `plus` · `gearshape` · `list.bullet.indent`
 (outline peek).
 
 Use the **outline (non-fill) variant everywhere** except for three status marks, where the fill is the
@@ -525,8 +525,8 @@ stays a scroll map rather than a list that runs off the bottom.
 At 0.8 the row is 24pt, glyph 12pt, label 10.5pt — the floor. Below that macOS hit-target guidance
 breaks before the type does, which is why the scale stops there rather than at a smaller type size.
 
-**PDF is the exception.** A page has a true physical size, so over a PDF ⌘+ zooms the **page** and
-leaves the workspace alone. The chrome stays at the workspace factor. Zoom is therefore two
+**PDF is the exception**, and an image with it. A page has a true physical size, so over a PDF or an
+image ⌘+ zooms the **page** and leaves the workspace alone. The chrome stays at the workspace factor. Zoom is therefore two
 independent values; the status bar shows whichever the focused view owns.
 
 Everything else zooms with the workspace — including **every page of Settings**, not just the editor.
@@ -572,7 +572,7 @@ in the cluster.**
 a view mode — it belongs in the Window menu with its own shortcut, not in a control whose other
 cells switch how one pane renders.
 
-**Disabled, not hidden.** For PDF and plain text the view-mode control takes the disabled treatment of
+**Disabled, not hidden.** For PDFs, images and plain text the view-mode control takes the disabled treatment of
 §5.1: `ink4` glyphs, its border at 40 %, and no selected cell. Controls never appear or disappear
 between file kinds — the toolbar must not reflow.
 
@@ -625,7 +625,7 @@ per depth · disclosure chevron 10 · Recents group · footer row 30, Settings o
 Rows are the **row primitive, identical to a tab**, on purpose.
 
 **One glyph per row.** A folder's disclosure chevron (10pt, nudged per §8.6) sits in the 18pt glyph
-column, and folders carry no folder glyph. Files use `doc.text` / `doc.richtext` in the same column.
+column, and folders carry no folder glyph. Files use `doc.text` / `doc.richtext` / `photo` in the same column.
 Names at one depth therefore share a left edge, and a child steps right by exactly the 16 indent. A
 chevron beside a monochrome folder outline says the same thing twice and pushes every name right.
 
@@ -711,6 +711,22 @@ fill its box.** If an icon looks small, that is correct — macOS chrome glyphs 
 **Hard ceilings.** No chrome glyph over 17. No square button over 28, except the Markdown toolbar's 30:
 it sits in its own sub-row under the titlebar, never beside a 28 control. No row over 34. The only glyphs
 above 17 anywhere are empty-state illustrations at 34, which are not controls.
+
+### 10.8 Images
+
+Raster images (PNG, JPEG, GIF, HEIC, TIFF, WebP, BMP, ICO, AVIF) are workspace documents and open
+in the PDF viewer, the way Preview marks up images: one page that draws the file's own pixels, never
+a recompressed copy. An image opens whole, at no more than its actual size; a Retina screenshot
+shows at the point size it was taken at.
+
+The toolbar is the PDF toolbar without what belongs to pages: no page counter, no navigator, no
+text-markup buttons. An image has no text to select, so its **highlighter drags out an area**; the
+pen, text box, eraser, colours, undo and zoom are the PDF's own.
+
+Until it is saved, markup is kept apart from the file. **⌘S draws it into the image in the image's
+own format** (a PNG stays a PNG), and the image reopens from what was written. Formats ImageIO cannot
+write (WebP) and animations open read-only: the tools are disabled, zoom still works. SVG is source
+and opens in the text editor.
 
 ---
 

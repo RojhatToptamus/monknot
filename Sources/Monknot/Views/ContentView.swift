@@ -1086,7 +1086,7 @@ struct ContentView: View {
         case .save:
             return await saveDocument(id: documentID)
         case .discard:
-            if document.kind == .pdf {
+            if document.kind.opensInPDFViewer {
                 pdfViewportCaptureBridge.cancelActiveFreeTextEdit(documentID: documentID)
             }
             store.discardUnsavedChanges(for: documentID)
@@ -1601,7 +1601,7 @@ struct ContentView: View {
     }
 
     private func saveSelectedDocument() {
-        if let document = store.selectedDocument, document.kind == .pdf {
+        if let document = store.selectedDocument, document.kind.opensInPDFViewer {
             commitActiveFreeTextEdit(for: document.id)
         }
         store.saveSelectedFile()
@@ -1610,7 +1610,7 @@ struct ContentView: View {
     private func saveAllDocuments() {
         guard canSaveAllDocuments else { return }
         let documentIDs = tabState.tabs.map(\.documentID)
-        if let document = store.selectedDocument, document.kind == .pdf {
+        if let document = store.selectedDocument, document.kind.opensInPDFViewer {
             commitActiveFreeTextEdit(for: document.id)
         }
         store.errorMessage = nil
@@ -1629,7 +1629,7 @@ struct ContentView: View {
     }
 
     private func saveDocument(id documentID: String) async -> Bool {
-        if store.document(id: documentID)?.kind == .pdf {
+        if store.document(id: documentID)?.kind.opensInPDFViewer == true {
             commitActiveFreeTextEdit(for: documentID)
         }
         return await store.saveDocument(id: documentID)
@@ -2008,10 +2008,10 @@ struct ContentView: View {
             saveAllDocuments: saveAllDocuments,
             canSaveAllDocuments: canSaveAllDocuments,
             undoPDFAnnotation: { pdfUndoCommandSerial &+= 1 },
-            canUndoPDFAnnotation: store.selectedDocument?.kind == .pdf && canUndoPDFAnnotation,
+            canUndoPDFAnnotation: store.selectedDocument?.kind.opensInPDFViewer == true && canUndoPDFAnnotation,
             redoPDFAnnotation: { pdfRedoCommandSerial &+= 1 },
-            canRedoPDFAnnotation: store.selectedDocument?.kind == .pdf && canRedoPDFAnnotation,
-            isPDFDocumentActive: store.selectedDocument?.kind == .pdf,
+            canRedoPDFAnnotation: store.selectedDocument?.kind.opensInPDFViewer == true && canRedoPDFAnnotation,
+            isPDFDocumentActive: store.selectedDocument?.kind.opensInPDFViewer == true,
             cut: { _ = cutFromCommand() },
             copy: { _ = copyFromCommand() },
             copyRenderedMarkdown: {
@@ -2329,8 +2329,8 @@ struct ContentView: View {
             canReopenClosedTab: canReopenClosedTab,
             canTogglePinTab: tabState.selectedDocumentID != nil && !store.isBusy,
             canExportPDF: selectedDocument?.capabilities.canExportPDF == true,
-            canUndoPDFAnnotation: selectedDocument?.kind == .pdf && canUndoPDFAnnotation,
-            canRedoPDFAnnotation: selectedDocument?.kind == .pdf && canRedoPDFAnnotation,
+            canUndoPDFAnnotation: selectedDocument?.kind.opensInPDFViewer == true && canUndoPDFAnnotation,
+            canRedoPDFAnnotation: selectedDocument?.kind.opensInPDFViewer == true && canRedoPDFAnnotation,
             isDocumentSearchPresented: documentSearch.isPresented,
             isQuickOpenPresented: quickOpen.isPresented,
             isKeyboardShortcutsHelpPresented: isKeyboardShortcutsHelpPresented,

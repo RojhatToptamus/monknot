@@ -4,7 +4,7 @@ This file orients AI agents and contributors working in this repository. Keep it
 
 ## Project Overview
 
-Monknot is a SwiftPM macOS app for browsing a workspace, opening multiple files in lightweight tabs, editing Markdown and text-like files, previewing Markdown, viewing PDFs, skipping unsupported binary/media file types, searching text/PDF documents, exporting Markdown to PDF, and running an embedded terminal.
+Monknot is a SwiftPM macOS app for browsing a workspace, opening multiple files in lightweight tabs, editing Markdown and text-like files, previewing Markdown, viewing and marking up PDFs and images, skipping unsupported binary/media file types, searching text/PDF documents, exporting Markdown to PDF, and running an embedded terminal.
 
 Direct releases use Sparkle 2 for standard in-app updates. The custom bundle
 builder embeds and signs Sparkle.framework; GitHub Releases host immutable
@@ -178,6 +178,7 @@ Shorter and more specific is preferable to polished but meaningless copy.
    - Markdown preview: `MarkdownPreviewView`.
    - Text/source/data text files: `MarkdownTextEditor` as a generic plain text editor.
    - PDF: `PDFPreviewView`.
+   - Image (raster formats in `WorkspaceDocumentSupport.imageExtensions`): `PDFPreviewView` too, on an `ImageMarkupPage` that draws the file's pixels. `ImageMarkupDocument` decodes the image, serializes unsaved markup without the image, and on save draws the markup into the image in its own format with ImageIO. SVG stays a text document.
    - Media/native preview/unsupported files: skipped by the scanner when possible. Generic Quick Look/media preview is intentionally disabled for performance.
 6. `WorkspaceStore` is the main app state owner for workspace selection, document loading, dirty text, save state, file operations, security-scoped bookmarks, external file refresh, and selected document state.
 7. `WorkspaceDocumentScanner` builds the sidebar tree and document list from the selected workspace.
@@ -245,10 +246,11 @@ App-layer code should stay in `Sources/Monknot` when it uses SwiftUI state, AppK
 Use Apple-native APIs where they fit the feature:
 
 - PDF viewing: `PDFPreviewView` renders PDFs in-app with PDFKit, including annotation/search state. Generic Quick Look/media preview remains disabled for file-switching performance.
+- Image viewing and markup: images reuse `PDFPreviewView` through a `PDFPage` subclass (`ImageMarkupPage`) that draws the decoded `CGImage`; `PDFPage(image:)` is not used because PDFKit recompresses the pixels. Decoding, orientation, DPI and saving go through ImageIO (`CGImageSource` / `CGImageDestination`). Unsaved markup travels as a small annotations-only PDF; never serialize the image into it on each edit. `WorkspaceDocumentKind.opensInPDFViewer` covers both kinds in the store and commands.
 - PDF search/text extraction: `PDFDocument` and `PDFSelection` in `WorkspaceSearchService`; keep this out of the file-selection/render hot path.
 - Markdown preview/export rendering: `WKWebView`; the HTML shell comes from `MarkdownRenderService`.
 - PDF export: `WKWebView.createPDF(configuration:)` plus `PDFKit.PDFDocument` pagination.
-- Generic native previews: disabled. Do not route image/video/Office/native files into Quick Look or the workspace document list without an explicit performance decision.
+- Generic native previews: disabled. Raster images are workspace documents (opened on demand in the PDF viewer, never decoded during scanning or search); do not route video/Office/native files into Quick Look or the workspace document list without an explicit performance decision.
 - File type detection: `UniformTypeIdentifiers.UTType` in `WorkspaceDocumentSupport`, with extension fallbacks for formats UTType may not classify consistently.
 - Text editing: `NSTextView` through `MarkdownTextEditor`, used for Markdown source and generic editable text/source/data files. Interactive editor opens are capped by `WorkspaceStore.interactiveTextOpenMaxBytes` so very large text files do not block file switching; search/export services can still use their own guarded limits.
 - File watching: FSEvents in `WorkspaceFileWatcher`.
@@ -304,8 +306,8 @@ Before adding custom parsing, indexing, PDF handling, file watching, or renderin
 - File tabs are rendered by `DocumentTabBar` under `TopNavigationBar`. Keep tabs lightweight: labels, pinned state, close/pin actions, and save indicators only. Inactive tabs must remain metadata only; do not create per-tab editor/preview runtimes. When split view is active for markdown/HTML documents, `TopNavigationBar` shows an active split indicator (click to turn off; ⌘\\ also toggles).
 - App menu commands flow through `MonknotCommandActions` and `FocusedValues`. Quick Open uses ⌘P; Export PDF is menu-only.
 - Markdown preview behavior belongs in `MarkdownPreviewView` and `renderer.js`, not scattered across unrelated views.
-- PDF viewing behavior belongs in `PDFPreviewView`.
-- Generic preview-only behavior is intentionally disabled; media/native preview files should be skipped by scanning and must not mount preview runtimes.
+- PDF and image viewing behavior belongs in `PDFPreviewView`; image decoding and saving belong in `ImageMarkupDocument`.
+- Generic preview-only behavior is intentionally disabled; media/native preview files other than raster images should be skipped by scanning and must not mount preview runtimes.
 - Route behavior by `WorkspaceDocument.capabilities` when possible. Keep `WorkspaceDocumentKind` coarse; do not add one enum case per file extension.
 - Theme colors should flow through `AppTheme` and `Color+Theme.swift`.
 - User-facing persisted UI preferences generally use `@AppStorage` keys prefixed with `Monknot.`.
