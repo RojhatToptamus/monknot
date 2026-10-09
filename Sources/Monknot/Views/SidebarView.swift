@@ -295,7 +295,6 @@ struct SidebarView: View {
                     zoomScale: zoomScale,
                     workspaceURL: store.workspaceURL,
                     workspaces: workspaceLibrary.entries,
-                    hasWorkspace: store.workspaceURL != nil,
                     isLoadingWorkspace: store.isWorkspaceOpening,
                     switchWorkspace: switchWorkspace
                 )
@@ -2021,7 +2020,6 @@ private struct EmptySidebarView: View {
     let zoomScale: Double
     let workspaceURL: URL?
     let workspaces: [SavedWorkspaceEntry]
-    let hasWorkspace: Bool
     let isLoadingWorkspace: Bool
     let switchWorkspace: (SavedWorkspaceEntry) -> Void
 

@@ -81,8 +81,7 @@ enum MonknotScrollbarStyle {
 /// The thin thumb used while overlay scroll bars are active. Documents with "Show scroll bars: Always"
 /// draw AppKit's own legacy knob and track, because the user asked for the standard scroll bar there.
 final class MonknotScroller: NSScroller {
-    /// Without this AppKit treats every scroller subclass as legacy-only (see NSScroller.h), so
-    /// documents never got overlay scroll bars on any Mac.
+    /// AppKit treats scroller subclasses as legacy-only unless they opt in (see NSScroller.h).
     override class var isCompatibleWithOverlayScrollers: Bool {
         self == MonknotScroller.self
     }
@@ -269,7 +268,7 @@ private struct MonknotScrollbarConfigurator: NSViewRepresentable {
 
         func applyStyle() {
             DispatchQueue.main.async { [weak self] in
-                guard let self, let scrollView = self.enclosingScrollView else { return }
+                guard let self, self.window != nil, let scrollView = self.enclosingScrollView else { return }
                 self.behavior.attach(to: scrollView)
             }
         }

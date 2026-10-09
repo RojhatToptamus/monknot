@@ -264,11 +264,11 @@ final class TerminalPTYSession {
 
     /// Variables other terminal emulators export. Inherited from whatever launched Monknot, they would
     /// tell programs in this terminal that they run in iTerm, VS Code, Ghostty or tmux.
-    static let foreignTerminalVariables: Set<String> = [
+    private static let foreignTerminalVariables: Set<String> = [
         "TERM_SESSION_ID", "LC_TERMINAL", "LC_TERMINAL_VERSION", "TERMINAL_EMULATOR",
         "TMUX", "TMUX_PANE", "STY", "WT_SESSION", "COLORFGBG", "SHLVL",
     ]
-    static let foreignTerminalVariablePrefixes = [
+    private static let foreignTerminalVariablePrefixes = [
         "ITERM_", "VSCODE_", "GHOSTTY_", "KITTY_", "WEZTERM_", "ALACRITTY_", "WARP_", "KONSOLE_", "ZELLIJ",
     ]
 

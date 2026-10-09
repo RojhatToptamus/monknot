@@ -15,8 +15,7 @@ extension Color {
 extension NSColor {
     convenience init(hex: String) {
         if let rgb = RGBHex(hex) {
-            // Theme hex values are sRGB, as in `Color(hex:)`; calibrated (generic)
-            // RGB drew AppKit surfaces lighter than the SwiftUI and WebKit ones.
+            // Theme hex values are sRGB, matching `Color(hex:)`.
             self.init(srgbRed: CGFloat(rgb.red), green: CGFloat(rgb.green), blue: CGFloat(rgb.blue), alpha: 1)
         } else {
             self.init(calibratedWhite: 1, alpha: 1)
@@ -146,7 +145,7 @@ extension AppTheme {
 
     /// Background for compact controls (segmented tracks, terminal tab chips).
     var controlTrackFillColor: Color {
-        foregroundColor.opacity(isDark ? 0.06 : 0.055)
+        hoverFillColor
     }
 
     /// Dimming layer over the editor when a drawer overlays constrained content.

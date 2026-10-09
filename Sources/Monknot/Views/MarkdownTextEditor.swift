@@ -1900,8 +1900,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 for: documentID
             )
         } else if scrollView.contentView.bounds.origin != visibleOrigin {
-            // Undo only a shift this update caused. Re-applying an unchanged origin cancelled
-            // in-flight animated scrolls, such as a page click in the scroll bar track.
+            // Undo only a shift this update caused; re-setting an unchanged origin cancels animated scrolls.
             context.coordinator.restoreScrollPosition(visibleOrigin, in: scrollView, shouldPublish: false)
         }
 
@@ -2344,8 +2343,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
         }
 
         /// The text view's text as native UTF-8, converted at most once per character edit.
-        /// SwiftUI and `WorkspaceStore` compare the document text on every update; with the bridged
-        /// `NSTextView.string` each of those comparisons walked the text up to the caret.
         func nativeText(of textView: NSTextView) -> String {
             guard let storage = textView.textStorage, storage === observedTextStorage else {
                 return NativeUTF8Text.copy(of: textView.string)
@@ -2519,8 +2516,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             in textView: NSTextView
         ) {
             guard !isWritingToolsActive else { return }
-            // Character edits are counted, not compared: comparing the whole bridged document on every
-            // update cost time proportional to the caret position.
+            // Character edits are counted, not compared.
             let editCount = textView.textStorage === observedTextStorage ? storageEditCount : nil
             let styleUnchanged = lastSyntaxTheme == theme &&
                 lastSyntaxFontName == font.fontName &&
@@ -2573,8 +2569,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
             lastAppliedSyncScrollLine = line
             let offset = MarkdownScrollSync.characterOffset(forLine: line, in: textView.string)
-            // Align tops, as the preview does for the source's line; minimal scrolling left the
-            // line at the bottom edge when the preview moved down.
+            // Align the line to the top, as the preview does.
             isRestoringScrollPosition = true
             scrollLineToTop(NSRange(location: offset, length: 0))
             isRestoringScrollPosition = false
@@ -6001,9 +5996,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
             let offset = characterOffset(for: location, in: textView.string)
             let range = NSRange(location: offset, length: 0)
             textView.setSelectedRange(range)
-            // A jump shows its target line at the top (minimal scrolling left a heading at the
-            // bottom edge, so the outline marked the section above it). This also supersedes a
-            // saved-origin restore still waiting for the view's size.
+            // A jump shows its target line at the top, superseding a saved-origin restore still
+            // waiting for the view's size.
             scrollLineToTop(range)
             textView.window?.makeFirstResponder(textView)
             lastNavigatedLocation = location
@@ -6354,7 +6348,7 @@ enum MarkdownEditorLayout {
 
 private enum MarkdownSyntaxHighlighter {
     /// Styles `paragraphs` (whole lines; the entire text when nil). Restyling only the lines an edit
-    /// touched keeps the rest of the document's layout valid; a full pass invalidated it all.
+    /// touched keeps the rest of the document's layout valid.
     static func apply(
         _ source: String,
         enabled: Bool,

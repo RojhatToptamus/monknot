@@ -59,10 +59,6 @@ struct WorkspaceSearchView: View {
         MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
     }
 
-    private func glyphScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
-    }
-
     private var groupedResults: [WorkspaceSearchResultGroup] {
         WorkspaceSearchResultGrouping.groups(from: state.results)
     }
@@ -518,10 +514,8 @@ struct WorkspaceSearchView: View {
         }
     }
 
-    /// One flat list in which every file header and every match is its own lazy item, with one fixed
-    /// height per kind. A lazy stack estimates the items it has not built from the ones it has, so
-    /// grouping matches per file made it guess whole files from the first one and the scroll knob
-    /// jumped. Rows are equatable: moving the selection redraws only the two rows involved.
+    /// One flat lazy list of file headers and matches, each with a fixed height, so the lazy stack
+    /// estimates its length correctly. Rows are equatable: moving the selection redraws two rows.
     private var resultList: some View {
         let query = state.query.trimmingCharacters(in: .whitespacesAndNewlines)
         return LazyVStack(alignment: .leading, spacing: scaled(2)) {

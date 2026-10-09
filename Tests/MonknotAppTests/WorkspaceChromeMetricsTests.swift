@@ -590,8 +590,9 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
 
     func testCommandOverlayPanelFitsItsRowsHeaderAndFooter() {
         let theme = AppTheme.defaultDark
-        // 44 header + 1 rule + three 34 rows with 2 between + 12 list padding + 1 rule + 30 footer.
-        let threeRows: CGFloat = 44 + 1 + 118 + 31
+        // 44 header + 1 rule + three 34 rows with 2 between + 12 list padding + 30 footer (its rule
+        // is drawn inside it).
+        let threeRows: CGFloat = 44 + 1 + 118 + 30
         XCTAssertEqual(
             MonknotCommandOverlayMetrics.panelHeight(rows: 3, hasFooter: true, theme: theme, zoomScale: 1),
             threeRows,

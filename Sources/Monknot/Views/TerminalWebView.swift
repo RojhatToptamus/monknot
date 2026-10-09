@@ -371,19 +371,16 @@ struct TerminalWebView: NSViewRepresentable {
             return false;
           });
           const sgrResetDisposable = term.parser.registerCsiHandler({ prefix: '?', final: 'l' }, params => {
-            if (params.includes(1006)) sgrMouseEncoding = false;
+            if (params.includes(1006) || params.includes(1016)) sgrMouseEncoding = false;
             return false;
           });
-          // XTVERSION: programs use it to pick terminal-specific behaviour such as wheel speed.
-          // A full reset (RIS) or a soft one (DECSTR) also ends SGR mouse encoding.
+          // A full reset (RIS) also ends SGR mouse encoding.
           const risDisposable = term.parser.registerEscHandler({ final: 'c' }, () => {
             sgrMouseEncoding = false;
             return false;
           });
-          const decstrDisposable = term.parser.registerCsiHandler({ intermediates: '!', final: 'p' }, () => {
-            sgrMouseEncoding = false;
-            return false;
-          });
+          // XTVERSION: programs use it to pick terminal-specific behaviour such as wheel speed. Keep the
+          // version in step with the vendored xterm.js (THIRD_PARTY_NOTICES.md).
           const versionDisposable = term.parser.registerCsiHandler({ prefix: '>', final: 'q' }, params => {
             if ((params[0] || 0) === 0) sendInput('\\x1bP>|xterm.js(5.5.0)\\x1b\\\\');
             return true;
@@ -696,7 +693,6 @@ struct TerminalWebView: NSViewRepresentable {
             sgrSetDisposable.dispose();
             sgrResetDisposable.dispose();
             risDisposable.dispose();
-            decstrDisposable.dispose();
             versionDisposable.dispose();
             binaryDisposable.dispose();
             resizeObserver.disconnect();
@@ -953,6 +949,8 @@ final class TerminalWebController: NSObject, TerminalSessionPresentation, WKNavi
         isLoaded = false
         renderedEpoch = nil
         replaysQuietly = true
+        // The reloaded page starts with its search box closed.
+        isSearchPresented = false
         appliedAppearance = appearance
         webView.loadHTMLString(
             TerminalWebView.html(
@@ -1009,13 +1007,8 @@ final class TerminalWebController: NSObject, TerminalSessionPresentation, WKNavi
             return
         }
 
-        guard let bytes = output.bytes(from: renderedOffset) else {
-            // The view fell behind past what the log keeps: redraw from what is kept. The view already
-            // answered the queries in these bytes once.
-            renderedOffset = output.endOffset
-            write(output.bytes(from: output.startOffset) ?? Data(), reset: true, quiet: true)
-            return
-        }
+        // The log always keeps the newest chunk, which starts at the offset rendered last.
+        guard let bytes = output.bytes(from: renderedOffset) else { return }
         renderedOffset = output.endOffset
         guard !bytes.isEmpty else { return }
         write(bytes, reset: false, quiet: false)

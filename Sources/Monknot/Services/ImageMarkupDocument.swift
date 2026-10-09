@@ -35,9 +35,11 @@ enum ImageMarkupDocument {
         let image: CGImage
         let pageSize: CGSize
         let contentType: String
-        /// Markup is saved by re-encoding the image, which ImageIO can do for most formats but not
-        /// all (WebP), and which would drop every frame but the first of an animation.
+        /// Markup is saved by re-encoding the image as 8-bit RGB in its own format. Formats ImageIO
+        /// cannot write (WebP), animations, and deeper or non-RGB images would lose data, so those
+        /// are read-only.
         let canSaveMarkup: Bool
+        fileprivate let properties: [CFString: Any]
     }
 
     static func decode(_ data: Data) -> DecodedImage? {
@@ -47,6 +49,9 @@ enum ImageMarkupDocument {
         else { return nil }
 
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
+        let colorModel = image.colorSpace?.model
+        let isEightBitRGBOrGray = image.bitsPerComponent <= 8
+            && (colorModel == .rgb || colorModel == .monochrome)
         // Points follow the image's resolution, so a Retina screenshot shows at the size it was
         // taken at, as in Preview.
         func points(_ pixels: Int, dpi key: CFString) -> CGFloat {
@@ -61,7 +66,10 @@ enum ImageMarkupDocument {
                 height: points(image.height, dpi: kCGImagePropertyDPIHeight)
             ),
             contentType: contentType,
-            canSaveMarkup: writableTypes.contains(contentType) && CGImageSourceGetCount(source) == 1
+            canSaveMarkup: writableTypes.contains(contentType)
+                && CGImageSourceGetCount(source) == 1
+                && isEightBitRGBOrGray,
+            properties: properties
         )
     }
 
@@ -90,10 +98,7 @@ enum ImageMarkupDocument {
 
     /// The image with its markup drawn in, encoded in the image's own format.
     static func flattenedImageData(imageData: Data, markupData: Data) throws -> Data {
-        guard let source = CGImageSourceCreateWithData(imageData as CFData, nil),
-              let contentType = CGImageSourceGetType(source),
-              let decoded = decode(imageData)
-        else { throw Failure.unreadableImage }
+        guard let decoded = decode(imageData) else { throw Failure.unreadableImage }
         guard decoded.canSaveMarkup else { throw Failure.unsupportedFormat }
         guard let markupPage = PDFDocument(data: markupData)?.page(at: 0) else {
             throw Failure.unreadableMarkup
@@ -130,7 +135,7 @@ enum ImageMarkupDocument {
         guard let flattened = context.makeImage() else { throw Failure.encodingFailed }
 
         // Keep the file's metadata, but its pixels are now upright.
-        var properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
+        var properties = decoded.properties
         properties[kCGImagePropertyOrientation] = CGImagePropertyOrientation.up.rawValue
         if var tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
             tiff[kCGImagePropertyTIFFOrientation] = CGImagePropertyOrientation.up.rawValue
@@ -139,7 +144,7 @@ enum ImageMarkupDocument {
         properties[kCGImageDestinationLossyCompressionQuality] = 0.92
 
         let output = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(output, contentType, 1, nil) else {
+        guard let destination = CGImageDestinationCreateWithData(output, decoded.contentType as CFString, 1, nil) else {
             throw Failure.unsupportedFormat
         }
         CGImageDestinationAddImage(destination, flattened, properties as CFDictionary)

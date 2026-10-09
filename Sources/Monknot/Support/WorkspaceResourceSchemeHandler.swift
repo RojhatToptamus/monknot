@@ -5,10 +5,8 @@ import WebKit
 
 /// Serves workspace files to the in-app web views (Markdown preview, HTML preview, PDF export).
 ///
-/// WebKit's sandboxed content process may only read local files it was explicitly granted, and a
-/// page loaded with `loadHTMLString(_:baseURL:)` is granted nothing, so relative images in notes
-/// and HTML files did not load. Those pages use a `monknot-file:` base URL instead, and this
-/// handler answers with files inside `rootURL` (the workspace) only.
+/// A page loaded with `loadHTMLString(_:baseURL:)` gets no file access, so these pages use a
+/// `monknot-file:` base URL and this handler serves files inside `rootURL` (the workspace) only.
 final class WorkspaceResourceSchemeHandler: NSObject, WKURLSchemeHandler {
     static let scheme = MarkdownRenderService.workspaceResourceScheme
 

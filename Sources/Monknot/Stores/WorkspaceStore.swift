@@ -1358,7 +1358,9 @@ final class WorkspaceStore: ObservableObject {
             if selectedDocumentID == documentID {
                 setSelectedDocumentExternalChangeIfChanged(true)
             }
-            errorMessage = "\(file.displayName) changed on disk. Reload it or save your annotated version as a copy."
+            errorMessage = file.kind == .image
+                ? "\(file.displayName) changed on disk. Reload it to continue."
+                : "\(file.displayName) changed on disk. Reload it or save your annotated version as a copy."
             return false
         }
 
@@ -1535,8 +1537,7 @@ final class WorkspaceStore: ObservableObject {
         }
 
         guard selectedDocument.capabilities.canEditText else { return }
-        // A clean document has no dirty baseline to write against; treating that as a disk
-        // conflict made ⌘S on an untouched file raise a false "changed on disk" review.
+        // A clean document has nothing to save.
         guard !saveState(for: selectedDocument.id).isClean else { return }
 
         let file = selectedDocument
@@ -2037,7 +2038,8 @@ final class WorkspaceStore: ObservableObject {
         forPDFViewerData pdfData: Data,
         imageMarkupSource: Data?
     ) throws -> Data {
-        guard let imageMarkupSource else { return pdfData }
+        // Undo back to the original pixels publishes the image itself rather than markup.
+        guard let imageMarkupSource, pdfData != imageMarkupSource else { return pdfData }
         return try ImageMarkupDocument.flattenedImageData(
             imageData: imageMarkupSource,
             markupData: pdfData
@@ -2260,6 +2262,7 @@ final class WorkspaceStore: ObservableObject {
         dirtyDocumentBaselines = [:]
         dirtyDocumentRevisionExpectations = [:]
         pdfDocumentBaselines = [:]
+        imageMarkupSources = [:]
         dirtyPDFDocumentData = [:]
         dirtyPDFDocumentVersions = [:]
         dirtyPDFDocumentEditCheckpoints = [:]
@@ -2957,7 +2960,9 @@ final class WorkspaceStore: ObservableObject {
             if selectedDocumentID == file.id {
                 setSelectedDocumentExternalChangeIfChanged(true)
             }
-            errorMessage = "\(file.displayName) changed on disk. Reload it or save your annotated version as a copy."
+            errorMessage = file.kind == .image
+                ? "\(file.displayName) changed on disk. Reload it to continue."
+                : "\(file.displayName) changed on disk. Reload it or save your annotated version as a copy."
         } else {
             errorMessage = "Could not save \(file.displayName): \(error.localizedDescription)"
         }
@@ -3042,6 +3047,7 @@ final class WorkspaceStore: ObservableObject {
             preservedDocumentIDs.contains($0.key)
         }
         pdfDocumentBaselines = pdfDocumentBaselines.filter { preservedDocumentIDs.contains($0.key) }
+        imageMarkupSources = imageMarkupSources.filter { preservedDocumentIDs.contains($0.key) }
         dirtyPDFDocumentData = dirtyPDFDocumentData.filter { preservedDocumentIDs.contains($0.key) }
         dirtyPDFDocumentVersions = dirtyPDFDocumentVersions.filter { preservedDocumentIDs.contains($0.key) }
         dirtyPDFDocumentEditCheckpoints = dirtyPDFDocumentEditCheckpoints.filter {

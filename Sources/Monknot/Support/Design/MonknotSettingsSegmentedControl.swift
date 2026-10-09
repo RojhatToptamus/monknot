@@ -30,7 +30,7 @@ struct MonknotSettingsSegmentedControl: View {
         }
         .padding(scaled(2))
         // Same treatment as the window's segmented controls: no track fill, the selected
-        // segment takes `sel`. A filled track left the dark-mode selection nearly invisible.
+        // segment takes `sel`.
         .overlay(
             RoundedRectangle(cornerRadius: cornerRadius)
                 .strokeBorder(theme.borderColor, lineWidth: 1)

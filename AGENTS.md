@@ -178,7 +178,7 @@ Shorter and more specific is preferable to polished but meaningless copy.
    - Markdown preview: `MarkdownPreviewView`.
    - Text/source/data text files: `MarkdownTextEditor` as a generic plain text editor.
    - PDF: `PDFPreviewView`.
-   - Image (raster formats in `WorkspaceDocumentSupport.imageExtensions`): `PDFPreviewView` too, on an `ImageMarkupPage` that draws the file's pixels. `ImageMarkupDocument` decodes the image, serializes unsaved markup without the image, and on save draws the markup into the image in its own format with ImageIO. SVG stays a text document.
+   - Image (raster formats in `WorkspaceDocumentSupport.imageExtensions`): `PDFPreviewView` on an `ImageMarkupPage`. SVG stays a text document.
    - Media/native preview/unsupported files: skipped by the scanner when possible. Generic Quick Look/media preview is intentionally disabled for performance.
 6. `WorkspaceStore` is the main app state owner for workspace selection, document loading, dirty text, save state, file operations, security-scoped bookmarks, external file refresh, and selected document state.
 7. `WorkspaceDocumentScanner` builds the sidebar tree and document list from the selected workspace.
@@ -260,11 +260,11 @@ Use Apple-native APIs where they fit the feature:
 
 Terminal lifecycle notes:
 
-- Multi-terminal UI is explicit: `TerminalSessionCollectionStore` owns tab metadata and one `TerminalSessionStore` per terminal. `TerminalWebView` renders only the active terminal, so inactive terminals do not keep hidden WebKit/xterm views mounted.
+- Multi-terminal UI is explicit: `TerminalSessionCollectionStore` owns tab metadata and one `TerminalSessionStore` per terminal. Each session owns one `TerminalWebController` (a `WKWebView` running xterm.js) for its lifetime, so an inactive tab or a hidden drawer keeps its screen and scrollback; `TerminalWebView` only hosts the active session's view. Session output is kept in a bounded `TerminalOutputLog` (2 MB) for replay after a web process crash.
 - Hiding the terminal drawer does not kill sessions. Terminal tabs use a single VS Code-style destructive action: killing a terminal stops its PTY if needed and removes that one session/tab.
 - New terminals start in the active document directory when possible, then the workspace directory, then the user's home directory. Existing running terminals keep their original working directory.
 - `TerminalPTYSession` follows Apple's Dispatch source guidance: a read source owns its file descriptor while active, and the cancellation handler closes it after the source releases the descriptor. Relevant docs: https://developer.apple.com/documentation/dispatch/dispatch_source_cancel and https://developer.apple.com/documentation/dispatch/dispatchsource/makereadsource%28filedescriptor%3Aqueue%3A%29.
-- `TerminalWebView` removes WebKit script message handlers during dismantle. Relevant docs: https://developer.apple.com/documentation/webkit/wkscriptmessagehandler.
+- `TerminalWebController` removes its WebKit script message handlers when its session stops (kill or quit), not when the view is dismantled. Relevant docs: https://developer.apple.com/documentation/webkit/wkscriptmessagehandler.
 
 Before adding custom parsing, indexing, PDF handling, file watching, or rendering code, check whether Foundation, AppKit, PDFKit, WebKit, CoreServices, or UniformTypeIdentifiers already provides the behavior.
 

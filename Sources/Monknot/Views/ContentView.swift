@@ -1635,9 +1635,7 @@ struct ContentView: View {
         return await store.saveDocument(id: documentID)
     }
 
-    /// Keyed by the document the editor shows. The tab selection follows the store one update
-    /// later when the store selects (New Note, Daily Note, the sidebar), and the previous
-    /// document's offset was applied to the new one: a blank, over-scrolled note.
+    /// Keyed by the store's selection, which leads the tab selection by one update.
     private var activeDocumentViewportState: DocumentViewportState? {
         guard let selectedDocumentID = store.selectedDocumentID else { return nil }
         return viewportCache.states[selectedDocumentID]
@@ -2084,8 +2082,7 @@ struct ContentView: View {
     }
 
     /// The command copies the focused text view's live selection, so enablement only needs to
-    /// know one exists. Comparing the cached snapshot with the store's text could leave the item
-    /// disabled after a reload kept the selection, since a changed snapshot does not re-render.
+    /// know one exists.
     private var canCopyRenderedMarkdown: Bool {
         hasMarkdownEditorSelection && MonknotNativeMarkdownCommand.canCopyRenderedSelection
     }
@@ -2603,8 +2600,7 @@ struct ContentView: View {
     }
 
     /// A focused document view that is not a text view (the PDF view) handles Cut, Copy and
-    /// Paste itself: ⌘C with PDF text selected copied the PDF *file*. Files are cut, copied and
-    /// pasted only from the sidebar or when nothing has focus.
+    /// Paste itself. Files are cut, copied and pasted only from the sidebar or when nothing has focus.
     private var documentViewOwnsFocus: Bool {
         TerminalFocusRestorer.firstResponder(in: responderWindow, isInside: .monknotDocumentFocusTarget)
     }

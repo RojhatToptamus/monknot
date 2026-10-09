@@ -745,8 +745,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         }
 
         private func scrollToLine(_ line: Int, in webView: WKWebView) {
-            // Opening split view sends the source's line while the preview is still loading;
-            // dropping it left the preview at its own stale position until the next scroll.
+            // Not rendered yet: apply once the content loads.
             guard isShellLoaded, lastRenderedContent?.documentID == documentID else {
                 pendingSyncScrollLine = line
                 return
@@ -754,8 +753,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
 
             pendingSyncScrollLine = nil
             lastAppliedSyncScrollLine = line
-            // The scroll reports the block now at the top, which can start a few lines above
-            // `line`; forwarded, it pulled the source back while the user scrolled it.
+            // Don't echo this programmatic scroll back to the source.
             suppressesNextSourceLine = true
 
             let payload: [String: Any] = ["line": line]

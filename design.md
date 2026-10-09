@@ -238,8 +238,9 @@ in Settings or the Keyboard Shortcuts reference uses `ink2`, 9 horizontal and 4 
 radius 6 and `surf3`/inset fill. A key cap contains only the key or modifier sequence; trigger
 context such as “after [[” belongs in the action label. A list footer pairs each quiet hint with its
 action in plain 12 `ink3` beside it (`↑↓` Choose · `↩` Open · `Esc` Close); words never go inside
-the label. Modifiers and named keys use Apple's symbols (⌘ ⇧ ⌥ ⌃ ↩ ⇥ −); Escape is written “Esc”. Shortcut text embedded in prose, help
-strings, tooltips and native menu items keeps the surrounding native text treatment.
+the label. Modifiers and named keys use Apple's symbols (⌘ ⇧ ⌥ ⌃ ↩ ⇥ −); Escape is written “Esc”.
+Shortcut text embedded in prose, help strings, tooltips and native menu items keeps the surrounding
+native text treatment.
 
 ---
 
@@ -257,7 +258,7 @@ The 28 is the **outer** dimension including the 1px border; a 28 content box plu
 | Hover | `hover` fill, `ink` glyph, border unchanged |
 | Pressed | `press` fill |
 | On (panel open) | `accsoft` fill, `accent` glyph, **still only the `line` border** |
-| Disabled | `ink4` glyph, border at 40 %, no fill. Nothing multiplies on top: `ink4` reads as unavailable (about 1.6:1 light, 2:1 dark), while 40 % of `ink4` (1.2:1) disappears. |
+| Disabled | `ink4` glyph, border at 40 %, no fill. No extra opacity on top. |
 
 **Search option exception.** Match Case and Match Whole Word use the same standard `28 × 28` box
 and 17pt symbol in both search surfaces, but stay transparent at rest whether off or on. On uses an
@@ -284,8 +285,7 @@ Two heights, no third: **28 in bars and banners, 30 in sheets.** Padding-x 12, r
 - **Destructive** — `danger` fill, white label.
 
 Hover adds the `hover` tint over the fill and press the `press` tint (§1.4), in both themes. It never
-changes padding, size, weight or elevation. Lightening instead would fade a light-theme secondary
-button into the page and drop a white label on `accent` below 3:1 (3.15:1 → 2.77:1 on §14).
+changes padding, size, weight or elevation.
 
 `bezel` (`0 1px 1px sh 5%` light, `none` dark) is the one-pixel seat that makes a macOS bezel look
 pressable without looking raised. It is the only shadow a resting surface ever gets.
@@ -328,9 +328,8 @@ trailing 30 push buttons, Cancel before the default action.
 **Scroll thumbs.** Chrome lists (sidebar, search results, palettes, panels, Settings) always use the
 overlay thumb, whatever "Show scroll bars" says: no track, a 4pt radius-2 thumb at `ink` 35 % that
 widens to 6pt at 70 % under the pointer. It appears while the list scrolls and while the pointer is
-over the list, and fades like any overlay scroller. With a mouse attached AppKit would otherwise give
-each list a 17pt bar with an opaque track, the loudest object in a 248pt sidebar, and take 17pt of
-every row. The document (editor, PDF, image) follows the system setting, as Notes and Xcode do.
+over the list, and fades like any overlay scroller. The document (editor, PDF, image) follows the
+system setting.
 
 ---
 
@@ -586,8 +585,7 @@ padding`.
   same width with thirty open as with two, so the strip the user learned stays put. The 16 trailing
   slot is reserved at every width so nothing shifts when the pointer enters.
 - **Scroll:** horizontal scroller. Two-finger horizontal, ⇧-wheel **and a plain mouse wheel**
-  scroll it: a wheel has no horizontal axis, so each vertical notch over the strip moves it
-  sideways, as in Safari and Xcode, and a mouse-only user can reach every tab. A trackpad's vertical
+  scroll it: each vertical wheel notch over the strip moves it sideways. A trackpad's vertical
   swipe over the titlebar does nothing, and nothing over the strip is **ever** forwarded to the
   document. Momentum and rubber-band come from the platform scroller — do not reimplement them. No
   scrollbar is drawn: the strip is 30 tall and a bar would take a third of it.
@@ -626,8 +624,7 @@ Rows are the **row primitive, identical to a tab**, on purpose.
 
 **One glyph per row.** A folder's disclosure chevron (10pt, nudged per §8.6) sits in the 18pt glyph
 column, and folders carry no folder glyph. Files use `doc.text` / `doc.richtext` / `photo` in the same column.
-Names at one depth therefore share a left edge, and a child steps right by exactly the 16 indent. A
-chevron beside a monochrome folder outline says the same thing twice and pushes every name right.
+Names at one depth therefore share a left edge, and a child steps right by exactly the 16 indent.
 
 Label `ink2` and glyph `ink3` at rest, both `ink` on hover or press; the selected file's label is `ink`
 and its glyph `accent` (§1.3, §1.4). Quiet Sidebar takes a fifth off each opacity, once, never below
@@ -636,8 +633,7 @@ and its glyph `accent` (§1.3, §1.4). Quiet Sidebar takes a fifth off each opac
 **Recents** is a collapsible group between the tree and the footer: the chevron in the glyph column, an
 eyebrow title (§4.3) and a trailing count in 12 `ink3`. Its entries are file rows one level in. It never
 grows past a third of the sidebar; the tree keeps the rest. It is a jump list and never marks a
-selection: the open document is always its first entry, the tree already marks it, and §1.3 gives the
-selected-row accent to one row.
+selection.
 
 **Dividers** (sidebar and terminal alike). Dragging a divider past half a pane's minimum closes that
 pane. A drag that pushes the *opposite* pane below its minimum closes that pane too, as the user's
@@ -676,13 +672,10 @@ Close: 10pt `xmark` in a 14 target, on the active pill and on hover. The strip s
 strip, mouse wheel included, with the same 24pt trailing fade; being clipped by the panel edge is
 correct.
 
-**The screen belongs to the session.** Hiding the panel or switching sessions moves the session's
-terminal view out of the window and back; it is never rebuilt from a replay, so the scrollback, the
-alternate screen, mouse modes and the scroll position come back exactly as the program left them.
-Output reaches it as raw bytes, each byte once. A program that reports the mouse (Claude Code, vim,
-less) gets one wheel report per line actually scrolled, so a flick scrolls it as far as it would
-scroll plain output. The scroll bar is the shared thumb (§5.7) at its resting strength: WebKit cannot
-fade a styled scroll bar, so it does not try.
+**The screen belongs to the session.** Hiding the panel or switching sessions keeps the scrollback,
+the alternate screen, mouse modes and the scroll position exactly as the program left them. A program
+that reports the mouse (Claude Code, vim, less) scrolls as far per wheel flick as plain output does.
+The scroll bar is the shared thumb (§5.7) at its resting strength.
 
 The header order is session scroller → 13pt divider → fullscreen → new session → close panel.
 Fullscreen is one 26/14 optical control: diagonal arrows point out when docked and in when expanded.

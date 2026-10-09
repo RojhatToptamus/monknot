@@ -170,8 +170,7 @@ struct MarkdownToolbarActionDescriptor: Identifiable {
 }
 
 /// The toolbar redraws when its theme, zoom or statistics change, not on every keystroke in the
-/// pane around it (its `ViewThatFits` re-measured all three layouts per key). `sendCommand`
-/// forwards to the pane and is deliberately not compared.
+/// pane around it. `sendCommand` forwards to the pane and is not compared.
 extension MarkdownSourceToolbar: Equatable {
     nonisolated static func == (lhs: MarkdownSourceToolbar, rhs: MarkdownSourceToolbar) -> Bool {
         MainActor.assumeIsolated {

@@ -4,10 +4,8 @@ import Foundation
 /// One window's per-document scroll positions, selections and PDF viewports.
 ///
 /// Scrolling and caret movement update these many times per second, so they are deliberately not
-/// SwiftUI state. Storing them in `@State` re-rendered the whole window on every scroll tick, and an
-/// editor publishing its final position while its window closed wrote SwiftUI state during graph
-/// teardown, which aborted the app. Readers pick up the latest values whenever the view updates for
-/// another reason (a document switch or a mode change), and persistence reads them directly.
+/// SwiftUI state. Readers pick up the latest values on their next update, and persistence reads them
+/// directly.
 @MainActor
 final class DocumentViewportStateCache {
     var states: [String: DocumentViewportState] = [:]

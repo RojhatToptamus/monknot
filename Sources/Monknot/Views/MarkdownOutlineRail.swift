@@ -37,9 +37,8 @@ enum MarkdownOutlineRailLayout {
     }
 }
 
-/// The source line at the top of the visible document. Only the outline rail observes it: scrolling
-/// changes it on nearly every frame, and keeping it in the editor pane's state re-rendered the
-/// formatting toolbar and the editor bridge on every scroll tick.
+/// The source line at the top of the visible document. Only the outline rail observes it, so scroll
+/// ticks don't re-render the editor pane.
 @MainActor
 final class MarkdownOutlinePosition: ObservableObject {
     @Published private(set) var visibleLine = 1
@@ -60,8 +59,9 @@ final class MarkdownOutlinePosition: ObservableObject {
 
 /// The rail is redrawn when its headings, theme or zoom change, not on every keystroke in the editor
 /// pane around it. The visible line is observed one level down, so scrolling still moves the current
-/// marker. `select` forwards to the pane and is deliberately not compared.
+/// marker. `select` forwards to the pane and is not compared; `documentID` stands in for it.
 struct MarkdownOutlineRail: View, Equatable {
+    let documentID: String
     let items: [MarkdownOutlineItem]
     let position: MarkdownOutlinePosition
     let theme: AppTheme
@@ -70,7 +70,8 @@ struct MarkdownOutlineRail: View, Equatable {
 
     nonisolated static func == (lhs: MarkdownOutlineRail, rhs: MarkdownOutlineRail) -> Bool {
         MainActor.assumeIsolated {
-            lhs.position === rhs.position &&
+            lhs.documentID == rhs.documentID &&
+                lhs.position === rhs.position &&
                 lhs.zoomScale == rhs.zoomScale &&
                 lhs.items == rhs.items &&
                 lhs.theme == rhs.theme

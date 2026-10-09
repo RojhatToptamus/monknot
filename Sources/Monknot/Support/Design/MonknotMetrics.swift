@@ -90,10 +90,6 @@ enum MonknotMetrics {
         interfaceControl(iconButtonSizeBase, theme: theme, zoomScale: zoomScale)
     }
 
-    /// Primary chrome symbols use the same workspace zoom as their control box.
-    static func chromeGlyphSize(theme: AppTheme, zoomScale: Double) -> CGFloat {
-        interfaceGlyph(iconPointSizeBase, theme: theme, zoomScale: zoomScale)
-    }
 
     static func windowNavigationButtonDimension(theme: AppTheme, zoomScale: Double) -> CGFloat {
         chromeButtonDimension(theme: theme, zoomScale: zoomScale)

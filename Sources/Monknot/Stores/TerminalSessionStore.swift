@@ -11,7 +11,7 @@ enum TerminalSessionStatus: Equatable {
 /// The raw bytes a terminal session has produced, so that its view can show output that arrived before
 /// it finished loading. Bytes rather than a String: a read can end inside a UTF-8 sequence, and only
 /// the terminal emulator's decoder joins the halves correctly.
-struct TerminalOutputLog: Equatable {
+struct TerminalOutputLog {
     static let defaultCapacity = 2 * 1024 * 1024
 
     let capacity: Int

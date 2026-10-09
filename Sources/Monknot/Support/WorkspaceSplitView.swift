@@ -409,7 +409,7 @@ final class WorkspaceSidePaneController: NSViewController {
         case trailing
     }
 
-    let content: NSViewController
+    private let content: NSViewController
     private let edge: Edge
 
     init(content: NSViewController, edge: Edge) {

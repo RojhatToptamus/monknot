@@ -159,8 +159,10 @@ struct PDFPreviewView: View {
         .onChange(of: document.id) { _, _ in
             loadState = .loading
             markupHint = nil
-            // The area highlighter is an image tool; a PDF highlights its selected text.
-            if !isImage, interactionMode == .highlighter {
+            // The area highlighter is an image tool, and the navigator a PDF one.
+            if isImage {
+                isNavigatorPresented = false
+            } else if interactionMode == .highlighter {
                 interactionMode = .select
             }
             selectedFreeTextFormatting = nil
@@ -2953,7 +2955,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
     let documentID: String
     let url: URL
     /// The file is an image shown on a page of its own; see `ImageMarkupDocument`.
-    var isImage = false
+    let isImage: Bool
     let dirtyData: Data?
     let savedEditCheckpoint: PDFAnnotationEditCheckpoint?
     let contentVersion: Int
@@ -3362,7 +3364,6 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
                         loadedSourceData = dirtyData == nil ? sourceData : nil
                         isMarkupSupported = decoded.canSaveMarkup
                     }
-                    pdfView.serializeDocument = ImageMarkupDocument.markupData(from:)
                 } else if let dirtyData, let dirtyDocument = PDFDocument(data: dirtyData) {
                     loadedDocument = dirtyDocument
                 } else {
@@ -3375,9 +3376,10 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
                         loadedDocument = sourceDocument
                     }
                 }
-                if !isImage {
-                    pdfView.serializeDocument = { $0.dataRepresentation() }
-                }
+                pdfView.serializeDocument = isImage
+                    ? ImageMarkupDocument.markupData(from:)
+                    : { $0.dataRepresentation() }
+                pdfView.imageFileURL = isImage ? nextIdentity.url : nil
                 pdfView.isMarkupSupported = isMarkupSupported
                 pdfView.document = loadedDocument
                 pdfView.replaceEditBaselineCapture(
@@ -4636,6 +4638,8 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
 
     /// False for an image whose format markup can't be saved into; it is shown read-only.
     var isMarkupSupported = true
+    /// For an image, the file whose bytes are the edit baseline; a PDF's baseline is the document itself.
+    var imageFileURL: URL?
     private weak var activeHighlightPage: PDFPage?
     private var activeHighlightOrigin: CGPoint?
     private var activeHighlightAnnotation: PDFAnnotation?
@@ -5904,7 +5908,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
 
     private func editBaselineDataWithoutConsuming() -> Data? {
         guard needsEditBaselineSnapshot else { return nil }
-        return loadedSourceBaselineData ?? document?.dataRepresentation()
+        return loadedSourceBaselineData ?? currentFileBaselineData()
     }
 
     private func cancelFreeTextGestureWithStaleAnnotation() {
@@ -6155,10 +6159,27 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         return annotation
     }
 
+    /// The baseline for an edit when no loaded source bytes are kept: the image file, or the PDF
+    /// document as it is now.
+    private func currentFileBaselineData() -> Data? {
+        if let imageFileURL {
+            return try? Data(contentsOf: imageFileURL)
+        }
+        return document?.dataRepresentation()
+    }
+
+    /// A gesture that took the one-time baseline snapshot but made no edit gives it back.
+    private func returnUnusedEditBaseline(_ baseline: Data?) {
+        guard let baseline else { return }
+        loadedSourceBaselineData = loadedSourceBaselineData ?? baseline
+        needsEditBaselineSnapshot = true
+    }
+
     private func discardActiveInkAnnotation() {
         if let activeInkPage, let activeInkAnnotation {
             activeInkPage.removeAnnotation(activeInkAnnotation)
         }
+        returnUnusedEditBaseline(activeInkBaselineData)
         activeInkPoints = []
         activeInkPage = nil
         activeInkAnnotation = nil
@@ -6197,19 +6218,18 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
     }
 
     private func finishActiveHighlight() {
-        defer { discardActiveHighlight(keepingAnnotation: true) }
         guard let page = activeHighlightPage,
               let annotation = activeHighlightAnnotation,
-              let document
+              let document,
+              // A click, or a drag too small to see, is not a highlight.
+              annotation.bounds.width >= 4,
+              annotation.bounds.height >= 4
         else {
             discardActiveHighlight()
             return
         }
-        // A click, or a drag too small to see, is not a highlight.
-        guard annotation.bounds.width >= 4, annotation.bounds.height >= 4 else {
-            discardActiveHighlight()
-            return
-        }
+        let baseline = activeHighlightBaselineData
+        clearActiveHighlight()
         registerAnnotationEdit(
             PDFAnnotationEditOperation(
                 added: [.init(pageIndex: document.index(for: page), annotation: annotation)],
@@ -6218,14 +6238,19 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         )
         annotationsChanged(on: page)
         onAnnotationsChanged()
-        publishEditedDocument(previousData: activeHighlightBaselineData)
+        publishEditedDocument(previousData: baseline)
     }
 
-    private func discardActiveHighlight(keepingAnnotation: Bool = false) {
-        if !keepingAnnotation, let activeHighlightPage, let activeHighlightAnnotation {
+    private func discardActiveHighlight() {
+        if let activeHighlightPage, let activeHighlightAnnotation {
             activeHighlightPage.removeAnnotation(activeHighlightAnnotation)
             refreshAnnotationDisplay(on: activeHighlightPage)
         }
+        returnUnusedEditBaseline(activeHighlightBaselineData)
+        clearActiveHighlight()
+    }
+
+    private func clearActiveHighlight() {
         activeHighlightPage = nil
         activeHighlightOrigin = nil
         activeHighlightAnnotation = nil
@@ -6381,7 +6406,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
 
     private func takeEditBaselineSnapshotIfNeeded() -> Data? {
         guard needsEditBaselineSnapshot else { return nil }
-        guard let baselineData = loadedSourceBaselineData ?? document?.dataRepresentation() else {
+        guard let baselineData = loadedSourceBaselineData ?? currentFileBaselineData() else {
             return nil
         }
         needsEditBaselineSnapshot = false
@@ -6655,6 +6680,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         onAnnotationsChanged = {}
         onFreeTextSelectionChanged = { _ in }
         serializeDocument = { $0.dataRepresentation() }
+        imageFileURL = nil
         document = nil
     }
 }

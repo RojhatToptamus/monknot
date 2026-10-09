@@ -119,7 +119,7 @@ final class MarkdownEditorBasicInteractionTests: FlowEditorTestCase {
         textView.textContainer?.widthTracksTextView = true
 
         // A tab switch assigns the long document's text and restores its origin in the same update,
-        // before layout; the clip view used to clamp the origin to the short note's height.
+        // before layout.
         let longText = (1...2000).map { "Line \($0) of the long document." }.joined(separator: "\n")
         textView.string = longText
         coordinator.restoreDocumentScrollPosition(CGPoint(x: 0, y: 8000), openingTopLine: nil, for: "long.md")

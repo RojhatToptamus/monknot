@@ -9,16 +9,16 @@ enum MonknotCommandOverlayMetrics {
     /// The height that shows `rows` result rows (at most eight) under the header, plus the footer.
     static func panelHeight(
         rows: Int,
-        emptyHeightBase: CGFloat = 72,
         hasFooter: Bool,
         theme: AppTheme,
         zoomScale: Double
     ) -> CGFloat {
         let visibleRows = CGFloat(min(rows, 8))
         let list = rows == 0
-            ? emptyHeightBase
+            ? 72
             : visibleRows * rowHeightBase + (visibleRows - 1) * 2 + 12
-        let footer = hasFooter && rows > 0 ? footerHeightBase + 1 : 0
+        // The footer draws its own separator inside its height.
+        let footer = hasFooter && rows > 0 ? footerHeightBase : 0
         return MonknotMetrics.interfaceDensity(
             headerHeightBase + 1 + list + footer,
             theme: theme,
@@ -75,6 +75,7 @@ struct MonknotCommandOverlayField: View {
     let isFocused: FocusState<Bool>.Binding
     let theme: AppTheme
     let zoomScale: Double
+    var accessibilityHint: String?
     let submit: () -> Void
     let close: () -> Void
 
@@ -95,6 +96,7 @@ struct MonknotCommandOverlayField: View {
                 .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
                 .foregroundStyle(theme.foregroundColor)
                 .accessibilityLabel(placeholder.trimmingCharacters(in: CharacterSet(charactersIn: "…")))
+                .accessibilityHint(accessibilityHint ?? "")
                 .onSubmit(submit)
 
             MonknotCommandOverlayCloseButton(theme: theme, zoomScale: zoomScale, close: close)

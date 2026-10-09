@@ -40,9 +40,7 @@ struct MonknotApp: App {
             MonknotWorkspaceWindowRequest()
         }
         .windowStyle(.hiddenTitleBar)
-        // Finder opens arrive through AppDelegate, which routes each to the right window
-        // (WorkspaceWindowRequestCenter). Without this, SwiftUI also opened a new, empty window
-        // for every external open event.
+        // External opens are routed by AppDelegate through WorkspaceWindowRequestCenter.
         .handlesExternalEvents(matching: [])
         .commands {
             MonknotCommandMenu()
@@ -122,7 +120,12 @@ private struct MonknotWindowRootView: View {
             .onAppear {
                 workspaceWindowRequests.installReusableWindow(
                     id: reusableWindowHandlerID,
-                    workspaceURL: { workspaceStore.openingWorkspaceURL ?? workspaceStore.workspaceURL },
+                    // Until its own request runs, a window counts as showing that request's workspace,
+                    // so a pending open is not routed into it.
+                    workspaceURL: {
+                        workspaceStore.openingWorkspaceURL ?? workspaceStore.workspaceURL
+                            ?? (didHandleInitialRequest ? nil : request.workspaceURL)
+                    },
                     take: takeWindowRequest
                 )
             }

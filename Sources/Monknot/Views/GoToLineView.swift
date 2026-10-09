@@ -21,7 +21,7 @@ struct GoToLineView: View {
             theme: theme,
             zoomScale: zoomScale,
             panelHeight: scaled(
-                MonknotCommandOverlayMetrics.headerHeightBase + 1 + MonknotCommandOverlayMetrics.footerHeightBase
+                MonknotCommandOverlayMetrics.headerHeightBase + MonknotCommandOverlayMetrics.footerHeightBase
             ),
             close: close
         ) {
@@ -33,10 +33,10 @@ struct GoToLineView: View {
                     isFocused: $isInputFocused,
                     theme: theme,
                     zoomScale: zoomScale,
+                    accessibilityHint: "Line and column numbers start at 1",
                     submit: submit,
                     close: close
                 )
-                .accessibilityHint("Line and column numbers start at 1")
 
                 if let errorMessage {
                     Text(errorMessage)

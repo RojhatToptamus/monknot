@@ -484,6 +484,7 @@ struct EditorPaneView: View {
 
             if showsDocumentOutline, outlineItems.count >= 2 {
                 MarkdownOutlineRail(
+                    documentID: selectedDocument.id,
                     items: outlineItems,
                     position: outlinePosition,
                     theme: theme,

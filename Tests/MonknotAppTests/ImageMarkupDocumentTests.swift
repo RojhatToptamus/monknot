@@ -2,6 +2,7 @@ import AppKit
 import ImageIO
 import PDFKit
 import UniformTypeIdentifiers
+import MonknotCore
 import XCTest
 @testable import MonknotApp
 
@@ -181,6 +182,45 @@ final class ImageMarkupDocumentTests: WorkspaceStorePDFTestCase {
         )
     }
 
+    func testAClickWithTheHighlighterKeepsTheBaselineForTheNextHighlight() throws {
+        let imageData = try encode(makeNoiseImage(), as: .png)
+        let decoded = try XCTUnwrap(ImageMarkupDocument.decode(imageData))
+        let view = AnnotatingPDFView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = view
+        defer { window.contentView = nil }
+        view.document = ImageMarkupDocument.makeDocument(from: decoded, markupData: nil)
+        view.serializeDocument = ImageMarkupDocument.markupData(from:)
+        view.replaceEditBaselineCapture(with: imageData, needsSnapshot: true)
+        view.layoutDocumentView()
+        var publishedBaselines: [Data?] = []
+        view.onEdited = { previousData, _, _ in publishedBaselines.append(previousData) }
+        view.annotationMode = .highlighter
+
+        let page = try XCTUnwrap(view.document?.page(at: 0))
+        func send(_ type: NSEvent.EventType, _ pagePoint: CGPoint) {
+            let point = view.convert(view.convert(pagePoint, from: page), to: nil)
+            let event = NSEvent.mouseEvent(
+                with: type, location: point, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+            )!
+            switch type {
+            case .leftMouseDown: view.mouseDown(with: event)
+            case .leftMouseDragged: view.mouseDragged(with: event)
+            default: view.mouseUp(with: event)
+            }
+        }
+
+        send(.leftMouseDown, CGPoint(x: 20, y: 20))
+        send(.leftMouseUp, CGPoint(x: 20, y: 20))
+        XCTAssertTrue(publishedBaselines.isEmpty, "A click is not a highlight")
+
+        send(.leftMouseDown, CGPoint(x: 10, y: 10))
+        send(.leftMouseDragged, CGPoint(x: 60, y: 40))
+        send(.leftMouseUp, CGPoint(x: 60, y: 40))
+        XCTAssertEqual(publishedBaselines, [imageData], "The first real highlight carries the file's bytes as its baseline")
+    }
+
     // MARK: - Fixtures
 
     private func makeNoiseImage() -> CGImage {
@@ -262,5 +302,23 @@ final class ImageMarkupDocumentTests: WorkspaceStorePDFTestCase {
             .enumerated()
             .filter { $0.offset % 4 != 3 && $0.element.0 != $0.element.1 }
             .count
+    }
+}
+
+@MainActor
+final class MarkdownOutlineRailEqualityTests: XCTestCase {
+    func testRailsForDifferentDocumentsWithTheSameHeadingsAreNotEqual() {
+        let position = MarkdownOutlinePosition()
+        let items = [
+            MarkdownOutlineItem(id: "1-1-Today", title: "Today", level: 1, location: MarkdownSourceLocation(line: 1, offset: 0)),
+        ]
+        func rail(_ documentID: String) -> MarkdownOutlineRail {
+            MarkdownOutlineRail(
+                documentID: documentID, items: items, position: position,
+                theme: .defaultLight, zoomScale: 1, select: { _ in }
+            )
+        }
+        XCTAssertEqual(rail("/a.md"), rail("/a.md"))
+        XCTAssertNotEqual(rail("/a.md"), rail("/b.md"), "Each rail's select records against its own document")
     }
 }
