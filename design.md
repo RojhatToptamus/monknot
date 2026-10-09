@@ -639,6 +639,13 @@ grows past a third of the sidebar; the tree keeps the rest. It is a jump list an
 selection: the open document is always its first entry, the tree already marks it, and §1.3 gives the
 selected-row accent to one row.
 
+**Dividers** (sidebar and terminal alike). Dragging a divider past half a pane's minimum closes that
+pane. A drag that pushes the *opposite* pane below its minimum closes that pane too, as the user's
+choice. Narrowing the window is not a drag: it may squeeze a pane closed, and widening the window
+brings it back. A divider drag never opens the opposite pane, whether the drag pushed it out or the
+window squeezed it: when the drag ends, a pane that is out of the layout is closed and reopens from
+its toolbar button, so a pane and its toolbar button always agree.
+
 ### 10.5 Outline rail
 
 A right-edge dash rail, always present, no toolbar button. Dash length encodes heading level: **22 /

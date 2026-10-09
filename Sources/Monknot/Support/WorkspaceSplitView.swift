@@ -1604,24 +1604,22 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
 
         // A native window-pressure collapse does not alter the user's preferred
         // presentation. Its transient collapsed width is restored when the
-        // document minimum and peripheral minimums fit again.
+        // document minimum and peripheral minimums fit again. A pane the window
+        // had already squeezed keeps that cause through a later drag, so the
+        // drag cannot bring it back mid-gesture.
+        let pressureCause: PressureCollapseCause =
+            workspaceSplitView.activeDividerIndex == nil ? .container : .divider
         if preferredSidebarPresentation,
            sidebarItem.isCollapsed,
-           workspaceSplitView.activeDividerIndex != 0 {
-            if workspaceSplitView.activeDividerIndex != nil {
-                sidebarPressureCollapseCause = .divider
-            } else if sidebarPressureCollapseCause == nil {
-                sidebarPressureCollapseCause = .container
-            }
+           workspaceSplitView.activeDividerIndex != 0,
+           sidebarPressureCollapseCause == nil {
+            sidebarPressureCollapseCause = pressureCause
         }
         if preferredTerminalPresentation,
            terminalItem.isCollapsed,
-           workspaceSplitView.activeDividerIndex != 1 {
-            if workspaceSplitView.activeDividerIndex != nil {
-                terminalPressureCollapseCause = .divider
-            } else if terminalPressureCollapseCause == nil {
-                terminalPressureCollapseCause = .container
-            }
+           workspaceSplitView.activeDividerIndex != 1,
+           terminalPressureCollapseCause == nil {
+            terminalPressureCollapseCause = pressureCause
         }
 
         // Effective visibility is useful during live layout, but preference
@@ -1681,6 +1679,21 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
                 terminalPressureCollapseCause = nil
                 userInitiatedTerminal = true
             }
+        }
+
+        // What the user sees when they let go is what stays. An opposite pane that is out of the
+        // layout, because this drag pushed it out or the window had squeezed it, is closed, as its
+        // toolbar button already shows: it reopens from that button, never because this drag or a
+        // later one made room. (A window resize is not a drag; it restores what it squeezed.)
+        if dividerIndex == 0, terminalItem.isCollapsed, terminalPressureCollapseCause != nil {
+            preferredTerminalPresentation = false
+            terminalPressureCollapseCause = nil
+            userInitiatedTerminal = true
+        }
+        if dividerIndex == 1, sidebarItem.isCollapsed, sidebarPressureCollapseCause != nil {
+            preferredSidebarPresentation = false
+            sidebarPressureCollapseCause = nil
+            userInitiatedSidebar = true
         }
         reportPresentationChanges(
             userInitiatedSidebar: userInitiatedSidebar,

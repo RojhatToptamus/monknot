@@ -149,7 +149,7 @@ final class WorkspaceSplitDividerTests: WorkspaceSplitViewTestCase {
         XCTAssertNotEqual(paneWidth(controller.terminalItem, in: controller), initialTerminalWidth, accuracy: 1)
     }
 
-    func testNativeSidebarDragCollapsesAndRestoresTheOppositePeripheralPane() throws {
+    func testASidebarDragThatPushesTheTerminalOutClosesItForGood() throws {
         let recorder = PresentationRecorder()
         let controller = makeController(recorder: recorder)
         let window = mount(controller, width: 940)
@@ -167,34 +167,77 @@ final class WorkspaceSplitDividerTests: WorkspaceSplitViewTestCase {
 
         XCTAssertFalse(controller.sidebarItem.isCollapsed)
         XCTAssertTrue(controller.terminalItem.isCollapsed)
+        XCTAssertFalse(controller.preferredTerminalPresentation)
         XCTAssertEqual(
             recorder.terminalEvents.last,
-            PresentationEvent(isPresented: false, userInitiated: false)
+            PresentationEvent(isPresented: false, userInitiated: true),
+            "The pushed-out terminal closes as the user's own choice"
         )
         XCTAssertGreaterThanOrEqual(
             paneWidth(controller.detailItem, in: controller),
             WorkspaceSplitMetrics.detailMinimumWidth - 1
         )
+        update(controller, sidebarPresented: true, terminalPresented: false, recorder: recorder)
 
-        try dragDivider(0, to: terminalCollapseThreshold - snapEpsilon / 2, in: controller, window: window)
-        layout(window, controller)
-        XCTAssertTrue(
-            controller.terminalItem.isCollapsed,
-            "A small reverse drag must not oscillate the opposite pane around its snap coordinate"
+        for target in [terminalCollapseThreshold - snapEpsilon / 2, terminalCollapseThreshold - 2 * snapEpsilon, 300] {
+            try dragDivider(0, to: target, in: controller, window: window)
+            layout(window, controller)
+            XCTAssertTrue(
+                controller.terminalItem.isCollapsed,
+                "Narrowing the sidebar again must not reopen the terminal (drag to \(target))"
+            )
+        }
+        XCTAssertFalse(recorder.terminalEvents.contains { $0.isPresented })
+
+        // Its toolbar button still reopens it, and the reveal makes room for it.
+        update(
+            controller,
+            sidebarPresented: true,
+            terminalPresented: true,
+            terminalRevealRequest: 1,
+            recorder: recorder
         )
-
-        try dragDivider(0, to: terminalCollapseThreshold - 2 * snapEpsilon, in: controller, window: window)
         layout(window, controller)
-
         XCTAssertFalse(controller.terminalItem.isCollapsed)
-        XCTAssertEqual(
-            recorder.terminalEvents.last,
-            PresentationEvent(isPresented: true, userInitiated: false)
+        XCTAssertGreaterThanOrEqual(
+            paneWidth(controller.terminalItem, in: controller),
+            WorkspaceSplitMetrics.terminalMinimumWidth - 1
         )
         XCTAssertGreaterThanOrEqual(
             paneWidth(controller.detailItem, in: controller),
             WorkspaceSplitMetrics.detailMinimumWidth - 1
         )
+    }
+
+    func testDraggingTheSidebarNeverOpensAClosedTerminal() throws {
+        for width in [CGFloat(940), 1_440] {
+            let recorder = PresentationRecorder()
+            let controller = makeController(terminalPresented: false, recorder: recorder)
+            let window = mount(controller, width: width)
+            update(controller, sidebarPresented: true, terminalPresented: false, recorder: recorder)
+            layout(window, controller)
+            recorder.terminalEvents.removeAll()
+
+            for target in [CGFloat(420), 200, 600, 60, 300] {
+                try dragDivider(0, to: target, in: controller, window: window)
+                layout(window, controller)
+                // SwiftUI feeds the sidebar's reported state back, as ContentView does.
+                update(
+                    controller,
+                    sidebarPresented: !controller.sidebarItem.isCollapsed,
+                    terminalPresented: false,
+                    recorder: recorder
+                )
+                layout(window, controller)
+                XCTAssertTrue(controller.terminalItem.isCollapsed, "width \(width), drag to \(target)")
+                XCTAssertFalse(controller.preferredTerminalPresentation, "width \(width), drag to \(target)")
+                XCTAssertFalse(
+                    recorder.terminalEvents.contains { $0.isPresented },
+                    "width \(width), drag to \(target): \(recorder.terminalEvents)"
+                )
+            }
+            window.orderOut(nil)
+        }
     }
 
     func testOnePointContainerGrowthPreservesOppositeDividerPressureAndSourceWidth() throws {
@@ -237,7 +280,10 @@ final class WorkspaceSplitDividerTests: WorkspaceSplitViewTestCase {
             accuracy: 1
         )
         XCTAssertTrue(controller.preferredSidebarPresentation)
-        XCTAssertTrue(controller.preferredTerminalPresentation)
+        XCTAssertFalse(
+            controller.preferredTerminalPresentation,
+            "The terminal the sidebar drag pushed out is closed, so container growth cannot reopen it"
+        )
     }
 
     func testNativeSidebarSnapCollapseReportsUserIntentAndOutwardDragRestoresWidth() throws {
@@ -402,7 +448,7 @@ final class WorkspaceSplitDividerTests: WorkspaceSplitViewTestCase {
         )
     }
 
-    func testNativeTerminalDragSymmetricallyCollapsesAndRestoresTheSidebar() throws {
+    func testATerminalDragThatPushesTheSidebarOutClosesItForGood() throws {
         let recorder = PresentationRecorder()
         let controller = makeController(recorder: recorder)
         let window = mount(controller, width: 940)
@@ -419,34 +465,27 @@ final class WorkspaceSplitDividerTests: WorkspaceSplitViewTestCase {
 
         XCTAssertTrue(controller.sidebarItem.isCollapsed)
         XCTAssertFalse(controller.terminalItem.isCollapsed)
+        XCTAssertFalse(controller.preferredSidebarPresentation)
         XCTAssertEqual(
             recorder.sidebarEvents.last,
-            PresentationEvent(isPresented: false, userInitiated: false)
+            PresentationEvent(isPresented: false, userInitiated: true),
+            "The pushed-out sidebar closes as the user's own choice"
         )
         XCTAssertGreaterThanOrEqual(
             paneWidth(controller.detailItem, in: controller),
             WorkspaceSplitMetrics.detailMinimumWidth - 1
         )
+        update(controller, sidebarPresented: false, terminalPresented: true, recorder: recorder)
 
-        try dragDivider(1, to: sidebarCollapseThreshold + snapEpsilon / 2, in: controller, window: window)
-        layout(window, controller)
-        XCTAssertTrue(
-            controller.sidebarItem.isCollapsed,
-            "A small reverse drag must not oscillate the opposite pane around its snap coordinate"
-        )
-
-        try dragDivider(1, to: sidebarCollapseThreshold + 2 * snapEpsilon, in: controller, window: window)
-        layout(window, controller)
-
-        XCTAssertFalse(controller.sidebarItem.isCollapsed)
-        XCTAssertEqual(
-            recorder.sidebarEvents.last,
-            PresentationEvent(isPresented: true, userInitiated: false)
-        )
-        XCTAssertGreaterThanOrEqual(
-            paneWidth(controller.detailItem, in: controller),
-            WorkspaceSplitMetrics.detailMinimumWidth - 1
-        )
+        for target in [sidebarCollapseThreshold + snapEpsilon / 2, sidebarCollapseThreshold + 2 * snapEpsilon] {
+            try dragDivider(1, to: target, in: controller, window: window)
+            layout(window, controller)
+            XCTAssertTrue(
+                controller.sidebarItem.isCollapsed,
+                "Narrowing the terminal again must not reopen the sidebar (drag to \(target))"
+            )
+        }
+        XCTAssertFalse(recorder.sidebarEvents.contains { $0.isPresented })
     }
 
     func testScaledOutwardTerminalDragCannotRevealAnUnderMinimumThreePaneLayout() throws {

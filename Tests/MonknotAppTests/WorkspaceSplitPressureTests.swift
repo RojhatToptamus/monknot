@@ -217,7 +217,7 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
         )
     }
 
-    func testSamePreferenceUpdateAndResizeDoNotCancelOppositeTerminalPressureCollapse() throws {
+    func testFeedbackAndResizeKeepATerminalTheSidebarDragPushedOutClosed() throws {
         let recorder = PresentationRecorder()
         let controller = makeController(recorder: recorder)
         let window = mount(controller, width: 940)
@@ -236,12 +236,12 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
         )
         layout(window, controller)
         XCTAssertTrue(controller.terminalItem.isCollapsed)
-        XCTAssertTrue(controller.preferredTerminalPresentation)
+        XCTAssertFalse(controller.preferredTerminalPresentation)
 
         update(
             controller,
             sidebarPresented: true,
-            terminalPresented: true,
+            terminalPresented: false,
             recorder: recorder
         )
         NotificationCenter.default.post(
@@ -253,31 +253,45 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
 
         XCTAssertTrue(
             controller.terminalItem.isCollapsed,
-            "A same-preference SwiftUI update and unchanged-bounds layout must preserve opposite-pane drag hysteresis"
+            "SwiftUI feedback and an unchanged-bounds layout must not reopen the terminal the drag closed"
         )
-        XCTAssertTrue(controller.preferredTerminalPresentation)
+        XCTAssertFalse(controller.preferredTerminalPresentation)
     }
 
-    func testTerminalRevealRequestShowsAnEffectivelyHiddenPreferredPane() throws {
+    func testSidebarDragNeverReopensATerminalTheWindowSqueezedOut() throws {
         let recorder = PresentationRecorder()
         let controller = makeController(recorder: recorder)
-        let window = mount(controller, width: 940)
-        let snapEpsilon = max(1, controller.layoutScale)
-        let terminalCollapseThreshold = controller.splitView.bounds.width
-            - 2 * controller.splitView.dividerThickness
-            - WorkspaceSplitMetrics.detailMinimumWidth
-            - WorkspaceSplitMetrics.terminalMinimumWidth
-            + WorkspaceSplitMetrics.terminalMinimumWidth * WorkspaceSplitMetrics.snapThresholdFraction
-
-        try dragDivider(
-            0,
-            to: terminalCollapseThreshold + 2 * snapEpsilon,
-            in: controller,
-            window: window
-        )
+        var window = mount(controller, width: 1_600)
+        controller.splitView.setPosition(440, ofDividerAt: 0)
+        controller.splitView.setPosition(controller.splitView.bounds.width - 430, ofDividerAt: 1)
         layout(window, controller)
+
+        // Squeeze the terminal out with the window, then grow it to a width where the terminal
+        // fits only once the sidebar is narrower.
+        window.contentViewController = nil
+        layoutController(controller, width: 900)
+        layoutController(controller, width: 1_100)
+        window = mount(controller, width: 1_100)
         XCTAssertTrue(controller.terminalItem.isCollapsed)
         XCTAssertTrue(controller.preferredTerminalPresentation)
+        recorder.terminalEvents.removeAll()
+
+        try dragDivider(0, to: 260, in: controller, window: window)
+        layout(window, controller)
+
+        XCTAssertTrue(
+            controller.terminalItem.isCollapsed,
+            "The terminal button shows closed, so making room with the sidebar must not open it"
+        )
+        XCTAssertFalse(controller.preferredTerminalPresentation)
+        XCTAssertEqual(
+            recorder.terminalEvents.last,
+            PresentationEvent(isPresented: false, userInitiated: true)
+        )
+        XCTAssertFalse(
+            recorder.terminalEvents.contains { $0.isPresented },
+            "The terminal must not flash open during the drag either"
+        )
 
         update(
             controller,
@@ -293,7 +307,7 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
         assertAllVisiblePanesMeetMinimums(controller)
     }
 
-    func testHidingSidebarRestoresTheOppositePressureHiddenTerminal() throws {
+    func testHidingTheSidebarLeavesTheTerminalItsDragPushedOutClosed() throws {
         let recorder = PresentationRecorder()
         let controller = makeController(recorder: recorder)
         let window = mount(controller, width: 940)
@@ -312,61 +326,26 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
         )
         layout(window, controller)
         XCTAssertTrue(controller.terminalItem.isCollapsed)
+        XCTAssertFalse(controller.preferredTerminalPresentation)
 
         update(
             controller,
             sidebarPresented: false,
-            terminalPresented: true,
-            recorder: recorder
-        )
-        layout(window, controller)
-
-        XCTAssertTrue(controller.sidebarItem.isCollapsed)
-        XCTAssertFalse(
-            controller.terminalItem.isCollapsed,
-            "Hiding the dragged source pane must release its pressure collapse on the opposite pane"
-        )
-        XCTAssertFalse(controller.preferredSidebarPresentation)
-        XCTAssertTrue(controller.preferredTerminalPresentation)
-    }
-
-    func testHidingTerminalRestoresTheOppositePressureHiddenSidebar() throws {
-        let recorder = PresentationRecorder()
-        let controller = makeController(recorder: recorder)
-        let window = mount(controller, width: 940)
-        let snapEpsilon = max(1, controller.layoutScale)
-        let sidebarCollapseThreshold = WorkspaceSplitMetrics.sidebarMinimumWidth
-            + controller.splitView.dividerThickness
-            + WorkspaceSplitMetrics.detailMinimumWidth
-            - WorkspaceSplitMetrics.sidebarMinimumWidth * WorkspaceSplitMetrics.snapThresholdFraction
-
-        try dragDivider(
-            1,
-            to: sidebarCollapseThreshold - 2 * snapEpsilon,
-            in: controller,
-            window: window
-        )
-        layout(window, controller)
-        XCTAssertTrue(controller.sidebarItem.isCollapsed)
-
-        update(
-            controller,
-            sidebarPresented: true,
             terminalPresented: false,
             recorder: recorder
         )
         layout(window, controller)
 
-        XCTAssertFalse(
-            controller.sidebarItem.isCollapsed,
-            "Hiding the dragged source pane must release its pressure collapse on the opposite pane"
+        XCTAssertTrue(controller.sidebarItem.isCollapsed)
+        XCTAssertTrue(
+            controller.terminalItem.isCollapsed,
+            "Room the hidden sidebar frees must not reopen a terminal the user closed"
         )
-        XCTAssertTrue(controller.terminalItem.isCollapsed)
-        XCTAssertTrue(controller.preferredSidebarPresentation)
+        XCTAssertFalse(controller.preferredSidebarPresentation)
         XCTAssertFalse(controller.preferredTerminalPresentation)
     }
 
-    func testSidebarRevealRequestShowsAnEffectivelyHiddenPreferredPane() throws {
+    func testHidingTheTerminalLeavesTheSidebarItsDragPushedOutClosed() throws {
         let recorder = PresentationRecorder()
         let controller = makeController(recorder: recorder)
         let window = mount(controller, width: 940)
@@ -384,20 +363,23 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
         )
         layout(window, controller)
         XCTAssertTrue(controller.sidebarItem.isCollapsed)
-        XCTAssertTrue(controller.preferredSidebarPresentation)
+        XCTAssertFalse(controller.preferredSidebarPresentation)
 
         update(
             controller,
-            sidebarPresented: true,
-            terminalPresented: true,
-            sidebarRevealRequest: 1,
+            sidebarPresented: false,
+            terminalPresented: false,
             recorder: recorder
         )
         layout(window, controller)
 
-        XCTAssertFalse(controller.sidebarItem.isCollapsed)
-        XCTAssertFalse(controller.terminalItem.isCollapsed)
-        assertAllVisiblePanesMeetMinimums(controller)
+        XCTAssertTrue(
+            controller.sidebarItem.isCollapsed,
+            "Room the hidden terminal frees must not reopen a sidebar the user closed"
+        )
+        XCTAssertTrue(controller.terminalItem.isCollapsed)
+        XCTAssertFalse(controller.preferredSidebarPresentation)
+        XCTAssertFalse(controller.preferredTerminalPresentation)
     }
 
     func testInitiallyHiddenNativePanesMountAndRevealWithoutReplacingContainers() {
