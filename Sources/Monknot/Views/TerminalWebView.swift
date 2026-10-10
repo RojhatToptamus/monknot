@@ -350,6 +350,7 @@ struct TerminalWebView: NSViewRepresentable {
           // must not be answered again: the replies would arrive as typed input.
           let quietWrites = 0;
           let sgrMouseEncoding = false;
+          let sgrPixelMouseEncoding = false;
           let wheelLines = 0;
           let lastNotifiedSize = null;
           let notifyResizeTimer = null;
@@ -368,15 +369,18 @@ struct TerminalWebView: NSViewRepresentable {
           // xterm.js does not expose the mouse encoding, so follow DECSET/DECRST 1006 (SGR) ourselves.
           const sgrSetDisposable = term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, params => {
             if (params.includes(1006)) sgrMouseEncoding = true;
+            if (params.includes(1016)) sgrPixelMouseEncoding = true;
             return false;
           });
           const sgrResetDisposable = term.parser.registerCsiHandler({ prefix: '?', final: 'l' }, params => {
             if (params.includes(1006) || params.includes(1016)) sgrMouseEncoding = false;
+            if (params.includes(1016)) sgrPixelMouseEncoding = false;
             return false;
           });
           // A full reset (RIS) also ends SGR mouse encoding.
           const risDisposable = term.parser.registerEscHandler({ final: 'c' }, () => {
             sgrMouseEncoding = false;
+            sgrPixelMouseEncoding = false;
             return false;
           });
           // XTVERSION: programs use it to pick terminal-specific behaviour such as wheel speed. Keep the
@@ -402,8 +406,9 @@ struct TerminalWebView: NSViewRepresentable {
           // scrolled, so a trackpad flick moves a program like Claude Code by a line or two. Send one
           // report per line actually scrolled instead.
           term.attachCustomWheelEventHandler(event => {
-            // X10 mode (DECSET 9) reports presses only, never the wheel.
+            // X10 mode (DECSET 9) reports presses only, never the wheel; pixel reports are xterm.js's.
             if (term.modes.mouseTrackingMode === 'none' || term.modes.mouseTrackingMode === 'x10') return true;
+            if (sgrPixelMouseEncoding) return true;
             const cellHeight = screenElement.getBoundingClientRect().height / term.rows;
             const lines = event.deltaMode === 1
               ? event.deltaY

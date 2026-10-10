@@ -1593,13 +1593,12 @@ private struct SidebarRowButtonStyle: ButtonStyle {
         @State private var isHovered = false
 
         var body: some View {
-            // Hover fades the fill and ink only (see SidebarRowLabel); the row's layout never animates.
+            // Fill and ink changes animate colour only, here and in SidebarRowLabel, never a frame.
             configuration.label
                 .environment(\.sidebarRowIsHighlighted, isHovered || configuration.isPressed)
                 .background {
                     RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(fill)
-                        .animation(MonknotMotion.hoverAnimation, value: isHovered)
+                        .animation(MonknotMotion.hoverAnimation) { $0.foregroundStyle(fill) }
                 }
                 .onHover { isHovered = $0 }
                 .monknotPointerCursor(enabled: isEnabled)

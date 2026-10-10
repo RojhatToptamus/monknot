@@ -130,7 +130,6 @@ final class DocumentTabBarLayoutTests: XCTestCase {
     }
 
     func testLabelsThatFitAreNeverElidedAtAnyZoom() {
-        // F14: `data.csv` (pinned) and `README.md` (at 1.25×) used to render as `da…sv` and `READ…E.m`.
         for zoomScale in [0.85, 1, 1.25, 1.5] {
             let metrics = DocumentTabMetrics(theme: .defaultDark, zoomScale: zoomScale)
             for name in ["data.csv", "README.md", "Untitled 4.md"] {

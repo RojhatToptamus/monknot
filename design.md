@@ -718,8 +718,8 @@ pen, text box, eraser, colours, undo and zoom are the PDF's own.
 
 Until it is saved, markup is kept apart from the file. **⌘S draws it into the image in the image's
 own format** (a PNG stays a PNG), and the image reopens from what was written. Formats ImageIO cannot
-write (WebP) and animations open read-only: the tools are disabled, zoom still works. SVG is source
-and opens in the text editor.
+write (WebP), animations, and images deeper than 8 bits or neither RGB nor gray open read-only: the
+tools are disabled, zoom still works. SVG is source and opens in the text editor.
 
 ---
 
