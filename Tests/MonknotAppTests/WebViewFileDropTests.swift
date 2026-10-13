@@ -113,7 +113,41 @@ final class WebViewFileDropTests: XCTestCase {
             #"/Users/me/My\ Notes\ \(v2\)/it\'s\ \&\ \$HOME.md"#
         )
         XCTAssertEqual(TerminalWebController.shellEscapedPath("/tmp/Ünïcødé 文件.md"), #"/tmp/Ünïcødé\ 文件.md"#)
-        XCTAssertEqual(TerminalWebController.shellEscapedPath("/tmp/a\nb's"), #"'/tmp/a"# + "\n" + #"b'\''s'"#)
+        XCTAssertEqual(TerminalWebController.shellEscapedPath("/tmp/a\nb's"), #"$'/tmp/a\nb\'s'"#)
+    }
+
+    func testDroppedPathsNeverTypeControlCharacters() throws {
+        let paths = [
+            "/tmp/x\u{15}touch ~/pwned\r",
+            "/tmp/a\u{3}b\u{7F}c\td\\e'f\ng",
+            "/tmp/Ünïcødé\u{1B}[31m\u{85}.md",
+        ]
+        for path in paths {
+            let escaped = TerminalWebController.shellEscapedPath(path)
+            XCTAssertFalse(
+                escaped.unicodeScalars.contains { $0.properties.generalCategory == .control },
+                "\(escaped.debugDescription) contains a control character"
+            )
+            XCTAssertEqual(try Self.shellWords(escaped, shell: "/bin/zsh"), path)
+            XCTAssertEqual(try Self.shellWords(escaped, shell: "/bin/bash"), path)
+        }
+        XCTAssertEqual(
+            TerminalWebController.shellEscapedPath("/tmp/x\u{15}touch ~/pwned\r"),
+            #"$'/tmp/x\x15touch ~/pwned\x0D'"#
+        )
+    }
+
+    /// The text a shell reads back from `escaped`, as one word.
+    private static func shellWords(_ escaped: String, shell: String) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: shell)
+        process.arguments = ["-c", "printf '%s' " + escaped]
+        let output = Pipe()
+        process.standardOutput = output
+        try process.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
     }
 
     func testPreviewsRefuseNavigationsOtherThanTheirOwnPage() {

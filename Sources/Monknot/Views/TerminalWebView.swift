@@ -952,10 +952,12 @@ final class TerminalWebController: NSObject, TerminalSessionPresentation, WKNavi
     }
 
     /// Escapes shell syntax with backslashes and leaves other characters, including non-ASCII ones,
-    /// as typed. A path with control characters is single-quoted instead.
+    /// as typed. A path with control characters is ANSI-C quoted (`$'…'`) with every control
+    /// character written as an escape, so no control byte reaches the terminal, where the line
+    /// editor would act on it as a keystroke.
     nonisolated static func shellEscapedPath(_ path: String) -> String {
-        if path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) {
-            return "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        if path.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) {
+            return ansiCQuotedPath(path)
         }
         let unescaped = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-+,:@%")
         var escaped = ""
@@ -966,6 +968,27 @@ final class TerminalWebController: NSObject, TerminalSessionPresentation, WKNavi
             escaped.unicodeScalars.append(scalar)
         }
         return escaped
+    }
+
+    private nonisolated static func ansiCQuotedPath(_ path: String) -> String {
+        var quoted = "$'"
+        for scalar in path.unicodeScalars {
+            switch scalar {
+            case "\\": quoted += "\\\\"
+            case "'": quoted += "\\'"
+            case "\n": quoted += "\\n"
+            case "\t": quoted += "\\t"
+            default:
+                if scalar.properties.generalCategory == .control {
+                    for byte in String(scalar).utf8 {
+                        quoted += String(format: "\\x%02X", byte)
+                    }
+                } else {
+                    quoted.unicodeScalars.append(scalar)
+                }
+            }
+        }
+        return quoted + "'"
     }
 
     // MARK: TerminalSessionPresentation
