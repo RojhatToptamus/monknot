@@ -16,12 +16,24 @@ public protocol WorkspaceDocumentScanning: Sendable {
 }
 
 public struct WorkspaceDocumentScanner: WorkspaceDocumentScanning {
+    public static let defaultIgnoredDirectoryNames: Set<String> = [".build", ".git", "DerivedData", "dist", "node_modules"]
+
     private let ignoredDirectoryNames: Set<String>
 
-    public init(
-        ignoredDirectoryNames: Set<String> = [".build", ".git", "DerivedData", "dist", "node_modules"]
-    ) {
+    public init(ignoredDirectoryNames: Set<String> = Self.defaultIgnoredDirectoryNames) {
         self.ignoredDirectoryNames = ignoredDirectoryNames
+    }
+
+    /// Whether a default scan leaves out an item with this name: hidden names, ignored folders, and
+    /// files that are not workspace documents.
+    public static func hidesItem(named name: String, isDirectory: Bool) -> Bool {
+        if name.hasPrefix(".") {
+            return true
+        }
+        if isDirectory {
+            return defaultIgnoredDirectoryNames.contains(name)
+        }
+        return !WorkspaceDocumentSupport.isWorkspaceDocumentName(name)
     }
 
     public func scan(rootURL: URL) throws -> WorkspaceDocumentScanResult {

@@ -148,6 +148,12 @@ public enum WorkspaceDocumentSupport {
         .union(textExtensions)
         .union(imageExtensions)
 
+    /// Whether a file with this name is listed as a workspace document.
+    public static func isWorkspaceDocumentName(_ name: String) -> Bool {
+        let url = URL(fileURLWithPath: name)
+        return shouldIncludeInWorkspaceScan(url) && classification(for: url).kind != .unsupported
+    }
+
     public static func shouldIncludeInWorkspaceScan(_ url: URL) -> Bool {
         let fileExtension = url.pathExtension.lowercased()
         let filename = url.lastPathComponent.lowercased()

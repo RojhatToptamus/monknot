@@ -5,7 +5,7 @@ public enum WorkspaceScanResultPatcher {
         to result: WorkspaceDocumentScanResult,
         rootURL: URL,
         changedPaths: Set<String>,
-        ignoredDirectoryNames: Set<String> = [".build", ".git", "DerivedData", "dist", "node_modules"]
+        ignoredDirectoryNames: Set<String> = WorkspaceDocumentScanner.defaultIgnoredDirectoryNames
     ) -> WorkspaceDocumentScanResult? {
         let rootURL = rootURL.standardizedFileURL
         var rootNode = result.root
