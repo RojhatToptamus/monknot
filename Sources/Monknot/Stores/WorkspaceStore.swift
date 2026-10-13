@@ -3559,7 +3559,41 @@ final class WorkspaceStore: ObservableObject {
         }
         guard let event = suppressedWatcherEvent else { return }
         suppressedWatcherEvent = nil
-        scheduleExternalWorkspaceRefresh(event)
+        guard let unmodelledEvent = unmodelledChanges(in: event) else { return }
+        scheduleExternalWorkspaceRefresh(unmodelledEvent)
+    }
+
+    /// The part of a held watcher event that the sidebar does not already show. Monknot's own
+    /// changes during the quiet window are in the model by now, so an item that is listed and on
+    /// disk, or neither, is left out. A listed document that was replaced on disk stays as a
+    /// content change, which is checked against the signature Monknot recorded for it.
+    private func unmodelledChanges(in event: WorkspaceFileWatcher.Event) -> WorkspaceFileWatcher.Event? {
+        guard !event.requiresFullRescan else { return event }
+        let folderIDs = rootNode.map(Self.folderIDs(in:)) ?? []
+        var structuralPaths = Set<String>()
+        var modifiedOnlyPaths = event.modifiedOnlyPaths
+        for path in event.changedPaths.subtracting(event.modifiedOnlyPaths) {
+            let isOnDisk = FileManager.default.fileExists(atPath: path)
+            if isOnDisk, documentsByID[path] != nil {
+                modifiedOnlyPaths.insert(path)
+            } else if isOnDisk != folderIDs.contains(path) {
+                structuralPaths.insert(path)
+            }
+        }
+        let changedPaths = structuralPaths.union(modifiedOnlyPaths)
+        guard !changedPaths.isEmpty else { return nil }
+        return WorkspaceFileWatcher.Event(
+            changedPaths: changedPaths,
+            modifiedOnlyPaths: modifiedOnlyPaths,
+            requiresFullRescan: false
+        )
+    }
+
+    private static func folderIDs(in node: SidebarNode) -> Set<String> {
+        guard node.kind == .folder else { return [] }
+        return (node.children ?? []).reduce(into: [node.id]) { ids, child in
+            ids.formUnion(folderIDs(in: child))
+        }
     }
 
     private func cancelSuppressedWatcherReplay() {
@@ -3604,13 +3638,7 @@ final class WorkspaceStore: ObservableObject {
 
         let nextSignature = Self.fileSignature(for: selectedDocument.url)
         if selectedDocument.kind.opensInPDFViewer {
-            if hasUnsavedChanges {
-                setSelectedDocumentExternalChangeIfChanged(true)
-                return
-            }
-            guard !isSaving else { return }
-            setSelectedDocumentSignatureIfChanged(nextSignature)
-            publishPDFContentReplacement(for: selectedDocument.id)
+            reconcileSelectedPDFViewerDocument(selectedDocument, nextSignature: nextSignature)
             return
         }
 
@@ -3697,18 +3725,8 @@ final class WorkspaceStore: ObservableObject {
         guard let selectedDocument else { return }
         let nextSignature = Self.fileSignature(for: selectedDocument.url)
         if selectedDocument.kind.opensInPDFViewer {
-            if hasUnsavedChanges,
-               selectionStillExists,
-               selectedDocumentSignature != nil,
-               nextSignature != selectedDocumentSignature {
-                setSelectedDocumentExternalChangeIfChanged(true)
-            } else if !hasUnsavedChanges,
-               !isSaving,
-               selectionStillExists,
-               selectedDocumentSignature != nil,
-               nextSignature != selectedDocumentSignature {
-                setSelectedDocumentSignatureIfChanged(nextSignature)
-                publishPDFContentReplacement(for: selectedDocument.id)
+            if selectionStillExists {
+                reconcileSelectedPDFViewerDocument(selectedDocument, nextSignature: nextSignature)
             } else if selectedDocumentSignature == nil, !hasUnsavedChanges {
                 setSelectedDocumentSignatureIfChanged(nextSignature)
             }
@@ -3729,6 +3747,25 @@ final class WorkspaceStore: ObservableObject {
             loadSelectedDocument()
         } else if selectedDocumentSignature == nil {
             setSelectedDocumentSignatureIfChanged(nextSignature)
+        }
+    }
+
+    /// Compares the selected PDF or image with its file on disk. A file other than the one
+    /// Monknot last loaded or saved is an external change: a conflict while markup is unsaved,
+    /// otherwise a reload. A save in progress settles the signature when it finishes.
+    private func reconcileSelectedPDFViewerDocument(_ document: WorkspaceDocument, nextSignature: FileSignature?) {
+        guard selectedDocumentSignature != nil else {
+            if !hasUnsavedChanges {
+                setSelectedDocumentSignatureIfChanged(nextSignature)
+            }
+            return
+        }
+        guard !isSaving, nextSignature != selectedDocumentSignature else { return }
+        if hasUnsavedChanges {
+            setSelectedDocumentExternalChangeIfChanged(true)
+        } else {
+            setSelectedDocumentSignatureIfChanged(nextSignature)
+            publishPDFContentReplacement(for: document.id)
         }
     }
 

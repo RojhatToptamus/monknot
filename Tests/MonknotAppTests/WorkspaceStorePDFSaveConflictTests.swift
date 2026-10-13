@@ -578,6 +578,45 @@ final class WorkspaceStorePDFSaveConflictTests: WorkspaceStorePDFTestCase {
         XCTAssertEqual(try Data(contentsOf: pdfURL), secondEdit)
     }
 
+    /// The watcher reports Monknot's own save as a modification once the quiet window ends. The
+    /// file is the one the save left, so it is neither a conflict for newer markup nor a reload.
+    func testOwnPDFSaveReportedByTheWatcherIsNotAnExternalChange() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pdfURL = root.appendingPathComponent("Paper.pdf")
+        let diskData = try makePDFData(annotationText: "Disk highlight")
+        let savedEdit = try makePDFData(annotationText: "Saved edit")
+        let laterEdit = try makePDFData(annotationText: "A later unsaved edit")
+        try diskData.write(to: pdfURL)
+
+        let store = makeWorkspaceStore()
+        store.openWorkspace(root)
+        let didLoad = await waitUntil { !store.isBusy && store.selectedDocument != nil }
+        XCTAssertTrue(didLoad)
+        let document = try XCTUnwrap(store.documents.first(where: { $0.id == pdfURL.standardizedFileURL.path }))
+        store.markPDFDocumentEdited(id: document.id, previousData: diskData, data: savedEdit)
+        store.saveSelectedFile()
+        let didSave = await waitUntil { !store.isSaving && store.saveState(for: document.id).isClean }
+        XCTAssertTrue(didSave, store.errorMessage ?? "The PDF did not save")
+        let savedVersion = store.pdfContentVersion(for: document.id)
+        let ownSave = WorkspaceFileWatcher.Event(
+            changedPaths: [pdfURL.standardizedFileURL.path],
+            modifiedOnlyPaths: [pdfURL.standardizedFileURL.path],
+            requiresFullRescan: false
+        )
+
+        store.testing_clearWatcherSuppression()
+        store.testing_scheduleExternalWorkspaceRefresh(ownSave)
+        XCTAssertEqual(store.pdfContentVersion(for: document.id), savedVersion, "Own save reloaded the PDF")
+
+        store.markPDFDocumentEdited(id: document.id, previousData: savedEdit, data: laterEdit)
+        XCTAssertTrue(store.hasUnsavedChanges)
+        store.testing_scheduleExternalWorkspaceRefresh(ownSave)
+        XCTAssertFalse(store.selectedDocumentExternalChange, "Own save reported as changed on disk")
+        XCTAssertEqual(store.dirtyPDFData(for: document.id), laterEdit)
+    }
+
     func testDirtyExternalPDFModificationSurfacesConflictWithoutReplacingLiveData() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

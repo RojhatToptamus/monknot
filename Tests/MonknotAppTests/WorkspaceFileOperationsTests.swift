@@ -1361,6 +1361,28 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertTrue(seen, "External file created during the watcher suppression window never appeared")
     }
 
+    /// Monknot's own change, reported by the watcher during the quiet window, is already in the
+    /// sidebar, so the replay after the window does not rebuild the tree for it.
+    func testReplayAfterTheQuietWindowSkipsMonknotsOwnChanges() async throws {
+        let root = try makeRoot()
+        try write("# A\n", to: root.appendingPathComponent("A.md"))
+        let store = try await openStore(root)
+
+        store.createFolder(named: "Mine")
+        await idle(store)
+        store.testing_stopFileWatcher()
+        let revision = store.rootNodeRevision
+        store.testing_scheduleExternalWorkspaceRefresh(.init(
+            changedPaths: [root.appendingPathComponent("Mine").path, root.appendingPathComponent("A.md").path],
+            modifiedOnlyPaths: [],
+            requiresFullRescan: false
+        ))
+        try await Task.sleep(nanoseconds: UInt64((store.suppressWatcherInterval + 0.6) * 1_000_000_000))
+
+        XCTAssertEqual(store.rootNodeRevision, revision, "The replay rebuilt the tree for Monknot's own folder")
+        XCTAssertNotNil(node(store, "Mine"))
+    }
+
     func testExternalPatchDuringBusyOperationIsConsistentAfterwards() async throws {
         let root = try makeRoot()
         let store = try await openStore(root)
