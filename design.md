@@ -667,15 +667,17 @@ Hover reveals a soft hit target plus a floating peek card (radius 12, `e2`, fade
 Header 36. Divider 1×13. New-session and close-panel buttons 26 box / 16 glyph, outside the scroller
 so adding a session never moves them.
 
-**Session pill: fixed 43 × 24, radius 8.** `terminal` glyph at 14 + gap 6 + session number in 12pt SF
-Mono. **No session name** — four pills all reading "zsh" identify nothing, and each costs a third of
+**Session pill: fixed 80 × 24, radius 8.** 8 padding · `terminal` glyph at 14 · gap 6 · session
+number in 12pt SF Mono in a two-digit slot · gap 6 · 16 close slot · 8 padding. Every pill from 1 to
+99 is the same width whether it is active, hovered or idle. **No session name** — four pills all reading "zsh" identify nothing, and each costs a third of
 the strip. The number is what tells them apart. No hug, no cap, no condensed form, no separate dot.
 
 Run state tints the glyph, the only coloured element in the header:
 `ok` running · `accent` awaiting input · `ink3` idle or exited 0 · `danger` exited non-zero.
 
-Close: 10pt `xmark` in a 14 target, on the active pill and on hover. The strip scrolls like the tab
-strip, mouse wheel included, with the same 24pt trailing fade; being clipped by the panel edge is
+Close: the tab close button, 11pt `xmark` in its 16 round target, visible on the active pill and on
+hover. Its slot is reserved on every pill, like the tab chip's trailing slot. The strip scrolls like
+the tab strip, mouse wheel included, with the same 24pt trailing fade; being clipped by the panel edge is
 correct.
 
 **The screen belongs to the session.** Hiding the panel or switching sessions keeps the scrollback,
@@ -704,7 +706,7 @@ fill its box.** If an icon looks small, that is correct — macOS chrome glyphs 
 | File tab | chip 30 · padding-x 10 · kind glyph 14 optical in 18 column · gap 8 · label 13 · trailing slot 16 · close 11 · dirty dot 6 · pin 11 · max width 220 · no minimum |
 | Sidebar | header 40 · row 30 · padding-x 10 · disclosure chevron 10 or file glyph 14 optical in the 18 column · gap 8 · label 13 · indent 16 · gutter 6 · 2 between rows · header action 22/16 (search 14 optical) · Recents header: chevron, eyebrow, count 12 · footer 30/15 |
 | Markdown toolbar | heading selector 100×30, radius 8, label 13 regular, trailing `⌄` 10 regular / +3.2 baseline, `ink2`/`ink3` at rest and the icon-button hover · icon button 30 box / 17 nominal glyph · inline code and link 13 optical · quote (`text.quote`) and task list 14 optical · image 12 optical · dividers 1×20 · gaps 6. Every glyph carries 6–9 % ink in its 30 box except the inherently thin italic and rule; a glyph far outside that band reads as a different icon set. |
-| Terminal | header 36 · pill 43×24 · glyph 14 · gap 6 · number 12 mono · close 10 in 14 · new/close buttons 26/16 · fullscreen 26/14 optical · divider 1×13 |
+| Terminal | header 36 · pill 80×24 · glyph 14 · gap 6 · number 12 mono, two-digit slot · close 11 in 16 · new/close buttons 26/16 · fullscreen 26/14 optical · divider 1×13 |
 | Elsewhere | field 28 · push button 28 bars / 30 sheets · toggle 34×20, knob 16 · stepper 26 · slider track 4 / knob 16 · overlay row 34 · settings row 28/15 · outline dash 22/14/9 × 2 |
 
 **Hard ceilings.** No chrome glyph over 17. No square button over 28, except the Markdown toolbar's 30:

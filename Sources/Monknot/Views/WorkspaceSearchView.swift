@@ -36,6 +36,9 @@ struct WorkspaceSearchView: View {
     let canConfigureReplace: Bool
     let canReviewReplace: Bool
 
+    /// Results from the previous query while the next search runs.
+    static let staleResultsOpacity = 0.5
+
     @State private var replaceConfirmation: WorkspaceReplacePreview?
     @State private var isReplaceExpanded = false
     @State private var didCopyResults = false
@@ -402,12 +405,14 @@ struct WorkspaceSearchView: View {
     private var searchStatusRow: some View {
         if hasQuery {
             HStack(spacing: scaled(6)) {
-                if state.isSearching {
-                    MonknotProgressIndicator(
-                        size: MonknotMetrics.interfaceGlyph(12, theme: theme, zoomScale: zoomScale),
-                        theme: theme
-                    )
-                }
+                // The spinner and the copy button keep their slots, so the status text never moves.
+                MonknotProgressIndicator(
+                    size: MonknotMetrics.interfaceGlyph(12, theme: theme, zoomScale: zoomScale),
+                    theme: theme,
+                    isAnimating: state.isSearching
+                )
+                .opacity(state.isSearching ? 1 : 0)
+                .accessibilityHidden(!state.isSearching)
 
                 Text(searchStatusText)
                     .font(.system(size: textScaled(12), weight: .regular))
@@ -421,16 +426,15 @@ struct WorkspaceSearchView: View {
 
                 Spacer(minLength: 0)
 
-                if !state.isSearching, !state.results.isEmpty {
-                    MonknotIconButton(
-                        systemImage: didCopyResults ? "checkmark" : "doc.on.doc",
-                        label: didCopyResults ? "Results Copied" : "Copy Search Results",
-                        theme: theme,
-                        zoomScale: zoomScale,
-                        size: .sidebarHeader,
-                        action: copySearchResults
-                    )
-                }
+                MonknotIconButton(
+                    systemImage: didCopyResults ? "checkmark" : "doc.on.doc",
+                    label: didCopyResults ? "Results Copied" : "Copy Search Results",
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    isDisabled: state.isSearching || state.results.isEmpty,
+                    size: .sidebarHeader,
+                    action: copySearchResults
+                )
             }
             .padding(.leading, scaled(10))
             .padding(.trailing, scaled(4))
@@ -497,11 +501,13 @@ struct WorkspaceSearchView: View {
                 .padding(.horizontal, scaled(16))
                 .padding(.vertical, scaled(12))
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        } else if state.isSearching || state.results.isEmpty {
+        } else if state.results.isEmpty {
             Color.clear
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityHidden(true)
         } else {
+            // While a new search runs, the previous results stay in place, dimmed, until the new
+            // ones replace them.
             ScrollViewReader { proxy in
                 MonknotScrollView(theme: theme) {
                     resultList
@@ -511,6 +517,8 @@ struct WorkspaceSearchView: View {
                 }
             }
             .scrollContentBackground(.hidden)
+            .opacity(state.isSearching ? Self.staleResultsOpacity : 1)
+            .animation(MonknotMotion.hoverAnimation, value: state.isSearching)
         }
     }
 
@@ -518,6 +526,7 @@ struct WorkspaceSearchView: View {
     /// estimates its length correctly. Rows are equatable: moving the selection redraws two rows.
     private var resultList: some View {
         let query = state.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let locationWidthTemplates = WorkspaceSearchLocationColumn.widthTemplates(for: state.results)
         return LazyVStack(alignment: .leading, spacing: scaled(2)) {
             ForEach(WorkspaceSearchResultGrouping.listItems(from: groupedResults)) { item in
                 switch item {
@@ -534,6 +543,7 @@ struct WorkspaceSearchView: View {
                         query: query,
                         searchOptions: searchOptions,
                         isSelected: match.index == state.selectedResultIndex,
+                        locationWidthTemplates: locationWidthTemplates,
                         theme: theme,
                         zoomScale: zoomScale
                     ) {
@@ -830,6 +840,36 @@ enum WorkspaceSearchSnippet {
     }
 }
 
+/// The location column of the result list: one width for every row, from the widest label in the
+/// results, so line numbers line up and the snippets share a left edge.
+enum WorkspaceSearchLocationColumn {
+    static func label(for result: WorkspaceSearchResult) -> String {
+        result.kind == .text ? "\(result.line)" : result.locationLabel
+    }
+
+    /// The widest label of each kind in `results`, as monospaced-digit templates.
+    static func widthTemplates(for results: [WorkspaceSearchResult]) -> [String] {
+        var widestTextLine = 0
+        var widestPage = 0
+        for result in results {
+            switch result.kind {
+            case .text:
+                widestTextLine = max(widestTextLine, result.line)
+            case .pdf:
+                widestPage = max(widestPage, result.line)
+            }
+        }
+        var templates: [String] = []
+        if widestTextLine > 0 {
+            templates.append(MonknotStableWidth.lineNumberTemplate(maximumLine: widestTextLine))
+        }
+        if widestPage > 0 {
+            templates.append("p" + MonknotStableWidth.lineNumberTemplate(maximumLine: widestPage))
+        }
+        return templates
+    }
+}
+
 /// One match: the line (or page) number in a fixed gutter and one line of text with this occurrence
 /// marked in `sel` (design.md §1.3 keeps accent off search matches). Row primitive, 30 tall.
 private struct WorkspaceSearchResultRow: View, Equatable {
@@ -837,12 +877,14 @@ private struct WorkspaceSearchResultRow: View, Equatable {
     let query: String
     let searchOptions: MonknotSearchOptions
     let isSelected: Bool
+    let locationWidthTemplates: [String]
     let theme: AppTheme
     let zoomScale: Double
     let open: () -> Void
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.match.index == rhs.match.index
+            && lhs.locationWidthTemplates == rhs.locationWidthTemplates
             && lhs.match.result == rhs.match.result
             && lhs.match.occurrenceInLine == rhs.match.occurrenceInLine
             && lhs.query == rhs.query
@@ -864,11 +906,11 @@ private struct WorkspaceSearchResultRow: View, Equatable {
         Button(action: open) {
             HStack(spacing: scaled(8)) {
                 Text(locationLabel)
+                    .monknotReservingWidth(of: locationWidthTemplates)
                     .font(.system(size: textScaled(12)))
                     .monospacedDigit()
                     .foregroundStyle(theme.tertiaryForegroundColor)
                     .lineLimit(1)
-                    .frame(width: scaled(30), alignment: .trailing)
 
                 Text(snippet)
                     .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
@@ -890,7 +932,7 @@ private struct WorkspaceSearchResultRow: View, Equatable {
     }
 
     private var locationLabel: String {
-        match.result.kind == .text ? "\(match.result.line)" : match.result.locationLabel
+        WorkspaceSearchLocationColumn.label(for: match.result)
     }
 
     private var accessibilityLocation: String {

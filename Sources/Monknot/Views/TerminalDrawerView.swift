@@ -302,8 +302,12 @@ private struct TerminalTabChip: View {
         MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
     }
 
+    /// One width for every pill: the number keeps a two-digit slot and the close button its slot,
+    /// so hovering or selecting a session never moves the pills after it (design.md §10.6).
+    static let numberWidthTemplate = MonknotStableWidth.digits(2)
+
     var body: some View {
-        HStack(spacing: showsCloseButton ? scaled(6) : 0) {
+        HStack(spacing: scaled(6)) {
             Button(action: select) {
                 HStack(spacing: scaled(6)) {
                     Image(systemName: "terminal")
@@ -315,12 +319,12 @@ private struct TerminalTabChip: View {
                         .accessibilityHidden(true)
 
                     Text("\(index)")
+                        .monknotReservingWidth(of: Self.numberWidthTemplate, alignment: .leading)
                         .font(.system(size: textScaled(12), weight: .regular, design: .monospaced))
                         .foregroundStyle(isSelected ? theme.foregroundColor : theme.mutedForegroundColor)
                         .monospacedDigit()
                 }
                 .padding(.leading, scaled(8))
-                .padding(.trailing, showsCloseButton ? 0 : scaled(8))
                 .frame(height: MonknotMetrics.interfaceControl(24, theme: theme, zoomScale: zoomScale))
                 .contentShape(Rectangle())
             }
@@ -328,15 +332,14 @@ private struct TerminalTabChip: View {
             .accessibilityLabel(accessibilityLabel)
             .accessibilityAddTraits(isSelected ? .isSelected : [])
 
-            if showsCloseButton {
-                MonknotTabCloseButton(
-                    label: "Kill terminal \(index)",
-                    theme: theme,
-                    zoomScale: zoomScale,
-                    action: kill
-                )
-                .padding(.trailing, scaled(8))
-            }
+            MonknotTabCloseButton(
+                label: "Kill terminal \(index)",
+                theme: theme,
+                zoomScale: zoomScale,
+                isVisible: showsCloseButton,
+                action: kill
+            )
+            .padding(.trailing, scaled(8))
         }
         .frame(height: scaled(24), alignment: .leading)
         .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)))

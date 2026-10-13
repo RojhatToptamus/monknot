@@ -159,11 +159,11 @@ final class WorkspaceSearchState: ObservableObject {
 
         searchTask?.cancel()
         errorMessage = nil
-        skippedLargeFileCount = 0
-        reachedMatchLimit = false
-        truncatedDocumentIDs = []
 
+        // A new search keeps the previous results, and the counts that describe them, until it
+        // replaces them.
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            clearResultDetails()
             if isSearching {
                 isSearching = false
             }
@@ -210,11 +210,18 @@ final class WorkspaceSearchState: ObservableObject {
                 await MainActor.run {
                     guard generation == self.searchGeneration else { return }
                     self.results = []
+                    self.clearResultDetails()
                     self.errorMessage = error.localizedDescription
                     self.isSearching = false
                 }
             }
         }
+    }
+
+    private func clearResultDetails() {
+        skippedLargeFileCount = 0
+        reachedMatchLimit = false
+        truncatedDocumentIDs = []
     }
 
     private func cancelSearch() {
