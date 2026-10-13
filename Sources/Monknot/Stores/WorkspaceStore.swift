@@ -968,6 +968,46 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    /// Moves a folder and everything in it to the Trash, as `deleteDocument` does for one file.
+    func deleteFolder(at folderURL: URL) {
+        guard let workspaceURL, !isBusy else { return }
+        let folderPath = folderURL.standardizedFileURL.path
+        let rootPath = workspaceURL.standardizedFileURL.path
+        guard folderPath != rootPath, folderPath.hasPrefix(rootPath + "/") else { return }
+        guard ensureWritingToolsInactive(for: "deleting a folder") else { return }
+
+        let contained = documents.filter { $0.id.hasPrefix(folderPath + "/") }
+        if let unsaved = contained.first(where: { openDocumentIDs.contains($0.id) && !saveState(for: $0.id).isClean }) {
+            errorMessage = "Save or close \(unsaved.displayName) before deleting \(folderURL.lastPathComponent)."
+            return
+        }
+
+        let containsSelection = contained.contains { $0.id == selectedDocumentID }
+        let preserveSelection = containsSelection ? nil : selectedDocumentID
+        noteInternalFileMutation()
+        invalidateWorkspaceSearchCaches(paths: Set(contained.map(\.id)))
+        let generation = beginDocumentFileOperation()
+
+        workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
+            do {
+                var trashedURL: NSURL?
+                try FileManager.default.trashItem(at: folderURL, resultingItemURL: &trashedURL)
+                let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
+                guard !Task.isCancelled else { return }
+                await self?.finishWorkspaceLoad(
+                    result: result,
+                    workspaceURL: workspaceURL,
+                    selectedURL: nil,
+                    preserveSelection: preserveSelection,
+                    reloadSelection: containsSelection,
+                    generation: generation
+                )
+            } catch {
+                await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not delete \(folderURL.lastPathComponent)")
+            }
+        }
+    }
+
     private func requestMarkdownLinkAwareMove(
         sourceURL: URL,
         destinationURL: URL,

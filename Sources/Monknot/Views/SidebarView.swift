@@ -249,7 +249,8 @@ struct SidebarView: View {
                                         exportPDF: exportPDF,
                                         copyDocument: copyDocument(_:),
                                         cutDocument: cutDocument(_:),
-                                        deleteDocument: store.deleteDocument(_:)
+                                        deleteDocument: store.deleteDocument(_:),
+                                        deleteFolder: store.deleteFolder(at:)
                                     )
                                     .equatable()
                                 }
@@ -1227,6 +1228,7 @@ private struct SidebarNodeRow: View {
     let copyDocument: (WorkspaceDocument) -> Void
     let cutDocument: (WorkspaceDocument) -> Void
     let deleteDocument: (WorkspaceDocument) -> Void
+    let deleteFolder: (URL) -> Void
 
     private var node: SidebarNode {
         visibleNode.node
@@ -1410,6 +1412,14 @@ private struct SidebarNodeRow: View {
             revealFolderInFinder(targetNode.url)
         } label: {
             Label("Reveal in Finder", systemImage: MonknotWorkspaceIcons.revealInFinder)
+        }
+
+        Divider()
+
+        Button(role: .destructive) {
+            deleteFolder(targetNode.url)
+        } label: {
+            Label("Delete", systemImage: "trash")
         }
     }
 
