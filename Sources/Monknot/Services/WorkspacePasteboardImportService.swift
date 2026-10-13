@@ -733,3 +733,43 @@ enum WorkspacePasteboardImportError: LocalizedError {
         }
     }
 }
+
+extension WorkspaceStore {
+    /// Copy and Cut for a workspace file or folder, as in Finder: the item goes on the pasteboard
+    /// and the next Paste in Monknot copies or moves it.
+    func putItemOnPasteboard(at url: URL, cutting: Bool, pasteboard: NSPasteboard = .general) {
+        guard !isBusy else { return }
+        do {
+            try WorkspacePasteboardExportService.copyFile(at: url, to: pasteboard)
+        } catch {
+            errorMessage = "Could not copy \(url.lastPathComponent): \(error.localizedDescription)"
+            return
+        }
+        if cutting {
+            cutItem(at: url)
+        } else {
+            copyItem(at: url)
+        }
+    }
+
+    /// Pastes into `directoryURL` (the root when nil): Monknot's pending Copy or Cut while it still
+    /// owns the pasteboard, otherwise the pasteboard's files, image or text. Returns false when
+    /// there is nothing to paste.
+    @discardableResult
+    func pasteFromPasteboard(_ pasteboard: NSPasteboard = .general, into directoryURL: URL?) -> Bool {
+        if WorkspacePasteboardExportService.ownsPasteboard(pasteboard), canPasteDocumentTransfer {
+            pasteDocumentTransfer(into: directoryURL)
+            return true
+        }
+
+        do {
+            let items = try WorkspacePasteboardImportService.importItems(from: pasteboard)
+            guard !items.isEmpty else { return false }
+            importPasteboardItems(items, into: directoryURL)
+            return true
+        } catch {
+            errorMessage = "Could not read clipboard contents: \(error.localizedDescription)"
+            return true
+        }
+    }
+}

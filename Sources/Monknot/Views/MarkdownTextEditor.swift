@@ -7230,7 +7230,12 @@ class MarkdownNSTextView: NSTextView {
         Self.fileURLs(on: sender.draggingPasteboard)
     }
 
+    /// A file copied in Monknot's sidebar yields its workspace URL, so it is linked rather than
+    /// imported from the pasteboard snapshot.
     private static func fileURLs(on pasteboard: NSPasteboard) -> [URL] {
+        if let workspaceFileURLs = WorkspacePasteboardExportService.workspaceFileURLs(on: pasteboard) {
+            return workspaceFileURLs
+        }
         let objects = pasteboard.readObjects(
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]
@@ -7280,7 +7285,7 @@ class MarkdownNSTextView: NSTextView {
            menu.items.contains(where: { $0.action == #selector(copyRenderedMarkdown(_:)) }) == false {
             addSeparatorIfNeeded()
             let item = NSMenuItem(
-                title: "Copy Rendered",
+                title: "Copy Rendered Markdown",
                 action: #selector(copyRenderedMarkdown(_:)),
                 keyEquivalent: ""
             )

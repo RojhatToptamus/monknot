@@ -142,6 +142,36 @@ final class WorkspacePasteboardExportServiceTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: exportedURL.path))
     }
 
+    func testCopiedFileCarriesASnapshotAndItsWorkspaceURL() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("Source.md")
+        let folderURL = root.appendingPathComponent("Folder", isDirectory: true)
+        try "source".write(to: sourceURL, atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
+        let pasteboard = makePasteboard()
+        defer { WorkspacePasteboardExportService.clearFileTransferPasteboard(pasteboard) }
+
+        try WorkspacePasteboardExportService.copyFile(at: sourceURL, to: pasteboard)
+        let snapshotURL = try XCTUnwrap(pasteboard.readObjects(forClasses: [NSURL.self])?.first as? URL)
+        XCTAssertNotEqual(snapshotURL.standardizedFileURL, sourceURL.standardizedFileURL)
+        XCTAssertEqual(try String(contentsOf: snapshotURL, encoding: .utf8), "source")
+        XCTAssertEqual(
+            WorkspacePasteboardExportService.workspaceFileURLs(on: pasteboard)?.map(\.standardizedFileURL),
+            [sourceURL.standardizedFileURL]
+        )
+
+        // A folder goes on the pasteboard as itself, and the previous snapshot is removed.
+        try WorkspacePasteboardExportService.copyFile(at: folderURL, to: pasteboard)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotURL.path))
+        let folderObject = try XCTUnwrap(pasteboard.readObjects(forClasses: [NSURL.self])?.first as? URL)
+        XCTAssertEqual(folderObject.standardizedFileURL.path, folderURL.standardizedFileURL.path)
+        XCTAssertTrue(WorkspacePasteboardExportService.ownsPasteboard(pasteboard))
+
+        try FileManager.default.removeItem(at: folderURL)
+        XCTAssertNil(WorkspacePasteboardExportService.workspaceFileURLs(on: pasteboard), "Missing originals are ignored")
+    }
+
     func testValidatedLinkedExcerptCopiesExactMarkdown() throws {
         let pasteboard = makePasteboard()
         defer { pasteboard.clearContents() }

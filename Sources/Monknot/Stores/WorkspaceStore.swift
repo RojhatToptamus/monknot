@@ -73,6 +73,8 @@ final class WorkspaceStore: ObservableObject {
     private var openDocumentIDs: Set<String> = []
     private var selectedDocumentSignature: FileSignature?
     private var externalRefreshWorkItem: DispatchWorkItem?
+    private var suppressedWatcherEvent: WorkspaceFileWatcher.Event?
+    private var suppressedWatcherReplayWorkItem: DispatchWorkItem?
     private var externalRefreshTask: Task<Void, Never>?
     private var externalReviewTask: Task<Void, Never>?
     private var externalRefreshGeneration = 0
@@ -90,6 +92,7 @@ final class WorkspaceStore: ObservableObject {
     private var documentGeneration = 0
     private var saveGeneration = 0
     private var markdownLinkMoveReviewSerial = 0
+    private static let busyMessage = "Wait for the current file operation to finish, then try again."
     nonisolated static let interactiveTextOpenMaxBytes: Int64 = 4 * 1024 * 1024
     private static let recentDocumentRecordDelayNanoseconds: UInt64 = 350_000_000
     @Published private var pendingDocumentTransfer: WorkspaceDocumentTransfer?
@@ -533,6 +536,39 @@ final class WorkspaceStore: ObservableObject {
         return Self.suggestedChildName(in: targetDirectory, baseName: "New Folder", pathExtension: nil)
     }
 
+    /// Why `proposedName` cannot name a new item in `directoryURL` (the root when nil), or nil when
+    /// it can. `createFile` and `createFolder` refuse exactly these names.
+    func validationMessage(forNewItemNamed proposedName: String, in directoryURL: URL?, isDirectory: Bool) -> String? {
+        do {
+            _ = try newItemURL(named: proposedName, in: directoryURL, isDirectory: isDirectory)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// Why the item at `itemURL` cannot be renamed to `proposedName`, or nil when it can.
+    /// `renameDocument` and `renameFolder` refuse exactly these names.
+    func validationMessage(forRenaming itemURL: URL, to proposedName: String, isDirectory: Bool) -> String? {
+        do {
+            _ = try Self.renamedURL(for: itemURL, proposedName: proposedName, isDirectory: isDirectory)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    private func newItemURL(named proposedName: String, in directoryURL: URL?, isDirectory: Bool) throws -> URL {
+        guard let workspaceURL else {
+            throw WorkspaceDocumentOperationError.invalidCreation("Open a workspace first.")
+        }
+        let targetDirectory = directoryURL ?? workspaceURL
+        guard Self.isURL(targetDirectory, containedIn: workspaceURL) else {
+            throw WorkspaceDocumentOperationError.invalidCreation("Create items inside the current workspace.")
+        }
+        return try Self.childURL(in: targetDirectory, proposedName: proposedName, isDirectory: isDirectory)
+    }
+
     func createFile(named proposedName: String, in directoryURL: URL? = nil) {
         guard let workspaceURL else {
             errorMessage = "Open a workspace before creating a file."
@@ -543,10 +579,9 @@ final class WorkspaceStore: ObservableObject {
               ensureWritingToolsInactive(for: "changing the workspace")
         else { return }
 
-        let targetDirectory = directoryURL ?? workspaceURL
         let fileURL: URL
         do {
-            fileURL = try Self.childURL(in: targetDirectory, proposedName: proposedName)
+            fileURL = try newItemURL(named: proposedName, in: directoryURL, isDirectory: false)
         } catch {
             errorMessage = error.localizedDescription
             return
@@ -586,10 +621,9 @@ final class WorkspaceStore: ObservableObject {
               ensureWritingToolsInactive(for: "changing the workspace")
         else { return }
 
-        let targetDirectory = directoryURL ?? workspaceURL
         let folderURL: URL
         do {
-            folderURL = try Self.childURL(in: targetDirectory, proposedName: proposedName)
+            folderURL = try newItemURL(named: proposedName, in: directoryURL, isDirectory: true)
         } catch {
             errorMessage = error.localizedDescription
             return
@@ -623,7 +657,7 @@ final class WorkspaceStore: ObservableObject {
 
         let targetURL: URL
         do {
-            targetURL = try Self.renamedURL(for: document.url, proposedName: proposedName)
+            targetURL = try Self.renamedURL(for: document.url, proposedName: proposedName, isDirectory: false)
         } catch {
             errorMessage = error.localizedDescription
             return
@@ -657,7 +691,7 @@ final class WorkspaceStore: ObservableObject {
 
         let targetURL: URL
         do {
-            targetURL = try Self.renamedURL(for: sourceURL, proposedName: proposedName, preservingExtension: false)
+            targetURL = try Self.renamedURL(for: sourceURL, proposedName: proposedName, isDirectory: true)
         } catch {
             errorMessage = error.localizedDescription
             return
@@ -703,28 +737,55 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    func copyDocument(_ document: WorkspaceDocument) {
-        guard documents.contains(where: { $0.id == document.id }) else { return }
-        pendingDocumentTransfer = WorkspaceDocumentTransfer(document: document, operation: .copy)
+    /// Marks a workspace file or folder to be copied by the next paste.
+    func copyItem(at url: URL) {
+        setPendingTransfer(for: url, operation: .copy)
     }
 
-    func cutDocument(_ document: WorkspaceDocument) {
-        guard documents.contains(where: { $0.id == document.id }) else { return }
-        pendingDocumentTransfer = WorkspaceDocumentTransfer(document: document, operation: .cut)
+    /// Marks a workspace file or folder to be moved by the next paste.
+    func cutItem(at url: URL) {
+        setPendingTransfer(for: url, operation: .cut)
+    }
+
+    private func setPendingTransfer(for url: URL, operation: WorkspaceDocumentTransferOperation) {
+        let url = url.standardizedFileURL
+        guard documentsByID[url.path] != nil || isWorkspaceFolder(url) else { return }
+        pendingDocumentTransfer = WorkspaceDocumentTransfer(url: url, operation: operation)
+    }
+
+    private func isWorkspaceFolder(_ url: URL) -> Bool {
+        guard let workspaceURL,
+              url.path != workspaceURL.standardizedFileURL.path,
+              Self.isURL(url, containedIn: workspaceURL)
+        else { return false }
+        var isDirectory = ObjCBool(false)
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
 
     func pasteDocumentTransfer(into directoryURL: URL? = nil) {
-        guard let workspaceURL, !isBusy, let transfer = pendingDocumentTransfer else { return }
+        guard let workspaceURL, let transfer = pendingDocumentTransfer else { return }
+        guard !isBusy else {
+            errorMessage = Self.busyMessage
+            return
+        }
         guard ensureWritingToolsInactive(for: "changing the workspace") else { return }
 
-        let targetDirectory = directoryURL ?? workspaceURL
-        let sourceURL = transfer.document.url
-        let sourceID = transfer.document.id
-        let dirtyCopyText = transfer.operation == .copy ? dirtyDocumentTexts[sourceID] : nil
+        let targetDirectory = (directoryURL ?? workspaceURL).standardizedFileURL
+        let sourceURL = transfer.url
+        let displayName = sourceURL.lastPathComponent
 
         if transfer.operation == .cut,
-           sourceURL.deletingLastPathComponent().standardizedFileURL == targetDirectory.standardizedFileURL {
+           sourceURL.deletingLastPathComponent().standardizedFileURL == targetDirectory {
             pendingDocumentTransfer = nil
+            return
+        }
+
+        guard Self.isURL(targetDirectory, containedIn: workspaceURL) else {
+            errorMessage = "Paste items into the current workspace."
+            return
+        }
+        guard !Self.isURL(targetDirectory, containedIn: sourceURL) else {
+            errorMessage = "A folder cannot be pasted into itself."
             return
         }
 
@@ -734,13 +795,55 @@ final class WorkspaceStore: ObservableObject {
                 sourceURL: sourceURL,
                 destinationURL: destinationURL,
                 workspaceURL: workspaceURL,
-                failureMessage: "Could not paste \(transfer.document.displayName)",
+                failureMessage: "Could not paste \(displayName)",
                 selectDestinationAfterMove: true,
                 clearDocumentTransferOnSuccess: true
             )
             return
         }
 
+        startItemCopy(
+            from: sourceURL,
+            into: targetDirectory,
+            workspaceURL: workspaceURL,
+            clearsDocumentTransfer: true,
+            failureMessage: "Could not paste \(displayName)"
+        )
+    }
+
+    /// Copies a workspace file or folder next to itself with a "copy" suffix.
+    func duplicateItem(at url: URL) {
+        let sourceURL = url.standardizedFileURL
+        guard let workspaceURL,
+              documentsByID[sourceURL.path] != nil || isWorkspaceFolder(sourceURL)
+        else { return }
+        guard !isBusy else {
+            errorMessage = Self.busyMessage
+            return
+        }
+        guard ensureWritingToolsInactive(for: "changing the workspace") else { return }
+
+        startItemCopy(
+            from: sourceURL,
+            into: sourceURL.deletingLastPathComponent(),
+            workspaceURL: workspaceURL,
+            clearsDocumentTransfer: false,
+            failureMessage: "Could not duplicate \(sourceURL.lastPathComponent)"
+        )
+    }
+
+    /// Copies a file (with its unsaved text) or folder and selects the copied file.
+    private func startItemCopy(
+        from sourceURL: URL,
+        into targetDirectory: URL,
+        workspaceURL: URL,
+        clearsDocumentTransfer: Bool,
+        failureMessage: String
+    ) {
+        let sourceID = sourceURL.path
+        let isDocument = documentsByID[sourceID] != nil
+        let dirtyCopyText = dirtyDocumentTexts[sourceID]
+        let preserveSelection = selectedDocumentID
         noteInternalFileMutation()
         let generation = beginDocumentFileOperation()
 
@@ -757,14 +860,14 @@ final class WorkspaceStore: ObservableObject {
                 await self?.finishDocumentTransfer(
                     result: result,
                     workspaceURL: workspaceURL,
-                    selectedURL: destinationURL,
-                    sourceID: sourceID,
-                    destinationID: destinationURL.standardizedFileURL.path,
-                    operation: .copy,
+                    selectedURL: isDocument ? destinationURL : nil,
+                    preserveSelection: isDocument ? nil : preserveSelection,
+                    changedPaths: [sourceID, destinationURL.standardizedFileURL.path],
+                    clearsDocumentTransfer: clearsDocumentTransfer,
                     generation: generation
                 )
             } catch {
-                await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not paste \(transfer.document.displayName)")
+                await self?.finishWorkspaceFailure(error, generation: generation, message: failureMessage)
             }
         }
     }
@@ -774,10 +877,12 @@ final class WorkspaceStore: ObservableObject {
             errorMessage = "Open a workspace before pasting clipboard contents."
             return
         }
-
-        guard !isBusy, !items.isEmpty,
-              ensureWritingToolsInactive(for: "changing the workspace")
-        else { return }
+        guard !items.isEmpty else { return }
+        guard !isBusy else {
+            errorMessage = Self.busyMessage
+            return
+        }
+        guard ensureWritingToolsInactive(for: "changing the workspace") else { return }
 
         let targetDirectory = directoryURL ?? workspaceURL
         guard Self.isURL(targetDirectory, containedIn: workspaceURL) else {
@@ -805,9 +910,50 @@ final class WorkspaceStore: ObservableObject {
                     generation: generation
                 )
             } catch {
-                await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not paste clipboard contents")
+                // Items copied before the failure stay on disk, so the sidebar is rescanned.
+                let result = try? await Self.scanWorkspace(workspaceURL, scanner: scanner)
+                await self?.finishImportFailure(
+                    error,
+                    result: result,
+                    workspaceURL: workspaceURL,
+                    preserveSelection: preserveSelection,
+                    generation: generation
+                )
             }
         }
+    }
+
+    /// Imports files dropped from Finder into `directoryURL` (the root when nil). A single item that
+    /// is already in the workspace is moved there instead. Without a workspace, one dropped item
+    /// opens as the workspace.
+    func dropFileURLs(_ urls: [URL], into directoryURL: URL? = nil) {
+        let fileURLs = urls.filter(\.isFileURL).map(\.standardizedFileURL)
+        guard !fileURLs.isEmpty else { return }
+
+        guard let workspaceURL = workspaceURL?.standardizedFileURL else {
+            guard fileURLs.count == 1 else {
+                errorMessage = "Drop one folder to open it as a workspace."
+                return
+            }
+            handleDroppedURL(fileURLs[0])
+            return
+        }
+        guard !isBusy else {
+            errorMessage = Self.busyMessage
+            return
+        }
+
+        let workspaceItems = fileURLs.filter { $0 != workspaceURL && Self.isURL($0, containedIn: workspaceURL) }
+        guard workspaceItems.isEmpty else {
+            guard fileURLs.count == 1 else {
+                errorMessage = "Move items that are already in the workspace one at a time."
+                return
+            }
+            moveItem(id: workspaceItems[0].path, toDirectory: directoryURL)
+            return
+        }
+
+        importPasteboardItems(fileURLs.map(WorkspacePasteboardImportItem.fileURL), into: directoryURL)
     }
 
     func createMarkdownImageAsset(
@@ -934,7 +1080,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func deleteDocument(_ document: WorkspaceDocument) {
-        guard let workspaceURL, documents.contains(where: { $0.id == document.id }) else { return }
+        guard let workspaceURL, !isBusy, documents.contains(where: { $0.id == document.id }) else { return }
         guard ensureWritingToolsInactive(for: "deleting a document") else { return }
 
         if openDocumentIDs.contains(document.id), saveState(for: document.id).isClean == false {
@@ -2306,6 +2452,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func clearStateForWorkspaceTransition() {
+        cancelSuppressedWatcherReplay()
         pendingDocumentTransfer = nil
         dirtyDocumentTexts = [:]
         dirtyDocumentBaselines = [:]
@@ -2346,7 +2493,17 @@ final class WorkspaceStore: ObservableObject {
         replaceDocuments(with: result.documents)
         pruneSaveStates(previousDocuments: previousDocuments)
         ensureFileWatcher(for: workspaceURL)
-        selectedDocumentID = documentsByID[fileURL.standardizedFileURL.path]?.id
+        guard let createdDocument = documentsByID[fileURL.standardizedFileURL.path] else {
+            // The scan does not list the file, so the current document stays selected.
+            isBusy = false
+            if let selectedDocumentID, documentsByID[selectedDocumentID] == nil {
+                self.selectedDocumentID = documents.first?.id
+                loadSelectedDocument()
+            }
+            errorMessage = "Created \(fileURL.lastPathComponent), but Monknot does not show this kind of file."
+            return
+        }
+        selectedDocumentID = createdDocument.id
         setDocumentTextIfChanged(initialText)
         lastSavedText = initialText
         setHasUnsavedChangesIfChanged(false)
@@ -2457,25 +2614,46 @@ final class WorkspaceStore: ObservableObject {
     private func finishDocumentTransfer(
         result: WorkspaceDocumentScanResult,
         workspaceURL: URL,
-        selectedURL: URL,
-        sourceID: String,
-        destinationID: String,
-        operation: WorkspaceDocumentTransferOperation,
+        selectedURL: URL?,
+        preserveSelection: String?,
+        changedPaths: [String],
+        clearsDocumentTransfer: Bool,
         generation: Int
     ) {
         guard generation == workspaceGeneration else { return }
 
-        guard operation == .copy else { return }
-        invalidateWorkspaceSearchCaches(paths: [sourceID, destinationID])
-        pendingDocumentTransfer = nil
+        invalidateWorkspaceSearchCaches(paths: changedPaths)
+        if clearsDocumentTransfer {
+            pendingDocumentTransfer = nil
+        }
         finishWorkspaceLoad(
             result: result,
             workspaceURL: workspaceURL,
             selectedURL: selectedURL,
-            preserveSelection: nil,
-            reloadSelection: true,
+            preserveSelection: preserveSelection,
+            reloadSelection: selectedURL != nil,
             generation: generation
         )
+    }
+
+    private func finishImportFailure(
+        _ error: Error,
+        result: WorkspaceDocumentScanResult?,
+        workspaceURL: URL,
+        preserveSelection: String?,
+        generation: Int
+    ) {
+        if let result {
+            finishWorkspaceLoad(
+                result: result,
+                workspaceURL: workspaceURL,
+                selectedURL: nil,
+                preserveSelection: preserveSelection,
+                reloadSelection: false,
+                generation: generation
+            )
+        }
+        finishWorkspaceFailure(error, generation: generation, message: "Could not paste clipboard contents")
     }
 
     private func updateSecurityScope(for url: URL) {
@@ -2489,6 +2667,7 @@ final class WorkspaceStore: ObservableObject {
 
     private func clearSecurityScope() {
         fileWatcher.stop()
+        cancelSuppressedWatcherReplay()
         externalRefreshWorkItem?.cancel()
         externalRefreshWorkItem = nil
         externalRefreshTask?.cancel()
@@ -3226,6 +3405,7 @@ final class WorkspaceStore: ObservableObject {
 
     internal func testing_stopFileWatcher() {
         fileWatcher.stop()
+        cancelSuppressedWatcherReplay()
         externalRefreshWorkItem?.cancel()
         externalRefreshWorkItem = nil
         externalRefreshTask?.cancel()
@@ -3256,7 +3436,10 @@ final class WorkspaceStore: ObservableObject {
             deferExternalRefreshUntilWritingToolsEnd()
             return
         }
-        guard bypassingSuppression || Date() >= suppressWatcherUntil else { return }
+        guard bypassingSuppression || Date() >= suppressWatcherUntil else {
+            deferSuppressedWatcherEvent(event)
+            return
+        }
 
         let requiresFullRescan = event.requiresFullRescan || deferredWritingToolsRefreshNeeded
 
@@ -3286,6 +3469,54 @@ final class WorkspaceStore: ObservableObject {
         }
         externalRefreshWorkItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
+    }
+
+    /// Holds watcher events that arrive while Monknot's own file change settles and replays them
+    /// once the window ends, so external changes made meanwhile still reach the sidebar.
+    private func deferSuppressedWatcherEvent(_ event: WorkspaceFileWatcher.Event) {
+        if let pending = suppressedWatcherEvent {
+            let createdOrRemoved = pending.changedPaths.subtracting(pending.modifiedOnlyPaths)
+                .union(event.changedPaths.subtracting(event.modifiedOnlyPaths))
+            suppressedWatcherEvent = WorkspaceFileWatcher.Event(
+                changedPaths: pending.changedPaths.union(event.changedPaths),
+                modifiedOnlyPaths: pending.modifiedOnlyPaths.union(event.modifiedOnlyPaths)
+                    .subtracting(createdOrRemoved),
+                requiresFullRescan: pending.requiresFullRescan || event.requiresFullRescan
+            )
+        } else {
+            suppressedWatcherEvent = event
+        }
+        if suppressedWatcherReplayWorkItem == nil {
+            scheduleSuppressedWatcherReplay()
+        }
+    }
+
+    private func scheduleSuppressedWatcherReplay() {
+        let item = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                self?.replaySuppressedWatcherEvent()
+            }
+        }
+        suppressedWatcherReplayWorkItem = item
+        let delay = max(0, suppressWatcherUntil.timeIntervalSinceNow)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
+    private func replaySuppressedWatcherEvent() {
+        suppressedWatcherReplayWorkItem = nil
+        guard Date() >= suppressWatcherUntil else {
+            scheduleSuppressedWatcherReplay()
+            return
+        }
+        guard let event = suppressedWatcherEvent else { return }
+        suppressedWatcherEvent = nil
+        scheduleExternalWorkspaceRefresh(event)
+    }
+
+    private func cancelSuppressedWatcherReplay() {
+        suppressedWatcherReplayWorkItem?.cancel()
+        suppressedWatcherReplayWorkItem = nil
+        suppressedWatcherEvent = nil
     }
 
     private func applyIncrementalFileChanges(paths: Set<String>) -> Bool {
@@ -3497,7 +3728,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private static func isRelevantExternalChange(path: String) -> Bool {
-        let ignored = Set([".git", ".build", "DerivedData", "dist", "node_modules"])
+        let ignored = WorkspaceDocumentScanner.defaultIgnoredDirectoryNames
         let components = URL(fileURLWithPath: path).pathComponents
         return !components.contains { component in
             ignored.contains(component) || (component.hasPrefix(".") && component != "." && component != "..")
@@ -3784,19 +4015,9 @@ final class WorkspaceStore: ObservableObject {
         return candidate
     }
 
-    nonisolated private static func childURL(in directoryURL: URL, proposedName: String) throws -> URL {
-        let fileName = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !fileName.isEmpty else {
-            throw WorkspaceDocumentOperationError.emptyName
-        }
-
-        guard fileName.rangeOfCharacter(from: CharacterSet(charactersIn: "/:")) == nil else {
-            throw WorkspaceDocumentOperationError.nestedName
-        }
-
-        guard fileName != "." && fileName != ".." else {
-            throw WorkspaceDocumentOperationError.invalidName(fileName)
-        }
+    nonisolated private static func childURL(in directoryURL: URL, proposedName: String, isDirectory: Bool) throws -> URL {
+        let fileName = try validatedItemName(proposedName)
+        try validateVisibility(of: fileName, isDirectory: isDirectory)
 
         let destinationURL = directoryURL.appendingPathComponent(fileName)
         guard !FileManager.default.fileExists(atPath: destinationURL.path) else {
@@ -3846,7 +4067,7 @@ final class WorkspaceStore: ObservableObject {
             throw WorkspaceDocumentOperationError.invalidCreation("The destination cannot pass through a symbolic link.")
         }
 
-        let validatedChild = try childURL(in: parentURL, proposedName: fileURL.lastPathComponent)
+        let validatedChild = try childURL(in: parentURL, proposedName: fileURL.lastPathComponent, isDirectory: false)
         guard validatedChild.standardizedFileURL == fileURL,
               (try? FileManager.default.destinationOfSymbolicLink(atPath: fileURL.path)) == nil
         else {
@@ -3863,23 +4084,51 @@ final class WorkspaceStore: ObservableObject {
         return "\(baseName).\(pathExtension)"
     }
 
-    nonisolated private static func renamedURL(
-        for sourceURL: URL,
-        proposedName: String,
-        preservingExtension: Bool = true
-    ) throws -> URL {
-        var fileName = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !fileName.isEmpty else {
+    /// The trimmed name, or an error for an empty name, a path, `.` or `..`.
+    nonisolated private static func validatedItemName(_ proposedName: String) throws -> String {
+        let name = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
             throw WorkspaceDocumentOperationError.emptyName
         }
 
-        guard fileName.rangeOfCharacter(from: CharacterSet(charactersIn: "/:")) == nil else {
+        guard name.rangeOfCharacter(from: CharacterSet(charactersIn: "/:")) == nil else {
             throw WorkspaceDocumentOperationError.nestedName
         }
 
-        if preservingExtension, URL(fileURLWithPath: fileName).pathExtension.isEmpty, !sourceURL.pathExtension.isEmpty {
-            fileName += ".\(sourceURL.pathExtension)"
+        guard name != "." && name != ".." else {
+            throw WorkspaceDocumentOperationError.invalidName(name)
         }
+        return name
+    }
+
+    /// Refuses names the workspace scan leaves out, so a new or renamed item never vanishes.
+    nonisolated private static func validateVisibility(of name: String, isDirectory: Bool) throws {
+        guard WorkspaceDocumentScanner.hidesItem(named: name, isDirectory: isDirectory) else { return }
+        if name.hasPrefix(".") {
+            throw WorkspaceDocumentOperationError.hiddenName(name)
+        }
+        throw isDirectory
+            ? WorkspaceDocumentOperationError.ignoredFolderName(name)
+            : WorkspaceDocumentOperationError.unsupportedFileType(name)
+    }
+
+    /// A file keeps its extension unless the new name ends in another document extension, so
+    /// "Release 1.2" renames `notes.md` to `Release 1.2.md`.
+    nonisolated private static func renamedURL(
+        for sourceURL: URL,
+        proposedName: String,
+        isDirectory: Bool
+    ) throws -> URL {
+        var fileName = try validatedItemName(proposedName)
+
+        let sourceExtension = sourceURL.pathExtension
+        if !isDirectory, !sourceExtension.isEmpty {
+            let typedExtension = (fileName as NSString).pathExtension
+            if typedExtension.isEmpty || !WorkspaceDocumentSupport.isWorkspaceDocumentName("_.\(typedExtension)") {
+                fileName += ".\(sourceExtension)"
+            }
+        }
+        try validateVisibility(of: fileName, isDirectory: isDirectory)
 
         let destinationURL = sourceURL.deletingLastPathComponent().appendingPathComponent(fileName)
         guard !FileManager.default.fileExists(atPath: destinationURL.path) else {
@@ -4165,8 +4414,9 @@ private enum DroppedTarget: Sendable {
     case unsupported
 }
 
+/// A workspace file or folder waiting for Paste.
 private struct WorkspaceDocumentTransfer: Sendable {
-    let document: WorkspaceDocument
+    let url: URL
     let operation: WorkspaceDocumentTransferOperation
 }
 
@@ -4187,6 +4437,9 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
     case invalidMove(String)
     case invalidCreation(String)
     case notDirectory(String)
+    case hiddenName(String)
+    case ignoredFolderName(String)
+    case unsupportedFileType(String)
 
     var errorDescription: String? {
         switch self {
@@ -4212,6 +4465,12 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
             return message
         case .notDirectory(let name):
             return "\(name) is not a folder."
+        case .hiddenName(let name):
+            return "Names starting with a period are hidden, so \(name) would not appear in the sidebar."
+        case .ignoredFolderName(let name):
+            return "Monknot hides folders named \(name)."
+        case .unsupportedFileType(let name):
+            return "Monknot does not show files like \(name). Add an extension such as .md or .txt."
         }
     }
 }

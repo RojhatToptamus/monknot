@@ -384,7 +384,7 @@ final class WorkspaceStoreLinkMoveRollbackTests: WorkspaceStoreLinkTestCase {
             return XCTFail("Expected target document")
         }
 
-        store.cutDocument(target)
+        store.cutItem(at: target.url)
         store.pasteDocumentTransfer(into: destinationFolder)
         await assertEventually {
             !store.isBusy && store.pendingMarkdownLinkMoveReview != nil

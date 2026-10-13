@@ -788,6 +788,7 @@ struct ContentView: View {
             showWorkspaceSearch: showWorkspaceSearch,
             dismissWorkspaceSearch: { dismissWorkspaceSearch(restoreFocus: true) },
             workspaceSearchFocusChanged: searchFieldFocusChanged,
+            copyPath: copyPath(_:),
             copyRelativePath: copyRelativePath(_:)
         )
         .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
@@ -897,6 +898,15 @@ struct ContentView: View {
             workspaceURL: store.workspaceURL,
             selectedDocumentURL: store.selectedDocument?.url
         )
+    }
+
+    private func copyPath(_ url: URL) {
+        do {
+            try WorkspacePasteboardExportService.copyPlainText(url.path)
+            showSuccessNotice("Copied \(url.path)")
+        } catch {
+            store.errorMessage = "Could not copy the path: \(error.localizedDescription)"
+        }
     }
 
     private func copyRelativePath(_ url: URL) {
@@ -2017,7 +2027,7 @@ struct ContentView: View {
             },
             canCopyRenderedMarkdown: canCopyRenderedMarkdown,
             paste: { _ = pasteFromCommand() },
-            selectAll: { _ = MonknotNativePasteboardCommand.performSelectAllIfAvailable() },
+            selectAll: { selectAllFromCommand() },
             refreshWorkspace: { store.refresh() },
             navigateBack: navigateBack,
             canNavigateBack: canNavigateBack,
@@ -2269,12 +2279,17 @@ struct ContentView: View {
             return performInFocusedDocument(#selector(NSText.paste(_:)))
         }
 
-        if WorkspacePasteboardExportService.ownsPasteboard(), store.canPasteDocumentTransfer {
-            store.pasteDocumentTransfer()
-            return true
-        }
+        // Into the selected document's folder, as Finder pastes into the folder it shows.
+        return store.pasteFromPasteboard(into: store.selectedDocument?.url.deletingLastPathComponent())
+    }
 
-        return importPasteboardFromCommand()
+    private func selectAllFromCommand() {
+        if MonknotNativePasteboardCommand.performSelectAllIfAvailable() {
+            return
+        }
+        if documentViewOwnsFocus {
+            _ = performInFocusedDocument(#selector(NSText.selectAll(_:)))
+        }
     }
 
     /// A focused document (a PDF) takes the clipboard command or refuses it with the system beep;
@@ -2288,32 +2303,14 @@ struct ContentView: View {
 
     private func copySelectedDocumentFromCommand() -> Bool {
         guard let document = store.selectedDocument, !store.isBusy else { return false }
-        do {
-            try WorkspacePasteboardExportService.copyFile(at: document.url)
-            store.copyDocument(document)
-        } catch {
-            store.errorMessage = "Could not copy \(document.displayName): \(error.localizedDescription)"
-        }
+        store.putItemOnPasteboard(at: document.url, cutting: false)
         return true
     }
 
     private func cutSelectedDocumentFromCommand() -> Bool {
         guard let document = store.selectedDocument, !store.isBusy else { return false }
-        WorkspacePasteboardExportService.clearFileTransferPasteboard()
-        store.cutDocument(document)
+        store.putItemOnPasteboard(at: document.url, cutting: true)
         return true
-    }
-
-    private func importPasteboardFromCommand() -> Bool {
-        do {
-            let items = try WorkspacePasteboardImportService.importItems(from: .general)
-            guard !items.isEmpty else { return false }
-            store.importPasteboardItems(items)
-            return true
-        } catch {
-            store.errorMessage = "Could not read clipboard contents: \(error.localizedDescription)"
-            return true
-        }
     }
 
     private var keyboardShortcutContext: MonknotKeyboardShortcutContext {

@@ -20,16 +20,18 @@ struct SidebarView: View {
     let showWorkspaceSearch: () -> Void
     let dismissWorkspaceSearch: () -> Void
     let workspaceSearchFocusChanged: (Bool) -> Void
+    let copyPath: (URL) -> Void
     let copyRelativePath: (URL) -> Void
     @State private var isDropTargeted = false
     @State private var expandedFolderIDs: Set<String> = []
     @State private var expandedWorkspacePath: String?
     @State private var sidebarPrompt: SidebarNamePrompt?
-    @State private var sidebarTreeFrame: CGRect = .zero
+    @State private var sidebarTreeSize: CGSize = .zero
     @State private var sidebarNodeFrames: [String: CGRect] = [:]
     @State private var draggedSidebarNodeID: String?
     @State private var moveDropTargetFolderID: String?
     @State private var isMoveDropTargetingRoot = false
+    @State private var externalDropRowID: String?
     @State private var recentDocuments: [RecentDocumentEntry] = []
     @State private var visibleNodes: [VisibleSidebarNode] = []
     private let treeExpansionPersistence = WorkspaceTreeExpansionPersistence()
@@ -152,6 +154,9 @@ struct SidebarView: View {
                 cancel: {
                     sidebarPrompt = nil
                 },
+                validate: { newName in
+                    validationMessage(for: prompt, name: newName)
+                },
                 submit: { newName in
                     submitPrompt(prompt, name: newName)
                     sidebarPrompt = nil
@@ -228,49 +233,31 @@ struct SidebarView: View {
                                         },
                                         isExpanded: visibleNode.isExpanded(in: expandedFolderIDs),
                                         tracksMoveFrame: tracksSidebarMoveFrames,
-                                        theme: theme,
-                                        zoomScale: zoomScale,
-                                        toggleFolder: toggleFolder(_:),
-                                        selectDocument: openDocument,
-                                        createFileInFolder: beginCreateFile(in:),
-                                        createFolderInFolder: beginCreateFolder(in:),
-                                        copyFolderPath: copyPath(_:),
-                                        copyFolderRelativePath: copyRelativePath,
-                                        revealFolderInFinder: revealInFinder(_:),
-                                        renameFolder: beginRenameFolder(_:),
+                                        isBusy: store.isBusy,
                                         isMoveSource: draggedSidebarNodeID == visibleNode.id,
                                         isMoveTarget: moveDropTargetFolderID == visibleNode.dropTargetFolderID,
-                                        dragChanged: handleSidebarNodeDragChanged(id:location:),
-                                        dragEnded: handleSidebarNodeDragEnded(id:location:),
-                                        renameDocument: beginRename(_:),
-                                        copyPath: copyPath(_:),
-                                        copyRelativePath: { copyRelativePath($0.url) },
-                                        revealInFinder: revealInFinder(_:),
-                                        exportPDF: exportPDF,
-                                        copyDocument: copyDocument(_:),
-                                        cutDocument: cutDocument(_:),
-                                        deleteDocument: store.deleteDocument(_:),
-                                        deleteFolder: store.deleteFolder(at:)
+                                        theme: theme,
+                                        zoomScale: zoomScale,
+                                        actions: rowActions
                                     )
                                     .equatable()
                                 }
                             }
                             .padding(.horizontal, scaled(6))
                             .padding(.vertical, scaled(6))
+                            // Inside the scroll view's hosting view, so the rows' drag gesture and
+                            // frame readers measure in the same space.
+                            .coordinateSpace(name: SidebarMoveCoordinateSpace.name)
+                            .onPreferenceChange(SidebarNodeFramePreferenceKey.self) { frames in
+                                sidebarNodeFrames = frames
+                            }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         .layoutPriority(1)
-                        .coordinateSpace(name: SidebarMoveCoordinateSpace.name)
-                        .background {
-                            if tracksSidebarMoveFrames {
-                                SidebarTreeFrameReader()
-                            }
-                        }
-                        .onPreferenceChange(SidebarTreeFramePreferenceKey.self) { frame in
-                            sidebarTreeFrame = frame
-                        }
-                        .onPreferenceChange(SidebarNodeFramePreferenceKey.self) { frames in
-                            sidebarNodeFrames = frames
+                        .onGeometryChange(for: CGSize.self) { proxy in
+                            proxy.size
+                        } action: { size in
+                            sidebarTreeSize = size
                         }
 
                         if !recentDocuments.isEmpty {
@@ -282,7 +269,9 @@ struct SidebarView: View {
                                 kindGlyph: { entry in
                                     (store.document(id: entry.documentID)?.kind ?? .markdown).resolvedSystemImage
                                 },
-                                openDocument: openDocument
+                                openDocument: openDocument,
+                                revealInFinder: revealInFinder(_:),
+                                copyPath: copyPath
                             )
                             .layoutPriority(2)
                         }
@@ -433,15 +422,30 @@ struct SidebarView: View {
     }
 
     private func handleDroppedURLs(_ urls: [URL]) {
-        let fileURLs = urls.filter(\.isFileURL)
-        guard !fileURLs.isEmpty else { return }
+        store.dropFileURLs(urls, into: nil)
+    }
 
-        guard store.workspaceURL != nil else {
-            fileURLs.forEach { store.handleDroppedURL($0) }
-            return
-        }
-
-        store.importPasteboardItems(fileURLs.map(WorkspacePasteboardImportItem.fileURL))
+    private var rowActions: SidebarRowActions {
+        SidebarRowActions(
+            toggleFolder: toggleFolder(_:),
+            openDocument: openDocument,
+            createFile: beginCreateFile(in:),
+            createFolder: beginCreateFolder(in:),
+            rename: beginRename(_:),
+            copyPath: copyPath,
+            copyRelativePath: copyRelativePath,
+            revealInFinder: revealInFinder(_:),
+            exportPDF: exportPDF,
+            copy: { store.putItemOnPasteboard(at: $0, cutting: false) },
+            cut: { store.putItemOnPasteboard(at: $0, cutting: true) },
+            paste: paste(into:),
+            duplicate: store.duplicateItem(at:),
+            moveToTrash: moveToTrash(_:),
+            dragChanged: handleSidebarNodeDragChanged(id:location:),
+            dragEnded: handleSidebarNodeDragEnded(id:location:),
+            dropFileURLs: { urls, directoryURL in store.dropFileURLs(urls, into: directoryURL) },
+            dropTargetingChanged: handleExternalDropTargeting(rowID:directoryURL:isTargeted:)
+        )
     }
 
     @ViewBuilder
@@ -460,15 +464,14 @@ struct SidebarView: View {
         }
         .disabled(store.workspaceURL == nil || store.isBusy)
 
-        if store.canPasteDocumentTransfer {
-            Divider()
+        Divider()
 
-            Button {
-                store.pasteDocumentTransfer()
-            } label: {
-                Label("Paste", systemImage: "doc.on.clipboard")
-            }
+        Button {
+            paste(into: nil)
+        } label: {
+            Label("Paste", systemImage: "doc.on.clipboard")
         }
+        .disabled(store.workspaceURL == nil || store.isBusy)
 
         if let workspaceURL = store.workspaceURL {
             Divider()
@@ -487,33 +490,52 @@ struct SidebarView: View {
         }
     }
 
-    private func beginRename(_ document: WorkspaceDocument) {
-        sidebarPrompt = SidebarNamePrompt(
-            operation: .renameDocument(document.id),
-            title: "Rename",
-            message: "Enter a new file name.",
-            placeholder: "File name",
-            confirmTitle: "Rename",
-            name: document.displayName
-        )
+    /// Renames the row's item; a compact folder row ("A/B") renames its deepest folder.
+    private func beginRename(_ visibleNode: VisibleSidebarNode) {
+        let item = visibleNode.dropTargetNode
+        if let document = item.document {
+            sidebarPrompt = SidebarNamePrompt(
+                operation: .renameDocument(document.id),
+                title: "Rename",
+                message: "Enter a new file name.",
+                placeholder: "File name",
+                confirmTitle: "Rename",
+                name: document.displayName
+            )
+        } else {
+            sidebarPrompt = SidebarNamePrompt(
+                operation: .renameFolder(item.id),
+                title: "Rename Folder",
+                message: "Enter a new folder name.",
+                placeholder: "Folder name",
+                confirmTitle: "Rename",
+                name: item.name
+            )
+        }
     }
 
-    private func beginRenameFolder(_ node: SidebarNode) {
-        sidebarPrompt = SidebarNamePrompt(
-            operation: .renameFolder(node.id),
-            title: "Rename Folder",
-            message: "Enter a new folder name.",
-            placeholder: "Folder name",
-            confirmTitle: "Rename",
-            name: node.name
-        )
+    private func moveToTrash(_ visibleNode: VisibleSidebarNode) {
+        let item = visibleNode.dropTargetNode
+        if let document = item.document {
+            store.deleteDocument(document)
+        } else {
+            store.deleteFolder(at: item.url)
+        }
+    }
+
+    private func paste(into directoryURL: URL?) {
+        if !store.pasteFromPasteboard(into: directoryURL) {
+            NSSound.beep()
+        }
     }
 
     private func handleSidebarNodeDragChanged(id: String, location: CGPoint) {
         guard store.workspaceURL != nil, !store.isBusy else { return }
         draggedSidebarNodeID = id
         guard sidebarNodeFrames[id] != nil else { return }
-        updateMoveDropTarget(at: location, excluding: id)
+        let target = moveDropTarget(forRow: id, at: location)
+        moveDropTargetFolderID = target?.folderID
+        isMoveDropTargetingRoot = target == .root
     }
 
     private func handleSidebarNodeDragEnded(id: String, location: CGPoint) {
@@ -521,55 +543,47 @@ struct SidebarView: View {
             draggedSidebarNodeID = nil
             moveDropTargetFolderID = nil
             isMoveDropTargetingRoot = false
-            sidebarTreeFrame = .zero
             sidebarNodeFrames = [:]
         }
 
-        guard store.workspaceURL != nil, !store.isBusy, sidebarNodeFrames[id] != nil else { return }
+        guard !store.isBusy,
+              sidebarNodeFrames[id] != nil,
+              let row = displayedVisibleNodes.first(where: { $0.id == id }),
+              let target = moveDropTarget(forRow: id, at: location)
+        else { return }
 
-        if let folderID = folderID(at: location, excluding: id),
-           let folderURL = displayedVisibleNodes.first(where: { $0.dropTargetFolderID == folderID })?.dropTargetNode.url {
-            store.moveItem(id: id, toDirectory: folderURL)
-            return
+        switch target {
+        case .root:
+            store.moveItem(id: row.dropTargetNode.id, toDirectory: nil)
+        case .folder(let folderURL):
+            store.moveItem(id: row.dropTargetNode.id, toDirectory: folderURL)
         }
-
-        guard isRootMoveTarget(at: location) else {
-            return
-        }
-
-        store.moveItem(id: id, toDirectory: nil)
     }
 
-    private func updateMoveDropTarget(at location: CGPoint, excluding draggedID: String) {
-        let folderID = folderID(at: location, excluding: draggedID)
-        moveDropTargetFolderID = folderID
-        isMoveDropTargetingRoot = folderID == nil && isRootMoveTarget(at: location)
+    private func moveDropTarget(forRow rowID: String, at location: CGPoint) -> SidebarMoveDropTarget? {
+        guard let workspaceURL = store.workspaceURL else { return nil }
+        return SidebarMoveDropTarget.resolve(
+            draggedRowID: rowID,
+            location: location,
+            rows: displayedVisibleNodes,
+            rowFrames: sidebarNodeFrames,
+            treeSize: sidebarTreeSize,
+            workspaceURL: workspaceURL
+        )
     }
 
-    private func isRootMoveTarget(at location: CGPoint) -> Bool {
-        let horizontalTarget: CGRect
-        if sidebarTreeFrame.width > 0 {
-            horizontalTarget = sidebarTreeFrame.insetBy(dx: -8, dy: 0)
-        } else {
-            guard let minX = sidebarNodeFrames.values.map(\.minX).min(),
-                  let maxX = sidebarNodeFrames.values.map(\.maxX).max() else {
-                return false
-            }
-            horizontalTarget = CGRect(x: minX - 8, y: 0, width: maxX - minX + 16, height: 1)
+    /// Highlights the folder a Finder drag over a row would land in (the root for a root file).
+    private func handleExternalDropTargeting(rowID: String, directoryURL: URL, isTargeted: Bool) {
+        if isTargeted {
+            externalDropRowID = rowID
+            let isRoot = directoryURL.standardizedFileURL == store.workspaceURL?.standardizedFileURL
+            moveDropTargetFolderID = isRoot ? nil : directoryURL.standardizedFileURL.path
+            isMoveDropTargetingRoot = isRoot
+        } else if externalDropRowID == rowID {
+            externalDropRowID = nil
+            moveDropTargetFolderID = nil
+            isMoveDropTargetingRoot = false
         }
-
-        return location.x >= horizontalTarget.minX && location.x <= horizontalTarget.maxX
-    }
-
-    private func folderID(at location: CGPoint, excluding draggedID: String) -> String? {
-        displayedVisibleNodes
-            .filter { visibleNode in
-                visibleNode.id != draggedID &&
-                    visibleNode.node.kind == .folder &&
-                    sidebarNodeFrames[visibleNode.id]?.contains(location) == true
-            }
-            .max { lhs, rhs in lhs.depth < rhs.depth }?
-            .dropTargetFolderID
     }
 
     private func beginCreateFile(in directoryURL: URL?) {
@@ -596,36 +610,23 @@ struct SidebarView: View {
         )
     }
 
-    private func copyPath(_ document: WorkspaceDocument) {
-        copyPath(document.url)
-    }
-
-    private func copyPath(_ url: URL) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(url.path, forType: .string)
-    }
-
-    private func revealInFinder(_ document: WorkspaceDocument) {
-        revealInFinder(document.url)
-    }
-
     private func revealInFinder(_ url: URL) {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
-    private func copyDocument(_ document: WorkspaceDocument) {
-        do {
-            try WorkspacePasteboardExportService.copyFile(at: document.url)
-            store.copyDocument(document)
-        } catch {
-            store.errorMessage = "Could not copy \(document.displayName): \(error.localizedDescription)"
+    private func validationMessage(for prompt: SidebarNamePrompt, name: String) -> String? {
+        switch prompt.operation {
+        case .renameDocument(let documentID):
+            guard let document = store.document(id: documentID) else { return nil }
+            return store.validationMessage(forRenaming: document.url, to: name, isDirectory: false)
+        case .renameFolder(let folderID):
+            let folderURL = URL(fileURLWithPath: folderID, isDirectory: true)
+            return store.validationMessage(forRenaming: folderURL, to: name, isDirectory: true)
+        case .createFile(let directoryURL):
+            return store.validationMessage(forNewItemNamed: name, in: directoryURL, isDirectory: false)
+        case .createFolder(let directoryURL):
+            return store.validationMessage(forNewItemNamed: name, in: directoryURL, isDirectory: true)
         }
-    }
-
-    private func cutDocument(_ document: WorkspaceDocument) {
-        WorkspacePasteboardExportService.clearFileTransferPasteboard()
-        store.cutDocument(document)
     }
 
     private func submitPrompt(_ prompt: SidebarNamePrompt, name: String) {
@@ -743,27 +744,60 @@ enum SidebarTreePresentation {
     }
 }
 
+/// Where a dragged sidebar row moves its item.
+enum SidebarMoveDropTarget: Equatable {
+    case folder(URL)
+    case root
+
+    var folderID: String? {
+        guard case .folder(let url) = self else { return nil }
+        return url.standardizedFileURL.path
+    }
+
+    /// The target under `location`, in the tree's coordinate space: a folder row is that folder (the
+    /// deepest of a compact row), a file row is the file's folder, and empty tree space below the
+    /// rows is the root. Nil where the item already is, on the item itself or anything inside it,
+    /// and anywhere else.
+    static func resolve(
+        draggedRowID: String,
+        location: CGPoint,
+        rows: [VisibleSidebarNode],
+        rowFrames: [String: CGRect],
+        treeSize: CGSize,
+        workspaceURL: URL
+    ) -> SidebarMoveDropTarget? {
+        guard let draggedRow = rows.first(where: { $0.id == draggedRowID }) else { return nil }
+        let itemPath = draggedRow.dropTargetNode.url.standardizedFileURL.path
+
+        let destinationURL: URL
+        if let row = rows.first(where: { rowFrames[$0.id]?.contains(location) == true }) {
+            guard row.id != draggedRowID else { return nil }
+            destinationURL = row.node.kind == .folder
+                ? row.dropTargetNode.url
+                : row.node.url.deletingLastPathComponent()
+        } else {
+            let rowsBottom = rowFrames.values.map(\.maxY).max() ?? 0
+            let isEmptyTreeSpace = location.y > rowsBottom
+                && location.y <= max(treeSize.height, rowsBottom + 8)
+                && location.x >= 0
+                && location.x <= treeSize.width
+            guard isEmptyTreeSpace else { return nil }
+            destinationURL = workspaceURL
+        }
+
+        let destinationPath = destinationURL.standardizedFileURL.path
+        guard destinationPath != (itemPath as NSString).deletingLastPathComponent,
+              destinationPath != itemPath,
+              !destinationPath.hasPrefix(itemPath + "/")
+        else { return nil }
+        return destinationPath == workspaceURL.standardizedFileURL.path
+            ? .root
+            : .folder(URL(fileURLWithPath: destinationPath, isDirectory: true))
+    }
+}
+
 private enum SidebarMoveCoordinateSpace {
     static let name = "Monknot.SidebarMoveCoordinateSpace"
-}
-
-private struct SidebarTreeFramePreferenceKey: PreferenceKey {
-    static let defaultValue: CGRect = .zero
-
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        value = nextValue()
-    }
-}
-
-private struct SidebarTreeFrameReader: View {
-    var body: some View {
-        GeometryReader { proxy in
-            Color.clear.preference(
-                key: SidebarTreeFramePreferenceKey.self,
-                value: proxy.frame(in: .named(SidebarMoveCoordinateSpace.name))
-            )
-        }
-    }
 }
 
 private struct SidebarNodeFramePreferenceKey: PreferenceKey {
@@ -1179,6 +1213,29 @@ private struct WorkspaceSwitcherActionRow: View {
 
 // MARK: - Sidebar Row
 
+/// What a sidebar row's clicks, drags, drops and context menu do. Folder actions take the deepest
+/// folder of a compact row ("A/B" acts on B).
+private struct SidebarRowActions {
+    let toggleFolder: (VisibleSidebarNode) -> Void
+    let openDocument: (String) -> Void
+    let createFile: (URL) -> Void
+    let createFolder: (URL) -> Void
+    let rename: (VisibleSidebarNode) -> Void
+    let copyPath: (URL) -> Void
+    let copyRelativePath: (URL) -> Void
+    let revealInFinder: (URL) -> Void
+    let exportPDF: (WorkspaceDocument) -> Void
+    let copy: (URL) -> Void
+    let cut: (URL) -> Void
+    let paste: (URL) -> Void
+    let duplicate: (URL) -> Void
+    let moveToTrash: (VisibleSidebarNode) -> Void
+    let dragChanged: (String, CGPoint) -> Void
+    let dragEnded: (String, CGPoint) -> Void
+    let dropFileURLs: ([URL], URL) -> Void
+    let dropTargetingChanged: (String, URL, Bool) -> Void
+}
+
 /// Rows compare only what they draw. Typing publishes the store on every keystroke, and without
 /// this every row in the tree re-evaluated its body (glyph, help text and context menu) per key.
 /// The action closures forward into the sidebar and the store, so they are deliberately ignored.
@@ -1196,6 +1253,7 @@ extension SidebarNodeRow: Equatable {
             lhs.gitStatus == rhs.gitStatus &&
             lhs.isExpanded == rhs.isExpanded &&
             lhs.tracksMoveFrame == rhs.tracksMoveFrame &&
+            lhs.isBusy == rhs.isBusy &&
             lhs.isMoveSource == rhs.isMoveSource &&
             lhs.isMoveTarget == rhs.isMoveTarget &&
             lhs.zoomScale == rhs.zoomScale &&
@@ -1210,32 +1268,25 @@ private struct SidebarNodeRow: View {
     let gitStatus: WorkspaceGitFileStatus?
     let isExpanded: Bool
     let tracksMoveFrame: Bool
-    let theme: AppTheme
-    let zoomScale: Double
-    let toggleFolder: (VisibleSidebarNode) -> Void
-    let selectDocument: (String) -> Void
-    let createFileInFolder: (URL) -> Void
-    let createFolderInFolder: (URL) -> Void
-    let copyFolderPath: (URL) -> Void
-    let copyFolderRelativePath: (URL) -> Void
-    let revealFolderInFinder: (URL) -> Void
-    let renameFolder: (SidebarNode) -> Void
+    let isBusy: Bool
     let isMoveSource: Bool
     let isMoveTarget: Bool
-    let dragChanged: (String, CGPoint) -> Void
-    let dragEnded: (String, CGPoint) -> Void
-    let renameDocument: (WorkspaceDocument) -> Void
-    let copyPath: (WorkspaceDocument) -> Void
-    let copyRelativePath: (WorkspaceDocument) -> Void
-    let revealInFinder: (WorkspaceDocument) -> Void
-    let exportPDF: (WorkspaceDocument) -> Void
-    let copyDocument: (WorkspaceDocument) -> Void
-    let cutDocument: (WorkspaceDocument) -> Void
-    let deleteDocument: (WorkspaceDocument) -> Void
-    let deleteFolder: (URL) -> Void
+    let theme: AppTheme
+    let zoomScale: Double
+    let actions: SidebarRowActions
 
     private var node: SidebarNode {
         visibleNode.node
+    }
+
+    /// The file, or the deepest folder of a compact folder row.
+    private var item: SidebarNode {
+        visibleNode.dropTargetNode
+    }
+
+    /// Where a Paste or a Finder drop on this row lands: the folder itself, or a file's folder.
+    private var destinationURL: URL {
+        node.kind == .folder ? item.url : node.url.deletingLastPathComponent()
     }
 
     private var isSelected: Bool {
@@ -1261,7 +1312,7 @@ private struct SidebarNodeRow: View {
     /// Folder row: its disclosure chevron takes the glyph column (design.md §10.4).
     private var folderRow: some View {
         Button {
-            toggleFolder(visibleNode)
+            actions.toggleFolder(visibleNode)
         } label: {
             SidebarRowLabel(
                 leading: .disclosure(isExpanded: isExpanded),
@@ -1291,7 +1342,8 @@ private struct SidebarNodeRow: View {
             }
         }
         .opacity(isMoveSource ? 0.45 : 1)
-        .simultaneousGesture(sidebarMoveGesture)
+        .highPriorityGesture(sidebarMoveGesture)
+        .dropDestination(for: URL.self, action: dropFileURLs, isTargeted: dropTargetingChanged)
         .help(visibleNode.displayRelativePath)
         .accessibilityLabel(folderAccessibilityLabel)
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
@@ -1311,7 +1363,7 @@ private struct SidebarNodeRow: View {
     private var fileRow: some View {
         Button {
             if let document = node.document {
-                selectDocument(document.id)
+                actions.openDocument(document.id)
             }
         } label: {
             SidebarRowLabel(
@@ -1347,7 +1399,8 @@ private struct SidebarNodeRow: View {
             }
         }
         .opacity(isMoveSource ? 0.45 : 1)
-        .simultaneousGesture(sidebarMoveGesture)
+        .highPriorityGesture(sidebarMoveGesture)
+        .dropDestination(for: URL.self, action: dropFileURLs, isTargeted: dropTargetingChanged)
         .monknotHelp(isSelected ? nil : (node.relativePath.isEmpty ? node.name : node.relativePath))
         .accessibilityLabel(fileAccessibilityLabel)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -1378,84 +1431,42 @@ private struct SidebarNodeRow: View {
 
     @ViewBuilder
     private func folderContextMenu() -> some View {
-        let targetNode = visibleNode.dropTargetNode
-
         Button {
-            createFileInFolder(targetNode.url)
+            actions.createFile(item.url)
         } label: {
             Label("New File", systemImage: MonknotWorkspaceIcons.newFile)
         }
+        .disabled(isBusy)
 
         Button {
-            createFolderInFolder(targetNode.url)
+            actions.createFolder(item.url)
         } label: {
             Label("New Folder", systemImage: MonknotWorkspaceIcons.newFolder)
         }
+        .disabled(isBusy)
 
         Divider()
 
-        Button {
-            renameFolder(targetNode)
-        } label: {
-            Label("Rename", systemImage: "pencil")
-        }
-
-        Button {
-            copyFolderPath(targetNode.url)
-        } label: {
-            Label("Copy Path", systemImage: "link")
-        }
-
-        Button {
-            copyFolderRelativePath(targetNode.url)
-        } label: {
-            Label("Copy Relative Path", systemImage: "doc.on.doc")
-        }
-
-        Button {
-            revealFolderInFinder(targetNode.url)
-        } label: {
-            Label("Reveal in Finder", systemImage: MonknotWorkspaceIcons.revealInFinder)
-        }
+        renameButton
+        locationButtons
 
         Divider()
 
-        Button(role: .destructive) {
-            deleteFolder(targetNode.url)
-        } label: {
-            Label("Delete", systemImage: "trash")
-        }
+        clipboardButtons
+
+        Divider()
+
+        moveToTrashButton
     }
 
     @ViewBuilder
     private func documentContextMenu(for document: WorkspaceDocument) -> some View {
-        Button {
-            renameDocument(document)
-        } label: {
-            Label("Rename", systemImage: "pencil")
-        }
-
-        Button {
-            copyPath(document)
-        } label: {
-            Label("Copy Path", systemImage: "link")
-        }
-
-        Button {
-            copyRelativePath(document)
-        } label: {
-            Label("Copy Relative Path", systemImage: "doc.on.doc")
-        }
-
-        Button {
-            revealInFinder(document)
-        } label: {
-            Label("Reveal in Finder", systemImage: MonknotWorkspaceIcons.revealInFinder)
-        }
+        renameButton
+        locationButtons
 
         if document.capabilities.canExportPDF {
             Button {
-                exportPDF(document)
+                actions.exportPDF(document)
             } label: {
                 Label("Export PDF…", systemImage: MonknotWorkspaceIcons.exportPDF)
             }
@@ -1463,35 +1474,103 @@ private struct SidebarNodeRow: View {
 
         Divider()
 
+        clipboardButtons
+
         Button {
-            copyDocument(document)
+            actions.duplicate(item.url)
+        } label: {
+            Label("Duplicate", systemImage: "plus.square.on.square")
+        }
+        .disabled(isBusy)
+
+        Divider()
+
+        moveToTrashButton
+    }
+
+    private var renameButton: some View {
+        Button {
+            actions.rename(visibleNode)
+        } label: {
+            Label("Rename", systemImage: "pencil")
+        }
+        .disabled(isBusy)
+    }
+
+    @ViewBuilder
+    private var locationButtons: some View {
+        Button {
+            actions.copyPath(item.url)
+        } label: {
+            Label("Copy Path", systemImage: MonknotWorkspaceIcons.copyPath)
+        }
+
+        Button {
+            actions.copyRelativePath(item.url)
+        } label: {
+            Label("Copy Relative Path", systemImage: "doc.on.doc")
+        }
+
+        Button {
+            actions.revealInFinder(item.url)
+        } label: {
+            Label("Reveal in Finder", systemImage: MonknotWorkspaceIcons.revealInFinder)
+        }
+    }
+
+    @ViewBuilder
+    private var clipboardButtons: some View {
+        Button {
+            actions.copy(item.url)
         } label: {
             Label("Copy", systemImage: "doc.on.doc")
         }
 
         Button {
-            cutDocument(document)
+            actions.cut(item.url)
         } label: {
             Label("Cut", systemImage: "scissors")
         }
+        .disabled(isBusy)
 
-        Divider()
-
-        Button(role: .destructive) {
-            deleteDocument(document)
+        Button {
+            actions.paste(destinationURL)
         } label: {
-            Label("Delete", systemImage: "trash")
+            Label("Paste", systemImage: "doc.on.clipboard")
         }
+        .disabled(isBusy)
     }
 
+    private var moveToTrashButton: some View {
+        Button(role: .destructive) {
+            actions.moveToTrash(visibleNode)
+        } label: {
+            Label("Move to Trash", systemImage: "trash")
+        }
+        .disabled(isBusy)
+    }
+
+    /// Takes precedence over the row's button, so a drag never also opens the file or toggles the
+    /// folder; a click that does not move still does.
     private var sidebarMoveGesture: some Gesture {
         DragGesture(minimumDistance: scaled(4), coordinateSpace: .named(SidebarMoveCoordinateSpace.name))
             .onChanged { value in
-                dragChanged(node.id, value.location)
+                actions.dragChanged(node.id, value.location)
             }
             .onEnded { value in
-                dragEnded(node.id, value.location)
+                actions.dragEnded(node.id, value.location)
             }
+    }
+
+    private func dropFileURLs(_ urls: [URL], at location: CGPoint) -> Bool {
+        let fileURLs = urls.filter(\.isFileURL)
+        guard !fileURLs.isEmpty else { return false }
+        actions.dropFileURLs(fileURLs, destinationURL)
+        return true
+    }
+
+    private func dropTargetingChanged(_ isTargeted: Bool) {
+        actions.dropTargetingChanged(node.id, destinationURL, isTargeted)
     }
 }
 
@@ -1880,6 +1959,8 @@ private struct SidebarRecentDocumentsSection: View {
     let availableSidebarHeight: CGFloat
     let kindGlyph: (RecentDocumentEntry) -> String
     let openDocument: (String) -> Void
+    let revealInFinder: (URL) -> Void
+    let copyPath: (URL) -> Void
     @State private var isExpanded = false
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -1950,6 +2031,9 @@ private struct SidebarRecentDocumentsSection: View {
                                 cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
                             ))
                             .help(entry.relativePath)
+                            .contextMenu {
+                                recentDocumentContextMenu(for: entry)
+                            }
                         }
                     }
                     .padding(.horizontal, scaled(6))
@@ -1957,6 +2041,31 @@ private struct SidebarRecentDocumentsSection: View {
                 .frame(height: viewportHeight)
                 .padding(.bottom, scaled(6))
             }
+        }
+    }
+
+    @ViewBuilder
+    private func recentDocumentContextMenu(for entry: RecentDocumentEntry) -> some View {
+        let url = URL(fileURLWithPath: entry.documentID)
+
+        Button {
+            openDocument(entry.documentID)
+        } label: {
+            Label("Open", systemImage: "doc")
+        }
+
+        Divider()
+
+        Button {
+            revealInFinder(url)
+        } label: {
+            Label("Reveal in Finder", systemImage: MonknotWorkspaceIcons.revealInFinder)
+        }
+
+        Button {
+            copyPath(url)
+        } label: {
+            Label("Copy Path", systemImage: MonknotWorkspaceIcons.copyPath)
         }
     }
 }
@@ -2224,8 +2333,10 @@ private struct SidebarNameInputSheet: View {
     let placeholder: String
     let confirmTitle: String
     let cancel: () -> Void
+    let validate: (String) -> String?
     let submitName: (String) -> Void
     @State private var name: String
+    @State private var validationMessage: String?
     @FocusState private var isNameFocused: Bool
 
     init(
@@ -2237,6 +2348,7 @@ private struct SidebarNameInputSheet: View {
         confirmTitle: String,
         initialName: String,
         cancel: @escaping () -> Void,
+        validate: @escaping (String) -> String?,
         submit: @escaping (String) -> Void
     ) {
         self.theme = theme
@@ -2246,8 +2358,13 @@ private struct SidebarNameInputSheet: View {
         self.placeholder = placeholder
         self.confirmTitle = confirmTitle
         self.cancel = cancel
+        self.validate = validate
         self.submitName = submit
         _name = State(initialValue: initialName)
+    }
+
+    private var isNameEmpty: Bool {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -2256,22 +2373,34 @@ private struct SidebarNameInputSheet: View {
 
     var body: some View {
         MonknotSheetLayout(title: title, message: message, theme: theme, zoomScale: zoomScale, width: 360) {
-            TextField(placeholder, text: $name)
-                .textFieldStyle(.plain)
-                .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
-                .foregroundStyle(theme.foregroundColor)
-                .focused($isNameFocused)
-                .onSubmit(submit)
-                .padding(.horizontal, scaled(10))
-                .frame(height: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale))
-                .background(
-                    RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                        .fill(theme.insetFillColor)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                        .strokeBorder(isNameFocused ? theme.accentColor : theme.borderColor, lineWidth: 1)
+            VStack(alignment: .leading, spacing: scaled(6)) {
+                TextField(placeholder, text: $name)
+                    .textFieldStyle(.plain)
+                    .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
+                    .foregroundStyle(theme.foregroundColor)
+                    .focused($isNameFocused)
+                    .onSubmit(submit)
+                    .padding(.horizontal, scaled(10))
+                    .frame(height: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale))
+                    .background(
+                        RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+                            .fill(theme.insetFillColor)
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+                            .strokeBorder(isNameFocused ? theme.accentColor : theme.borderColor, lineWidth: 1)
+                    }
+                    .onChange(of: name) { _, _ in
+                        validationMessage = nil
+                    }
+
+                if let validationMessage {
+                    Text(validationMessage)
+                        .font(.system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale)))
+                        .foregroundStyle(Color(nsColor: .systemRed))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+            }
         } buttons: {
             MonknotActionButton(
                 title: "Cancel",
@@ -2287,7 +2416,7 @@ private struct SidebarNameInputSheet: View {
                 role: .primary,
                 theme: theme,
                 zoomScale: zoomScale,
-                isDisabled: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                isDisabled: isNameEmpty,
                 action: submit
             )
             .keyboardShortcut(.defaultAction)
@@ -2297,7 +2426,13 @@ private struct SidebarNameInputSheet: View {
         }
     }
 
+    /// Keeps the sheet open with the reason inline when the name cannot be used.
     private func submit() {
+        guard !isNameEmpty else { return }
+        if let message = validate(name) {
+            validationMessage = message
+            return
+        }
         submitName(name)
     }
 }

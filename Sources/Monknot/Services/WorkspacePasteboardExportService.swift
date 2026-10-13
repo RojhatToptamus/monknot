@@ -4,24 +4,39 @@ import MonknotCore
 
 @MainActor
 enum WorkspacePasteboardExportService {
+    /// The copied workspace item's own URL, beside the exported snapshot that other apps read.
+    nonisolated static let workspaceFileURLType = NSPasteboard.PasteboardType("com.monknot.workspace-file-url")
+
     private static var exportedDirectoryURL: URL?
     private static var exportedPasteboardChangeCount: Int?
 
+    /// Puts a file snapshot (or a folder itself) on the pasteboard, as Finder's Copy does, together
+    /// with the item's workspace URL so Monknot can link to the original instead of importing a copy.
     static func copyFile(at url: URL, to pasteboard: NSPasteboard = .general) throws {
         let sourceURL = url.standardizedFileURL
-        let exportDirectoryURL = try makeExportDirectory()
-        let exportedURL = exportDirectoryURL.appendingPathComponent(sourceURL.lastPathComponent)
+        let isDirectory = (try? sourceURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        // Snapshotting a folder could copy a large tree, so a folder goes on the pasteboard as itself.
+        let exportDirectoryURL = isDirectory ? nil : try makeExportDirectory()
+        let exportedURL = exportDirectoryURL?.appendingPathComponent(sourceURL.lastPathComponent) ?? sourceURL
 
-        do {
-            try exportFile(at: sourceURL, to: exportedURL)
-        } catch {
-            try? FileManager.default.removeItem(at: exportDirectoryURL)
-            throw error
+        if let exportDirectoryURL {
+            do {
+                try exportFile(at: sourceURL, to: exportedURL)
+            } catch {
+                try? FileManager.default.removeItem(at: exportDirectoryURL)
+                throw error
+            }
         }
 
+        let item = NSPasteboardItem()
+        item.setString(exportedURL.absoluteString, forType: .fileURL)
+        item.setString(sourceURL.absoluteString, forType: workspaceFileURLType)
+
         pasteboard.clearContents()
-        guard pasteboard.writeObjects([exportedURL as NSURL]) else {
-            try? FileManager.default.removeItem(at: exportDirectoryURL)
+        guard pasteboard.writeObjects([item]) else {
+            if let exportDirectoryURL {
+                try? FileManager.default.removeItem(at: exportDirectoryURL)
+            }
             throw WorkspacePasteboardExportError.couldNotWritePasteboard
         }
 
@@ -43,8 +58,7 @@ enum WorkspacePasteboardExportService {
             throw WorkspacePasteboardExportError.emptyText
         }
 
-        let wasOwnedFileTransfer = exportedDirectoryURL != nil
-            && exportedPasteboardChangeCount == pasteboard.changeCount
+        let wasOwnedFileTransfer = exportedPasteboardChangeCount == pasteboard.changeCount
         guard let previousItems = copiedPasteboardItems(pasteboard.pasteboardItems ?? []) else {
             throw WorkspacePasteboardExportError.couldNotWritePasteboard
         }
@@ -80,8 +94,21 @@ enum WorkspacePasteboardExportService {
         return relativePath
     }
 
+    /// The workspace items a Monknot Copy or Cut put on the pasteboard, when they still exist.
+    nonisolated static func workspaceFileURLs(on pasteboard: NSPasteboard) -> [URL]? {
+        let urls = (pasteboard.pasteboardItems ?? []).compactMap { item -> URL? in
+            guard let string = item.string(forType: workspaceFileURLType),
+                  let url = URL(string: string),
+                  url.isFileURL,
+                  FileManager.default.fileExists(atPath: url.path)
+            else { return nil }
+            return url
+        }
+        return urls.isEmpty ? nil : urls
+    }
+
     static func ownsPasteboard(_ pasteboard: NSPasteboard = .general) -> Bool {
-        guard exportedDirectoryURL != nil else { return false }
+        guard exportedPasteboardChangeCount != nil else { return false }
 
         if exportedPasteboardChangeCount == pasteboard.changeCount {
             return true
