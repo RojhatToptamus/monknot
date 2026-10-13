@@ -119,7 +119,8 @@ struct SidebarView: View {
         .onChange(of: store.selectedDocumentID ?? "") {
             expandAncestorsForSelectedDocument()
         }
-        .onChange(of: store.documents) { _, _ in
+        // The rows come from the tree, which also changes without the documents (an empty folder).
+        .onChange(of: store.rootNodeRevision) { _, _ in
             refreshVisibleNodes()
         }
         .onChange(of: store.recentDocumentChangeSerial) { _, _ in

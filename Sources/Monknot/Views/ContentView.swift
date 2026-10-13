@@ -362,7 +362,6 @@ struct ContentView: View {
                     theme: activeTheme,
                     zoomScale: zoomScale
                 ),
-                usesDarkAppearance: activeTheme.isDark,
                 enablesStandardWindowControls: true
             ))
             .background(WindowCloseGuard(
@@ -370,7 +369,6 @@ struct ContentView: View {
                 shouldClose: { await prepareForWindowClose() }
             ))
             .background(KeyboardShortcutMonitor(handler: handleKeyDown))
-            .preferredColorScheme(themePreference.preferredColorScheme)
             .accentColor(activeTheme.accentColor)
         )
     }

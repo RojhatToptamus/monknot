@@ -16,7 +16,6 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
     var suppressToolbarButton: Bool = true
     var trafficLightRowHeight: CGFloat?
     var trafficLightLeadingInset: CGFloat?
-    var usesDarkAppearance: Bool?
     var windowTitle: String?
     var enablesStandardWindowControls = false
 
@@ -63,9 +62,6 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             window.isOpaque = true
             if #available(macOS 11.0, *) {
                 window.titlebarSeparatorStyle = .none
-            }
-            if let usesDarkAppearance {
-                window.appearance = NSAppearance(named: usesDarkAppearance ? .darkAqua : .aqua)
             }
 
             coordinator.observeWindow(window)

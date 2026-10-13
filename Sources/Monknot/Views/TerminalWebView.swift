@@ -611,15 +611,6 @@ struct TerminalWebView: NSViewRepresentable {
             });
           }
 
-          function writeAndFollow(data) {
-            if (disposed) return;
-            const buffer = term.buffer.active;
-            const wasAtBottom = buffer.baseY - buffer.viewportY <= 0;
-            term.write(data, () => {
-              if (wasAtBottom) term.scrollToBottom();
-            });
-          }
-
           function bytesFromBase64(encoded) {
             const binary = atob(encoded);
             const bytes = new Uint8Array(binary.length);
@@ -639,8 +630,10 @@ struct TerminalWebView: NSViewRepresentable {
               notifyResize();
             }
             const bytes = bytesFromBase64(encoded);
+            // xterm.js follows output only while the view is at the bottom, so reading back through
+            // the scrollback is never pulled down by new output.
             if (!options.quiet) {
-              writeAndFollow(bytes);
+              term.write(bytes);
               return;
             }
             quietWrites += 1;

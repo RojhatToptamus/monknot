@@ -1,15 +1,16 @@
+import AppKit
 import MonknotCore
-import SwiftUI
 
 extension ThemePreference {
-    var preferredColorScheme: ColorScheme? {
+    /// The appearance the app adopts; nil follows macOS.
+    var appAppearance: NSAppearance? {
         switch self {
         case .system:
             return nil
         case .light:
-            return .light
+            return NSAppearance(named: .aqua)
         case .dark:
-            return .dark
+            return NSAppearance(named: .darkAqua)
         }
     }
 

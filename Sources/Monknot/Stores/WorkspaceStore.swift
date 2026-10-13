@@ -13,7 +13,11 @@ struct DocumentLoadFailure: Equatable {
 final class WorkspaceStore: ObservableObject {
     @Published private(set) var workspaceURL: URL?
     @Published private(set) var openingWorkspaceURL: URL?
-    @Published private(set) var rootNode: SidebarNode?
+    @Published private(set) var rootNode: SidebarNode? {
+        didSet { rootNodeRevision &+= 1 }
+    }
+    /// Changes with every new tree, so views can follow the tree without comparing it.
+    @Published private(set) var rootNodeRevision = 0
     @Published private(set) var documents: [WorkspaceDocument] = []
     private(set) var markdownDocuments: [WorkspaceDocument] = []
     private(set) var hasPDFDocuments = false

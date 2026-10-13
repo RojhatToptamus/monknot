@@ -89,13 +89,11 @@ struct PreferencesView: View {
             WindowBackgroundDragEnabler(
                 surfaceColor: panelTheme.sidebarSurfaceColor,
                 suppressToolbarButton: true,
-                usesDarkAppearance: panelTheme.isDark,
                 windowTitle: selectedSection.rawValue,
                 enablesStandardWindowControls: true
             )
         )
         .environment(\.monknotSettingsZoomScale, settingsZoomScale)
-        .preferredColorScheme(themePreference.preferredColorScheme)
     }
 
     private var settingsSidebar: some View {

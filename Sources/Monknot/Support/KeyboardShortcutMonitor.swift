@@ -2,6 +2,7 @@ import AppKit
 import MonknotCore
 import PDFKit
 import SwiftUI
+import WebKit
 
 struct KeyboardShortcutMonitor: NSViewRepresentable {
     var handler: (NSEvent) -> Bool
@@ -251,13 +252,15 @@ enum MonknotNativePasteboardCommand {
         return monknotIsNativeTextTarget(target)
     }
 
-    private static func monknotIsNativeTextTarget(_ target: Any) -> Bool {
+    static func monknotIsNativeTextTarget(_ target: Any) -> Bool {
         if target is NSTextView || target is NSTextField {
             return true
         }
 
-        let targetTypeName = String(describing: Swift.type(of: target))
-        return targetTypeName.hasPrefix("WK") || targetTypeName.contains("WKContent")
+        // A web view (the terminal, a preview) handles the clipboard itself, whichever of its views
+        // has focus.
+        guard let view = target as? NSView else { return false }
+        return sequence(first: view, next: \.superview).contains { $0 is WKWebView }
     }
 }
 

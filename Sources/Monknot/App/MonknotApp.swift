@@ -13,6 +13,7 @@ struct MonknotApp: App {
     @StateObject private var workspaceRestoration = InitialWorkspaceRestorationCoordinator()
     @StateObject private var workspaceLibrary = WorkspaceLibraryStore()
     @StateObject private var themeStore = ThemeSettingsStore()
+    @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.defaultValue.rawValue
     private let workspaceWindowRequests = WorkspaceWindowRequestCenter.shared
     private let updaterController = SPUStandardUpdaterController(
         startingUpdater: true,
@@ -40,6 +41,10 @@ struct MonknotApp: App {
             MonknotWorkspaceWindowRequest()
         }
         .windowStyle(.hiddenTitleBar)
+        // Every window, Settings included, inherits the app's appearance; System leaves it to macOS.
+        .onChange(of: themePreferenceRawValue, initial: true) { _, rawValue in
+            NSApp.appearance = ThemePreference.resolved(rawValue: rawValue).appAppearance
+        }
         // External opens are routed by AppDelegate through WorkspaceWindowRequestCenter.
         .handlesExternalEvents(matching: [])
         .commands {
