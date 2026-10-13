@@ -293,7 +293,7 @@ struct ContentView: View {
     @State private var isExportingPDF = false
     @State private var isResolvingUnsavedChanges = false
     @State private var isKeyboardShortcutsHelpPresented = false
-    @Environment(\.colorScheme) private var systemColorScheme
+    @ObservedObject private var systemAppearance = SystemAppearanceMonitor.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.openSettings) private var openSettings
     private let tabStatePersistence = WorkspaceTabStatePersistence()
@@ -336,7 +336,7 @@ struct ContentView: View {
     private var activeTheme: AppTheme {
         themeStore.activeTheme(
             themePreference: themePreference,
-            systemAppearance: systemColorScheme == .dark ? .dark : .light
+            systemAppearance: systemAppearance.appearance
         )
     }
 
@@ -354,6 +354,7 @@ struct ContentView: View {
             .background(activeTheme.surfaceColor)
             .background(WindowChromeConfigurator(
                 surfaceColor: activeTheme.surfaceColor,
+                isDark: activeTheme.isDark,
                 trafficLightRowHeight: MonknotMetrics.chromeHeight(
                     theme: activeTheme,
                     zoomScale: zoomScale
@@ -2877,8 +2878,8 @@ struct ContentView: View {
         let updatesEffectiveState = isTerminalVisible != isPresented
         guard updatesPreference || updatesEffectiveState else {
             if !userInitiated, !isPresented, terminalPreferredVisible {
-                // A forced native report after an infeasible explicit reveal
-                // cancels the focus capture without moving keyboard focus.
+                // A pane AppKit keeps closed cancels the focus capture without
+                // moving keyboard focus.
                 terminalFocusRestorer.discard()
             }
             return
@@ -2888,9 +2889,11 @@ struct ContentView: View {
             terminalFocusRestorer.capture(from: responderWindow)
         }
 
+        // A pane AppKit closes on its own, for a reveal that can't fit or a narrowing window,
+        // takes focus back only if it had it.
         let shouldRestoreDocumentFocus = isTerminalVisible && !isPresented
             && (terminalPanelOwnsFocus
-                || !TerminalFocusRestorer.hasVisibleContentResponder(in: responderWindow))
+                || (userInitiated && !TerminalFocusRestorer.hasVisibleContentResponder(in: responderWindow)))
         updateChromeState(animated: false) {
             if userInitiated {
                 terminalPreferredVisible = isPresented

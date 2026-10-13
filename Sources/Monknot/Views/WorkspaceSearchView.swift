@@ -211,6 +211,8 @@ struct WorkspaceSearchView: View {
             .font(.system(size: textScaled(13)))
             .foregroundStyle(theme.foregroundColor)
             .onSubmit {
+                // Results from the previous query don't open while a new search runs.
+                guard !state.isSearching else { return }
                 if let selected = state.selectedResult ?? state.results.first {
                     openResult(selected)
                 }
@@ -518,6 +520,7 @@ struct WorkspaceSearchView: View {
             }
             .scrollContentBackground(.hidden)
             .opacity(state.isSearching ? Self.staleResultsOpacity : 1)
+            .allowsHitTesting(!state.isSearching)
             .animation(MonknotMotion.hoverAnimation, value: state.isSearching)
         }
     }
@@ -525,7 +528,7 @@ struct WorkspaceSearchView: View {
     /// One flat lazy list of file headers and matches, each with a fixed height, so the lazy stack
     /// estimates its length correctly. Rows are equatable: moving the selection redraws two rows.
     private var resultList: some View {
-        let query = state.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = state.resultsQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let locationWidthTemplates = WorkspaceSearchLocationColumn.widthTemplates(for: state.results)
         return LazyVStack(alignment: .leading, spacing: scaled(2)) {
             ForEach(WorkspaceSearchResultGrouping.listItems(from: groupedResults)) { item in

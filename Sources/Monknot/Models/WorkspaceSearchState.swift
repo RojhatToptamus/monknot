@@ -6,6 +6,8 @@ final class WorkspaceSearchState: ObservableObject {
     @Published var isPresented = false
     @Published private(set) var isSearching = false
     @Published private(set) var results: [WorkspaceSearchResult] = []
+    /// The query that produced `results`, which can trail `query` while a new search runs.
+    @Published private(set) var resultsQuery = ""
     @Published private(set) var selectedResultIndex = 0
     @Published private(set) var errorMessage: String?
     @Published private(set) var skippedLargeFileCount = 0
@@ -199,6 +201,7 @@ final class WorkspaceSearchState: ObservableObject {
                 await MainActor.run {
                     guard generation == self.searchGeneration else { return }
                     self.results = batch.results
+                    self.resultsQuery = query
                     self.skippedLargeFileCount = batch.skippedLargeFileCount
                     self.reachedMatchLimit = batch.reachedMatchLimit
                     self.truncatedDocumentIDs = batch.truncatedDocumentIDs

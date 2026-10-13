@@ -1553,9 +1553,16 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
             return
         }
 
+        guard let width = collapsedWidth(for: item) else { return }
         // Restoring lays the split out, and in a window too narrow for every pane AppKit may
-        // collapse or expand an item within that pass; its own restore must not start another.
-        guard !isRestoringRetainedWidth, let width = collapsedWidth(for: item) else { return }
+        // expand another item within that pass. That item restores once the pass is over.
+        guard !isRestoringRetainedWidth else {
+            DispatchQueue.main.async { [weak self, weak item] in
+                guard let self, let item, !item.isCollapsed else { return }
+                self.restoreCollapsedWidthIfNeeded(for: item)
+            }
+            return
+        }
         isRestoringRetainedWidth = true
         defer { isRestoringRetainedWidth = false }
         setCollapsedWidth(nil, for: item)
@@ -1815,9 +1822,9 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         finalRequestedPosition: CGFloat?
     ) {
         let draggedItem = dividerIndex == 0 ? sidebarItem : terminalItem
-        // Some AppKit releases clamp inspector tracking at its minimum and
-        // leave the pane expanded instead of honoring the native half-minimum
-        // collapse. Reconcile that gesture after AppKit releases tracking.
+        // AppKit can clamp divider tracking at a pane's minimum and leave the
+        // pane expanded instead of collapsing it past half its minimum.
+        // Reconcile that gesture after AppKit releases tracking.
         if widthBeforeDrag != nil,
            !draggedItem.isCollapsed,
            let finalRequestedPosition,

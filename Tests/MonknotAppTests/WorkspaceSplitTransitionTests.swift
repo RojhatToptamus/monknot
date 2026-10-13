@@ -193,6 +193,7 @@ final class WorkspaceSplitTransitionTests: WorkspaceSplitViewTestCase {
         }
         .background(WindowChromeConfigurator(
             surfaceColor: .black,
+            isDark: true,
             trafficLightRowHeight: 44,
             trafficLightLeadingInset: 16,
             enablesStandardWindowControls: true

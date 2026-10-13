@@ -305,10 +305,11 @@ private struct MarkdownOutlineHoverPanel: View {
                 .frame(height: 1)
 
             ScrollViewReader { scrollProxy in
+                let lineNumberWidthTemplate = lineNumberWidthTemplate
                 MonknotScrollView(theme: theme) {
                     LazyVStack(alignment: .leading, spacing: scaled(2)) {
                         ForEach(items) { item in
-                            outlineRow(for: item)
+                            outlineRow(for: item, lineNumberWidthTemplate: lineNumberWidthTemplate)
                                 .id(item.id)
                         }
                     }
@@ -369,7 +370,7 @@ private struct MarkdownOutlineHoverPanel: View {
         MonknotStableWidth.lineNumberTemplate(maximumLine: items.map(\.location.line).max() ?? 0)
     }
 
-    private func outlineRow(for item: MarkdownOutlineItem) -> some View {
+    private func outlineRow(for item: MarkdownOutlineItem, lineNumberWidthTemplate: String) -> some View {
         let isRevealed = item.id == revealedItemID
 
         return Button {

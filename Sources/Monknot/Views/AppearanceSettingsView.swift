@@ -5,7 +5,7 @@ struct AppearanceSettingsView: View {
     @ObservedObject var themeStore: ThemeSettingsStore
     let uiTheme: AppTheme
     @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.defaultValue.rawValue
-    @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var systemAppearance = SystemAppearanceMonitor.shared
     @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
     @State private var lightDraft = ThemeConfiguration(theme: AppTheme.defaultLight)
     @State private var darkDraft = ThemeConfiguration(theme: AppTheme.defaultDark)
@@ -20,7 +20,7 @@ struct AppearanceSettingsView: View {
     private var activeSlot: ThemeSlot {
         themeStore.activeSlot(
             themePreference: themePreference,
-            systemAppearance: colorScheme == .dark ? .dark : .light
+            systemAppearance: systemAppearance.appearance
         )
     }
 

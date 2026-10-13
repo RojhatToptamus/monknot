@@ -616,7 +616,6 @@ cat >"$INFO_PLIST" <<PLIST
       <array>
         <string>public.plain-text</string>
         <string>public.source-code</string>
-        <string>public.script</string>
         <string>public.json</string>
         <string>public.yaml</string>
         <string>public.xml</string>
@@ -634,7 +633,16 @@ cat >"$INFO_PLIST" <<PLIST
       <key>LSItemContentTypes</key>
       <array>
         <string>com.adobe.pdf</string>
-        <string>public.image</string>
+        <string>public.png</string>
+        <string>public.jpeg</string>
+        <string>com.compuserve.gif</string>
+        <string>public.heic</string>
+        <string>public.heif</string>
+        <string>public.tiff</string>
+        <string>org.webmproject.webp</string>
+        <string>com.microsoft.bmp</string>
+        <string>com.microsoft.ico</string>
+        <string>public.avif</string>
       </array>
     </dict>
   </array>
@@ -655,9 +663,24 @@ cat >"$INFO_PLIST" <<PLIST
       <key>NSSendFileTypes</key>
       <array>
         <string>public.folder</string>
-        <string>public.text</string>
+        <string>public.plain-text</string>
+        <string>public.source-code</string>
+        <string>public.json</string>
+        <string>public.yaml</string>
+        <string>public.xml</string>
+        <string>public.comma-separated-values-text</string>
+        <string>public.html</string>
         <string>com.adobe.pdf</string>
-        <string>public.image</string>
+        <string>public.png</string>
+        <string>public.jpeg</string>
+        <string>com.compuserve.gif</string>
+        <string>public.heic</string>
+        <string>public.heif</string>
+        <string>public.tiff</string>
+        <string>org.webmproject.webp</string>
+        <string>com.microsoft.bmp</string>
+        <string>com.microsoft.ico</string>
+        <string>public.avif</string>
       </array>
     </dict>
   </array>

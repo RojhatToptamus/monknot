@@ -4717,6 +4717,10 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
 
     override func layout() {
         super.layout()
+        // PDFKit configures its own scroll view and can replace it when the document changes.
+        if let scrollView = documentView?.enclosingScrollView {
+            MonknotScrollbarStyle.applyDocument(to: scrollView)
+        }
         updateFreeTextSelectionOverlay()
         updateFreeTextEditorFrame()
         if annotationMode == .select {

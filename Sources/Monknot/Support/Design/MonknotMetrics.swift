@@ -102,13 +102,6 @@ enum MonknotMetrics {
         interfaceDensity(windowNavigationLeadingGapBase, theme: theme, zoomScale: zoomScale)
     }
 
-    static func windowChromeLeadingReservedWidth(theme: AppTheme, zoomScale: Double) -> CGFloat {
-        trafficLightReserveBase
-            + windowNavigationLeadingGap(theme: theme, zoomScale: zoomScale)
-            + windowNavigationButtonDimension(theme: theme, zoomScale: zoomScale) * 2
-            + interfaceDensity(10, theme: theme, zoomScale: zoomScale)
-    }
-
 }
 
 /// Optical corrections for SF Symbols whose visible bounds are materially

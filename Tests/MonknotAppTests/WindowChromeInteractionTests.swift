@@ -57,7 +57,7 @@ final class WindowChromeInteractionTests: XCTestCase {
         )
         window.isMovableByWindowBackground = true
         let host = NSHostingView(rootView: Color.clear.background(
-            WindowChromeConfigurator(surfaceColor: .black)
+            WindowChromeConfigurator(surfaceColor: .black, isDark: true)
         ))
         window.contentView = host
 
@@ -433,27 +433,6 @@ final class WindowChromeInteractionTests: XCTestCase {
                 MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale),
                 accuracy: 0.01,
                 "Window navigation chrome height drifted at zoom \(zoomScale)"
-            )
-        }
-    }
-
-    func testWindowNavigationReserveContainsControlsAtEverySupportedZoom() {
-        let theme = AppTheme.defaultDark
-
-        for zoomScale in WorkspaceZoomPolicy.supportedLevels {
-            let buttonWidth = MonknotMetrics.windowNavigationButtonDimension(
-                theme: theme,
-                zoomScale: zoomScale
-            )
-            let controlsTrailingEdge = MonknotMetrics.trafficLightReserveBase
-                + MonknotMetrics.windowNavigationLeadingGap(theme: theme, zoomScale: zoomScale)
-                + buttonWidth * 2
-                + MonknotMetrics.scale(2, theme: theme, zoomScale: zoomScale)
-
-            XCTAssertGreaterThan(
-                MonknotMetrics.windowChromeLeadingReservedWidth(theme: theme, zoomScale: zoomScale),
-                controlsTrailingEdge,
-                "Window chrome reserve overlapped navigation controls at zoom \(zoomScale)"
             )
         }
     }

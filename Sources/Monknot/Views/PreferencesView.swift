@@ -32,7 +32,7 @@ struct PreferencesView: View {
     @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.defaultValue.rawValue
     @AppStorage("Monknot.settingsSection") private var selectedSectionRawValue = Section.general.rawValue
     @AppStorage("Monknot.zoomScale") private var persistedZoomScale = WorkspaceZoomPolicy.defaultValue
-    @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var systemAppearance = SystemAppearanceMonitor.shared
     @State private var hoveredSection: Section?
     @FocusState private var focusedSection: Section?
 
@@ -48,7 +48,7 @@ struct PreferencesView: View {
     private var panelTheme: AppTheme {
         themeStore.activeTheme(
             themePreference: themePreference,
-            systemAppearance: colorScheme == .dark ? .dark : .light
+            systemAppearance: systemAppearance.appearance
         )
     }
 
@@ -62,7 +62,10 @@ struct PreferencesView: View {
 
     private var windowSize: CGSize {
         let visible = NSScreen.main?.visibleFrame.size ?? .zero
-        let titlebarHeight: CGFloat = 28
+        let titlebarHeight = NSWindow.frameRect(
+            forContentRect: CGRect(x: 0, y: 0, width: 100, height: 100),
+            styleMask: [.titled, .closable]
+        ).height - 100
         return CGSize(
             width: min(scaled(MonknotMetrics.settingsWindowWidth), visible.width > 0 ? visible.width : .infinity),
             height: min(
@@ -99,6 +102,7 @@ struct PreferencesView: View {
         .background(
             WindowChromeConfigurator(
                 surfaceColor: panelTheme.sidebarSurfaceColor,
+                isDark: panelTheme.isDark,
                 windowTitle: selectedSection.rawValue,
                 enablesStandardWindowControls: true
             )

@@ -2281,6 +2281,11 @@ final class WorkspaceStore: ObservableObject {
             reloadSelection: reloadSelection,
             generation: generation
         )
+        if let selectedURL,
+           documentsByID[selectedURL.standardizedFileURL.path] == nil,
+           (try? selectedURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true {
+            errorMessage = "Monknot can't open “\(selectedURL.lastPathComponent)”."
+        }
     }
 
     private func finishWorkspaceOpenFailure(

@@ -1820,7 +1820,7 @@ private struct GitStatusBadge: View {
         Text(status.label)
             .font(.system(
                 size: MonknotMetrics.interfaceText(10, theme: theme, zoomScale: zoomScale),
-                weight: .semibold,
+                weight: .regular,
                 design: .monospaced
             ))
             .foregroundStyle(status.badgeForegroundColor(theme: theme))

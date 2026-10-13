@@ -177,7 +177,9 @@ struct HTMLPreviewView: NSViewRepresentable {
                 if (document.getElementById("monknot-html-content-width-style")) return;
                 const style = document.createElement("style");
                 style.id = "monknot-html-content-width-style";
+                // Zero specificity, so a page's own overflow rule wins.
                 style.textContent = `
+                  :where(html) { overflow-y: scroll; }
                   body {
                     box-sizing: border-box !important;
                     max-width: var(--monknot-content-max-width, 100%) !important;

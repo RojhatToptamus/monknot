@@ -12,6 +12,8 @@ extension NSUserInterfaceItemIdentifier {
 /// their inter-button spacing, targets, accessibility, and window behavior.
 struct WindowChromeConfigurator: NSViewRepresentable {
     var surfaceColor: Color
+    /// The window's controls, menus and scroll bars follow the theme surface, not the system.
+    var isDark: Bool
     var trafficLightRowHeight: CGFloat?
     var trafficLightLeadingInset: CGFloat?
     var windowTitle: String?
@@ -56,6 +58,8 @@ struct WindowChromeConfigurator: NSViewRepresentable {
             let backgroundColor = NSColor(surfaceColor)
             if window.backgroundColor != backgroundColor { window.backgroundColor = backgroundColor }
             if !window.isOpaque { window.isOpaque = true }
+            let appearanceName: NSAppearance.Name = isDark ? .darkAqua : .aqua
+            if window.appearance?.name != appearanceName { window.appearance = NSAppearance(named: appearanceName) }
             if window.titlebarSeparatorStyle != .none { window.titlebarSeparatorStyle = .none }
 
             coordinator.observeWindow(window)
