@@ -49,20 +49,17 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             // Deliberate title-bar gaps opt in to dragging below. Making the
             // whole background draggable lets transparent controls and editor
             // gaps accidentally move the window.
-            window.isMovableByWindowBackground = false
-            window.titlebarAppearsTransparent = true
-            if let windowTitle {
-                window.title = windowTitle
-                window.titleVisibility = .visible
-            } else {
-                window.titleVisibility = .hidden
-            }
-            window.styleMask.insert(.fullSizeContentView)
-            window.backgroundColor = NSColor(surfaceColor)
-            window.isOpaque = true
-            if #available(macOS 11.0, *) {
-                window.titlebarSeparatorStyle = .none
-            }
+            // Each change retiles or redraws the window, so only real changes are applied.
+            if window.isMovableByWindowBackground { window.isMovableByWindowBackground = false }
+            if !window.titlebarAppearsTransparent { window.titlebarAppearsTransparent = true }
+            if let windowTitle, window.title != windowTitle { window.title = windowTitle }
+            let titleVisibility: NSWindow.TitleVisibility = windowTitle == nil ? .hidden : .visible
+            if window.titleVisibility != titleVisibility { window.titleVisibility = titleVisibility }
+            if !window.styleMask.contains(.fullSizeContentView) { window.styleMask.insert(.fullSizeContentView) }
+            let backgroundColor = NSColor(surfaceColor)
+            if window.backgroundColor != backgroundColor { window.backgroundColor = backgroundColor }
+            if !window.isOpaque { window.isOpaque = true }
+            if window.titlebarSeparatorStyle != .none { window.titlebarSeparatorStyle = .none }
 
             coordinator.observeWindow(window)
             coordinator.configureWindowChrome(in: window)
@@ -110,15 +107,13 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             observedWindow = window
 
             let center = NotificationCenter.default
+            // The window retiles its titlebar on these; nothing else moves the traffic lights.
             let windowLayoutNames: [NSNotification.Name] = [
                 NSWindow.didResizeNotification,
                 NSWindow.didBecomeKeyNotification,
-                NSWindow.didResignKeyNotification,
                 NSWindow.didEnterFullScreenNotification,
                 NSWindow.didExitFullScreenNotification,
                 NSWindow.didChangeBackingPropertiesNotification,
-                NSWindow.didChangeOcclusionStateNotification,
-                NSWindow.didUpdateNotification
             ]
             for name in windowLayoutNames {
                 let token = center.addObserver(forName: name, object: window, queue: .main) { [weak self, weak window] _ in
@@ -140,7 +135,10 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
         }
 
         private func enableStandardWindowControls(in window: NSWindow) {
-            window.styleMask.formUnion([.closable, .miniaturizable, .resizable])
+            let controls: NSWindow.StyleMask = [.closable, .miniaturizable, .resizable]
+            if !window.styleMask.isSuperset(of: controls) {
+                window.styleMask.formUnion(controls)
+            }
             [
                 NSWindow.ButtonType.closeButton,
                 .miniaturizeButton,

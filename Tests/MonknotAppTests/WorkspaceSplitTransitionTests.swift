@@ -184,4 +184,53 @@ final class WorkspaceSplitTransitionTests: WorkspaceSplitViewTestCase {
         XCTAssertTrue(controller.sidebarItem.isCollapsed)
         XCTAssertTrue(controller.terminalItem.isCollapsed)
     }
+
+    func testTrafficLightsStayPutWhileSidePanesOpenAndClose() async throws {
+        let model = ChromeToggleModel(layoutScale: 1)
+        let root = VStack(spacing: 0) {
+            Color.gray.frame(height: 44)
+            ChromeToggleFixture(model: model)
+        }
+        .background(WindowBackgroundDragEnabler(
+            surfaceColor: .black,
+            trafficLightRowHeight: 44,
+            trafficLightLeadingInset: 16,
+            enablesStandardWindowControls: true
+        ))
+        let host = NSHostingView(rootView: root)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1_300, height: 700),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.titlebarAppearsTransparent = true
+        window.contentView = host
+        window.orderFront(nil)
+        defer {
+            window.orderOut(nil)
+            window.contentView = nil
+        }
+        try? await Task.sleep(nanoseconds: 500_000_000)
+
+        func closeButtonOrigin() throws -> CGPoint {
+            let button = try XCTUnwrap(window.standardWindowButton(.closeButton))
+            return button.convert(button.bounds, to: nil).origin
+        }
+        let resting = try closeButtonOrigin()
+        let toggles: [() -> Void] = [
+            { model.toggleSidebar(animated: true) },
+            { model.toggleSidebar(animated: true) },
+            { model.toggleTerminal(animated: true) },
+            { model.toggleTerminal(animated: true) },
+        ]
+        for toggle in toggles {
+            toggle()
+            let deadline = Date().addingTimeInterval(MonknotMotion.paneTransitionDuration * 1.6)
+            while Date() < deadline {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.004))
+                XCTAssertEqual(try closeButtonOrigin(), resting, "The traffic lights must not move with a side pane")
+            }
+        }
+    }
 }

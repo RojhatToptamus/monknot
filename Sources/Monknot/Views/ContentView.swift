@@ -867,9 +867,11 @@ struct ContentView: View {
         .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
     }
 
+    /// Stays mounted while a session exists, so the panel keeps its terminal while it slides
+    /// closed and shows it at once when it opens again.
     @ViewBuilder
     private var terminalContent: some View {
-        if terminalPreferredVisible {
+        if terminalPreferredVisible || terminalSessions.activeSession != nil {
             TerminalDrawerView(
                 sessions: terminalSessions,
                 workingDirectory: activeTerminalDirectory,
@@ -2851,11 +2853,12 @@ struct ContentView: View {
         let terminalOwnedFocus = terminalPanelOwnsFocus
         updateChromeState(animated: animated) {
             terminalPreferredVisible = isPresented
+            // The button reflects the request at once; a pane that cannot open reports back.
+            isTerminalVisible = isPresented
             if isPresented {
                 terminalRevealRequest &+= 1
             } else {
                 isTerminalFullscreen = false
-                isTerminalVisible = false
             }
         }
         if !isPresented {
@@ -2913,10 +2916,9 @@ struct ContentView: View {
         guard sidebarPreferredVisible != isPresented || isSidebarVisible != isPresented else { return }
         updateChromeState(animated: animated) {
             sidebarPreferredVisible = isPresented
+            isSidebarVisible = isPresented
             if isPresented {
                 sidebarRevealRequest &+= 1
-            } else {
-                isSidebarVisible = false
             }
         }
     }

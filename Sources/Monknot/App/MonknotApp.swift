@@ -36,11 +36,15 @@ struct MonknotApp: App {
                 terminationCoordinator: appDelegate.terminationCoordinator
             )
                 .background(WorkspaceWindowRequestInstaller(requestCenter: workspaceWindowRequests))
-                .frame(minWidth: 920, minHeight: 620)
+                .frame(
+                    minWidth: WorkspaceSplitMetrics.minimumWindowWidth,
+                    minHeight: WorkspaceSplitMetrics.minimumWindowHeight
+                )
         } defaultValue: {
             MonknotWorkspaceWindowRequest()
         }
         .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 1_200, height: 760)
         // Every window, Settings included, inherits the app's appearance; System leaves it to macOS.
         .onChange(of: themePreferenceRawValue, initial: true) { _, rawValue in
             NSApp.appearance = ThemePreference.resolved(rawValue: rawValue).appAppearance

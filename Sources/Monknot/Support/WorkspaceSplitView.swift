@@ -126,6 +126,10 @@ enum WorkspaceSplitMetrics {
     static let dividerHitWidth: CGFloat = 12
     static let dividerThickness: CGFloat = 3
     static let snapThresholdFraction: CGFloat = 0.5
+    /// The smallest window that fits the sidebar, document and terminal at 100% zoom.
+    static let minimumWindowWidth = sidebarMinimumWidth + detailMinimumWidth + terminalMinimumWidth
+        + 2 * dividerThickness
+    static let minimumWindowHeight: CGFloat = 620
     static let autosaveName = "Monknot.WorkspaceSplit.ThreePane"
     static let legacyAutosaveName = "Monknot.WorkspaceSplit"
     static let legacyTerminalWidthKey = "Monknot.terminalDrawerWidth"
@@ -183,6 +187,7 @@ final class WorkspaceNativeSplitView: NSSplitView {
     private(set) var hoveredDividerIndex: Int?
     private(set) var activeDividerIndex: Int?
     private var pointerTrackingArea: NSTrackingArea?
+    private var lastLayoutHitRects: [NSRect] = []
 
     override var mouseDownCanMoveWindow: Bool { false }
     override var dividerThickness: CGFloat {
@@ -273,7 +278,11 @@ final class WorkspaceNativeSplitView: NSSplitView {
 
     override func layout() {
         super.layout()
-        window?.invalidateCursorRects(for: self)
+        let hitRects = dividerIndices.map { hitRect(forDividerAt: $0) }
+        if hitRects != lastLayoutHitRects {
+            lastLayoutHitRects = hitRects
+            window?.invalidateCursorRects(for: self)
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -555,7 +564,8 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
     private var isReconcilingTerminalFullscreen = false
     private var isReconcilingPresentation = false
     private var isChangingPressureDuringConstraint = false
-    private let migratesLegacyLayout: Bool
+    private var isRestoringRetainedWidth = false
+    private var migratesLegacyLayout: Bool
     private let workspaceSplitView: WorkspaceNativeSplitView
 
     init(
@@ -580,9 +590,12 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         terminalHostingController = NSHostingController(rootView: terminal)
         sidebarPane = WorkspaceSidePaneController(content: sidebarHostingController, edge: .leading)
         terminalPane = WorkspaceSidePaneController(content: terminalHostingController, edge: .trailing)
-        sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarPane)
+        // Plain items: sidebar and inspector items make the window retile its titlebar on every
+        // frame of a pane transition, which moves the traffic lights. configureItems() sets the
+        // collapse behavior those items would otherwise provide.
+        sidebarItem = NSSplitViewItem(viewController: sidebarPane)
         detailItem = NSSplitViewItem(viewController: detailHostingController)
-        terminalItem = NSSplitViewItem(inspectorWithViewController: terminalPane)
+        terminalItem = NSSplitViewItem(viewController: terminalPane)
         preferredSidebarPresentation = isSidebarPresented
         preferredTerminalPresentation = isTerminalPresented
         self.isTerminalFullscreen = isTerminalFullscreen && isTerminalPresented
@@ -660,7 +673,6 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         super.viewDidLayout()
         migrateLegacyLayoutIfNeeded()
         reconcilePresentation(animated: false)
-        reconcileTerminalFullscreen(animated: false)
     }
 
     /// The allocation supplied by the representable's parent. AppKit can
@@ -962,7 +974,6 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         sidebarItem.canCollapse = true
         sidebarItem.canCollapseFromWindowResize = true
         sidebarItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
-        sidebarItem.isSpringLoaded = false
 
         detailItem.minimumThickness = isTerminalFullscreen
             ? 0
@@ -981,7 +992,6 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         terminalItem.canCollapse = !isTerminalFullscreen
         terminalItem.canCollapseFromWindowResize = !isTerminalFullscreen
         terminalItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
-        terminalItem.isSpringLoaded = false
 
         workspaceSplitView.dividerHitWidth = WorkspaceSplitMetrics.dividerHitWidth * scale
     }
@@ -1068,9 +1078,10 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
     /// terminal-width preference once. AppKit reads its own legacy autosave;
     /// Monknot does not inspect or copy NSSplitView's private defaults keys.
     private func migrateLegacyLayoutIfNeeded() {
-        guard migratesLegacyLayout,
-              availableLayoutWidth > 0,
-              !UserDefaults.standard.bool(forKey: WorkspaceSplitMetrics.migrationMarkerKey) else {
+        guard migratesLegacyLayout, availableLayoutWidth > 0 else { return }
+        // Checked once: this runs on every layout pass.
+        migratesLegacyLayout = false
+        guard !UserDefaults.standard.bool(forKey: WorkspaceSplitMetrics.migrationMarkerKey) else {
             return
         }
 
@@ -1542,7 +1553,11 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
             return
         }
 
-        guard let width = collapsedWidth(for: item) else { return }
+        // Restoring lays the split out, and in a window too narrow for every pane AppKit may
+        // collapse or expand an item within that pass; its own restore must not start another.
+        guard !isRestoringRetainedWidth, let width = collapsedWidth(for: item) else { return }
+        isRestoringRetainedWidth = true
+        defer { isRestoringRetainedWidth = false }
         setCollapsedWidth(nil, for: item)
         splitView.layoutSubtreeIfNeeded()
         restoreNativeRetainedWidth(width, for: item)
