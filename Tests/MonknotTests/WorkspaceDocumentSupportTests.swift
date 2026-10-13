@@ -13,6 +13,39 @@ final class WorkspaceDocumentSupportTests: XCTestCase {
         )
     }
 
+    func testAvailableCopyURLKeepsFolderNamesWholeAndExtensionsLast() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for name in ["v1.2", "photo.png", "Release.app", "Makefile"] {
+            try FileManager.default.createDirectory(
+                at: root.appendingPathComponent(name),
+                withIntermediateDirectories: true
+            )
+        }
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("v1.2 copy"),
+            withIntermediateDirectories: true
+        )
+
+        func copyName(_ name: String, isDirectory: Bool) -> String {
+            WorkspaceDocumentSupport.availableCopyURL(named: name, isDirectory: isDirectory, in: root)
+                .lastPathComponent
+        }
+        XCTAssertEqual(copyName("v1.2", isDirectory: true), "v1.2 copy 2")
+        XCTAssertEqual(copyName("photo.png", isDirectory: false), "photo copy.png")
+        XCTAssertEqual(copyName("Release.app", isDirectory: true), "Release copy.app")
+        XCTAssertEqual(copyName("Makefile", isDirectory: false), "Makefile copy")
+        XCTAssertEqual(copyName("new.md", isDirectory: false), "new.md")
+    }
+
+    func testIsURLContainedInComparesWholePathComponents() {
+        let root = URL(fileURLWithPath: "/tmp/Work")
+        XCTAssertTrue(WorkspaceDocumentSupport.isURL(root, containedIn: root))
+        XCTAssertTrue(WorkspaceDocumentSupport.isURL(URL(fileURLWithPath: "/tmp/Work/a/b.md"), containedIn: root))
+        XCTAssertFalse(WorkspaceDocumentSupport.isURL(URL(fileURLWithPath: "/tmp/Workshop/b.md"), containedIn: root))
+        XCTAssertFalse(WorkspaceDocumentSupport.isURL(URL(fileURLWithPath: "/tmp"), containedIn: root))
+    }
+
     func testValidatedRelativePathReturnsPlainPOSIXPathsForFilesAndFolders() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

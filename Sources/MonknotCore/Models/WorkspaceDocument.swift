@@ -150,8 +150,59 @@ public enum WorkspaceDocumentSupport {
 
     /// Whether a file with this name is listed as a workspace document.
     public static func isWorkspaceDocumentName(_ name: String) -> Bool {
-        let url = URL(fileURLWithPath: name)
-        return shouldIncludeInWorkspaceScan(url) && classification(for: url).kind != .unsupported
+        workspaceClassification(for: URL(fileURLWithPath: name)) != nil
+    }
+
+    /// The classification of a file the workspace scan lists, or nil for a file it leaves out.
+    public static func workspaceClassification(for url: URL) -> Classification? {
+        guard shouldIncludeInWorkspaceScan(url) else { return nil }
+        let classification = classification(for: url)
+        return classification.kind == .unsupported ? nil : classification
+    }
+
+    /// Whether a folder with this name is a package, such as `Release.app` or `Notes.rtfd`, which
+    /// Finder shows as a single item.
+    public static func isPackageName(_ name: String) -> Bool {
+        let pathExtension = (name as NSString).pathExtension
+        guard !pathExtension.isEmpty,
+              let type = UTType(filenameExtension: pathExtension, conformingTo: .package)
+        else { return false }
+        return !type.isDynamic
+    }
+
+    /// `name` in `directoryURL`, or when that is taken, the first free "name copy", "name copy 2", ….
+    /// A file or package keeps its extension last ("photo copy.png"); a folder's name is used whole,
+    /// so "v1.2" becomes "v1.2 copy".
+    public static func availableCopyURL(
+        named name: String,
+        isDirectory: Bool,
+        in directoryURL: URL,
+        fileManager: FileManager = .default
+    ) -> URL {
+        var candidate = directoryURL.appendingPathComponent(name)
+        guard fileManager.fileExists(atPath: candidate.path) else { return candidate }
+
+        let splitsExtension = !isDirectory || isPackageName(name)
+        let pathExtension = splitsExtension ? (name as NSString).pathExtension : ""
+        let baseName = pathExtension.isEmpty ? name : (name as NSString).deletingPathExtension
+        var index = 1
+        repeat {
+            let suffix = index == 1 ? " copy" : " copy \(index)"
+            let copyName = pathExtension.isEmpty
+                ? "\(baseName)\(suffix)"
+                : "\(baseName)\(suffix).\(pathExtension)"
+            candidate = directoryURL.appendingPathComponent(copyName)
+            index += 1
+        } while fileManager.fileExists(atPath: candidate.path)
+        return candidate
+    }
+
+    /// Whether `url` is `directoryURL` or inside it, comparing standardized paths.
+    public static func isURL(_ url: URL, containedIn directoryURL: URL) -> Bool {
+        let path = url.standardizedFileURL.path
+        let directoryPath = directoryURL.standardizedFileURL.path
+        let prefix = directoryPath.hasSuffix("/") ? directoryPath : directoryPath + "/"
+        return path == directoryPath || path.hasPrefix(prefix)
     }
 
     public static func shouldIncludeInWorkspaceScan(_ url: URL) -> Bool {

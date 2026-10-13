@@ -13,17 +13,20 @@ public enum WorkspaceScanResultPatcher {
 
         for path in changedPaths {
             let url = URL(fileURLWithPath: path).standardizedFileURL
-            guard isURL(url, containedIn: rootURL) else { continue }
+            guard WorkspaceDocumentSupport.isURL(url, containedIn: rootURL) else { continue }
             guard url != rootURL else { return nil }
 
             let fileManager = FileManager.default
             if fileManager.fileExists(atPath: url.path) {
-                guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]) else {
+                guard let values = try? url.resourceValues(
+                    forKeys: [.isDirectoryKey, .isRegularFileKey, .isPackageKey, .isSymbolicLinkKey]
+                ) else {
                     return nil
                 }
                 if values.isDirectory == true {
                     let existingNode = findNode(id: url.path, in: rootNode)
-                    if shouldSkipDirectory(url, rootURL: rootURL, ignoredDirectoryNames: ignoredDirectoryNames) {
+                    if values.isPackage == true
+                        || shouldSkipDirectory(url, rootURL: rootURL, ignoredDirectoryNames: ignoredDirectoryNames) {
                         if existingNode?.kind == .folder {
                             removeDocuments(containedIn: url, from: &documentsByID)
                             rootNode = removingNode(id: url.path, from: rootNode)
@@ -53,19 +56,9 @@ public enum WorkspaceScanResultPatcher {
                     rootNode = removingNode(id: url.path, from: rootNode)
                     continue
                 }
-                guard !shouldSkipFile(url, rootURL: rootURL, ignoredDirectoryNames: ignoredDirectoryNames) else {
-                    documentsByID.removeValue(forKey: url.path)
-                    rootNode = removingNode(id: url.path, from: rootNode)
-                    continue
-                }
-                guard WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(url) else {
-                    documentsByID.removeValue(forKey: url.path)
-                    rootNode = removingNode(id: url.path, from: rootNode)
-                    continue
-                }
-
-                let classification = WorkspaceDocumentSupport.classification(for: url)
-                guard classification.kind != .unsupported else {
+                guard !shouldSkipFile(url, rootURL: rootURL, ignoredDirectoryNames: ignoredDirectoryNames),
+                      let classification = WorkspaceDocumentSupport.workspaceClassification(for: url)
+                else {
                     documentsByID.removeValue(forKey: url.path)
                     rootNode = removingNode(id: url.path, from: rootNode)
                     continue
@@ -251,10 +244,9 @@ public enum WorkspaceScanResultPatcher {
                 )
                 children.append(child)
             } else if values.isRegularFile == true, values.isSymbolicLink != true {
-                guard WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(url) else { continue }
-
-                let classification = WorkspaceDocumentSupport.classification(for: url)
-                guard classification.kind != .unsupported else { continue }
+                guard let classification = WorkspaceDocumentSupport.workspaceClassification(for: url) else {
+                    continue
+                }
 
                 let document = WorkspaceDocument(url: url, rootURL: rootURL, classification: classification)
                 documentsByID[document.id] = document
@@ -348,12 +340,5 @@ public enum WorkspaceScanResultPatcher {
             }
             return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
         }
-    }
-
-    private static func isURL(_ candidate: URL, containedIn directory: URL) -> Bool {
-        let candidatePath = candidate.standardizedFileURL.path
-        let directoryPath = directory.standardizedFileURL.path
-        let prefix = directoryPath.hasSuffix("/") ? directoryPath : directoryPath + "/"
-        return candidatePath == directoryPath || candidatePath.hasPrefix(prefix)
     }
 }

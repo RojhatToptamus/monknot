@@ -38,6 +38,30 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
         XCTAssertEqual(result.root.children?.first(where: { $0.name == "Notes" })?.children?.map(\.name), ["image.png", "Todo.markdown"])
     }
 
+    /// A folder named like a package is skipped by the scan, so the name check reports it hidden.
+    func testPackageNamedFoldersAreHiddenLikeTheScanSkipsThem() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        for name in ["Release.app", "X.bundle", "Notes.rtfd", "Folder", "v1.2", "Kit.framework"] {
+            let folder = root.appendingPathComponent(name, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try write("# Inside", to: folder.appendingPathComponent("Inside.md"))
+        }
+
+        let result = try WorkspaceDocumentScanner().scan(rootURL: root)
+        let listed = Set(result.root.children?.map(\.name) ?? [])
+        for name in ["Release.app", "X.bundle", "Notes.rtfd", "Folder", "v1.2", "Kit.framework"] {
+            XCTAssertEqual(
+                WorkspaceDocumentScanner.hidesItem(named: name, isDirectory: true),
+                !listed.contains(name),
+                name
+            )
+        }
+        XCTAssertEqual(listed, ["Folder", "v1.2", "Kit.framework"])
+        XCTAssertFalse(WorkspaceDocumentScanner.hidesItem(named: "Release.app.md", isDirectory: false))
+    }
+
     func testScannerSkipsSymbolicLinkDirectories() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
