@@ -579,7 +579,9 @@ cells switch how one pane renders.
 
 **Disabled, not hidden.** For PDFs, images and plain text the view-mode control takes the disabled treatment of
 §5.1: `ink4` glyphs, its border at 40 %, and no selected cell. Controls never appear or disappear
-between file kinds — the toolbar must not reflow.
+between file kinds — the toolbar must not reflow. The same holds for the Markdown toolbar row under
+the titlebar: an editable Markdown document keeps it in Preview, its controls disabled, so switching
+view mode never moves the document.
 
 ### 10.3 Tab strip — hug, cap, scroll
 

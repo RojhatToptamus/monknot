@@ -144,14 +144,16 @@ struct EditorPaneView: View {
             }
     }
 
-    private var showsMarkdownSourceSubchrome: Bool {
-        guard let document = store.selectedDocument,
-              document.kind == .markdown,
-              document.capabilities.canEditText
-        else {
-            return false
-        }
-        return editorMode == .source || isSplitViewEnabled
+    /// An editable Markdown document keeps its toolbar row in every view mode, so switching between
+    /// Source and Preview never moves the document.
+    private var showsMarkdownToolbar: Bool {
+        guard let document = store.selectedDocument else { return false }
+        return document.kind == .markdown && document.capabilities.canEditText
+    }
+
+    /// The toolbar edits the source, so it acts only while the source is on screen.
+    private var isMarkdownToolbarEnabled: Bool {
+        (editorMode == .source || isSplitViewEnabled) && store.activeWritingToolsDocumentID == nil
     }
 
     private func supportsSplitViewRatioPersistence(forDocumentID documentID: String) -> Bool {
@@ -161,7 +163,7 @@ struct EditorPaneView: View {
 
     private var editorColumn: some View {
         VStack(spacing: 0) {
-            if showsMarkdownSourceSubchrome {
+            if showsMarkdownToolbar {
                 MonknotChromePanel(theme: theme) {
                     MarkdownSourceToolbar(
                         theme: theme,
@@ -170,7 +172,7 @@ struct EditorPaneView: View {
                         sendCommand: sendMarkdownCommand
                     )
                     .equatable()
-                    .disabled(store.activeWritingToolsDocumentID != nil)
+                    .disabled(!isMarkdownToolbarEnabled)
                 }
             }
 
@@ -187,7 +189,7 @@ struct EditorPaneView: View {
     }
 
     private func sendMarkdownCommand(_ command: MarkdownTextEditorCommand) {
-        guard store.activeWritingToolsDocumentID == nil else { return }
+        guard isMarkdownToolbarEnabled else { return }
         markdownCommandSerial += 1
         markdownCommandRequest = MarkdownTextEditorCommandRequest(
             serial: markdownCommandSerial,
