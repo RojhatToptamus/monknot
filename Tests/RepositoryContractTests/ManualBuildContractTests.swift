@@ -83,7 +83,11 @@ final class ManualBuildContractTests: RepositoryContractTestCase {
         XCTAssertTrue(script.contains("<string>monknot</string>"))
         XCTAssertTrue(script.contains("<key>CFBundleDocumentTypes</key>"))
         XCTAssertTrue(script.contains("<string>public.folder</string>"))
-        XCTAssertTrue(script.contains("<string>public.data</string>"))
+        XCTAssertTrue(script.contains("<string>net.daringfireball.markdown</string>"))
+        // A public.data claim makes LaunchServices treat the app as a wildcard handler, which keeps it
+        // out of Finder's Open With menu for every specific file type.
+        XCTAssertFalse(script.contains("<string>public.data</string>"))
+        XCTAssertTrue(script.contains("<string>openInMonknot</string>"))
         XCTAssertTrue(script.contains("<key>LSSupportsOpeningDocumentsInPlace</key>"))
     }
 

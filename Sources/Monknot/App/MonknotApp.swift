@@ -259,6 +259,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Monknot has its own document tabs; the system's window tabs (Show Tab Bar, Merge All
         // Windows) offered a second, conflicting kind.
         NSWindow.allowsAutomaticWindowTabbing = false
+        // Before launch finishes, so a Finder service request that launches the app is delivered.
+        NSApp.servicesProvider = self
+    }
+
+    /// Finder's "Open in Monknot" service for files and folders (Info.plist `NSServices`).
+    @objc func openInMonknot(
+        _ pasteboard: NSPasteboard,
+        userData: String?,
+        error: AutoreleasingUnsafeMutablePointer<NSString>
+    ) {
+        let urls = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL] ?? []
+        guard !urls.isEmpty else {
+            error.pointee = "No files or folders were provided."
+            return
+        }
+        openWorkspaceItems(at: urls)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

@@ -566,7 +566,7 @@ cat >"$INFO_PLIST" <<PLIST
   <array>
     <dict>
       <key>CFBundleTypeName</key>
-      <string>Folders</string>
+      <string>Folder</string>
       <key>CFBundleTypeRole</key>
       <string>Viewer</string>
       <key>LSHandlerRank</key>
@@ -578,14 +578,85 @@ cat >"$INFO_PLIST" <<PLIST
     </dict>
     <dict>
       <key>CFBundleTypeName</key>
-      <string>Files</string>
+      <string>Markdown Document</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>net.daringfireball.markdown</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Markdown Document (Other Extensions)</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>mdown</string>
+        <string>mkd</string>
+        <string>mdx</string>
+        <string>mmd</string>
+        <string>mermaid</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Text Document</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.plain-text</string>
+        <string>public.source-code</string>
+        <string>public.script</string>
+        <string>public.json</string>
+        <string>public.yaml</string>
+        <string>public.xml</string>
+        <string>public.comma-separated-values-text</string>
+        <string>public.html</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>PDF or Image</string>
       <key>CFBundleTypeRole</key>
       <string>Viewer</string>
       <key>LSHandlerRank</key>
       <string>Alternate</string>
       <key>LSItemContentTypes</key>
       <array>
-        <string>public.data</string>
+        <string>com.adobe.pdf</string>
+        <string>public.image</string>
+      </array>
+    </dict>
+  </array>
+  <key>NSServices</key>
+  <array>
+    <dict>
+      <key>NSMenuItem</key>
+      <dict>
+        <key>default</key>
+        <string>Open in $APP_NAME</string>
+      </dict>
+      <key>NSMessage</key>
+      <string>openInMonknot</string>
+      <key>NSPortName</key>
+      <string>$APP_NAME</string>
+      <key>NSRequiredContext</key>
+      <dict/>
+      <key>NSSendFileTypes</key>
+      <array>
+        <string>public.folder</string>
+        <string>public.text</string>
+        <string>com.adobe.pdf</string>
+        <string>public.image</string>
       </array>
     </dict>
   </array>
@@ -638,6 +709,7 @@ verify_plist_value NSHumanReadableCopyright "$APP_COPYRIGHT"
 verify_plist_value SUFeedURL "$SPARKLE_FEED_URL"
 verify_plist_value SUPublicEDKey "$SPARKLE_PUBLIC_ED_KEY"
 verify_plist_value SURequireSignedFeed true
+verify_plist_value NSServices:0:NSMessage openInMonknot
 verify_plist_value SUVerifyUpdateBeforeExtraction true
 
 # Direct-distribution and local builds do not embed a provisioning profile.
