@@ -107,6 +107,7 @@ struct MonknotCommandMenu: Commands {
         monknotUndoCommandDestination(
             isPDFDocumentActive: actions?.isPDFDocumentActive == true,
             hasNativeEditingFocus: MonknotNativePasteboardCommand.hasNativeEditingFocus,
+            terminalHasFocus: MonknotNativeUndoCommand.terminalHasFocus,
             canPerformNative: MonknotNativeUndoCommand.canRedo,
             canPerformPDF: actions?.canRedoPDFAnnotation == true
         )
@@ -509,13 +510,18 @@ func monknotUndoCommandDestination(
     canPerformWorkspaceReplace: Bool = false,
     canPerformPDF: Bool
 ) -> MonknotUndoCommandDestination {
+    // The terminal keeps ⌘Z and ⇧⌘Z for its shell. The window's undo manager it would otherwise
+    // reach holds the editor's edits.
+    if terminalHasFocus {
+        return .unavailable
+    }
     if hasNativeEditingFocus {
         if canPerformNative {
             return .native
         }
         // Nothing to undo in the focused text: the workspace Replace All is next, as its
-        // confirmation promises that ⌘Z undoes it. The terminal keeps ⌘Z to itself.
-        return canPerformWorkspaceReplace && !terminalHasFocus ? .workspaceReplace : .unavailable
+        // confirmation promises that ⌘Z undoes it.
+        return canPerformWorkspaceReplace ? .workspaceReplace : .unavailable
     }
     if canPerformWorkspaceReplace {
         return .workspaceReplace

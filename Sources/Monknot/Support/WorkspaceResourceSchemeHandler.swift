@@ -24,6 +24,14 @@ final class WorkspaceResourceSchemeHandler: NSObject, WKURLSchemeHandler {
         return components.url
     }
 
+    /// Whether a preview may load a navigation it did not get from a clicked link. Of the main
+    /// frame's `.other` loads only the preview's own page (from a string, with this scheme's base
+    /// URL or none) may load; a file dropped on the view would load its `file:` URL instead.
+    static func allowsPreviewNavigation(type: WKNavigationType, isMainFrame: Bool, to url: URL?) -> Bool {
+        guard type == .other, isMainFrame else { return true }
+        return url?.scheme == scheme || url?.absoluteString == "about:blank"
+    }
+
     static func fileURL(for resourceURL: URL) -> URL? {
         guard resourceURL.scheme == scheme, !resourceURL.path.isEmpty else { return nil }
         return URL(fileURLWithPath: resourceURL.path)

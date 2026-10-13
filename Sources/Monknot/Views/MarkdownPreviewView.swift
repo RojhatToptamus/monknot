@@ -841,7 +841,12 @@ struct MarkdownPreviewView: NSViewRepresentable {
             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
         ) {
             guard navigationAction.navigationType == .linkActivated else {
-                decisionHandler(isTornDown ? .cancel : .allow)
+                let allows = !isTornDown && WorkspaceResourceSchemeHandler.allowsPreviewNavigation(
+                    type: navigationAction.navigationType,
+                    isMainFrame: navigationAction.targetFrame?.isMainFrame != false,
+                    to: navigationAction.request.url
+                )
+                decisionHandler(allows ? .allow : .cancel)
                 return
             }
 

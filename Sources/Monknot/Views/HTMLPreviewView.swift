@@ -567,6 +567,19 @@ struct HTMLPreviewView: NSViewRepresentable {
             }
         }
 
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            let allows = WorkspaceResourceSchemeHandler.allowsPreviewNavigation(
+                type: navigationAction.navigationType,
+                isMainFrame: navigationAction.targetFrame?.isMainFrame != false,
+                to: navigationAction.request.url
+            )
+            decisionHandler(allows ? .allow : .cancel)
+        }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             isLoaded = true
             webView.evaluateJavaScript("window.__monknotHTMLSourceLineCount = \(max(sourceLineCount, 1));")

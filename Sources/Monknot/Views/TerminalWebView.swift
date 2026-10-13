@@ -124,6 +124,44 @@ enum MonknotNativeTerminalSearchCommand {
 @MainActor
 final class TerminalWKWebView: WKWebView {
     weak var terminalController: TerminalWebController?
+
+    // Files dragged from Finder are typed as shell-escaped paths, as in Terminal, instead of
+    // WebKit opening the first file in place of the terminal page.
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        Self.fileURLs(on: sender.draggingPasteboard).isEmpty ? super.draggingEntered(sender) : .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        Self.fileURLs(on: sender.draggingPasteboard).isEmpty ? super.draggingUpdated(sender) : .copy
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        if let sender, !Self.fileURLs(on: sender.draggingPasteboard).isEmpty { return }
+        super.draggingExited(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        Self.fileURLs(on: sender.draggingPasteboard).isEmpty ? super.prepareForDragOperation(sender) : true
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = Self.fileURLs(on: sender.draggingPasteboard)
+        guard !urls.isEmpty else { return super.performDragOperation(sender) }
+        guard let terminalController else { return false }
+        terminalController.typeDroppedFileURLs(urls)
+        return true
+    }
+
+    override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+        if let sender, !Self.fileURLs(on: sender.draggingPasteboard).isEmpty { return }
+        super.concludeDragOperation(sender)
+    }
+
+    private static func fileURLs(on pasteboard: NSPasteboard) -> [URL] {
+        let objects = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) ?? []
+        return objects.compactMap { ($0 as? NSURL).map { $0 as URL } }
+    }
 }
 
 /// Shows a terminal session. The xterm web view belongs to the session's `TerminalWebController`, so
@@ -907,6 +945,29 @@ final class TerminalWebController: NSObject, TerminalSessionPresentation, WKNavi
         evaluate("window.monknotFocus && window.monknotFocus();")
     }
 
+    /// Types the paths into the session, separated and followed by a space, as Terminal does.
+    func typeDroppedFileURLs(_ urls: [URL]) {
+        let paths = urls.map { Self.shellEscapedPath($0.path) }
+        session?.send(paths.joined(separator: " ") + " ")
+    }
+
+    /// Escapes shell syntax with backslashes and leaves other characters, including non-ASCII ones,
+    /// as typed. A path with control characters is single-quoted instead.
+    nonisolated static func shellEscapedPath(_ path: String) -> String {
+        if path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) {
+            return "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        }
+        let unescaped = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-+,:@%")
+        var escaped = ""
+        for scalar in path.unicodeScalars {
+            if scalar.isASCII, !unescaped.contains(scalar) {
+                escaped.append("\\")
+            }
+            escaped.unicodeScalars.append(scalar)
+        }
+        return escaped
+    }
+
     // MARK: TerminalSessionPresentation
 
     func sessionOutputDidChange() {
@@ -932,6 +993,19 @@ final class TerminalWebController: NSObject, TerminalSessionPresentation, WKNavi
     }
 
     // MARK: WKNavigationDelegate
+
+    /// Only the terminal page, loaded from a string, may load; any other navigation would replace it.
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        decisionHandler(Self.allowsNavigation(to: navigationAction.request.url) ? .allow : .cancel)
+    }
+
+    nonisolated static func allowsNavigation(to url: URL?) -> Bool {
+        url?.absoluteString == "about:blank"
+    }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         isLoaded = true
