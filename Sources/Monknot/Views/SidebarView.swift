@@ -1093,14 +1093,18 @@ private struct WorkspaceSwitcherRow: View {
 
                     Spacer(minLength: scaled(8))
 
-                    if !isHovered, let shortcutIndex {
-                        MonknotShortcutLabel(
-                            shortcut: "⌃⌘\(shortcutIndex)",
-                            theme: theme,
-                            zoomScale: zoomScale
-                        )
-                    } else {
+                    // The trailing slot keeps one width: the shortcut fades out under the remove
+                    // button instead of leaving the layout, so the path never re-truncates on hover.
+                    ZStack(alignment: .trailing) {
                         Color.clear.frame(width: scaled(22), height: scaled(22))
+                        if let shortcutIndex {
+                            MonknotShortcutLabel(
+                                shortcut: "⌃⌘\(shortcutIndex)",
+                                theme: theme,
+                                zoomScale: zoomScale
+                            )
+                            .opacity(isHovered ? 0 : 1)
+                        }
                     }
                 }
                 .padding(.horizontal, scaled(10))
@@ -1809,16 +1813,20 @@ private struct GitStatusBadge: View {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
+    /// Every status letter sits in one badge width, so a status change never moves the row's label.
+    static let minimumWidthBase: CGFloat = 16
+
     var body: some View {
         Text(status.label)
             .font(.system(
                 size: MonknotMetrics.interfaceText(10, theme: theme, zoomScale: zoomScale),
                 weight: .semibold,
-                design: .rounded
+                design: .monospaced
             ))
             .foregroundStyle(status.badgeForegroundColor(theme: theme))
             .padding(.horizontal, scaled(4))
             .padding(.vertical, scaled(2))
+            .frame(minWidth: scaled(Self.minimumWidthBase))
             .background(
                 Capsule()
                     .fill(status.badgeBackgroundColor(theme: theme))

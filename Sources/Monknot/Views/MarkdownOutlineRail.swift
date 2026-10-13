@@ -364,6 +364,11 @@ private struct MarkdownOutlineHoverPanel: View {
         .frame(height: scaled(38))
     }
 
+    /// One line-number column for the whole list, as wide as its largest line number.
+    private var lineNumberWidthTemplate: String {
+        MonknotStableWidth.lineNumberTemplate(maximumLine: items.map(\.location.line).max() ?? 0)
+    }
+
     private func outlineRow(for item: MarkdownOutlineItem) -> some View {
         let isRevealed = item.id == revealedItemID
 
@@ -381,6 +386,7 @@ private struct MarkdownOutlineHoverPanel: View {
                 Spacer(minLength: scaled(6))
 
                 Text("\(item.location.line)")
+                    .monknotReservingWidth(of: lineNumberWidthTemplate)
                     .font(.system(size: textScaled(9.5), weight: .regular, design: .monospaced))
                     .foregroundStyle(theme.mutedForegroundColor)
                     .monospacedDigit()

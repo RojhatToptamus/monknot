@@ -238,7 +238,7 @@ struct TerminalWebView: NSViewRepresentable {
             color: var(--terminal-fg);
             background: var(--terminal-search-bg);
             box-shadow: 0 5px 18px var(--terminal-search-shadow);
-            font: 500 calc(var(--terminal-font-size) * 0.88) system-ui, sans-serif;
+            font: 400 calc(var(--terminal-font-size) * 0.88) system-ui, sans-serif;
           }
           #terminal-search[hidden] {
             display: none;
@@ -260,7 +260,7 @@ struct TerminalWebView: NSViewRepresentable {
           }
           #terminal-search-status {
             flex: none;
-            min-width: 48px;
+            min-width: 10ch;
             color: var(--terminal-muted-fg);
             text-align: right;
             font-variant-numeric: tabular-nums;
@@ -273,7 +273,7 @@ struct TerminalWebView: NSViewRepresentable {
             border-radius: 4px;
             color: var(--terminal-fg);
             background: transparent;
-            font: 600 13px system-ui, sans-serif;
+            font: 400 13px system-ui, sans-serif;
           }
           .terminal-search-button:hover,
           .terminal-search-button:focus-visible {
