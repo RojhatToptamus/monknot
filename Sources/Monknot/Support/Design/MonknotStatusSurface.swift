@@ -4,11 +4,13 @@ import SwiftUI
 struct MonknotProgressIndicator: View {
     let size: CGFloat
     let theme: AppTheme
+    /// False pauses the spinner while a caller keeps it laid out but hidden.
+    var isAnimating = true
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion || !isAnimating)) { context in
             let turns = context.date.timeIntervalSinceReferenceDate
                 .truncatingRemainder(dividingBy: 0.9) / 0.9
 

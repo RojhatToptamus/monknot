@@ -28,6 +28,9 @@ struct DocumentSearchState: Equatable {
         "\(currentIndex)/\(totalCount)"
     }
 
+    /// As wide as any count below a thousand matches, so the find bar keeps its layout while counting.
+    static let countWidthTemplate = "000/000"
+
     mutating func present() {
         isPresented = true
         focusSerial += 1

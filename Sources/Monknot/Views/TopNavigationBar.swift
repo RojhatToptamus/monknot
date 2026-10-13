@@ -63,6 +63,10 @@ struct TopNavigationBar: View {
         MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
     }
 
+    private var isWorking: Bool {
+        isBusy || isDocumentLoading || isSaving
+    }
+
     var body: some View {
         HStack(spacing: scaled(MonknotMetrics.Spacing.s)) {
             Color.clear
@@ -91,14 +95,16 @@ struct TopNavigationBar: View {
             tabsOrEmptyTitle
                 .layoutPriority(1)
 
-            if isBusy || isDocumentLoading || isSaving {
-                MonknotProgressIndicator(
-                    size: MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale),
-                    theme: theme
-                )
-                    .frame(width: scaled(18), height: scaled(18))
-                    .accessibilityLabel("Working")
-            }
+            // The spinner keeps its slot while idle, so starting work never moves the controls after it.
+            MonknotProgressIndicator(
+                size: MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale),
+                theme: theme,
+                isAnimating: isWorking
+            )
+                .frame(width: scaled(18), height: scaled(18))
+                .opacity(isWorking ? 1 : 0)
+                .accessibilityLabel("Working")
+                .accessibilityHidden(!isWorking)
 
             // Find sits before the trailing cluster, which never disappears (design.md §10.1–10.2).
             // The tab strip scrolls to make room first; in a narrow, zoomed window the find bar gives
@@ -318,10 +324,10 @@ struct TopNavigationBar: View {
 
             if showsCount {
                 Text(documentSearch.countText)
+                    .monknotReservingWidth(of: DocumentSearchState.countWidthTemplate)
                     .font(.system(size: textScaled(12), weight: .regular, design: .rounded))
                     .foregroundStyle(theme.mutedForegroundColor)
                     .monospacedDigit()
-                    .frame(minWidth: scaled(42), alignment: .trailing)
                     .accessibilityLabel("Search result \(documentSearch.countText)")
             }
 

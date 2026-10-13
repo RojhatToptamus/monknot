@@ -83,33 +83,6 @@ struct PDFPreviewView: View {
                 )
             }
 
-            if let markupHint {
-                HStack(spacing: scaled(8)) {
-                    Image(systemName: "text.cursor")
-                        .font(.system(
-                            size: MonknotMetrics.interfaceGlyph(15, theme: theme, zoomScale: zoomScale),
-                            weight: .regular
-                        ))
-                        .foregroundStyle(theme.accentColor)
-
-                    Text(markupHint)
-                        .font(.system(
-                            size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale),
-                            weight: .regular
-                        ))
-                        .foregroundStyle(theme.foregroundColor)
-
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, scaled(12))
-                .frame(height: scaled(32))
-                .background(theme.accentColor.opacity(theme.isDark ? 0.18 : 0.14))
-                .overlay(alignment: .bottom) {
-                    Rectangle().fill(theme.separatorColor).frame(height: 1)
-                }
-                .transition(.opacity)
-            }
-
             ZStack {
                 PDFKitPreviewRepresentable(
                     documentID: document.id,
@@ -154,6 +127,13 @@ struct PDFPreviewView: View {
                 pdfLoadStatus
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // An overlay, so the page never moves while the hint shows.
+            .overlay(alignment: .top) {
+                if let markupHint {
+                    markupHintBanner(markupHint)
+                        .transition(.opacity)
+                }
+            }
         }
         .background(theme.surfaceColor)
         .onChange(of: document.id) { _, _ in
@@ -183,6 +163,37 @@ struct PDFPreviewView: View {
             withAnimation(MonknotMotion.hoverAnimation) {
                 markupHint = nil
             }
+        }
+    }
+
+    private func markupHintBanner(_ hint: String) -> some View {
+        HStack(spacing: scaled(8)) {
+            Image(systemName: "text.cursor")
+                .font(.system(
+                    size: MonknotMetrics.interfaceGlyph(15, theme: theme, zoomScale: zoomScale),
+                    weight: .regular
+                ))
+                .foregroundStyle(theme.accentColor)
+
+            Text(hint)
+                .font(.system(
+                    size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale),
+                    weight: .regular
+                ))
+                .foregroundStyle(theme.foregroundColor)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, scaled(12))
+        .frame(height: scaled(32))
+        .background {
+            ZStack {
+                theme.surfaceColor
+                theme.accentColor.opacity(theme.isDark ? 0.18 : 0.14)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(theme.separatorColor).frame(height: 1)
         }
     }
 
@@ -406,6 +417,9 @@ struct PDFZoomStatus: Equatable {
 
     static let presetPercentages = [100, 120, 140, 160, 180, 200]
 
+    /// The label's slot is as wide as a three-digit percentage, so zooming never resizes it.
+    static let widthTemplate = "000%"
+
     var displayLabel: String {
         guard isAvailable else { return "—" }
         return "\(Int((scaleFactor * 100).rounded()))%"
@@ -432,6 +446,11 @@ struct PDFPageStatus: Equatable {
     var displayLabel: String {
         guard isAvailable else { return "—/—" }
         return "\(currentPage)/\(pageCount)"
+    }
+
+    /// As wide as the label of any page of this document, so turning pages never resizes the slot.
+    var widthTemplate: String {
+        MonknotStableWidth.pageTemplate(pageCount: pageCount)
     }
 }
 
@@ -983,13 +1002,20 @@ private struct PDFAnnotationToolbar: View {
     }
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            regularToolbar
-            annotationToolbar
-            compactToolbar
-            minimalToolbar
+        // The zoom group and Save sit outside the variants, so changing tools, selecting text or
+        // dirtying the document never moves them.
+        HStack(spacing: scaled(5)) {
+            ViewThatFits(in: .horizontal) {
+                regularToolbar
+                annotationToolbar
+                compactToolbar
+                minimalToolbar
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            toolbarDivider
+            zoomToolbar
+            saveButton
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, scaled(10))
         .frame(height: MonknotMetrics.interfaceControl(36, theme: theme, zoomScale: zoomScale))
         .frame(maxWidth: .infinity)
@@ -1021,9 +1047,6 @@ private struct PDFAnnotationToolbar: View {
             toolbarContent
             regularStyleControls
                 .disabled(!isMarkupSupported)
-            toolbarDivider
-            zoomToolbar
-            saveButtonIfNeeded
         }
         .fixedSize(horizontal: true, vertical: false)
     }
@@ -1038,9 +1061,6 @@ private struct PDFAnnotationToolbar: View {
             }
             .disabled(!isMarkupSupported)
             moreMenu
-            toolbarDivider
-            zoomToolbar
-            saveButtonIfNeeded
         }
         .fixedSize(horizontal: true, vertical: false)
     }
@@ -1061,9 +1081,6 @@ private struct PDFAnnotationToolbar: View {
             }
             .disabled(!isMarkupSupported)
             moreMenu
-            toolbarDivider
-            zoomToolbar
-            saveButtonIfNeeded
         }
         .fixedSize(horizontal: true, vertical: false)
     }
@@ -1077,9 +1094,6 @@ private struct PDFAnnotationToolbar: View {
             }
             .disabled(!isMarkupSupported)
             moreMenu
-            toolbarDivider
-            zoomToolbar
-            saveButtonIfNeeded
         }
         .fixedSize(horizontal: true, vertical: false)
     }
@@ -1662,13 +1676,7 @@ private struct PDFAnnotationToolbar: View {
         .accessibilityValue("\(Int(strokeWidth)) points")
     }
 
-    @ViewBuilder
-    private var saveButtonIfNeeded: some View {
-        if !saveState.isClean {
-            saveButton
-        }
-    }
-
+    /// Always laid out; disabled while there is nothing to save (design.md §10.2).
     private var saveButton: some View {
         MonknotIconButton(
             systemImage: "externaldrive.badge.checkmark",
@@ -1676,7 +1684,7 @@ private struct PDFAnnotationToolbar: View {
             theme: theme,
             zoomScale: zoomScale,
             isActive: !saveState.isClean,
-            isDisabled: saveState == .saving,
+            isDisabled: saveState.isClean || saveState == .saving,
             size: .compact
         ) {
             saveDocument()
@@ -1685,6 +1693,7 @@ private struct PDFAnnotationToolbar: View {
 
     private var pageIndicator: some View {
         Text(pageStatus.displayLabel)
+            .monknotReservingWidth(of: pageStatus.widthTemplate)
             .font(.system(
                 size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale),
                 weight: .regular,
@@ -1693,7 +1702,7 @@ private struct PDFAnnotationToolbar: View {
             .foregroundStyle(pageStatus.isAvailable ? theme.mutedForegroundColor : theme.disabledForegroundColor)
             .monospacedDigit()
             .lineLimit(1)
-            .frame(minWidth: scaled(34), alignment: .leading)
+            .frame(minWidth: scaled(34), alignment: .trailing)
             .fixedSize(horizontal: true, vertical: false)
             .accessibilityLabel(
                 pageStatus.isAvailable
@@ -1748,6 +1757,7 @@ struct PDFZoomToolbarGroup: View {
         } label: {
             HStack(spacing: scaled(6)) {
                 Text(status.displayLabel)
+                    .monknotReservingWidth(of: PDFZoomStatus.widthTemplate)
                     .font(.system(size: textScaled(13), weight: .regular))
                     .monospacedDigit()
                     .lineLimit(1)

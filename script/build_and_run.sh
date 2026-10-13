@@ -421,6 +421,7 @@ APP_SOURCES=(
   "Sources/Monknot/Support/Design/MonknotSegmentedControl.swift"
   "Sources/Monknot/Support/Design/MonknotSettingsSegmentedControl.swift"
   "Sources/Monknot/Support/Design/MonknotShortcutLabel.swift"
+  "Sources/Monknot/Support/Design/MonknotStableWidth.swift"
   "Sources/Monknot/Support/Design/MonknotStatusSurface.swift"
   "Sources/Monknot/Support/Design/MonknotTypography.swift"
   "Sources/Monknot/Support/Design/MonknotWorkspaceIcons.swift"

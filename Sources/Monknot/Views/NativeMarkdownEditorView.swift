@@ -276,16 +276,19 @@ struct MarkdownSourceToolbar: View {
 
             Spacer(minLength: 0)
 
-            if let statistics {
-                Text(Self.wordCountLabel(statistics.wordCount))
-                    .font(.system(size: textScaled(12), weight: .regular))
-                    .monospacedDigit()
-                    .foregroundStyle(theme.tertiaryForegroundColor)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .help(Self.statisticsDescription(statistics))
-                    .accessibilityLabel(Self.statisticsDescription(statistics))
-            }
+            // The count keeps one width, present or not, so `ViewThatFits` never picks another
+            // variant while typing or switching tabs.
+            Text(statistics.map { Self.wordCountLabel($0.wordCount) } ?? "")
+                .monknotReservingWidth(of: Self.wordCountWidthTemplate)
+                .font(.system(size: textScaled(12), weight: .regular))
+                .monospacedDigit()
+                .foregroundStyle(theme.tertiaryForegroundColor)
+                .lineLimit(1)
+                .fixedSize()
+                .opacity(statistics == nil ? 0 : 1)
+                .help(statistics.map(Self.statisticsDescription) ?? "")
+                .accessibilityLabel(statistics.map(Self.statisticsDescription) ?? "")
+                .accessibilityHidden(statistics == nil)
         }
         .monknotChromeSubrowLayout(theme: theme, zoomScale: zoomScale)
     }
@@ -458,6 +461,9 @@ struct MarkdownSourceToolbar: View {
             action: { sendCommand(command) }
         )
     }
+
+    /// As wide as any count below a million words.
+    static let wordCountWidthTemplate = wordCountLabel(999_999)
 
     static func wordCountLabel(_ wordCount: Int) -> String {
         wordCount == 1 ? "1 word" : "\(wordCount.formatted()) words"
