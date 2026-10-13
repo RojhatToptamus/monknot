@@ -92,8 +92,9 @@ enum WorkspacePasteboardImportService {
             case .fileURL(let sourceURL):
                 importedURLs.append(try copyFile(at: sourceURL, into: directoryURL))
             case .pngImageData(let data, let suggestedName):
-                let destinationURL = uniqueURL(
-                    for: sanitizedFileName(suggestedName, fallback: "Pasted Image.png"),
+                let destinationURL = WorkspaceDocumentSupport.availableCopyURL(
+                    named: sanitizedFileName(suggestedName, fallback: "Pasted Image.png"),
+                    isDirectory: false,
                     in: directoryURL
                 )
                 try data.write(to: destinationURL, options: .atomic)
@@ -101,8 +102,9 @@ enum WorkspacePasteboardImportService {
             case .capturedMarkdown(let markdown, let suggestedName):
                 let inboxURL = directoryURL.appendingPathComponent("inbox", isDirectory: true)
                 try FileManager.default.createDirectory(at: inboxURL, withIntermediateDirectories: true)
-                let destinationURL = uniqueURL(
-                    for: sanitizedFileName(suggestedName, fallback: "Clipboard.md"),
+                let destinationURL = WorkspaceDocumentSupport.availableCopyURL(
+                    named: sanitizedFileName(suggestedName, fallback: "Clipboard.md"),
+                    isDirectory: false,
                     in: inboxURL
                 )
                 try markdown.write(to: destinationURL, atomically: true, encoding: .utf8)
@@ -121,12 +123,17 @@ enum WorkspacePasteboardImportService {
             throw WorkspacePasteboardImportError.unsupportedSource(sourceURL.lastPathComponent)
         }
 
-        if resourceValues.isDirectory == true, isURL(directoryURL, containedIn: sourceURL) {
+        let isDirectory = resourceValues.isDirectory == true
+        if isDirectory, WorkspaceDocumentSupport.isURL(directoryURL, containedIn: sourceURL) {
             throw WorkspacePasteboardImportError.sourceContainsDestination(sourceURL.lastPathComponent)
         }
 
         let fileName = sanitizedFileName(sourceURL.lastPathComponent, fallback: "Pasted File")
-        let destinationURL = uniqueURL(for: fileName, in: directoryURL)
+        let destinationURL = WorkspaceDocumentSupport.availableCopyURL(
+            named: fileName,
+            isDirectory: isDirectory,
+            in: directoryURL
+        )
         try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
         return destinationURL
     }
@@ -136,30 +143,6 @@ enum WorkspacePasteboardImportService {
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {
             throw WorkspacePasteboardImportError.invalidDestination(url.lastPathComponent)
         }
-    }
-
-    fileprivate static func uniqueURL(for proposedName: String, in directoryURL: URL) -> URL {
-        let fileManager = FileManager.default
-        let proposedURL = URL(fileURLWithPath: proposedName)
-        let sourceExtension = proposedURL.pathExtension
-        let baseName = proposedURL.deletingPathExtension().lastPathComponent
-        var candidate = directoryURL.appendingPathComponent(proposedName)
-
-        guard fileManager.fileExists(atPath: candidate.path) else {
-            return candidate
-        }
-
-        var index = 1
-        repeat {
-            let suffix = index == 1 ? " copy" : " copy \(index)"
-            let name = sourceExtension.isEmpty
-                ? "\(baseName)\(suffix)"
-                : "\(baseName)\(suffix).\(sourceExtension)"
-            candidate = directoryURL.appendingPathComponent(name)
-            index += 1
-        } while fileManager.fileExists(atPath: candidate.path)
-
-        return candidate
     }
 
     fileprivate static func sanitizedFileName(_ name: String, fallback: String) -> String {
@@ -309,13 +292,6 @@ enum WorkspacePasteboardImportService {
         }
 
         return nil
-    }
-
-    private static func isURL(_ candidate: URL, containedIn directory: URL) -> Bool {
-        let candidatePath = candidate.standardizedFileURL.path
-        let directoryPath = directory.standardizedFileURL.path
-        let prefix = directoryPath.hasSuffix("/") ? directoryPath : directoryPath + "/"
-        return candidatePath == directoryPath || candidatePath.hasPrefix(prefix)
     }
 }
 
@@ -575,7 +551,11 @@ enum MarkdownImageAssetService {
         } else {
             proposedName = originalName
         }
-        let destinationURL = WorkspacePasteboardImportService.uniqueURL(for: proposedName, in: assetsURL)
+        let destinationURL = WorkspaceDocumentSupport.availableCopyURL(
+            named: proposedName,
+            isDirectory: false,
+            in: assetsURL
+        )
         guard isContained(destinationURL, in: root) else {
             throw MarkdownImageAssetError.outsideWorkspace
         }
@@ -739,28 +719,34 @@ extension WorkspaceStore {
     /// and the next Paste in Monknot copies or moves it.
     func putItemOnPasteboard(at url: URL, cutting: Bool, pasteboard: NSPasteboard = .general) {
         guard !isBusy else { return }
+        let stamp: WorkspacePasteboardTransferStamp
         do {
-            try WorkspacePasteboardExportService.copyFile(at: url, to: pasteboard)
+            stamp = try WorkspacePasteboardExportService.copyFile(at: url, to: pasteboard)
         } catch {
+            // The pasteboard may no longer hold the item of an earlier Copy or Cut.
+            discardPendingTransfer()
             errorMessage = "Could not copy \(url.lastPathComponent): \(error.localizedDescription)"
             return
         }
         if cutting {
-            cutItem(at: url)
+            cutItem(at: url, pasteboardStamp: stamp)
         } else {
-            copyItem(at: url)
+            copyItem(at: url, pasteboardStamp: stamp)
         }
     }
 
-    /// Pastes into `directoryURL` (the root when nil): Monknot's pending Copy or Cut while it still
-    /// owns the pasteboard, otherwise the pasteboard's files, image or text. Returns false when
-    /// there is nothing to paste.
+    /// Pastes into `directoryURL` (the root when nil): the pending Copy or Cut while the pasteboard
+    /// still holds the item it wrote, otherwise the pasteboard's files, image or text. Another
+    /// window's Copy or Cut, or any other app's copy, replaces that item and so ends the transfer.
+    /// Returns false when there is nothing to paste.
     @discardableResult
     func pasteFromPasteboard(_ pasteboard: NSPasteboard = .general, into directoryURL: URL?) -> Bool {
-        if WorkspacePasteboardExportService.ownsPasteboard(pasteboard), canPasteDocumentTransfer {
+        if let stamp = pendingTransferPasteboardStamp,
+           WorkspacePasteboardExportService.holdsTransfer(stamp, on: pasteboard) {
             pasteDocumentTransfer(into: directoryURL)
             return true
         }
+        discardPendingTransfer()
 
         do {
             let items = try WorkspacePasteboardImportService.importItems(from: pasteboard)

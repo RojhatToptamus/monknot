@@ -563,7 +563,7 @@ final class WorkspaceStore: ObservableObject {
             throw WorkspaceDocumentOperationError.invalidCreation("Open a workspace first.")
         }
         let targetDirectory = directoryURL ?? workspaceURL
-        guard Self.isURL(targetDirectory, containedIn: workspaceURL) else {
+        guard WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: workspaceURL) else {
             throw WorkspaceDocumentOperationError.invalidCreation("Create items inside the current workspace.")
         }
         return try Self.childURL(in: targetDirectory, proposedName: proposedName, isDirectory: isDirectory)
@@ -737,26 +737,50 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    /// Marks a workspace file or folder to be copied by the next paste.
-    func copyItem(at url: URL) {
-        setPendingTransfer(for: url, operation: .copy)
+    /// Marks a workspace file or folder to be copied by the next paste. A Copy made through the
+    /// pasteboard passes the stamp of the item it wrote there.
+    func copyItem(at url: URL, pasteboardStamp: WorkspacePasteboardTransferStamp? = nil) {
+        setPendingTransfer(for: url, operation: .copy, pasteboardStamp: pasteboardStamp)
     }
 
-    /// Marks a workspace file or folder to be moved by the next paste.
-    func cutItem(at url: URL) {
-        setPendingTransfer(for: url, operation: .cut)
+    /// Marks a workspace file or folder to be moved by the next paste. A Cut made through the
+    /// pasteboard passes the stamp of the item it wrote there.
+    func cutItem(at url: URL, pasteboardStamp: WorkspacePasteboardTransferStamp? = nil) {
+        setPendingTransfer(for: url, operation: .cut, pasteboardStamp: pasteboardStamp)
     }
 
-    private func setPendingTransfer(for url: URL, operation: WorkspaceDocumentTransferOperation) {
+    /// The stamp of the pasteboard item the pending Copy or Cut wrote, if it wrote one.
+    var pendingTransferPasteboardStamp: WorkspacePasteboardTransferStamp? {
+        pendingDocumentTransfer?.pasteboardStamp
+    }
+
+    func discardPendingTransfer() {
+        pendingDocumentTransfer = nil
+    }
+
+    /// Replaces any earlier transfer, which the newer Copy or Cut supersedes even when its item is
+    /// not a workspace file or folder.
+    private func setPendingTransfer(
+        for url: URL,
+        operation: WorkspaceDocumentTransferOperation,
+        pasteboardStamp: WorkspacePasteboardTransferStamp?
+    ) {
         let url = url.standardizedFileURL
-        guard documentsByID[url.path] != nil || isWorkspaceFolder(url) else { return }
-        pendingDocumentTransfer = WorkspaceDocumentTransfer(url: url, operation: operation)
+        guard documentsByID[url.path] != nil || isWorkspaceFolder(url) else {
+            pendingDocumentTransfer = nil
+            return
+        }
+        pendingDocumentTransfer = WorkspaceDocumentTransfer(
+            url: url,
+            operation: operation,
+            pasteboardStamp: pasteboardStamp
+        )
     }
 
     private func isWorkspaceFolder(_ url: URL) -> Bool {
         guard let workspaceURL,
               url.path != workspaceURL.standardizedFileURL.path,
-              Self.isURL(url, containedIn: workspaceURL)
+              WorkspaceDocumentSupport.isURL(url, containedIn: workspaceURL)
         else { return false }
         var isDirectory = ObjCBool(false)
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
@@ -776,28 +800,27 @@ final class WorkspaceStore: ObservableObject {
 
         if transfer.operation == .cut,
            sourceURL.deletingLastPathComponent().standardizedFileURL == targetDirectory {
-            pendingDocumentTransfer = nil
+            completeTransfer(transfer)
             return
         }
 
-        guard Self.isURL(targetDirectory, containedIn: workspaceURL) else {
+        guard WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: workspaceURL) else {
             errorMessage = "Paste items into the current workspace."
             return
         }
-        guard !Self.isURL(targetDirectory, containedIn: sourceURL) else {
+        guard !WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: sourceURL) else {
             errorMessage = "A folder cannot be pasted into itself."
             return
         }
 
         if transfer.operation == .cut {
-            let destinationURL = Self.uniqueDocumentURL(for: sourceURL, in: targetDirectory)
             requestMarkdownLinkAwareMove(
                 sourceURL: sourceURL,
-                destinationURL: destinationURL,
+                destinationURL: Self.uniqueDocumentURL(for: sourceURL, in: targetDirectory),
                 workspaceURL: workspaceURL,
                 failureMessage: "Could not paste \(displayName)",
-                selectDestinationAfterMove: true,
-                clearDocumentTransferOnSuccess: true
+                selectDestinationAfterMove: documentsByID[sourceURL.path] != nil,
+                completedTransfer: transfer
             )
             return
         }
@@ -806,9 +829,20 @@ final class WorkspaceStore: ObservableObject {
             from: sourceURL,
             into: targetDirectory,
             workspaceURL: workspaceURL,
-            clearsDocumentTransfer: true,
+            completedTransfer: transfer,
             failureMessage: "Could not paste \(displayName)"
         )
+    }
+
+    /// Ends a pasted transfer. A Cut also leaves the pasteboard while it still holds the item, so
+    /// a second Paste does not copy the moved item back from its snapshot.
+    private func completeTransfer(_ transfer: WorkspaceDocumentTransfer) {
+        if pendingDocumentTransfer == transfer {
+            pendingDocumentTransfer = nil
+        }
+        if transfer.operation == .cut, let stamp = transfer.pasteboardStamp {
+            WorkspacePasteboardExportService.clearTransfer(stamp)
+        }
     }
 
     /// Copies a workspace file or folder next to itself with a "copy" suffix.
@@ -827,17 +861,18 @@ final class WorkspaceStore: ObservableObject {
             from: sourceURL,
             into: sourceURL.deletingLastPathComponent(),
             workspaceURL: workspaceURL,
-            clearsDocumentTransfer: false,
+            completedTransfer: nil,
             failureMessage: "Could not duplicate \(sourceURL.lastPathComponent)"
         )
     }
 
-    /// Copies a file (with its unsaved text) or folder and selects the copied file.
+    /// Copies a file (with its unsaved text) or folder and selects the copied file. Whatever was
+    /// copied before a failure stays on disk, so a failure rescans too.
     private func startItemCopy(
         from sourceURL: URL,
         into targetDirectory: URL,
         workspaceURL: URL,
-        clearsDocumentTransfer: Bool,
+        completedTransfer: WorkspaceDocumentTransfer?,
         failureMessage: String
     ) {
         let sourceID = sourceURL.path
@@ -863,11 +898,19 @@ final class WorkspaceStore: ObservableObject {
                     selectedURL: isDocument ? destinationURL : nil,
                     preserveSelection: isDocument ? nil : preserveSelection,
                     changedPaths: [sourceID, destinationURL.standardizedFileURL.path],
-                    clearsDocumentTransfer: clearsDocumentTransfer,
+                    completedTransfer: completedTransfer,
                     generation: generation
                 )
             } catch {
-                await self?.finishWorkspaceFailure(error, generation: generation, message: failureMessage)
+                let result = try? await Self.scanWorkspace(workspaceURL, scanner: scanner)
+                await self?.finishCopyFailure(
+                    error,
+                    result: result,
+                    workspaceURL: workspaceURL,
+                    preserveSelection: preserveSelection,
+                    message: failureMessage,
+                    generation: generation
+                )
             }
         }
     }
@@ -885,7 +928,7 @@ final class WorkspaceStore: ObservableObject {
         guard ensureWritingToolsInactive(for: "changing the workspace") else { return }
 
         let targetDirectory = directoryURL ?? workspaceURL
-        guard Self.isURL(targetDirectory, containedIn: workspaceURL) else {
+        guard WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: workspaceURL) else {
             errorMessage = "Paste clipboard contents into the current workspace."
             return
         }
@@ -912,11 +955,12 @@ final class WorkspaceStore: ObservableObject {
             } catch {
                 // Items copied before the failure stay on disk, so the sidebar is rescanned.
                 let result = try? await Self.scanWorkspace(workspaceURL, scanner: scanner)
-                await self?.finishImportFailure(
+                await self?.finishCopyFailure(
                     error,
                     result: result,
                     workspaceURL: workspaceURL,
                     preserveSelection: preserveSelection,
+                    message: "Could not paste clipboard contents",
                     generation: generation
                 )
             }
@@ -943,7 +987,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        let workspaceItems = fileURLs.filter { $0 != workspaceURL && Self.isURL($0, containedIn: workspaceURL) }
+        let workspaceItems = fileURLs.filter { $0 != workspaceURL && WorkspaceDocumentSupport.isURL($0, containedIn: workspaceURL) }
         guard workspaceItems.isEmpty else {
             guard fileURLs.count == 1 else {
                 errorMessage = "Move items that are already in the workspace one at a time."
@@ -1160,7 +1204,7 @@ final class WorkspaceStore: ObservableObject {
         workspaceURL: URL,
         failureMessage: String,
         selectDestinationAfterMove: Bool = false,
-        clearDocumentTransferOnSuccess: Bool = false
+        completedTransfer: WorkspaceDocumentTransfer? = nil
     ) {
         guard !isBusy else { return }
         guard ensureWritingToolsInactive(for: "renaming or moving files") else { return }
@@ -1180,7 +1224,7 @@ final class WorkspaceStore: ObservableObject {
             selectedURL: selectedURL,
             preserveSelection: selectDestinationAfterMove ? nil : preserveSelection,
             reloadSelection: selectDestinationAfterMove || selectedURL != nil,
-            clearDocumentTransferOnSuccess: clearDocumentTransferOnSuccess,
+            completedTransfer: completedTransfer,
             failureMessage: failureMessage
         )
         let documentSnapshot = documents
@@ -1346,8 +1390,8 @@ final class WorkspaceStore: ObservableObject {
             moveDirtyState(from: mapping.sourceID, to: mapping.destinationID)
         }
         publishDocumentIDRemaps(request.mappings)
-        if request.clearDocumentTransferOnSuccess {
-            pendingDocumentTransfer = nil
+        if let completedTransfer = request.completedTransfer {
+            completeTransfer(completedTransfer)
         }
 
         let rewrittenPaths = plan.rewriteFiles.flatMap {
@@ -1589,8 +1633,9 @@ final class WorkspaceStore: ObservableObject {
                     documentName: document.displayName,
                     relativePath: document.relativePath
                 )
-                let destinationURL = Self.uniqueDocumentURL(
-                    for: notesURL.appendingPathComponent("\(document.url.deletingPathExtension().lastPathComponent) Annotations.md"),
+                let destinationURL = WorkspaceDocumentSupport.availableCopyURL(
+                    named: "\(document.url.deletingPathExtension().lastPathComponent) Annotations.md",
+                    isDirectory: false,
                     in: notesURL
                 )
                 try await Self.writeText(markdown, to: destinationURL)
@@ -1645,8 +1690,9 @@ final class WorkspaceStore: ObservableObject {
                     from: exportItems,
                     title: "Workspace PDF Annotations"
                 )
-                let destinationURL = Self.uniqueDocumentURL(
-                    for: notesURL.appendingPathComponent("Workspace PDF Annotations.md"),
+                let destinationURL = WorkspaceDocumentSupport.availableCopyURL(
+                    named: "Workspace PDF Annotations.md",
+                    isDirectory: false,
                     in: notesURL
                 )
                 try await Self.writeText(markdown, to: destinationURL)
@@ -1688,8 +1734,9 @@ final class WorkspaceStore: ObservableObject {
                 let exportsURL = workspaceURL.appendingPathComponent("exports", isDirectory: true)
                 try FileManager.default.createDirectory(at: exportsURL, withIntermediateDirectories: true)
 
-                let destinationURL = Self.uniqueDocumentURL(
-                    for: exportsURL.appendingPathComponent("\(document.url.deletingPathExtension().lastPathComponent) Annotated.pdf"),
+                let destinationURL = WorkspaceDocumentSupport.availableCopyURL(
+                    named: "\(document.url.deletingPathExtension().lastPathComponent) Annotated.pdf",
+                    isDirectory: false,
                     in: exportsURL
                 )
                 try WorkspaceConditionalDataWriter.write(
@@ -2617,14 +2664,14 @@ final class WorkspaceStore: ObservableObject {
         selectedURL: URL?,
         preserveSelection: String?,
         changedPaths: [String],
-        clearsDocumentTransfer: Bool,
+        completedTransfer: WorkspaceDocumentTransfer?,
         generation: Int
     ) {
         guard generation == workspaceGeneration else { return }
 
         invalidateWorkspaceSearchCaches(paths: changedPaths)
-        if clearsDocumentTransfer {
-            pendingDocumentTransfer = nil
+        if let completedTransfer {
+            completeTransfer(completedTransfer)
         }
         finishWorkspaceLoad(
             result: result,
@@ -2636,11 +2683,13 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    private func finishImportFailure(
+    /// Shows what a copy or import left on disk before it failed, then reports the failure.
+    private func finishCopyFailure(
         _ error: Error,
         result: WorkspaceDocumentScanResult?,
         workspaceURL: URL,
         preserveSelection: String?,
+        message: String,
         generation: Int
     ) {
         if let result {
@@ -2653,7 +2702,7 @@ final class WorkspaceStore: ObservableObject {
                 generation: generation
             )
         }
-        finishWorkspaceFailure(error, generation: generation, message: "Could not paste clipboard contents")
+        finishWorkspaceFailure(error, generation: generation, message: message)
     }
 
     private func updateSecurityScope(for url: URL) {
@@ -4033,7 +4082,7 @@ final class WorkspaceStore: ObservableObject {
     ) throws -> URL {
         let workspaceURL = workspaceURL.standardizedFileURL
         let fileURL = proposedURL.standardizedFileURL
-        guard fileURL != workspaceURL, isURL(fileURL, containedIn: workspaceURL) else {
+        guard fileURL != workspaceURL, WorkspaceDocumentSupport.isURL(fileURL, containedIn: workspaceURL) else {
             throw WorkspaceDocumentOperationError.invalidCreation("The note must be inside the workspace.")
         }
 
@@ -4146,6 +4195,17 @@ final class WorkspaceStore: ObservableObject {
         return destinationURL
     }
 
+    /// Where a copy or move of `sourceURL` into `directoryURL` lands: its own name, or a "copy"
+    /// name when that is taken.
+    nonisolated private static func uniqueDocumentURL(for sourceURL: URL, in directoryURL: URL) -> URL {
+        let isDirectory = (try? sourceURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        return WorkspaceDocumentSupport.availableCopyURL(
+            named: sourceURL.lastPathComponent,
+            isDirectory: isDirectory,
+            in: directoryURL
+        )
+    }
+
     nonisolated private static func moveDestinationURL(
         for sourceURL: URL,
         toDirectory targetDirectory: URL,
@@ -4155,7 +4215,7 @@ final class WorkspaceStore: ObservableObject {
         let targetDirectory = targetDirectory.standardizedFileURL
         let workspaceURL = workspaceURL.standardizedFileURL
 
-        guard isURL(sourceURL, containedIn: workspaceURL) else {
+        guard WorkspaceDocumentSupport.isURL(sourceURL, containedIn: workspaceURL) else {
             throw WorkspaceDocumentOperationError.invalidMove("Move items from inside the current workspace.")
         }
 
@@ -4165,7 +4225,7 @@ final class WorkspaceStore: ObservableObject {
             throw WorkspaceDocumentOperationError.notDirectory(targetDirectory.lastPathComponent)
         }
 
-        guard isURL(targetDirectory, containedIn: workspaceURL) else {
+        guard WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: workspaceURL) else {
             throw WorkspaceDocumentOperationError.invalidMove("Move items into the current workspace.")
         }
 
@@ -4174,7 +4234,7 @@ final class WorkspaceStore: ObservableObject {
             throw WorkspaceDocumentOperationError.invalidMove("The item no longer exists.")
         }
 
-        if sourceIsDirectory.boolValue, isURL(targetDirectory, containedIn: sourceURL) {
+        if sourceIsDirectory.boolValue, WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: sourceURL) {
             throw WorkspaceDocumentOperationError.invalidMove("A folder cannot be moved into itself.")
         }
 
@@ -4219,35 +4279,6 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    nonisolated private static func isURL(_ candidate: URL, containedIn directory: URL) -> Bool {
-        let candidatePath = candidate.standardizedFileURL.path
-        let directoryPath = directory.standardizedFileURL.path
-        let prefix = directoryPath.hasSuffix("/") ? directoryPath : directoryPath + "/"
-        return candidatePath == directoryPath || candidatePath.hasPrefix(prefix)
-    }
-
-    nonisolated private static func uniqueDocumentURL(for sourceURL: URL, in directoryURL: URL) -> URL {
-        let fileManager = FileManager.default
-        let sourceExtension = sourceURL.pathExtension
-        let baseName = sourceURL.deletingPathExtension().lastPathComponent
-        var candidate = directoryURL.appendingPathComponent(sourceURL.lastPathComponent)
-
-        guard fileManager.fileExists(atPath: candidate.path) else {
-            return candidate
-        }
-
-        var index = 1
-        repeat {
-            let suffix = index == 1 ? " copy" : " copy \(index)"
-            let name = sourceExtension.isEmpty
-                ? "\(baseName)\(suffix)"
-                : "\(baseName)\(suffix).\(sourceExtension)"
-            candidate = directoryURL.appendingPathComponent(name)
-            index += 1
-        } while fileManager.fileExists(atPath: candidate.path)
-
-        return candidate
-    }
 
     nonisolated private static func resolveDroppedTarget(for url: URL) async throws -> DroppedTarget {
         try await Task.detached(priority: .userInitiated) {
@@ -4303,7 +4334,7 @@ private struct WorkspaceMarkdownLinkMoveRequest: Equatable, Sendable {
     let selectedURL: URL?
     let preserveSelection: String?
     let reloadSelection: Bool
-    let clearDocumentTransferOnSuccess: Bool
+    let completedTransfer: WorkspaceDocumentTransfer?
     let failureMessage: String
 }
 
@@ -4414,13 +4445,14 @@ private enum DroppedTarget: Sendable {
     case unsupported
 }
 
-/// A workspace file or folder waiting for Paste.
-private struct WorkspaceDocumentTransfer: Sendable {
+/// A workspace file or folder waiting for Paste, with the pasteboard item its Copy or Cut wrote.
+private struct WorkspaceDocumentTransfer: Equatable, Sendable {
     let url: URL
     let operation: WorkspaceDocumentTransferOperation
+    let pasteboardStamp: WorkspacePasteboardTransferStamp?
 }
 
-private enum WorkspaceDocumentTransferOperation: Sendable {
+private enum WorkspaceDocumentTransferOperation: Equatable, Sendable {
     case copy
     case cut
 }

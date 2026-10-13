@@ -124,8 +124,8 @@ final class WorkspacePasteboardExportServiceTests: XCTestCase {
         let sourceURL = root.appendingPathComponent("Source.md")
         try "source".write(to: sourceURL, atomically: true, encoding: .utf8)
         let pasteboard = makePasteboard()
-        defer { WorkspacePasteboardExportService.clearFileTransferPasteboard(pasteboard) }
-        try WorkspacePasteboardExportService.copyFile(at: sourceURL, to: pasteboard)
+        let stamp = try WorkspacePasteboardExportService.copyFile(at: sourceURL, to: pasteboard)
+        defer { WorkspacePasteboardExportService.clearTransfer(stamp) }
         let exportedURL = try XCTUnwrap(
             pasteboard.readObjects(forClasses: [NSURL.self])?.first as? URL
         )
@@ -138,7 +138,7 @@ final class WorkspacePasteboardExportServiceTests: XCTestCase {
             )
         )
 
-        XCTAssertTrue(WorkspacePasteboardExportService.ownsPasteboard(pasteboard))
+        XCTAssertTrue(WorkspacePasteboardExportService.holdsTransfer(stamp, on: pasteboard))
         XCTAssertTrue(FileManager.default.fileExists(atPath: exportedURL.path))
     }
 
@@ -150,9 +150,9 @@ final class WorkspacePasteboardExportServiceTests: XCTestCase {
         try "source".write(to: sourceURL, atomically: true, encoding: .utf8)
         try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
         let pasteboard = makePasteboard()
-        defer { WorkspacePasteboardExportService.clearFileTransferPasteboard(pasteboard) }
+        defer { pasteboard.clearContents() }
 
-        try WorkspacePasteboardExportService.copyFile(at: sourceURL, to: pasteboard)
+        let fileStamp = try WorkspacePasteboardExportService.copyFile(at: sourceURL, to: pasteboard)
         let snapshotURL = try XCTUnwrap(pasteboard.readObjects(forClasses: [NSURL.self])?.first as? URL)
         XCTAssertNotEqual(snapshotURL.standardizedFileURL, sourceURL.standardizedFileURL)
         XCTAssertEqual(try String(contentsOf: snapshotURL, encoding: .utf8), "source")
@@ -162,14 +162,36 @@ final class WorkspacePasteboardExportServiceTests: XCTestCase {
         )
 
         // A folder goes on the pasteboard as itself, and the previous snapshot is removed.
-        try WorkspacePasteboardExportService.copyFile(at: folderURL, to: pasteboard)
+        let folderStamp = try WorkspacePasteboardExportService.copyFile(at: folderURL, to: pasteboard)
         XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotURL.path))
         let folderObject = try XCTUnwrap(pasteboard.readObjects(forClasses: [NSURL.self])?.first as? URL)
         XCTAssertEqual(folderObject.standardizedFileURL.path, folderURL.standardizedFileURL.path)
-        XCTAssertTrue(WorkspacePasteboardExportService.ownsPasteboard(pasteboard))
+        XCTAssertTrue(WorkspacePasteboardExportService.holdsTransfer(folderStamp, on: pasteboard))
+        XCTAssertFalse(WorkspacePasteboardExportService.holdsTransfer(fileStamp, on: pasteboard))
+
+        // Clearing an earlier Copy leaves the newer one alone.
+        WorkspacePasteboardExportService.clearTransfer(fileStamp)
+        XCTAssertTrue(WorkspacePasteboardExportService.holdsTransfer(folderStamp, on: pasteboard))
+        WorkspacePasteboardExportService.clearTransfer(folderStamp)
+        XCTAssertNil(pasteboard.pasteboardItems?.first)
+        try WorkspacePasteboardExportService.copyFile(at: folderURL, to: pasteboard)
 
         try FileManager.default.removeItem(at: folderURL)
         XCTAssertNil(WorkspacePasteboardExportService.workspaceFileURLs(on: pasteboard), "Missing originals are ignored")
+    }
+
+    /// A file that cannot be hard-linked into the snapshot folder (here, one on the read-only
+    /// system volume) goes on the pasteboard as itself instead of being copied.
+    func testFileOnAnotherVolumeIsNotCopiedForTheSnapshot() throws {
+        let systemFile = URL(fileURLWithPath: "/System/Library/CoreServices/SystemVersion.plist")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: systemFile.path))
+        let pasteboard = makePasteboard()
+        defer { pasteboard.clearContents() }
+
+        let stamp = try WorkspacePasteboardExportService.copyFile(at: systemFile, to: pasteboard)
+        let fileObject = try XCTUnwrap(pasteboard.readObjects(forClasses: [NSURL.self])?.first as? URL)
+        XCTAssertEqual(fileObject.standardizedFileURL.path, systemFile.path)
+        XCTAssertTrue(WorkspacePasteboardExportService.holdsTransfer(stamp, on: pasteboard))
     }
 
     func testValidatedLinkedExcerptCopiesExactMarkdown() throws {

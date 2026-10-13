@@ -225,6 +225,7 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
         XCTAssertNil(emptySpaceTarget("top.md", y: 300), "Already at the root")
         XCTAssertNil(emptySpaceTarget("deep.md", y: 500), "Below the visible tree")
         XCTAssertNil(emptySpaceTarget("deep.md", y: 37), "Between two rows")
+
     }
 
     // MARK: - File clipboard
@@ -237,7 +238,7 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
         try "# Other".write(to: other, atomically: true, encoding: .utf8)
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("MonknotSidebarClipboard-\(UUID().uuidString)"))
         defer {
-            WorkspacePasteboardExportService.clearFileTransferPasteboard(pasteboard)
+            pasteboard.clearContents()
             pasteboard.releaseGlobally()
         }
 

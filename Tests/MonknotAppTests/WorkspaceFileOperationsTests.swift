@@ -756,20 +756,26 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertTrue(exists(root.appendingPathComponent("b.txt")))
     }
 
-    /// ⌘X then ⌘V (and the Paste menu items) move the file; Cut leaves it on the clipboard.
-    func testCutThenPasteMovesTheFileAndKeepsItOnTheClipboard() async throws {
+    private func makePasteboard() -> NSPasteboard {
+        NSPasteboard(name: NSPasteboard.Name("MonknotFileOps-\(UUID().uuidString)"))
+    }
+
+    /// ⌘X then ⌘V (and the Paste menu items) move the file. The moved item then leaves the
+    /// clipboard, so a second ⌘V has nothing to paste instead of copying the stale snapshot back.
+    func testCutThenPasteMovesTheFileAndClearsTheClipboard() async throws {
         let root = try makeRoot()
         try write("x\n", to: root.appendingPathComponent("a.txt"))
         try makeFolder(root.appendingPathComponent("Sub"))
         let store = try await openStore(root)
-        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MonknotFileOps-\(UUID().uuidString)"))
+        let pasteboard = makePasteboard()
         defer {
-            WorkspacePasteboardExportService.clearFileTransferPasteboard(pasteboard)
+            pasteboard.clearContents()
             pasteboard.releaseGlobally()
         }
 
         store.putItemOnPasteboard(at: root.appendingPathComponent("a.txt"), cutting: true, pasteboard: pasteboard)
-        XCTAssertTrue(WorkspacePasteboardExportService.ownsPasteboard(pasteboard))
+        let stamp = try XCTUnwrap(store.pendingTransferPasteboardStamp)
+        XCTAssertTrue(WorkspacePasteboardExportService.holdsTransfer(stamp, on: pasteboard))
         XCTAssertEqual(
             WorkspacePasteboardExportService.workspaceFileURLs(on: pasteboard)?.map(\.lastPathComponent),
             ["a.txt"]
@@ -781,6 +787,99 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(names(in: root.appendingPathComponent("Sub")), ["a.txt"])
         XCTAssertFalse(exists(root.appendingPathComponent("a.txt")))
+        XCTAssertNil(pasteboard.pasteboardItems?.first, "The moved item is still on the clipboard")
+
+        XCTAssertFalse(store.pasteFromPasteboard(pasteboard, into: nil), "A second Paste found something")
+        await idle(store)
+        XCTAssertEqual(names(in: root), ["Sub"])
+        XCTAssertEqual(names(in: root.appendingPathComponent("Sub")), ["a.txt"])
+    }
+
+    /// A folder has no snapshot, so a second ⌘V after moving it would fail on the old location.
+    func testCutPasteOfAFolderClearsTheClipboard() async throws {
+        let root = try makeRoot()
+        try write("# N\n", to: root.appendingPathComponent("Folder/N.md"))
+        try makeFolder(root.appendingPathComponent("Archive"))
+        let store = try await openStore(root)
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
+
+        store.putItemOnPasteboard(at: root.appendingPathComponent("Folder"), cutting: true, pasteboard: pasteboard)
+        XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Archive")))
+        await settleMove(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertFalse(store.pasteFromPasteboard(pasteboard, into: nil))
+        await idle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(names(in: root), ["Archive"])
+    }
+
+    /// Each window has its own store. A Cut in one window followed by a Copy in another leaves the
+    /// clipboard holding the Copy, so Paste in the first window copies that item and moves nothing.
+    func testPasteAfterAnotherWindowCopiedUsesTheClipboardNotTheEarlierCut() async throws {
+        let root = try makeRoot()
+        try write("a\n", to: root.appendingPathComponent("a.txt"))
+        try write("b\n", to: root.appendingPathComponent("b.txt"))
+        try makeFolder(root.appendingPathComponent("Sub"))
+        let windowA = try await openStore(root)
+        let windowB = try await openStore(root)
+        let pasteboard = makePasteboard()
+        defer {
+            pasteboard.clearContents()
+            pasteboard.releaseGlobally()
+        }
+
+        windowA.putItemOnPasteboard(at: root.appendingPathComponent("a.txt"), cutting: true, pasteboard: pasteboard)
+        windowB.putItemOnPasteboard(at: root.appendingPathComponent("b.txt"), cutting: false, pasteboard: pasteboard)
+
+        XCTAssertTrue(windowA.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Sub")))
+        await idle(windowA)
+        XCTAssertNil(windowA.errorMessage)
+        XCTAssertTrue(exists(root.appendingPathComponent("a.txt")), "Window A moved its cut file")
+        XCTAssertEqual(names(in: root.appendingPathComponent("Sub")), ["b.txt"])
+        XCTAssertFalse(windowA.canPasteDocumentTransfer)
+        XCTAssertTrue(windowB.canPasteDocumentTransfer)
+    }
+
+    /// Any other copy replaces the item a Cut wrote, so Paste imports the new clipboard contents.
+    func testPasteAfterTheClipboardChangedDropsThePendingCut() async throws {
+        let root = try makeRoot()
+        try write("a\n", to: root.appendingPathComponent("a.txt"))
+        try makeFolder(root.appendingPathComponent("Sub"))
+        let store = try await openStore(root)
+        let pasteboard = makePasteboard()
+        defer {
+            pasteboard.clearContents()
+            pasteboard.releaseGlobally()
+        }
+
+        store.putItemOnPasteboard(at: root.appendingPathComponent("a.txt"), cutting: true, pasteboard: pasteboard)
+        pasteboard.clearContents()
+        pasteboard.setString("Plain words", forType: .string)
+
+        XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Sub")))
+        await idle(store)
+        XCTAssertTrue(exists(root.appendingPathComponent("a.txt")))
+        XCTAssertFalse(exists(root.appendingPathComponent("Sub/a.txt")))
+        XCTAssertFalse(store.canPasteDocumentTransfer)
+    }
+
+    /// A Copy or Cut that fails ends the earlier one, whose item the clipboard may no longer hold.
+    func testFailedCopyEndsTheEarlierCut() async throws {
+        let root = try makeRoot()
+        try write("a\n", to: root.appendingPathComponent("a.txt"))
+        let store = try await openStore(root)
+        let pasteboard = makePasteboard()
+        defer {
+            pasteboard.clearContents()
+            pasteboard.releaseGlobally()
+        }
+
+        store.putItemOnPasteboard(at: root.appendingPathComponent("a.txt"), cutting: true, pasteboard: pasteboard)
+        XCTAssertTrue(store.canPasteDocumentTransfer)
+        store.putItemOnPasteboard(at: root.appendingPathComponent("missing.txt"), cutting: false, pasteboard: pasteboard)
+        XCTAssertNotNil(store.errorMessage)
+        XCTAssertFalse(store.canPasteDocumentTransfer)
     }
 
     func testPasteFromAForeignClipboardImportsItsFiles() async throws {
@@ -833,6 +932,62 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(names(in: root.appendingPathComponent("Archive")), ["Folder", "Folder copy"])
         XCTAssertFalse(exists(folder))
+    }
+
+    /// Moving a folder never selects some other document: the selection stays, and a selection
+    /// inside the moved folder follows it to its new path.
+    func testCutPasteOfAFolderKeepsAndRemapsTheSelection() async throws {
+        let root = try makeRoot()
+        try write("# O\n", to: root.appendingPathComponent("Other.md"))
+        try write("# A\n", to: root.appendingPathComponent("A.md"))
+        try write("# N\n", to: root.appendingPathComponent("Folder/N.md"))
+        try makeFolder(root.appendingPathComponent("Archive"))
+        let store = try await openStore(root)
+        _ = try await select(store, "Other.md")
+
+        store.cutItem(at: root.appendingPathComponent("Folder"))
+        store.pasteDocumentTransfer(into: root.appendingPathComponent("Archive"))
+        await settleMove(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertNotNil(document(store, "Archive/Folder/N.md"))
+        XCTAssertEqual(store.selectedDocumentID, root.appendingPathComponent("Other.md").path)
+
+        _ = try await select(store, "Archive/Folder/N.md")
+        store.cutItem(at: root.appendingPathComponent("Archive/Folder"))
+        store.pasteDocumentTransfer(into: nil)
+        await settleMove(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(store.selectedDocumentID, root.appendingPathComponent("Folder/N.md").path)
+        XCTAssertEqual(store.documentText, "# N\n")
+    }
+
+    func testDuplicateFolderWithADotKeepsItsWholeName() async throws {
+        let root = try makeRoot()
+        try write("# N\n", to: root.appendingPathComponent("v1.2/N.md"))
+        let store = try await openStore(root)
+
+        store.duplicateItem(at: root.appendingPathComponent("v1.2"))
+        await idle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(names(in: root), ["v1.2", "v1.2 copy"])
+        XCTAssertNotNil(document(store, "v1.2 copy/N.md"))
+    }
+
+    /// Whatever a failed folder copy left on disk shows in the sidebar right away.
+    func testPartiallyFailedFolderCopyShowsWhatWasCopied() async throws {
+        let root = try makeRoot()
+        try write("# A\n", to: root.appendingPathComponent("Folder/A.md"))
+        let unreadable = root.appendingPathComponent("Folder/Z.md")
+        try write("# Z\n", to: unreadable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: unreadable.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: unreadable.path) }
+        let store = try await openStore(root)
+
+        store.duplicateItem(at: root.appendingPathComponent("Folder"))
+        await idle(store)
+        XCTAssertNotNil(store.errorMessage)
+        XCTAssertTrue(exists(root.appendingPathComponent("Folder copy")))
+        XCTAssertNotNil(node(store, "Folder copy"), "The partial copy is missing from the sidebar")
     }
 
     func testDuplicateFileCarriesUnsavedTextAndSelectsTheCopy() async throws {
