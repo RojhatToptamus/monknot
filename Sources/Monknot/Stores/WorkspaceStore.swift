@@ -4156,13 +4156,18 @@ final class WorkspaceStore: ObservableObject {
         if name.hasPrefix(".") {
             throw WorkspaceDocumentOperationError.hiddenName(name)
         }
-        throw isDirectory
-            ? WorkspaceDocumentOperationError.ignoredFolderName(name)
-            : WorkspaceDocumentOperationError.unsupportedFileType(name)
+        guard isDirectory else {
+            throw WorkspaceDocumentOperationError.unsupportedFileType(name)
+        }
+        if WorkspaceDocumentSupport.isPackageName(name) {
+            throw WorkspaceDocumentOperationError.packageFolderName(name)
+        }
+        throw WorkspaceDocumentOperationError.ignoredFolderName(name)
     }
 
-    /// A file keeps its extension unless the new name ends in another document extension, so
-    /// "Release 1.2" renames `notes.md` to `Release 1.2.md`.
+    /// A file keeps its extension unless the new name ends in an extension of the same kind of
+    /// document, so "Release 1.2" renames `notes.md` to `Release 1.2.md`, "notes.txt" makes it
+    /// plain text, and "photo.md" renames `photo.png` to `photo.md.png`.
     nonisolated private static func renamedURL(
         for sourceURL: URL,
         proposedName: String,
@@ -4173,7 +4178,7 @@ final class WorkspaceStore: ObservableObject {
         let sourceExtension = sourceURL.pathExtension
         if !isDirectory, !sourceExtension.isEmpty {
             let typedExtension = (fileName as NSString).pathExtension
-            if typedExtension.isEmpty || !WorkspaceDocumentSupport.isWorkspaceDocumentName("_.\(typedExtension)") {
+            if !isSameKindOfDocument(extension: typedExtension, as: sourceURL) {
                 fileName += ".\(sourceExtension)"
             }
         }
@@ -4193,6 +4198,21 @@ final class WorkspaceStore: ObservableObject {
         }
 
         return destinationURL
+    }
+
+    /// Whether a file named with `pathExtension` holds the same kind of content as `sourceURL`:
+    /// both are text that the editor opens, or both are the same file type (`.jpg` and `.jpeg`).
+    nonisolated private static func isSameKindOfDocument(extension pathExtension: String, as sourceURL: URL) -> Bool {
+        guard !pathExtension.isEmpty,
+              let typed = WorkspaceDocumentSupport.workspaceClassification(for: URL(fileURLWithPath: "_.\(pathExtension)"))
+        else { return false }
+        let source = WorkspaceDocumentSupport.classification(for: sourceURL)
+        if typed.capabilities.canEditText && source.capabilities.canEditText {
+            return true
+        }
+        return typed.kind == source.kind
+            && typed.contentTypeIdentifier != nil
+            && typed.contentTypeIdentifier == source.contentTypeIdentifier
     }
 
     /// Where a copy or move of `sourceURL` into `directoryURL` lands: its own name, or a "copy"
@@ -4471,6 +4491,7 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
     case notDirectory(String)
     case hiddenName(String)
     case ignoredFolderName(String)
+    case packageFolderName(String)
     case unsupportedFileType(String)
 
     var errorDescription: String? {
@@ -4501,6 +4522,8 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
             return "Names starting with a period are hidden, so \(name) would not appear in the sidebar."
         case .ignoredFolderName(let name):
             return "Monknot hides folders named \(name)."
+        case .packageFolderName(let name):
+            return "\(name) would be a package, which Finder shows as one file, so Monknot hides it."
         case .unsupportedFileType(let name):
             return "Monknot does not show files like \(name). Add an extension such as .md or .txt."
         }

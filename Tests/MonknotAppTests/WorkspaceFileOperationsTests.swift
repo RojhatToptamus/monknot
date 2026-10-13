@@ -277,6 +277,21 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertNotNil(store.validationMessage(forRenaming: a, to: ".hidden", isDirectory: false))
         XCTAssertNotNil(store.validationMessage(forRenaming: sub, to: "dist", isDirectory: true))
         XCTAssertNil(store.validationMessage(forRenaming: sub, to: "v1.2", isDirectory: true))
+        for package in ["Release.app", "X.bundle", "Notes.rtfd"] {
+            XCTAssertNotNil(store.validationMessage(forNewItemNamed: package, in: sub, isDirectory: true), package)
+            XCTAssertNotNil(store.validationMessage(forRenaming: sub, to: package, isDirectory: true), package)
+        }
+    }
+
+    /// A folder named like a package would vanish from the sidebar, so it is refused.
+    func testCreatingAPackageNamedFolderIsRefused() async throws {
+        let root = try makeRoot()
+        let store = try await openStore(root)
+
+        store.createFolder(named: "Notes.rtfd")
+        await idle(store)
+        XCTAssertNotNil(store.errorMessage)
+        XCTAssertEqual(names(in: root), [])
     }
 
     func testRenameKeepsTheExtensionUnlessANewDocumentExtensionIsTyped() async throws {
@@ -295,6 +310,29 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
             await settleMove(store)
             XCTAssertNil(store.errorMessage, proposed)
             XCTAssertEqual(names(in: root), [expected], proposed)
+        }
+    }
+
+    /// A typed extension changes the type only between text documents or names of one file type;
+    /// otherwise the file keeps its extension, so an image never turns into a Markdown file.
+    func testRenameNeverChangesAFileIntoAnotherKindOfDocument() async throws {
+        let root = try makeRoot()
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: root.appendingPathComponent("photo.png"))
+        try Data([0xFF, 0xD8, 0xFF]).write(to: root.appendingPathComponent("shot.jpg"))
+        try write("%PDF-1.7\n", to: root.appendingPathComponent("paper.pdf"))
+        let store = try await openStore(root)
+
+        for (source, proposed, expected) in [
+            ("photo.png", "photo.md", "photo.md.png"),
+            ("photo.md.png", "diagram.jpg", "diagram.jpg.png"),
+            ("shot.jpg", "shot.jpeg", "shot.jpeg"),
+            ("paper.pdf", "paper.txt", "paper.txt.pdf"),
+        ] {
+            let document = try XCTUnwrap(self.document(store, source), source)
+            store.renameDocument(id: document.id, to: proposed)
+            await settleMove(store)
+            XCTAssertNil(store.errorMessage, proposed)
+            XCTAssertTrue(names(in: root).contains(expected), "\(proposed): \(names(in: root))")
         }
     }
 
