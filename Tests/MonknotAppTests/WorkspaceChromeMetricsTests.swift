@@ -630,7 +630,6 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
                 let topBar = TopNavigationBar(
                     editorMode: .constant(.source),
                     isSplitViewEnabled: .constant(false),
-                    emptyStateTitle: "Monknot",
                     selectedDocument: nil,
                     isBusy: false,
                     isDocumentLoading: false,

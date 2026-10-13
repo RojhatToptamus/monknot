@@ -191,7 +191,7 @@ final class WorkspaceSplitTransitionTests: WorkspaceSplitViewTestCase {
             Color.gray.frame(height: 44)
             ChromeToggleFixture(model: model)
         }
-        .background(WindowBackgroundDragEnabler(
+        .background(WindowChromeConfigurator(
             surfaceColor: .black,
             trafficLightRowHeight: 44,
             trafficLightLeadingInset: 16,

@@ -757,9 +757,9 @@ change has not happened yet, which is false in every macOS app since 10.7.
 Category rows 28 / glyph 15. Segmented cells 28×22 like everywhere else. Quieter header than the main
 window: name + chevron, 22 actions.
 
-The window stays 600 × 560 at every workspace zoom. A zoomed page keeps its zoom-1 proportions and
-scrolls inside the window, sideways too when it is wider, rather than squeezing its rows or resizing
-the window. A menu button is as wide as its longest option, so previewing options never resizes it.
+The window is 600 × 560 at 100% and scales with workspace zoom, never past the screen's visible area;
+its pages scroll vertically inside it. A menu button is as wide as its longest option, so previewing
+options never resizes it.
 
 ---
 

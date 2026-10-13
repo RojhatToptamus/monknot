@@ -24,7 +24,8 @@ enum MonknotMetrics {
     static let sidebarIconPointSizeBase: CGFloat = 15
     static let rowIconColumnWidthBase: CGFloat = 18
     static let iconCornerRadiusBase: CGFloat = 8
-    static let trafficLightReserveBase: CGFloat = 72
+    /// The fixed-size native traffic lights and their leading inset.
+    static let trafficLightReserveBase: CGFloat = 64
     static let windowNavigationLeadingGapBase: CGFloat = 8
     // File tabs follow their measured title width. The bounds only protect the
     // icon/close affordances and prevent one unusually long path from owning
@@ -34,13 +35,10 @@ enum MonknotMetrics {
     static let settingsMaxContentWidth: CGFloat = 720
     /// Native settings content is 532 points tall so the standard 28-point
     /// macOS title bar produces the specification's 600 × 560 window.
-    /// The window keeps this size at every workspace zoom; zoomed pages scroll inside it.
+    /// The window scales with workspace zoom, up to the screen's visible area.
     static let settingsWindowWidth: CGFloat = 600
     static let settingsWindowContentHeight: CGFloat = 532
     static let settingsSidebarWidth: CGFloat = 168
-    /// A page's width at zoom 1. A zoomed page keeps this width scaled and scrolls sideways when the
-    /// window is narrower, rather than squeezing its rows.
-    static let settingsPageWidth: CGFloat = settingsWindowWidth - settingsSidebarWidth - 1
 
     enum Spacing {
         static let xxs: CGFloat = 2

@@ -352,7 +352,7 @@ struct ContentView: View {
         AnyView(rootContent
             .ignoresSafeArea(.container, edges: .top)
             .background(activeTheme.surfaceColor)
-            .background(WindowBackgroundDragEnabler(
+            .background(WindowChromeConfigurator(
                 surfaceColor: activeTheme.surfaceColor,
                 trafficLightRowHeight: MonknotMetrics.chromeHeight(
                     theme: activeTheme,
@@ -733,7 +733,6 @@ struct ContentView: View {
                 set: { editorMode = $0 }
             ),
             isSplitViewEnabled: markdownSplitViewBinding,
-            emptyStateTitle: store.workspaceURL?.lastPathComponent ?? "Monknot",
             selectedDocument: store.selectedDocument,
             isBusy: store.isBusy,
             isDocumentLoading: store.isDocumentLoading,

@@ -17,7 +17,6 @@ struct TopNavigationBar: View {
 
     @Binding var editorMode: EditorMode
     @Binding var isSplitViewEnabled: Bool
-    let emptyStateTitle: String
     let selectedDocument: WorkspaceDocument?
     let isBusy: Bool
     let isDocumentLoading: Bool
@@ -70,7 +69,7 @@ struct TopNavigationBar: View {
     var body: some View {
         HStack(spacing: scaled(MonknotMetrics.Spacing.s)) {
             Color.clear
-                .frame(width: 64)
+                .frame(width: MonknotMetrics.trafficLightReserveBase)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
 
@@ -201,22 +200,9 @@ struct TopNavigationBar: View {
     @ViewBuilder
     private var tabsOrEmptyTitle: some View {
         if tabs.isEmpty {
-            HStack(spacing: scaled(8)) {
-                if !isSidebarVisible {
-                    Text(emptyStateTitle)
-                        .font(.system(size: textScaled(13), weight: .regular))
-                        .foregroundStyle(theme.mutedForegroundColor)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .accessibilityAddTraits(.isHeader)
-                }
-
-                WindowTitleBarDragArea()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .accessibilityHidden(true)
-            }
-            .padding(.leading, scaled(6))
-            .frame(maxWidth: .infinity, alignment: .leading)
+            WindowTitleBarDragArea()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityHidden(true)
         } else {
             DocumentTabBar(
                 tabs: tabs,

@@ -32,8 +32,7 @@ final class DocumentTabBarLayoutTests: XCTestCase {
                 window.standardWindowButton(.zoomButton),
             ].compactMap { $0?.frame.minX }
 
-            let coordinator = WindowBackgroundDragEnabler.Coordinator(
-                suppressToolbarButton: true,
+            let coordinator = WindowChromeConfigurator.Coordinator(
                 trafficLightRowHeight: chromeHeight,
                 trafficLightLeadingInset: leadingInset
             )
@@ -195,7 +194,6 @@ final class DocumentTabBarLayoutTests: XCTestCase {
         let topBar = TopNavigationBar(
             editorMode: .constant(.source),
             isSplitViewEnabled: .constant(false),
-            emptyStateTitle: "Monknot",
             selectedDocument: nil,
             isBusy: false,
             isDocumentLoading: false,
@@ -252,7 +250,6 @@ final class DocumentTabBarLayoutTests: XCTestCase {
         let topBar = TopNavigationBar(
             editorMode: .constant(.source),
             isSplitViewEnabled: .constant(false),
-            emptyStateTitle: "Monknot",
             selectedDocument: nil,
             isBusy: false,
             isDocumentLoading: false,

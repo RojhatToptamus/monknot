@@ -7,13 +7,11 @@ extension NSUserInterfaceItemIdentifier {
     static let monknotTerminalFocusRegion = Self("Monknot.TerminalFocusRegion")
 }
 
-/// Aligns the NSWindow's appearance with our SwiftUI surface and suppresses
-/// the AppKit-injected `.toolbarButton`, which duplicates our sidebar toggle.
-/// AppKit remains the owner of the native traffic-light controls and their
-/// inter-button spacing, targets, accessibility, and window behavior.
-struct WindowBackgroundDragEnabler: NSViewRepresentable {
+/// Aligns the NSWindow's appearance with our SwiftUI surface and centres the native traffic
+/// lights on Monknot's titlebar row. AppKit remains the owner of the traffic-light controls and
+/// their inter-button spacing, targets, accessibility, and window behavior.
+struct WindowChromeConfigurator: NSViewRepresentable {
     var surfaceColor: Color
-    var suppressToolbarButton: Bool = true
     var trafficLightRowHeight: CGFloat?
     var trafficLightLeadingInset: CGFloat?
     var windowTitle: String?
@@ -21,7 +19,6 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
-            suppressToolbarButton: suppressToolbarButton,
             trafficLightRowHeight: trafficLightRowHeight,
             trafficLightLeadingInset: trafficLightLeadingInset,
             enablesStandardWindowControls: enablesStandardWindowControls
@@ -68,17 +65,7 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
         view.configureAttachedWindow()
     }
 
-    /// AppKit reinstalls `.toolbarButton` whenever the window changes state.
-    /// Hide + remove it on every relevant notification so our own SwiftUI
-    /// sidebar toggle is the only one visible.
-    fileprivate static func suppressSystemToolbarButton(in window: NSWindow) {
-        guard let button = window.standardWindowButton(.toolbarButton) else { return }
-        button.isHidden = true
-        button.removeFromSuperview()
-    }
-
     final class Coordinator {
-        let suppressToolbarButton: Bool
         var trafficLightRowHeight: CGFloat?
         var trafficLightLeadingInset: CGFloat?
         let enablesStandardWindowControls: Bool
@@ -86,12 +73,10 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
         private var observers: [NSObjectProtocol] = []
 
         init(
-            suppressToolbarButton: Bool,
             trafficLightRowHeight: CGFloat? = nil,
             trafficLightLeadingInset: CGFloat? = nil,
             enablesStandardWindowControls: Bool = false
         ) {
-            self.suppressToolbarButton = suppressToolbarButton
             self.trafficLightRowHeight = trafficLightRowHeight
             self.trafficLightLeadingInset = trafficLightLeadingInset
             self.enablesStandardWindowControls = enablesStandardWindowControls
@@ -127,9 +112,6 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
         func configureWindowChrome(in window: NSWindow) {
             if enablesStandardWindowControls {
                 enableStandardWindowControls(in: window)
-            }
-            if suppressToolbarButton {
-                WindowBackgroundDragEnabler.suppressSystemToolbarButton(in: window)
             }
             alignTrafficLights(in: window)
         }

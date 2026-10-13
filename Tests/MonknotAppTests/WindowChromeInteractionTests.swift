@@ -25,8 +25,7 @@ final class WindowChromeInteractionTests: XCTestCase {
         window.standardWindowButton(.miniaturizeButton)?.isEnabled = false
         window.standardWindowButton(.zoomButton)?.isEnabled = false
 
-        let coordinator = WindowBackgroundDragEnabler.Coordinator(
-            suppressToolbarButton: true,
+        let coordinator = WindowChromeConfigurator.Coordinator(
             enablesStandardWindowControls: true
         )
         coordinator.configureWindowChrome(in: window)
@@ -58,7 +57,7 @@ final class WindowChromeInteractionTests: XCTestCase {
         )
         window.isMovableByWindowBackground = true
         let host = NSHostingView(rootView: Color.clear.background(
-            WindowBackgroundDragEnabler(surfaceColor: .black)
+            WindowChromeConfigurator(surfaceColor: .black)
         ))
         window.contentView = host
 
@@ -82,8 +81,7 @@ final class WindowChromeInteractionTests: XCTestCase {
             defer: false
         )
 
-        let coordinator = WindowBackgroundDragEnabler.Coordinator(
-            suppressToolbarButton: true,
+        let coordinator = WindowChromeConfigurator.Coordinator(
             enablesStandardWindowControls: true
         )
         coordinator.configureWindowChrome(in: window)
@@ -110,8 +108,7 @@ final class WindowChromeInteractionTests: XCTestCase {
             theme: .defaultLight,
             zoomScale: WorkspaceZoomPolicy.maximum
         )
-        let coordinator = WindowBackgroundDragEnabler.Coordinator(
-            suppressToolbarButton: true,
+        let coordinator = WindowChromeConfigurator.Coordinator(
             trafficLightRowHeight: chromeHeight
         )
         coordinator.observeWindow(window)
@@ -319,7 +316,6 @@ final class WindowChromeInteractionTests: XCTestCase {
         let topBar = TopNavigationBar(
             editorMode: .constant(.source),
             isSplitViewEnabled: .constant(false),
-            emptyStateTitle: "Monknot",
             selectedDocument: nil,
             isBusy: false,
             isDocumentLoading: false,

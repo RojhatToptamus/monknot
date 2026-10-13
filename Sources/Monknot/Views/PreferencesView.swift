@@ -60,6 +60,18 @@ struct PreferencesView: View {
         MonknotMetrics.interfaceDensity(base, theme: panelTheme, zoomScale: settingsZoomScale)
     }
 
+    private var windowSize: CGSize {
+        let visible = NSScreen.main?.visibleFrame.size ?? .zero
+        let titlebarHeight: CGFloat = 28
+        return CGSize(
+            width: min(scaled(MonknotMetrics.settingsWindowWidth), visible.width > 0 ? visible.width : .infinity),
+            height: min(
+                scaled(MonknotMetrics.settingsWindowContentHeight),
+                visible.height > titlebarHeight ? visible.height - titlebarHeight : .infinity
+            )
+        )
+    }
+
     private func textScaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceText(base, theme: panelTheme, zoomScale: settingsZoomScale)
     }
@@ -80,16 +92,13 @@ struct PreferencesView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(panelTheme.contentSurfaceColor)
         }
-        // Unscaled: the window never resizes with the workspace zoom; zoomed pages scroll instead.
-        .frame(
-            width: MonknotMetrics.settingsWindowWidth,
-            height: MonknotMetrics.settingsWindowContentHeight
-        )
+        // Settings zooms with the workspace, but the window never grows past the screen; its pages
+        // scroll inside it.
+        .frame(width: windowSize.width, height: windowSize.height)
         .background(panelTheme.sidebarSurfaceColor.ignoresSafeArea())
         .background(
-            WindowBackgroundDragEnabler(
+            WindowChromeConfigurator(
                 surfaceColor: panelTheme.sidebarSurfaceColor,
-                suppressToolbarButton: true,
                 windowTitle: selectedSection.rawValue,
                 enablesStandardWindowControls: true
             )
@@ -585,17 +594,15 @@ struct SettingsPage<Content: View>: View {
     }
 
     var body: some View {
-        GeometryReader { viewport in
-            MonknotScrollView([.horizontal, .vertical], theme: theme) {
-                VStack(alignment: .leading, spacing: 0) {
-                    content()
-                }
-                .padding(.horizontal, scaled(20))
-                .padding(.vertical, scaled(18))
-                .padding(.bottom, scaled(10))
-                .frame(maxWidth: scaled(680))
-                .frame(width: max(viewport.size.width, scaled(MonknotMetrics.settingsPageWidth)))
+        MonknotScrollView(theme: theme) {
+            VStack(alignment: .leading, spacing: 0) {
+                content()
             }
+            .padding(.horizontal, scaled(20))
+            .padding(.vertical, scaled(18))
+            .padding(.bottom, scaled(10))
+            .frame(maxWidth: scaled(680))
+            .frame(maxWidth: .infinity)
         }
         .scrollContentBackground(.hidden)
         .background(theme.contentSurfaceColor)
