@@ -394,7 +394,8 @@ struct EditableThemeColorRow: View {
                             isHexValid
                                 ? (isHexFieldFocused ? theme.accentColor.opacity(0.9) : theme.borderColor)
                                 : validationColor,
-                            lineWidth: isHexFieldFocused ? 1.5 : 1
+                            // design.md §3: focus changes the stroke colour, never its width.
+                            lineWidth: 1
                         )
                 )
                 .accessibilityLabel("\(label) hexadecimal value")

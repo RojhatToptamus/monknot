@@ -152,10 +152,14 @@ struct MonknotSettingsMenuPicker: View {
             isMenuPresented = true
         } label: {
             HStack(spacing: scaled(6)) {
+                // As wide as the longest option, so previewing options while the menu tracks never
+                // resizes the button or moves the row.
                 Text(selectedTitle)
+                    .monknotReservingWidth(of: options.map(\.title), alignment: .leading)
                     .font(MonknotTypography.settingsButton(theme: theme, zoomScale: settingsZoomScale))
                     .foregroundStyle(theme.foregroundColor)
                     .lineLimit(1)
+                    .truncationMode(.middle)
 
                 Image(systemName: "chevron.down")
                     .font(.system(
@@ -185,7 +189,7 @@ struct MonknotSettingsMenuPicker: View {
         .focusable(NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
         .focusEffectDisabled()
-        .fixedSize()
+        .fixedSize(horizontal: false, vertical: true)
         .background(
             SettingsMenuPresenter(
                 isPresented: $isMenuPresented,

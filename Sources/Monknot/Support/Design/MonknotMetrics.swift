@@ -34,8 +34,13 @@ enum MonknotMetrics {
     static let settingsMaxContentWidth: CGFloat = 720
     /// Native settings content is 532 points tall so the standard 28-point
     /// macOS title bar produces the specification's 600 × 560 window.
+    /// The window keeps this size at every workspace zoom; zoomed pages scroll inside it.
     static let settingsWindowWidth: CGFloat = 600
     static let settingsWindowContentHeight: CGFloat = 532
+    static let settingsSidebarWidth: CGFloat = 168
+    /// A page's width at zoom 1. A zoomed page keeps this width scaled and scrolls sideways when the
+    /// window is narrower, rather than squeezing its rows.
+    static let settingsPageWidth: CGFloat = settingsWindowWidth - settingsSidebarWidth - 1
 
     enum Spacing {
         static let xxs: CGFloat = 2

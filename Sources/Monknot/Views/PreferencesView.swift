@@ -80,9 +80,10 @@ struct PreferencesView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(panelTheme.contentSurfaceColor)
         }
+        // Unscaled: the window never resizes with the workspace zoom; zoomed pages scroll instead.
         .frame(
-            width: scaled(MonknotMetrics.settingsWindowWidth),
-            height: scaled(MonknotMetrics.settingsWindowContentHeight)
+            width: MonknotMetrics.settingsWindowWidth,
+            height: MonknotMetrics.settingsWindowContentHeight
         )
         .background(panelTheme.sidebarSurfaceColor.ignoresSafeArea())
         .background(
@@ -150,7 +151,7 @@ struct PreferencesView: View {
         }
         .padding(.horizontal, scaled(8))
         .padding(.top, scaled(18))
-        .frame(width: scaled(168))
+        .frame(width: scaled(MonknotMetrics.settingsSidebarWidth))
         .background(panelTheme.sidebarSurfaceColor)
     }
 
@@ -584,15 +585,17 @@ struct SettingsPage<Content: View>: View {
     }
 
     var body: some View {
-        MonknotScrollView(theme: theme) {
-            VStack(alignment: .leading, spacing: 0) {
-                content()
+        GeometryReader { viewport in
+            MonknotScrollView([.horizontal, .vertical], theme: theme) {
+                VStack(alignment: .leading, spacing: 0) {
+                    content()
+                }
+                .padding(.horizontal, scaled(20))
+                .padding(.vertical, scaled(18))
+                .padding(.bottom, scaled(10))
+                .frame(maxWidth: scaled(680))
+                .frame(width: max(viewport.size.width, scaled(MonknotMetrics.settingsPageWidth)))
             }
-            .padding(.horizontal, scaled(20))
-            .padding(.vertical, scaled(18))
-            .padding(.bottom, scaled(10))
-            .frame(maxWidth: scaled(680))
-            .frame(maxWidth: .infinity)
         }
         .scrollContentBackground(.hidden)
         .background(theme.contentSurfaceColor)
