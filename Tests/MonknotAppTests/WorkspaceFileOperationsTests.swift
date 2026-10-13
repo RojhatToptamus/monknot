@@ -1117,6 +1117,26 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertFalse(store.isBusy)
     }
 
+    /// An Option-drop copies a workspace item, leaving the original and its links in place.
+    func testCopyingDropOfAWorkspaceItemCopiesIt() async throws {
+        let root = try makeRoot()
+        try write("# A\n", to: root.appendingPathComponent("Sub/a.md"))
+        try write("# B\n", to: root.appendingPathComponent("b.md"))
+        try makeFolder(root.appendingPathComponent("Other"))
+        let store = try await openStore(root)
+
+        store.dropFileURLs(
+            [root.appendingPathComponent("Sub/a.md"), root.appendingPathComponent("b.md")],
+            into: root.appendingPathComponent("Other"),
+            copying: true
+        )
+        await idle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(names(in: root.appendingPathComponent("Other")), ["a.md", "b.md"])
+        XCTAssertTrue(exists(root.appendingPathComponent("Sub/a.md")))
+        XCTAssertTrue(exists(root.appendingPathComponent("b.md")))
+    }
+
     func testFinderDropImportsIntoTheTargetFolder() async throws {
         let root = try makeRoot()
         try makeFolder(root.appendingPathComponent("Sub"))
@@ -1232,7 +1252,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
 
         store.deleteDocument(a)
         XCTAssertFalse(store.isBusy)
-        XCTAssertTrue(store.errorMessage?.contains("Save or close") == true)
+        XCTAssertEqual(store.errorMessage, "Save or close A.md before moving it to the Trash.")
 
         // A document that is not part of the workspace is ignored.
         let foreign = WorkspaceDocument(

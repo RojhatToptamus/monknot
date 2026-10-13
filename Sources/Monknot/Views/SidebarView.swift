@@ -138,9 +138,13 @@ struct SidebarView: View {
         }
         .onAppear(perform: handleSidebarAppear)
         .background {
-            FileURLDropTarget(isTargeted: $isDropTargeted) { urls in
-                handleDroppedURLs(urls)
-            }
+            FileURLDropTarget(
+                isTargeted: $isDropTargeted,
+                operation: { urls in SidebarFileDrop.operation(for: urls, workspaceURL: store.workspaceURL) },
+                handleURLs: { urls, operation in
+                    store.dropFileURLs(urls, into: nil, copying: operation == .copy)
+                }
+            )
         }
         .sheet(item: $sidebarPrompt) { prompt in
             SidebarNameInputSheet(
@@ -421,10 +425,6 @@ struct SidebarView: View {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    private func handleDroppedURLs(_ urls: [URL]) {
-        store.dropFileURLs(urls, into: nil)
-    }
-
     private var rowActions: SidebarRowActions {
         SidebarRowActions(
             toggleFolder: toggleFolder(_:),
@@ -443,8 +443,11 @@ struct SidebarView: View {
             moveToTrash: moveToTrash(_:),
             dragChanged: handleSidebarNodeDragChanged(id:location:),
             dragEnded: handleSidebarNodeDragEnded(id:location:),
-            dropFileURLs: { urls, directoryURL in store.dropFileURLs(urls, into: directoryURL) },
-            dropTargetingChanged: handleExternalDropTargeting(rowID:directoryURL:isTargeted:)
+            dropFileURLs: { urls, directoryURL, copying in
+                store.dropFileURLs(urls, into: directoryURL, copying: copying)
+            },
+            dropTargetingChanged: handleExternalDropTargeting(rowID:directoryURL:isTargeted:),
+            workspaceURL: { store.workspaceURL }
         )
     }
 
@@ -681,6 +684,12 @@ struct VisibleSidebarNode: Identifiable {
         dropTargetNode.id
     }
 
+    /// Where a Paste, a Finder drop or a moved row lands on this row: the folder itself (the
+    /// deepest of a compact row), or a file's folder.
+    var destinationURL: URL {
+        node.kind == .folder ? dropTargetNode.url : node.url.deletingLastPathComponent()
+    }
+
     var displayName: String {
         guard folderNodes.count > 1 else { return node.name }
         return folderNodes.map(\.name).joined(separator: "/")
@@ -772,9 +781,7 @@ enum SidebarMoveDropTarget: Equatable {
         let destinationURL: URL
         if let row = rows.first(where: { rowFrames[$0.id]?.contains(location) == true }) {
             guard row.id != draggedRowID else { return nil }
-            destinationURL = row.node.kind == .folder
-                ? row.dropTargetNode.url
-                : row.node.url.deletingLastPathComponent()
+            destinationURL = row.destinationURL
         } else {
             let rowsBottom = rowFrames.values.map(\.maxY).max() ?? 0
             let isEmptyTreeSpace = location.y > rowsBottom
@@ -1232,8 +1239,9 @@ private struct SidebarRowActions {
     let moveToTrash: (VisibleSidebarNode) -> Void
     let dragChanged: (String, CGPoint) -> Void
     let dragEnded: (String, CGPoint) -> Void
-    let dropFileURLs: ([URL], URL) -> Void
+    let dropFileURLs: ([URL], URL, Bool) -> Void
     let dropTargetingChanged: (String, URL, Bool) -> Void
+    let workspaceURL: () -> URL?
 }
 
 /// Rows compare only what they draw. Typing publishes the store on every keystroke, and without
@@ -1282,11 +1290,6 @@ private struct SidebarNodeRow: View {
     /// The file, or the deepest folder of a compact folder row.
     private var item: SidebarNode {
         visibleNode.dropTargetNode
-    }
-
-    /// Where a Paste or a Finder drop on this row lands: the folder itself, or a file's folder.
-    private var destinationURL: URL {
-        node.kind == .folder ? item.url : node.url.deletingLastPathComponent()
     }
 
     private var isSelected: Bool {
@@ -1343,7 +1346,7 @@ private struct SidebarNodeRow: View {
         }
         .opacity(isMoveSource ? 0.45 : 1)
         .highPriorityGesture(sidebarMoveGesture)
-        .dropDestination(for: URL.self, action: dropFileURLs, isTargeted: dropTargetingChanged)
+        .onDrop(of: [.fileURL], delegate: fileDropDelegate)
         .help(visibleNode.displayRelativePath)
         .accessibilityLabel(folderAccessibilityLabel)
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
@@ -1400,7 +1403,7 @@ private struct SidebarNodeRow: View {
         }
         .opacity(isMoveSource ? 0.45 : 1)
         .highPriorityGesture(sidebarMoveGesture)
-        .dropDestination(for: URL.self, action: dropFileURLs, isTargeted: dropTargetingChanged)
+        .onDrop(of: [.fileURL], delegate: fileDropDelegate)
         .monknotHelp(isSelected ? nil : (node.relativePath.isEmpty ? node.name : node.relativePath))
         .accessibilityLabel(fileAccessibilityLabel)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -1476,13 +1479,6 @@ private struct SidebarNodeRow: View {
 
         clipboardButtons
 
-        Button {
-            actions.duplicate(item.url)
-        } label: {
-            Label("Duplicate", systemImage: "plus.square.on.square")
-        }
-        .disabled(isBusy)
-
         Divider()
 
         moveToTrashButton
@@ -1518,6 +1514,7 @@ private struct SidebarNodeRow: View {
         }
     }
 
+    /// Copy, Cut, Paste and Duplicate, the same for files and folders.
     @ViewBuilder
     private var clipboardButtons: some View {
         Button {
@@ -1525,6 +1522,7 @@ private struct SidebarNodeRow: View {
         } label: {
             Label("Copy", systemImage: "doc.on.doc")
         }
+        .disabled(isBusy)
 
         Button {
             actions.cut(item.url)
@@ -1534,9 +1532,16 @@ private struct SidebarNodeRow: View {
         .disabled(isBusy)
 
         Button {
-            actions.paste(destinationURL)
+            actions.paste(visibleNode.destinationURL)
         } label: {
             Label("Paste", systemImage: "doc.on.clipboard")
+        }
+        .disabled(isBusy)
+
+        Button {
+            actions.duplicate(item.url)
+        } label: {
+            Label("Duplicate", systemImage: "plus.square.on.square")
         }
         .disabled(isBusy)
     }
@@ -1562,15 +1567,77 @@ private struct SidebarNodeRow: View {
             }
     }
 
-    private func dropFileURLs(_ urls: [URL], at location: CGPoint) -> Bool {
-        let fileURLs = urls.filter(\.isFileURL)
-        guard !fileURLs.isEmpty else { return false }
-        actions.dropFileURLs(fileURLs, destinationURL)
-        return true
+    private var fileDropDelegate: SidebarFileDropDelegate {
+        SidebarFileDropDelegate(
+            workspaceURL: actions.workspaceURL(),
+            drop: { urls, copying in actions.dropFileURLs(urls, visibleNode.destinationURL, copying) },
+            targetingChanged: { isTargeted in
+                actions.dropTargetingChanged(node.id, visibleNode.destinationURL, isTargeted)
+            }
+        )
+    }
+}
+
+/// What a Finder drop on the sidebar does, so the drag cursor and the drop agree. An item that is
+/// already in the workspace moves, as within a Finder volume, and is copied while Option is held;
+/// anything else is copied in.
+enum SidebarFileDrop {
+    static func copies(_ urls: [URL], workspaceURL: URL?, isOptionPressed: Bool) -> Bool {
+        guard let workspaceURL, !isOptionPressed else { return true }
+        return !urls.contains { url in
+            url.standardizedFileURL != workspaceURL.standardizedFileURL
+                && WorkspaceDocumentSupport.isURL(url, containedIn: workspaceURL)
+        }
     }
 
-    private func dropTargetingChanged(_ isTargeted: Bool) {
-        actions.dropTargetingChanged(node.id, destinationURL, isTargeted)
+    static func operation(for urls: [URL], workspaceURL: URL?) -> NSDragOperation {
+        guard !urls.isEmpty else { return [] }
+        let isOptionPressed = NSEvent.modifierFlags.contains(.option)
+        return copies(urls, workspaceURL: workspaceURL, isOptionPressed: isOptionPressed) ? .copy : .move
+    }
+
+    /// The file URLs of the drag in progress.
+    static func draggedFileURLs(on pasteboard: NSPasteboard = NSPasteboard(name: .drag)) -> [URL] {
+        let objects = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) ?? []
+        return objects.compactMap { ($0 as? NSURL) as URL? }
+    }
+}
+
+/// A Finder drop on a sidebar row, proposing the operation `SidebarFileDrop` performs.
+private struct SidebarFileDropDelegate: DropDelegate {
+    let workspaceURL: URL?
+    let drop: ([URL], Bool) -> Void
+    let targetingChanged: (Bool) -> Void
+
+    func validateDrop(info: DropInfo) -> Bool {
+        info.hasItemsConforming(to: [.fileURL])
+    }
+
+    func dropEntered(info: DropInfo) {
+        targetingChanged(true)
+    }
+
+    func dropExited(info: DropInfo) {
+        targetingChanged(false)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        let operation = SidebarFileDrop.operation(
+            for: SidebarFileDrop.draggedFileURLs(),
+            workspaceURL: workspaceURL
+        )
+        return DropProposal(operation: operation == .move ? .move : .copy)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        targetingChanged(false)
+        let urls = SidebarFileDrop.draggedFileURLs()
+        guard !urls.isEmpty else { return false }
+        drop(urls, SidebarFileDrop.operation(for: urls, workspaceURL: workspaceURL) == .copy)
+        return true
     }
 }
 

@@ -226,6 +226,28 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
         XCTAssertNil(emptySpaceTarget("deep.md", y: 500), "Below the visible tree")
         XCTAssertNil(emptySpaceTarget("deep.md", y: 37), "Between two rows")
 
+        // A Paste or Finder drop on a row lands where a moved row would.
+        XCTAssertEqual(rows.map(\.destinationURL.path), [
+            "/workspace/A/B", "/workspace/A/B", "/workspace/A/B", "/workspace/C", "/workspace/C", "/workspace",
+        ])
+    }
+
+    /// The drag cursor and the drop agree: workspace items move unless Option asks for a copy,
+    /// and anything from outside the workspace is copied in.
+    func testFinderDropMovesWorkspaceItemsAndCopiesWithOption() {
+        let root = URL(fileURLWithPath: "/workspace")
+        let inside = [root.appendingPathComponent("Notes/a.md")]
+        let outside = [URL(fileURLWithPath: "/elsewhere/b.md")]
+
+        XCTAssertFalse(SidebarFileDrop.copies(inside, workspaceURL: root, isOptionPressed: false))
+        XCTAssertTrue(SidebarFileDrop.copies(inside, workspaceURL: root, isOptionPressed: true))
+        XCTAssertTrue(SidebarFileDrop.copies(outside, workspaceURL: root, isOptionPressed: false))
+        XCTAssertFalse(SidebarFileDrop.copies(inside + outside, workspaceURL: root, isOptionPressed: false))
+        XCTAssertTrue(SidebarFileDrop.copies([root], workspaceURL: root, isOptionPressed: false), "The root itself")
+        XCTAssertTrue(SidebarFileDrop.copies(
+            [URL(fileURLWithPath: "/workspace-other/c.md")], workspaceURL: root, isOptionPressed: false
+        ))
+        XCTAssertTrue(SidebarFileDrop.copies(inside, workspaceURL: nil, isOptionPressed: false), "No workspace")
     }
 
     // MARK: - File clipboard

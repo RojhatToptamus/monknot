@@ -968,9 +968,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     /// Imports files dropped from Finder into `directoryURL` (the root when nil). A single item that
-    /// is already in the workspace is moved there instead. Without a workspace, one dropped item
-    /// opens as the workspace.
-    func dropFileURLs(_ urls: [URL], into directoryURL: URL? = nil) {
+    /// is already in the workspace is moved there instead, unless the drop is `copying`. Without a
+    /// workspace, one dropped item opens as the workspace.
+    func dropFileURLs(_ urls: [URL], into directoryURL: URL? = nil, copying: Bool = false) {
         let fileURLs = urls.filter(\.isFileURL).map(\.standardizedFileURL)
         guard !fileURLs.isEmpty else { return }
 
@@ -988,7 +988,7 @@ final class WorkspaceStore: ObservableObject {
         }
 
         let workspaceItems = fileURLs.filter { $0 != workspaceURL && WorkspaceDocumentSupport.isURL($0, containedIn: workspaceURL) }
-        guard workspaceItems.isEmpty else {
+        guard copying || workspaceItems.isEmpty else {
             guard fileURLs.count == 1 else {
                 errorMessage = "Move items that are already in the workspace one at a time."
                 return
@@ -1125,10 +1125,10 @@ final class WorkspaceStore: ObservableObject {
 
     func deleteDocument(_ document: WorkspaceDocument) {
         guard let workspaceURL, !isBusy, documents.contains(where: { $0.id == document.id }) else { return }
-        guard ensureWritingToolsInactive(for: "deleting a document") else { return }
+        guard ensureWritingToolsInactive(for: "moving a document to the Trash") else { return }
 
         if openDocumentIDs.contains(document.id), saveState(for: document.id).isClean == false {
-            errorMessage = "Save or close \(document.displayName) before deleting it."
+            errorMessage = "Save or close \(document.displayName) before moving it to the Trash."
             return
         }
 
@@ -1153,7 +1153,7 @@ final class WorkspaceStore: ObservableObject {
                     generation: generation
                 )
             } catch {
-                await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not delete \(document.displayName)")
+                await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not move \(document.displayName) to the Trash")
             }
         }
     }
@@ -1164,11 +1164,11 @@ final class WorkspaceStore: ObservableObject {
         let folderPath = folderURL.standardizedFileURL.path
         let rootPath = workspaceURL.standardizedFileURL.path
         guard folderPath != rootPath, folderPath.hasPrefix(rootPath + "/") else { return }
-        guard ensureWritingToolsInactive(for: "deleting a folder") else { return }
+        guard ensureWritingToolsInactive(for: "moving a folder to the Trash") else { return }
 
         let contained = documents.filter { $0.id.hasPrefix(folderPath + "/") }
         if let unsaved = contained.first(where: { openDocumentIDs.contains($0.id) && !saveState(for: $0.id).isClean }) {
-            errorMessage = "Save or close \(unsaved.displayName) before deleting \(folderURL.lastPathComponent)."
+            errorMessage = "Save or close \(unsaved.displayName) before moving \(folderURL.lastPathComponent) to the Trash."
             return
         }
 
@@ -1193,7 +1193,7 @@ final class WorkspaceStore: ObservableObject {
                     generation: generation
                 )
             } catch {
-                await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not delete \(folderURL.lastPathComponent)")
+                await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not move \(folderURL.lastPathComponent) to the Trash")
             }
         }
     }
