@@ -325,11 +325,17 @@ paragraphs of explanation and no decorative glyphs.
 **Sheets.** 20 padding, the 13/600 title with an optional 12 `ink2` line under it, the content, then
 trailing 30 push buttons, Cancel before the default action.
 
-**Scroll thumbs.** Chrome lists (sidebar, search results, palettes, panels, Settings) always use the
-overlay thumb, whatever "Show scroll bars" says: no track, a 4pt radius-2 thumb at `ink` 35 % that
-widens to 6pt at 70 % under the pointer. It appears while the list scrolls and while the pointer is
-over the list, and fades like any overlay scroller. The document (editor, PDF, image) follows the
-system setting.
+**Scroll thumbs.** Chrome lists (sidebar, search results, palettes, panels, PDF navigator, diff
+panes, Settings) always use the overlay thumb, whatever "Show scroll bars" says: no track, a 4pt
+radius-2 thumb at `ink` 35 % that widens to 6pt at 70 % under the pointer. It appears while the list
+scrolls and while the pointer is over the list, and fades like any overlay scroller. A chrome list
+takes this thumb before its first layout, so no legacy bar flashes and nothing shifts sideways.
+
+Documents — editor, PDF, image, Markdown and HTML preview — keep the system scroller and follow the
+system setting, so side-by-side panes always draw the same scroll bar. With "Always", a document's
+scroll bar stays laid out while the document fits, so text never rewraps when it grows past one
+screen. The terminal is the one document-like surface with the custom thumb (§10.6); every custom
+thumb takes its colour from the theme's `ink`.
 
 ---
 

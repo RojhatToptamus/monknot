@@ -584,7 +584,7 @@ struct SettingsPage<Content: View>: View {
     }
 
     var body: some View {
-        MonknotScrollView {
+        MonknotScrollView(theme: theme) {
             VStack(alignment: .leading, spacing: 0) {
                 content()
             }

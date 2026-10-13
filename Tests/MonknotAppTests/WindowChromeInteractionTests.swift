@@ -162,6 +162,54 @@ final class WindowChromeInteractionTests: XCTestCase {
         behavior.detach()
     }
 
+    func testChromeScrollViewTakesTheOverlayThumbWithoutWaitingForTheRunLoop() throws {
+        let theme = AppTheme.defaultDark
+        let hostingView = NSHostingView(
+            rootView: MonknotScrollView(theme: theme) {
+                Color.clear.frame(height: 1200)
+            }
+            .frame(width: 248, height: 300)
+        )
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 248, height: 300),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = hostingView
+        hostingView.layoutSubtreeIfNeeded()
+
+        let scrollView = try XCTUnwrap(Self.firstDescendant(of: NSScrollView.self, in: hostingView))
+        XCTAssertEqual(scrollView.scrollerStyle, .overlay)
+        let scroller = try XCTUnwrap(scrollView.verticalScroller as? MonknotScroller)
+        XCTAssertEqual(scroller.thumbColor, NSColor(hex: theme.foreground), "The thumb takes the theme's ink")
+        XCTAssertEqual(scrollView.contentView.bounds.width, 248, "An overlay thumb takes no width from the list")
+    }
+
+    func testPDFPageThumbnailsUseTheChromeThumb() throws {
+        let navigator = PDFNavigatorView(frame: NSRect(x: 0, y: 0, width: 220, height: 400))
+        let scrollView = try XCTUnwrap(Self.firstDescendant(of: NSScrollView.self, in: navigator.thumbnailView))
+        XCTAssertTrue(scrollView.verticalScroller is MonknotScroller)
+        XCTAssertEqual(scrollView.scrollerStyle, .overlay)
+    }
+
+    func testDocumentsKeepTheSystemScrollerAndHideItOnlyWhenOverlay() {
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        scrollView.hasVerticalScroller = true
+        MonknotScrollbarStyle.applyDocument(to: scrollView)
+        XCTAssertFalse(scrollView.verticalScroller is MonknotScroller)
+        XCTAssertEqual(scrollView.autohidesScrollers, NSScroller.preferredScrollerStyle == .overlay)
+    }
+
+    private static func firstDescendant<View: NSView>(of type: View.Type, in view: NSView) -> View? {
+        for subview in view.subviews {
+            if let match = subview as? View ?? firstDescendant(of: type, in: subview) {
+                return match
+            }
+        }
+        return nil
+    }
+
     func testScrollThumbsAreSlimRadiusTwoMarks() {
         XCTAssertEqual(MonknotScrollbarStyle.thumbRadius, 2, "design.md §7: scroll thumbs are radius-2 marks")
         XCTAssertLessThan(MonknotScrollbarStyle.restingThumbWidth, MonknotScrollbarStyle.hoveredThumbWidth)

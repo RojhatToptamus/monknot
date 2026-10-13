@@ -25,7 +25,7 @@ struct MonknotKeyboardShortcutsHelpView: View {
 
                 Rectangle().fill(theme.separatorColor).frame(height: 1)
 
-                MonknotScrollView {
+                MonknotScrollView(theme: theme) {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(MonknotKeyboardShortcutCatalog.sections, id: \.title) { section in
                             Text(section.title)

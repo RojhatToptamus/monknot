@@ -72,7 +72,7 @@ struct WorkspaceQuickOpenView: View {
 
     private var resultBody: some View {
         ScrollViewReader { proxy in
-            MonknotScrollView {
+            MonknotScrollView(theme: theme) {
                 if state.matches.isEmpty {
                     MonknotCommandOverlayEmptyState(
                         title: state.query.isEmpty

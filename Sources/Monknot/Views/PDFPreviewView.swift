@@ -2340,6 +2340,7 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
     private let contentView = NSView()
     private let outlineScrollView = NSScrollView()
     private let annotationScrollView = NSScrollView()
+    private let thumbnailScrollerBehavior = MonknotChromeScrollerBehavior()
     private let outlineScrollerBehavior = MonknotChromeScrollerBehavior()
     private let annotationScrollerBehavior = MonknotChromeScrollerBehavior()
     private let emptyLabel = NSTextField(labelWithString: "")
@@ -2427,6 +2428,10 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         appliedTheme = theme
         let foreground = NSColor(hex: theme.foreground)
         foregroundColor = foreground
+        let thumbColor = MonknotScrollbarStyle.thumbColor(for: theme)
+        thumbnailScrollerBehavior.thumbColor = thumbColor
+        outlineScrollerBehavior.thumbColor = thumbColor
+        annotationScrollerBehavior.thumbColor = thumbColor
         mutedForegroundColor = foreground.withAlphaComponent(theme.isDark ? 0.62 : 0.64)
         selectionColor = NSColor(hex: theme.selectionBackground)
         wantsLayer = true
@@ -2555,6 +2560,9 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         thumbnailView.allowsDragging = false
         thumbnailView.allowsMultipleSelection = false
         thumbnailView.setAccessibilityLabel("PDF Pages")
+        if let thumbnailScrollView = Self.firstScrollView(in: thumbnailView) {
+            thumbnailScrollerBehavior.attach(to: thumbnailScrollView)
+        }
         contentView.addSubview(thumbnailView)
         thumbnailLeadingConstraint = thumbnailView.leadingAnchor.constraint(
             equalTo: contentView.leadingAnchor,
@@ -2578,6 +2586,16 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
             thumbnailTopConstraint,
             thumbnailBottomConstraint
         ])
+    }
+
+    /// PDFThumbnailView lists its pages in a private scroll view of its own.
+    private static func firstScrollView(in view: NSView) -> NSScrollView? {
+        for subview in view.subviews {
+            if let scrollView = subview as? NSScrollView ?? firstScrollView(in: subview) {
+                return scrollView
+            }
+        }
+        return nil
     }
 
     private func configureOutlineView() {
@@ -4689,9 +4707,6 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
 
     override func layout() {
         super.layout()
-        if let scrollView = documentView?.enclosingScrollView {
-            MonknotScrollbarStyle.apply(to: scrollView)
-        }
         updateFreeTextSelectionOverlay()
         updateFreeTextEditorFrame()
         if annotationMode == .select {

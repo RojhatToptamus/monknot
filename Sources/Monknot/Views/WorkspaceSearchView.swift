@@ -503,7 +503,7 @@ struct WorkspaceSearchView: View {
                 .accessibilityHidden(true)
         } else {
             ScrollViewReader { proxy in
-                MonknotScrollView {
+                MonknotScrollView(theme: theme) {
                     resultList
                 }
                 .onChange(of: state.selectedResultIndex) { _, index in
@@ -587,7 +587,7 @@ private struct WorkspaceReplaceConfirmationSheet: View {
             theme: theme
         ) {
             VStack(alignment: .leading, spacing: 8) {
-                MonknotScrollView {
+                MonknotScrollView(theme: theme) {
                     VStack(spacing: 0) {
                         ForEach(Array(preview.fileResults.enumerated()), id: \.element.documentID) { index, result in
                             HStack(spacing: 8) {

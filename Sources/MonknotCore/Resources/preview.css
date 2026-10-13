@@ -73,6 +73,12 @@ body {
   box-sizing: border-box;
 }
 
+/* A legacy scroll bar stays laid out while the preview fits, so text never rewraps when the preview
+   grows past one screen. PDF export clips its pages instead (html.monknot-pdf-export). */
+html {
+  overflow-y: scroll;
+}
+
 .markdown-body {
   box-sizing: border-box;
   width: min(var(--content-max-width, 88%), calc(100% - 28px));

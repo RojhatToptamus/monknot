@@ -350,7 +350,7 @@ struct ExternalDocumentReconciliationSheet: View {
             GeometryReader { geometry in
                 let metrics = ExternalDocumentDiffLayoutMetrics(theme: theme, zoomScale: zoomScale)
                 let contentWidth = metrics.contentWidth(for: diff, viewportWidth: geometry.size.width)
-                ScrollView([.horizontal, .vertical]) {
+                MonknotScrollView([.horizontal, .vertical], theme: theme) {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(diff.hunks.enumerated()), id: \.offset) { _, hunk in
                             hunkHeader(hunk, metrics: metrics)
@@ -468,7 +468,7 @@ struct ExternalDocumentReconciliationSheet: View {
     }
 
     private func baselinePane(_ text: String) -> some View {
-        ScrollView([.horizontal, .vertical]) {
+        MonknotScrollView([.horizontal, .vertical], theme: theme) {
             Text(verbatim: text.isEmpty ? " " : text)
                 .font(.system(
                     size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale),

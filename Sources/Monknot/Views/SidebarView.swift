@@ -216,7 +216,7 @@ struct SidebarView: View {
             if !nodes.isEmpty {
                 GeometryReader { geometry in
                     VStack(spacing: 0) {
-                        SidebarScrollContainer {
+                        SidebarScrollContainer(theme: theme) {
                             LazyVStack(alignment: .leading, spacing: scaled(2)) {
                                 ForEach(nodes) { visibleNode in
                                     SidebarNodeRow(
@@ -976,7 +976,7 @@ private struct WorkspaceSwitcherPopover: View {
                     .padding(.horizontal, scaled(14))
                     .frame(height: scaled(42), alignment: .leading)
             } else {
-                MonknotScrollView {
+                MonknotScrollView(theme: theme) {
                     LazyVStack(spacing: scaled(2)) {
                         ForEach(Array(workspaces.enumerated()), id: \.element.id) { index, workspace in
                             WorkspaceSwitcherRow(
@@ -1492,9 +1492,11 @@ private struct SidebarNodeRow: View {
 }
 
 private struct SidebarScrollContainer<Content: View>: NSViewRepresentable {
+    let thumbColor: NSColor
     let content: Content
 
-    init(@ViewBuilder content: () -> Content) {
+    init(theme: AppTheme, @ViewBuilder content: () -> Content) {
+        self.thumbColor = MonknotScrollbarStyle.thumbColor(for: theme)
         self.content = content()
     }
 
@@ -1504,6 +1506,7 @@ private struct SidebarScrollContainer<Content: View>: NSViewRepresentable {
 
     func makeNSView(context: Context) -> SidebarNativeScrollView<Content> {
         let scrollView = SidebarNativeScrollView<Content>()
+        scrollView.thumbColor = thumbColor
         let hostingView = SidebarHostingView(rootView: content)
         hostingView.translatesAutoresizingMaskIntoConstraints = false
         hostingView.setContentHuggingPriority(.required, for: .vertical)
@@ -1526,8 +1529,7 @@ private struct SidebarScrollContainer<Content: View>: NSViewRepresentable {
 
     func updateNSView(_ scrollView: SidebarNativeScrollView<Content>, context: Context) {
         context.coordinator.hostingView?.rootView = content
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
+        scrollView.thumbColor = thumbColor
     }
 
     final class Coordinator {
@@ -1549,6 +1551,11 @@ private final class SidebarClipView: NSClipView {
 
 private final class SidebarNativeScrollView<Content: View>: NSScrollView {
     private let chromeScrollerBehavior = MonknotChromeScrollerBehavior()
+
+    var thumbColor: NSColor {
+        get { chromeScrollerBehavior.thumbColor }
+        set { chromeScrollerBehavior.thumbColor = newValue }
+    }
 
     override var mouseDownCanMoveWindow: Bool {
         false
@@ -1912,7 +1919,7 @@ private struct SidebarRecentDocumentsSection: View {
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
 
             if isExpanded {
-                MonknotScrollView {
+                MonknotScrollView(theme: theme) {
                     VStack(alignment: .leading, spacing: rowSpacing) {
                         ForEach(entries, id: \.documentID) { entry in
                             Button {
@@ -2040,7 +2047,7 @@ private struct EmptySidebarView: View {
     /// The editor area carries the empty state; the sidebar only offers the saved workspaces, as rows
     /// like every other, or a quiet line while one opens.
     var body: some View {
-        MonknotScrollView {
+        MonknotScrollView(theme: theme) {
             VStack(alignment: .leading, spacing: scaled(2)) {
                 if isLoadingWorkspace {
                     Text("Opening workspace…")
@@ -2131,7 +2138,7 @@ private struct MarkdownLinkMoveReviewSheet: View {
                 .foregroundStyle(theme.foregroundColor)
                 .lineLimit(1)
 
-                MonknotScrollView {
+                MonknotScrollView(theme: theme) {
                     LazyVStack(alignment: .leading, spacing: scaled(12)) {
                         ForEach(Array(review.plan.rewriteFiles.enumerated()), id: \.offset) { _, filePlan in
                             VStack(alignment: .leading, spacing: scaled(6)) {

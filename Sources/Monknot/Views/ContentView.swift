@@ -3203,7 +3203,7 @@ private struct AmbiguousMarkdownLinkPicker: View {
 
                 Rectangle().fill(theme.separatorColor).frame(height: 1)
 
-                MonknotScrollView {
+                MonknotScrollView(theme: theme) {
                     LazyVStack(spacing: scaled(2)) {
                         ForEach(documents) { document in
                             MonknotCommandOverlayRow(

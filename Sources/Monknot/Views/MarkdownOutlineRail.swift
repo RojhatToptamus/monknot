@@ -305,7 +305,7 @@ private struct MarkdownOutlineHoverPanel: View {
                 .frame(height: 1)
 
             ScrollViewReader { scrollProxy in
-                MonknotScrollView {
+                MonknotScrollView(theme: theme) {
                     LazyVStack(alignment: .leading, spacing: scaled(2)) {
                         ForEach(items) { item in
                             outlineRow(for: item)

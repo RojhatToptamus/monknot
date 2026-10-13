@@ -1723,10 +1723,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = true
-        MonknotScrollbarStyle.apply(to: scrollView)
+        MonknotScrollbarStyle.applyDocument(to: scrollView)
 
         let textView = MarkdownNSTextView()
         textView.identifier = .monknotDocumentFocusTarget
@@ -2299,6 +2298,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
             )
             NotificationCenter.default.addObserver(
                 self,
+                selector: #selector(preferredScrollerStyleDidChange(_:)),
+                name: NSScroller.preferredScrollerStyleDidChangeNotification,
+                object: nil
+            )
+            NotificationCenter.default.addObserver(
+                self,
                 selector: #selector(applicationDidResignActive(_:)),
                 name: NSApplication.didResignActiveNotification,
                 object: NSApp
@@ -2702,6 +2707,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
             if shouldPublish {
                 publishCurrentScrollPosition()
             }
+        }
+
+        @objc private func preferredScrollerStyleDidChange(_ notification: Notification) {
+            guard let scrollView else { return }
+            MonknotScrollbarStyle.applyDocument(to: scrollView)
         }
 
         @objc private func windowDidResignKey(_ notification: Notification) {
