@@ -44,6 +44,28 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
         XCTAssertEqual(result.root.children?.first(where: { $0.name == "Notes" })?.children?.map(\.name), ["image.png", "Todo.markdown"])
     }
 
+    func testNodeLookupFindsFoldersAndFilesByPath() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        for folder in ["Notes/Deep", "Notes Archive"] {
+            try FileManager.default.createDirectory(at: root.appendingPathComponent(folder), withIntermediateDirectories: true)
+        }
+        try write("# A", to: root.appendingPathComponent("Notes/Deep/a.md"))
+        try write("# B", to: root.appendingPathComponent("Notes Archive/b.md"))
+
+        let tree = try WorkspaceDocumentScanner().scan(rootURL: root).root
+        let notes = root.appendingPathComponent("Notes").standardizedFileURL.path
+
+        XCTAssertEqual(tree.node(withID: tree.id)?.id, tree.id)
+        XCTAssertEqual(tree.node(withID: notes)?.kind, .folder)
+        XCTAssertEqual(tree.node(withID: notes + "/Deep")?.name, "Deep")
+        XCTAssertEqual(tree.node(withID: notes + "/Deep/a.md")?.kind, .file)
+        XCTAssertEqual(tree.node(withID: notes + " Archive/b.md")?.name, "b.md")
+        XCTAssertNil(tree.node(withID: notes + "/Missing"))
+        XCTAssertNil(tree.node(withID: "/elsewhere/Notes"))
+    }
+
     /// A folder named like a package is skipped by the scan, so the name check reports it hidden.
     func testPackageNamedFoldersAreHiddenLikeTheScanSkipsThem() throws {
         let root = try makeTemporaryDirectory()

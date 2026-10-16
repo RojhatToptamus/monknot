@@ -14,7 +14,10 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var workspaceURL: URL?
     @Published private(set) var openingWorkspaceURL: URL?
     @Published private(set) var rootNode: SidebarNode? {
-        didSet { rootNodeRevision &+= 1 }
+        didSet {
+            rootNodeRevision &+= 1
+            reconcileSelectedFolder()
+        }
     }
     /// Changes with every new tree, so views can follow the tree without comparing it.
     @Published private(set) var rootNodeRevision = 0
@@ -28,6 +31,11 @@ final class WorkspaceStore: ObservableObject {
             cancelExternalDocumentReview()
         }
     }
+    /// The folder selected in the sidebar. The sidebar has one selection: this folder, or the
+    /// selected document while no folder is selected. Selecting a folder leaves the document open.
+    @Published private(set) var selectedFolderID: String?
+    /// A folder the sidebar expands to show items pasted or dropped into it.
+    @Published private(set) var revealedFolder: WorkspaceFolderReveal?
     @Published private(set) var documentText = ""
     @Published private(set) var hasUnsavedChanges = false
     @Published private(set) var isBusy = false
@@ -108,6 +116,64 @@ final class WorkspaceStore: ObservableObject {
     var selectedDocument: WorkspaceDocument? {
         guard let selectedDocumentID else { return nil }
         return document(id: selectedDocumentID)
+    }
+
+    /// The sidebar's selected item: the selected folder, otherwise the selected document.
+    var sidebarSelectionURL: URL? {
+        if let selectedFolderID {
+            return URL(fileURLWithPath: selectedFolderID, isDirectory: true)
+        }
+        return selectedDocument?.url
+    }
+
+    /// Where New and Paste put items when no row names a folder: the selected folder, the selected
+    /// document's folder, or the workspace root when nil.
+    var sidebarTargetFolderURL: URL? {
+        if let selectedFolderID {
+            return URL(fileURLWithPath: selectedFolderID, isDirectory: true)
+        }
+        return selectedDocument?.url.deletingLastPathComponent()
+    }
+
+    /// Selects a folder of the workspace tree in the sidebar; the workspace root is never selected.
+    func selectFolder(id: String) {
+        guard let rootNode,
+              id != rootNode.id,
+              rootNode.node(withID: id)?.kind == .folder
+        else { return }
+        selectedFolderID = id
+    }
+
+    /// Keeps the selected folder in the tree: when it is gone, the nearest folder above it that
+    /// remains is selected instead, and nothing when that is the root.
+    private func reconcileSelectedFolder() {
+        guard var folderID = selectedFolderID else { return }
+        guard let rootNode else {
+            selectedFolderID = nil
+            return
+        }
+        while folderID != rootNode.id, folderID.hasPrefix(rootNode.id + "/") {
+            if rootNode.node(withID: folderID)?.kind == .folder {
+                if folderID != selectedFolderID {
+                    selectedFolderID = folderID
+                }
+                return
+            }
+            folderID = (folderID as NSString).deletingLastPathComponent
+        }
+        selectedFolderID = nil
+    }
+
+    /// Asks the sidebar to expand `directoryURL` so the items just added to it show.
+    private func revealFolder(_ directoryURL: URL?) {
+        guard let directoryURL,
+              let workspaceURL,
+              directoryURL.standardizedFileURL != workspaceURL.standardizedFileURL
+        else { return }
+        revealedFolder = WorkspaceFolderReveal(
+            serial: (revealedFolder?.serial ?? 0) &+ 1,
+            folderID: directoryURL.standardizedFileURL.path
+        )
     }
 
     var isWorkspaceOpening: Bool {
@@ -328,15 +394,25 @@ final class WorkspaceStore: ObservableObject {
         return pendingDocumentOpenIDs
     }
 
+    /// Opens the document `id` and moves the sidebar selection to it; nil leaves no document open
+    /// and keeps a selected folder.
     @discardableResult
     func selectDocument(id: String?) -> Bool {
         guard !isBusy else { return false }
-        guard id != selectedDocumentID else { return true }
+        guard id != selectedDocumentID else {
+            if id != nil {
+                selectedFolderID = nil
+            }
+            return true
+        }
         guard ensureWritingToolsInactive(for: "switching documents") else { return false }
 
         let signpostID = MonknotSignposting.documentSelection.beginInterval("SelectDocument")
         defer { MonknotSignposting.documentSelection.endInterval("SelectDocument", signpostID) }
 
+        if id != nil {
+            selectedFolderID = nil
+        }
         selectedDocumentID = id
         loadSelectedDocument()
         if let id, let document = document(id: id), let workspaceURL {
@@ -644,6 +720,7 @@ final class WorkspaceStore: ObservableObject {
                     selectedURL: nil,
                     preserveSelection: preserveSelection,
                     reloadSelection: false,
+                    sidebarSelection: .folder(folderURL),
                     generation: generation
                 )
             } catch {
@@ -819,7 +896,7 @@ final class WorkspaceStore: ObservableObject {
                 destinationURL: Self.uniqueDocumentURL(for: sourceURL, in: targetDirectory),
                 workspaceURL: workspaceURL,
                 failureMessage: "Could not paste \(displayName)",
-                selectDestinationAfterMove: documentsByID[sourceURL.path] != nil,
+                selectDestinationAfterMove: true,
                 completedTransfer: transfer
             )
             return
@@ -866,8 +943,9 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    /// Copies a file (with its unsaved text) or folder and selects the copied file. Whatever was
-    /// copied before a failure stays on disk, so a failure rescans too.
+    /// Copies a file (with its unsaved text) or folder and selects the copy: a copied file opens, a
+    /// copied folder is selected in the sidebar. Whatever was copied before a failure stays on
+    /// disk, so a failure rescans too.
     private func startItemCopy(
         from sourceURL: URL,
         into targetDirectory: URL,
@@ -897,6 +975,7 @@ final class WorkspaceStore: ObservableObject {
                     workspaceURL: workspaceURL,
                     selectedURL: isDocument ? destinationURL : nil,
                     preserveSelection: isDocument ? nil : preserveSelection,
+                    sidebarSelection: isDocument ? .document : .folder(destinationURL),
                     changedPaths: [sourceID, destinationURL.standardizedFileURL.path],
                     completedTransfer: completedTransfer,
                     generation: generation
@@ -937,6 +1016,7 @@ final class WorkspaceStore: ObservableObject {
         let preserveSelection = selectedDocumentID
         let shouldSelectImportedCapture = items.contains { $0.prefersSelectionAfterImport }
         let generation = beginDocumentFileOperation()
+        revealFolder(targetDirectory)
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
             do {
@@ -950,6 +1030,7 @@ final class WorkspaceStore: ObservableObject {
                     selectedURL: selectedURL,
                     preserveSelection: preserveSelection,
                     reloadSelection: selectedURL != nil,
+                    sidebarSelection: selectedURL != nil ? .document : .unchanged,
                     generation: generation
                 )
             } catch {
@@ -1215,15 +1296,25 @@ final class WorkspaceStore: ObservableObject {
 
         let mappings = Self.documentIDMappings(forMoving: sourceURL, to: destinationURL, documents: documents)
         let preserveSelection = selectedDocumentID
-        let selectedURL = selectDestinationAfterMove
+        let movesDocument = documentsByID[sourceURL.standardizedFileURL.path] != nil
+        let selectsDocument = selectDestinationAfterMove && movesDocument
+        let selectedURL = selectsDocument
             ? destinationURL.standardizedFileURL
             : mappings.first(where: { $0.sourceID == selectedDocumentID })?.destinationURL
+        let sidebarSelection: SidebarSelectionAfterLoad = if !selectDestinationAfterMove {
+            .unchanged
+        } else if movesDocument {
+            .document
+        } else {
+            .folder(destinationURL.standardizedFileURL)
+        }
         let request = WorkspaceMarkdownLinkMoveRequest(
             workspaceURL: workspaceURL.standardizedFileURL,
             mappings: mappings,
             selectedURL: selectedURL,
-            preserveSelection: selectDestinationAfterMove ? nil : preserveSelection,
-            reloadSelection: selectDestinationAfterMove || selectedURL != nil,
+            preserveSelection: selectsDocument ? nil : preserveSelection,
+            reloadSelection: selectsDocument || selectedURL != nil,
+            sidebarSelection: sidebarSelection,
             completedTransfer: completedTransfer,
             failureMessage: failureMessage
         )
@@ -1390,6 +1481,13 @@ final class WorkspaceStore: ObservableObject {
             moveDirtyState(from: mapping.sourceID, to: mapping.destinationID)
         }
         publishDocumentIDRemaps(request.mappings)
+        if let selectedFolderID {
+            self.selectedFolderID = Self.path(
+                selectedFolderID,
+                afterMoving: plan.sourceURL.standardizedFileURL.path,
+                to: plan.destinationURL.standardizedFileURL.path
+            )
+        }
         if let completedTransfer = request.completedTransfer {
             completeTransfer(completedTransfer)
         }
@@ -1412,6 +1510,7 @@ final class WorkspaceStore: ObservableObject {
             selectedURL: request.selectedURL,
             preserveSelection: request.preserveSelection,
             reloadSelection: request.reloadSelection || selectedDocumentWasRewritten,
+            sidebarSelection: request.sidebarSelection,
             generation: generation
         )
         return true
@@ -2424,6 +2523,7 @@ final class WorkspaceStore: ObservableObject {
         selectedURL: URL?,
         preserveSelection: String?,
         reloadSelection: Bool,
+        sidebarSelection: SidebarSelectionAfterLoad = .unchanged,
         generation: Int
     ) {
         guard generation == workspaceGeneration else { return }
@@ -2441,6 +2541,15 @@ final class WorkspaceStore: ObservableObject {
             selectedDocumentID = preserveSelection
         } else {
             selectedDocumentID = documents.first?.id
+        }
+
+        switch sidebarSelection {
+        case .unchanged:
+            break
+        case .document:
+            selectedFolderID = nil
+        case .folder(let folderURL):
+            selectFolder(id: folderURL.standardizedFileURL.path)
         }
 
         isBusy = false
@@ -2516,6 +2625,7 @@ final class WorkspaceStore: ObservableObject {
         openDocumentIDs = []
         documentSaveStates = [:]
         selectedDocumentID = nil
+        selectedFolderID = nil
         setDocumentTextIfChanged("")
         lastSavedText = ""
         setHasUnsavedChangesIfChanged(false)
@@ -2551,6 +2661,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         selectedDocumentID = createdDocument.id
+        selectedFolderID = nil
         setDocumentTextIfChanged(initialText)
         lastSavedText = initialText
         setHasUnsavedChangesIfChanged(false)
@@ -2575,6 +2686,7 @@ final class WorkspaceStore: ObservableObject {
         pruneSaveStates(previousDocuments: previousDocuments)
         ensureFileWatcher(for: workspaceURL)
         selectedDocumentID = documentsByID[fileURL.standardizedFileURL.path]?.id ?? documents.first?.id
+        selectedFolderID = nil
         loadSelectedDocument()
         isBusy = false
     }
@@ -2663,6 +2775,7 @@ final class WorkspaceStore: ObservableObject {
         workspaceURL: URL,
         selectedURL: URL?,
         preserveSelection: String?,
+        sidebarSelection: SidebarSelectionAfterLoad,
         changedPaths: [String],
         completedTransfer: WorkspaceDocumentTransfer?,
         generation: Int
@@ -2679,6 +2792,7 @@ final class WorkspaceStore: ObservableObject {
             selectedURL: selectedURL,
             preserveSelection: preserveSelection,
             reloadSelection: selectedURL != nil,
+            sidebarSelection: sidebarSelection,
             generation: generation
         )
     }
@@ -4316,26 +4430,28 @@ final class WorkspaceStore: ObservableObject {
     ) -> [WorkspaceDocumentIDMapping] {
         let sourcePath = sourceURL.standardizedFileURL.path
         let destinationPath = destinationURL.standardizedFileURL.path
-        let sourcePrefix = sourcePath.hasSuffix("/") ? sourcePath : sourcePath + "/"
 
         return documents.compactMap { document in
             let documentPath = document.url.standardizedFileURL.path
-            let remappedPath: String?
-
-            if documentPath == sourcePath {
-                remappedPath = destinationPath
-            } else if documentPath.hasPrefix(sourcePrefix) {
-                remappedPath = destinationPath + "/" + documentPath.dropFirst(sourcePrefix.count)
-            } else {
-                remappedPath = nil
-            }
-
-            guard let remappedPath, remappedPath != documentPath else {
-                return nil
-            }
-
+            let remappedPath = path(documentPath, afterMoving: sourcePath, to: destinationPath)
+            guard remappedPath != documentPath else { return nil }
             return WorkspaceDocumentIDMapping(sourceID: documentPath, destinationID: remappedPath)
         }
+    }
+
+    /// Where `path` is once the item at `sourcePath` moves to `destinationPath`: the item and
+    /// everything inside it follow, and any other path stays.
+    nonisolated private static func path(
+        _ path: String,
+        afterMoving sourcePath: String,
+        to destinationPath: String
+    ) -> String {
+        if path == sourcePath {
+            return destinationPath
+        }
+        let sourcePrefix = sourcePath.hasSuffix("/") ? sourcePath : sourcePath + "/"
+        guard path.hasPrefix(sourcePrefix) else { return path }
+        return destinationPath + "/" + path.dropFirst(sourcePrefix.count)
     }
 
 
@@ -4393,6 +4509,7 @@ private struct WorkspaceMarkdownLinkMoveRequest: Equatable, Sendable {
     let selectedURL: URL?
     let preserveSelection: String?
     let reloadSelection: Bool
+    let sidebarSelection: SidebarSelectionAfterLoad
     let completedTransfer: WorkspaceDocumentTransfer?
     let failureMessage: String
 }
@@ -4474,6 +4591,21 @@ struct WorkspaceTextMutation: Equatable, Sendable {
     let range: NSRange
     let expectedText: String
     let replacement: String
+}
+
+struct WorkspaceFolderReveal: Equatable, Sendable {
+    let serial: Int
+    let folderID: String
+}
+
+/// What the sidebar selects once an operation's rescan lands.
+private enum SidebarSelectionAfterLoad: Equatable, Sendable {
+    /// The selection stays; a selected folder that moved is followed to its new path.
+    case unchanged
+    /// The selection moves to the document the operation selected.
+    case document
+    /// A folder the operation created or pasted.
+    case folder(URL)
 }
 
 struct WorkspaceDocumentIDRemapEvent: Equatable, Sendable {

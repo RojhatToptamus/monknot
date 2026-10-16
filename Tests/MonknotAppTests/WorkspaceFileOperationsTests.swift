@@ -1477,4 +1477,165 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertFalse(exists(root.appendingPathComponent("Sub/Target.md")))
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("Source.md"), encoding: .utf8), "[t](Target.md)\nmore\n")
     }
+
+    // MARK: - Sidebar selection
+
+    /// One selection: a folder, or else the open document. Opening a document (even the one already
+    /// open) moves it there; closing every document keeps a selected folder.
+    func testSidebarSelectionIsAFolderOrTheOpenDocument() async throws {
+        let root = try makeRoot()
+        try write("# A\n", to: root.appendingPathComponent("Notes/A.md"))
+        try write("# T\n", to: root.appendingPathComponent("Top.md"))
+        let store = try await openStore(root)
+        let notes = root.appendingPathComponent("Notes", isDirectory: true)
+        let top = try await select(store, "Top.md")
+        XCTAssertEqual(store.sidebarTargetFolderURL?.standardizedFileURL.path, root.path, "A root file's folder")
+        XCTAssertEqual(store.sidebarSelectionURL?.path, top.url.path)
+
+        store.selectFolder(id: notes.path)
+        XCTAssertEqual(store.selectedFolderID, notes.path)
+        XCTAssertEqual(store.selectedDocumentID, top.id, "Selecting a folder keeps the document open")
+        XCTAssertEqual(store.sidebarSelectionURL?.path, notes.path)
+        XCTAssertEqual(store.sidebarTargetFolderURL?.path, notes.path)
+
+        store.selectFolder(id: root.path)
+        store.selectFolder(id: top.id)
+        store.selectFolder(id: root.appendingPathComponent("Missing").path)
+        XCTAssertEqual(store.selectedFolderID, notes.path, "Only folders of the tree below the root are selected")
+
+        XCTAssertTrue(store.selectDocument(id: top.id))
+        XCTAssertNil(store.selectedFolderID, "Opening the open document moves the selection to it")
+
+        store.selectFolder(id: notes.path)
+        let a = try await select(store, "Notes/A.md")
+        XCTAssertNil(store.selectedFolderID)
+        XCTAssertEqual(store.sidebarTargetFolderURL?.path, notes.path, "A document's folder is the target")
+
+        store.selectFolder(id: notes.path)
+        XCTAssertTrue(store.selectDocument(id: nil))
+        XCTAssertEqual(store.selectedFolderID, notes.path)
+        XCTAssertNotEqual(store.selectedDocumentID, a.id)
+    }
+
+    func testNewItemsAndPastesGoIntoTheSelectedFolderAndAreSelected() async throws {
+        let root = try makeRoot()
+        try write("# T\n", to: root.appendingPathComponent("Top.md"))
+        try makeFolder(root.appendingPathComponent("Box"))
+        let store = try await openStore(root)
+        let box = root.appendingPathComponent("Box", isDirectory: true)
+        let top = try await select(store, "Top.md")
+        let pasteboard = makePasteboard()
+        defer {
+            pasteboard.clearContents()
+            pasteboard.releaseGlobally()
+        }
+
+        store.selectFolder(id: box.path)
+        store.createFolder(named: "Inner", in: store.sidebarTargetFolderURL)
+        await idle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(store.selectedFolderID, box.appendingPathComponent("Inner").path, "The new folder is selected")
+        XCTAssertEqual(store.selectedDocumentID, top.id)
+
+        store.selectFolder(id: box.path)
+        store.putItemOnPasteboard(at: top.url, cutting: false, pasteboard: pasteboard)
+        XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: store.sidebarTargetFolderURL))
+        await idle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertTrue(exists(box.appendingPathComponent("Top.md")))
+        XCTAssertEqual(store.selectedDocumentID, box.appendingPathComponent("Top.md").path, "A pasted file opens")
+        XCTAssertNil(store.selectedFolderID)
+
+        store.selectFolder(id: box.appendingPathComponent("Inner").path)
+        store.putItemOnPasteboard(at: box.appendingPathComponent("Inner"), cutting: true, pasteboard: pasteboard)
+        XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: nil))
+        await settleMove(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(store.selectedFolderID, root.appendingPathComponent("Inner").path, "A pasted folder is selected")
+
+        store.duplicateItem(at: root.appendingPathComponent("Inner"))
+        await idle(store)
+        XCTAssertEqual(store.selectedFolderID, root.appendingPathComponent("Inner copy").path)
+
+        store.selectFolder(id: box.path)
+        store.createFile(named: "new.txt", in: store.sidebarTargetFolderURL)
+        await idle(store)
+        XCTAssertEqual(store.selectedDocumentID, box.appendingPathComponent("new.txt").path)
+        XCTAssertNil(store.selectedFolderID, "The new file opens and takes the selection")
+    }
+
+    /// Pasting files from another app into a folder asks the sidebar to open that folder.
+    func testImportedItemsRevealTheirFolder() async throws {
+        let root = try makeRoot()
+        try makeFolder(root.appendingPathComponent("Box"))
+        let outside = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotFileOpsOutside")
+        try write("o\n", to: outside.appendingPathComponent("o.txt"))
+        let store = try await openStore(root)
+        let box = root.appendingPathComponent("Box", isDirectory: true)
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
+
+        store.selectFolder(id: box.path)
+        pasteboard.clearContents()
+        pasteboard.writeObjects([outside.appendingPathComponent("o.txt") as NSURL])
+        XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: store.sidebarTargetFolderURL))
+        await idle(store)
+        XCTAssertEqual(names(in: box), ["o.txt"])
+        XCTAssertEqual(store.revealedFolder?.folderID, box.path)
+        XCTAssertEqual(store.selectedFolderID, box.path)
+    }
+
+    func testSelectedFolderFollowsRenameAndMove() async throws {
+        let root = try makeRoot()
+        try write("# N\n", to: root.appendingPathComponent("Projects/Plans/N.md"))
+        try makeFolder(root.appendingPathComponent("Archive"))
+        let store = try await openStore(root)
+
+        store.selectFolder(id: root.appendingPathComponent("Projects/Plans").path)
+        store.renameFolder(id: root.appendingPathComponent("Projects/Plans").path, to: "Ideas")
+        await settleMove(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(store.selectedFolderID, root.appendingPathComponent("Projects/Ideas").path)
+
+        store.renameFolder(id: root.appendingPathComponent("Projects").path, to: "Work")
+        await settleMove(store)
+        XCTAssertEqual(store.selectedFolderID, root.appendingPathComponent("Work/Ideas").path, "It follows its parent")
+
+        store.moveItem(id: root.appendingPathComponent("Work/Ideas").path, toDirectory: root.appendingPathComponent("Archive"))
+        await settleMove(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(store.selectedFolderID, root.appendingPathComponent("Archive/Ideas").path)
+
+        store.moveItem(id: root.appendingPathComponent("Work").path, toDirectory: root.appendingPathComponent("Archive"))
+        await settleMove(store)
+        XCTAssertEqual(store.selectedFolderID, root.appendingPathComponent("Archive/Ideas").path, "Other moves leave it")
+    }
+
+    func testRemovedFolderSelectionMovesUpAndClearsOnWorkspaceSwitch() async throws {
+        let root = try makeRoot()
+        try write("# N\n", to: root.appendingPathComponent("A/B/C/N.md"))
+        let store = try await openStore(root)
+
+        store.selectFolder(id: root.appendingPathComponent("A/B/C").path)
+        try FileManager.default.removeItem(at: root.appendingPathComponent("A/B/C"))
+        store.refresh()
+        _ = await wait { self.node(store, "A/B/C") == nil }
+        XCTAssertEqual(store.selectedFolderID, root.appendingPathComponent("A/B").path, "The nearest remaining folder")
+
+        try FileManager.default.removeItem(at: root.appendingPathComponent("A"))
+        store.refresh()
+        _ = await wait { self.node(store, "A") == nil }
+        XCTAssertNil(store.selectedFolderID, "Nothing above it but the root")
+
+        let other = try makeRoot()
+        try makeFolder(other.appendingPathComponent("A"))
+        try makeFolder(root.appendingPathComponent("A"))
+        store.refresh()
+        _ = await wait { self.node(store, "A") != nil }
+        store.selectFolder(id: root.appendingPathComponent("A").path)
+        XCTAssertNotNil(store.selectedFolderID)
+        store.openWorkspace(other)
+        _ = await wait { store.workspaceURL == other && !store.isBusy }
+        XCTAssertNil(store.selectedFolderID)
+    }
 }
