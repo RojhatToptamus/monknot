@@ -70,6 +70,12 @@ struct WindowChromeConfigurator: NSViewRepresentable {
     }
 
     final class Coordinator {
+        private static let trafficLightButtonTypes: [NSWindow.ButtonType] = [
+            .closeButton,
+            .miniaturizeButton,
+            .zoomButton,
+        ]
+
         var trafficLightRowHeight: CGFloat?
         var trafficLightLeadingInset: CGFloat?
         let enablesStandardWindowControls: Bool
@@ -125,12 +131,8 @@ struct WindowChromeConfigurator: NSViewRepresentable {
             if !window.styleMask.isSuperset(of: controls) {
                 window.styleMask.formUnion(controls)
             }
-            [
-                NSWindow.ButtonType.closeButton,
-                .miniaturizeButton,
-                .zoomButton,
-            ].forEach { buttonType in
-                guard let button = window.standardWindowButton(buttonType) else { return }
+            for buttonType in Self.trafficLightButtonTypes {
+                guard let button = window.standardWindowButton(buttonType) else { continue }
                 button.isHidden = false
                 button.isEnabled = true
             }
@@ -184,12 +186,13 @@ struct WindowChromeConfigurator: NSViewRepresentable {
                 horizontalOffset = 0
             }
 
-            let buttonTypes: [NSWindow.ButtonType] = [
-                .closeButton,
-                .miniaturizeButton,
-                .zoomButton,
-            ]
-            for buttonType in buttonTypes {
+            if titlebarView.clipsToBounds {
+                titlebarView.clipsToBounds = false
+            }
+            let titlebarTopY = titlebarView.isFlipped
+                ? titlebarView.bounds.minY
+                : titlebarView.bounds.maxY
+            for buttonType in Self.trafficLightButtonTypes {
                 guard let button = window.standardWindowButton(buttonType),
                       !button.isHidden,
                       button.superview === titlebarView
@@ -197,17 +200,12 @@ struct WindowChromeConfigurator: NSViewRepresentable {
                     continue
                 }
 
-                let titlebarTopY = titlebarView.isFlipped
-                    ? titlebarView.bounds.minY
-                    : titlebarView.bounds.maxY
                 let originY = NativeWindowChromeGeometry.centeredButtonOriginY(
                     buttonHeight: button.frame.height,
                     chromeHeight: trafficLightRowHeight,
                     contentTopY: titlebarTopY,
                     isFlipped: titlebarView.isFlipped
                 )
-
-                titlebarView.clipsToBounds = false
                 let originX = button.frame.minX + horizontalOffset
                 guard abs(button.frame.minX - originX) > 0.25
                     || abs(button.frame.minY - originY) > 0.25
