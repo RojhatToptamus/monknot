@@ -187,8 +187,8 @@ final class DocumentViewerRoutingTests: WorkspaceStoreTestCase {
         // Only weak references: a player that outlives its tab is a leak, and it could still sound.
         store.selectDocument(id: try document("clip.mov").id)
         _ = await waitUntil { self.playerView(in: host)?.player?.currentItem?.status == .readyToPlay }
-        weak var moviePlayerView = playerView(in: host)
-        weak var moviePlayer = moviePlayerView?.player
+        weak let moviePlayerView = playerView(in: host)
+        weak let moviePlayer = moviePlayerView?.player
         moviePlayer?.play()
         let moviePlays = await waitUntil { moviePlayer?.timeControlStatus == .playing }
         XCTAssertTrue(moviePlays)
@@ -202,7 +202,7 @@ final class DocumentViewerRoutingTests: WorkspaceStoreTestCase {
         let movieReleased = await waitUntil { moviePlayer == nil }
         XCTAssertTrue(movieReleased, "The hidden movie's player is released with its file")
 
-        weak var audioPlayer = playerView(in: host)?.player
+        weak let audioPlayer = playerView(in: host)?.player
         audioPlayer?.play()
         let audioPlays = await waitUntil { audioPlayer?.timeControlStatus == .playing }
         XCTAssertTrue(audioPlays)
