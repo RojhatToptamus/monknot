@@ -50,7 +50,8 @@ final class QASidebarHarness {
             dismissWorkspaceSearch: {},
             workspaceSearchFocusChanged: { _ in },
             copyPath: { copiedPathsSink($0) },
-            copyRelativePath: { copiedRelativeSink($0) }
+            copyRelativePath: { copiedRelativeSink($0) },
+            newItemRequest: .constant(nil)
         )
         .frame(width: 280, height: 640)
 
