@@ -404,41 +404,11 @@ struct ContentView: View {
         )
     }
 
-    private var lifecycleContent: AnyView {
+    /// The modifier chain is split into stages so each one type-checks quickly.
+    private var documentLifecycleContent: AnyView {
         AnyView(chromeContent
             .onChange(of: store.selectedDocument?.id) { oldDocumentID, newDocumentID in
-                dismissGoToLine(restoreFocus: false)
-                linkInspection.dismiss()
-                missingWikilinkCreationRequest = nil
-                pendingMarkdownFileDropConfirmation = nil
-                if documentNavigationHistory.currentDocumentID != newDocumentID {
-                    documentNavigationHistory.replaceCurrent(with: newDocumentID)
-                }
-                resetPDFAnnotationShortcutState()
-                pendingPDFSearchTarget = nil
-                cancelPDFExcerptCopy()
-                pdfSelectionSnapshot = nil
-                hasMarkdownEditorSelection = false
-                if let oldDocumentID, supportsSplitView(store.document(id: oldDocumentID)) {
-                    DocumentSplitViewPersistence.setEnabled(
-                        isMarkdownSplitViewEnabled,
-                        forDocumentPath: oldDocumentID
-                    )
-                }
-                if let newDocumentID, supportsSplitView(store.document(id: newDocumentID)) {
-                    isMarkdownSplitViewEnabled = DocumentSplitViewPersistence.isEnabled(forDocumentPath: newDocumentID)
-                } else {
-                    isMarkdownSplitViewEnabled = false
-                }
-                syncSelectedTabWithStore()
-                if !canShowDocumentSearch {
-                    dismissDocumentSearch(restoreFocus: false)
-                } else if documentSearch.currentIndex != 0 || documentSearch.totalCount != 0 {
-                    documentSearch.updateResult(.init())
-                }
-                updateOutline()
-                fulfillDeferredWorkspaceSourceJump()
-                fulfillDeferredWorkspaceHeadingJump()
+                handleSelectedDocumentChange(from: oldDocumentID, to: newDocumentID)
             }
             .onChange(of: isMarkdownSplitViewEnabled) { _, isEnabled in
                 guard let documentID = store.selectedDocument?.id,
@@ -461,56 +431,22 @@ struct ContentView: View {
                 fulfillDeferredWorkspaceSourceJump()
                 fulfillDeferredWorkspaceHeadingJump()
             }
+        )
+    }
+
+    private var lifecycleContent: AnyView {
+        AnyView(documentLifecycleContent
             .onChange(of: store.documents) { _, documents in
-                workspaceSearch.refresh(
-                    options: searchOptions,
-                    documents: documents,
-                    dirtyTextByDocumentID: store.dirtyTextByDocumentID,
-                    dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
-                )
+                refreshWorkspaceSearch(documents: documents)
                 quickOpen.refresh(documents: documents)
                 reconcileTabsWithStore()
                 refreshLinkInspection()
             }
             .onChange(of: store.workspaceSearchContentChangeSerial) { _, _ in
-                workspaceSearch.refresh(
-                    options: searchOptions,
-                    documents: store.documents,
-                    dirtyTextByDocumentID: store.dirtyTextByDocumentID,
-                    dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
-                )
+                refreshWorkspaceSearch(documents: store.documents)
             }
             .onChange(of: store.workspaceURL?.standardizedFileURL.path ?? "") { previousPath, newPath in
-                cancelPDFExcerptCopy()
-                linkInspection.dismiss()
-                if !previousPath.isEmpty {
-                    flushPendingViewportStatePersistence(
-                        for: URL(fileURLWithPath: previousPath, isDirectory: true)
-                    )
-                }
-                tabState.reset()
-                closedTabHistory.reset()
-                documentNavigationHistory.reset()
-                restoredTabStateWorkspacePath = nil
-                restoredViewportStateWorkspacePath = nil
-                viewportCache.pendingPersistenceTask?.cancel()
-                viewportCache.pendingPersistenceTask = nil
-                pendingMarkdownFileDropConfirmation = nil
-                viewportCache.states.removeAll()
-                publishOpenTabIDs(persistTabs: false)
-                terminalSessions.stopAll()
-                if !newPath.isEmpty {
-                    workspaceLibrary.markActive(URL(fileURLWithPath: newPath, isDirectory: true))
-                    if terminalPreferredVisible {
-                        terminalSessions.ensureActiveTerminal(
-                            in: activeTerminalDirectory,
-                            workspaceRoot: store.workspaceURL
-                        )
-                    }
-                }
-                // The selected-document handler may already have opened a tab
-                // in this update; the reset above discarded it.
-                syncSelectedTabWithStore()
+                handleWorkspaceChange(from: previousPath, to: newPath)
             }
             .onChange(of: store.removedDirtyOpenDocumentIDs) { _, _ in
                 reconcileTabsWithStore()
@@ -535,6 +471,83 @@ struct ContentView: View {
             }
             .focusedSceneValue(\.monknotCommandActions, commandActions)
         )
+    }
+
+    private func handleSelectedDocumentChange(from oldDocumentID: String?, to newDocumentID: String?) {
+        dismissGoToLine(restoreFocus: false)
+        linkInspection.dismiss()
+        missingWikilinkCreationRequest = nil
+        pendingMarkdownFileDropConfirmation = nil
+        if documentNavigationHistory.currentDocumentID != newDocumentID {
+            documentNavigationHistory.replaceCurrent(with: newDocumentID)
+        }
+        resetPDFAnnotationShortcutState()
+        pendingPDFSearchTarget = nil
+        cancelPDFExcerptCopy()
+        pdfSelectionSnapshot = nil
+        hasMarkdownEditorSelection = false
+        if let oldDocumentID, supportsSplitView(store.document(id: oldDocumentID)) {
+            DocumentSplitViewPersistence.setEnabled(
+                isMarkdownSplitViewEnabled,
+                forDocumentPath: oldDocumentID
+            )
+        }
+        if let newDocumentID, supportsSplitView(store.document(id: newDocumentID)) {
+            isMarkdownSplitViewEnabled = DocumentSplitViewPersistence.isEnabled(forDocumentPath: newDocumentID)
+        } else {
+            isMarkdownSplitViewEnabled = false
+        }
+        syncSelectedTabWithStore()
+        if !canShowDocumentSearch {
+            dismissDocumentSearch(restoreFocus: false)
+        } else if documentSearch.currentIndex != 0 || documentSearch.totalCount != 0 {
+            documentSearch.updateResult(.init())
+        }
+        updateOutline()
+        fulfillDeferredWorkspaceSourceJump()
+        fulfillDeferredWorkspaceHeadingJump()
+    }
+
+    private func refreshWorkspaceSearch(documents: [WorkspaceDocument]) {
+        workspaceSearch.refresh(
+            options: searchOptions,
+            documents: documents,
+            dirtyTextByDocumentID: store.dirtyTextByDocumentID,
+            dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
+        )
+    }
+
+    private func handleWorkspaceChange(from previousPath: String, to newPath: String) {
+        cancelPDFExcerptCopy()
+        linkInspection.dismiss()
+        if !previousPath.isEmpty {
+            flushPendingViewportStatePersistence(
+                for: URL(fileURLWithPath: previousPath, isDirectory: true)
+            )
+        }
+        tabState.reset()
+        closedTabHistory.reset()
+        documentNavigationHistory.reset()
+        restoredTabStateWorkspacePath = nil
+        restoredViewportStateWorkspacePath = nil
+        viewportCache.pendingPersistenceTask?.cancel()
+        viewportCache.pendingPersistenceTask = nil
+        pendingMarkdownFileDropConfirmation = nil
+        viewportCache.states.removeAll()
+        publishOpenTabIDs(persistTabs: false)
+        terminalSessions.stopAll()
+        if !newPath.isEmpty {
+            workspaceLibrary.markActive(URL(fileURLWithPath: newPath, isDirectory: true))
+            if terminalPreferredVisible {
+                terminalSessions.ensureActiveTerminal(
+                    in: activeTerminalDirectory,
+                    workspaceRoot: store.workspaceURL
+                )
+            }
+        }
+        // The selected-document handler may already have opened a tab
+        // in this update; the reset above discarded it.
+        syncSelectedTabWithStore()
     }
 
     private var alertContent: AnyView {
