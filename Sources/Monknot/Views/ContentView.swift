@@ -105,6 +105,16 @@ final class TerminalFocusRestorer: ObservableObject {
         clear()
     }
 
+    /// Restores the saved target when the surface that captured it closes, or forgets it when
+    /// another surface takes focus instead.
+    func finish(restoringFocus: Bool, fallbackFrom window: NSWindow?) {
+        if restoringFocus {
+            restore(fallbackFrom: window)
+        } else {
+            discard()
+        }
+    }
+
     /// Drops the saved target and focuses the visible document instead, for
     /// overlays whose chosen result lives in the document.
     func focusDocument(in window: NSWindow?) {
@@ -115,24 +125,20 @@ final class TerminalFocusRestorer: ObservableObject {
     /// Gives the visible document keyboard focus once it has mounted, as after a file is chosen in
     /// the sidebar.
     static func focusVisibleDocument(in window: NSWindow?) {
-        DispatchQueue.main.async { [weak window] in
-            guard let window,
-                  window.attachedSheet == nil,
-                  let target = fallbackDocumentFocusTarget(in: window)
-            else {
-                return
-            }
-            window.makeFirstResponder(target)
-        }
+        focusVisibleDocumentLater(in: window, onlyIfUnfocused: false)
     }
 
     /// Gives the visible document keyboard focus when nothing in the window
     /// holds it, such as after the focused view was replaced by another one.
     static func focusDocumentIfUnfocused(in window: NSWindow?) {
+        focusVisibleDocumentLater(in: window, onlyIfUnfocused: true)
+    }
+
+    private static func focusVisibleDocumentLater(in window: NSWindow?, onlyIfUnfocused: Bool) {
         DispatchQueue.main.async { [weak window] in
             guard let window,
                   window.attachedSheet == nil,
-                  !hasVisibleContentResponder(in: window),
+                  !onlyIfUnfocused || !hasVisibleContentResponder(in: window),
                   let target = fallbackDocumentFocusTarget(in: window)
             else {
                 return
@@ -371,11 +377,7 @@ struct ContentView: View {
     }
 
     var body: some View {
-        configuredContent
-    }
-
-    private var configuredContent: AnyView {
-        AnyView(alertContent)
+        alertContent
     }
 
     private var chromeContent: AnyView {
@@ -807,11 +809,6 @@ struct ContentView: View {
         )
     }
 
-    private var themeScrim: some View {
-        activeTheme.scrimColor
-            .ignoresSafeArea()
-    }
-
     private var sidebarContent: some View {
         SidebarView(
             store: store,
@@ -826,17 +823,7 @@ struct ContentView: View {
             manageWorkspaces: openWorkspaceSettings,
             newMarkdown: createMarkdownFile,
             exportPDF: exportMarkdownPDF(_:),
-            openDocument: { documentID in
-                openDocumentTab(id: documentID)
-                if let document = store.document(id: documentID),
-                   SidebarDocumentOpenFocus.movesFocusToDocument(
-                       document,
-                       editorMode: editorMode,
-                       isSplitViewEnabled: DocumentSplitViewPersistence.isEnabled(forDocumentPath: documentID)
-                   ) {
-                    TerminalFocusRestorer.focusVisibleDocument(in: responderWindow)
-                }
-            },
+            openDocument: openDocumentFromSidebar(id:),
             openWorkspaceSearchResult: openWorkspaceSearchResult(_:),
             showWorkspaceSearch: showWorkspaceSearch,
             dismissWorkspaceSearch: { dismissWorkspaceSearch(restoreFocus: true) },
@@ -1334,6 +1321,19 @@ struct ContentView: View {
         tabState.open(document)
         closedTabHistory.discard(documentID: documentID)
         publishOpenTabIDs()
+    }
+
+    /// A file chosen in the sidebar opens in its tab; one shown for typing also takes focus.
+    private func openDocumentFromSidebar(id documentID: String) {
+        openDocumentTab(id: documentID)
+        if let document = store.document(id: documentID),
+           SidebarDocumentOpenFocus.movesFocusToDocument(
+               document,
+               editorMode: editorMode,
+               isSplitViewEnabled: DocumentSplitViewPersistence.isEnabled(forDocumentPath: documentID)
+           ) {
+            TerminalFocusRestorer.focusVisibleDocument(in: responderWindow)
+        }
     }
 
     /// Opens documents asked for from Finder or the Dock once the workspace is ready, the last one
@@ -2042,7 +2042,7 @@ struct ContentView: View {
             newDailyNote: { store.createDailyNote() },
             newFile: { requestSidebarNewItem(.file) },
             newFolder: { requestSidebarNewItem(.folder) },
-            canCreateItems: store.workspaceURL != nil && !store.isBusy,
+            canCreateItems: canEditWorkspace,
             openFolder: openFolderPanel,
             workspaceNames: workspaceLibrary.entries.map(\.displayName),
             switchWorkspaceAtIndex: { index in
@@ -2082,10 +2082,10 @@ struct ContentView: View {
             saveAllDocuments: saveAllDocuments,
             canSaveAllDocuments: canSaveAllDocuments,
             undoPDFAnnotation: { pdfUndoCommandSerial &+= 1 },
-            canUndoPDFAnnotation: store.selectedDocument?.kind.opensInPDFViewer == true && canUndoPDFAnnotation,
+            canUndoPDFAnnotation: isPDFViewerDocumentSelected && canUndoPDFAnnotation,
             redoPDFAnnotation: { pdfRedoCommandSerial &+= 1 },
-            canRedoPDFAnnotation: store.selectedDocument?.kind.opensInPDFViewer == true && canRedoPDFAnnotation,
-            isPDFDocumentActive: store.selectedDocument?.kind.opensInPDFViewer == true,
+            canRedoPDFAnnotation: isPDFViewerDocumentSelected && canRedoPDFAnnotation,
+            isPDFDocumentActive: isPDFViewerDocumentSelected,
             cut: { _ = cutFromCommand() },
             copy: { _ = copyFromCommand() },
             copyRenderedMarkdown: {
@@ -2100,11 +2100,11 @@ struct ContentView: View {
             navigateForward: navigateForward,
             canNavigateForward: canNavigateForward,
             closeTab: { closeActiveTab() },
-            canCloseTab: tabState.selectedDocumentID != nil && !store.isBusy,
+            canCloseTab: canActOnSelectedTab,
             reopenClosedTab: reopenClosedTab,
             canReopenClosedTab: canReopenClosedTab,
             togglePinTab: { toggleActiveTabPin() },
-            canTogglePinTab: tabState.selectedDocumentID != nil && !store.isBusy,
+            canTogglePinTab: canActOnSelectedTab,
             zoomIn: { adjustZoom(by: WorkspaceZoomPolicy.step) },
             zoomOut: { adjustZoom(by: -WorkspaceZoomPolicy.step) },
             resetZoom: { zoomScale = WorkspaceZoomPolicy.defaultValue },
@@ -2112,7 +2112,7 @@ struct ContentView: View {
             canShowFind: canShowDocumentSearch,
             showWorkspaceSearch: { showWorkspaceSearch() },
             showQuickOpen: { showQuickOpen() },
-            canShowQuickOpen: store.workspaceURL != nil && !store.isBusy,
+            canShowQuickOpen: canEditWorkspace,
             showGoToLine: showGoToLine,
             canShowGoToLine: canShowGoToLine,
             toggleLinkInspection: toggleLinkInspection,
@@ -2148,8 +2148,25 @@ struct ContentView: View {
                 isKeyboardShortcutsHelpPresented = true
             },
             undoWorkspaceReplace: { store.undoLastWorkspaceReplace() },
-            canUndoWorkspaceReplace: store.canUndoWorkspaceReplace && !store.isBusy
+            canUndoWorkspaceReplace: canUndoWorkspaceReplace
         )
+    }
+
+    /// The workspace accepts new items and Quick Open: one is open and no operation runs.
+    private var canEditWorkspace: Bool {
+        store.workspaceURL != nil && !store.isBusy
+    }
+
+    private var canActOnSelectedTab: Bool {
+        tabState.selectedDocumentID != nil && !store.isBusy
+    }
+
+    private var isPDFViewerDocumentSelected: Bool {
+        store.selectedDocument?.kind.opensInPDFViewer == true
+    }
+
+    private var canUndoWorkspaceReplace: Bool {
+        store.canUndoWorkspaceReplace && !store.isBusy
     }
 
     private var canToggleMarkdownSplitView: Bool {
@@ -2284,68 +2301,50 @@ struct ContentView: View {
             return false
         }
 
-        if action == .importPasteboard {
-            return pasteFromCommand()
-        }
-
-        if action == .cutDocument {
-            return cutFromCommand()
-        }
-
-        if action == .copyDocument {
-            return copyFromCommand()
-        }
-
-        performKeyboardShortcutAction(action)
-        return true
+        return performKeyboardShortcutAction(action)
     }
 
     private func cutFromCommand() -> Bool {
-        if MonknotNativePasteboardCommand.performCutIfAvailable() {
-            return true
+        performClipboardCommand(
+            native: MonknotNativePasteboardCommand.performCutIfAvailable,
+            inFocusedDocument: #selector(NSText.cut(_:))
+        ) {
+            putSidebarSelectionOnPasteboard(cutting: true)
         }
-
-        if MonknotNativePasteboardCommand.hasNativeEditingFocus {
-            return true
-        }
-
-        if documentViewOwnsFocus {
-            return performInFocusedDocument(#selector(NSText.cut(_:)))
-        }
-
-        return cutSidebarSelectionFromCommand()
     }
 
     private func copyFromCommand() -> Bool {
-        if MonknotNativePasteboardCommand.performCopyIfAvailable() {
-            return true
+        performClipboardCommand(
+            native: MonknotNativePasteboardCommand.performCopyIfAvailable,
+            inFocusedDocument: #selector(NSText.copy(_:))
+        ) {
+            putSidebarSelectionOnPasteboard(cutting: false)
         }
-
-        if MonknotNativePasteboardCommand.hasNativeEditingFocus {
-            return true
-        }
-
-        if documentViewOwnsFocus {
-            return performInFocusedDocument(#selector(NSText.copy(_:)))
-        }
-
-        return copySidebarSelectionFromCommand()
     }
 
     private func pasteFromCommand() -> Bool {
-        if MonknotNativePasteboardCommand.performPasteIfAvailable() {
+        performClipboardCommand(
+            native: MonknotNativePasteboardCommand.performPasteIfAvailable,
+            inFocusedDocument: #selector(NSText.paste(_:))
+        ) {
+            store.pasteFromPasteboard(into: store.sidebarTargetFolderURL)
+        }
+    }
+
+    /// Focused text takes the command, then a focused document view; only with neither does it act
+    /// on workspace files. True when something took it.
+    private func performClipboardCommand(
+        native: () -> Bool,
+        inFocusedDocument action: Selector,
+        onWorkspace: () -> Bool
+    ) -> Bool {
+        if native() || MonknotNativePasteboardCommand.hasNativeEditingFocus {
             return true
         }
-
-        if MonknotNativePasteboardCommand.hasNativeEditingFocus {
-            return true
-        }
-
         if documentViewOwnsFocus {
-            return performInFocusedDocument(#selector(NSText.paste(_:)))
+            return performInFocusedDocument(action)
         }
-
-        return store.pasteFromPasteboard(into: store.sidebarTargetFolderURL)
+        return onWorkspace()
     }
 
     /// New Markdown goes into the sidebar's target folder: the selected folder, or the selected
@@ -2356,7 +2355,7 @@ struct ContentView: View {
 
     /// New File and New Folder ask for a name in the sidebar, which shows first if it is hidden.
     private func requestSidebarNewItem(_ request: SidebarNewItemRequest) {
-        guard store.workspaceURL != nil, !store.isBusy else { return }
+        guard canEditWorkspace else { return }
         requestSidebarPresentation(true, animated: true)
         sidebarNewItemRequest = request
     }
@@ -2379,15 +2378,9 @@ struct ContentView: View {
         return true
     }
 
-    private func copySidebarSelectionFromCommand() -> Bool {
+    private func putSidebarSelectionOnPasteboard(cutting: Bool) -> Bool {
         guard let url = store.sidebarSelectionURL, !store.isBusy else { return false }
-        store.putItemOnPasteboard(at: url, cutting: false)
-        return true
-    }
-
-    private func cutSidebarSelectionFromCommand() -> Bool {
-        guard let url = store.sidebarSelectionURL, !store.isBusy else { return false }
-        store.putItemOnPasteboard(at: url, cutting: true)
+        store.putItemOnPasteboard(at: url, cutting: cutting)
         return true
     }
 
@@ -2397,12 +2390,12 @@ struct ContentView: View {
             hasWorkspace: store.workspaceURL != nil,
             hasSelectedDocument: selectedDocument != nil,
             selectedDocumentKind: selectedDocument?.kind,
-            canCloseTab: tabState.selectedDocumentID != nil && !store.isBusy,
+            canCloseTab: canActOnSelectedTab,
             canReopenClosedTab: canReopenClosedTab,
-            canTogglePinTab: tabState.selectedDocumentID != nil && !store.isBusy,
+            canTogglePinTab: canActOnSelectedTab,
             canExportPDF: selectedDocument?.capabilities.canExportPDF == true,
-            canUndoPDFAnnotation: selectedDocument?.kind.opensInPDFViewer == true && canUndoPDFAnnotation,
-            canRedoPDFAnnotation: selectedDocument?.kind.opensInPDFViewer == true && canRedoPDFAnnotation,
+            canUndoPDFAnnotation: isPDFViewerDocumentSelected && canUndoPDFAnnotation,
+            canRedoPDFAnnotation: isPDFViewerDocumentSelected && canRedoPDFAnnotation,
             isDocumentSearchPresented: documentSearch.isPresented,
             isQuickOpenPresented: quickOpen.isPresented,
             isKeyboardShortcutsHelpPresented: isKeyboardShortcutsHelpPresented,
@@ -2413,13 +2406,15 @@ struct ContentView: View {
             hasMarkdownOutline: store.selectedDocument?.kind == .markdown && !outlineStore.items.isEmpty,
             canToggleSplitView: canToggleMarkdownSplitView,
             canInspectLinks: canInspectLinks,
-            canUndoWorkspaceReplace: store.canUndoWorkspaceReplace && !store.isBusy,
+            canUndoWorkspaceReplace: canUndoWorkspaceReplace,
             canToggleTerminalFullscreen: isTerminalVisible,
             isBusy: store.isBusy
         )
     }
 
-    private func performKeyboardShortcutAction(_ action: MonknotKeyboardShortcutAction) {
+    /// Performs the shortcut's action. False, from a clipboard shortcut with nothing to act on,
+    /// lets the key go on to the focused view.
+    private func performKeyboardShortcutAction(_ action: MonknotKeyboardShortcutAction) -> Bool {
         switch action {
         case .newMarkdown:
             createMarkdownFile()
@@ -2430,9 +2425,9 @@ struct ContentView: View {
         case .saveDocument:
             saveSelectedDocument()
         case .cutDocument:
-            _ = cutFromCommand()
+            return cutFromCommand()
         case .copyDocument:
-            _ = copyFromCommand()
+            return copyFromCommand()
         case .refreshWorkspace:
             store.refresh()
         case .closeTab:
@@ -2458,7 +2453,7 @@ struct ContentView: View {
         case .resetZoom:
             zoomScale = WorkspaceZoomPolicy.defaultValue
         case .importPasteboard:
-            _ = pasteFromCommand()
+            return pasteFromCommand()
         case .toggleTerminal:
             toggleTerminalDrawer(animated: true)
         case .toggleTerminalFullscreen:
@@ -2466,9 +2461,9 @@ struct ContentView: View {
         case .toggleSidebar:
             toggleSidebar(animated: true)
         case .undoPDFAnnotation:
-            pdfUndoCommandSerial += 1
+            pdfUndoCommandSerial &+= 1
         case .redoPDFAnnotation:
-            pdfRedoCommandSerial += 1
+            pdfRedoCommandSerial &+= 1
         case .showQuickOpen:
             showQuickOpen()
         case .dismissQuickOpen:
@@ -2494,6 +2489,7 @@ struct ContentView: View {
         case .undoWorkspaceReplace:
             store.undoLastWorkspaceReplace()
         }
+        return true
     }
 
     private func resetPDFAnnotationShortcutState() {
@@ -2511,7 +2507,7 @@ struct ContentView: View {
     }
 
     private func showQuickOpen() {
-        guard store.workspaceURL != nil, !store.isBusy else { return }
+        guard canEditWorkspace else { return }
         isKeyboardShortcutsHelpPresented = false
         dismissGoToLine(restoreFocus: false)
         symbolQuickOpen.dismiss()
@@ -2533,13 +2529,13 @@ struct ContentView: View {
     private func dismissQuickOpen(restoreFocus: Bool) {
         guard quickOpen.isPresented else { return }
         quickOpen.dismiss()
-        finishPaletteDismissal(restoreFocus: restoreFocus)
+        paletteFocusRestorer.finish(restoringFocus: restoreFocus, fallbackFrom: responderWindow)
     }
 
     private func dismissGoToSymbol(restoreFocus: Bool) {
         guard symbolQuickOpen.isPresented else { return }
         symbolQuickOpen.dismiss()
-        finishPaletteDismissal(restoreFocus: restoreFocus)
+        paletteFocusRestorer.finish(restoringFocus: restoreFocus, fallbackFrom: responderWindow)
     }
 
     /// Another surface is taking focus; a palette left open behind it would
@@ -2547,14 +2543,6 @@ struct ContentView: View {
     private func dismissPalettes() {
         dismissQuickOpen(restoreFocus: false)
         dismissGoToSymbol(restoreFocus: false)
-    }
-
-    private func finishPaletteDismissal(restoreFocus: Bool) {
-        if restoreFocus {
-            paletteFocusRestorer.restore(fallbackFrom: responderWindow)
-        } else {
-            paletteFocusRestorer.discard()
-        }
     }
 
     private func movePickerSelection(by offset: Int) {
@@ -2577,11 +2565,7 @@ struct ContentView: View {
     private func dismissGoToLine(restoreFocus: Bool) {
         guard isGoToLinePresented else { return }
         isGoToLinePresented = false
-        if restoreFocus {
-            goToLineFocusRestorer.restore(fallbackFrom: NSApp.keyWindow)
-        } else {
-            goToLineFocusRestorer.discard()
-        }
+        goToLineFocusRestorer.finish(restoringFocus: restoreFocus, fallbackFrom: NSApp.keyWindow)
     }
 
     private var canShowGoToLine: Bool {
