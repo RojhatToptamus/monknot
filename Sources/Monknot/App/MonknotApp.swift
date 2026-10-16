@@ -151,23 +151,21 @@ private struct MonknotWindowRootView: View {
 
                 // A window starting with a request (a new window, or one restored at launch) or taking a
                 // pending one first checks that no other window shows or is opening the workspace;
-                // otherwise the request goes to that window and this redundant one closes.
-                if let workspaceURL = request.workspaceURL {
+                // otherwise the request goes to that window (a pending one once launch handling
+                // finishes), and a window started for the request closes.
+                let startsWithOwnRequest = request.workspaceURL != nil
+                let startingRequest = startsWithOwnRequest
+                    ? request
+                    : workspaceWindowRequests.consumePendingInitialWorkspaceRequest()
+                if let startingRequest, let workspaceURL = startingRequest.workspaceURL {
                     if isShownElsewhere(workspaceURL) {
-                        workspaceWindowRequests.openWorkspaceWindow(request)
-                        hostingWindow.close()
+                        workspaceWindowRequests.openWorkspaceWindow(startingRequest)
+                        if startsWithOwnRequest {
+                            hostingWindow.close()
+                        }
                     } else {
-                        openWorkspace(workspaceURL, for: request)
-                        await importCaptureIfNeeded(from: request)
-                    }
-                } else if let pendingRequest = workspaceWindowRequests.consumePendingInitialWorkspaceRequest(),
-                          let workspaceURL = pendingRequest.workspaceURL {
-                    if isShownElsewhere(workspaceURL) {
-                        // It goes to that window once launch handling finishes.
-                        workspaceWindowRequests.openWorkspaceWindow(pendingRequest)
-                    } else {
-                        openWorkspace(workspaceURL, for: pendingRequest)
-                        await importCaptureIfNeeded(from: pendingRequest)
+                        openWorkspace(workspaceURL, for: startingRequest)
+                        await importCaptureIfNeeded(from: startingRequest)
                     }
                 } else if reopenLastWorkspace, workspaceRestoration.claimInitialRestore() {
                     do {
@@ -261,7 +259,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Monknot has its own document tabs; the system's window tabs (Show Tab Bar, Merge All
-        // Windows) offered a second, conflicting kind.
+        // Windows) would offer a second, conflicting kind.
         NSWindow.allowsAutomaticWindowTabbing = false
         // Before launch finishes, so a Finder service request that launches the app is delivered.
         NSApp.servicesProvider = self
