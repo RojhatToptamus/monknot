@@ -215,6 +215,50 @@ struct MonknotCommandOverlayRow: View {
     }
 }
 
+/// An overlay's results: the empty state while nothing matches, otherwise the rows, with the
+/// selected one scrolled into view as ↑/↓ move it.
+struct MonknotCommandOverlayResults<Item: Identifiable, Row: View>: View {
+    let items: [Item]
+    let selectedIndex: Int
+    let emptyTitle: String
+    let emptyMessage: String
+    let theme: AppTheme
+    let zoomScale: Double
+    @ViewBuilder let row: (_ item: Item, _ isSelected: Bool) -> Row
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            MonknotScrollView(theme: theme) {
+                if items.isEmpty {
+                    MonknotCommandOverlayEmptyState(
+                        title: emptyTitle,
+                        message: emptyMessage,
+                        theme: theme,
+                        zoomScale: zoomScale
+                    )
+                } else {
+                    LazyVStack(alignment: .leading, spacing: scaled(2)) {
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                            row(item, index == selectedIndex)
+                        }
+                    }
+                    .padding(scaled(6))
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .onChange(of: selectedIndex) { _, index in
+                if items.indices.contains(index) {
+                    proxy.scrollTo(items[index].id)
+                }
+            }
+        }
+    }
+}
+
 /// Keyboard hints under a list: each key sequence as a quiet shortcut label with its action beside it
 /// in plain text (design.md §4.4 keeps words out of the label), and an optional count at the end.
 struct MonknotCommandOverlayFooter: View {

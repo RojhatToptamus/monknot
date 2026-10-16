@@ -11,10 +11,6 @@ struct WorkspaceQuickOpenView: View {
 
     @FocusState private var isSearchFocused: Bool
 
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
-    }
-
     var body: some View {
         MonknotCommandOverlay(
             theme: theme,
@@ -71,42 +67,27 @@ struct WorkspaceQuickOpenView: View {
     }
 
     private var resultBody: some View {
-        ScrollViewReader { proxy in
-            MonknotScrollView(theme: theme) {
-                if state.matches.isEmpty {
-                    MonknotCommandOverlayEmptyState(
-                        title: state.query.isEmpty
-                            ? "Open a file by name"
-                            : "No files match “\(state.query)”",
-                        message: state.query.isEmpty
-                            ? "Start typing to filter workspace files."
-                            : "Try part of a name, or ⇧⌘F to search contents.",
-                        theme: theme,
-                        zoomScale: zoomScale
-                    )
-                } else {
-                    LazyVStack(alignment: .leading, spacing: scaled(2)) {
-                        ForEach(Array(state.matches.enumerated()), id: \.element.id) { index, document in
-                            MonknotCommandOverlayRow(
-                                leading: .glyph(document.kind.resolvedSystemImage),
-                                title: document.displayName,
-                                detail: (document.relativePath as NSString).deletingLastPathComponent,
-                                isSelected: index == state.selectedIndex,
-                                theme: theme,
-                                zoomScale: zoomScale
-                            ) {
-                                openDocument(document.id)
-                            }
-                        }
-                    }
-                    .padding(scaled(6))
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .onChange(of: state.selectedIndex) { _, _ in
-                if let selected = state.selectedMatch {
-                    proxy.scrollTo(selected.id)
-                }
+        MonknotCommandOverlayResults(
+            items: state.matches,
+            selectedIndex: state.selectedIndex,
+            emptyTitle: state.query.isEmpty
+                ? "Open a file by name"
+                : "No files match “\(state.query)”",
+            emptyMessage: state.query.isEmpty
+                ? "Start typing to filter workspace files."
+                : "Try part of a name, or ⇧⌘F to search contents.",
+            theme: theme,
+            zoomScale: zoomScale
+        ) { document, isSelected in
+            MonknotCommandOverlayRow(
+                leading: .glyph(document.kind.resolvedSystemImage),
+                title: document.displayName,
+                detail: (document.relativePath as NSString).deletingLastPathComponent,
+                isSelected: isSelected,
+                theme: theme,
+                zoomScale: zoomScale
+            ) {
+                openDocument(document.id)
             }
         }
     }

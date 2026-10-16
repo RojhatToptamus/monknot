@@ -11,10 +11,6 @@ struct MarkdownSymbolQuickOpenView: View {
 
     @FocusState private var isSearchFocused: Bool
 
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
-    }
-
     var body: some View {
         MonknotCommandOverlay(
             theme: theme,
@@ -70,41 +66,27 @@ struct MarkdownSymbolQuickOpenView: View {
     }
 
     private var resultBody: some View {
-        ScrollViewReader { proxy in
-            MonknotScrollView(theme: theme) {
-                if state.matches.isEmpty {
-                    MonknotCommandOverlayEmptyState(
-                        title: state.query.isEmpty
-                            ? "No headings in this document"
-                            : "No headings match “\(state.query)”",
-                        message: state.query.isEmpty
-                            ? "Add a Markdown heading, then try again."
-                            : "Try a shorter part of the heading name.",
-                        theme: theme,
-                        zoomScale: zoomScale
-                    )
-                } else {
-                    LazyVStack(alignment: .leading, spacing: scaled(2)) {
-                        ForEach(Array(state.matches.enumerated()), id: \.element.id) { index, item in
-                            MonknotCommandOverlayRow(
-                                leading: .tag("H\(item.level)"),
-                                title: item.title,
-                                trailing: "\(item.location.line)",
-                                isSelected: index == state.selectedIndex,
-                                theme: theme,
-                                zoomScale: zoomScale
-                            ) {
-                                selectItem(item)
-                            }
-                        }
-                    }
-                    .padding(scaled(6))
-                }
-            }
-            .onChange(of: state.selectedIndex) { _, _ in
-                if let selected = state.selectedMatch {
-                    proxy.scrollTo(selected.id)
-                }
+        MonknotCommandOverlayResults(
+            items: state.matches,
+            selectedIndex: state.selectedIndex,
+            emptyTitle: state.query.isEmpty
+                ? "No headings in this document"
+                : "No headings match “\(state.query)”",
+            emptyMessage: state.query.isEmpty
+                ? "Add a Markdown heading, then try again."
+                : "Try a shorter part of the heading name.",
+            theme: theme,
+            zoomScale: zoomScale
+        ) { item, isSelected in
+            MonknotCommandOverlayRow(
+                leading: .tag("H\(item.level)"),
+                title: item.title,
+                trailing: "\(item.location.line)",
+                isSelected: isSelected,
+                theme: theme,
+                zoomScale: zoomScale
+            ) {
+                selectItem(item)
             }
         }
     }
