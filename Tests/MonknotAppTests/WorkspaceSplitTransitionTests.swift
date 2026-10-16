@@ -214,11 +214,7 @@ final class WorkspaceSplitTransitionTests: WorkspaceSplitViewTestCase {
         }
         try? await Task.sleep(nanoseconds: 500_000_000)
 
-        func closeButtonOrigin() throws -> CGPoint {
-            let button = try XCTUnwrap(window.standardWindowButton(.closeButton))
-            return button.convert(button.bounds, to: nil).origin
-        }
-        let resting = try closeButtonOrigin()
+        let resting = try closeButtonOrigin(in: window)
         let toggles: [() -> Void] = [
             { model.toggleSidebar(animated: true) },
             { model.toggleSidebar(animated: true) },
@@ -227,11 +223,34 @@ final class WorkspaceSplitTransitionTests: WorkspaceSplitViewTestCase {
         ]
         for toggle in toggles {
             toggle()
-            let deadline = Date().addingTimeInterval(MonknotMotion.paneTransitionDuration * 1.6)
-            while Date() < deadline {
-                RunLoop.main.run(until: Date().addingTimeInterval(0.004))
-                XCTAssertEqual(try closeButtonOrigin(), resting, "The traffic lights must not move with a side pane")
-            }
+            try assertCloseButtonStays(
+                at: resting,
+                in: window,
+                for: MonknotMotion.paneTransitionDuration * 1.6
+            )
+        }
+    }
+
+    private func closeButtonOrigin(in window: NSWindow) throws -> CGPoint {
+        let button = try XCTUnwrap(window.standardWindowButton(.closeButton))
+        return button.convert(button.bounds, to: nil).origin
+    }
+
+    /// Samples the close button every few milliseconds while the run loop drives the transition.
+    /// Synchronous, so every sample sees one completed run-loop pass.
+    private func assertCloseButtonStays(
+        at resting: CGPoint,
+        in window: NSWindow,
+        for duration: TimeInterval
+    ) throws {
+        let deadline = Date().addingTimeInterval(duration)
+        while Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.004))
+            XCTAssertEqual(
+                try closeButtonOrigin(in: window),
+                resting,
+                "The traffic lights must not move with a side pane"
+            )
         }
     }
 }
