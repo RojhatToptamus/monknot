@@ -1806,6 +1806,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.configureFlow(mode: flowSourceMode, options: textCheckingOptions)
         context.coordinator.attach(to: scrollView)
         context.coordinator.ignoreSyncScrollLine(syncScrollTargetLine)
+        context.coordinator.acceptCurrentCommandRequest(commandRequest)
         applyTheme(theme, to: textView, in: scrollView)
         context.coordinator.markFontApplied(resolvedFont)
         context.coordinator.markThemeApplied(theme)
@@ -5964,6 +5965,14 @@ struct MarkdownTextEditor: NSViewRepresentable {
             textView.undoManager?.endUndoGrouping()
             textView.breakUndoCoalescing()
             return true
+        }
+
+        /// Treats the request in place when the editor is created as already applied: the pane
+        /// keeps its last toolbar request while Source, Preview, split and tab changes rebuild the
+        /// editor, and running it again would edit the document the user is now looking at.
+        func acceptCurrentCommandRequest(_ request: MarkdownTextEditorCommandRequest?) {
+            guard let request else { return }
+            lastCommandSerial = request.serial
         }
 
         func apply(_ request: MarkdownTextEditorCommandRequest) {

@@ -1,0 +1,410 @@
+import AppKit
+import Combine
+import ImageIO
+import MonknotCore
+import PDFKit
+import SwiftUI
+import XCTest
+@testable import MonknotApp
+
+/// Documents the user never edits stay clean: no unsaved dot, no dirty buffer and no "changed on
+/// disk" banner, whatever the file holds and whatever the user does short of editing it.
+@MainActor
+final class UnsavedChangesIntegrityTests: WorkspaceStoreTestCase {
+    private var hostWindows: [NSWindow] = []
+
+    override func tearDown() async throws {
+        for window in hostWindows {
+            window.orderOut(nil)
+            window.contentView = nil
+        }
+        hostWindows.removeAll()
+        try await super.tearDown()
+    }
+
+    // MARK: - Markdown toolbar
+
+    /// `EditorPaneView` keeps the last toolbar request in its state while Source, Preview,
+    /// split and tab changes rebuild the editor, as this harness does.
+    func testAToolbarCommandIsNotAppliedAgainWhenTheEditorIsRebuilt() async throws {
+        let (store, url) = try await openNote("word\n", named: "A.md")
+        let controls = ToolbarEditorControls()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+            styleMask: [.titled, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: ToolbarEditorHarness(store: store, controls: controls))
+        window.contentView = host
+        window.orderFront(nil)
+        hostWindows.append(window)
+
+        let shown = await waitUntil { self.documentTextView(in: host)?.string == "word\n" }
+        XCTAssertTrue(shown)
+        documentTextView(in: host)?.setSelectedRange(NSRange(location: 0, length: 4))
+        controls.commandRequest = MarkdownTextEditorCommandRequest(serial: 1, command: .bold)
+        let applied = await waitUntil { store.documentText == "**word**\n" }
+        XCTAssertTrue(applied, store.documentText)
+        store.saveSelectedFile()
+        let saved = await waitUntil { !store.isSaving && store.saveState(for: url.path).isClean }
+        XCTAssertTrue(saved)
+
+        for _ in 0..<2 {
+            controls.showsEditor = false
+            await settle()
+            controls.showsEditor = true
+            let remounted = await waitUntil { self.documentTextView(in: host) != nil }
+            XCTAssertTrue(remounted)
+            await settle()
+        }
+        XCTAssertEqual(store.documentText, "**word**\n")
+        assertClean(store, "after rebuilding the editor")
+
+        documentTextView(in: host)?.setSelectedRange(NSRange(location: 0, length: 0))
+        controls.commandRequest = MarkdownTextEditorCommandRequest(serial: 2, command: .italic)
+        let appliedAgain = await waitUntil { store.documentText != "**word**\n" }
+        XCTAssertTrue(appliedAgain, "a new toolbar command still edits the document")
+        XCTAssertTrue(store.hasUnsavedChanges)
+    }
+
+    // MARK: - Fixtures
+
+    private static let textFixtures: [(name: String, contents: String)] = [
+        ("crlf.md", "# CRLF\r\n\r\nLine one\r\nLine two\r\n"),
+        ("lone-cr.txt", "first\rsecond\rthird\r"),
+        ("mixed-endings.md", "unix\nwindows\r\nmac\rend"),
+        ("bom.md", "\u{FEFF}# Byte order mark\n\nBody\n"),
+        ("no-trailing-newline.md", "# Title\n\nNo newline at the end"),
+        ("trailing-space.md", "Trailing spaces   \nTabs\t\t\n\tIndented\n  \n"),
+        ("nbsp.md", "Non\u{00A0}breaking\u{00A0}space and narrow\u{202F}one\n"),
+        ("nfd.md", "Cafe\u{0301} na\u{0308}ive re\u{0301}sume\u{0301}\n"),
+        ("emoji.md", "Family 👩‍👩‍👧‍👦 flags 🇹🇷🏳️‍🌈 skin 👍🏽 keycap 1️⃣\n"),
+        ("separators.txt", "line\u{2028}separator\u{2029}paragraph\u{0085}next\u{000B}tab\u{000C}feed\n"),
+        ("long-line.md", String(repeating: "word ", count: 6_000) + "\n"),
+        ("rich.md", """
+        ---
+        title: "Front matter"
+        tags: [a, b]
+        ---
+
+        # Heading
+
+        | Column | Other |
+        |--------|------:|
+        | 1      | 2     |
+
+        - [ ] open task
+        - [x] done task
+
+        ```mermaid
+        graph TD; A-->B
+        ```
+
+        "Double quotes" and 'single quotes' -- dash --- em... (c) (tm) 1/2 teh adn
+        Its a test. i think so. recieve seperate
+        * bullet
+        1. numbered
+
+        """),
+        ("page.html", "<!doctype html>\r\n<h1>\"Quotes\" -- dash</h1>\n"),
+        ("data.json", "{\"key\": \"value -- 'x'\"}"),
+        ("empty.md", ""),
+        ("only-newlines.md", "\n\n\n"),
+    ]
+
+    private func makeTextWorkspace() throws -> URL {
+        let root = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotUnsavedChanges")
+        for fixture in Self.textFixtures {
+            try Data(fixture.contents.utf8).write(to: root.appendingPathComponent(fixture.name))
+        }
+        return root
+    }
+
+    // MARK: - Helpers
+
+    private func openNote(
+        _ contents: String = "# Note\n\nBody\n",
+        named name: String = "Note.md",
+        stopWatcher: Bool = true
+    ) async throws -> (WorkspaceStore, URL) {
+        let root = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotUnsavedChanges")
+        let url = root.appendingPathComponent(name)
+        try Data(contents.utf8).write(to: url)
+        let store = try await openStore(root, stopWatcher: stopWatcher)
+        let document = try XCTUnwrap(store.documents.first { $0.displayName == name })
+        XCTAssertTrue(store.selectDocument(id: document.id))
+        let loaded = await waitUntil { !store.isDocumentLoading && store.documentText == contents }
+        XCTAssertTrue(loaded, "\(name) did not load")
+        return (store, url.standardizedFileURL)
+    }
+
+    private func deliverModification(of url: URL, to store: WorkspaceStore) {
+        store.testing_clearWatcherSuppression()
+        store.testing_scheduleExternalWorkspaceRefresh(.init(
+            changedPaths: [url.path],
+            modifiedOnlyPaths: [url.path],
+            requiresFullRescan: false
+        ))
+    }
+
+    private func touch(_ url: URL, by seconds: TimeInterval = 5) throws {
+        let date = (try FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date) ?? Date()
+        try FileManager.default.setAttributes(
+            [.modificationDate: date.addingTimeInterval(seconds)],
+            ofItemAtPath: url.path
+        )
+    }
+
+    private func type(_ text: String, at location: Int, in textView: NSTextView) {
+        textView.setSelectedRange(NSRange(location: location, length: 0))
+        textView.insertText(text, replacementRange: textView.selectedRange())
+    }
+
+    private func undo(in textView: NSTextView) {
+        if textView.undoManager?.canUndo == true {
+            textView.undoManager?.undo()
+        }
+    }
+
+    private func writeAnnotatedPDF(to url: URL) throws {
+        let data = NSMutableData()
+        var mediaBox = CGRect(x: 0, y: 0, width: 400, height: 300)
+        let consumer = try XCTUnwrap(CGDataConsumer(data: data))
+        let context = try XCTUnwrap(CGContext(consumer: consumer, mediaBox: &mediaBox, nil))
+        for pageIndex in 0..<3 {
+            context.beginPDFPage(nil)
+            let line = CTLineCreateWithAttributedString(NSAttributedString(
+                string: "Page \(pageIndex + 1) searchable sample text",
+                attributes: [.font: NSFont.systemFont(ofSize: 18)]
+            ))
+            context.textPosition = CGPoint(x: 30, y: 240)
+            CTLineDraw(line, context)
+            context.endPDFPage()
+        }
+        context.closePDF()
+
+        let document = try XCTUnwrap(PDFDocument(data: data as Data))
+        let page = try XCTUnwrap(document.page(at: 0))
+        let link = PDFAnnotation(bounds: CGRect(x: 30, y: 200, width: 120, height: 20), forType: .link, withProperties: nil)
+        link.url = URL(string: "https://example.com")
+        page.addAnnotation(link)
+        let field = PDFAnnotation(bounds: CGRect(x: 30, y: 150, width: 160, height: 24), forType: .widget, withProperties: nil)
+        field.widgetFieldType = .text
+        field.fieldName = "name"
+        field.widgetStringValue = "Filled"
+        page.addAnnotation(field)
+        let checkbox = PDFAnnotation(bounds: CGRect(x: 220, y: 150, width: 20, height: 20), forType: .widget, withProperties: nil)
+        checkbox.widgetFieldType = .button
+        checkbox.widgetControlType = .checkBoxControl
+        checkbox.fieldName = "agree"
+        checkbox.buttonWidgetState = .onState
+        page.addAnnotation(checkbox)
+        let note = PDFAnnotation(bounds: CGRect(x: 30, y: 80, width: 180, height: 40), forType: .freeText, withProperties: nil)
+        note.contents = "Existing note"
+        note.font = NSFont.systemFont(ofSize: 12)
+        page.addAnnotation(note)
+        let highlight = PDFAnnotation(bounds: CGRect(x: 30, y: 235, width: 200, height: 24), forType: .highlight, withProperties: nil)
+        highlight.color = .yellow
+        page.addAnnotation(highlight)
+        let ink = PDFAnnotation(bounds: CGRect(x: 250, y: 40, width: 100, height: 60), forType: .ink, withProperties: nil)
+        let path = NSBezierPath()
+        path.move(to: CGPoint(x: 10, y: 10))
+        path.line(to: CGPoint(x: 80, y: 50))
+        ink.add(path)
+        page.addAnnotation(ink)
+        let text = PDFAnnotation(bounds: CGRect(x: 360, y: 260, width: 20, height: 20), forType: .text, withProperties: nil)
+        text.contents = "Sticky"
+        page.addAnnotation(text)
+        try XCTUnwrap(document.dataRepresentation()).write(to: url)
+    }
+
+    private func assertClean(
+        _ store: WorkspaceStore,
+        _ context: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertFalse(store.hasUnsavedChanges, "\(context): hasUnsavedChanges", file: file, line: line)
+        XCTAssertTrue(store.documentSaveStates.isEmpty, "\(context): \(store.documentSaveStates)", file: file, line: line)
+        XCTAssertTrue(store.dirtyTextByDocumentID.isEmpty, "\(context): dirty \(store.dirtyTextByDocumentID.keys.map { URL(fileURLWithPath: $0).lastPathComponent })", file: file, line: line)
+        XCTAssertTrue(store.dirtyPDFDataByDocumentID.isEmpty, "\(context): dirty PDF", file: file, line: line)
+        XCTAssertFalse(store.selectedDocumentExternalChange, "\(context): external change", file: file, line: line)
+        XCTAssertNil(store.errorMessage, "\(context): \(store.errorMessage ?? "")", file: file, line: line)
+    }
+
+    private func openStore(_ root: URL, stopWatcher: Bool = true) async throws -> WorkspaceStore {
+        let store = makeWorkspaceStore()
+        store.openWorkspace(root)
+        let loaded = await waitUntil { !store.isBusy && store.workspaceURL != nil && store.rootNode != nil }
+        XCTAssertTrue(loaded, "Workspace did not load")
+        if stopWatcher {
+            store.testing_stopFileWatcher()
+        }
+        return store
+    }
+
+    private func hostEditorPane(store: WorkspaceStore, controls: PaneControls) -> NSView {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: UnsavedChangesPaneHarness(store: store, controls: controls))
+        host.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        window.contentView = host
+        window.orderFront(nil)
+        hostWindows.append(window)
+        return host
+    }
+
+    private func documentTextView(in view: NSView) -> NSTextView? {
+        allDescendants(of: NSTextView.self, in: view).first {
+            $0.identifier == .monknotDocumentFocusTarget
+        }
+    }
+
+    private func pdfView(in view: NSView) -> PDFView? {
+        allDescendants(of: PDFView.self, in: view).first
+    }
+
+    private func allDescendants<ViewType: NSView>(of type: ViewType.Type, in view: NSView) -> [ViewType] {
+        var matches: [ViewType] = []
+        if let match = view as? ViewType {
+            matches.append(match)
+        }
+        for subview in view.subviews {
+            matches += allDescendants(of: type, in: subview)
+        }
+        return matches
+    }
+
+    private func settle(_ seconds: TimeInterval = 0.15) async {
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval = 5,
+        _ condition: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return condition()
+    }
+}
+
+@MainActor
+private final class PaneControls: ObservableObject {
+    @Published var editorMode = EditorMode.source
+    @Published var isSplitViewEnabled = false
+    @Published var zoomScale = 1.0
+    @Published var sourceLocation: MarkdownSourceLocation?
+    @Published var previewLocation: MarkdownSourceLocation?
+    @Published var pdfSearchTarget: WorkspaceSearchPDFTarget?
+    @Published var documentSearch = DocumentSearchState()
+    @Published var viewportState: DocumentViewportState?
+    @Published var pdfNavigatorToggleSerial = 0
+
+    func reset() {
+        editorMode = .source
+        isSplitViewEnabled = false
+        zoomScale = 1
+        sourceLocation = nil
+        documentSearch = DocumentSearchState()
+    }
+}
+
+/// The editor pane as `ContentView` mounts it, with the view controls the window owns.
+private struct UnsavedChangesPaneHarness: View {
+    @ObservedObject var store: WorkspaceStore
+    @ObservedObject var controls: PaneControls
+    @StateObject private var pdfViewportCaptureBridge = PDFViewportCaptureBridge()
+
+    var body: some View {
+        EditorPaneView(
+            store: store,
+            editorMode: $controls.editorMode,
+            isSplitViewEnabled: $controls.isSplitViewEnabled,
+            theme: .defaultLight,
+            zoomScale: controls.zoomScale,
+            codeFontSize: 13,
+            contentWidthPercent: 100,
+            showsDocumentOutline: true,
+            usePointerCursors: false,
+            fontSmoothing: true,
+            activeViewportState: controls.viewportState,
+            pdfViewportCaptureBridge: pdfViewportCaptureBridge,
+            updateViewportState: { _, _ in },
+            pdfUndoCommandSerial: 0,
+            pdfRedoCommandSerial: 0,
+            updatePDFAnnotationUndoState: { _, _ in },
+            sourceLocation: $controls.sourceLocation,
+            previewLocation: $controls.previewLocation,
+            pdfSearchTarget: $controls.pdfSearchTarget,
+            pdfPageNavigationRequest: nil,
+            pdfNavigatorToggleCommandSerial: controls.pdfNavigatorToggleSerial,
+            documentSearch: $controls.documentSearch,
+            searchOptions: MonknotSearchOptions(),
+            newMarkdown: {},
+            bootstrapStarterWorkspace: {},
+            openFolder: {},
+            saveDocument: { store.saveSelectedFile() },
+            outlineItems: [],
+            textStatistics: nil,
+            selectOutlineItem: { _ in },
+            onPreviewSourceJump: { _ in },
+            copyPDFLinkedExcerpt: { _ in },
+            updatePDFSelectionSnapshot: { _ in },
+            consumePDFPageNavigationRequest: { _ in },
+            onMarkdownSelectionChange: { _ in },
+            onMarkdownLinkRequest: { _ in },
+            onInspectLinks: nil,
+            onMarkdownImagePasteRequest: { _ in },
+            onMarkdownFileDropRequest: { _ in },
+            onMarkdownPreviewLinkRequest: { _ in },
+            onMarkdownTaskRequest: { _ in }
+        )
+        .frame(minWidth: 300, minHeight: 200)
+    }
+}
+
+@MainActor
+private final class ToolbarEditorControls: ObservableObject {
+    @Published var showsEditor = true
+    @Published var commandRequest: MarkdownTextEditorCommandRequest?
+    @Published var sourceLocation: MarkdownSourceLocation?
+    @Published var documentSearch = DocumentSearchState()
+}
+
+private struct ToolbarEditorHarness: View {
+    @ObservedObject var store: WorkspaceStore
+    @ObservedObject var controls: ToolbarEditorControls
+
+    var body: some View {
+        if controls.showsEditor, let documentID = store.selectedDocumentID {
+            MarkdownTextEditor(
+                documentID: documentID,
+                text: Binding(get: { store.documentText }, set: { store.setDocumentText($0) }),
+                theme: .defaultLight,
+                fontSize: 13,
+                zoomScale: 1,
+                contentWidthPercent: 100,
+                fontSmoothing: true,
+                scrollPosition: nil,
+                sourceLocation: $controls.sourceLocation,
+                searchState: $controls.documentSearch,
+                onScrollPositionChange: { _ in },
+                commandRequest: controls.commandRequest,
+                markdownShortcutsEnabled: true
+            )
+        } else {
+            Color.clear
+        }
+    }
+}
