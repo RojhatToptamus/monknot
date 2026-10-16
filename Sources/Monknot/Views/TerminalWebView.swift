@@ -96,9 +96,6 @@ enum MonknotNativeTerminalSearchCommand {
         for window in [NSApp.mainWindow, NSApp.keyWindow].compactMap({ $0 }) {
             var responder = window.firstResponder
             while let current = responder {
-                if let webView = current as? TerminalWKWebView {
-                    return webView
-                }
                 if let view = current as? NSView,
                    let webView = enclosingTerminalWebView(for: view) {
                     return webView
@@ -207,6 +204,15 @@ struct TerminalWebView: NSViewRepresentable {
         usePointerCursors: Bool,
         fontSmoothing: Bool
     ) -> String {
+        let appearance = TerminalAppearance(
+            theme: theme,
+            fontSize: fontSize,
+            usePointerCursors: usePointerCursors,
+            fontSmoothing: fontSmoothing
+        )
+        let cssVariables = appearance.cssVariables
+            .map { "\($0.name): \($0.value);" }
+            .joined(separator: "\n    ")
         let xtermCSS = bundledResource(named: "xterm", extension: "css")
         let xtermJS = bundledResource(named: "xterm", extension: "js")
         let fitJS = bundledResource(named: "xterm-addon-fit", extension: "js")
@@ -220,12 +226,7 @@ struct TerminalWebView: NSViewRepresentable {
           <style>
           \(xtermCSS)
           :root {
-            \(Self.cssVariables(
-                theme,
-                fontSize: fontSize,
-                usePointerCursors: usePointerCursors,
-                fontSmoothing: fontSmoothing
-            ))
+            \(cssVariables)
             color-scheme: \(theme.isDark ? "dark" : "light");
           }
           html, body, #terminal {
@@ -375,7 +376,7 @@ struct TerminalWebView: NSViewRepresentable {
             macOptionClickForcesSelection: true,
             fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
             fontSize: \(fontSize),
-            theme: \(Self.jsonObject(Self.xtermTheme(theme)))
+            theme: \(Self.javaScriptLiteral(Self.xtermTheme(theme)))
           });
           const fitAddon = new FitAddon.FitAddon();
           const searchHighlightLimit = 1000;
@@ -470,14 +471,7 @@ struct TerminalWebView: NSViewRepresentable {
           let pendingResizeFrame = null;
           let pendingResizeRequestFrame = null;
           let pendingScrollDistanceFromBottom = null;
-          let searchDecorationOptions = {
-            matchBackground: '\(theme.selectionBackground)',
-            matchBorder: '\(theme.accent)',
-            matchOverviewRuler: '\(theme.accent)',
-            activeMatchBackground: '\(theme.accent)',
-            activeMatchBorder: '\(theme.foreground)',
-            activeMatchColorOverviewRuler: '\(theme.foreground)'
-          };
+          let searchDecorationOptions = \(Self.javaScriptLiteral(Self.searchDecorations(theme)));
           let disposed = false;
 
           function notifySearchVisibility(isPresented) {
@@ -765,29 +759,6 @@ struct TerminalWebView: NSViewRepresentable {
         return contents
     }
 
-    private static func cssVariables(
-        _ theme: AppTheme,
-        fontSize: CGFloat,
-        usePointerCursors: Bool,
-        fontSmoothing: Bool
-    ) -> String {
-        """
-        --terminal-bg: \(theme.terminalSurfaceHex);
-        --terminal-fg: \(theme.foreground);
-        --terminal-muted-fg: \(rgba(theme.foreground, alpha: 0.62));
-        --terminal-accent: \(theme.accent);
-        --terminal-font-size: \(fontSize)px;
-        --terminal-font-smoothing: \(fontSmoothing ? "antialiased" : "auto");
-        --terminal-interactive-cursor: \(usePointerCursors ? "pointer" : "default");
-        --terminal-scrollbar-thumb: \(rgba(theme.foreground, alpha: Double(MonknotScrollbarStyle.restingOpacity)));
-        --terminal-scrollbar-thumb-hover: \(rgba(theme.foreground, alpha: Double(MonknotScrollbarStyle.hoveredOpacity)));
-        --terminal-search-bg: \(theme.recessedSurfaceHex(amount: theme.isDark ? 0.13 : 0.055));
-        --terminal-search-border: \(rgba(theme.foreground, alpha: 0.16));
-        --terminal-search-hover: \(rgba(theme.foreground, alpha: theme.isDark ? 0.10 : 0.07));
-        --terminal-search-shadow: rgba(0, 0, 0, \(theme.isDark ? "0.30" : "0.14"));
-        """
-    }
-
     /// The xterm.js theme, for the page and for every later theme change alike. `term.options.theme`
     /// replaces the whole theme, so a key missing from either would fall back to xterm's default.
     static func xtermTheme(_ theme: AppTheme) -> [String: String] {
@@ -806,11 +777,20 @@ struct TerminalWebView: NSViewRepresentable {
         ]
     }
 
-    static func jsonObject(_ value: [String: String]) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
-              let json = String(data: data, encoding: .utf8)
-        else { return "{}" }
-        return json.replacingOccurrences(of: "</", with: "<\\/")
+    /// The search addon's match decorations, for the page and for every later theme change alike.
+    static func searchDecorations(_ theme: AppTheme) -> [String: String] {
+        [
+            "matchBackground": theme.selectionBackground,
+            "matchBorder": theme.accent,
+            "matchOverviewRuler": theme.accent,
+            "activeMatchBackground": theme.accent,
+            "activeMatchBorder": theme.foreground,
+            "activeMatchColorOverviewRuler": theme.foreground,
+        ]
+    }
+
+    static func javaScriptLiteral(_ value: [String: String]) -> String {
+        (try? WebViewBridge.literal(value)) ?? "{}"
     }
 
     static func rgba(_ hex: String, alpha: Double) -> String {
@@ -834,6 +814,26 @@ struct TerminalAppearance: Equatable {
     let fontSize: CGFloat
     let usePointerCursors: Bool
     let fontSmoothing: Bool
+
+    /// The page's CSS custom properties, set in its stylesheet and again on every theme change.
+    var cssVariables: [(name: String, value: String)] {
+        let foreground = theme.foreground
+        return [
+            ("--terminal-bg", theme.terminalSurfaceHex),
+            ("--terminal-fg", foreground),
+            ("--terminal-muted-fg", TerminalWebView.rgba(foreground, alpha: 0.62)),
+            ("--terminal-accent", theme.accent),
+            ("--terminal-font-size", "\(fontSize)px"),
+            ("--terminal-font-smoothing", fontSmoothing ? "antialiased" : "auto"),
+            ("--terminal-interactive-cursor", usePointerCursors ? "pointer" : "default"),
+            ("--terminal-scrollbar-thumb", TerminalWebView.rgba(foreground, alpha: Double(MonknotScrollbarStyle.restingOpacity))),
+            ("--terminal-scrollbar-thumb-hover", TerminalWebView.rgba(foreground, alpha: Double(MonknotScrollbarStyle.hoveredOpacity))),
+            ("--terminal-search-bg", theme.recessedSurfaceHex(amount: theme.isDark ? 0.13 : 0.055)),
+            ("--terminal-search-border", TerminalWebView.rgba(foreground, alpha: 0.16)),
+            ("--terminal-search-hover", TerminalWebView.rgba(foreground, alpha: theme.isDark ? 0.10 : 0.07)),
+            ("--terminal-search-shadow", "rgba(0, 0, 0, \(theme.isDark ? "0.30" : "0.14"))"),
+        ]
+    }
 }
 
 /// Hosts a session's terminal web view while it is on screen. Taking it out never destroys the view.
@@ -914,6 +914,11 @@ final class TerminalWebController: NSObject, TerminalSessionPresentation, WKNavi
         TerminalWebView.configureBackground(of: webView, theme: appearance.theme)
         self.webView = webView
         self.appearance = appearance
+        loadPage(in: webView, appearance: appearance)
+        return webView
+    }
+
+    private func loadPage(in webView: WKWebView, appearance: TerminalAppearance) {
         appliedAppearance = appearance
         webView.loadHTMLString(
             TerminalWebView.html(
@@ -924,7 +929,6 @@ final class TerminalWebController: NSObject, TerminalSessionPresentation, WKNavi
             ),
             baseURL: nil
         )
-        return webView
     }
 
     func updateAppearance(_ appearance: TerminalAppearance) {
@@ -1046,16 +1050,7 @@ final class TerminalWebController: NSObject, TerminalSessionPresentation, WKNavi
         replaysQuietly = true
         // The reloaded page starts with its search box closed.
         isSearchPresented = false
-        appliedAppearance = appearance
-        webView.loadHTMLString(
-            TerminalWebView.html(
-                theme: appearance.theme,
-                fontSize: appearance.fontSize,
-                usePointerCursors: appearance.usePointerCursors,
-                fontSmoothing: appearance.fontSmoothing
-            ),
-            baseURL: nil
-        )
+        loadPage(in: webView, appearance: appearance)
     }
 
     // MARK: Messages
@@ -1127,46 +1122,12 @@ final class TerminalWebController: NSObject, TerminalSessionPresentation, WKNavi
         let payload: [String: Any] = [
             "fontSize": appearance.fontSize,
             "colorScheme": theme.isDark ? "dark" : "light",
-            "css": [
-                "--terminal-bg": theme.terminalSurfaceHex,
-                "--terminal-fg": theme.foreground,
-                "--terminal-muted-fg": TerminalWebView.rgba(theme.foreground, alpha: 0.62),
-                "--terminal-accent": theme.accent,
-                "--terminal-font-size": "\(appearance.fontSize)px",
-                "--terminal-font-smoothing": appearance.fontSmoothing ? "antialiased" : "auto",
-                "--terminal-interactive-cursor": appearance.usePointerCursors ? "pointer" : "default",
-                "--terminal-scrollbar-thumb": TerminalWebView.rgba(
-                    theme.foreground,
-                    alpha: Double(MonknotScrollbarStyle.restingOpacity)
-                ),
-                "--terminal-scrollbar-thumb-hover": TerminalWebView.rgba(
-                    theme.foreground,
-                    alpha: Double(MonknotScrollbarStyle.hoveredOpacity)
-                ),
-                "--terminal-search-bg": theme.recessedSurfaceHex(amount: theme.isDark ? 0.13 : 0.055),
-                "--terminal-search-border": TerminalWebView.rgba(theme.foreground, alpha: 0.16),
-                "--terminal-search-hover": TerminalWebView.rgba(
-                    theme.foreground,
-                    alpha: theme.isDark ? 0.10 : 0.07
-                ),
-                "--terminal-search-shadow": theme.isDark
-                    ? "rgba(0, 0, 0, 0.30)"
-                    : "rgba(0, 0, 0, 0.14)"
-            ],
-            "searchDecorations": [
-                "matchBackground": theme.selectionBackground,
-                "matchBorder": theme.accent,
-                "matchOverviewRuler": theme.accent,
-                "activeMatchBackground": theme.accent,
-                "activeMatchBorder": theme.foreground,
-                "activeMatchColorOverviewRuler": theme.foreground
-            ],
-            "theme": TerminalWebView.xtermTheme(theme)
+            "css": Dictionary(uniqueKeysWithValues: appearance.cssVariables.map { ($0.name, $0.value) }),
+            "searchDecorations": TerminalWebView.searchDecorations(theme),
+            "theme": TerminalWebView.xtermTheme(theme),
         ]
-        guard let data = try? JSONSerialization.data(withJSONObject: payload),
-              let json = String(data: data, encoding: .utf8)
-        else { return }
-        evaluate("window.monknotTheme && window.monknotTheme(\(json.replacingOccurrences(of: "</", with: "<\\/")));")
+        guard let json = try? WebViewBridge.literal(payload) else { return }
+        evaluate("window.monknotTheme && window.monknotTheme(\(json));")
     }
 
     // MARK: Focus

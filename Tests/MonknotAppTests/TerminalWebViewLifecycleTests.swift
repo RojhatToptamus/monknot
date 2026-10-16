@@ -302,7 +302,7 @@ final class TerminalWebViewLifecycleTests: XCTestCase {
         XCTAssertEqual(xterm["white"], theme.foreground)
         XCTAssertEqual(xterm["brightWhite"], theme.foreground)
         let html = TerminalWebView.html(theme: theme, fontSize: 13, usePointerCursors: true, fontSmoothing: true)
-        XCTAssertTrue(html.contains(TerminalWebView.jsonObject(xterm)), "The page and theme changes share one theme")
+        XCTAssertTrue(html.contains(TerminalWebView.javaScriptLiteral(xterm)), "The page and theme changes share one theme")
     }
 
     @MainActor
