@@ -4034,37 +4034,19 @@ final class WorkspaceStore: ObservableObject {
             scheduleSuppressedWatcherReplay()
             return
         }
-        guard let event = suppressedWatcherEvent else { return }
+        guard let event = suppressedWatcherEvent, let workspaceURL else { return }
         suppressedWatcherEvent = nil
-        guard let unmodelledEvent = unmodelledChanges(in: event) else { return }
-        scheduleExternalWorkspaceRefresh(unmodelledEvent)
-    }
-
-    /// The part of a held watcher event that the sidebar does not already show. Monknot's own
-    /// changes during the quiet window are in the model by now, so an item that is listed and on
-    /// disk, or neither, is left out. A listed document that was replaced on disk stays as a
-    /// content change, which is checked against the signature Monknot recorded for it.
-    private func unmodelledChanges(in event: WorkspaceFileWatcher.Event) -> WorkspaceFileWatcher.Event? {
-        guard !event.requiresFullRescan else { return event }
-        var structuralPaths = Set<String>()
-        var modifiedOnlyPaths = event.modifiedOnlyPaths
-        for path in event.changedPaths.subtracting(event.modifiedOnlyPaths) {
-            let isOnDisk = FileManager.default.fileExists(atPath: path)
-            let isListedDocument = documentsByID[path] != nil
-            let isListed = isListedDocument || rootNode?.node(withID: path)?.kind == .folder
-            if isOnDisk, isListedDocument {
-                modifiedOnlyPaths.insert(path)
-            } else if isOnDisk != isListed {
-                structuralPaths.insert(path)
-            }
+        // The held event mixes Monknot's own changes with any made meanwhile. A file added,
+        // removed or renamed is settled by one scan of the disk rather than path by path.
+        if event.requiresFullRescan || !event.changedPaths.isSubset(of: event.modifiedOnlyPaths) {
+            scheduleExternalWorkspaceRefresh(.init(
+                changedPaths: [workspaceURL.path],
+                modifiedOnlyPaths: [],
+                requiresFullRescan: true
+            ))
+        } else {
+            scheduleExternalWorkspaceRefresh(event)
         }
-        let changedPaths = structuralPaths.union(modifiedOnlyPaths)
-        guard !changedPaths.isEmpty else { return nil }
-        return WorkspaceFileWatcher.Event(
-            changedPaths: changedPaths,
-            modifiedOnlyPaths: modifiedOnlyPaths,
-            requiresFullRescan: false
-        )
     }
 
     private func cancelSuppressedWatcherReplay() {
@@ -4175,8 +4157,13 @@ final class WorkspaceStore: ObservableObject {
         let dirtySelectionRemoved = previousSelection != nil && !selectionStillExists && hasUnsavedChanges
 
         let previousDocuments = documents
-        rootNode = result.root
-        replaceDocuments(with: result.documents)
+        // A scan that finds the workspace unchanged leaves the tree, and the views drawing it, alone.
+        if rootNode != result.root {
+            rootNode = result.root
+        }
+        if documents != result.documents {
+            replaceDocuments(with: result.documents)
+        }
         pruneSaveStates(previousDocuments: previousDocuments)
 
         if selectionStillExists {
