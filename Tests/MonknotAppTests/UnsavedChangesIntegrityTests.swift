@@ -270,6 +270,392 @@ final class UnsavedChangesIntegrityTests: WorkspaceStoreTestCase {
         XCTAssertTrue(store.hasUnsavedChanges)
     }
 
+    // MARK: - Viewing text
+
+    func testOpeningAndViewingTextNeverMarksItEdited() async throws {
+        let root = try makeTextWorkspace()
+        let store = try await openStore(root)
+        let controls = PaneControls()
+        let host = hostEditorPane(store: store, controls: controls)
+
+        for fixture in Self.textFixtures {
+            let document = try XCTUnwrap(store.documents.first { $0.displayName == fixture.name })
+            controls.reset()
+            XCTAssertTrue(store.selectDocument(id: document.id))
+            // Foundation's UTF-8 decoding drops a leading byte order mark.
+            let expected = fixture.contents.hasPrefix("\u{FEFF}") ? String(fixture.contents.dropFirst()) : fixture.contents
+            let shown = await waitUntil {
+                !store.isDocumentLoading && self.documentTextView(in: host)?.string == expected
+            }
+            XCTAssertTrue(shown, "\(fixture.name) did not open")
+            await settle()
+            assertClean(store, "\(fixture.name) after opening")
+
+            if document.hasPreviewMode {
+                controls.editorMode = .preview
+                await settle()
+                assertClean(store, "\(fixture.name) in Preview")
+                controls.editorMode = .source
+                await settle()
+                assertClean(store, "\(fixture.name) back in Source")
+                controls.isSplitViewEnabled = true
+                await settle()
+                assertClean(store, "\(fixture.name) in Split")
+                controls.isSplitViewEnabled = false
+                await settle()
+                assertClean(store, "\(fixture.name) after Split")
+            }
+
+            controls.zoomScale = 1.4
+            await settle()
+            controls.zoomScale = 0.8
+            await settle()
+            controls.zoomScale = 1
+            await settle()
+            assertClean(store, "\(fixture.name) after zooming")
+
+            host.window?.setContentSize(NSSize(width: 420, height: 300))
+            await settle()
+            host.window?.setContentSize(NSSize(width: 800, height: 600))
+            await settle()
+            assertClean(store, "\(fixture.name) after resizing")
+
+            if let textView = documentTextView(in: host) {
+                host.window?.makeFirstResponder(textView)
+                textView.selectAll(nil)
+                await settle()
+                textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
+                textView.scrollToEndOfDocument(nil)
+                await settle()
+                textView.scrollToBeginningOfDocument(nil)
+                await settle()
+                assertClean(store, "\(fixture.name) after selecting and scrolling")
+            }
+
+            controls.documentSearch.present()
+            controls.documentSearch.setQuery("e")
+            await settle()
+            controls.documentSearch.dismiss()
+            await settle()
+            assertClean(store, "\(fixture.name) after find")
+
+            controls.sourceLocation = MarkdownSourceLocation(line: 2, offset: 0)
+            await settle()
+            assertClean(store, "\(fixture.name) after go to line")
+        }
+
+        // Switch tabs back and forth.
+        for fixture in Self.textFixtures + Self.textFixtures.reversed() {
+            let document = try XCTUnwrap(store.documents.first { $0.displayName == fixture.name })
+            XCTAssertTrue(store.selectDocument(id: document.id))
+            await settle(0.05)
+        }
+        await settle()
+        assertClean(store, "after switching tabs")
+    }
+
+    func testRestoringTheViewportAndCheckingSpellingAroundTheCaretLeavesTextUntouched() async throws {
+        let root = try makeTextWorkspace()
+        let store = try await openStore(root)
+        let controls = PaneControls()
+        controls.viewportState = DocumentViewportState(
+            textScrollPosition: DocumentScrollPosition(x: 0, y: 120),
+            textSelection: DocumentTextSelection(location: 40, length: 12)
+        )
+        let host = hostEditorPane(store: store, controls: controls)
+        host.window?.makeKeyAndOrderFront(nil)
+        let rich = try XCTUnwrap(store.documents.first { $0.displayName == "rich.md" })
+        XCTAssertTrue(store.selectDocument(id: rich.id))
+        let shown = await waitUntil { !store.isDocumentLoading && self.documentTextView(in: host) != nil }
+        XCTAssertTrue(shown)
+        let textView = try XCTUnwrap(documentTextView(in: host))
+        host.window?.makeFirstResponder(textView)
+        let length = (textView.string as NSString).length
+        for location in stride(from: 0, to: length, by: 23) {
+            textView.setSelectedRange(NSRange(location: location, length: 0))
+            await settle(0.1)
+        }
+        await settle(3)
+        assertClean(store, "after moving the caret through misspelled text")
+    }
+
+    // MARK: - PDFs and images
+
+    func testViewingPDFsAndImagesNeverMarksThemEdited() async throws {
+        let root = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotUnsavedPDF")
+        try writeAnnotatedPDF(to: root.appendingPathComponent("annotated.pdf"))
+        try DocumentFileTypeFixtures.writePDF(to: root.appendingPathComponent("plain.pdf"))
+        try DocumentFileTypeFixtures.writeImage(
+            [DocumentFileTypeFixtures.image(width: 60, height: 40)],
+            as: .png,
+            to: root.appendingPathComponent("photo.png")
+        )
+        try DocumentFileTypeFixtures.writeImage(
+            [DocumentFileTypeFixtures.image(width: 60, height: 40)],
+            as: .jpeg,
+            to: root.appendingPathComponent("rotated.jpg"),
+            properties: [kCGImagePropertyOrientation: CGImagePropertyOrientation.right.rawValue]
+        )
+        let store = try await openStore(root)
+        let controls = PaneControls()
+        let host = hostEditorPane(store: store, controls: controls)
+
+        for name in ["annotated.pdf", "plain.pdf", "photo.png", "rotated.jpg", "annotated.pdf"] {
+            let document = try XCTUnwrap(store.documents.first { $0.displayName == name })
+            controls.reset()
+            XCTAssertTrue(store.selectDocument(id: document.id))
+            let shown = await waitUntil { self.pdfView(in: host)?.document != nil }
+            XCTAssertTrue(shown, "\(name) did not open")
+            await settle(0.5)
+            assertClean(store, "\(name) after opening")
+            let pdfView = try XCTUnwrap(pdfView(in: host) as? AnnotatingPDFView)
+
+            controls.zoomScale = 1.5
+            await settle()
+            pdfView.scaleFactor *= 1.7
+            await settle()
+            pdfView.autoScales = true
+            await settle()
+            controls.zoomScale = 1
+            await settle()
+            assertClean(store, "\(name) after zooming")
+
+            pdfView.goToNextPage(nil)
+            await settle()
+            pdfView.goToFirstPage(nil)
+            await settle()
+            controls.pdfNavigatorToggleSerial += 1
+            await settle(0.5)
+            controls.pdfNavigatorToggleSerial += 1
+            await settle()
+            assertClean(store, "\(name) after page navigation and thumbnails")
+
+            if let page = pdfView.document?.page(at: 0), let selection = page.selection(for: page.bounds(for: .mediaBox)) {
+                pdfView.setCurrentSelection(selection, animate: false)
+                await settle()
+                pdfView.clearSelection()
+            }
+            controls.documentSearch.present()
+            controls.documentSearch.setQuery("sample")
+            await settle(0.5)
+            controls.documentSearch.dismiss()
+            await settle()
+            assertClean(store, "\(name) after selecting and searching")
+
+            for mode in [PDFAnnotationInteractionMode.highlighter, .pen, .eraser, .select] {
+                pdfView.annotationMode = mode
+                await settle(0.1)
+            }
+            await settle()
+            assertClean(store, "\(name) after switching tools")
+
+            host.window?.setContentSize(NSSize(width: 420, height: 300))
+            await settle()
+            host.window?.setContentSize(NSSize(width: 800, height: 600))
+            await settle()
+            assertClean(store, "\(name) after resizing")
+        }
+    }
+
+    func testSavedMarkupStaysCleanWhenTheFileIsReopened() async throws {
+        let root = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotUnsavedMarkup")
+        try writeAnnotatedPDF(to: root.appendingPathComponent("annotated.pdf"))
+        try DocumentFileTypeFixtures.writeImage(
+            [DocumentFileTypeFixtures.image(width: 60, height: 40)],
+            as: .png,
+            to: root.appendingPathComponent("photo.png")
+        )
+        try Data("# Note\n".utf8).write(to: root.appendingPathComponent("Note.md"))
+        let store = try await openStore(root, stopWatcher: false)
+        let controls = PaneControls()
+        let host = hostEditorPane(store: store, controls: controls)
+
+        for name in ["annotated.pdf", "photo.png"] {
+            let document = try XCTUnwrap(store.documents.first { $0.displayName == name })
+            XCTAssertTrue(store.selectDocument(id: document.id))
+            let shown = await waitUntil { self.pdfView(in: host)?.document != nil }
+            XCTAssertTrue(shown, name)
+            await settle(0.5)
+            let pdfDocument = try XCTUnwrap(pdfView(in: host)?.document)
+            let page = try XCTUnwrap(pdfDocument.page(at: 0))
+            page.addAnnotation(PDFAnnotation(
+                bounds: CGRect(x: 5, y: 5, width: 20, height: 10),
+                forType: .square,
+                withProperties: nil
+            ))
+            let data = document.kind == .image
+                ? ImageMarkupDocument.markupData(from: pdfDocument)
+                : pdfDocument.dataRepresentation()
+            store.markPDFDocumentEdited(
+                id: document.id,
+                previousData: try Data(contentsOf: document.url),
+                data: data
+            )
+            XCTAssertFalse(store.saveState(for: document.id).isClean, name)
+            store.saveSelectedFile()
+            let saved = await waitUntil { !store.isSaving && store.documentSaveStates.isEmpty }
+            XCTAssertTrue(saved, "\(name): \(store.errorMessage ?? "")")
+            await settle(2)
+            assertClean(store, "\(name) after saving")
+
+            XCTAssertTrue(store.selectDocument(id: root.appendingPathComponent("Note.md").standardizedFileURL.path))
+            await settle(0.5)
+            XCTAssertTrue(store.selectDocument(id: document.id))
+            let reopened = await waitUntil { self.pdfView(in: host)?.document != nil }
+            XCTAssertTrue(reopened, name)
+            await settle(1)
+            assertClean(store, "\(name) after reopening")
+        }
+    }
+
+    func testOpeningAnExistingTextBoxWithoutTypingPublishesNoEdit() throws {
+        let root = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotUnsavedFreeText")
+        let url = root.appendingPathComponent("annotated.pdf")
+        try writeAnnotatedPDF(to: url)
+        let data = try Data(contentsOf: url)
+        let document = try XCTUnwrap(PDFDocument(data: data))
+        let page = try XCTUnwrap(document.page(at: 0))
+        let note = try XCTUnwrap(page.annotations.first { $0.type == "FreeText" })
+
+        let pdfView = AnnotatingPDFView(frame: CGRect(x: 0, y: 0, width: 640, height: 560))
+        var edits = 0
+        pdfView.onEdited = { _, _, _ in edits += 1 }
+        pdfView.document = document
+        pdfView.replaceEditBaselineCapture(with: data, needsSnapshot: true)
+        pdfView.layoutDocumentView()
+
+        pdfView.beginFreeTextEditing(note, on: page, isNew: false, baselineData: data)
+        XCTAssertTrue(pdfView.hasActiveFreeTextEditor)
+        XCTAssertTrue(pdfView.commitActiveFreeTextEdit())
+        XCTAssertEqual(edits, 0, "committing an untouched text box is not an edit")
+
+        pdfView.beginFreeTextEditing(note, on: page, isNew: false, baselineData: data)
+        pdfView.annotationMode = .pen
+        pdfView.annotationMode = .select
+        XCTAssertEqual(edits, 0, "switching tools with an untouched text box is not an edit")
+
+        let center = pdfView.convert(CGPoint(x: note.bounds.midX, y: note.bounds.midY), from: page)
+        for clickCount in [1, 2] {
+            pdfView.mouseDown(with: try XCTUnwrap(freeTextMouseEvent(type: .leftMouseDown, location: center, clickCount: clickCount)))
+            pdfView.mouseUp(with: try XCTUnwrap(freeTextMouseEvent(type: .leftMouseUp, location: center, clickCount: clickCount)))
+        }
+        pdfView.keyDown(with: try XCTUnwrap(freeTextEscapeKeyEvent()))
+        _ = pdfView.commitActiveFreeTextEdit()
+        XCTAssertEqual(edits, 0, "clicking a text box is not an edit")
+    }
+
+    func testClickingWithAMarkupToolWithoutDraggingPublishesNoEdit() throws {
+        let root = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotUnsavedTools")
+        let url = root.appendingPathComponent("annotated.pdf")
+        try writeAnnotatedPDF(to: url)
+        let data = try Data(contentsOf: url)
+        for mode in [PDFAnnotationInteractionMode.highlighter, .pen, .eraser] {
+            let document = try XCTUnwrap(PDFDocument(data: data))
+            let page = try XCTUnwrap(document.page(at: 1))
+            let pdfView = AnnotatingPDFView(frame: CGRect(x: 0, y: 0, width: 640, height: 560))
+            var edits = 0
+            pdfView.onEdited = { _, _, _ in edits += 1 }
+            pdfView.document = document
+            pdfView.replaceEditBaselineCapture(with: data, needsSnapshot: true)
+            pdfView.go(to: page)
+            pdfView.layoutDocumentView()
+            pdfView.annotationMode = mode
+            let point = pdfView.convert(CGPoint(x: 200, y: 150), from: page)
+            pdfView.mouseDown(with: try XCTUnwrap(freeTextMouseEvent(type: .leftMouseDown, location: point)))
+            pdfView.mouseUp(with: try XCTUnwrap(freeTextMouseEvent(type: .leftMouseUp, location: point)))
+            XCTAssertEqual(edits, 0, "a click with \(mode) is not an edit")
+            XCTAssertEqual(page.annotations.count, 0, "a click with \(mode) adds nothing")
+        }
+    }
+
+    // MARK: - Saving and reloading
+
+    func testSavingClearsTheDotAndItStaysClearWhileTheWatcherSettles() async throws {
+        let (store, url) = try await openNote(stopWatcher: false)
+        store.setDocumentText("# Note\n\nEdited\n")
+        XCTAssertFalse(store.saveState(for: url.path).isClean)
+        store.saveSelectedFile()
+        let saved = await waitUntil { !store.isSaving && store.saveState(for: url.path).isClean }
+        XCTAssertTrue(saved)
+        await settle(2.5)
+        assertClean(store, "after save and watcher replay")
+        XCTAssertEqual(store.documentText, "# Note\n\nEdited\n")
+    }
+
+    func testUndoingBackToTheSavedTextClearsTheDot() async throws {
+        let (store, url) = try await openNote()
+        store.setDocumentText("# Note\n\nBody!\n")
+        XCTAssertFalse(store.saveState(for: url.path).isClean)
+        store.setDocumentText("# Note\n\nBody\n")
+        assertClean(store, "after undo")
+    }
+
+    func testMetadataChangesToAnEditedDocumentAreNotExternalChanges() async throws {
+        let (store, url) = try await openNote()
+        store.setDocumentText("# Note\n\nEdited\n")
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        _ = url.withUnsafeFileSystemRepresentation { path in
+            setxattr(path, "com.apple.metadata:_kMDItemUserTags", "x", 1, 0, 0)
+        }
+        deliverModification(of: url, to: store)
+        await settle(0.6)
+        XCTAssertFalse(store.selectedDocumentExternalChange)
+        store.saveSelectedFile()
+        let saved = await waitUntil { !store.isSaving && store.saveState(for: url.path).isClean }
+        XCTAssertTrue(saved, "save failed: \(store.errorMessage ?? "")")
+    }
+
+    func testRenamingAndMovingTheOpenDocumentKeepsItClean() async throws {
+        let (store, url) = try await openNote(stopWatcher: false)
+        store.renameDocument(id: url.path, to: "Renamed.md")
+        let renamed = await waitUntil { !store.isBusy && store.selectedDocument?.displayName == "Renamed.md" }
+        XCTAssertTrue(renamed, store.errorMessage ?? "")
+        await settle(2)
+        assertClean(store, "after rename")
+
+        let folder = url.deletingLastPathComponent().appendingPathComponent("Folder", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        store.refresh()
+        await settle(1)
+        let renamedID = try XCTUnwrap(store.selectedDocumentID)
+        XCTAssertTrue(store.moveItem(id: renamedID, toDirectory: folder))
+        let moved = await waitUntil { !store.isBusy && store.selectedDocument?.url.deletingLastPathComponent().lastPathComponent == "Folder" }
+        XCTAssertTrue(moved, store.errorMessage ?? "")
+        await settle(2)
+        assertClean(store, "after move")
+    }
+
+    func testRenamingAnEditedDocumentKeepsItSavableWithoutAConflict() async throws {
+        let (store, url) = try await openNote(stopWatcher: false)
+        store.setDocumentText("# Note\n\nEdited\n")
+        store.renameDocument(id: url.path, to: "Renamed.md")
+        let renamed = await waitUntil { !store.isBusy && store.selectedDocument?.displayName == "Renamed.md" }
+        XCTAssertTrue(renamed, store.errorMessage ?? "")
+        await settle(2)
+        XCTAssertTrue(store.hasUnsavedChanges)
+        XCTAssertFalse(store.selectedDocumentExternalChange)
+        store.saveSelectedFile()
+        let saved = await waitUntil { !store.isSaving && store.documentSaveStates.isEmpty }
+        XCTAssertTrue(saved, "save failed: \(store.errorMessage ?? "")")
+        await settle(2)
+        assertClean(store, "after saving the renamed document")
+    }
+
+    func testReloadingFromDiskAfterAReviewLeavesTheDocumentClean() async throws {
+        let (store, url) = try await openNote(stopWatcher: false)
+        store.setDocumentText("# Note\n\nMine\n")
+        try await Task.sleep(nanoseconds: 20_000_000)
+        try Data("# Note\n\nTheirs\n".utf8).write(to: url, options: .atomic)
+        let reported = await waitUntil(timeout: 8) { store.selectedDocumentExternalChange }
+        XCTAssertTrue(reported)
+
+        store.resolveSelectedExternalDocumentWithoutReview(.useDisk)
+        let resolved = await waitUntil { !store.selectedDocumentExternalChange && store.documentText == "# Note\n\nTheirs\n" }
+        XCTAssertTrue(resolved)
+        await settle(2)
+        assertClean(store, "after using the disk version")
+    }
+
     // MARK: - Fixtures
 
     private static let textFixtures: [(name: String, contents: String)] = [
