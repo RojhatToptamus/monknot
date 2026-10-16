@@ -14,7 +14,7 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         "Copy", "Cut", "Paste", "Duplicate", "-", "Move to Trash",
     ]
     static let fileMenu = [
-        "Rename", "Copy Path", "Copy Relative Path", "Reveal in Finder", "Export PDF…", "-",
+        "New File", "New Folder", "-", "Rename", "Copy Path", "Copy Relative Path", "Reveal in Finder", "Export PDF…", "-",
         "Copy", "Cut", "Paste", "Duplicate", "-", "Move to Trash",
     ]
     static let emptyAreaMenu = ["New File", "New Folder", "-", "Paste", "-", "Copy Path", "Reveal in Finder"]
@@ -52,16 +52,23 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         XCTAssertFalse(txtMenu.contains("Export PDF…"))
     }
 
-    /// New File and New Folder are offered on folder rows and the empty area, but not on a file
-    /// row, where the user expects them to create beside the file.
-    func testFileRowMenuOffersNewFileAndNewFolder() async throws {
-        let (_, _, h) = try await makeFixture()
+    /// A file row's New File and New Folder create beside the file.
+    func testFileRowMenuNewFileAndNewFolderCreateBesideTheFile() async throws {
+        let (root, store, h) = try await makeFixture()
         defer { h.close() }
-        let titles = QASidebarHarness.titles(h.contextMenu(row: try XCTUnwrap(rowIndex(h, "docs/b.md"))))
-        XCTExpectFailure("A file row's context menu has no New File or New Folder item") {
-            XCTAssertTrue(titles.contains("New File"), "\(titles)")
-            XCTAssertTrue(titles.contains("New Folder"), "\(titles)")
-        }
+
+        let opened = await h.performAndWaitForSheet("New File", in: h.contextMenu(row: try XCTUnwrap(rowIndex(h, "docs/b.md"))))
+        XCTAssertTrue(opened, "New File sheet did not open")
+        await h.submitSheet(name: "beside.md")
+        await idle(store)
+        XCTAssertEqual(store.selectedDocument?.relativePath, "docs/beside.md")
+        try await Task.sleep(nanoseconds: 400_000_000)
+
+        let openedFolder = await h.performAndWaitForSheet("New Folder", in: h.contextMenu(row: try XCTUnwrap(rowIndex(h, "docs/b.md"))))
+        XCTAssertTrue(openedFolder, "New Folder sheet did not open")
+        await h.submitSheet(name: "Inner")
+        await idle(store)
+        XCTAssertEqual(names("docs", in: root), ["a.md", "b.md", "beside.md", "Inner"])
     }
 
     func openRecents(_ h: QASidebarHarness, _ store: WorkspaceStore, recording document: WorkspaceDocument) async throws {
@@ -86,34 +93,45 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         XCTAssertEqual(h.openedDocumentIDs.last, b.id)
     }
 
-    /// Recents rows are file rows (design.md §10.4) and the last commit aligned the menus; the
-    /// Recents menu still orders its location items differently and lacks Copy Relative Path.
+    /// Recents rows are file rows (design.md §10.4), with the file row's location items in order.
     func testRecentsRowMenuMatchesTheFileRowLocationItems() async throws {
-        let (_, store, h) = try await makeFixture()
+        let (root, store, h) = try await makeFixture()
         defer { h.close() }
         try await openRecents(h, store, recording: try XCTUnwrap(doc(store, "docs/b.md")))
-        let titles = QASidebarHarness.titles(h.recentsRowMenus().first)
-        XCTAssertEqual(titles.first, "Open")
-        XCTExpectFailure("Recents menu is Open, Reveal in Finder, Copy Path: no Copy Relative Path and a different order from file rows") {
-            XCTAssertEqual(titles, ["Open", "-", "Copy Path", "Copy Relative Path", "Reveal in Finder"])
-        }
+        let menu = h.recentsRowMenus().first
+        XCTAssertEqual(QASidebarHarness.titles(menu), ["Open", "-", "Copy Path", "Copy Relative Path", "Reveal in Finder"])
+        h.perform("Copy Relative Path", in: menu)
+        XCTAssertEqual(h.copiedRelativePaths.last, root.appendingPathComponent("docs/b.md").standardizedFileURL)
     }
 
-    /// Paste is enabled even when nothing can be pasted, and then only beeps. Needs an empty
-    /// general clipboard to show (the test never writes the general clipboard).
-    func testPasteIsDisabledWhenThereIsNothingToPaste() async throws {
-        let general = NSPasteboard.general
-        let generalHasContent = (try? WorkspacePasteboardImportService.importItems(from: general).isEmpty == false) ?? true
-        try XCTSkipIf(generalHasContent, "The general clipboard holds pasteable content; this check needs it empty")
-        let (_, store, h) = try await makeFixture()
+    /// Paste is enabled only while the clipboard holds something to paste, checked each time a
+    /// menu opens.
+    func testPasteIsEnabledOnlyWhenThereIsSomethingToPaste() async throws {
+        let (root, store, h) = try await makeFixture()
         defer { h.close() }
-        XCTAssertFalse(store.canPasteDocumentTransfer)
-        let folderPaste = QASidebarHarness.item("Paste", in: h.contextMenu(row: 0))
-        let emptyPaste = QASidebarHarness.item("Paste", in: h.contextMenu(at: try XCTUnwrap(h.emptyTreePoint())))
-        XCTExpectFailure("Paste is enabled with nothing to paste; choosing it only beeps") {
-            XCTAssertEqual(folderPaste?.isEnabled, false)
-            XCTAssertEqual(emptyPaste?.isEnabled, false)
+        let empty = try XCTUnwrap(h.emptyTreePoint())
+        func pasteEnabled() -> [Bool?] {
+            [
+                QASidebarHarness.item("Paste", in: h.contextMenu(row: 0))?.isEnabled,
+                QASidebarHarness.item("Paste", in: h.contextMenu(row: try! XCTUnwrap(rowIndex(h, "top.md"))))?.isEnabled,
+                QASidebarHarness.item("Paste", in: h.contextMenu(at: empty))?.isEnabled,
+            ]
         }
+
+        h.pasteboard.clearContents()
+        XCTAssertEqual(pasteEnabled(), [false, false, false])
+
+        h.pasteboard.setString("Some words", forType: .string)
+        XCTAssertEqual(pasteEnabled(), [true, true, true])
+
+        h.pasteboard.clearContents()
+        XCTAssertEqual(pasteEnabled(), [false, false, false])
+
+        h.perform("Copy", in: h.contextMenu(row: try XCTUnwrap(rowIndex(h, "top.md"))))
+        XCTAssertEqual(pasteEnabled(), [true, true, true])
+        h.perform("Paste", in: h.contextMenu(row: try XCTUnwrap(rowIndex(h, "docs"))))
+        await idle(store)
+        XCTAssertEqual(names("docs", in: root), ["a.md", "b.md", "top.md"])
     }
 
     func testMoveToTrashFromAFolderMenuWithAnUnsavedDocumentInsideIsRefused() async throws {
@@ -230,9 +248,7 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         XCTAssertEqual(names("Collapsed", in: root), ["inner.md", "Sub"])
         _ = await wait(timeout: 2) { h.visibleRowPaths().contains("Collapsed/Sub") }
         let rows = h.visibleRowPaths()
-        XCTExpectFailure("New Folder into a collapsed folder leaves the folder collapsed: the new folder is created but not shown") {
-            XCTAssertTrue(rows.contains("Collapsed/Sub"), "\(rows)")
-        }
+        XCTAssertTrue(rows.contains("Collapsed/Sub"), "\(rows)")
     }
 
     func testNewFileAndFolderFromTheEmptyArea() async throws {
@@ -319,9 +335,29 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         XCTAssertEqual(names("notes", in: root), ["a.md", "b.md"])
         _ = await wait(timeout: 2) { h.visibleRowPaths().contains("notes/a.md") }
         let rows = h.visibleRowPaths()
-        XCTExpectFailure("Renaming (or moving) an expanded folder collapses it: expansion is keyed by path and not remapped") {
-            XCTAssertTrue(rows.contains("notes/a.md"), "\(rows)")
-        }
+        XCTAssertTrue(rows.contains("notes/a.md"), "\(rows)")
+    }
+
+    func testMovingAnExpandedFolderKeepsItAndItsOpenSubfoldersExpanded() async throws {
+        let root = try makeRoot()
+        try write("# a\n", "Box/Inner/a.md", in: root)
+        try write("# b\n", "Box/b.md", in: root)
+        try write("# keep\n", "Archive/keep.md", in: root)
+        try write("# top\n", "top.md", in: root)
+        let store = try await openStore(root, selecting: "Box/Inner/a.md")
+        let h = await harness(store, root)
+        defer { h.close() }
+        store.selectDocument(id: try XCTUnwrap(doc(store, "top.md")).id)
+        _ = await wait { !store.isDocumentLoading }
+        await h.click(at: try XCTUnwrap(h.rowCenter(try XCTUnwrap(rowIndex(h, "Archive")))))
+        _ = await wait(timeout: 2) { h.visibleRowPaths().contains("Archive/keep.md") }
+        XCTAssertTrue(h.visibleRowPaths().contains("Box/Inner/a.md"), "\(h.visibleRowPaths())")
+
+        store.moveItem(id: root.appendingPathComponent("Box").path, toDirectory: root.appendingPathComponent("Archive"))
+        await settle(store)
+        XCTAssertEqual(names("Archive", in: root), ["Box", "keep.md"])
+        _ = await wait(timeout: 2) { h.visibleRowPaths().contains("Archive/Box/Inner/a.md") }
+        XCTAssertTrue(h.visibleRowPaths().contains("Archive/Box/Inner/a.md"), "\(h.visibleRowPaths())")
     }
 
     // MARK: - Busy
@@ -351,7 +387,7 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         for title in ["New File", "New Folder", "Rename", "Copy", "Cut", "Paste", "Duplicate", "Move to Trash"] {
             XCTAssertEqual(folder[title], false, "Folder \(title)")
         }
-        for title in ["Rename", "Copy", "Cut", "Paste", "Duplicate", "Move to Trash"] {
+        for title in ["New File", "New Folder", "Rename", "Copy", "Cut", "Paste", "Duplicate", "Move to Trash"] {
             XCTAssertEqual(file[title], false, "File \(title)")
         }
         for title in ["New File", "New Folder", "Paste"] {
@@ -385,19 +421,13 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
             h.perform("Copy Path", in: menu)
             if let url = h.copiedPaths.last { recentPaths.append(url) }
         }
-        XCTExpectFailure("After a rename the Recents row keeps the old path (it is neither remapped nor refreshed)") {
-            XCTAssertFalse(recentPaths.contains(b.url.standardizedFileURL), "Recents still lists the old name: \(recentPaths)")
-            XCTAssertTrue(recentPaths.contains(root.appendingPathComponent("docs/bee.md").standardizedFileURL), "\(recentPaths)")
-        }
-        // Its Open item asks for a document that no longer exists, so choosing it does nothing.
-        if let stale = h.recentsRowMenus().first {
-            h.perform("Open", in: stale)
-            if let opened = h.openedDocumentIDs.last {
-                XCTExpectFailure("The stale Recents row opens a document ID the workspace no longer has") {
-                    XCTAssertNotNil(store.document(id: opened), opened)
-                }
-            }
-        }
+        XCTAssertFalse(recentPaths.contains(b.url.standardizedFileURL), "Recents still lists the old name: \(recentPaths)")
+        XCTAssertTrue(recentPaths.contains(root.appendingPathComponent("docs/bee.md").standardizedFileURL), "\(recentPaths)")
+
+        let first = try XCTUnwrap(h.recentsRowMenus().first)
+        h.perform("Open", in: first)
+        let opened = try XCTUnwrap(h.openedDocumentIDs.last)
+        XCTAssertNotNil(store.document(id: opened), opened)
     }
 
     // MARK: - Paste into a collapsed folder
@@ -430,9 +460,7 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         XCTAssertEqual(names("Collapsed", in: root), ["inner.md", "outside.md"])
         _ = await wait(timeout: 2) { h.visibleRowPaths().contains("Collapsed/outside.md") }
         let rows = h.visibleRowPaths()
-        XCTExpectFailure("Finder files pasted (or dropped) into a collapsed folder are neither revealed nor selected") {
-            XCTAssertTrue(rows.contains("Collapsed/outside.md"), "\(rows)")
-        }
+        XCTAssertTrue(rows.contains("Collapsed/outside.md"), "\(rows)")
     }
 
     // MARK: - Finder drop on the empty sidebar
@@ -495,8 +523,7 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         XCTAssertEqual(names("docs", in: root), ["a.md", "a copy.md", "top.md"])
     }
 
-    /// Finder copies when Option is held during a drag; the sidebar's Finder drops follow that,
-    /// but dragging a row with Option still moves it.
+    /// As in Finder, holding Option while dragging a row copies the item instead of moving it.
     func testOptionDragOfARowCopiesLikeFinder() async throws {
         let (root, store, h) = try await makeFixture()
         defer { h.close() }
@@ -506,9 +533,8 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         await settle(store)
         _ = await wait(timeout: 2) { self.names("docs", in: root).contains("top.md") }
         XCTAssertTrue(names("docs", in: root).contains("top.md"), "Nothing landed in docs")
-        XCTExpectFailure("Option-dragging a sidebar row moves it; it never copies (Finder drops onto the sidebar do copy with Option)") {
-            XCTAssertTrue(names("", in: root).contains("top.md"))
-        }
+        XCTAssertTrue(names("", in: root).contains("top.md"))
+        XCTAssertEqual(store.selectedDocument?.relativePath, "docs/top.md")
     }
 
     // MARK: - Tabs

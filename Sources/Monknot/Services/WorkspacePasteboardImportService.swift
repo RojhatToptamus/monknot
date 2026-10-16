@@ -314,6 +314,13 @@ enum WorkspacePasteboardImportService {
 
         return nil
     }
+
+    /// Whether `importItems(from:)` may find something on `pasteboard`, from the kinds of data it
+    /// holds and without reading them.
+    static func canImportItems(from pasteboard: NSPasteboard) -> Bool {
+        pasteboard.canReadObject(forClasses: [NSURL.self, NSImage.self], options: [.urlReadingFileURLsOnly: true])
+            || pasteboard.availableType(from: [.URL, .string, .rtf, .html]) != nil
+    }
 }
 
 struct MarkdownImageAsset: Equatable, Sendable {
@@ -787,5 +794,10 @@ extension WorkspaceStore {
             errorMessage = "Could not read clipboard contents: \(error.localizedDescription)"
             return true
         }
+    }
+
+    /// Whether Paste has something to paste from `pasteboard`, checked from its types alone.
+    func canPaste(from pasteboard: NSPasteboard = .general) -> Bool {
+        workspaceURL != nil && WorkspacePasteboardImportService.canImportItems(from: pasteboard)
     }
 }

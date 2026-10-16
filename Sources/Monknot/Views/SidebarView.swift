@@ -25,6 +25,8 @@ struct SidebarView: View {
     /// A New File or New Folder command from the menu, answered with the name prompt for the
     /// sidebar's target folder.
     @Binding var newItemRequest: SidebarNewItemRequest?
+    /// The clipboard the sidebar's Copy, Cut and Paste use.
+    var pasteboard: NSPasteboard = .general
     @State private var isDropTargeted = false
     @State private var expandedFolderIDs: Set<String> = []
     @State private var expandedWorkspacePath: String?
@@ -37,6 +39,9 @@ struct SidebarView: View {
     @State private var externalDropRowID: String?
     @State private var recentDocuments: [RecentDocumentEntry] = []
     @State private var visibleNodes: [VisibleSidebarNode] = []
+    /// Whether the clipboard held something to paste when a context menu last opened.
+    @State private var canPaste = false
+    @State private var treeMouse = SidebarTreeMouse()
     private let treeExpansionPersistence = WorkspaceTreeExpansionPersistence()
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -72,6 +77,98 @@ struct SidebarView: View {
     }
 
     var body: some View {
+        followingTree(sidebarColumn)
+            .onChange(of: newItemRequest) { _, request in
+                guard let request else { return }
+                newItemRequest = nil
+                guard store.workspaceURL != nil, !store.isBusy else { return }
+                switch request {
+                case .file:
+                    beginCreateFile(in: store.sidebarTargetFolderURL)
+                case .folder:
+                    beginCreateFolder(in: store.sidebarTargetFolderURL)
+                }
+            }
+            .onChange(of: store.recentDocumentChangeSerial) { _, _ in
+                refreshRecentDocuments()
+            }
+            .onChange(of: store.workspaceURL?.standardizedFileURL.path ?? "") { _, _ in
+                expandedWorkspacePath = nil
+                restoreExpandedFoldersIfNeeded()
+                refreshRecentDocuments()
+            }
+            .onAppear(perform: handleSidebarAppear)
+            .background {
+                FileURLDropTarget(
+                    isTargeted: $isDropTargeted,
+                    operation: { urls in SidebarFileDrop.operation(for: urls, workspaceURL: store.workspaceURL) },
+                    handleURLs: { urls, operation in
+                        store.dropFileURLs(urls, into: nil, copying: operation == .copy)
+                    }
+                )
+            }
+            .sheet(item: $sidebarPrompt) { prompt in
+                SidebarNameInputSheet(
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    title: prompt.title,
+                    message: prompt.message,
+                    placeholder: prompt.placeholder,
+                    confirmTitle: prompt.confirmTitle,
+                    initialName: prompt.name,
+                    cancel: {
+                        sidebarPrompt = nil
+                    },
+                    validate: { newName in
+                        validationMessage(for: prompt, name: newName)
+                    },
+                    submit: { newName in
+                        submitPrompt(prompt, name: newName)
+                        sidebarPrompt = nil
+                    }
+                )
+            }
+            .sheet(item: markdownLinkMoveReviewBinding) { review in
+                MarkdownLinkMoveReviewSheet(
+                    review: review,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    cancel: {
+                        store.cancelMarkdownLinkMoveReview(id: review.id)
+                    },
+                    confirm: {
+                        store.confirmMarkdownLinkMoveReview(id: review.id)
+                    }
+                )
+            }
+    }
+
+    /// Keeps the rows and open folders in step with the store's tree, selection and moves.
+    private func followingTree(_ content: some View) -> some View {
+        content
+            .onChange(of: store.rootNode?.id ?? "") {
+                restoreExpandedFoldersIfNeeded()
+            }
+            .onChange(of: sidebarSelectionID) { _, selectionID in
+                expandFolders(ancestorFolderIDs(of: selectionID))
+            }
+            .onChange(of: store.revealedFolder) { _, reveal in
+                guard let reveal else { return }
+                expandFolders(ancestorFolderIDs(of: reveal.folderID).union([reveal.folderID]))
+            }
+            // The rows come from the tree, which also changes without the documents (an empty folder).
+            .onChange(of: store.rootNodeRevision) { _, _ in
+                refreshVisibleNodes()
+            }
+            .onChange(of: store.documentIDRemapEvent?.serial ?? 0) { _, _ in
+                followMovedFolders()
+            }
+            .onChange(of: expandedFolderIDs) { _, _ in
+                persistExpandedFolders()
+            }
+    }
+
+    private var sidebarColumn: some View {
         VStack(spacing: 0) {
             VStack(spacing: 0) {
                 if !workspaceSearch.isPresented {
@@ -117,86 +214,6 @@ struct SidebarView: View {
                     .stroke(theme.accentColor, style: StrokeStyle(lineWidth: 2, dash: [7, 5]))
                     .padding(8)
             }
-        }
-        .onChange(of: store.rootNode?.id ?? "") {
-            restoreExpandedFoldersIfNeeded()
-        }
-        .onChange(of: sidebarSelectionID) { _, selectionID in
-            expandFolders(ancestorFolderIDs(of: selectionID))
-        }
-        .onChange(of: store.revealedFolder) { _, reveal in
-            guard let reveal else { return }
-            expandFolders(ancestorFolderIDs(of: reveal.folderID).union([reveal.folderID]))
-        }
-        .onChange(of: newItemRequest) { _, request in
-            guard let request else { return }
-            newItemRequest = nil
-            guard store.workspaceURL != nil, !store.isBusy else { return }
-            switch request {
-            case .file:
-                beginCreateFile(in: store.sidebarTargetFolderURL)
-            case .folder:
-                beginCreateFolder(in: store.sidebarTargetFolderURL)
-            }
-        }
-        // The rows come from the tree, which also changes without the documents (an empty folder).
-        .onChange(of: store.rootNodeRevision) { _, _ in
-            refreshVisibleNodes()
-        }
-        .onChange(of: store.recentDocumentChangeSerial) { _, _ in
-            refreshRecentDocuments()
-        }
-        .onChange(of: store.workspaceURL?.standardizedFileURL.path ?? "") { _, _ in
-            expandedWorkspacePath = nil
-            restoreExpandedFoldersIfNeeded()
-            refreshRecentDocuments()
-        }
-        .onChange(of: expandedFolderIDs) { _, _ in
-            persistExpandedFolders()
-        }
-        .onAppear(perform: handleSidebarAppear)
-        .background {
-            FileURLDropTarget(
-                isTargeted: $isDropTargeted,
-                operation: { urls in SidebarFileDrop.operation(for: urls, workspaceURL: store.workspaceURL) },
-                handleURLs: { urls, operation in
-                    store.dropFileURLs(urls, into: nil, copying: operation == .copy)
-                }
-            )
-        }
-        .sheet(item: $sidebarPrompt) { prompt in
-            SidebarNameInputSheet(
-                theme: theme,
-                zoomScale: zoomScale,
-                title: prompt.title,
-                message: prompt.message,
-                placeholder: prompt.placeholder,
-                confirmTitle: prompt.confirmTitle,
-                initialName: prompt.name,
-                cancel: {
-                    sidebarPrompt = nil
-                },
-                validate: { newName in
-                    validationMessage(for: prompt, name: newName)
-                },
-                submit: { newName in
-                    submitPrompt(prompt, name: newName)
-                    sidebarPrompt = nil
-                }
-            )
-        }
-        .sheet(item: markdownLinkMoveReviewBinding) { review in
-            MarkdownLinkMoveReviewSheet(
-                review: review,
-                theme: theme,
-                zoomScale: zoomScale,
-                cancel: {
-                    store.cancelMarkdownLinkMoveReview(id: review.id)
-                },
-                confirm: {
-                    store.confirmMarkdownLinkMoveReview(id: review.id)
-                }
-            )
         }
     }
 
@@ -246,7 +263,9 @@ struct SidebarView: View {
                         SidebarScrollContainer(
                             theme: theme,
                             revealedRow: revealedRow(in: nodes),
-                            keyDown: handleTreeKeyDown(_:)
+                            keyDown: handleTreeKeyDown(_:),
+                            menuWillOpen: refreshCanPaste,
+                            mouse: treeMouse
                         ) {
                             LazyVStack(alignment: .leading, spacing: scaled(2)) {
                                 ForEach(nodes) { visibleNode in
@@ -260,6 +279,7 @@ struct SidebarView: View {
                                         isExpanded: visibleNode.isExpanded(in: expandedFolderIDs),
                                         tracksMoveFrame: tracksSidebarMoveFrames,
                                         isBusy: store.isBusy,
+                                        canPaste: canPaste,
                                         isMoveSource: draggedSidebarNodeID == visibleNode.id,
                                         isMoveTarget: moveDropTargetFolderID == visibleNode.dropTargetFolderID,
                                         theme: theme,
@@ -297,7 +317,8 @@ struct SidebarView: View {
                                 },
                                 openDocument: openDocument,
                                 revealInFinder: revealInFinder(_:),
-                                copyPath: copyPath
+                                copyPath: copyPath,
+                                copyRelativePath: copyRelativePath
                             )
                             .layoutPriority(2)
                         }
@@ -315,6 +336,12 @@ struct SidebarView: View {
                     isLoadingWorkspace: store.isWorkspaceOpening,
                     switchWorkspace: switchWorkspace
                 )
+                    // The menu's Paste checks the clipboard as the pointer arrives for a right-click.
+                    .onHover { isHovered in
+                        if isHovered {
+                            refreshCanPaste()
+                        }
+                    }
                     .contextMenu {
                         sidebarContextMenu
                     }
@@ -392,6 +419,15 @@ struct SidebarView: View {
             folderPath = (folderPath as NSString).deletingLastPathComponent
         }
         return ancestorIDs
+    }
+
+    /// Keeps a renamed or moved folder, and the folders inside it, open at their new paths.
+    private func followMovedFolders() {
+        guard let event = store.documentIDRemapEvent else { return }
+        let followedFolderIDs = Set(expandedFolderIDs.map(event.remappedPath))
+        guard followedFolderIDs != expandedFolderIDs else { return }
+        expandedFolderIDs = followedFolderIDs
+        refreshVisibleNodes()
     }
 
     private func expandFolders(_ folderIDs: Set<String>) {
@@ -511,8 +547,8 @@ struct SidebarView: View {
             copyRelativePath: copyRelativePath,
             revealInFinder: revealInFinder(_:),
             exportPDF: exportPDF,
-            copy: { store.putItemOnPasteboard(at: $0, cutting: false) },
-            cut: { store.putItemOnPasteboard(at: $0, cutting: true) },
+            copy: { store.putItemOnPasteboard(at: $0, cutting: false, pasteboard: pasteboard) },
+            cut: { store.putItemOnPasteboard(at: $0, cutting: true, pasteboard: pasteboard) },
             paste: paste(into:),
             duplicate: store.duplicateItem(at:),
             moveToTrash: moveToTrash(_:),
@@ -549,7 +585,7 @@ struct SidebarView: View {
         } label: {
             Label("Paste", systemImage: "doc.on.clipboard")
         }
-        .disabled(store.workspaceURL == nil || store.isBusy)
+        .disabled(store.workspaceURL == nil || store.isBusy || !canPaste)
 
         if let workspaceURL = store.workspaceURL {
             Divider()
@@ -599,8 +635,12 @@ struct SidebarView: View {
         }
     }
 
+    private func refreshCanPaste() {
+        canPaste = store.canPaste(from: pasteboard)
+    }
+
     private func paste(into directoryURL: URL?) {
-        if !store.pasteFromPasteboard(into: directoryURL) {
+        if !store.pasteFromPasteboard(pasteboard, into: directoryURL) {
             NSSound.beep()
         }
     }
@@ -628,10 +668,14 @@ struct SidebarView: View {
               let target = moveDropTarget(forRow: id, at: location)
         else { return }
 
-        switch target {
-        case .root:
-            store.moveItem(id: row.dropTargetNode.id, toDirectory: nil)
-        case .folder(let folderURL):
+        let folderURL: URL? = switch target {
+        case .root: nil
+        case .folder(let folderURL): folderURL
+        }
+        // As in Finder, holding Option when the drag ends copies the item instead of moving it.
+        if treeMouse.modifierFlags.contains(.option) {
+            store.duplicateItem(at: row.dropTargetNode.url, into: folderURL)
+        } else {
             store.moveItem(id: row.dropTargetNode.id, toDirectory: folderURL)
         }
     }
@@ -1342,6 +1386,7 @@ extension SidebarNodeRow: Equatable {
             lhs.isExpanded == rhs.isExpanded &&
             lhs.tracksMoveFrame == rhs.tracksMoveFrame &&
             lhs.isBusy == rhs.isBusy &&
+            lhs.canPaste == rhs.canPaste &&
             lhs.isMoveSource == rhs.isMoveSource &&
             lhs.isMoveTarget == rhs.isMoveTarget &&
             lhs.zoomScale == rhs.zoomScale &&
@@ -1357,6 +1402,7 @@ private struct SidebarNodeRow: View {
     let isExpanded: Bool
     let tracksMoveFrame: Bool
     let isBusy: Bool
+    let canPaste: Bool
     let isMoveSource: Bool
     let isMoveTarget: Bool
     let theme: AppTheme
@@ -1511,19 +1557,7 @@ private struct SidebarNodeRow: View {
 
     @ViewBuilder
     private func folderContextMenu() -> some View {
-        Button {
-            actions.createFile(item.url)
-        } label: {
-            Label("New File", systemImage: MonknotWorkspaceIcons.newFile)
-        }
-        .disabled(isBusy)
-
-        Button {
-            actions.createFolder(item.url)
-        } label: {
-            Label("New Folder", systemImage: MonknotWorkspaceIcons.newFolder)
-        }
-        .disabled(isBusy)
+        newItemButtons
 
         Divider()
 
@@ -1541,6 +1575,10 @@ private struct SidebarNodeRow: View {
 
     @ViewBuilder
     private func documentContextMenu(for document: WorkspaceDocument) -> some View {
+        newItemButtons
+
+        Divider()
+
         renameButton
         locationButtons
 
@@ -1559,6 +1597,24 @@ private struct SidebarNodeRow: View {
         Divider()
 
         moveToTrashButton
+    }
+
+    /// New File and New Folder, in the folder itself or beside the file.
+    @ViewBuilder
+    private var newItemButtons: some View {
+        Button {
+            actions.createFile(visibleNode.destinationURL)
+        } label: {
+            Label("New File", systemImage: MonknotWorkspaceIcons.newFile)
+        }
+        .disabled(isBusy)
+
+        Button {
+            actions.createFolder(visibleNode.destinationURL)
+        } label: {
+            Label("New Folder", systemImage: MonknotWorkspaceIcons.newFolder)
+        }
+        .disabled(isBusy)
     }
 
     private var renameButton: some View {
@@ -1613,7 +1669,7 @@ private struct SidebarNodeRow: View {
         } label: {
             Label("Paste", systemImage: "doc.on.clipboard")
         }
-        .disabled(isBusy)
+        .disabled(isBusy || !canPaste)
 
         Button {
             actions.duplicate(item.url)
@@ -1722,17 +1778,23 @@ private struct SidebarScrollContainer<Content: View>: NSViewRepresentable {
     let thumbColor: NSColor
     let revealedRow: SidebarRevealedRow?
     let keyDown: (NSEvent) -> Bool
+    let menuWillOpen: () -> Void
+    let mouse: SidebarTreeMouse
     let content: Content
 
     init(
         theme: AppTheme,
         revealedRow: SidebarRevealedRow?,
         keyDown: @escaping (NSEvent) -> Bool,
+        menuWillOpen: @escaping () -> Void,
+        mouse: SidebarTreeMouse,
         @ViewBuilder content: () -> Content
     ) {
         self.thumbColor = MonknotScrollbarStyle.thumbColor(for: theme)
         self.revealedRow = revealedRow
         self.keyDown = keyDown
+        self.menuWillOpen = menuWillOpen
+        self.mouse = mouse
         self.content = content()
     }
 
@@ -1767,6 +1829,8 @@ private struct SidebarScrollContainer<Content: View>: NSViewRepresentable {
         guard let hostingView = context.coordinator.hostingView else { return }
         hostingView.rootView = content
         hostingView.keyDownHandler = keyDown
+        hostingView.menuWillOpenHandler = menuWillOpen
+        hostingView.mouse = mouse
         scrollView.thumbColor = thumbColor
 
         // A new selection scrolls into view once, after the rows that show it are laid out.
@@ -1786,6 +1850,12 @@ private struct SidebarScrollContainer<Content: View>: NSViewRepresentable {
     }
 }
 
+/// The modifier keys of the latest mouse event in the tree, so a row drag that ends reads the keys
+/// held as the mouse went up rather than whenever its handler runs.
+private final class SidebarTreeMouse {
+    var modifierFlags: NSEvent.ModifierFlags = []
+}
+
 /// The selected row and its frame in the tree, which scrolls it into view.
 private struct SidebarRevealedRow {
     let id: String
@@ -1796,6 +1866,8 @@ private struct SidebarRevealedRow {
 /// menu's Cut, Copy and Paste and the tree's own keys act on the sidebar's selection.
 private final class SidebarHostingView<Content: View>: NSHostingView<Content> {
     var keyDownHandler: (NSEvent) -> Bool = { _ in false }
+    var menuWillOpenHandler: () -> Void = {}
+    var mouse: SidebarTreeMouse?
 
     override var mouseDownCanMoveWindow: Bool {
         false
@@ -1813,13 +1885,32 @@ private final class SidebarHostingView<Content: View>: NSHostingView<Content> {
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        mouse?.modifierFlags = event.modifierFlags
         super.mouseDown(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        mouse?.modifierFlags = event.modifierFlags
+        super.mouseDragged(with: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        mouse?.modifierFlags = event.modifierFlags
+        super.mouseUp(with: event)
     }
 
     override func keyDown(with event: NSEvent) {
         if !keyDownHandler(event) {
             super.keyDown(with: event)
         }
+    }
+
+    /// A right-click in the tree, on a row or below the rows, lets the sidebar bring its menus up
+    /// to date and applies that to the window's views, so the menu is built as things are now.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        menuWillOpenHandler()
+        window?.contentView?.layoutSubtreeIfNeeded()
+        return super.menu(for: event)
     }
 }
 
@@ -2175,6 +2266,7 @@ private struct SidebarRecentDocumentsSection: View {
     let openDocument: (String) -> Void
     let revealInFinder: (URL) -> Void
     let copyPath: (URL) -> Void
+    let copyRelativePath: (URL) -> Void
     @State private var isExpanded = false
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -2271,15 +2363,21 @@ private struct SidebarRecentDocumentsSection: View {
         Divider()
 
         Button {
-            revealInFinder(url)
-        } label: {
-            Label("Reveal in Finder", systemImage: MonknotWorkspaceIcons.revealInFinder)
-        }
-
-        Button {
             copyPath(url)
         } label: {
             Label("Copy Path", systemImage: MonknotWorkspaceIcons.copyPath)
+        }
+
+        Button {
+            copyRelativePath(url)
+        } label: {
+            Label("Copy Relative Path", systemImage: "doc.on.doc")
+        }
+
+        Button {
+            revealInFinder(url)
+        } label: {
+            Label("Reveal in Finder", systemImage: MonknotWorkspaceIcons.revealInFinder)
         }
     }
 }

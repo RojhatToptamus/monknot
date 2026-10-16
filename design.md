@@ -648,10 +648,16 @@ tree has focus, ⌘C, ⌘X and ⌘V copy, cut and paste the selection, Return re
 ⌘⌫ moves it to the Trash; with the editor, terminal or a field focused those keys stay theirs. A created
 or pasted item is selected and its folder opens; files pasted or dropped in from elsewhere open their
 folder. The selection follows a rename or move, moves up to the nearest remaining folder when its folder
-is removed, and clears when the workspace changes.
+is removed, and clears when the workspace changes; open folders stay open when renamed or moved.
+
+**Row menus.** Folder and file rows start with New File and New Folder (in the folder, or beside the
+file), then Rename and the location items, then Copy, Cut, Paste and Duplicate, then Move to Trash.
+Paste is enabled only while the clipboard holds something to paste. Dragging a row moves the item, and
+holding Option as the drag ends copies it, as Finder does.
 
 **Recents** is a collapsible group between the tree and the footer: the chevron in the glyph column, an
-eyebrow title (§4.3) and a trailing count in 12 `ink3`. Its entries are file rows one level in. It never
+eyebrow title (§4.3) and a trailing count in 12 `ink3`. Its entries are file rows one level in, whose
+menu is Open and the file row's location items, and they follow a rename or move. It never
 grows past a third of the sidebar; the tree keeps the rest. It is a jump list and never marks a
 selection.
 

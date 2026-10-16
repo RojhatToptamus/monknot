@@ -8,14 +8,15 @@ import XCTest
 /// drives it: right-clicks build the row's real context menu, menu items are performed, and rows
 /// are identified by what their own "Copy Path" item reports.
 ///
-/// Never performs Copy, Cut or Paste from a sidebar menu: those write `NSPasteboard.general`.
-/// Never performs Reveal in Finder or a successful Move to Trash.
+/// The sidebar's Copy, Cut and Paste use the harness's own private `pasteboard`, never
+/// `NSPasteboard.general`. Never performs Reveal in Finder or a successful Move to Trash.
 @MainActor
 final class QASidebarHarness {
     let store: WorkspaceStore
     let window: NSWindow
     let host: NSView
     let root: URL
+    let pasteboard = NSPasteboard(name: NSPasteboard.Name("MonknotQASidebar-\(UUID().uuidString)"))
     var copiedPaths: [URL] = []
     var copiedRelativePaths: [URL] = []
     var exportedPDFs: [String] = []
@@ -51,7 +52,8 @@ final class QASidebarHarness {
             workspaceSearchFocusChanged: { _ in },
             copyPath: { copiedPathsSink($0) },
             copyRelativePath: { copiedRelativeSink($0) },
-            newItemRequest: .constant(nil)
+            newItemRequest: .constant(nil),
+            pasteboard: pasteboard
         )
         .frame(width: 280, height: 640)
 
@@ -84,6 +86,7 @@ final class QASidebarHarness {
         }
         window.orderOut(nil)
         window.contentView = nil
+        pasteboard.releaseGlobally()
     }
 
     // MARK: Geometry
