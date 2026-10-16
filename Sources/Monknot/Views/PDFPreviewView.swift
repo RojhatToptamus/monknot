@@ -3085,6 +3085,13 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             zoomSerial: zoomCommand?.serial ?? 0,
             addFreeTextSerial: addFreeTextCommandSerial
         )
+        pdfView.onLayout = { [weak coordinator = context.coordinator, weak pdfView] in
+            guard let coordinator, let pdfView, coordinator.awaitsOpeningImageFit else { return }
+            // Zooming lays the view out again, so the fit runs after this layout pass.
+            DispatchQueue.main.async {
+                coordinator.applyOpeningImageFitIfNeeded(in: pdfView)
+            }
+        }
         context.coordinator.attach(to: pdfView)
         container.navigatorView.attach(to: pdfView)
         return container
@@ -3259,6 +3266,10 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         private var lastZoomCommandSerial = 0
         private var lastPageNavigationRequest: PDFPageNavigationRequest?
         private var shouldRestoreViewportState = false
+        private var isImageDocument = false
+        /// An image opens fitted to the view, which a view without a size yet cannot do; the fit
+        /// then waits for its first layout.
+        private(set) var awaitsOpeningImageFit = false
         private var lastPublishedViewportState: PDFDocumentViewportState?
         /// States this view published itself, newest last. SwiftUI hands each one back a frame or more
         /// later, by when the view may have moved on (a ⌘-scroll publishes several in a row): a state
@@ -3311,6 +3322,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             viewportCaptureBridge = nil
             matches = []
             pendingSearchTarget = nil
+            awaitsOpeningImageFit = false
         }
 
         func clearSelectionSnapshot() {
@@ -3415,10 +3427,8 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
                     needsSnapshot: dirtyData == nil && loadedDocument != nil,
                     currentOwnedData: dirtyData
                 )
-                // An image opens whole, at no more than its actual size, as in Preview.
-                let fitScale = pdfView.scaleFactorForSizeToFit
-                let initialScale = isImage && fitScale.isFinite && fitScale > 0 ? min(1, fitScale) : 1
-                applyPDFZoomMode(.fixed(scaleFactor: Double(initialScale)), to: pdfView)
+                isImageDocument = isImage
+                applyPDFZoomMode(.fixed(scaleFactor: Double(openingScale(in: pdfView))), to: pdfView)
             }
             onLoadStateChange(
                 loadedDocument == nil ? .failed : .loaded(isMarkupSupported: isMarkupSupported)
@@ -3583,8 +3593,40 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
                 return
             }
 
+            awaitsOpeningImageFit = false
             performWithoutPublishingViewportStateChanges {
                 applyPDFZoomCommand(request.command, to: pdfView)
+            }
+            publishViewportState(from: pdfView)
+        }
+
+        /// A PDF opens at its actual size. An image opens whole, at no more than its actual size,
+        /// as in Preview.
+        private func openingScale(in pdfView: PDFView) -> CGFloat {
+            guard isImageDocument, pdfView.document != nil else {
+                awaitsOpeningImageFit = false
+                return 1
+            }
+            guard !pdfView.bounds.isEmpty else {
+                awaitsOpeningImageFit = true
+                return 1
+            }
+            awaitsOpeningImageFit = false
+            // PDFKit's size-to-fit matches the width; a whole image must fit the height too.
+            let widthFit = pdfView.scaleFactorForSizeToFit
+            let margins = pdfView.displaysPageBreaks ? pdfView.pageBreakMargins : NSEdgeInsetsZero
+            let pageHeight = pdfView.document?.page(at: 0)?.bounds(for: pdfView.displayBox).height ?? 0
+            let heightFit = pageHeight > 0
+                ? (pdfView.bounds.height - margins.top - margins.bottom) / pageHeight
+                : 1
+            let fitScale = min(widthFit, heightFit)
+            return fitScale.isFinite && fitScale > 0 ? min(1, fitScale) : 1
+        }
+
+        func applyOpeningImageFitIfNeeded(in pdfView: AnnotatingPDFView) {
+            guard awaitsOpeningImageFit, !pdfView.bounds.isEmpty else { return }
+            performWithoutPublishingViewportStateChanges {
+                applyPDFZoomMode(.fixed(scaleFactor: Double(openingScale(in: pdfView))), to: pdfView)
             }
             publishViewportState(from: pdfView)
         }
@@ -3648,9 +3690,13 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
                 let restoredZoomMode: PDFZoomMode
                 switch state?.zoomMode {
                 case .fixed(let scaleFactor):
+                    awaitsOpeningImageFit = false
                     restoredZoomMode = .fixed(scaleFactor: scaleFactor)
-                case .fitToView, .none:
+                case .fitToView:
+                    awaitsOpeningImageFit = false
                     restoredZoomMode = .fixed(scaleFactor: 1)
+                case .none:
+                    restoredZoomMode = .fixed(scaleFactor: Double(openingScale(in: pdfView)))
                 }
                 applyPDFZoomMode(restoredZoomMode, to: pdfView)
                 pdfView.layoutDocumentView()
@@ -4660,6 +4706,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
     var onError: (String) -> Void = { _ in }
     var onRequestLinkedExcerptCopy: (PDFSelectionSnapshot) -> Void = { _ in }
     var onAnnotationsChanged: () -> Void = {}
+    var onLayout: () -> Void = {}
     var onFreeTextSelectionChanged: (PDFFreeTextFormatting?) -> Void = { _ in }
     var linkedExcerptDocumentID: String?
     var linkedExcerptContentVersion = 0
@@ -4726,6 +4773,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         if annotationMode == .select {
             window?.invalidateCursorRects(for: self)
         }
+        onLayout()
     }
 
     /// PDFKit zooms only with a trackpad pinch, so a mouse could not zoom a PDF at all. ⌘-scroll
