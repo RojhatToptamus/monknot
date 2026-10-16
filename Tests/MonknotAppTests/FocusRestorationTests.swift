@@ -292,6 +292,72 @@ final class FocusRestorationTests: XCTestCase {
         XCTAssertTrue(window.firstResponder === replacementEditor)
     }
 
+    func testFocusRestorerReturnsToTheTextFieldThatWasEditingBeforeAnOverlayField() async {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let documentEditor = NSTextView(frame: NSRect(x: 0, y: 40, width: 640, height: 440))
+        documentEditor.identifier = .monknotDocumentFocusTarget
+        let findField = NSTextField(frame: NSRect(x: 0, y: 0, width: 160, height: 28))
+        window.contentView?.addSubview(documentEditor)
+        window.contentView?.addSubview(findField)
+
+        for removesFindField in [false, true] {
+            let paletteField = NSTextField(frame: NSRect(x: 200, y: 0, width: 160, height: 28))
+            window.contentView?.addSubview(paletteField)
+            if findField.superview == nil {
+                window.contentView?.addSubview(findField)
+            }
+            XCTAssertTrue(window.makeFirstResponder(findField))
+
+            let restorer = TerminalFocusRestorer()
+            restorer.capture(from: window)
+            // The window's one field editor moves into the palette's field.
+            XCTAssertTrue(window.makeFirstResponder(paletteField))
+            paletteField.removeFromSuperview()
+            if removesFindField {
+                findField.removeFromSuperview()
+            }
+
+            restorer.restore(fallbackFrom: window)
+            await Task.yield()
+
+            if removesFindField {
+                XCTAssertTrue(window.firstResponder === documentEditor)
+            } else {
+                XCTAssertNotNil(findField.currentEditor())
+                XCTAssertTrue(findField.currentEditor() === window.firstResponder)
+            }
+        }
+    }
+
+    func testUnfocusedWindowGivesTheDocumentFocusButNeverStealsIt() async {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let documentEditor = NSTextView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
+        documentEditor.identifier = .monknotDocumentFocusTarget
+        let sidebarResponder = NSTextView(frame: NSRect(x: 320, y: 0, width: 320, height: 480))
+        window.contentView?.addSubview(documentEditor)
+        window.contentView?.addSubview(sidebarResponder)
+
+        XCTAssertTrue(window.makeFirstResponder(sidebarResponder))
+        TerminalFocusRestorer.focusDocumentIfUnfocused(in: window)
+        await Task.yield()
+        XCTAssertTrue(window.firstResponder === sidebarResponder)
+
+        XCTAssertTrue(window.makeFirstResponder(nil))
+        TerminalFocusRestorer.focusDocumentIfUnfocused(in: window)
+        await Task.yield()
+        XCTAssertTrue(window.firstResponder === documentEditor)
+    }
+
     func testHiddenTerminalLoadDoesNotStealDocumentFocus() async {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
@@ -310,9 +376,9 @@ final class FocusRestorationTests: XCTestCase {
         window.contentView?.addSubview(hiddenTerminalContainer)
         XCTAssertTrue(window.makeFirstResponder(documentEditor))
 
-        let coordinator = TerminalWebView.Coordinator(session: TerminalSessionStore())
+        let coordinator = TerminalWebController(session: TerminalSessionStore())
         coordinator.webView = terminalWebView
-        coordinator.requestFocusOnLoad(from: documentEditor)
+        coordinator.requestFocus(from: documentEditor)
         coordinator.webView(terminalWebView, didFinish: nil)
         await Task.yield()
 
@@ -334,9 +400,9 @@ final class FocusRestorationTests: XCTestCase {
         window.contentView?.addSubview(terminalWebView)
         XCTAssertTrue(window.makeFirstResponder(documentEditor))
 
-        let coordinator = TerminalWebView.Coordinator(session: TerminalSessionStore())
+        let coordinator = TerminalWebController(session: TerminalSessionStore())
         coordinator.webView = terminalWebView
-        coordinator.requestFocusOnLoad(from: documentEditor)
+        coordinator.requestFocus(from: documentEditor)
         coordinator.webView(terminalWebView, didFinish: nil)
         await Task.yield()
 
@@ -364,9 +430,9 @@ final class FocusRestorationTests: XCTestCase {
         window.contentView?.addSubview(terminalWebView)
         XCTAssertTrue(window.makeFirstResponder(workspaceSearchField))
 
-        let coordinator = TerminalWebView.Coordinator(session: TerminalSessionStore())
+        let coordinator = TerminalWebController(session: TerminalSessionStore())
         coordinator.webView = terminalWebView
-        coordinator.requestFocusOnLoad(from: window.firstResponder)
+        coordinator.requestFocus(from: window.firstResponder)
         XCTAssertTrue(window.makeFirstResponder(documentSearchField))
         coordinator.webView(terminalWebView, didFinish: nil)
         await Task.yield()

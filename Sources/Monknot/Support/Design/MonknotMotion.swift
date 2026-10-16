@@ -1,33 +1,33 @@
+import QuartzCore
 import SwiftUI
 
 enum MonknotMotion {
     static let hoverDuration: Double = 0.12
     static let outlineDuration: Double = 0.16
-    static let sidebarTransitionDuration: Double = 0.22
+    /// Sidebar and terminal open and close with the standard macOS split-view transition.
+    static let paneTransitionDuration: Double = 0.25
     static let terminalFullscreenTransitionDuration: Double = 0.18
 
     static var hoverAnimation: Animation {
         .easeOut(duration: hoverDuration)
     }
 
-    static var sidebarTransition: Animation {
-        .timingCurve(
-            0.77,
-            0,
-            0.175,
-            1,
-            duration: sidebarTransitionDuration
-        )
+    /// The SwiftUI side of the pane transition, on the same ease-in-ease-out curve as AppKit's.
+    static var paneTransition: Animation {
+        .timingCurve(0.42, 0, 0.58, 1, duration: paneTransitionDuration)
+    }
+
+    static var paneTimingFunction: CAMediaTimingFunction {
+        CAMediaTimingFunction(name: .easeInEaseOut)
+    }
+
+    /// Reduce Motion shows and hides panes instantly.
+    static func paneTransition(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : paneTransition
     }
 
     static var terminalFullscreenTransition: Animation {
         .easeInOut(duration: terminalFullscreenTransitionDuration)
-    }
-
-    static func sidebarTransition(reduceMotion: Bool) -> Animation? {
-        reduceMotion
-            ? nil
-            : sidebarTransition
     }
 
     static func outlineAnimation(reduceMotion: Bool) -> Animation? {

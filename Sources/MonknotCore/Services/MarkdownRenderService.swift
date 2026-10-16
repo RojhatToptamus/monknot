@@ -1,6 +1,10 @@
 import Foundation
 
 public struct MarkdownRenderService: Sendable {
+    /// In-app web views load workspace files (images, linked styles) through this URL scheme:
+    /// WebKit's sandboxed content process cannot read local files for a page loaded from a string.
+    public static let workspaceResourceScheme = "monknot-file"
+
     private let stylesheet: String
     private let rendererJavaScript: String
 
@@ -58,7 +62,7 @@ public struct MarkdownRenderService: Sendable {
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
-          <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data: blob:; img-src 'self' file: data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+          <meta http-equiv="Content-Security-Policy" content="default-src 'self' \(Self.workspaceResourceScheme): file: data: blob:; img-src 'self' \(Self.workspaceResourceScheme): file: data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
           \(baseTag)
           <style>
         \(stylesheet)
@@ -216,7 +220,11 @@ public struct MarkdownRenderService: Sendable {
     }
 
     private func directoryURLString(for url: URL) -> String {
-        URL(fileURLWithPath: url.standardizedFileURL.path, isDirectory: true).absoluteString
+        guard url.isFileURL else {
+            // A `workspaceResourceScheme` base from an in-app web view; already a directory URL.
+            return url.absoluteString
+        }
+        return URL(fileURLWithPath: url.standardizedFileURL.path, isDirectory: true).absoluteString
     }
 
     private func htmlAttributeEscaped(_ value: String) -> String {

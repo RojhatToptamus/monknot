@@ -6,6 +6,8 @@ public final class WorkspaceSearchIndex: @unchecked Sendable {
     enum DocumentStatus {
         case indexed([WorkspaceTextContentCache.SearchLine])
         case skippedLarge
+        /// Not UTF-8 text, such as binary data in a `.txt` file: nothing in it can match.
+        case unreadable
     }
 
     struct DocumentMatchBatch {
@@ -93,7 +95,7 @@ public final class WorkspaceSearchIndex: @unchecked Sendable {
     ) throws -> WorkspaceSearchBatch {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return WorkspaceSearchBatch(results: []) }
-        var results: [WorkspaceSearchResult] = []
+        var collector = WorkspaceSearchCollector(maxMatches: maxMatches, maxMatchesPerFile: maxMatchesPerFile)
         var skippedLargeFileCount = 0
 
         for document in documents where document.kind == .markdown || document.kind == .text {
@@ -102,21 +104,14 @@ public final class WorkspaceSearchIndex: @unchecked Sendable {
                 query: needle,
                 options: options,
                 document: document,
-                limit: maxMatchesPerFile,
+                limit: collector.perFileQueryLimit,
                 maxBytes: maxTextFileBytes
             )
             skippedLargeFileCount += batch.skippedLargeFileCount
-            results.append(contentsOf: batch.results)
-
-            if results.count >= maxMatches {
-                return WorkspaceSearchBatch(
-                    results: Array(results.prefix(maxMatches)),
-                    skippedLargeFileCount: skippedLargeFileCount
-                )
-            }
+            guard collector.add(batch.results, documentID: document.id) else { break }
         }
 
-        return WorkspaceSearchBatch(results: results, skippedLargeFileCount: skippedLargeFileCount)
+        return collector.batch(skippedLargeFileCount: skippedLargeFileCount)
     }
 
     func matches(
@@ -134,6 +129,8 @@ public final class WorkspaceSearchIndex: @unchecked Sendable {
         switch entry.status {
         case .skippedLarge:
             return DocumentMatchBatch(results: [], skippedLargeFileCount: 1)
+        case .unreadable:
+            return DocumentMatchBatch(results: [], skippedLargeFileCount: 0)
         case .indexed(let searchLines):
             return DocumentMatchBatch(
                 results: Self.matches(
@@ -183,6 +180,8 @@ public final class WorkspaceSearchIndex: @unchecked Sendable {
             status = .indexed(textCache.searchLines(for: document.url, buildingFrom: text))
         } catch WorkspaceTextFileGuard.Error.fileTooLarge {
             status = .skippedLarge
+        } catch is WorkspaceTextFileGuard.Error {
+            status = .unreadable
         }
         let updatedCacheRevision = textCache.revision(for: document.url)
 

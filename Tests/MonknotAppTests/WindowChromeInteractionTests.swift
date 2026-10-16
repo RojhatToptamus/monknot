@@ -25,8 +25,7 @@ final class WindowChromeInteractionTests: XCTestCase {
         window.standardWindowButton(.miniaturizeButton)?.isEnabled = false
         window.standardWindowButton(.zoomButton)?.isEnabled = false
 
-        let coordinator = WindowBackgroundDragEnabler.Coordinator(
-            suppressToolbarButton: true,
+        let coordinator = WindowChromeConfigurator.Coordinator(
             enablesStandardWindowControls: true
         )
         coordinator.configureWindowChrome(in: window)
@@ -58,7 +57,7 @@ final class WindowChromeInteractionTests: XCTestCase {
         )
         window.isMovableByWindowBackground = true
         let host = NSHostingView(rootView: Color.clear.background(
-            WindowBackgroundDragEnabler(surfaceColor: .black)
+            WindowChromeConfigurator(surfaceColor: .black, isDark: true)
         ))
         window.contentView = host
 
@@ -82,8 +81,7 @@ final class WindowChromeInteractionTests: XCTestCase {
             defer: false
         )
 
-        let coordinator = WindowBackgroundDragEnabler.Coordinator(
-            suppressToolbarButton: true,
+        let coordinator = WindowChromeConfigurator.Coordinator(
             enablesStandardWindowControls: true
         )
         coordinator.configureWindowChrome(in: window)
@@ -110,8 +108,7 @@ final class WindowChromeInteractionTests: XCTestCase {
             theme: .defaultLight,
             zoomScale: WorkspaceZoomPolicy.maximum
         )
-        let coordinator = WindowBackgroundDragEnabler.Coordinator(
-            suppressToolbarButton: true,
+        let coordinator = WindowChromeConfigurator.Coordinator(
             trafficLightRowHeight: chromeHeight
         )
         coordinator.observeWindow(window)
@@ -137,10 +134,104 @@ final class WindowChromeInteractionTests: XCTestCase {
         )
     }
 
-    func testDisabledWindowNavigationAvoidsDoubleAttenuation() {
-        let size = MonknotIconButton.IconButtonSize.windowNavigation
+    func testDisabledControlsDimTheirBorderNotTheirGlyphAgain() {
+        // design.md §5.1: the glyph is `ink4` and the border 40 %; nothing multiplies on top.
+        XCTAssertEqual(MonknotIconButton.disabledBorderOpacity, 0.4, accuracy: 0.001)
+    }
 
-        XCTAssertEqual(size.disabledControlOpacity, 0.24, accuracy: 0.001)
+    func testChromeListsKeepTheSlimOverlayThumbWhenTheSystemSwitchesToLegacyScrollBars() async {
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 248, height: 300))
+        scrollView.hasVerticalScroller = true
+        scrollView.documentView = NSView(frame: NSRect(x: 0, y: 0, width: 248, height: 1200))
+        let behavior = MonknotChromeScrollerBehavior()
+        behavior.attach(to: scrollView)
+        XCTAssertEqual(scrollView.scrollerStyle, .overlay)
+        XCTAssertTrue(scrollView.verticalScroller is MonknotScroller)
+        XCTAssertEqual(scrollView.contentView.bounds.width, 248, "An overlay thumb takes no width from the list")
+
+        // What AppKit does when "Show scroll bars" changes or a mouse is plugged in.
+        scrollView.scrollerStyle = .legacy
+        NotificationCenter.default.post(name: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil)
+        for _ in 0..<10 where scrollView.scrollerStyle != .overlay {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(scrollView.scrollerStyle, .overlay)
+        behavior.detach()
+    }
+
+    func testChromeScrollViewTakesTheOverlayThumbWithoutWaitingForTheRunLoop() throws {
+        let theme = AppTheme.defaultDark
+        let hostingView = NSHostingView(
+            rootView: MonknotScrollView(theme: theme) {
+                Color.clear.frame(height: 1200)
+            }
+            .frame(width: 248, height: 300)
+        )
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 248, height: 300),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = hostingView
+        hostingView.layoutSubtreeIfNeeded()
+
+        let scrollView = try XCTUnwrap(Self.firstDescendant(of: NSScrollView.self, in: hostingView))
+        XCTAssertEqual(scrollView.scrollerStyle, .overlay)
+        let scroller = try XCTUnwrap(scrollView.verticalScroller as? MonknotScroller)
+        XCTAssertEqual(scroller.thumbColor, NSColor(hex: theme.foreground), "The thumb takes the theme's ink")
+        XCTAssertEqual(scrollView.contentView.bounds.width, 248, "An overlay thumb takes no width from the list")
+    }
+
+    func testPDFPageThumbnailsUseTheChromeThumb() throws {
+        let navigator = PDFNavigatorView(frame: NSRect(x: 0, y: 0, width: 220, height: 400))
+        let scrollView = try XCTUnwrap(Self.firstDescendant(of: NSScrollView.self, in: navigator.thumbnailView))
+        XCTAssertTrue(scrollView.verticalScroller is MonknotScroller)
+        XCTAssertEqual(scrollView.scrollerStyle, .overlay)
+    }
+
+    func testDocumentsKeepTheSystemScrollerAndHideItOnlyWhenOverlay() {
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        scrollView.hasVerticalScroller = true
+        MonknotScrollbarStyle.applyDocument(to: scrollView)
+        XCTAssertFalse(scrollView.verticalScroller is MonknotScroller)
+        XCTAssertEqual(scrollView.autohidesScrollers, NSScroller.preferredScrollerStyle == .overlay)
+    }
+
+    private static func firstDescendant<View: NSView>(of type: View.Type, in view: NSView) -> View? {
+        for subview in view.subviews {
+            if let match = subview as? View ?? firstDescendant(of: type, in: subview) {
+                return match
+            }
+        }
+        return nil
+    }
+
+    func testScrollThumbsAreSlimRadiusTwoMarks() {
+        XCTAssertEqual(MonknotScrollbarStyle.thumbRadius, 2, "design.md §7: scroll thumbs are radius-2 marks")
+        XCTAssertLessThan(MonknotScrollbarStyle.restingThumbWidth, MonknotScrollbarStyle.hoveredThumbWidth)
+        XCTAssertLessThan(MonknotScrollbarStyle.restingOpacity, MonknotScrollbarStyle.hoveredOpacity)
+    }
+
+    func testDisabledRowsDrawNoHoverOrPressFillButKeepTheirSelection() {
+        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
+            func fill(selected: Bool = false, hovered: Bool = false, pressed: Bool = false, enabled: Bool) -> Color {
+                MonknotRowButtonStyle.fill(
+                    theme: theme,
+                    isSelected: selected,
+                    isActive: false,
+                    isHovered: hovered,
+                    isPressed: pressed,
+                    isEnabled: enabled
+                )
+            }
+
+            XCTAssertEqual(fill(hovered: true, enabled: true), theme.hoverFillColor)
+            XCTAssertEqual(fill(hovered: true, pressed: true, enabled: true), theme.pressedFillColor)
+            XCTAssertEqual(fill(hovered: true, enabled: false), .clear)
+            XCTAssertEqual(fill(hovered: true, pressed: true, enabled: false), .clear)
+            XCTAssertEqual(fill(selected: true, hovered: true, enabled: false), theme.selectedRowColor)
+        }
     }
 
     func testWindowNavigationUsesReferenceSegmentGeometryAcrossSupportedZooms() {
@@ -165,26 +256,6 @@ final class WindowChromeInteractionTests: XCTestCase {
                 accuracy: 0.001,
                 "Navigation chevrons use their specified optical size"
             )
-        }
-    }
-
-    func testWindowNavigationUsesTheSharedReferenceHoverFill() {
-        let navigationSize = MonknotIconButton.IconButtonSize.windowNavigation
-        let chromeSize = MonknotIconButton.IconButtonSize.chrome
-
-        for isDark in [false, true] {
-            XCTAssertEqual(
-                navigationSize.hoverBackgroundOpacity(isDark: isDark),
-                chromeSize.hoverBackgroundOpacity(isDark: isDark)
-            )
-        }
-    }
-
-    func testOpenPanelButtonsUseTheSharedReferenceHoverSurface() {
-        let size = MonknotIconButton.IconButtonSize.chrome
-
-        for isDark in [false, true] {
-            XCTAssertEqual(size.activeBackgroundOpacity(isDark: isDark), isDark ? 0.18 : 0.14)
         }
     }
 
@@ -245,7 +316,6 @@ final class WindowChromeInteractionTests: XCTestCase {
         let topBar = TopNavigationBar(
             editorMode: .constant(.source),
             isSplitViewEnabled: .constant(false),
-            emptyStateTitle: "Monknot",
             selectedDocument: nil,
             isBusy: false,
             isDocumentLoading: false,
@@ -363,27 +433,6 @@ final class WindowChromeInteractionTests: XCTestCase {
                 MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale),
                 accuracy: 0.01,
                 "Window navigation chrome height drifted at zoom \(zoomScale)"
-            )
-        }
-    }
-
-    func testWindowNavigationReserveContainsControlsAtEverySupportedZoom() {
-        let theme = AppTheme.defaultDark
-
-        for zoomScale in WorkspaceZoomPolicy.supportedLevels {
-            let buttonWidth = MonknotMetrics.windowNavigationButtonDimension(
-                theme: theme,
-                zoomScale: zoomScale
-            )
-            let controlsTrailingEdge = MonknotMetrics.trafficLightReserveBase
-                + MonknotMetrics.windowNavigationLeadingGap(theme: theme, zoomScale: zoomScale)
-                + buttonWidth * 2
-                + MonknotMetrics.scale(2, theme: theme, zoomScale: zoomScale)
-
-            XCTAssertGreaterThan(
-                MonknotMetrics.windowChromeLeadingReservedWidth(theme: theme, zoomScale: zoomScale),
-                controlsTrailingEdge,
-                "Window chrome reserve overlapped navigation controls at zoom \(zoomScale)"
             )
         }
     }

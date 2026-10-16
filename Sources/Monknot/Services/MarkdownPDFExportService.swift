@@ -7,6 +7,8 @@ import WebKit
 struct MarkdownPDFExportRequest {
     let markdown: String
     let baseURL: URL?
+    /// The workspace root; images in the note load from inside it only.
+    let resourceRoot: URL?
     let theme: AppTheme
     let usePointerCursors: Bool
     let fontSmoothing: Bool
@@ -16,6 +18,7 @@ struct MarkdownPDFExportRequest {
 @MainActor
 final class MarkdownPDFExportService: NSObject, WKNavigationDelegate {
     private let renderService: MarkdownRenderService
+    private let resourceHandler = WorkspaceResourceSchemeHandler()
     private var navigationDidFinish = false
     private var navigationError: Error?
     private var renderWindow: NSWindow?
@@ -34,6 +37,8 @@ final class MarkdownPDFExportService: NSObject, WKNavigationDelegate {
         let pageSize = request.options.pageSize.resolved()
         let pageMargin = request.options.marginPreset.points
         let pageContentHeight = max(120, pageSize.height - (pageMargin * 2))
+        resourceHandler.rootURL = request.resourceRoot
+        let pageBaseURL = WorkspaceResourceSchemeHandler.pageBaseURL(forDirectory: request.baseURL)
         let html = try renderService.htmlDocument(
             markdown: request.markdown,
             appTheme: request.theme,
@@ -42,7 +47,7 @@ final class MarkdownPDFExportService: NSObject, WKNavigationDelegate {
             contentWidthPercent: request.options.contentWidthPercent,
             usePointerCursors: request.usePointerCursors,
             fontSmoothing: request.fontSmoothing,
-            baseURL: request.baseURL
+            baseURL: pageBaseURL
         )
 
         let webView = makeWebView(viewportSize: pageSize)
@@ -50,7 +55,7 @@ final class MarkdownPDFExportService: NSObject, WKNavigationDelegate {
             cleanup()
         }
 
-        try await load(html: html, baseURL: request.baseURL, in: webView)
+        try await load(html: html, baseURL: pageBaseURL, in: webView)
         try await prepareForPDFExport(in: webView, pageSize: pageSize, margin: pageMargin)
         let contentHeight = try await measuredMarkdownContentHeight(in: webView)
         let pageOrigins = pageOrigins(contentHeight: contentHeight, pageContentHeight: pageContentHeight)
@@ -78,6 +83,7 @@ final class MarkdownPDFExportService: NSObject, WKNavigationDelegate {
     private func makeWebView(viewportSize: CGSize) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.setURLSchemeHandler(resourceHandler, forURLScheme: WorkspaceResourceSchemeHandler.scheme)
 
         let webView = WKWebView(frame: CGRect(origin: .zero, size: viewportSize), configuration: configuration)
         webView.navigationDelegate = self
@@ -129,6 +135,15 @@ final class MarkdownPDFExportService: NSObject, WKNavigationDelegate {
               root.style.setProperty('--pdf-page-height', '\(javaScriptNumber(pageSize.height))px');
               root.style.setProperty('--pdf-page-margin', '\(javaScriptNumber(margin))px');
               root.style.setProperty('--pdf-page-offset-y', '0px');
+              // Relative links resolve against the page's \(WorkspaceResourceSchemeHandler.scheme): base,
+              // which only Monknot can open; the exported PDF links to the files themselves. Links
+              // within the page (footnotes, headings) stay as they are.
+              for (const link of document.querySelectorAll('a[href]')) {
+                if (link.protocol === '\(WorkspaceResourceSchemeHandler.scheme):'
+                    && !link.getAttribute('href').startsWith('#')) {
+                  link.href = 'file://' + link.pathname + link.search + link.hash;
+                }
+              }
             })();
             """,
             in: webView

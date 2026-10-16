@@ -50,6 +50,20 @@ public struct RecentDocumentStore {
         save(Array(updatedEntries), key: key)
     }
 
+    /// Points the entries of renamed or moved documents at their new location, keeping their place
+    /// in the list. `movedDocuments` maps an old document ID to the document now at its new path.
+    /// Returns whether any entry changed.
+    @discardableResult
+    public func remap(_ movedDocuments: [String: WorkspaceDocument], workspaceURL: URL) -> Bool {
+        let currentEntries = entries(for: workspaceURL)
+        let updatedEntries = currentEntries.map { entry in
+            movedDocuments[entry.documentID].map(RecentDocumentEntry.init(document:)) ?? entry
+        }
+        guard updatedEntries != currentEntries else { return false }
+        save(updatedEntries, key: storageKey(for: workspaceURL))
+        return true
+    }
+
     public func remove(documentID: String, workspaceURL: URL) {
         let key = storageKey(for: workspaceURL)
         save(entries(for: workspaceURL).filter { $0.documentID != documentID }, key: key)

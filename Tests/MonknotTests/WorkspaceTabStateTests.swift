@@ -65,6 +65,24 @@ final class WorkspaceTabStateTests: XCTestCase {
         XCTAssertEqual(state.tabs.map(\.documentID), [readme.id])
     }
 
+    /// A selected tab whose document left the workspace hands the selection to the tab after it,
+    /// as closing it does, or to the one before it when it was last.
+    func testPruningTheSelectedTabSelectsTheTabThatTakesItsPlace() {
+        let (readme, guide, notes) = documents()
+        var state = WorkspaceTabState()
+        [readme, guide, notes].forEach { state.open($0) }
+        state.activate(documentID: guide.id)
+
+        XCTAssertEqual(state.pruneUnavailableDocuments(availableDocumentIDs: [readme.id, notes.id]), notes.id)
+        XCTAssertEqual(state.tabs.map(\.documentID), [readme.id, notes.id])
+
+        XCTAssertEqual(state.pruneUnavailableDocuments(availableDocumentIDs: [readme.id]), readme.id)
+
+        state.open(guide)
+        state.activate(documentID: readme.id)
+        XCTAssertEqual(state.pruneUnavailableDocuments(availableDocumentIDs: [readme.id]), readme.id, "An unselected tab leaves the selection alone")
+    }
+
     func testOpeningExistingTabActivatesWithoutMovingIt() {
         let root = URL(fileURLWithPath: "/tmp/MonknotWorkspace", isDirectory: true)
         let readme = WorkspaceDocument(url: root.appendingPathComponent("README.md"), rootURL: root)

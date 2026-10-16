@@ -34,13 +34,13 @@ final class WorkspaceScanResultPatcherTests: XCTestCase {
         try write("# Existing", to: root.appendingPathComponent("Existing.md"))
         let initial = try WorkspaceDocumentScanner().scan(rootURL: root)
 
-        let image = root.appendingPathComponent("image.png")
-        try write("not a workspace document", to: image)
+        let archive = root.appendingPathComponent("archive.zip")
+        try write("not a workspace document", to: archive)
 
         let patched = try XCTUnwrap(WorkspaceScanResultPatcher.applyingFileChanges(
             to: initial,
             rootURL: root,
-            changedPaths: [image.standardizedFileURL.path]
+            changedPaths: [archive.standardizedFileURL.path]
         ))
 
         XCTAssertEqual(patched.documents.map(\.relativePath), ["Existing.md"])
@@ -57,7 +57,7 @@ final class WorkspaceScanResultPatcherTests: XCTestCase {
         let initial = try WorkspaceDocumentScanner().scan(rootURL: root)
 
         try write("# Added", to: folder.appendingPathComponent("Added.md"))
-        try write("not a workspace document", to: folder.appendingPathComponent("image.png"))
+        try write("not a workspace document", to: folder.appendingPathComponent("archive.zip"))
 
         let patched = try XCTUnwrap(WorkspaceScanResultPatcher.applyingFileChanges(
             to: initial,
@@ -186,6 +186,48 @@ final class WorkspaceScanResultPatcherTests: XCTestCase {
 
         XCTAssertTrue(patched.documents.isEmpty)
         XCTAssertTrue(patched.root.children?.isEmpty == true)
+    }
+
+    func testCreatedPackageIsSkippedLikeAFullScan() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let initial = try WorkspaceDocumentScanner().scan(rootURL: root)
+
+        let package = root.appendingPathComponent("Release.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
+        try write("# Inside", to: package.appendingPathComponent("Inside.md"))
+
+        let patched = try XCTUnwrap(WorkspaceScanResultPatcher.applyingFileChanges(
+            to: initial,
+            rootURL: root,
+            changedPaths: [package.standardizedFileURL.path]
+        ))
+        let full = try WorkspaceDocumentScanner().scan(rootURL: root)
+
+        XCTAssertEqual(patched.root, full.root)
+        XCTAssertTrue(patched.documents.isEmpty)
+    }
+
+    func testFileChangeInsideExistingPackageIsSkippedLikeAFullScan() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let package = root.appendingPathComponent("Release.app", isDirectory: true)
+        let nested = package.appendingPathComponent("Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        let initial = try WorkspaceDocumentScanner().scan(rootURL: root)
+
+        let inside = nested.appendingPathComponent("Inside.md")
+        try write("# Inside", to: inside)
+        let patched = try XCTUnwrap(WorkspaceScanResultPatcher.applyingFileChanges(
+            to: initial,
+            rootURL: root,
+            changedPaths: [inside.standardizedFileURL.path, nested.standardizedFileURL.path]
+        ))
+        let full = try WorkspaceDocumentScanner().scan(rootURL: root)
+
+        XCTAssertEqual(patched.root, full.root)
+        XCTAssertTrue(patched.documents.isEmpty)
     }
 
     func testSymlinkFileChangeRemovesExistingDocument() throws {

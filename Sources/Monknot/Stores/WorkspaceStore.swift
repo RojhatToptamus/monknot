@@ -1,11 +1,25 @@
 import Foundation
 import MonknotCore
 
+/// A text document whose file could not be read into the editor (too large, not UTF-8). The pane
+/// shows `message` read-only instead of an empty, editable editor that could be saved over the file.
+struct DocumentLoadFailure: Equatable {
+    let documentID: String
+    let message: String
+}
+
 @MainActor
 final class WorkspaceStore: ObservableObject {
     @Published private(set) var workspaceURL: URL?
     @Published private(set) var openingWorkspaceURL: URL?
-    @Published private(set) var rootNode: SidebarNode?
+    @Published private(set) var rootNode: SidebarNode? {
+        didSet {
+            rootNodeRevision &+= 1
+            reconcileSelectedFolder()
+        }
+    }
+    /// Changes with every new tree, so views can follow the tree without comparing it.
+    @Published private(set) var rootNodeRevision = 0
     @Published private(set) var documents: [WorkspaceDocument] = []
     private(set) var markdownDocuments: [WorkspaceDocument] = []
     private(set) var hasPDFDocuments = false
@@ -16,10 +30,23 @@ final class WorkspaceStore: ObservableObject {
             cancelExternalDocumentReview()
         }
     }
+    /// The folder selected in the sidebar. The sidebar has one selection: this folder, or the
+    /// selected document while no folder is selected. Selecting a folder leaves the document open.
+    @Published private(set) var selectedFolderID: String?
+    /// Whether the sidebar selects the open document while no folder is selected. It stops when
+    /// the selection goes to the Trash or the selected document leaves the workspace, so the
+    /// document a tab shows in its place is not selected until the user picks one.
+    @Published private(set) var sidebarSelectsOpenDocument = true
+    /// A folder the sidebar expands to show items pasted or dropped into it.
+    @Published private(set) var revealedFolder: WorkspaceFolderReveal?
     @Published private(set) var documentText = ""
     @Published private(set) var hasUnsavedChanges = false
     @Published private(set) var isBusy = false
     @Published private(set) var isDocumentLoading = false
+    @Published private(set) var documentLoadFailure: DocumentLoadFailure?
+    /// Documents asked for from outside the window (Finder, the Dock), in order. The window opens
+    /// them as tabs once its workspace is ready, the same way as from the sidebar.
+    @Published private(set) var pendingDocumentOpenIDs: [String] = []
     @Published private(set) var isSaving = false
     @Published private(set) var documentSaveStates: [String: DocumentSaveState] = [:]
     @Published private(set) var selectedDocumentExternalChange = false
@@ -37,6 +64,7 @@ final class WorkspaceStore: ObservableObject {
     private var replaceUndoSnapshot: WorkspaceReplaceUndoSnapshot?
 
     private let scanner: any WorkspaceDocumentScanning
+    private let moveItemToTrash: @Sendable (URL) throws -> Void
     private let recentDocumentStore: RecentDocumentStore
     private let fileWatcher = WorkspaceFileWatcher()
     private var lastSavedText = ""
@@ -44,6 +72,10 @@ final class WorkspaceStore: ObservableObject {
     private var dirtyDocumentBaselines: [String: String] = [:]
     private var dirtyDocumentRevisionExpectations: [String: WorkspaceTextRevisionExpectation] = [:]
     private var pdfDocumentBaselines: [String: Data] = [:]
+    /// For a marked-up image, the file as it was when the markup began: the pixels a save draws the
+    /// markup onto. It differs from the baseline only once a save has written the markup in while
+    /// newer markup was still being added.
+    private var imageMarkupSources: [String: Data] = [:]
     private var dirtyPDFDocumentData: [String: Data] = [:]
     private var dirtyPDFDocumentVersions: [String: Int] = [:]
     private var dirtyPDFDocumentEditCheckpoints: [String: PDFAnnotationEditCheckpoint] = [:]
@@ -53,6 +85,8 @@ final class WorkspaceStore: ObservableObject {
     private var openDocumentIDs: Set<String> = []
     private var selectedDocumentSignature: FileSignature?
     private var externalRefreshWorkItem: DispatchWorkItem?
+    private var suppressedWatcherEvent: WorkspaceFileWatcher.Event?
+    private var suppressedWatcherReplayWorkItem: DispatchWorkItem?
     private var externalRefreshTask: Task<Void, Never>?
     private var externalReviewTask: Task<Void, Never>?
     private var externalRefreshGeneration = 0
@@ -70,21 +104,119 @@ final class WorkspaceStore: ObservableObject {
     private var documentGeneration = 0
     private var saveGeneration = 0
     private var markdownLinkMoveReviewSerial = 0
+    private static let busyMessage = "Wait for the current file operation to finish, then try again."
     nonisolated static let interactiveTextOpenMaxBytes: Int64 = 4 * 1024 * 1024
     private static let recentDocumentRecordDelayNanoseconds: UInt64 = 350_000_000
     @Published private var pendingDocumentTransfer: WorkspaceDocumentTransfer?
+    /// The moves of a drop of several items, made one after another.
+    private var moveRun: WorkspaceMoveRun?
+    private var moveRunSerial = 0
+    /// The store of every open window, so a Paste in one window can finish a Cut made in another.
+    private static let openStores = NSHashTable<WorkspaceStore>.weakObjects()
 
+    /// `moveItemToTrash` moves a file or folder to the Trash; tests pass one that leaves the
+    /// user's Trash alone.
     init(
         scanner: any WorkspaceDocumentScanning = WorkspaceDocumentScanner(),
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        moveItemToTrash: @escaping @Sendable (URL) throws -> Void = { url in
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        }
     ) {
         self.scanner = scanner
+        self.moveItemToTrash = moveItemToTrash
         recentDocumentStore = RecentDocumentStore(userDefaults: userDefaults)
+        Self.openStores.add(self)
     }
 
     var selectedDocument: WorkspaceDocument? {
         guard let selectedDocumentID else { return nil }
         return document(id: selectedDocumentID)
+    }
+
+    /// The path of the sidebar's selected item: the selected folder, otherwise the selected
+    /// document while the sidebar selects it.
+    var sidebarSelectionID: String? {
+        selectedFolderID ?? (sidebarSelectsOpenDocument ? selectedDocumentID : nil)
+    }
+
+    /// The sidebar's selected item: the selected folder, otherwise the selected document while the
+    /// sidebar selects it.
+    var sidebarSelectionURL: URL? {
+        if let selectedFolderID {
+            return URL(fileURLWithPath: selectedFolderID, isDirectory: true)
+        }
+        return sidebarSelectsOpenDocument ? selectedDocument?.url : nil
+    }
+
+    /// Where New and Paste put items when no row names a folder: the selected folder, the selected
+    /// document's folder, or the workspace root when nil.
+    var sidebarTargetFolderURL: URL? {
+        if let selectedFolderID {
+            return URL(fileURLWithPath: selectedFolderID, isDirectory: true)
+        }
+        return sidebarSelectsOpenDocument ? selectedDocument?.url.deletingLastPathComponent() : nil
+    }
+
+    /// Selects a folder of the workspace tree in the sidebar; the workspace root is never selected.
+    func selectFolder(id: String) {
+        guard let rootNode,
+              id != rootNode.id,
+              rootNode.node(withID: id)?.kind == .folder
+        else { return }
+        selectedFolderID = id
+    }
+
+    /// Keeps the selected folder in the tree: when it is gone, the nearest folder above it that
+    /// remains is selected instead, and nothing when that is the root. Moving the selection to the
+    /// Trash from Monknot selects nothing instead (`SidebarSelectionAfterLoad.cleared`).
+    private func reconcileSelectedFolder() {
+        guard var folderID = selectedFolderID else { return }
+        guard let rootNode else {
+            selectedFolderID = nil
+            return
+        }
+        while folderID != rootNode.id, WorkspaceDocumentSupport.isPath(folderID, containedIn: rootNode.id) {
+            if rootNode.node(withID: folderID)?.kind == .folder {
+                if folderID != selectedFolderID {
+                    selectedFolderID = folderID
+                }
+                return
+            }
+            folderID = (folderID as NSString).deletingLastPathComponent
+        }
+        selectedFolderID = nil
+    }
+
+    private func selectOpenDocumentInSidebar() {
+        selectedFolderID = nil
+        sidebarSelectsOpenDocument = true
+    }
+
+    /// Leaves nothing selected in the sidebar.
+    private func clearSidebarSelection() {
+        selectedFolderID = nil
+        sidebarSelectsOpenDocument = false
+    }
+
+    /// Drops the selection of a document that is no longer in the workspace. The window's tabs then
+    /// show the tab that takes its place, as when it closes, and the sidebar selects nothing in
+    /// its place.
+    private func deselectRemovedDocument() {
+        selectedDocumentID = nil
+        sidebarSelectsOpenDocument = false
+    }
+
+    /// Asks the sidebar to expand `directoryURL` so the items just added to it show.
+    private func revealFolder(_ directoryURL: URL?) {
+        guard let directoryURL,
+              let workspaceURL,
+              directoryURL.standardizedFileURL != workspaceURL.standardizedFileURL
+        else { return }
+        revealedFolder = WorkspaceFolderReveal(
+            serial: (revealedFolder?.serial ?? 0) &+ 1,
+            folderID: directoryURL.standardizedFileURL.path
+        )
     }
 
     var isWorkspaceOpening: Bool {
@@ -93,14 +225,6 @@ final class WorkspaceStore: ObservableObject {
 
     var canBootstrapStarterWorkspace: Bool {
         workspaceURL != nil && rootNode != nil && documents.isEmpty && !isBusy
-    }
-
-    var canPasteDocumentTransfer: Bool {
-        pendingDocumentTransfer != nil && workspaceURL != nil
-    }
-
-    private var hasDirtyMarkdownDocuments: Bool {
-        markdownDocuments.contains { !saveState(for: $0.id).isClean }
     }
 
     func saveState(for documentID: String) -> DocumentSaveState {
@@ -273,7 +397,7 @@ final class WorkspaceStore: ObservableObject {
 
     private func changeTrackedSignature(for document: WorkspaceDocument?) -> FileSignature? {
         guard let document,
-              document.capabilities.canEditText || document.kind == .pdf
+              document.capabilities.canEditText || document.kind.opensInPDFViewer
         else { return nil }
         return Self.fileSignature(for: document.url)
     }
@@ -294,15 +418,37 @@ final class WorkspaceStore: ObservableObject {
         pruneRemovedDirtyDocuments()
     }
 
+    func requestDocumentOpen(at url: URL) {
+        let documentID = url.standardizedFileURL.path
+        guard !pendingDocumentOpenIDs.contains(documentID) else { return }
+        pendingDocumentOpenIDs.append(documentID)
+    }
+
+    func takePendingDocumentOpens() -> [String] {
+        defer { pendingDocumentOpenIDs = [] }
+        return pendingDocumentOpenIDs
+    }
+
+    /// Opens the document `id` and, when `selectingInSidebar`, moves the sidebar selection to it;
+    /// nil leaves no document open and keeps a selected folder. The window's tabs pass false when
+    /// they show a document on their own, as after its neighbour left the workspace.
     @discardableResult
-    func selectDocument(id: String?) -> Bool {
+    func selectDocument(id: String?, selectingInSidebar: Bool = true) -> Bool {
         guard !isBusy else { return false }
-        guard id != selectedDocumentID else { return true }
+        guard id != selectedDocumentID else {
+            if id != nil, selectingInSidebar {
+                selectOpenDocumentInSidebar()
+            }
+            return true
+        }
         guard ensureWritingToolsInactive(for: "switching documents") else { return false }
 
         let signpostID = MonknotSignposting.documentSelection.beginInterval("SelectDocument")
         defer { MonknotSignposting.documentSelection.endInterval("SelectDocument", signpostID) }
 
+        if id != nil, selectingInSidebar {
+            selectOpenDocumentInSidebar()
+        }
         selectedDocumentID = id
         loadSelectedDocument()
         if let id, let document = document(id: id), let workspaceURL {
@@ -317,9 +463,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        guard !isBusy,
-              ensureWritingToolsInactive(for: "changing the workspace")
-        else { return }
+        guard ensureNotBusy(), ensureWritingToolsInactive(for: "changing the workspace") else { return }
 
         noteInternalFileMutation()
 
@@ -502,20 +646,50 @@ final class WorkspaceStore: ObservableObject {
         return Self.suggestedChildName(in: targetDirectory, baseName: "New Folder", pathExtension: nil)
     }
 
+    /// Why `proposedName` cannot name a new item in `directoryURL` (the root when nil), or nil when
+    /// it can. `createFile` and `createFolder` refuse exactly these names.
+    func validationMessage(forNewItemNamed proposedName: String, in directoryURL: URL?, isDirectory: Bool) -> String? {
+        do {
+            _ = try newItemURL(named: proposedName, in: directoryURL, isDirectory: isDirectory)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// Why the item at `itemURL` cannot be renamed to `proposedName`, or nil when it can.
+    /// `renameDocument` and `renameFolder` refuse exactly these names.
+    func validationMessage(forRenaming itemURL: URL, to proposedName: String, isDirectory: Bool) -> String? {
+        do {
+            _ = try Self.renamedURL(for: itemURL, proposedName: proposedName, isDirectory: isDirectory)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    private func newItemURL(named proposedName: String, in directoryURL: URL?, isDirectory: Bool) throws -> URL {
+        guard let workspaceURL else {
+            throw WorkspaceDocumentOperationError.invalidCreation("Open a workspace first.")
+        }
+        let targetDirectory = directoryURL ?? workspaceURL
+        guard WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: workspaceURL) else {
+            throw WorkspaceDocumentOperationError.invalidCreation("Create items inside the current workspace.")
+        }
+        return try Self.childURL(in: targetDirectory, proposedName: proposedName, isDirectory: isDirectory)
+    }
+
     func createFile(named proposedName: String, in directoryURL: URL? = nil) {
         guard let workspaceURL else {
             errorMessage = "Open a workspace before creating a file."
             return
         }
 
-        guard !isBusy,
-              ensureWritingToolsInactive(for: "changing the workspace")
-        else { return }
+        guard ensureNotBusy(), ensureWritingToolsInactive(for: "changing the workspace") else { return }
 
-        let targetDirectory = directoryURL ?? workspaceURL
         let fileURL: URL
         do {
-            fileURL = try Self.childURL(in: targetDirectory, proposedName: proposedName)
+            fileURL = try newItemURL(named: proposedName, in: directoryURL, isDirectory: false)
         } catch {
             errorMessage = error.localizedDescription
             return
@@ -551,14 +725,11 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        guard !isBusy,
-              ensureWritingToolsInactive(for: "changing the workspace")
-        else { return }
+        guard ensureNotBusy(), ensureWritingToolsInactive(for: "changing the workspace") else { return }
 
-        let targetDirectory = directoryURL ?? workspaceURL
         let folderURL: URL
         do {
-            folderURL = try Self.childURL(in: targetDirectory, proposedName: proposedName)
+            folderURL = try newItemURL(named: proposedName, in: directoryURL, isDirectory: true)
         } catch {
             errorMessage = error.localizedDescription
             return
@@ -579,6 +750,7 @@ final class WorkspaceStore: ObservableObject {
                     selectedURL: nil,
                     preserveSelection: preserveSelection,
                     reloadSelection: false,
+                    sidebarSelection: .folder(folderURL),
                     generation: generation
                 )
             } catch {
@@ -588,11 +760,12 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func renameDocument(id: String, to proposedName: String) {
-        guard let workspaceURL, !isBusy, let document = document(id: id) else { return }
+        guard let workspaceURL, let document = document(id: id) else { return }
+        guard ensureNotBusy() else { return }
 
         let targetURL: URL
         do {
-            targetURL = try Self.renamedURL(for: document.url, proposedName: proposedName)
+            targetURL = try Self.renamedURL(for: document.url, proposedName: proposedName, isDirectory: false)
         } catch {
             errorMessage = error.localizedDescription
             return
@@ -611,7 +784,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func renameFolder(id: String, to proposedName: String) {
-        guard let workspaceURL, !isBusy else { return }
+        guard let workspaceURL else { return }
+        guard ensureNotBusy() else { return }
 
         let sourceURL = URL(fileURLWithPath: id, isDirectory: true).standardizedFileURL
         guard sourceURL != workspaceURL.standardizedFileURL else {
@@ -626,7 +800,7 @@ final class WorkspaceStore: ObservableObject {
 
         let targetURL: URL
         do {
-            targetURL = try Self.renamedURL(for: sourceURL, proposedName: proposedName, preservingExtension: false)
+            targetURL = try Self.renamedURL(for: sourceURL, proposedName: proposedName, isDirectory: true)
         } catch {
             errorMessage = error.localizedDescription
             return
@@ -644,8 +818,12 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    func moveItem(id: String, toDirectory directoryURL: URL?) {
-        guard let workspaceURL, !isBusy else { return }
+    /// Moves a workspace item into `directoryURL` (the root when nil). Returns false when the move
+    /// is refused; an item already there is left alone.
+    @discardableResult
+    func moveItem(id: String, toDirectory directoryURL: URL?) -> Bool {
+        guard let workspaceURL else { return false }
+        guard ensureNotBusy() else { return false }
 
         let sourceURL = URL(fileURLWithPath: id).standardizedFileURL
         let targetDirectory = (directoryURL ?? workspaceURL).standardizedFileURL
@@ -658,10 +836,10 @@ final class WorkspaceStore: ObservableObject {
             )
 
             guard destinationURL.standardizedFileURL != sourceURL else {
-                return
+                return true
             }
 
-            requestMarkdownLinkAwareMove(
+            return requestMarkdownLinkAwareMove(
                 sourceURL: sourceURL,
                 destinationURL: destinationURL,
                 workspaceURL: workspaceURL,
@@ -669,56 +847,243 @@ final class WorkspaceStore: ObservableObject {
             )
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
-    func copyDocument(_ document: WorkspaceDocument) {
-        guard documents.contains(where: { $0.id == document.id }) else { return }
-        pendingDocumentTransfer = WorkspaceDocumentTransfer(document: document, operation: .copy)
+    /// Marks a workspace file or folder to be copied by each later paste. A Copy made through the
+    /// pasteboard passes the stamp of the item it wrote there.
+    func copyItem(at url: URL, pasteboardStamp: WorkspacePasteboardTransferStamp? = nil) {
+        setPendingTransfer(for: url, operation: .copy, pasteboardStamp: pasteboardStamp)
     }
 
-    func cutDocument(_ document: WorkspaceDocument) {
-        guard documents.contains(where: { $0.id == document.id }) else { return }
-        pendingDocumentTransfer = WorkspaceDocumentTransfer(document: document, operation: .cut)
+    /// Marks a workspace file or folder to be moved by the next paste. A Cut made through the
+    /// pasteboard passes the stamp of the item it wrote there.
+    func cutItem(at url: URL, pasteboardStamp: WorkspacePasteboardTransferStamp? = nil) {
+        setPendingTransfer(for: url, operation: .cut, pasteboardStamp: pasteboardStamp)
     }
 
-    func pasteDocumentTransfer(into directoryURL: URL? = nil) {
-        guard let workspaceURL, !isBusy, let transfer = pendingDocumentTransfer else { return }
-        guard ensureWritingToolsInactive(for: "changing the workspace") else { return }
+    /// The stamp of the pasteboard item the pending Copy or Cut wrote, if it wrote one.
+    var pendingTransferPasteboardStamp: WorkspacePasteboardTransferStamp? {
+        pendingDocumentTransfer?.pasteboardStamp
+    }
 
-        let targetDirectory = directoryURL ?? workspaceURL
-        let sourceURL = transfer.document.url
-        let sourceID = transfer.document.id
-        let dirtyCopyText = transfer.operation == .copy ? dirtyDocumentTexts[sourceID] : nil
+    /// Whether the pending transfer is a Cut, which the next paste in any window moves.
+    var hasPendingCut: Bool {
+        pendingDocumentTransfer?.operation == .cut
+    }
 
-        if transfer.operation == .cut,
-           sourceURL.deletingLastPathComponent().standardizedFileURL == targetDirectory.standardizedFileURL {
+    func discardPendingTransfer() {
+        pendingDocumentTransfer = nil
+    }
+
+    /// The stores of the other open windows.
+    var otherWindowStores: [WorkspaceStore] {
+        Self.openStores.allObjects.filter { $0 !== self }
+    }
+
+    /// Replaces any earlier transfer, which the newer Copy or Cut supersedes even when its item is
+    /// not a workspace file or folder.
+    private func setPendingTransfer(
+        for url: URL,
+        operation: WorkspaceDocumentTransferOperation,
+        pasteboardStamp: WorkspacePasteboardTransferStamp?
+    ) {
+        let url = url.standardizedFileURL
+        guard isWorkspaceItem(url) else {
             pendingDocumentTransfer = nil
             return
         }
+        pendingDocumentTransfer = WorkspaceDocumentTransfer(
+            url: url,
+            operation: operation,
+            pasteboardStamp: pasteboardStamp
+        )
+    }
 
-        if transfer.operation == .cut {
-            let destinationURL = Self.uniqueDocumentURL(for: sourceURL, in: targetDirectory)
+    /// Whether the standardized `url` is a document of the workspace or a folder inside it.
+    private func isWorkspaceItem(_ url: URL) -> Bool {
+        documentsByID[url.path] != nil || isWorkspaceFolder(url)
+    }
+
+    private func isWorkspaceFolder(_ url: URL) -> Bool {
+        guard let workspaceURL,
+              url.path != workspaceURL.standardizedFileURL.path,
+              WorkspaceDocumentSupport.isURL(url, containedIn: workspaceURL)
+        else { return false }
+        var isDirectory = ObjCBool(false)
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+
+    func pasteDocumentTransfer(into directoryURL: URL? = nil) {
+        guard let transfer = pendingDocumentTransfer else { return }
+        paste(transfer, cutIn: nil, into: directoryURL)
+    }
+
+    /// Moves the item another window cut into `directoryURL` (the root when nil), as a Paste in
+    /// that window would. An item with unsaved changes in that window stays where it is.
+    func pasteCut(from owner: WorkspaceStore, into directoryURL: URL?) {
+        guard owner !== self,
+              let transfer = owner.pendingDocumentTransfer,
+              transfer.operation == .cut
+        else { return }
+        paste(transfer, cutIn: owner, into: directoryURL)
+    }
+
+    /// Pastes a Copy or Cut into `directoryURL`. `owner` is the store of the window that made the
+    /// Cut when that is another window.
+    private func paste(_ transfer: WorkspaceDocumentTransfer, cutIn owner: WorkspaceStore?, into directoryURL: URL?) {
+        guard let workspaceURL else { return }
+        guard !isBusy, owner?.isBusy != true else {
+            errorMessage = Self.busyMessage
+            return
+        }
+        guard ensureWritingToolsInactive(for: "changing the workspace") else { return }
+
+        let targetDirectory = (directoryURL ?? workspaceURL).standardizedFileURL
+        let sourceURL = transfer.url
+        let displayName = sourceURL.lastPathComponent
+
+        if transfer.operation == .cut,
+           sourceURL.deletingLastPathComponent().standardizedFileURL == targetDirectory {
+            completeTransfer(transfer)
+            return
+        }
+
+        guard WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: workspaceURL) else {
+            errorMessage = "Paste items into the current workspace."
+            return
+        }
+        guard !WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: sourceURL) else {
+            errorMessage = "A folder cannot be pasted into itself."
+            return
+        }
+        let movesWithinWorkspace = transfer.operation == .cut
+            && WorkspaceDocumentSupport.isURL(sourceURL, containedIn: workspaceURL)
+        // A move within this workspace can rewrite the links in any note of it; a move from
+        // another workspace takes only the item.
+        if let owner, let unsaved = owner.unsavedDocument(at: movesWithinWorkspace ? workspaceURL : sourceURL) {
+            errorMessage = "Save or close \(unsaved.displayName) in its window first."
+            return
+        }
+
+        if movesWithinWorkspace {
             requestMarkdownLinkAwareMove(
                 sourceURL: sourceURL,
-                destinationURL: destinationURL,
+                destinationURL: Self.uniqueDocumentURL(for: sourceURL, in: targetDirectory),
                 workspaceURL: workspaceURL,
-                failureMessage: "Could not paste \(transfer.document.displayName)",
+                failureMessage: "Could not paste \(displayName)",
                 selectDestinationAfterMove: true,
-                clearDocumentTransferOnSuccess: true
+                completedTransfer: transfer
             )
             return
         }
 
+        // A Copy pastes the file as it was at Copy while its snapshot is on the pasteboard, as
+        // a Paste in another app does.
+        let snapshotURL = transfer.operation == .copy
+            ? transfer.pasteboardStamp?.snapshotURL.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+            : nil
+        startItemTransfer(
+            from: sourceURL,
+            contentsOf: snapshotURL,
+            into: targetDirectory,
+            moving: transfer.operation == .cut,
+            workspaceURL: workspaceURL,
+            completedTransfer: transfer,
+            failureMessage: "Could not paste \(displayName)"
+        )
+    }
+
+    /// The first document at or inside `url` with unsaved changes.
+    private func unsavedDocument(at url: URL) -> WorkspaceDocument? {
+        let path = url.standardizedFileURL.path
+        return documentSaveStates
+            .filter { !$0.value.isClean && WorkspaceDocumentSupport.isPath($0.key, containedIn: path) }
+            .keys
+            .sorted()
+            .lazy
+            .compactMap { self.document(id: $0) }
+            .first
+    }
+
+    /// Ends a pasted Cut, which also leaves the pasteboard while it still holds the item, so a
+    /// second Paste does not copy the moved item back from its snapshot. A Copy stays pending, so
+    /// every Paste of it makes another copy.
+    private func completeTransfer(_ transfer: WorkspaceDocumentTransfer) {
+        guard transfer.operation == .cut else { return }
+        if pendingDocumentTransfer == transfer {
+            pendingDocumentTransfer = nil
+        }
+        if let stamp = transfer.pasteboardStamp {
+            WorkspacePasteboardExportService.clearTransfer(stamp)
+        }
+    }
+
+    /// Copies a workspace file or folder next to itself with a "copy" suffix.
+    func duplicateItem(at url: URL) {
+        duplicateItem(at: url, into: url.standardizedFileURL.deletingLastPathComponent())
+    }
+
+    /// Copies a workspace file or folder into `directoryURL` (the root when nil), with a "copy"
+    /// suffix when its name is taken there.
+    func duplicateItem(at url: URL, into directoryURL: URL?) {
+        let sourceURL = url.standardizedFileURL
+        guard let workspaceURL, isWorkspaceItem(sourceURL) else { return }
+        guard ensureNotBusy(), ensureWritingToolsInactive(for: "changing the workspace") else { return }
+
+        let targetDirectory = (directoryURL ?? workspaceURL).standardizedFileURL
+        guard WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: workspaceURL) else {
+            errorMessage = "Copy items into the current workspace."
+            return
+        }
+        guard !WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: sourceURL) else {
+            errorMessage = "A folder cannot be copied into itself."
+            return
+        }
+
+        startItemTransfer(
+            from: sourceURL,
+            into: targetDirectory,
+            moving: false,
+            workspaceURL: workspaceURL,
+            completedTransfer: nil,
+            failureMessage: "Could not duplicate \(sourceURL.lastPathComponent)"
+        )
+    }
+
+    /// Copies a file or folder, or moves one cut in another workspace, into `targetDirectory` and
+    /// selects the result: a file opens, a folder is selected in the sidebar. A copy is made of
+    /// `contentsURL`, a snapshot of the file, when given; otherwise it carries the unsaved text of
+    /// the copied file, or of every document in the copied folder. Whatever was copied before a
+    /// failure stays on disk, so a failure rescans too.
+    private func startItemTransfer(
+        from sourceURL: URL,
+        contentsOf contentsURL: URL? = nil,
+        into targetDirectory: URL,
+        moving: Bool,
+        workspaceURL: URL,
+        completedTransfer: WorkspaceDocumentTransfer?,
+        failureMessage: String
+    ) {
+        let sourceID = sourceURL.path
+        let dirtyCopyTexts = moving || contentsURL != nil ? [] : unsavedTexts(inItemAt: sourceID)
+        let preserveSelection = selectedDocumentID
         noteInternalFileMutation()
         let generation = beginDocumentFileOperation()
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
             do {
                 let destinationURL = Self.uniqueDocumentURL(for: sourceURL, in: targetDirectory)
-                try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
-                if let dirtyCopyText {
-                    try await Self.writeText(dirtyCopyText, to: destinationURL)
+                let isFolder = Self.isDirectory(sourceURL)
+                if moving {
+                    try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
+                } else {
+                    try FileManager.default.copyItem(at: contentsURL ?? sourceURL, to: destinationURL)
+                    for (subpath, text) in dirtyCopyTexts {
+                        let copiedURL = subpath.isEmpty ? destinationURL : destinationURL.appendingPathComponent(subpath)
+                        try await Self.writeText(text, to: copiedURL)
+                    }
                 }
 
                 let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
@@ -726,30 +1091,52 @@ final class WorkspaceStore: ObservableObject {
                 await self?.finishDocumentTransfer(
                     result: result,
                     workspaceURL: workspaceURL,
-                    selectedURL: destinationURL,
-                    sourceID: sourceID,
-                    destinationID: destinationURL.standardizedFileURL.path,
-                    operation: .copy,
+                    selectedURL: isFolder ? nil : destinationURL,
+                    preserveSelection: preserveSelection,
+                    sidebarSelection: isFolder ? .folder(destinationURL) : .document,
+                    changedPaths: [sourceID, destinationURL.standardizedFileURL.path],
+                    completedTransfer: completedTransfer,
                     generation: generation
                 )
             } catch {
-                await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not paste \(transfer.document.displayName)")
+                let result = try? await Self.scanWorkspace(workspaceURL, scanner: scanner)
+                await self?.finishCopyFailure(
+                    error,
+                    result: result,
+                    workspaceURL: workspaceURL,
+                    preserveSelection: preserveSelection,
+                    message: failureMessage,
+                    generation: generation
+                )
             }
         }
     }
 
-    func importPasteboardItems(_ items: [WorkspacePasteboardImportItem], into directoryURL: URL? = nil) {
+    /// The unsaved text of the document at `path` and of each document inside it, by its path
+    /// relative to `path` ("" for the item itself).
+    private func unsavedTexts(inItemAt path: String) -> [(subpath: String, text: String)] {
+        dirtyDocumentTexts.compactMap { documentID, text in
+            guard WorkspaceDocumentSupport.isPath(documentID, containedIn: path) else { return nil }
+            return (String(documentID.dropFirst(path.count).drop { $0 == "/" }), text)
+        }
+    }
+
+    /// Copies `items` into `directoryURL` (the root when nil). `moveRunID` names the move run whose
+    /// drop the items came with, which goes on once they are in.
+    func importPasteboardItems(
+        _ items: [WorkspacePasteboardImportItem],
+        into directoryURL: URL? = nil,
+        moveRunID: Int? = nil
+    ) {
         guard let workspaceURL else {
             errorMessage = "Open a workspace before pasting clipboard contents."
             return
         }
-
-        guard !isBusy, !items.isEmpty,
-              ensureWritingToolsInactive(for: "changing the workspace")
-        else { return }
+        guard !items.isEmpty else { return }
+        guard ensureNotBusy(), ensureWritingToolsInactive(for: "changing the workspace") else { return }
 
         let targetDirectory = directoryURL ?? workspaceURL
-        guard Self.isURL(targetDirectory, containedIn: workspaceURL) else {
+        guard WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: workspaceURL) else {
             errorMessage = "Paste clipboard contents into the current workspace."
             return
         }
@@ -757,26 +1144,205 @@ final class WorkspaceStore: ObservableObject {
         noteInternalFileMutation()
         let preserveSelection = selectedDocumentID
         let shouldSelectImportedCapture = items.contains { $0.prefersSelectionAfterImport }
-        let generation = beginDocumentFileOperation()
+        let generation = beginDocumentFileOperation(continuingMoveRun: moveRunID)
+        revealFolder(targetDirectory)
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
             do {
                 let importedURLs = try WorkspacePasteboardImportService.importItems(items, into: targetDirectory)
-                let selectedURL = shouldSelectImportedCapture ? importedURLs.last : nil
                 let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
                 guard !Task.isCancelled else { return }
-                await self?.finishWorkspaceLoad(
+                await self?.finishPasteboardImport(
                     result: result,
+                    importedURLs: importedURLs,
+                    selectsImport: shouldSelectImportedCapture,
                     workspaceURL: workspaceURL,
-                    selectedURL: selectedURL,
                     preserveSelection: preserveSelection,
-                    reloadSelection: selectedURL != nil,
+                    moveRunID: moveRunID,
                     generation: generation
                 )
             } catch {
-                await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not paste clipboard contents")
+                // Items copied before the failure stay on disk, so the sidebar is rescanned.
+                let result = try? await Self.scanWorkspace(workspaceURL, scanner: scanner)
+                await self?.finishCopyFailure(
+                    error,
+                    result: result,
+                    workspaceURL: workspaceURL,
+                    preserveSelection: preserveSelection,
+                    message: "Could not paste clipboard contents",
+                    moveRunID: moveRunID,
+                    generation: generation
+                )
             }
         }
+    }
+
+    /// Shows imported items and selects an imported capture. Items the sidebar does not list are
+    /// reported, as New File reports a file it would not show, at the end of the move run when the
+    /// items came with one.
+    private func finishPasteboardImport(
+        result: WorkspaceDocumentScanResult,
+        importedURLs: [URL],
+        selectsImport: Bool,
+        workspaceURL: URL,
+        preserveSelection: String?,
+        moveRunID: Int?,
+        generation: Int
+    ) {
+        guard generation == workspaceGeneration else { return }
+
+        let selectedURL = selectsImport ? importedURLs.last : nil
+        finishWorkspaceLoad(
+            result: result,
+            workspaceURL: workspaceURL,
+            selectedURL: selectedURL,
+            preserveSelection: preserveSelection,
+            reloadSelection: selectedURL != nil,
+            sidebarSelection: selectedURL != nil ? .document : .unchanged,
+            generation: generation
+        )
+
+        let unlistedNames = importedURLs
+            .filter { result.root.node(withID: $0.standardizedFileURL.path) == nil }
+            .map(\.lastPathComponent)
+        if let name = unlistedNames.first {
+            let message = unlistedNames.count == 1
+                ? "Pasted \(name), but Monknot does not show this kind of item."
+                : "Pasted \(ListFormatter.localizedString(byJoining: unlistedNames)), but Monknot does not show these kinds of items."
+            if let moveRunID, moveRun?.id == moveRunID {
+                moveRun?.notes.append(message)
+            } else {
+                errorMessage = message
+            }
+        }
+        continueMoveRun(moveRunID)
+    }
+
+    /// Imports files dropped from Finder into `directoryURL` (the root when nil). Items that are
+    /// already in the workspace are moved there instead, one after another, unless the drop is
+    /// `copying`. Without a workspace, one dropped item opens as the workspace.
+    func dropFileURLs(_ urls: [URL], into directoryURL: URL? = nil, copying: Bool = false) {
+        let fileURLs = urls.filter(\.isFileURL).map(\.standardizedFileURL)
+        guard !fileURLs.isEmpty else { return }
+
+        guard let workspaceURL = workspaceURL?.standardizedFileURL else {
+            guard fileURLs.count == 1 else {
+                errorMessage = "Drop one folder to open it as a workspace."
+                return
+            }
+            handleDroppedURL(fileURLs[0])
+            return
+        }
+        guard ensureNotBusy() else { return }
+
+        let isInsideWorkspace = { (url: URL) in url != workspaceURL && WorkspaceDocumentSupport.isURL(url, containedIn: workspaceURL) }
+        let workspaceItems = copying ? [] : fileURLs.filter(isInsideWorkspace)
+        let importedItems = copying ? fileURLs : fileURLs.filter { !isInsideWorkspace($0) }
+        // An item inside another dropped folder moves with that folder.
+        let movedItems = workspaceItems.filter { url in
+            !workspaceItems.contains { $0 != url && WorkspaceDocumentSupport.isURL(url, containedIn: $0) }
+        }
+
+        // The drop replaces a move waiting for its link review, as any other operation does.
+        pendingMarkdownLinkMoveReview = nil
+        moveRunSerial &+= 1
+        let runID = moveRunSerial
+        moveRun = WorkspaceMoveRun(
+            id: runID,
+            moves: movedItems.map { WorkspaceQueuedMove(sourcePath: $0.path, directoryURL: directoryURL) }
+        )
+        guard !importedItems.isEmpty else {
+            continueMoveRun(runID)
+            return
+        }
+        importPasteboardItems(importedItems.map(WorkspacePasteboardImportItem.fileURL), into: directoryURL, moveRunID: runID)
+        // The moves follow the import, and are dropped with it when it is refused.
+        if !isBusy {
+            moveRun = nil
+        }
+    }
+
+    /// Starts the next move of the run `runID` once the step before it has finished. A move with
+    /// nothing to do is skipped; one that cannot be made is skipped and reported when the run
+    /// ends, as Finder does. A step that is not this run's, or a refused start, ends the run.
+    private func continueMoveRun(_ runID: Int?) {
+        guard let runID, var run = moveRun, run.id == runID,
+              !isBusy, pendingMarkdownLinkMoveReview == nil,
+              let workspaceURL
+        else { return }
+
+        while !run.moves.isEmpty {
+            let move = run.moves.removeFirst()
+            let sourceURL = URL(fileURLWithPath: move.sourcePath).standardizedFileURL
+            let destinationURL: URL
+            do {
+                destinationURL = try Self.moveDestinationURL(
+                    for: sourceURL,
+                    toDirectory: (move.directoryURL ?? workspaceURL).standardizedFileURL,
+                    workspaceURL: workspaceURL
+                )
+            } catch {
+                run.failures.append(Self.notMovedMessage(sourceURL.lastPathComponent, error))
+                continue
+            }
+            guard destinationURL.standardizedFileURL != sourceURL else { continue }
+
+            moveRun = run
+            if !requestMarkdownLinkAwareMove(
+                sourceURL: sourceURL,
+                destinationURL: destinationURL,
+                workspaceURL: workspaceURL,
+                failureMessage: "Could not move \(sourceURL.lastPathComponent)",
+                moveRunID: runID
+            ) {
+                moveRun = nil
+            }
+            return
+        }
+
+        moveRun = nil
+        reportMoveRun(run)
+    }
+
+    /// Ends the run `runID` when its link review is cancelled, reporting the items left unmoved.
+    private func cancelMoveRun(_ runID: Int?) {
+        guard let runID, let run = moveRun, run.id == runID else { return }
+        moveRun = nil
+        reportMoveRun(run, unmovedCount: 1 + run.moves.count)
+    }
+
+    /// Skips a failed step of the move run `runID` while that run is in progress: the run reports
+    /// `reason` when it ends, and goes on. Returns false when there is no such run, so the caller
+    /// reports the failure itself.
+    private func skipFailedMoveRunStep(_ runID: Int?, reason: @autoclosure () -> String) -> Bool {
+        guard let runID, moveRun?.id == runID else { return false }
+        isBusy = false
+        moveRun?.failures.append(reason())
+        continueMoveRun(runID)
+        return true
+    }
+
+    /// Says how a move run went: nothing when every item moved, otherwise how many moved and why
+    /// the others did not, then anything its import had to say.
+    private func reportMoveRun(_ run: WorkspaceMoveRun, unmovedCount: Int = 0) {
+        let reportsUnmoved = unmovedCount > 1
+            || (unmovedCount == 1 && (run.movedCount > 0 || !run.failures.isEmpty))
+        var sentences: [String] = []
+        if run.movedCount > 0, reportsUnmoved || !run.failures.isEmpty {
+            sentences.append(run.movedCount == 1 ? "Moved 1 item." : "Moved \(run.movedCount) items.")
+        }
+        sentences += run.failures
+        if reportsUnmoved {
+            sentences.append(unmovedCount == 1 ? "1 item wasn't moved." : "\(unmovedCount) items weren't moved.")
+        }
+        sentences += run.notes
+        if !sentences.isEmpty {
+            errorMessage = sentences.joined(separator: " ")
+        }
+    }
+
+    nonisolated private static func notMovedMessage(_ name: String, _ error: Error) -> String {
+        "\(name) wasn't moved: \(error.localizedDescription)"
     }
 
     func createMarkdownImageAsset(
@@ -838,7 +1404,7 @@ final class WorkspaceStore: ObservableObject {
         documentID: String,
         commitInsertion: @escaping @MainActor (MarkdownFileDropResult) -> Bool
     ) {
-        guard ensureWritingToolsInactive(for: "inserting dropped files") else { return }
+        guard ensureWritingToolsInactive(for: "inserting files") else { return }
         guard let workspaceURL,
               let document = document(id: documentID),
               document.kind == .markdown,
@@ -847,7 +1413,7 @@ final class WorkspaceStore: ObservableObject {
               plan.markdownDocumentURL.standardizedFileURL.resolvingSymlinksInPath() ==
                 document.url.standardizedFileURL.resolvingSymlinksInPath()
         else {
-            errorMessage = "Open the original Markdown document before inserting dropped files."
+            errorMessage = "Open the original Markdown document before inserting files."
             return
         }
 
@@ -897,105 +1463,165 @@ final class WorkspaceStore: ObservableObject {
             } catch is CancellationError {
                 return
             } catch {
-                self?.errorMessage = "Could not insert the dropped files: \(error.localizedDescription)"
+                self?.errorMessage = "Could not insert the files: \(error.localizedDescription)"
             }
         }
     }
 
     func deleteDocument(_ document: WorkspaceDocument) {
-        guard let workspaceURL, documents.contains(where: { $0.id == document.id }) else { return }
-        guard ensureWritingToolsInactive(for: "deleting a document") else { return }
+        guard workspaceURL != nil, documents.contains(where: { $0.id == document.id }) else { return }
+        guard ensureNotBusy(), ensureWritingToolsInactive(for: "moving a document to the Trash") else { return }
 
         if openDocumentIDs.contains(document.id), saveState(for: document.id).isClean == false {
-            errorMessage = "Save or close \(document.displayName) before deleting it."
+            errorMessage = "Save or close \(document.displayName) before moving it to the Trash."
             return
         }
 
-        let preserveSelection = selectedDocumentID
-        let didDeleteSelectedDocument = selectedDocumentID == document.id
+        startMovingToTrash(document.url, documentIDs: [document.id])
+    }
+
+    /// Moves a folder and everything in it to the Trash, as `deleteDocument` does for one file.
+    func deleteFolder(at folderURL: URL) {
+        guard let workspaceURL else { return }
+        let folderPath = folderURL.standardizedFileURL.path
+        let rootPath = workspaceURL.standardizedFileURL.path
+        guard folderPath != rootPath, WorkspaceDocumentSupport.isPath(folderPath, containedIn: rootPath) else { return }
+        guard ensureNotBusy(), ensureWritingToolsInactive(for: "moving a folder to the Trash") else { return }
+
+        let contained = documents.filter { WorkspaceDocumentSupport.isPath($0.id, containedIn: folderPath) }
+        if let unsaved = contained.first(where: { openDocumentIDs.contains($0.id) && !saveState(for: $0.id).isClean }) {
+            errorMessage = "Save or close \(unsaved.displayName) before moving \(folderURL.lastPathComponent) to the Trash."
+            return
+        }
+
+        startMovingToTrash(folderURL, documentIDs: Set(contained.map(\.id)))
+    }
+
+    /// Moves the item at `url`, which holds the documents `documentIDs`, to the Trash and rescans.
+    /// A selected document among them closes, and nothing is selected in the sidebar once the
+    /// selection, or the folder holding it, is in the Trash.
+    private func startMovingToTrash(_ url: URL, documentIDs: Set<String>) {
+        guard let workspaceURL else { return }
+        let path = url.standardizedFileURL.path
+        let containsSelection = selectedDocumentID.map(documentIDs.contains) == true
+        let preserveSelection = containsSelection ? nil : selectedDocumentID
+        let sidebarSelection: SidebarSelectionAfterLoad = sidebarSelectionID.map {
+            WorkspaceDocumentSupport.isPath($0, containedIn: path)
+        } == true ? .cleared : .unchanged
         noteInternalFileMutation()
-        invalidateWorkspaceSearchCaches(paths: [document.id])
+        invalidateWorkspaceSearchCaches(paths: documentIDs)
         let generation = beginDocumentFileOperation()
 
-        workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
+        workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner, moveItemToTrash] in
             do {
-                var trashedURL: NSURL?
-                try FileManager.default.trashItem(at: document.url, resultingItemURL: &trashedURL)
+                try moveItemToTrash(url)
                 let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
                 guard !Task.isCancelled else { return }
                 await self?.finishWorkspaceLoad(
                     result: result,
                     workspaceURL: workspaceURL,
                     selectedURL: nil,
-                    preserveSelection: didDeleteSelectedDocument ? nil : preserveSelection,
-                    reloadSelection: didDeleteSelectedDocument,
+                    preserveSelection: preserveSelection,
+                    reloadSelection: containsSelection,
+                    sidebarSelection: sidebarSelection,
                     generation: generation
                 )
             } catch {
-                await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not delete \(document.displayName)")
+                await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not move \(url.lastPathComponent) to the Trash")
             }
         }
     }
 
+    /// Plans a rename or move that updates the Markdown links to the item, then runs it or asks
+    /// for review. `moveRunID` names the move run it is a step of. Returns false when it cannot
+    /// start.
+    @discardableResult
     private func requestMarkdownLinkAwareMove(
         sourceURL: URL,
         destinationURL: URL,
         workspaceURL: URL,
         failureMessage: String,
         selectDestinationAfterMove: Bool = false,
-        clearDocumentTransferOnSuccess: Bool = false
-    ) {
-        guard !isBusy else { return }
-        guard ensureWritingToolsInactive(for: "renaming or moving files") else { return }
-        guard !hasDirtyMarkdownDocuments else {
-            errorMessage = WorkspaceMarkdownLinkMoveError.unsavedMarkdown.errorDescription
-            return
-        }
+        completedTransfer: WorkspaceDocumentTransfer? = nil,
+        moveRunID: Int? = nil
+    ) -> Bool {
+        guard ensureNotBusy(), ensureWritingToolsInactive(for: "renaming or moving files") else { return false }
 
         let mappings = Self.documentIDMappings(forMoving: sourceURL, to: destinationURL, documents: documents)
         let preserveSelection = selectedDocumentID
-        let selectedURL = selectDestinationAfterMove
+        let movesDocument = documentsByID[sourceURL.standardizedFileURL.path] != nil
+        let selectsDocument = selectDestinationAfterMove && movesDocument
+        let selectedURL = selectsDocument
             ? destinationURL.standardizedFileURL
             : mappings.first(where: { $0.sourceID == selectedDocumentID })?.destinationURL
+        let sidebarSelection: SidebarSelectionAfterLoad = if !selectDestinationAfterMove {
+            .unchanged
+        } else if movesDocument {
+            .document
+        } else {
+            .folder(destinationURL.standardizedFileURL)
+        }
         let request = WorkspaceMarkdownLinkMoveRequest(
             workspaceURL: workspaceURL.standardizedFileURL,
             mappings: mappings,
             selectedURL: selectedURL,
-            preserveSelection: selectDestinationAfterMove ? nil : preserveSelection,
-            reloadSelection: selectDestinationAfterMove || selectedURL != nil,
-            clearDocumentTransferOnSuccess: clearDocumentTransferOnSuccess,
-            failureMessage: failureMessage
+            preserveSelection: selectsDocument ? nil : preserveSelection,
+            reloadSelection: selectsDocument || selectedURL != nil,
+            sidebarSelection: sidebarSelection,
+            completedTransfer: completedTransfer,
+            failureMessage: failureMessage,
+            itemName: sourceURL.lastPathComponent,
+            moveRunID: moveRunID
         )
         let documentSnapshot = documents
-        let generation = beginDocumentFileOperation()
+        let unsavedMarkdownTexts = dirtyDocumentTexts
+            .compactMap { documentID, text in
+                documentsByID[documentID].flatMap { $0.kind == .markdown ? (document: $0, text: text) : nil }
+            }
+            .sorted { $0.document.relativePath < $1.document.relativePath }
+        let generation = beginDocumentFileOperation(continuingMoveRun: moveRunID)
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                let plan = try MarkdownLinkMovePlanner().plan(
+                let planner = MarkdownLinkMovePlanner()
+                let plan = try planner.plan(
                     moving: sourceURL,
                     to: destinationURL,
                     workspaceRootURL: workspaceURL,
                     documents: documentSnapshot
                 )
+                // The plan rewrites files on disk. A link the move would change in unsaved text
+                // would break, so the move waits until that document is saved.
+                let unsavedLinkingDocumentID = unsavedMarkdownTexts.first { document, text in
+                    let rewrites = try? planner.rewrites(
+                        in: text,
+                        of: document,
+                        moving: sourceURL,
+                        to: destinationURL,
+                        workspaceRootURL: workspaceURL,
+                        documents: documentSnapshot
+                    )
+                    return rewrites?.isEmpty != true
+                }?.document.id
                 guard !Task.isCancelled else { return }
                 await self?.finishMarkdownLinkMovePlanning(
                     plan: plan,
+                    unsavedLinkingDocumentID: unsavedLinkingDocumentID,
                     request: request,
                     generation: generation
                 )
             } catch {
-                await self?.finishWorkspaceFailure(
-                    error,
-                    generation: generation,
-                    message: failureMessage
-                )
+                await self?.finishMarkdownLinkMoveFailure(error, request: request, generation: generation)
             }
         }
+        return true
     }
 
+    /// Cancels the move a link review was shown for, and the rest of its move run.
     func cancelMarkdownLinkMoveReview(id: Int) {
-        guard !isBusy, pendingMarkdownLinkMoveReview?.id == id else { return }
+        guard !isBusy, let review = pendingMarkdownLinkMoveReview, review.id == id else { return }
         pendingMarkdownLinkMoveReview = nil
+        cancelMoveRun(review.request.moveRunID)
     }
 
     func confirmMarkdownLinkMoveReview(id: Int) {
@@ -1006,12 +1632,19 @@ final class WorkspaceStore: ObservableObject {
         startMarkdownLinkMoveCommit(review)
     }
 
+    /// Runs a planned move, or shows it for review. `unsavedLinkingDocumentID` is a document whose
+    /// unsaved text links to what moves, which refuses the move as a rewritten file does.
     private func finishMarkdownLinkMovePlanning(
         plan: MarkdownLinkMovePlan,
+        unsavedLinkingDocumentID: String?,
         request: WorkspaceMarkdownLinkMoveRequest,
         generation: Int
     ) {
         guard generation == workspaceGeneration else { return }
+        if let unsaved = unsavedDocumentRewritten(by: plan) ?? unsavedLinkingDocumentID.flatMap(document(id:)) {
+            refuseMove(of: unsaved, request: request)
+            return
+        }
 
         markdownLinkMoveReviewSerial &+= 1
         let review = MarkdownLinkMoveReviewState(
@@ -1038,15 +1671,13 @@ final class WorkspaceStore: ObservableObject {
             errorMessage = "\(review.request.failureMessage): The workspace changed before the move was confirmed."
             return
         }
-        guard !hasDirtyMarkdownDocuments else {
-            pendingMarkdownLinkMoveReview = nil
-            isBusy = false
-            errorMessage = WorkspaceMarkdownLinkMoveError.unsavedMarkdown.errorDescription
+        if let unsaved = unsavedDocumentRewritten(by: review.plan) {
+            refuseMove(of: unsaved, request: review.request)
             return
         }
 
         noteInternalFileMutation()
-        let generation = beginDocumentFileOperation()
+        let generation = beginDocumentFileOperation(continuingMoveRun: review.request.moveRunID)
         let reviewedPlan = review.plan
         let request = review.request
 
@@ -1106,12 +1737,42 @@ final class WorkspaceStore: ObservableObject {
                 } else {
                     finalError = error
                 }
-                await self?.finishWorkspaceFailure(
-                    finalError,
-                    generation: generation,
-                    message: request.failureMessage
-                )
+                await self?.finishMarkdownLinkMoveFailure(finalError, request: request, generation: generation)
             }
+        }
+    }
+
+    /// A document with unsaved changes whose file the move would rewrite to update its links. A
+    /// moved document whose links stay as they are keeps its unsaved changes at its new path.
+    private func unsavedDocumentRewritten(by plan: MarkdownLinkMovePlan) -> WorkspaceDocument? {
+        plan.rewriteFiles
+            .lazy
+            .compactMap { self.document(id: $0.originalURL.standardizedFileURL.path) }
+            .first { !self.saveState(for: $0.id).isClean }
+    }
+
+    /// Refuses a move that would rewrite the links in a document with unsaved changes. A step of
+    /// a move run is reported when the run ends, and the run goes on.
+    private func refuseMove(of unsavedDocument: WorkspaceDocument, request: WorkspaceMarkdownLinkMoveRequest) {
+        pendingMarkdownLinkMoveReview = nil
+        isBusy = false
+        let error = WorkspaceMarkdownLinkMoveError.unsavedLinkingDocument(unsavedDocument.displayName)
+        if !skipFailedMoveRunStep(request.moveRunID, reason: Self.notMovedMessage(request.itemName, error)) {
+            errorMessage = error.errorDescription
+        }
+    }
+
+    /// Reports a rename or move that failed. A step of a move run is reported when the run ends,
+    /// and the run goes on.
+    private func finishMarkdownLinkMoveFailure(
+        _ error: Error,
+        request: WorkspaceMarkdownLinkMoveRequest,
+        generation: Int
+    ) {
+        guard generation == workspaceGeneration else { return }
+        setDocumentLoadingIfChanged(false)
+        if !skipFailedMoveRunStep(request.moveRunID, reason: Self.notMovedMessage(request.itemName, error)) {
+            finishWorkspaceFailure(error, generation: generation, message: request.failureMessage)
         }
     }
 
@@ -1125,12 +1786,20 @@ final class WorkspaceStore: ObservableObject {
               request.workspaceURL == workspaceURL?.standardizedFileURL
         else { return false }
 
+        let sourcePath = plan.sourceURL.standardizedFileURL.path
+        let destinationPath = plan.destinationURL.standardizedFileURL.path
         for mapping in request.mappings {
             moveDirtyState(from: mapping.sourceID, to: mapping.destinationID)
         }
-        publishDocumentIDRemaps(request.mappings)
-        if request.clearDocumentTransferOnSuccess {
-            pendingDocumentTransfer = nil
+        publishItemMove(from: sourcePath, to: destinationPath, mappings: request.mappings)
+        if let selectedFolderID {
+            self.selectedFolderID = Self.path(selectedFolderID, afterMoving: sourcePath, to: destinationPath)
+        }
+        if let completedTransfer = request.completedTransfer {
+            completeTransfer(completedTransfer)
+        }
+        if let transfer = pendingDocumentTransfer {
+            pendingDocumentTransfer = transfer.following(movedItemAt: sourcePath, to: destinationPath)
         }
 
         let rewrittenPaths = plan.rewriteFiles.flatMap {
@@ -1151,13 +1820,35 @@ final class WorkspaceStore: ObservableObject {
             selectedURL: request.selectedURL,
             preserveSelection: request.preserveSelection,
             reloadSelection: request.reloadSelection || selectedDocumentWasRewritten,
+            sidebarSelection: request.sidebarSelection,
             generation: generation
         )
+        remapRecentDocuments(request.mappings)
+        if let runID = request.moveRunID, moveRun?.id == runID {
+            moveRun?.movedCount += 1
+            continueMoveRun(runID)
+        }
         return true
     }
 
-    func setDocumentText(_ text: String) {
+    /// Keeps the Recents entries of renamed or moved documents, at their new paths.
+    private func remapRecentDocuments(_ mappings: [WorkspaceDocumentIDMapping]) {
+        guard let workspaceURL else { return }
+        let movedDocuments = Dictionary(
+            mappings.compactMap { mapping in documentsByID[mapping.destinationID].map { (mapping.sourceID, $0) } },
+            uniquingKeysWith: { first, _ in first }
+        )
+        guard !movedDocuments.isEmpty,
+              recentDocumentStore.remap(movedDocuments, workspaceURL: workspaceURL)
+        else { return }
+        recentDocumentChangeSerial &+= 1
+    }
+
+    func setDocumentText(_ editedText: String) {
         guard !isBusy, selectedDocument?.capabilities.canEditText == true else { return }
+        // Views and this store compare the document text on every update; native UTF-8 keeps
+        // those comparisons from walking a bridged text-view string character by character.
+        let text = NativeUTF8Text.copy(of: editedText)
         guard text != documentText else { return }
 
         let shouldAdoptExternalDiskVersion = text == lastSavedText
@@ -1212,15 +1903,16 @@ final class WorkspaceStore: ObservableObject {
         return true
     }
 
-    func commitWritingToolsText(_ text: String, documentID: String) {
+    func commitWritingToolsText(_ committedText: String, documentID: String) {
         guard writingToolsDocumentID == documentID,
               selectedDocumentID == documentID,
               let document = document(id: documentID),
               document.capabilities.canEditText
         else { return }
+        let text = NativeUTF8Text.copy(of: committedText)
         guard text != documentText else { return }
 
-        if Self.fileSignature(for: document.url) != selectedDocumentSignature {
+        if (try? WorkspaceConditionalTextWriter.read(from: document.url))?.text != lastSavedText {
             setSelectedDocumentExternalChangeIfChanged(true)
         }
         clearReplaceUndoSnapshot()
@@ -1289,7 +1981,7 @@ final class WorkspaceStore: ObservableObject {
         data: Data?,
         editCheckpoint: PDFAnnotationEditCheckpoint? = nil
     ) {
-        guard let file = document(id: documentID), file.kind == .pdf else { return }
+        guard let file = document(id: documentID), file.kind.opensInPDFViewer else { return }
         guard let data else {
             errorMessage = "Could not prepare PDF annotation data."
             return
@@ -1305,6 +1997,9 @@ final class WorkspaceStore: ObservableObject {
             }
             pdfDocumentBaselines[documentID] = previousData
         }
+        if file.kind == .image, imageMarkupSources[documentID] == nil {
+            imageMarkupSources[documentID] = pdfDocumentBaselines[documentID]
+        }
 
         applyPDFData(data, editCheckpoint: editCheckpoint, to: file)
     }
@@ -1316,15 +2011,12 @@ final class WorkspaceStore: ObservableObject {
     ) -> Bool {
         guard pdfDocumentSavedEditCheckpoints[documentID] == checkpoint,
               let file = document(id: documentID),
-              file.kind == .pdf,
+              file.kind.opensInPDFViewer,
               let baseline = pdfDocumentBaselines[documentID]
         else { return false }
 
         guard let diskData = try? Data(contentsOf: file.url), diskData == baseline else {
-            if selectedDocumentID == documentID {
-                setSelectedDocumentExternalChangeIfChanged(true)
-            }
-            errorMessage = "\(file.displayName) changed on disk. Reload it or save your annotated version as a copy."
+            reportPDFViewerDiskConflict(file)
             return false
         }
 
@@ -1363,8 +2055,9 @@ final class WorkspaceStore: ObservableObject {
                     documentName: document.displayName,
                     relativePath: document.relativePath
                 )
-                let destinationURL = Self.uniqueDocumentURL(
-                    for: notesURL.appendingPathComponent("\(document.url.deletingPathExtension().lastPathComponent) Annotations.md"),
+                let destinationURL = WorkspaceDocumentSupport.availableCopyURL(
+                    named: "\(document.url.deletingPathExtension().lastPathComponent) Annotations.md",
+                    isDirectory: false,
                     in: notesURL
                 )
                 try await Self.writeText(markdown, to: destinationURL)
@@ -1419,8 +2112,9 @@ final class WorkspaceStore: ObservableObject {
                     from: exportItems,
                     title: "Workspace PDF Annotations"
                 )
-                let destinationURL = Self.uniqueDocumentURL(
-                    for: notesURL.appendingPathComponent("Workspace PDF Annotations.md"),
+                let destinationURL = WorkspaceDocumentSupport.availableCopyURL(
+                    named: "Workspace PDF Annotations.md",
+                    isDirectory: false,
                     in: notesURL
                 )
                 try await Self.writeText(markdown, to: destinationURL)
@@ -1462,8 +2156,9 @@ final class WorkspaceStore: ObservableObject {
                 let exportsURL = workspaceURL.appendingPathComponent("exports", isDirectory: true)
                 try FileManager.default.createDirectory(at: exportsURL, withIntermediateDirectories: true)
 
-                let destinationURL = Self.uniqueDocumentURL(
-                    for: exportsURL.appendingPathComponent("\(document.url.deletingPathExtension().lastPathComponent) Annotated.pdf"),
+                let destinationURL = WorkspaceDocumentSupport.availableCopyURL(
+                    named: "\(document.url.deletingPathExtension().lastPathComponent) Annotated.pdf",
+                    isDirectory: false,
                     in: exportsURL
                 )
                 try WorkspaceConditionalDataWriter.write(
@@ -1495,12 +2190,14 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        if selectedDocument.kind == .pdf {
+        if selectedDocument.kind.opensInPDFViewer {
             saveSelectedPDF(selectedDocument)
             return
         }
 
         guard selectedDocument.capabilities.canEditText else { return }
+        // A clean document has nothing to save.
+        guard !saveState(for: selectedDocument.id).isClean else { return }
 
         let file = selectedDocument
         let text = documentText
@@ -1544,7 +2241,7 @@ final class WorkspaceStore: ObservableObject {
         }
         guard !saveState(for: documentID).isClean else { return true }
 
-        if file.kind == .pdf {
+        if file.kind.opensInPDFViewer {
             return await savePDFDocument(file)
         }
 
@@ -1879,12 +2576,13 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func discardUnsavedChangesWithoutWritingToolsGuard(for documentID: String) {
-        let isPDF = document(id: documentID)?.kind == .pdf
+        let isPDF = document(id: documentID)?.kind.opensInPDFViewer == true
         let hadSearchablePDFDirtyData = dirtyPDFDocumentData[documentID] != nil
         dirtyDocumentTexts.removeValue(forKey: documentID)
         dirtyDocumentBaselines.removeValue(forKey: documentID)
         dirtyDocumentRevisionExpectations.removeValue(forKey: documentID)
         pdfDocumentBaselines.removeValue(forKey: documentID)
+        imageMarkupSources.removeValue(forKey: documentID)
         dirtyPDFDocumentData.removeValue(forKey: documentID)
         dirtyPDFDocumentVersions.removeValue(forKey: documentID)
         dirtyPDFDocumentEditCheckpoints.removeValue(forKey: documentID)
@@ -1921,6 +2619,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         let savedEditCheckpoint = dirtyPDFDocumentEditCheckpoints[file.id]
+        let imageMarkupSource = self.imageMarkupSource(for: file, baseline: baseline)
 
         saveGeneration += 1
         let generation = saveGeneration
@@ -1931,7 +2630,7 @@ final class WorkspaceStore: ObservableObject {
         saveTask = Task.detached(priority: .utility) { [weak self] in
             do {
                 let writtenData = try WorkspaceConditionalDataWriter.write(
-                    pdfData,
+                    Self.fileData(forPDFViewerData: pdfData, imageMarkupSource: imageMarkupSource),
                     to: file.url,
                     expecting: .present(baseline)
                 )
@@ -1961,6 +2660,7 @@ final class WorkspaceStore: ObservableObject {
             errorMessage = "Could not safely save \(file.displayName) because its original contents are unavailable."
             return false
         }
+        let imageMarkupSource = self.imageMarkupSource(for: file, baseline: baseline)
 
         saveGeneration += 1
         let generation = saveGeneration
@@ -1971,7 +2671,7 @@ final class WorkspaceStore: ObservableObject {
         do {
             let writtenData = try await Task.detached(priority: .utility) {
                 try WorkspaceConditionalDataWriter.write(
-                    pdfData,
+                    Self.fileData(forPDFViewerData: pdfData, imageMarkupSource: imageMarkupSource),
                     to: file.url,
                     expecting: .present(baseline)
                 )
@@ -1991,6 +2691,25 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    /// For a marked-up image, the pixels a save draws the markup onto; nil for a PDF.
+    private func imageMarkupSource(for file: WorkspaceDocument, baseline: Data) -> Data? {
+        file.kind == .image ? imageMarkupSources[file.id] ?? baseline : nil
+    }
+
+    /// What a save writes for a document in the PDF viewer: the PDF itself, or for an image, the
+    /// image with its markup drawn in, in the image's own format.
+    nonisolated private static func fileData(
+        forPDFViewerData pdfData: Data,
+        imageMarkupSource: Data?
+    ) throws -> Data {
+        // Undo back to the original pixels publishes the image itself rather than markup.
+        guard let imageMarkupSource, pdfData != imageMarkupSource else { return pdfData }
+        return try ImageMarkupDocument.flattenedImageData(
+            imageData: imageMarkupSource,
+            markupData: pdfData
+        )
+    }
+
     private func currentPDFData(for file: WorkspaceDocument) -> Data? {
         if let dirtyData = dirtyPDFDocumentData[file.id] {
             return dirtyData
@@ -2007,6 +2726,7 @@ final class WorkspaceStore: ObservableObject {
             let shouldReloadExternalReplacement = selectedDocumentID == file.id
                 && selectedDocumentExternalChange
             pdfDocumentBaselines.removeValue(forKey: file.id)
+            imageMarkupSources.removeValue(forKey: file.id)
             dirtyPDFDocumentData.removeValue(forKey: file.id)
             dirtyPDFDocumentVersions.removeValue(forKey: file.id)
             dirtyPDFDocumentEditCheckpoints.removeValue(forKey: file.id)
@@ -2040,6 +2760,7 @@ final class WorkspaceStore: ObservableObject {
 
     private func publishPDFContentReplacement(for documentID: String) {
         pdfDocumentBaselines.removeValue(forKey: documentID)
+        imageMarkupSources.removeValue(forKey: documentID)
         dirtyPDFDocumentEditCheckpoints.removeValue(forKey: documentID)
         pdfDocumentSavedEditCheckpoints.removeValue(forKey: documentID)
         pdfDocumentContentVersions[documentID, default: 0] &+= 1
@@ -2103,11 +2824,16 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func beginWorkspaceOperation() -> Int {
+    /// Starts an operation that replaces any in flight. It ends a move run unless it is the step of
+    /// the run `continuingMoveRun`.
+    private func beginWorkspaceOperation(continuingMoveRun moveRunID: Int? = nil) -> Int {
         workspaceTask?.cancel()
         documentTask?.cancel()
         recentDocumentRecordTask?.cancel()
         pendingMarkdownLinkMoveReview = nil
+        if moveRunID == nil || moveRun?.id != moveRunID {
+            moveRun = nil
+        }
         workspaceGeneration += 1
         openingWorkspaceURL = nil
         isBusy = true
@@ -2116,12 +2842,12 @@ final class WorkspaceStore: ObservableObject {
         return workspaceGeneration
     }
 
-    private func beginDocumentFileOperation() -> Int {
+    private func beginDocumentFileOperation(continuingMoveRun moveRunID: Int? = nil) -> Int {
         saveTask?.cancel()
         markdownImageAssetTask?.cancel()
         saveGeneration += 1
         setSavingIfChanged(false)
-        return beginWorkspaceOperation()
+        return beginWorkspaceOperation(continuingMoveRun: moveRunID)
     }
 
     private func finishWorkspaceLoad(
@@ -2130,6 +2856,8 @@ final class WorkspaceStore: ObservableObject {
         selectedURL: URL?,
         preserveSelection: String?,
         reloadSelection: Bool,
+        sidebarSelection: SidebarSelectionAfterLoad = .unchanged,
+        opensFirstDocument: Bool = false,
         generation: Int
     ) {
         guard generation == workspaceGeneration else { return }
@@ -2145,8 +2873,21 @@ final class WorkspaceStore: ObservableObject {
             selectedDocumentID = selectedDocument.id
         } else if let preserveSelection, documentsByID[preserveSelection] != nil {
             selectedDocumentID = preserveSelection
-        } else {
+        } else if opensFirstDocument {
             selectedDocumentID = documents.first?.id
+        } else if let selectedDocumentID, documentsByID[selectedDocumentID] == nil {
+            deselectRemovedDocument()
+        }
+
+        switch sidebarSelection {
+        case .unchanged:
+            break
+        case .document:
+            selectOpenDocumentInSidebar()
+        case .folder(let folderURL):
+            selectFolder(id: folderURL.standardizedFileURL.path)
+        case .cleared:
+            clearSidebarSelection()
         }
 
         isBusy = false
@@ -2178,8 +2919,14 @@ final class WorkspaceStore: ObservableObject {
             selectedURL: selectedURL,
             preserveSelection: preserveSelection,
             reloadSelection: reloadSelection,
+            opensFirstDocument: true,
             generation: generation
         )
+        if let selectedURL,
+           documentsByID[selectedURL.standardizedFileURL.path] == nil,
+           !Self.isDirectory(selectedURL) {
+            errorMessage = "Monknot can't open “\(selectedURL.lastPathComponent)”."
+        }
     }
 
     private func finishWorkspaceOpenFailure(
@@ -2200,11 +2947,14 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func clearStateForWorkspaceTransition() {
+        cancelSuppressedWatcherReplay()
         pendingDocumentTransfer = nil
+        moveRun = nil
         dirtyDocumentTexts = [:]
         dirtyDocumentBaselines = [:]
         dirtyDocumentRevisionExpectations = [:]
         pdfDocumentBaselines = [:]
+        imageMarkupSources = [:]
         dirtyPDFDocumentData = [:]
         dirtyPDFDocumentVersions = [:]
         dirtyPDFDocumentEditCheckpoints = [:]
@@ -2215,6 +2965,8 @@ final class WorkspaceStore: ObservableObject {
         openDocumentIDs = []
         documentSaveStates = [:]
         selectedDocumentID = nil
+        selectedFolderID = nil
+        sidebarSelectsOpenDocument = true
         setDocumentTextIfChanged("")
         lastSavedText = ""
         setHasUnsavedChangesIfChanged(false)
@@ -2239,7 +2991,18 @@ final class WorkspaceStore: ObservableObject {
         replaceDocuments(with: result.documents)
         pruneSaveStates(previousDocuments: previousDocuments)
         ensureFileWatcher(for: workspaceURL)
-        selectedDocumentID = documentsByID[fileURL.standardizedFileURL.path]?.id
+        guard let createdDocument = documentsByID[fileURL.standardizedFileURL.path] else {
+            // The scan does not list the file, so the current document stays selected.
+            isBusy = false
+            if let selectedDocumentID, documentsByID[selectedDocumentID] == nil {
+                deselectRemovedDocument()
+                loadSelectedDocument()
+            }
+            errorMessage = "Created \(fileURL.lastPathComponent), but Monknot does not show this kind of file."
+            return
+        }
+        selectedDocumentID = createdDocument.id
+        selectOpenDocumentInSidebar()
         setDocumentTextIfChanged(initialText)
         lastSavedText = initialText
         setHasUnsavedChangesIfChanged(false)
@@ -2264,6 +3027,7 @@ final class WorkspaceStore: ObservableObject {
         pruneSaveStates(previousDocuments: previousDocuments)
         ensureFileWatcher(for: workspaceURL)
         selectedDocumentID = documentsByID[fileURL.standardizedFileURL.path]?.id ?? documents.first?.id
+        selectOpenDocumentInSidebar()
         loadSelectedDocument()
         isBusy = false
     }
@@ -2350,25 +3114,55 @@ final class WorkspaceStore: ObservableObject {
     private func finishDocumentTransfer(
         result: WorkspaceDocumentScanResult,
         workspaceURL: URL,
-        selectedURL: URL,
-        sourceID: String,
-        destinationID: String,
-        operation: WorkspaceDocumentTransferOperation,
+        selectedURL: URL?,
+        preserveSelection: String?,
+        sidebarSelection: SidebarSelectionAfterLoad,
+        changedPaths: [String],
+        completedTransfer: WorkspaceDocumentTransfer?,
         generation: Int
     ) {
         guard generation == workspaceGeneration else { return }
 
-        guard operation == .copy else { return }
-        invalidateWorkspaceSearchCaches(paths: [sourceID, destinationID])
-        pendingDocumentTransfer = nil
+        invalidateWorkspaceSearchCaches(paths: changedPaths)
+        if let completedTransfer {
+            completeTransfer(completedTransfer)
+        }
         finishWorkspaceLoad(
             result: result,
             workspaceURL: workspaceURL,
             selectedURL: selectedURL,
-            preserveSelection: nil,
-            reloadSelection: true,
+            preserveSelection: preserveSelection,
+            reloadSelection: selectedURL != nil,
+            sidebarSelection: sidebarSelection,
             generation: generation
         )
+    }
+
+    /// Shows what a copy or import left on disk before it failed, then reports the failure: at
+    /// the end of the move run `moveRunID`, which goes on, when the import came with one.
+    private func finishCopyFailure(
+        _ error: Error,
+        result: WorkspaceDocumentScanResult?,
+        workspaceURL: URL,
+        preserveSelection: String?,
+        message: String,
+        moveRunID: Int? = nil,
+        generation: Int
+    ) {
+        if let result {
+            finishWorkspaceLoad(
+                result: result,
+                workspaceURL: workspaceURL,
+                selectedURL: nil,
+                preserveSelection: preserveSelection,
+                reloadSelection: false,
+                generation: generation
+            )
+        }
+        guard generation == workspaceGeneration else { return }
+        if !skipFailedMoveRunStep(moveRunID, reason: "\(message): \(error.localizedDescription)") {
+            finishWorkspaceFailure(error, generation: generation, message: message)
+        }
     }
 
     private func updateSecurityScope(for url: URL) {
@@ -2382,6 +3176,7 @@ final class WorkspaceStore: ObservableObject {
 
     private func clearSecurityScope() {
         fileWatcher.stop()
+        cancelSuppressedWatcherReplay()
         externalRefreshWorkItem?.cancel()
         externalRefreshWorkItem = nil
         externalRefreshTask?.cancel()
@@ -2396,6 +3191,9 @@ final class WorkspaceStore: ObservableObject {
         documentTask?.cancel()
         documentGeneration += 1
         let generation = documentGeneration
+        if documentLoadFailure != nil {
+            documentLoadFailure = nil
+        }
 
         guard let selectedDocument else {
             setDocumentTextIfChanged("")
@@ -2417,7 +3215,7 @@ final class WorkspaceStore: ObservableObject {
             )
             setSelectedDocumentExternalChangeIfChanged(removedDirtyDocuments[selectedDocument.id] != nil)
             setDocumentLoadingIfChanged(false)
-            if selectedDocument.kind == .pdf, hasUnsavedChanges, saveState(for: selectedDocument.id).isClean {
+            if selectedDocument.kind.opensInPDFViewer, hasUnsavedChanges, saveState(for: selectedDocument.id).isClean {
                 setSaveState(.edited, for: selectedDocument.id)
             }
             return
@@ -2502,9 +3300,12 @@ final class WorkspaceStore: ObservableObject {
                 return
             }
 
+            // A file that could not be opened is not a recent document. Checked here because a
+            // too-large file fails while it is being selected, before this task exists.
             guard let self,
                   self.selectedDocumentID == documentID,
-                  self.workspaceURL?.standardizedFileURL.path == workspacePath
+                  self.workspaceURL?.standardizedFileURL.path == workspacePath,
+                  self.documentLoadFailure?.documentID != documentID
             else {
                 return
             }
@@ -2537,10 +3338,20 @@ final class WorkspaceStore: ObservableObject {
         setHasUnsavedChangesIfChanged(false)
         setSelectedDocumentSignatureIfChanged(nil)
         setDocumentLoadingIfChanged(false)
-        if case WorkspaceTextFileGuard.Error.fileTooLarge = error {
-            errorMessage = "\(file.displayName) is too large to open in the editor. \(error.localizedDescription)"
-        } else {
-            errorMessage = "Could not read \(file.displayName): \(error.localizedDescription)"
+        documentLoadFailure = DocumentLoadFailure(documentID: file.id, message: Self.loadFailureMessage(for: error))
+    }
+
+    nonisolated private static func loadFailureMessage(for error: Error) -> String {
+        switch error {
+        case WorkspaceTextFileGuard.Error.fileTooLarge(_, let size, let maxBytes):
+            let megabytes = { (bytes: Int64) in String(format: "%.1f", Double(bytes) / (1024 * 1024)) }
+            return "This file is \(megabytes(size)) MB. The editor opens text files up to \(megabytes(maxBytes)) MB."
+        case WorkspaceTextFileGuard.Error.unreadableEncoding:
+            return "This file is not UTF-8 text, so it cannot be edited here."
+        case WorkspaceTextFileGuard.Error.binaryContent:
+            return "This file holds binary data, not text, so it cannot be edited here."
+        default:
+            return "The file could not be read: \(error.localizedDescription)"
         }
     }
 
@@ -2853,6 +3664,11 @@ final class WorkspaceStore: ObservableObject {
                 setSelectedDocumentSignatureIfChanged(Self.fileSignature(for: url))
             }
             invalidateWorkspaceSearchCaches(paths: [url.path])
+            // The saved markup is now part of the image's pixels, as in Preview: reopen the file
+            // so the next markup starts from it.
+            if document(id: fileID)?.kind == .image {
+                publishPDFContentReplacement(for: fileID)
+            }
         } else {
             pdfDocumentBaselines[fileID] = writtenData
             if let savedEditCheckpoint {
@@ -2880,13 +3696,20 @@ final class WorkspaceStore: ObservableObject {
         setSaveState(.failed(error.localizedDescription), for: file.id)
         if error as? WorkspaceTextRevisionError == .changedOnDisk
             || error as? WorkspaceTextRevisionError == .unexpectedlyCreated {
-            if selectedDocumentID == file.id {
-                setSelectedDocumentExternalChangeIfChanged(true)
-            }
-            errorMessage = "\(file.displayName) changed on disk. Reload it or save your annotated version as a copy."
+            reportPDFViewerDiskConflict(file)
         } else {
             errorMessage = "Could not save \(file.displayName): \(error.localizedDescription)"
         }
+    }
+
+    /// Reports that the file of `file`, a PDF or image with unsaved markup, changed on disk.
+    private func reportPDFViewerDiskConflict(_ file: WorkspaceDocument) {
+        if selectedDocumentID == file.id {
+            setSelectedDocumentExternalChangeIfChanged(true)
+        }
+        errorMessage = file.kind == .image
+            ? "\(file.displayName) changed on disk. Reload it to continue."
+            : "\(file.displayName) changed on disk. Reload it or save your annotated version as a copy."
     }
 
     private func finishSaveFailure(_ error: Error, file: WorkspaceDocument, generation: Int) {
@@ -2968,6 +3791,7 @@ final class WorkspaceStore: ObservableObject {
             preservedDocumentIDs.contains($0.key)
         }
         pdfDocumentBaselines = pdfDocumentBaselines.filter { preservedDocumentIDs.contains($0.key) }
+        imageMarkupSources = imageMarkupSources.filter { preservedDocumentIDs.contains($0.key) }
         dirtyPDFDocumentData = dirtyPDFDocumentData.filter { preservedDocumentIDs.contains($0.key) }
         dirtyPDFDocumentVersions = dirtyPDFDocumentVersions.filter { preservedDocumentIDs.contains($0.key) }
         dirtyPDFDocumentEditCheckpoints = dirtyPDFDocumentEditCheckpoints.filter {
@@ -3030,6 +3854,10 @@ final class WorkspaceStore: ObservableObject {
             pdfDocumentBaselines[destinationID] = pdfBaseline
         }
 
+        if let imageMarkupSource = imageMarkupSources.removeValue(forKey: sourceID) {
+            imageMarkupSources[destinationID] = imageMarkupSource
+        }
+
         if let dirtyPDFData = dirtyPDFDocumentData.removeValue(forKey: sourceID) {
             dirtyPDFDocumentData[destinationID] = dirtyPDFData
         }
@@ -3043,13 +3871,16 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func publishDocumentIDRemaps(_ mappings: [WorkspaceDocumentIDMapping]) {
-        let mappings = mappings.filter { $0.sourceID != $0.destinationID }
-        guard !mappings.isEmpty else { return }
-        let serial = (documentIDRemapEvent?.serial ?? 0) + 1
+    private func publishItemMove(
+        from sourcePath: String,
+        to destinationPath: String,
+        mappings: [WorkspaceDocumentIDMapping]
+    ) {
         documentIDRemapEvent = WorkspaceDocumentIDRemapEvent(
-            serial: serial,
-            mappings: mappings
+            serial: (documentIDRemapEvent?.serial ?? 0) + 1,
+            itemSourcePath: sourcePath,
+            itemDestinationPath: destinationPath,
+            mappings: mappings.filter { $0.sourceID != $0.destinationID }
         )
     }
 
@@ -3093,6 +3924,7 @@ final class WorkspaceStore: ObservableObject {
 
     internal func testing_stopFileWatcher() {
         fileWatcher.stop()
+        cancelSuppressedWatcherReplay()
         externalRefreshWorkItem?.cancel()
         externalRefreshWorkItem = nil
         externalRefreshTask?.cancel()
@@ -3123,7 +3955,10 @@ final class WorkspaceStore: ObservableObject {
             deferExternalRefreshUntilWritingToolsEnd()
             return
         }
-        guard bypassingSuppression || Date() >= suppressWatcherUntil else { return }
+        guard bypassingSuppression || !holdsWatcherEvents else {
+            deferSuppressedWatcherEvent(event)
+            return
+        }
 
         let requiresFullRescan = event.requiresFullRescan || deferredWritingToolsRefreshNeeded
 
@@ -3153,6 +3988,89 @@ final class WorkspaceStore: ObservableObject {
         }
         externalRefreshWorkItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
+    }
+
+    /// Watcher events wait while a file operation runs, whose scan replaces the sidebar when it
+    /// finishes, and while Monknot's own change settles.
+    private var holdsWatcherEvents: Bool {
+        isBusy || Date() < suppressWatcherUntil
+    }
+
+    /// Holds watcher events that arrive while Monknot's own file change settles and replays them
+    /// once the window ends, so external changes made meanwhile still reach the sidebar.
+    private func deferSuppressedWatcherEvent(_ event: WorkspaceFileWatcher.Event) {
+        if let pending = suppressedWatcherEvent {
+            let createdOrRemoved = pending.changedPaths.subtracting(pending.modifiedOnlyPaths)
+                .union(event.changedPaths.subtracting(event.modifiedOnlyPaths))
+            suppressedWatcherEvent = WorkspaceFileWatcher.Event(
+                changedPaths: pending.changedPaths.union(event.changedPaths),
+                modifiedOnlyPaths: pending.modifiedOnlyPaths.union(event.modifiedOnlyPaths)
+                    .subtracting(createdOrRemoved),
+                requiresFullRescan: pending.requiresFullRescan || event.requiresFullRescan
+            )
+        } else {
+            suppressedWatcherEvent = event
+        }
+        if suppressedWatcherReplayWorkItem == nil {
+            scheduleSuppressedWatcherReplay()
+        }
+    }
+
+    private func scheduleSuppressedWatcherReplay() {
+        let item = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                self?.replaySuppressedWatcherEvent()
+            }
+        }
+        suppressedWatcherReplayWorkItem = item
+        // A running operation has no known end, so its events are checked again shortly.
+        let delay = max(isBusy ? 0.3 : 0, suppressWatcherUntil.timeIntervalSinceNow)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
+    private func replaySuppressedWatcherEvent() {
+        suppressedWatcherReplayWorkItem = nil
+        guard !holdsWatcherEvents else {
+            scheduleSuppressedWatcherReplay()
+            return
+        }
+        guard let event = suppressedWatcherEvent else { return }
+        suppressedWatcherEvent = nil
+        guard let unmodelledEvent = unmodelledChanges(in: event) else { return }
+        scheduleExternalWorkspaceRefresh(unmodelledEvent)
+    }
+
+    /// The part of a held watcher event that the sidebar does not already show. Monknot's own
+    /// changes during the quiet window are in the model by now, so an item that is listed and on
+    /// disk, or neither, is left out. A listed document that was replaced on disk stays as a
+    /// content change, which is checked against the signature Monknot recorded for it.
+    private func unmodelledChanges(in event: WorkspaceFileWatcher.Event) -> WorkspaceFileWatcher.Event? {
+        guard !event.requiresFullRescan else { return event }
+        var structuralPaths = Set<String>()
+        var modifiedOnlyPaths = event.modifiedOnlyPaths
+        for path in event.changedPaths.subtracting(event.modifiedOnlyPaths) {
+            let isOnDisk = FileManager.default.fileExists(atPath: path)
+            let isListedDocument = documentsByID[path] != nil
+            let isListed = isListedDocument || rootNode?.node(withID: path)?.kind == .folder
+            if isOnDisk, isListedDocument {
+                modifiedOnlyPaths.insert(path)
+            } else if isOnDisk != isListed {
+                structuralPaths.insert(path)
+            }
+        }
+        let changedPaths = structuralPaths.union(modifiedOnlyPaths)
+        guard !changedPaths.isEmpty else { return nil }
+        return WorkspaceFileWatcher.Event(
+            changedPaths: changedPaths,
+            modifiedOnlyPaths: modifiedOnlyPaths,
+            requiresFullRescan: false
+        )
+    }
+
+    private func cancelSuppressedWatcherReplay() {
+        suppressedWatcherReplayWorkItem?.cancel()
+        suppressedWatcherReplayWorkItem = nil
+        suppressedWatcherEvent = nil
     }
 
     private func applyIncrementalFileChanges(paths: Set<String>) -> Bool {
@@ -3190,14 +4108,8 @@ final class WorkspaceStore: ObservableObject {
         guard relevantPaths.contains(selectedPath) else { return }
 
         let nextSignature = Self.fileSignature(for: selectedDocument.url)
-        if selectedDocument.kind == .pdf {
-            if hasUnsavedChanges {
-                setSelectedDocumentExternalChangeIfChanged(true)
-                return
-            }
-            guard !isSaving else { return }
-            setSelectedDocumentSignatureIfChanged(nextSignature)
-            publishPDFContentReplacement(for: selectedDocument.id)
+        if selectedDocument.kind.opensInPDFViewer {
+            reconcileSelectedPDFViewerDocument(selectedDocument, nextSignature: nextSignature)
             return
         }
 
@@ -3209,7 +4121,7 @@ final class WorkspaceStore: ObservableObject {
                 setSelectedDocumentExternalChangeIfChanged(true)
             }
         } else if !hasUnsavedChanges, !isSaving, nextSignature != selectedDocumentSignature {
-            loadSelectedDocument()
+            reloadSelectedTextIfChangedOnDisk(selectedDocument, signature: nextSignature)
         } else if selectedDocumentSignature == nil {
             setSelectedDocumentSignatureIfChanged(nextSignature)
         }
@@ -3272,30 +4184,19 @@ final class WorkspaceStore: ObservableObject {
         } else if dirtySelectionRemoved, let previousSelection {
             selectedDocumentID = previousSelection
             setSelectedDocumentExternalChangeIfChanged(true)
-        } else if previousSelection == nil {
-            selectedDocumentID = nil
-            setSelectedDocumentSignatureIfChanged(nil)
         } else {
-            selectedDocumentID = documents.first?.id
+            if previousSelection != nil {
+                deselectRemovedDocument()
+            }
             setSelectedDocumentSignatureIfChanged(nil)
         }
 
         guard !dirtySelectionRemoved else { return }
         guard let selectedDocument else { return }
         let nextSignature = Self.fileSignature(for: selectedDocument.url)
-        if selectedDocument.kind == .pdf {
-            if hasUnsavedChanges,
-               selectionStillExists,
-               selectedDocumentSignature != nil,
-               nextSignature != selectedDocumentSignature {
-                setSelectedDocumentExternalChangeIfChanged(true)
-            } else if !hasUnsavedChanges,
-               !isSaving,
-               selectionStillExists,
-               selectedDocumentSignature != nil,
-               nextSignature != selectedDocumentSignature {
-                setSelectedDocumentSignatureIfChanged(nextSignature)
-                publishPDFContentReplacement(for: selectedDocument.id)
+        if selectedDocument.kind.opensInPDFViewer {
+            if selectionStillExists {
+                reconcileSelectedPDFViewerDocument(selectedDocument, nextSignature: nextSignature)
             } else if selectedDocumentSignature == nil, !hasUnsavedChanges {
                 setSelectedDocumentSignatureIfChanged(nextSignature)
             }
@@ -3313,9 +4214,52 @@ final class WorkspaceStore: ObservableObject {
                   !isSaving,
                   selectedDocumentSignature != nil,
                   nextSignature != selectedDocumentSignature {
-            loadSelectedDocument()
+            reloadSelectedTextIfChangedOnDisk(selectedDocument, signature: nextSignature)
         } else if selectedDocumentSignature == nil {
             setSelectedDocumentSignatureIfChanged(nextSignature)
+        }
+    }
+
+    /// Reloads the clean selected text document when its file holds other text. A file that was
+    /// only touched, or saved again with the same text, keeps the editor as it is and takes
+    /// `signature`, read before the text so a later change still differs from it.
+    private func reloadSelectedTextIfChangedOnDisk(_ document: WorkspaceDocument, signature: FileSignature?) {
+        guard documentLoadFailure == nil,
+              !isDocumentLoading,
+              let text = try? WorkspaceTextFileGuard.readUTF8Text(
+                  from: document.url,
+                  maxBytes: Self.interactiveTextOpenMaxBytes
+              ),
+              text == lastSavedText
+        else {
+            loadSelectedDocument()
+            return
+        }
+        setSelectedDocumentSignatureIfChanged(signature)
+    }
+
+    /// Compares the selected PDF or image with its file on disk. A file other than the one
+    /// Monknot last loaded or saved is an external change: a conflict while markup is unsaved,
+    /// otherwise a reload. A file that was only touched, or saved again with the same bytes, is
+    /// not. A save in progress settles the signature when it finishes.
+    private func reconcileSelectedPDFViewerDocument(_ document: WorkspaceDocument, nextSignature: FileSignature?) {
+        guard selectedDocumentSignature != nil else {
+            if !hasUnsavedChanges {
+                setSelectedDocumentSignatureIfChanged(nextSignature)
+            }
+            return
+        }
+        guard !isSaving, nextSignature != selectedDocumentSignature else { return }
+        if hasUnsavedChanges {
+            if let baseline = pdfDocumentBaselines[document.id],
+               (try? Data(contentsOf: document.url)) == baseline {
+                setSelectedDocumentSignatureIfChanged(nextSignature)
+            } else {
+                setSelectedDocumentExternalChangeIfChanged(true)
+            }
+        } else {
+            setSelectedDocumentSignatureIfChanged(nextSignature)
+            publishPDFContentReplacement(for: document.id)
         }
     }
 
@@ -3354,6 +4298,15 @@ final class WorkspaceStore: ObservableObject {
         gitStatusByRelativePath = [:]
     }
 
+    /// Whether no file operation is running; otherwise says to wait for it.
+    private func ensureNotBusy() -> Bool {
+        guard !isBusy else {
+            errorMessage = Self.busyMessage
+            return false
+        }
+        return true
+    }
+
     @discardableResult
     private func ensureWritingToolsInactive(for action: String) -> Bool {
         guard writingToolsDocumentID == nil else {
@@ -3364,7 +4317,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private static func isRelevantExternalChange(path: String) -> Bool {
-        let ignored = Set([".git", ".build", "DerivedData", "dist", "node_modules"])
+        let ignored = WorkspaceDocumentScanner.defaultIgnoredDirectoryNames
         let components = URL(fileURLWithPath: path).pathComponents
         return !components.contains { component in
             ignored.contains(component) || (component.hasPrefix(".") && component != "." && component != "..")
@@ -3595,7 +4548,7 @@ final class WorkspaceStore: ObservableObject {
 
     nonisolated private static func writeText(_ text: String, to url: URL) async throws {
         try await Task.detached(priority: .utility) {
-            try text.write(to: url, atomically: true, encoding: .utf8)
+            try WorkspaceTextFileGuard.writeUTF8Text(text, to: url)
         }.value
     }
 
@@ -3651,19 +4604,10 @@ final class WorkspaceStore: ObservableObject {
         return candidate
     }
 
-    nonisolated private static func childURL(in directoryURL: URL, proposedName: String) throws -> URL {
-        let fileName = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !fileName.isEmpty else {
-            throw WorkspaceDocumentOperationError.emptyName
-        }
-
-        guard fileName.rangeOfCharacter(from: CharacterSet(charactersIn: "/:")) == nil else {
-            throw WorkspaceDocumentOperationError.nestedName
-        }
-
-        guard fileName != "." && fileName != ".." else {
-            throw WorkspaceDocumentOperationError.invalidName(fileName)
-        }
+    nonisolated private static func childURL(in directoryURL: URL, proposedName: String, isDirectory: Bool) throws -> URL {
+        let fileName = try validatedItemName(proposedName)
+        try validateLength(of: fileName)
+        try validateVisibility(of: fileName, isDirectory: isDirectory)
 
         let destinationURL = directoryURL.appendingPathComponent(fileName)
         guard !FileManager.default.fileExists(atPath: destinationURL.path) else {
@@ -3679,7 +4623,7 @@ final class WorkspaceStore: ObservableObject {
     ) throws -> URL {
         let workspaceURL = workspaceURL.standardizedFileURL
         let fileURL = proposedURL.standardizedFileURL
-        guard fileURL != workspaceURL, isURL(fileURL, containedIn: workspaceURL) else {
+        guard fileURL != workspaceURL, WorkspaceDocumentSupport.isURL(fileURL, containedIn: workspaceURL) else {
             throw WorkspaceDocumentOperationError.invalidCreation("The note must be inside the workspace.")
         }
 
@@ -3713,7 +4657,7 @@ final class WorkspaceStore: ObservableObject {
             throw WorkspaceDocumentOperationError.invalidCreation("The destination cannot pass through a symbolic link.")
         }
 
-        let validatedChild = try childURL(in: parentURL, proposedName: fileURL.lastPathComponent)
+        let validatedChild = try childURL(in: parentURL, proposedName: fileURL.lastPathComponent, isDirectory: false)
         guard validatedChild.standardizedFileURL == fileURL,
               (try? FileManager.default.destinationOfSymbolicLink(atPath: fileURL.path)) == nil
         else {
@@ -3730,23 +4674,64 @@ final class WorkspaceStore: ObservableObject {
         return "\(baseName).\(pathExtension)"
     }
 
-    nonisolated private static func renamedURL(
-        for sourceURL: URL,
-        proposedName: String,
-        preservingExtension: Bool = true
-    ) throws -> URL {
-        var fileName = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !fileName.isEmpty else {
+    /// The trimmed name, or an error for an empty name, a path, `.` or `..`.
+    nonisolated private static func validatedItemName(_ proposedName: String) throws -> String {
+        let name = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
             throw WorkspaceDocumentOperationError.emptyName
         }
 
-        guard fileName.rangeOfCharacter(from: CharacterSet(charactersIn: "/:")) == nil else {
+        guard name.rangeOfCharacter(from: CharacterSet(charactersIn: "/:")) == nil else {
             throw WorkspaceDocumentOperationError.nestedName
         }
 
-        if preservingExtension, URL(fileURLWithPath: fileName).pathExtension.isEmpty, !sourceURL.pathExtension.isEmpty {
-            fileName += ".\(sourceURL.pathExtension)"
+        guard name != "." && name != ".." else {
+            throw WorkspaceDocumentOperationError.invalidName(name)
         }
+        return name
+    }
+
+    /// Refuses a name longer than macOS allows, before anything is written.
+    nonisolated private static func validateLength(of name: String) throws {
+        guard WorkspaceDocumentSupport.fileNameLength(name) <= WorkspaceDocumentSupport.maximumFileNameLength else {
+            throw WorkspaceDocumentOperationError.nameTooLong
+        }
+    }
+
+    /// Refuses names the workspace scan leaves out, so a new or renamed item never vanishes.
+    nonisolated private static func validateVisibility(of name: String, isDirectory: Bool) throws {
+        guard WorkspaceDocumentScanner.hidesItem(named: name, isDirectory: isDirectory) else { return }
+        if name.hasPrefix(".") {
+            throw WorkspaceDocumentOperationError.hiddenName(name)
+        }
+        guard isDirectory else {
+            throw WorkspaceDocumentOperationError.unsupportedFileType(name)
+        }
+        if WorkspaceDocumentSupport.isPackageName(name) {
+            throw WorkspaceDocumentOperationError.packageFolderName(name)
+        }
+        throw WorkspaceDocumentOperationError.ignoredFolderName(name)
+    }
+
+    /// A file keeps its extension unless the new name ends in an extension of the same kind of
+    /// document, so "Release 1.2" renames `notes.md` to `Release 1.2.md`, "notes.txt" makes it
+    /// plain text, and "photo.md" renames `photo.png` to `photo.md.png`.
+    nonisolated private static func renamedURL(
+        for sourceURL: URL,
+        proposedName: String,
+        isDirectory: Bool
+    ) throws -> URL {
+        var fileName = try validatedItemName(proposedName)
+
+        let sourceExtension = sourceURL.pathExtension
+        if !isDirectory, !sourceExtension.isEmpty {
+            let typedExtension = (fileName as NSString).pathExtension
+            if !isSameKindOfDocument(extension: typedExtension, as: sourceURL) {
+                fileName += ".\(sourceExtension)"
+            }
+        }
+        try validateLength(of: fileName)
+        try validateVisibility(of: fileName, isDirectory: isDirectory)
 
         let destinationURL = sourceURL.deletingLastPathComponent().appendingPathComponent(fileName)
         guard !FileManager.default.fileExists(atPath: destinationURL.path) else {
@@ -3764,6 +4749,36 @@ final class WorkspaceStore: ObservableObject {
         return destinationURL
     }
 
+    /// Whether a file named with `pathExtension` holds the same kind of content as `sourceURL`:
+    /// both are text that the editor opens, or both are the same file type (`.jpg` and `.jpeg`).
+    nonisolated private static func isSameKindOfDocument(extension pathExtension: String, as sourceURL: URL) -> Bool {
+        guard !pathExtension.isEmpty,
+              let typed = WorkspaceDocumentSupport.workspaceClassification(for: URL(fileURLWithPath: "_.\(pathExtension)"))
+        else { return false }
+        let source = WorkspaceDocumentSupport.classification(for: sourceURL)
+        if typed.capabilities.canEditText && source.capabilities.canEditText {
+            return true
+        }
+        return typed.kind == source.kind
+            && typed.contentTypeIdentifier != nil
+            && typed.contentTypeIdentifier == source.contentTypeIdentifier
+    }
+
+    /// Where a copy or move of `sourceURL` into `directoryURL` lands: its own name, or a "copy"
+    /// name when that is taken.
+    nonisolated private static func uniqueDocumentURL(for sourceURL: URL, in directoryURL: URL) -> URL {
+        WorkspaceDocumentSupport.availableCopyURL(
+            named: sourceURL.lastPathComponent,
+            isDirectory: isDirectory(sourceURL),
+            in: directoryURL
+        )
+    }
+
+    /// Whether `url` is a folder (or package); false when it cannot be read.
+    nonisolated private static func isDirectory(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+    }
+
     nonisolated private static func moveDestinationURL(
         for sourceURL: URL,
         toDirectory targetDirectory: URL,
@@ -3773,7 +4788,7 @@ final class WorkspaceStore: ObservableObject {
         let targetDirectory = targetDirectory.standardizedFileURL
         let workspaceURL = workspaceURL.standardizedFileURL
 
-        guard isURL(sourceURL, containedIn: workspaceURL) else {
+        guard WorkspaceDocumentSupport.isURL(sourceURL, containedIn: workspaceURL) else {
             throw WorkspaceDocumentOperationError.invalidMove("Move items from inside the current workspace.")
         }
 
@@ -3783,7 +4798,7 @@ final class WorkspaceStore: ObservableObject {
             throw WorkspaceDocumentOperationError.notDirectory(targetDirectory.lastPathComponent)
         }
 
-        guard isURL(targetDirectory, containedIn: workspaceURL) else {
+        guard WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: workspaceURL) else {
             throw WorkspaceDocumentOperationError.invalidMove("Move items into the current workspace.")
         }
 
@@ -3792,7 +4807,7 @@ final class WorkspaceStore: ObservableObject {
             throw WorkspaceDocumentOperationError.invalidMove("The item no longer exists.")
         }
 
-        if sourceIsDirectory.boolValue, isURL(targetDirectory, containedIn: sourceURL) {
+        if sourceIsDirectory.boolValue, WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: sourceURL) {
             throw WorkspaceDocumentOperationError.invalidMove("A folder cannot be moved into itself.")
         }
 
@@ -3815,56 +4830,28 @@ final class WorkspaceStore: ObservableObject {
     ) -> [WorkspaceDocumentIDMapping] {
         let sourcePath = sourceURL.standardizedFileURL.path
         let destinationPath = destinationURL.standardizedFileURL.path
-        let sourcePrefix = sourcePath.hasSuffix("/") ? sourcePath : sourcePath + "/"
 
         return documents.compactMap { document in
             let documentPath = document.url.standardizedFileURL.path
-            let remappedPath: String?
-
-            if documentPath == sourcePath {
-                remappedPath = destinationPath
-            } else if documentPath.hasPrefix(sourcePrefix) {
-                remappedPath = destinationPath + "/" + documentPath.dropFirst(sourcePrefix.count)
-            } else {
-                remappedPath = nil
-            }
-
-            guard let remappedPath, remappedPath != documentPath else {
-                return nil
-            }
-
+            let remappedPath = path(documentPath, afterMoving: sourcePath, to: destinationPath)
+            guard remappedPath != documentPath else { return nil }
             return WorkspaceDocumentIDMapping(sourceID: documentPath, destinationID: remappedPath)
         }
     }
 
-    nonisolated private static func isURL(_ candidate: URL, containedIn directory: URL) -> Bool {
-        let candidatePath = candidate.standardizedFileURL.path
-        let directoryPath = directory.standardizedFileURL.path
-        let prefix = directoryPath.hasSuffix("/") ? directoryPath : directoryPath + "/"
-        return candidatePath == directoryPath || candidatePath.hasPrefix(prefix)
-    }
-
-    nonisolated private static func uniqueDocumentURL(for sourceURL: URL, in directoryURL: URL) -> URL {
-        let fileManager = FileManager.default
-        let sourceExtension = sourceURL.pathExtension
-        let baseName = sourceURL.deletingPathExtension().lastPathComponent
-        var candidate = directoryURL.appendingPathComponent(sourceURL.lastPathComponent)
-
-        guard fileManager.fileExists(atPath: candidate.path) else {
-            return candidate
+    /// Where `path` is once the item at `sourcePath` moves to `destinationPath`: the item and
+    /// everything inside it follow, and any other path stays.
+    nonisolated static func path(
+        _ path: String,
+        afterMoving sourcePath: String,
+        to destinationPath: String
+    ) -> String {
+        if path == sourcePath {
+            return destinationPath
         }
-
-        var index = 1
-        repeat {
-            let suffix = index == 1 ? " copy" : " copy \(index)"
-            let name = sourceExtension.isEmpty
-                ? "\(baseName)\(suffix)"
-                : "\(baseName)\(suffix).\(sourceExtension)"
-            candidate = directoryURL.appendingPathComponent(name)
-            index += 1
-        } while fileManager.fileExists(atPath: candidate.path)
-
-        return candidate
+        let sourcePrefix = sourcePath.hasSuffix("/") ? sourcePath : sourcePath + "/"
+        guard path.hasPrefix(sourcePrefix) else { return path }
+        return destinationPath + "/" + path.dropFirst(sourcePrefix.count)
     }
 
     nonisolated private static func resolveDroppedTarget(for url: URL) async throws -> DroppedTarget {
@@ -3921,8 +4908,12 @@ private struct WorkspaceMarkdownLinkMoveRequest: Equatable, Sendable {
     let selectedURL: URL?
     let preserveSelection: String?
     let reloadSelection: Bool
-    let clearDocumentTransferOnSuccess: Bool
+    let sidebarSelection: SidebarSelectionAfterLoad
+    let completedTransfer: WorkspaceDocumentTransfer?
     let failureMessage: String
+    let itemName: String
+    /// The move run this move is a step of.
+    let moveRunID: Int?
 }
 
 private struct WorkspaceMarkdownLinkMoveWrittenFile: Sendable {
@@ -3938,7 +4929,7 @@ private struct WorkspaceMarkdownLinkMoveReceipt: Sendable {
 }
 
 private enum WorkspaceMarkdownLinkMoveError: LocalizedError {
-    case unsavedMarkdown
+    case unsavedLinkingDocument(String)
     case staleReview
     case sourceOutsideWorkspace
     case destinationOutsideWorkspace
@@ -3949,8 +4940,8 @@ private enum WorkspaceMarkdownLinkMoveError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .unsavedMarkdown:
-            return "Save Markdown changes before renaming or moving workspace items."
+        case .unsavedLinkingDocument(let name):
+            return "Save \(name) first: this move updates the links in it."
         case .staleReview:
             return "Workspace files changed after the link preview. Review the move again."
         case .sourceOutsideWorkspace:
@@ -4004,16 +4995,33 @@ struct WorkspaceTextMutation: Equatable, Sendable {
     let replacement: String
 }
 
+struct WorkspaceFolderReveal: Equatable, Sendable {
+    let serial: Int
+    let folderID: String
+}
+
+/// What the sidebar selects once an operation's rescan lands.
+private enum SidebarSelectionAfterLoad: Equatable, Sendable {
+    /// The selection stays; a selected folder that moved is followed to its new path.
+    case unchanged
+    /// The selection moves to the document the operation selected.
+    case document
+    /// A folder the operation created or pasted.
+    case folder(URL)
+    /// Nothing: the operation moved the selection to the Trash.
+    case cleared
+}
+
+/// A file or folder Monknot renamed or moved, with the documents that moved with it.
 struct WorkspaceDocumentIDRemapEvent: Equatable, Sendable {
     let serial: Int
+    let itemSourcePath: String
+    let itemDestinationPath: String
     let mappings: [WorkspaceDocumentIDMapping]
 
-    var sourceID: String {
-        mappings.first?.sourceID ?? ""
-    }
-
-    var destinationID: String {
-        mappings.first?.destinationID ?? ""
+    /// Where `path` is now: the moved item and everything inside it follow it, any other path stays.
+    func remappedPath(_ path: String) -> String {
+        WorkspaceStore.path(path, afterMoving: itemSourcePath, to: itemDestinationPath)
     }
 }
 
@@ -4032,12 +5040,43 @@ private enum DroppedTarget: Sendable {
     case unsupported
 }
 
-private struct WorkspaceDocumentTransfer: Sendable {
-    let document: WorkspaceDocument
+/// A workspace file or folder waiting for Paste, with the pasteboard item its Copy or Cut wrote.
+private struct WorkspaceDocumentTransfer: Equatable, Sendable {
+    let url: URL
     let operation: WorkspaceDocumentTransferOperation
+    let pasteboardStamp: WorkspacePasteboardTransferStamp?
+
+    /// The same transfer once Monknot has moved the item at `sourcePath`, or an item containing it.
+    func following(movedItemAt sourcePath: String, to destinationPath: String) -> WorkspaceDocumentTransfer {
+        let path = WorkspaceStore.path(url.path, afterMoving: sourcePath, to: destinationPath)
+        guard path != url.path else { return self }
+        return WorkspaceDocumentTransfer(
+            url: URL(fileURLWithPath: path, isDirectory: url.hasDirectoryPath),
+            operation: operation,
+            pasteboardStamp: pasteboardStamp
+        )
+    }
 }
 
-private enum WorkspaceDocumentTransferOperation: Sendable {
+/// A move waiting for the one before it to finish.
+private struct WorkspaceQueuedMove: Equatable, Sendable {
+    let sourcePath: String
+    let directoryURL: URL?
+}
+
+/// The moves of a drop of several items, made one after another, and what the run reports when
+/// it ends.
+private struct WorkspaceMoveRun {
+    let id: Int
+    var moves: [WorkspaceQueuedMove]
+    var movedCount = 0
+    /// Why items were not moved, in order.
+    var failures: [String] = []
+    /// What the drop's import had to say.
+    var notes: [String] = []
+}
+
+private enum WorkspaceDocumentTransferOperation: Equatable, Sendable {
     case copy
     case cut
 }
@@ -4046,6 +5085,7 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
     case emptyName
     case nestedName
     case invalidName(String)
+    case nameTooLong
     case couldNotCreateFile(String)
     case unsupportedPDFExport(String)
     case writingToolsActive(String)
@@ -4054,6 +5094,10 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
     case invalidMove(String)
     case invalidCreation(String)
     case notDirectory(String)
+    case hiddenName(String)
+    case ignoredFolderName(String)
+    case packageFolderName(String)
+    case unsupportedFileType(String)
 
     var errorDescription: String? {
         switch self {
@@ -4063,6 +5107,8 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
             return "File name cannot contain path separators."
         case .invalidName(let name):
             return "\(name) is not a valid file name."
+        case .nameTooLong:
+            return "This name is longer than macOS allows. Shorten it."
         case .couldNotCreateFile(let name):
             return "Could not create \(name)."
         case .unsupportedPDFExport(let name):
@@ -4079,6 +5125,14 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
             return message
         case .notDirectory(let name):
             return "\(name) is not a folder."
+        case .hiddenName(let name):
+            return "Names starting with a period are hidden, so \(name) would not appear in the sidebar."
+        case .ignoredFolderName(let name):
+            return "Monknot hides folders named \(name)."
+        case .packageFolderName(let name):
+            return "\(name) would be a package, which Finder shows as one file, so Monknot hides it."
+        case .unsupportedFileType(let name):
+            return "Monknot does not show files like \(name). Add an extension such as .md or .txt."
         }
     }
 }

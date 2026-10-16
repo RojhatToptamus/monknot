@@ -198,9 +198,9 @@ final class PDFNavigatorLayoutTests: PDFNavigatorTestCase {
         XCTAssertTrue(MonknotSegmentButton.showsFocusRing(isFocused: true, isDisabled: false))
         XCTAssertFalse(MonknotSegmentButton.showsFocusRing(isFocused: false, isDisabled: false))
         XCTAssertFalse(MonknotSegmentButton.showsFocusRing(isFocused: true, isDisabled: true))
-        XCTAssertEqual(MonknotSegmentButton.focusRingLineWidth, 3)
-        XCTAssertEqual(MonknotSegmentButton.focusRingOutset, 2)
-        XCTAssertEqual(MonknotSegmentButton.focusRingOpacity, 0.35)
+        XCTAssertEqual(MonknotIconButton.focusRingLineWidth, 3)
+        XCTAssertEqual(MonknotIconButton.focusRingOutset, 2)
+        XCTAssertEqual(MonknotIconButton.focusRingOpacity, 0.35)
 
         for zoomScale in [1.0, 2.0] {
             let theme = AppTheme.defaultLight

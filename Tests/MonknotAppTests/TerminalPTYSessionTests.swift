@@ -132,6 +132,57 @@ final class TerminalPTYSessionTests: XCTestCase {
         )
     }
 
+    func testShellEnvironmentDropsAnotherTerminalsIdentityAndNamesThisOne() {
+        let environment = TerminalPTYSession.childEnvironment(
+            from: [
+                "PATH": "/usr/bin",
+                "HOME": "/Users/test",
+                "TERM_PROGRAM": "iTerm.app",
+                "ITERM_SESSION_ID": "w0t0p0",
+                "VSCODE_INJECTION": "1",
+                "TMUX": "/tmp/tmux",
+                "LC_TERMINAL": "iTerm2",
+            ],
+            appVersion: "2.3"
+        )
+        XCTAssertEqual(environment["PATH"], "/usr/bin")
+        XCTAssertEqual(environment["HOME"], "/Users/test")
+        XCTAssertEqual(environment["TERM"], "xterm-256color")
+        XCTAssertEqual(environment["COLORTERM"], "truecolor")
+        XCTAssertEqual(environment["TERM_PROGRAM"], "Monknot")
+        XCTAssertEqual(environment["TERM_PROGRAM_VERSION"], "2.3")
+        XCTAssertEqual(environment["LANG"], "en_US.UTF-8", "Launched from Finder there is no locale")
+        for inherited in ["ITERM_SESSION_ID", "VSCODE_INJECTION", "TMUX", "LC_TERMINAL"] {
+            XCTAssertNil(environment[inherited], inherited)
+        }
+
+        let withLocale = TerminalPTYSession.childEnvironment(from: ["LANG": "de_DE.UTF-8"], appVersion: nil)
+        XCTAssertEqual(withLocale["LANG"], "de_DE.UTF-8", "A locale the user set is kept")
+    }
+
+    @MainActor
+    func testARestartedShellStartsAtTheSizeTheViewLastReported() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MonknotTerminalSize-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let session = TerminalSessionStore(initialDirectory: directory)
+        defer { session.stop() }
+        session.resize(columns: 77, rows: 21)
+        session.startIfNeeded()
+        session.restart()
+        session.send("stty size\n")
+
+        var output = ""
+        for _ in 0..<200 {
+            output = String(decoding: session.output.bytes(from: session.output.startOffset) ?? Data(), as: UTF8.self)
+            if output.contains("21 77") { break }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertTrue(output.contains("21 77"), output)
+    }
+
     func testTwoTerminalSessionsRunIndependently() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("MonknotTerminalPTYMultiple-\(UUID().uuidString)", isDirectory: true)
@@ -290,9 +341,9 @@ private final class TerminalPTYRecorder: @unchecked Sendable {
         return output
     }
 
-    func append(_ text: String) {
+    func append(_ bytes: Data) {
         condition.lock()
-        output += text
+        output += String(decoding: bytes, as: UTF8.self)
         condition.broadcast()
         condition.unlock()
     }

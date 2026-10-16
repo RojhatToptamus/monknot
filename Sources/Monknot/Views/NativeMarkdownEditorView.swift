@@ -15,6 +15,7 @@ struct NativeMarkdownEditorView: View {
     let textSelection: DocumentTextSelection?
     let syncScrollEnabled: Bool
     let syncScrollTargetLine: Int?
+    let openingTopLine: Int?
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var searchState: DocumentSearchState
     let searchOptions: MonknotSearchOptions
@@ -44,6 +45,7 @@ struct NativeMarkdownEditorView: View {
         textSelection: DocumentTextSelection? = nil,
         syncScrollEnabled: Bool,
         syncScrollTargetLine: Int?,
+        openingTopLine: Int? = nil,
         sourceLocation: Binding<MarkdownSourceLocation?>,
         searchState: Binding<DocumentSearchState>,
         searchOptions: MonknotSearchOptions = MonknotSearchOptions(),
@@ -72,6 +74,7 @@ struct NativeMarkdownEditorView: View {
         self.textSelection = textSelection
         self.syncScrollEnabled = syncScrollEnabled
         self.syncScrollTargetLine = syncScrollTargetLine
+        self.openingTopLine = openingTopLine
         self._sourceLocation = sourceLocation
         self._searchState = searchState
         self.searchOptions = searchOptions
@@ -108,6 +111,7 @@ struct NativeMarkdownEditorView: View {
                     onScrollPositionChange: onScrollPositionChange,
                     syncScrollEnabled: syncScrollEnabled,
                     syncScrollTargetLine: syncScrollTargetLine,
+                    openingTopLine: openingTopLine,
                     onVisibleTopLineChange: onVisibleTopLineChange,
                     commandRequest: commandRequest,
                     markdownShortcutsEnabled: true,
@@ -165,10 +169,67 @@ struct MarkdownToolbarActionDescriptor: Identifiable {
     var id: String { label }
 }
 
+/// The toolbar redraws when its theme, zoom or statistics change, not on every keystroke in the
+/// pane around it. `sendCommand` forwards to the pane and is not compared.
+extension MarkdownSourceToolbar: Equatable {
+    nonisolated static func == (lhs: MarkdownSourceToolbar, rhs: MarkdownSourceToolbar) -> Bool {
+        MainActor.assumeIsolated {
+            lhs.zoomScale == rhs.zoomScale &&
+                lhs.statistics == rhs.statistics &&
+                lhs.theme == rhs.theme
+        }
+    }
+}
+
+/// A menu in the Markdown toolbar, with the same box and states as the icon buttons beside it: no fill
+/// at rest, the shared hover fill, the label one step up the ink ladder while hovered (design.md §1.4,
+/// §5.1) and the standard focus ring. SwiftUI draws the label: a `.borderlessButton` menu hands it to an
+/// AppKit pop-up button, which keeps only its text or image and drops the frame, fill and hover.
+private struct MarkdownToolbarMenu<Content: View, Label: View>: View {
+    let theme: AppTheme
+    let zoomScale: Double
+    /// The label's width; `nil` makes the menu square, like an icon button.
+    var width: CGFloat?
+    @ViewBuilder let content: () -> Content
+    @ViewBuilder let label: (_ isHovered: Bool) -> Label
+    @State private var isHovered = false
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        let size = MarkdownSourceToolbar.controlSize
+        let dimension = size.dimension(theme: theme, zoomScale: zoomScale)
+        let cornerRadius = size.cornerRadius(theme: theme, zoomScale: zoomScale)
+        let shape = RoundedRectangle(cornerRadius: cornerRadius)
+
+        Menu {
+            content()
+        } label: {
+            label(isHovered)
+                .frame(width: width ?? dimension, height: dimension)
+                .background {
+                    if isHovered {
+                        shape.fill(theme.hoverFillColor)
+                    }
+                }
+                .contentShape(shape)
+                .monknotFocusRing(isVisible: isFocused, cornerRadius: cornerRadius, theme: theme)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .focusable(NSApp.isFullKeyboardAccessEnabled)
+        .focused($isFocused)
+        .focusEffectDisabled()
+        .onHover { isHovered = $0 }
+        .animation(MonknotMotion.hoverAnimation, value: isHovered)
+        .fixedSize()
+    }
+}
+
 struct MarkdownSourceToolbar: View {
     let theme: AppTheme
     let zoomScale: Double
-    let text: String
+    let statistics: MarkdownTextStatistics?
     let sendCommand: (MarkdownTextEditorCommand) -> Void
 
     static let controlSize = MonknotIconButton.IconButtonSize.editorToolbar
@@ -182,7 +243,7 @@ struct MarkdownSourceToolbar: View {
         [
             MarkdownToolbarActionDescriptor(systemImage: "bold", label: "Bold", command: .bold),
             MarkdownToolbarActionDescriptor(systemImage: "italic", label: "Italic", command: .italic),
-            MarkdownToolbarActionDescriptor(systemImage: "quote.opening", label: "Quote", command: .quote),
+            MarkdownToolbarActionDescriptor(systemImage: "text.quote", label: "Quote", command: .quote),
             MarkdownToolbarActionDescriptor(systemImage: "curlybraces", label: "Inline Code", command: .code),
             MarkdownToolbarActionDescriptor(systemImage: "link", label: "Link", command: .link),
         ],
@@ -215,12 +276,19 @@ struct MarkdownSourceToolbar: View {
 
             Spacer(minLength: 0)
 
-            Text("\(lineCount)/\(wordCount)")
-                .font(.system(size: textScaled(12), weight: .regular, design: .monospaced))
+            // The count keeps one width, present or not, so `ViewThatFits` never picks another
+            // variant while typing or switching tabs.
+            Text(statistics.map { Self.wordCountLabel($0.wordCount) } ?? "")
+                .monknotReservingWidth(of: Self.wordCountWidthTemplate)
+                .font(.system(size: textScaled(12), weight: .regular))
+                .monospacedDigit()
                 .foregroundStyle(theme.tertiaryForegroundColor)
                 .lineLimit(1)
                 .fixedSize()
-                .accessibilityLabel("\(lineCount) lines, \(wordCount) words")
+                .opacity(statistics == nil ? 0 : 1)
+                .help(statistics.map(Self.statisticsDescription) ?? "")
+                .accessibilityLabel(statistics.map(Self.statisticsDescription) ?? "")
+                .accessibilityHidden(statistics == nil)
         }
         .monknotChromeSubrowLayout(theme: theme, zoomScale: zoomScale)
     }
@@ -271,54 +339,36 @@ struct MarkdownSourceToolbar: View {
     }
 
     private func headingMenu(width: CGFloat) -> some View {
-        let dimension = Self.controlSize.dimension(theme: theme, zoomScale: zoomScale)
-        let shape = RoundedRectangle(
-            cornerRadius: Self.controlSize.cornerRadius(theme: theme, zoomScale: zoomScale)
-        )
-
-        return Menu {
+        MarkdownToolbarMenu(theme: theme, zoomScale: zoomScale, width: width) {
             blockStyleCommands
-        } label: {
-            headingMenuLabel
+        } label: { isHovered in
+            headingMenuLabel(isHovered: isHovered)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, scaled(10))
-                .frame(width: width, height: dimension)
-                .background(shape.fill(theme.controlTrackFillColor))
-                .contentShape(shape)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .buttonStyle(.plain)
         .help("Block Style")
         .accessibilityLabel("Block Style")
     }
 
-    private var headingMenuLabel: Text {
-        // macOS Menu extracts only one label value: standalone Images move to
-        // the leading icon slot and later sibling views are discarded. Keep
-        // the title, scalable spacing, and indicator in one composed Text. The
-        // arrowhead's SF Pro ink sits 3.2pt below the title's optical center.
+    private func headingMenuLabel(isHovered: Bool) -> Text {
+        // One composed Text keeps the title and indicator on one baseline. The arrowhead's SF Pro ink
+        // sits 3.2pt below the title's optical center.
         Text("Paragraph")
             .font(.system(size: textScaled(Self.headingFontSizeBase), weight: .regular))
-            .foregroundColor(theme.foregroundColor)
+            .foregroundColor(isHovered ? theme.foregroundColor : theme.mutedForegroundColor)
         + Text(verbatim: "\u{2002}")
             .font(.system(size: textScaled(Self.headingFontSizeBase), weight: .regular))
         + Text(verbatim: "⌄")
             .font(.system(size: textScaled(Self.headingChevronFontSizeBase), weight: .regular))
             .baselineOffset(textScaled(Self.headingChevronBaselineOffsetBase))
-            .foregroundColor(theme.mutedForegroundColor)
+            .foregroundColor(isHovered ? theme.foregroundColor : theme.tertiaryForegroundColor)
     }
 
     private var blockStyleIconMenu: some View {
-        Menu {
+        iconMenu(systemImage: "textformat.size") {
             blockStyleCommands
-        } label: {
-            toolbarMenuLabel(systemImage: "textformat.size")
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
         .help("Block Style")
         .accessibilityLabel("Block Style")
     }
@@ -333,21 +383,16 @@ struct MarkdownSourceToolbar: View {
     }
 
     private var listsMenu: some View {
-        Menu {
+        iconMenu(systemImage: "list.bullet") {
             listCommands
-        } label: {
-            toolbarMenuLabel(systemImage: "list.bullet")
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
         .help("List Formatting")
         .accessibilityLabel("List Formatting")
     }
 
     private func overflowMenu(includesLink: Bool, includesLists: Bool) -> some View {
-        Menu {
-            Button("Quote", systemImage: "quote.opening") { sendCommand(.quote) }
+        iconMenu(systemImage: "ellipsis") {
+            Button("Quote", systemImage: "text.quote") { sendCommand(.quote) }
             Button("Inline Code", systemImage: "curlybraces") { sendCommand(.code) }
             if includesLink {
                 Button("Link", systemImage: "link") { sendCommand(.link) }
@@ -365,12 +410,7 @@ struct MarkdownSourceToolbar: View {
                 Button("Image", systemImage: "photo") { sendCommand(.image) }
                 Button("Horizontal Rule", systemImage: "minus") { sendCommand(.horizontalRule) }
             }
-        } label: {
-            toolbarMenuLabel(systemImage: "ellipsis")
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
         .help("More formatting actions")
         .accessibilityLabel("More formatting actions")
     }
@@ -382,21 +422,19 @@ struct MarkdownSourceToolbar: View {
         Button("Task List", systemImage: "checklist") { sendCommand(.taskList) }
     }
 
-    private func toolbarMenuLabel(systemImage: String) -> some View {
-        let dimension = Self.controlSize.dimension(theme: theme, zoomScale: zoomScale)
-        let shape = RoundedRectangle(
-            cornerRadius: Self.controlSize.cornerRadius(theme: theme, zoomScale: zoomScale)
-        )
-
-        return MonknotSystemGlyph(
-            systemImage: systemImage,
-            nominalPointSizeBase: 17,
-            theme: theme,
-            zoomScale: zoomScale
-        )
-            .foregroundStyle(theme.mutedForegroundColor)
-            .frame(width: dimension, height: dimension)
-            .contentShape(shape)
+    private func iconMenu<Content: View>(
+        systemImage: String,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        MarkdownToolbarMenu(theme: theme, zoomScale: zoomScale, content: content) { isHovered in
+            MonknotSystemGlyph(
+                systemImage: systemImage,
+                nominalPointSizeBase: Self.controlSize.iconPointSizeBase,
+                theme: theme,
+                zoomScale: zoomScale
+            )
+            .foregroundStyle(isHovered ? theme.foregroundColor : theme.mutedForegroundColor)
+        }
     }
 
     private var divider: some View {
@@ -424,13 +462,15 @@ struct MarkdownSourceToolbar: View {
         )
     }
 
-    private var lineCount: Int {
-        max(1, text.reduce(into: 1) { count, character in
-            if character == "\n" { count += 1 }
-        })
+    /// As wide as any count below a million words.
+    static let wordCountWidthTemplate = wordCountLabel(999_999)
+
+    static func wordCountLabel(_ wordCount: Int) -> String {
+        wordCount == 1 ? "1 word" : "\(wordCount.formatted()) words"
     }
 
-    private var wordCount: Int {
-        text.split { $0.isWhitespace || $0.isPunctuation }.count
+    static func statisticsDescription(_ statistics: MarkdownTextStatistics) -> String {
+        let lines = statistics.lineCount == 1 ? "1 line" : "\(statistics.lineCount.formatted()) lines"
+        return "\(lines), \(wordCountLabel(statistics.wordCount))"
     }
 }

@@ -57,13 +57,15 @@ struct PDFPreviewView: View {
         VStack(spacing: 0) {
             MonknotChromePanel(theme: theme) {
                 PDFAnnotationToolbar(
+                    isImage: isImage,
+                    isMarkupSupported: loadState.isMarkupSupported,
                     interactionMode: $interactionMode,
                     selectedColor: $selectedColor,
                     strokeWidth: $strokeWidth,
                     saveState: saveState,
                     canUndo: canUndo,
                     canRedo: canRedo,
-                    isDocumentAvailable: loadState == .loaded,
+                    isDocumentAvailable: loadState.isLoaded,
                     theme: theme,
                     zoomScale: zoomScale,
                     runMarkup: runMarkup(_:),
@@ -81,37 +83,11 @@ struct PDFPreviewView: View {
                 )
             }
 
-            if let markupHint {
-                HStack(spacing: scaled(8)) {
-                    Image(systemName: "text.cursor")
-                        .font(.system(
-                            size: MonknotMetrics.interfaceGlyph(15, theme: theme, zoomScale: zoomScale),
-                            weight: .regular
-                        ))
-                        .foregroundStyle(theme.accentColor)
-
-                    Text(markupHint)
-                        .font(.system(
-                            size: MonknotMetrics.interfaceText(12.5, theme: theme, zoomScale: zoomScale),
-                            weight: .regular
-                        ))
-                        .foregroundStyle(theme.foregroundColor)
-
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, scaled(12))
-                .frame(height: scaled(32))
-                .background(theme.accentColor.opacity(theme.isDark ? 0.18 : 0.14))
-                .overlay(alignment: .bottom) {
-                    Rectangle().fill(theme.separatorColor).frame(height: 1)
-                }
-                .transition(.opacity)
-            }
-
             ZStack {
                 PDFKitPreviewRepresentable(
                     documentID: document.id,
                     url: document.url,
+                    isImage: isImage,
                     dirtyData: dirtyData,
                     savedEditCheckpoint: savedEditCheckpoint,
                     contentVersion: contentVersion,
@@ -146,16 +122,29 @@ struct PDFPreviewView: View {
                     updateLoadState: updateLoadState(_:),
                     reportError: handleAnnotationError(_:)
                 )
-                .opacity(loadState == .loaded ? 1 : 0)
+                .opacity(loadState.isLoaded ? 1 : 0)
 
                 pdfLoadStatus
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // An overlay, so the page never moves while the hint shows.
+            .overlay(alignment: .top) {
+                if let markupHint {
+                    markupHintBanner(markupHint)
+                        .transition(.opacity)
+                }
+            }
         }
         .background(theme.surfaceColor)
         .onChange(of: document.id) { _, _ in
             loadState = .loading
             markupHint = nil
+            // The area highlighter is an image tool, and the navigator a PDF one.
+            if isImage {
+                isNavigatorPresented = false
+            } else if interactionMode == .highlighter {
+                interactionMode = .select
+            }
             selectedFreeTextFormatting = nil
             onSelectionSnapshotChange(nil)
         }
@@ -174,6 +163,37 @@ struct PDFPreviewView: View {
             withAnimation(MonknotMotion.hoverAnimation) {
                 markupHint = nil
             }
+        }
+    }
+
+    private func markupHintBanner(_ hint: String) -> some View {
+        HStack(spacing: scaled(8)) {
+            Image(systemName: "text.cursor")
+                .font(.system(
+                    size: MonknotMetrics.interfaceGlyph(15, theme: theme, zoomScale: zoomScale),
+                    weight: .regular
+                ))
+                .foregroundStyle(theme.accentColor)
+
+            Text(hint)
+                .font(.system(
+                    size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale),
+                    weight: .regular
+                ))
+                .foregroundStyle(theme.foregroundColor)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, scaled(12))
+        .frame(height: scaled(32))
+        .background {
+            ZStack {
+                theme.surfaceColor
+                theme.accentColor.opacity(theme.isDark ? 0.18 : 0.14)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(theme.separatorColor).frame(height: 1)
         }
     }
 
@@ -264,23 +284,25 @@ struct PDFPreviewView: View {
     private var pdfLoadStatus: some View {
         switch loadState {
         case .loading:
-            VStack(spacing: scaled(10)) {
-                ProgressView()
-                    .controlSize(.small)
+            VStack(spacing: scaled(12)) {
+                MonknotProgressIndicator(
+                    size: MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale),
+                    theme: theme
+                )
 
-                Text("Opening PDF…")
+                Text(isImage ? "Opening image…" : "Opening PDF…")
                     .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
-                    .foregroundStyle(theme.mutedForegroundColor)
+                    .foregroundStyle(theme.tertiaryForegroundColor)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("Opening PDF")
+            .accessibilityLabel(isImage ? "Opening image" : "Opening PDF")
         case .loaded:
             EmptyView()
         case .failed:
             MonknotEmptyState(
                 systemImage: "exclamationmark.triangle",
-                title: "Unable to open PDF",
+                title: isImage ? "Unable to open image" : "Unable to open PDF",
                 detail: "The file may be damaged, incomplete, or unavailable.",
                 theme: theme,
                 zoomScale: zoomScale
@@ -293,12 +315,27 @@ struct PDFPreviewView: View {
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
+
+    private var isImage: Bool {
+        document.kind == .image
+    }
 }
 
 private enum PDFLoadState: Equatable {
     case loading
-    case loaded
+    /// Markup is unsupported only for images whose format can't be written back.
+    case loaded(isMarkupSupported: Bool)
     case failed
+
+    var isLoaded: Bool {
+        if case .loaded = self { return true }
+        return false
+    }
+
+    var isMarkupSupported: Bool {
+        if case .loaded(let isMarkupSupported) = self { return isMarkupSupported }
+        return true
+    }
 }
 
 private enum PDFStrokeWidthPopoverAnchor: Equatable {
@@ -323,6 +360,8 @@ enum PDFAnnotationStyleDisclosure: Equatable {
         switch mode {
         case .select:
             self = hasSelectedText ? .text : .markupColor
+        case .highlighter:
+            self = .markupColor
         case .pen:
             self = .drawing
         case .eraser:
@@ -378,6 +417,9 @@ struct PDFZoomStatus: Equatable {
 
     static let presetPercentages = [100, 120, 140, 160, 180, 200]
 
+    /// The label's slot is as wide as a three-digit percentage, so zooming never resizes it.
+    static let widthTemplate = "000%"
+
     var displayLabel: String {
         guard isAvailable else { return "—" }
         return "\(Int((scaleFactor * 100).rounded()))%"
@@ -404,6 +446,11 @@ struct PDFPageStatus: Equatable {
     var displayLabel: String {
         guard isAvailable else { return "—/—" }
         return "\(currentPage)/\(pageCount)"
+    }
+
+    /// As wide as the label of any page of this document, so turning pages never resizes the slot.
+    var widthTemplate: String {
+        MonknotStableWidth.pageTemplate(pageCount: pageCount)
     }
 }
 
@@ -634,6 +681,7 @@ private struct PDFFreeTextFormattingPopover: View {
 
     @State private var isFontMenuHovered = false
     @State private var hoveredSizeStep: Int?
+    @State private var pressedSizeStep: Int?
     @FocusState private var focusedControl: PDFFreeTextPopoverFocus?
 
     private var metrics: PDFFreeTextPopoverMetrics {
@@ -697,42 +745,12 @@ private struct PDFFreeTextFormattingPopover: View {
                 }
             }
         } label: {
-            HStack(spacing: metrics.itemSpacing) {
-                Text(formatting.fontFamily)
-                    .font(.system(size: metrics.labelFontSize, weight: .regular))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Image(systemName: "chevron.down")
-                    .font(.system(size: metrics.secondaryGlyphFontSize, weight: .regular))
-                    .foregroundStyle(theme.tertiaryForegroundColor)
-            }
-            .foregroundStyle(theme.foregroundColor)
-            .padding(.horizontal, metrics.itemSpacing)
-            .frame(width: metrics.fontMenuWidth, height: metrics.controlHeight)
-            .background(
-                isFontMenuHovered
-                    ? theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.055)
-                    : theme.insetFillColor,
-                in: controlShape
-            )
-            .overlay {
-                controlShape.strokeBorder(theme.borderColor, lineWidth: 1)
-            }
-            .overlay {
-                if focusedControl == .fontFamily {
-                    controlShape
-                        .stroke(theme.accentColor.opacity(0.35), lineWidth: 3)
-                        .padding(-2)
-                }
-            }
-            .contentShape(controlShape)
+            fontFamilyMenuLabel
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .buttonStyle(.plain)
-        .focusable()
+        .focusable(NSApp.isFullKeyboardAccessEnabled)
         .focused($focusedControl, equals: .fontFamily)
         .focusEffectDisabled()
         .onHover { isFontMenuHovered = $0 }
@@ -740,6 +758,38 @@ private struct PDFFreeTextFormattingPopover: View {
         .help("Font Family")
         .accessibilityLabel("Font Family")
         .accessibilityValue(formatting.fontFamily)
+    }
+
+    private var fontFamilyMenuLabel: some View {
+        HStack(spacing: metrics.itemSpacing) {
+            Text(formatting.fontFamily)
+                .font(.system(size: metrics.labelFontSize, weight: .regular))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Image(systemName: "chevron.down")
+                .font(.system(size: metrics.secondaryGlyphFontSize, weight: .regular))
+                .foregroundStyle(theme.tertiaryForegroundColor)
+        }
+        .foregroundStyle(theme.foregroundColor)
+        .padding(.horizontal, metrics.itemSpacing)
+        .frame(width: metrics.fontMenuWidth, height: metrics.controlHeight)
+        .background {
+            controlShape.fill(theme.insetFillColor)
+            if isFontMenuHovered {
+                controlShape.fill(theme.hoverFillColor)
+            }
+        }
+        .overlay {
+            controlShape.strokeBorder(theme.borderColor, lineWidth: 1)
+        }
+        .monknotFocusRing(
+            isVisible: focusedControl == .fontFamily,
+            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale),
+            theme: theme
+        )
+        .contentShape(controlShape)
     }
 
     private var fontSizeControl: some View {
@@ -786,13 +836,11 @@ private struct PDFFreeTextFormattingPopover: View {
         .overlay {
             controlShape.strokeBorder(theme.borderColor, lineWidth: 1)
         }
-        .overlay {
-            if focusedControl == .increaseSize || focusedControl == .decreaseSize {
-                controlShape
-                    .stroke(theme.accentColor.opacity(0.35), lineWidth: 3)
-                    .padding(-2)
-            }
-        }
+        .monknotFocusRing(
+            isVisible: focusedControl == .increaseSize || focusedControl == .decreaseSize,
+            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale),
+            theme: theme
+        )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Font Size")
         .accessibilityValue("\(Int(formatting.fontSize.rounded())) points")
@@ -815,15 +863,28 @@ private struct PDFFreeTextFormattingPopover: View {
                 .foregroundStyle(isDisabled ? theme.disabledForegroundColor : theme.mutedForegroundColor)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background {
-                    if hoveredSizeStep == Int(delta), !isDisabled {
-                        theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.055)
+                    if !isDisabled {
+                        if pressedSizeStep == Int(delta) {
+                            theme.pressedFillColor
+                        } else if hoveredSizeStep == Int(delta) {
+                            theme.hoverFillColor
+                        }
                     }
                 }
                 .contentShape(Rectangle())
         }
-        .buttonStyle(MonknotControlPressStyle())
+        .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: Binding(
+            get: { pressedSizeStep == Int(delta) },
+            set: { isPressed in
+                if isPressed {
+                    pressedSizeStep = Int(delta)
+                } else if pressedSizeStep == Int(delta) {
+                    pressedSizeStep = nil
+                }
+            }
+        )))
         .disabled(isDisabled)
-        .focusable(!isDisabled)
+        .focusable(!isDisabled && NSApp.isFullKeyboardAccessEnabled)
         .focused($focusedControl, equals: focus)
         .focusEffectDisabled()
         .onHover { isHovered in
@@ -903,6 +964,9 @@ private struct PDFFreeTextFormattingPopover: View {
 }
 
 private struct PDFAnnotationToolbar: View {
+    /// An image: one page, no text, and markup that can be saved only into some formats.
+    let isImage: Bool
+    let isMarkupSupported: Bool
     @Binding var interactionMode: PDFAnnotationInteractionMode
     @Binding var selectedColor: PDFAnnotationPaletteColor
     @Binding var strokeWidth: Double
@@ -942,13 +1006,20 @@ private struct PDFAnnotationToolbar: View {
     }
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            regularToolbar
-            annotationToolbar
-            compactToolbar
-            minimalToolbar
+        // The zoom group and Save sit outside the variants, so changing tools, selecting text or
+        // dirtying the document never moves them.
+        HStack(spacing: scaled(5)) {
+            ViewThatFits(in: .horizontal) {
+                regularToolbar
+                annotationToolbar
+                compactToolbar
+                minimalToolbar
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            toolbarDivider
+            zoomToolbar
+            saveButton
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, scaled(10))
         .frame(height: MonknotMetrics.interfaceControl(36, theme: theme, zoomScale: zoomScale))
         .frame(maxWidth: .infinity)
@@ -971,57 +1042,29 @@ private struct PDFAnnotationToolbar: View {
 
     private var regularToolbar: some View {
         HStack(spacing: scaled(5)) {
-            pageIndicator
-            toolbarDivider
-            navigatorButton
-            toolbarDivider
+            if !isImage {
+                pageIndicator
+                toolbarDivider
+                navigatorButton
+                toolbarDivider
+            }
             toolbarContent
             regularStyleControls
-            toolbarDivider
-            zoomToolbar
-            saveButtonIfNeeded
+                .disabled(!isMarkupSupported)
         }
         .fixedSize(horizontal: true, vertical: false)
     }
 
     private var compactToolbar: some View {
         HStack(spacing: scaled(5)) {
-            pageIndicator
-            toolbarDivider
-            navigatorButton
-            toolMenu
-            MonknotIconButton(
-                systemImage: "highlighter",
-                label: "Highlight Selection",
-                theme: theme,
-                zoomScale: zoomScale,
-                size: .compact
-            ) {
-                runMarkup(.highlight)
+            documentNavigation
+            Group {
+                toolMenu
+                markupButtons
+                responsiveStyleControls(anchor: .compact)
             }
-            MonknotIconButton(
-                systemImage: "underline",
-                label: "Underline Selection",
-                theme: theme,
-                zoomScale: zoomScale,
-                size: .compact
-            ) {
-                runMarkup(.underline)
-            }
-            MonknotIconButton(
-                systemImage: "strikethrough",
-                label: "Strike Through Selection",
-                theme: theme,
-                zoomScale: zoomScale,
-                size: .compact
-            ) {
-                runMarkup(.strikeOut)
-            }
-            responsiveStyleControls(anchor: .compact)
+            .disabled(!isMarkupSupported)
             moreMenu
-            toolbarDivider
-            zoomToolbar
-            saveButtonIfNeeded
         }
         .fixedSize(horizontal: true, vertical: false)
     }
@@ -1031,64 +1074,30 @@ private struct PDFAnnotationToolbar: View {
     /// `ViewThatFits` selects this only when the complete toolbar cannot fit.
     private var annotationToolbar: some View {
         HStack(spacing: scaled(5)) {
-            pageIndicator
-            toolbarDivider
-            navigatorButton
-            selectButton
-
-            MonknotIconButton(
-                systemImage: "highlighter",
-                label: "Highlight Selection",
-                theme: theme,
-                zoomScale: zoomScale,
-                size: .compact
-            ) {
-                runMarkup(.highlight)
+            documentNavigation
+            Group {
+                selectButton
+                markupButtons
+                penButton
+                freeTextButton
+                eraserButton
+                responsiveStyleControls(anchor: .annotation)
             }
-
-            MonknotIconButton(
-                systemImage: "underline",
-                label: "Underline Selection",
-                theme: theme,
-                zoomScale: zoomScale,
-                size: .compact
-            ) {
-                runMarkup(.underline)
-            }
-
-            MonknotIconButton(
-                systemImage: "strikethrough",
-                label: "Strike Through Selection",
-                theme: theme,
-                zoomScale: zoomScale,
-                size: .compact
-            ) {
-                runMarkup(.strikeOut)
-            }
-
-            penButton
-            freeTextButton
-            eraserButton
-            responsiveStyleControls(anchor: .annotation)
+            .disabled(!isMarkupSupported)
             moreMenu
-            toolbarDivider
-            zoomToolbar
-            saveButtonIfNeeded
         }
         .fixedSize(horizontal: true, vertical: false)
     }
 
     private var minimalToolbar: some View {
         HStack(spacing: scaled(5)) {
-            pageIndicator
-            toolbarDivider
-            navigatorButton
-            toolMenu
-            responsiveStyleControls(anchor: .minimal)
+            documentNavigation
+            Group {
+                toolMenu
+                responsiveStyleControls(anchor: .minimal)
+            }
+            .disabled(!isMarkupSupported)
             moreMenu
-            toolbarDivider
-            zoomToolbar
-            saveButtonIfNeeded
         }
         .fixedSize(horizontal: true, vertical: false)
     }
@@ -1110,7 +1119,41 @@ private struct PDFAnnotationToolbar: View {
             toolbarDivider
 
             selectButton
+            markupButtons
+            penButton
+            freeTextButton
+            eraserButton
+        }
+        .disabled(!isMarkupSupported)
+        .fixedSize(horizontal: true, vertical: false)
+    }
 
+    /// Pages and the navigator belong to PDFs; an image is one page.
+    @ViewBuilder
+    private var documentNavigation: some View {
+        if !isImage {
+            pageIndicator
+            toolbarDivider
+            navigatorButton
+        }
+    }
+
+    /// PDFs mark up selected text; images have none, so their highlighter drags out an area.
+    @ViewBuilder
+    private var markupButtons: some View {
+        if isImage {
+            MonknotIconButton(
+                systemImage: "highlighter",
+                label: "Highlight",
+                theme: theme,
+                zoomScale: zoomScale,
+                isActive: interactionMode == .highlighter,
+                size: .compact
+            ) {
+                interactionMode = .highlighter
+            }
+            .accessibilityAddTraits(interactionMode == .highlighter ? .isSelected : [])
+        } else {
             MonknotIconButton(
                 systemImage: "highlighter",
                 label: "Highlight Selection",
@@ -1120,7 +1163,6 @@ private struct PDFAnnotationToolbar: View {
             ) {
                 runMarkup(.highlight)
             }
-
             MonknotIconButton(
                 systemImage: "underline",
                 label: "Underline Selection",
@@ -1130,7 +1172,6 @@ private struct PDFAnnotationToolbar: View {
             ) {
                 runMarkup(.underline)
             }
-
             MonknotIconButton(
                 systemImage: "strikethrough",
                 label: "Strike Through Selection",
@@ -1140,12 +1181,7 @@ private struct PDFAnnotationToolbar: View {
             ) {
                 runMarkup(.strikeOut)
             }
-
-            penButton
-            freeTextButton
-            eraserButton
         }
-        .fixedSize(horizontal: true, vertical: false)
     }
 
     @ViewBuilder
@@ -1327,6 +1363,11 @@ private struct PDFAnnotationToolbar: View {
             Button("Select", systemImage: "cursorarrow") {
                 interactionMode = .select
             }
+            if isImage {
+                Button("Highlight", systemImage: "highlighter") {
+                    interactionMode = .highlighter
+                }
+            }
             Button("Draw", systemImage: "pencil.tip") {
                 interactionMode = .pen
             }
@@ -1429,8 +1470,12 @@ private struct PDFAnnotationToolbar: View {
     private var moreMenu: some View {
         Menu {
             if !saveState.isClean {
-                Button("Save PDF", systemImage: "externaldrive.badge.checkmark", action: saveDocument)
-                    .disabled(saveState == .saving)
+                Button(
+                    isImage ? "Save Image" : "Save PDF",
+                    systemImage: "externaldrive.badge.checkmark",
+                    action: saveDocument
+                )
+                .disabled(saveState == .saving)
 
                 Divider()
             }
@@ -1440,9 +1485,11 @@ private struct PDFAnnotationToolbar: View {
             Button("Redo", systemImage: "arrow.uturn.forward", action: redo)
                 .disabled(!canRedo)
 
-            Divider()
+            if !isImage {
+                Divider()
 
-            markupCommands
+                markupCommands
+            }
         } label: {
             toolbarMenuLabel(
                 systemImage: "ellipsis",
@@ -1454,8 +1501,8 @@ private struct PDFAnnotationToolbar: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .onHover { updateMenuHover(.more, isHovered: $0) }
-        .help("More PDF actions")
-        .accessibilityLabel("More PDF actions")
+        .help(isImage ? "More image actions" : "More PDF actions")
+        .accessibilityLabel(isImage ? "More image actions" : "More PDF actions")
     }
 
     private var navigatorButton: some View {
@@ -1507,16 +1554,10 @@ private struct PDFAnnotationToolbar: View {
             )
             .frame(width: dimension, height: dimension)
             .background {
-                if isActive || isHovered {
-                    shape.fill(theme.foregroundColor.opacity(
-                        isActive
-                            ? MonknotIconButton.IconButtonSize.chrome.activeBackgroundOpacity(
-                                isDark: theme.isDark
-                            )
-                            : MonknotIconButton.IconButtonSize.chrome.hoverBackgroundOpacity(
-                                isDark: theme.isDark
-                            )
-                    ))
+                if isActive {
+                    shape.fill(theme.accentSoftFillColor)
+                } else if isHovered {
+                    shape.fill(theme.hoverFillColor)
                 }
             }
             .contentShape(shape)
@@ -1549,11 +1590,7 @@ private struct PDFAnnotationToolbar: View {
         .background(theme.controlTrackFillColor, in: shape)
         .overlay {
             if isHovered {
-                shape.fill(theme.foregroundColor.opacity(
-                    MonknotIconButton.IconButtonSize.chrome.hoverBackgroundOpacity(
-                        isDark: theme.isDark
-                    )
-                ))
+                shape.fill(theme.hoverFillColor)
             }
         }
         .overlay {
@@ -1575,6 +1612,8 @@ private struct PDFAnnotationToolbar: View {
         switch interactionMode {
         case .select:
             return "cursorarrow"
+        case .highlighter:
+            return "highlighter"
         case .pen:
             return "pencil.tip"
         case .eraser:
@@ -1586,6 +1625,8 @@ private struct PDFAnnotationToolbar: View {
         switch interactionMode {
         case .select:
             return "Select"
+        case .highlighter:
+            return "Highlight"
         case .pen:
             return "Draw"
         case .eraser:
@@ -1606,7 +1647,7 @@ private struct PDFAnnotationToolbar: View {
 
                 Text("\(Int(strokeWidth)) pt")
                     .font(.system(
-                        size: MonknotMetrics.interfaceText(11, theme: theme, zoomScale: zoomScale),
+                        size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale),
                         weight: .regular,
                         design: .monospaced
                     ))
@@ -1625,7 +1666,7 @@ private struct PDFAnnotationToolbar: View {
         HStack(spacing: scaled(8)) {
             Text("Thickness")
                 .font(.system(
-                    size: MonknotMetrics.interfaceText(11, theme: theme, zoomScale: zoomScale),
+                    size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale),
                     weight: .regular
                 ))
                 .foregroundStyle(theme.mutedForegroundColor)
@@ -1639,21 +1680,15 @@ private struct PDFAnnotationToolbar: View {
         .accessibilityValue("\(Int(strokeWidth)) points")
     }
 
-    @ViewBuilder
-    private var saveButtonIfNeeded: some View {
-        if !saveState.isClean {
-            saveButton
-        }
-    }
-
+    /// Always laid out; disabled while there is nothing to save (design.md §10.2).
     private var saveButton: some View {
         MonknotIconButton(
             systemImage: "externaldrive.badge.checkmark",
-            label: "Save PDF",
+            label: isImage ? "Save Image" : "Save PDF",
             theme: theme,
             zoomScale: zoomScale,
             isActive: !saveState.isClean,
-            isDisabled: saveState == .saving,
+            isDisabled: saveState.isClean || saveState == .saving,
             size: .compact
         ) {
             saveDocument()
@@ -1662,6 +1697,7 @@ private struct PDFAnnotationToolbar: View {
 
     private var pageIndicator: some View {
         Text(pageStatus.displayLabel)
+            .monknotReservingWidth(of: pageStatus.widthTemplate)
             .font(.system(
                 size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale),
                 weight: .regular,
@@ -1670,7 +1706,7 @@ private struct PDFAnnotationToolbar: View {
             .foregroundStyle(pageStatus.isAvailable ? theme.mutedForegroundColor : theme.disabledForegroundColor)
             .monospacedDigit()
             .lineLimit(1)
-            .frame(minWidth: scaled(34), alignment: .leading)
+            .frame(minWidth: scaled(34), alignment: .trailing)
             .fixedSize(horizontal: true, vertical: false)
             .accessibilityLabel(
                 pageStatus.isAvailable
@@ -1725,6 +1761,7 @@ struct PDFZoomToolbarGroup: View {
         } label: {
             HStack(spacing: scaled(6)) {
                 Text(status.displayLabel)
+                    .monknotReservingWidth(of: PDFZoomStatus.widthTemplate)
                     .font(.system(size: textScaled(13), weight: .regular))
                     .monospacedDigit()
                     .lineLimit(1)
@@ -1743,31 +1780,36 @@ struct PDFZoomToolbarGroup: View {
             .padding(.leading, scaled(10))
             .padding(.trailing, scaled(9))
             .frame(height: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale))
-            .background(zoomControlBackgroundColor, in: zoomControlShape)
-            .overlay {
-                zoomControlShape
-                    .strokeBorder(theme.borderColor, lineWidth: 1)
-            }
-            .overlay {
-                if isMenuFocused, status.isAvailable {
-                    zoomControlShape
-                        .stroke(theme.accentColor.opacity(0.35), lineWidth: 3)
-                        .padding(-2)
+            .background {
+                zoomControlShape.fill(theme.controlTrackFillColor)
+                if isMenuHovered, status.isAvailable {
+                    zoomControlShape.fill(theme.hoverFillColor)
                 }
             }
+            .overlay {
+                // design.md §5.1: disabled dims the border and uses `ink4`; nothing multiplies on top.
+                zoomControlShape.strokeBorder(
+                    theme.borderColor.opacity(status.isAvailable ? 1 : MonknotIconButton.disabledBorderOpacity),
+                    lineWidth: 1
+                )
+            }
+            .monknotFocusRing(
+                isVisible: isMenuFocused && status.isAvailable,
+                cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale),
+                theme: theme
+            )
             .contentShape(zoomControlShape)
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .disabled(!status.isAvailable)
-        .focusable(status.isAvailable)
+        .focusable(status.isAvailable && NSApp.isFullKeyboardAccessEnabled)
         .focused($isMenuFocused)
         .focusEffectDisabled()
-        .opacity(status.isAvailable ? 1 : 0.42)
         .onHover { isMenuHovered = $0 }
-        .help("PDF Zoom")
-        .accessibilityLabel("PDF Zoom")
+        .help("Page Zoom")
+        .accessibilityLabel("Page Zoom")
         .accessibilityValue(status.displayLabel)
         .fixedSize(horizontal: true, vertical: false)
         .animation(.easeOut(duration: 0.12), value: isMenuHovered)
@@ -1780,14 +1822,6 @@ struct PDFZoomToolbarGroup: View {
     private var zoomControlForegroundColor: Color {
         guard status.isAvailable else { return theme.disabledForegroundColor }
         return isMenuHovered ? theme.foregroundColor : theme.mutedForegroundColor
-    }
-
-    private var zoomControlBackgroundColor: Color {
-        guard status.isAvailable else { return theme.controlTrackFillColor }
-        if isMenuHovered {
-            return theme.foregroundColor.opacity(theme.isDark ? 0.085 : 0.06)
-        }
-        return theme.controlTrackFillColor
     }
 }
 
@@ -1809,6 +1843,7 @@ private struct PDFColorSwatchButton: View {
     let action: () -> Void
 
     @State private var isHovered = false
+    @State private var isPressed = false
     @FocusState private var isFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -1816,11 +1851,19 @@ private struct PDFColorSwatchButton: View {
         MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
     }
 
+    private var backgroundFill: Color {
+        if isPressed {
+            return theme.pressedFillColor
+        }
+        return isSelected || isHovered ? theme.hoverFillColor : .clear
+    }
+
     var body: some View {
+        let dimension = MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale)
         Button(action: action) {
             ZStack {
                 Circle()
-                    .fill(isSelected || isHovered ? theme.controlTrackFillColor : Color.clear)
+                    .fill(backgroundFill)
 
                 Circle()
                     .fill(color.color)
@@ -1833,25 +1876,20 @@ private struct PDFColorSwatchButton: View {
                             .strokeBorder(theme.surfaceColor.opacity(0.85), lineWidth: 1)
                     }
             }
-            .frame(
-                width: MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale),
-                height: MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale)
-            )
+            .frame(width: dimension, height: dimension)
             .overlay {
-                if isFocused {
-                    Circle()
-                        .strokeBorder(theme.accentColor.opacity(0.9), lineWidth: 1.5)
-                        .padding(1)
-                } else if isSelected {
+                if isSelected {
                     Circle()
                         .strokeBorder(theme.borderColor, lineWidth: 1)
                 }
             }
+            .monknotFocusRing(isVisible: isFocused, cornerRadius: dimension / 2, theme: theme)
             .contentShape(Circle())
         }
-        .buttonStyle(MonknotControlPressStyle())
-        .focusable()
+        .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
+        .focusable(NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
+        .focusEffectDisabled()
         .onHover { isHovered = $0 }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: isHovered)
         .animation(.easeOut(duration: 0.12), value: isSelected)
@@ -2316,6 +2354,9 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
     private let contentView = NSView()
     private let outlineScrollView = NSScrollView()
     private let annotationScrollView = NSScrollView()
+    private let thumbnailScrollerBehavior = MonknotChromeScrollerBehavior()
+    private let outlineScrollerBehavior = MonknotChromeScrollerBehavior()
+    private let annotationScrollerBehavior = MonknotChromeScrollerBehavior()
     private let emptyLabel = NSTextField(labelWithString: "")
     private var headerHeightConstraint: NSLayoutConstraint!
     private var sectionControlHeightConstraint: NSLayoutConstraint!
@@ -2401,6 +2442,10 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         appliedTheme = theme
         let foreground = NSColor(hex: theme.foreground)
         foregroundColor = foreground
+        let thumbColor = MonknotScrollbarStyle.thumbColor(for: theme)
+        thumbnailScrollerBehavior.thumbColor = thumbColor
+        outlineScrollerBehavior.thumbColor = thumbColor
+        annotationScrollerBehavior.thumbColor = thumbColor
         mutedForegroundColor = foreground.withAlphaComponent(theme.isDark ? 0.62 : 0.64)
         selectionColor = NSColor(hex: theme.selectionBackground)
         wantsLayer = true
@@ -2529,6 +2574,9 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         thumbnailView.allowsDragging = false
         thumbnailView.allowsMultipleSelection = false
         thumbnailView.setAccessibilityLabel("PDF Pages")
+        if let thumbnailScrollView = Self.firstScrollView(in: thumbnailView) {
+            thumbnailScrollerBehavior.attach(to: thumbnailScrollView)
+        }
         contentView.addSubview(thumbnailView)
         thumbnailLeadingConstraint = thumbnailView.leadingAnchor.constraint(
             equalTo: contentView.leadingAnchor,
@@ -2554,6 +2602,16 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         ])
     }
 
+    /// PDFThumbnailView lists its pages in a private scroll view of its own.
+    private static func firstScrollView(in view: NSView) -> NSScrollView? {
+        for subview in view.subviews {
+            if let scrollView = subview as? NSScrollView ?? firstScrollView(in: subview) {
+                return scrollView
+            }
+        }
+        return nil
+    }
+
     private func configureOutlineView() {
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("PDFNavigatorOutlineColumn"))
         outlineView.addTableColumn(column)
@@ -2571,6 +2629,7 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         outlineScrollView.documentView = outlineView
         outlineScrollView.drawsBackground = false
         outlineScrollView.hasVerticalScroller = true
+        outlineScrollerBehavior.attach(to: outlineScrollView)
         contentView.addSubview(outlineScrollView)
         NSLayoutConstraint.activate([
             outlineScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
@@ -2595,6 +2654,7 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         annotationScrollView.documentView = annotationTableView
         annotationScrollView.drawsBackground = false
         annotationScrollView.hasVerticalScroller = true
+        annotationScrollerBehavior.attach(to: annotationScrollView)
         contentView.addSubview(annotationScrollView)
         NSLayoutConstraint.activate([
             annotationScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
@@ -2926,6 +2986,8 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
 struct PDFKitPreviewRepresentable: NSViewRepresentable {
     let documentID: String
     let url: URL
+    /// The file is an image shown on a page of its own; see `ImageMarkupDocument`.
+    let isImage: Bool
     let dirtyData: Data?
     let savedEditCheckpoint: PDFAnnotationEditCheckpoint?
     let contentVersion: Int
@@ -3027,6 +3089,13 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             zoomSerial: zoomCommand?.serial ?? 0,
             addFreeTextSerial: addFreeTextCommandSerial
         )
+        pdfView.onLayout = { [weak coordinator = context.coordinator, weak pdfView] in
+            guard let coordinator, let pdfView, coordinator.awaitsOpeningImageFit else { return }
+            // Zooming lays the view out again, so the fit runs after this layout pass.
+            DispatchQueue.main.async {
+                coordinator.applyOpeningImageFitIfNeeded(in: pdfView)
+            }
+        }
         context.coordinator.attach(to: pdfView)
         container.navigatorView.attach(to: pdfView)
         return container
@@ -3124,6 +3193,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         container.setNavigatorPresented(isNavigatorPresented)
         let didLoadDocument = context.coordinator.loadDocumentIfNeeded(
             url,
+            isImage: isImage,
             dirtyData: dirtyData,
             contentVersion: contentVersion,
             in: pdfView,
@@ -3200,7 +3270,16 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         private var lastZoomCommandSerial = 0
         private var lastPageNavigationRequest: PDFPageNavigationRequest?
         private var shouldRestoreViewportState = false
+        private var isImageDocument = false
+        /// An image opens fitted to the view, which a view without a size yet cannot do; the fit
+        /// then waits for its first layout.
+        private(set) var awaitsOpeningImageFit = false
         private var lastPublishedViewportState: PDFDocumentViewportState?
+        /// States this view published itself, newest last. SwiftUI hands each one back a frame or more
+        /// later, by when the view may have moved on (a ⌘-scroll publishes several in a row): a state
+        /// that matches any of them is an echo of the view's own past, not a request to move it.
+        private var recentlyPublishedViewportStates: [PDFDocumentViewportState] = []
+        private static let publishedViewportStateMemory = 16
         private var lastPublishedPageStatus: PDFPageStatus?
         private var lastPublishedZoomStatus: PDFZoomStatus?
         private var lastPublishedSelectionSnapshot: PDFSelectionSnapshot?
@@ -3247,6 +3326,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             viewportCaptureBridge = nil
             matches = []
             pendingSearchTarget = nil
+            awaitsOpeningImageFit = false
         }
 
         func clearSelectionSnapshot() {
@@ -3286,6 +3366,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
                 addFreeTextSerial: addFreeTextSerial
             )
             lastPublishedViewportState = nil
+            recentlyPublishedViewportStates.removeAll()
             lastPublishedPageStatus = nil
             lastPublishedZoomStatus = nil
             lastPublishedSelectionSnapshot = nil
@@ -3297,6 +3378,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         @discardableResult
         func loadDocumentIfNeeded(
             _ url: URL,
+            isImage: Bool = false,
             dirtyData: Data?,
             contentVersion: Int,
             in pdfView: AnnotatingPDFView,
@@ -3312,9 +3394,21 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             lastSearchHighlightTheme = nil
             var loadedDocument: PDFDocument?
             var loadedSourceData: Data?
+            var isMarkupSupported = true
             performWithoutPublishingViewportStateChanges {
                 pdfView.cancelFreeTextEditingBeforeDocumentReplacement()
-                if let dirtyData, let dirtyDocument = PDFDocument(data: dirtyData) {
+                if isImage {
+                    // The pixels always come from the file; unsaved edits hold only the markup.
+                    if let sourceData = try? Data(contentsOf: nextIdentity.url),
+                       let decoded = ImageMarkupDocument.decode(sourceData) {
+                        loadedDocument = ImageMarkupDocument.makeDocument(
+                            from: decoded,
+                            markupData: dirtyData
+                        )
+                        loadedSourceData = dirtyData == nil ? sourceData : nil
+                        isMarkupSupported = decoded.canSaveMarkup
+                    }
+                } else if let dirtyData, let dirtyDocument = PDFDocument(data: dirtyData) {
                     loadedDocument = dirtyDocument
                 } else {
                     // PDFKit may rewrite object order, metadata, or trailers when a loaded
@@ -3326,15 +3420,23 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
                         loadedDocument = sourceDocument
                     }
                 }
+                pdfView.serializeDocument = isImage
+                    ? ImageMarkupDocument.markupData(from:)
+                    : { $0.dataRepresentation() }
+                pdfView.imageFileURL = isImage ? nextIdentity.url : nil
+                pdfView.isMarkupSupported = isMarkupSupported
                 pdfView.document = loadedDocument
                 pdfView.replaceEditBaselineCapture(
                     with: loadedSourceData,
                     needsSnapshot: dirtyData == nil && loadedDocument != nil,
                     currentOwnedData: dirtyData
                 )
-                applyPDFZoomMode(.fixed(scaleFactor: 1), to: pdfView)
+                isImageDocument = isImage
+                applyOpeningZoom(to: pdfView)
             }
-            onLoadStateChange(loadedDocument == nil ? .failed : .loaded)
+            onLoadStateChange(
+                loadedDocument == nil ? .failed : .loaded(isMarkupSupported: isMarkupSupported)
+            )
             pdfView.clearAnnotationUndoHistory()
             navigatorView.documentDidChange()
             shouldRestoreViewportState = true
@@ -3495,8 +3597,37 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
                 return
             }
 
+            awaitsOpeningImageFit = false
             performWithoutPublishingViewportStateChanges {
                 applyPDFZoomCommand(request.command, to: pdfView)
+            }
+            publishViewportState(from: pdfView)
+        }
+
+        /// A PDF opens at its actual size. An image opens whole, at no more than its actual size,
+        /// as in Preview; until the view has a size it opens at actual size and fits on first layout.
+        private func applyOpeningZoom(to pdfView: PDFView) {
+            awaitsOpeningImageFit = isImageDocument && pdfView.document != nil && pdfView.bounds.isEmpty
+            applyPDFZoomMode(.fixed(scaleFactor: Double(openingScale(in: pdfView))), to: pdfView)
+        }
+
+        private func openingScale(in pdfView: PDFView) -> CGFloat {
+            guard isImageDocument, pdfView.document != nil, !pdfView.bounds.isEmpty else { return 1 }
+            // PDFKit's size-to-fit matches the width; a whole image must fit the height too.
+            let widthFit = pdfView.scaleFactorForSizeToFit
+            let margins = pdfView.displaysPageBreaks ? pdfView.pageBreakMargins : NSEdgeInsetsZero
+            let pageHeight = pdfView.document?.page(at: 0)?.bounds(for: pdfView.displayBox).height ?? 0
+            let heightFit = pageHeight > 0
+                ? (pdfView.bounds.height - margins.top - margins.bottom) / pageHeight
+                : 1
+            let fitScale = min(widthFit, heightFit)
+            return fitScale.isFinite && fitScale > 0 ? min(1, fitScale) : 1
+        }
+
+        func applyOpeningImageFitIfNeeded(in pdfView: AnnotatingPDFView) {
+            guard awaitsOpeningImageFit, !pdfView.bounds.isEmpty else { return }
+            performWithoutPublishingViewportStateChanges {
+                applyOpeningZoom(to: pdfView)
             }
             publishViewportState(from: pdfView)
         }
@@ -3545,8 +3676,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
                 shouldRestoreViewportState = true
             }
 
-            if let state,
-               state.isMeaningfullyDifferent(from: lastPublishedViewportState) {
+            if let state, !isEchoOfPublishedViewportState(state) {
                 shouldRestoreViewportState = true
             }
 
@@ -3558,15 +3688,12 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             shouldRestoreViewportState = false
 
             performWithoutPublishingViewportStateChanges {
-                let restoredZoomMode: PDFZoomMode
-                switch state?.zoomMode {
-                case .fixed(let scaleFactor):
-                    restoredZoomMode = .fixed(scaleFactor: scaleFactor)
-                case .fitToView, .none:
-                    restoredZoomMode = .fixed(scaleFactor: 1)
+                if let zoomMode = state?.zoomMode {
+                    awaitsOpeningImageFit = false
+                    applyPDFZoomMode(zoomMode, to: pdfView)
+                } else {
+                    applyOpeningZoom(to: pdfView)
                 }
-                applyPDFZoomMode(restoredZoomMode, to: pdfView)
-                pdfView.layoutDocumentView()
 
                 if !skipPosition,
                    let position = state?.position,
@@ -3583,11 +3710,19 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             if let state = PDFDocumentViewportState(pdfView: pdfView),
                state.isMeaningfullyDifferent(from: lastPublishedViewportState) {
                 lastPublishedViewportState = state
+                recentlyPublishedViewportStates.append(state)
+                if recentlyPublishedViewportStates.count > Self.publishedViewportStateMemory {
+                    recentlyPublishedViewportStates.removeFirst()
+                }
                 onViewportStateChange(state)
             }
 
             publishPageStatus(from: pdfView)
             publishZoomStatus(from: pdfView)
+        }
+
+        private func isEchoOfPublishedViewportState(_ state: PDFDocumentViewportState) -> Bool {
+            recentlyPublishedViewportStates.contains { !state.isMeaningfullyDifferent(from: $0) }
         }
 
         func publishFinalViewportState(from pdfView: PDFView) {
@@ -3891,53 +4026,40 @@ extension PDFPageStatus {
 /// PDFKit's own minimum/maximum scale bounds.
 /// https://developer.apple.com/documentation/pdfkit/pdfview/scalefactor
 func applyPDFZoomMode(_ mode: PDFZoomMode, to pdfView: PDFView) {
-    switch mode {
-    case .fitToView:
-        pdfView.autoScales = false
-        pdfView.scaleFactor = clampedPDFScaleFactor(1, in: pdfView)
-    case .fixed(let scaleFactor):
-        let requestedScale = CGFloat(scaleFactor)
-        guard requestedScale.isFinite, requestedScale > 0 else {
-            pdfView.autoScales = false
-            pdfView.scaleFactor = clampedPDFScaleFactor(1, in: pdfView)
-            break
-        }
-
-        pdfView.autoScales = false
-        pdfView.scaleFactor = clampedPDFScaleFactor(requestedScale, in: pdfView)
+    var requestedScale: CGFloat = 1
+    if case .fixed(let scaleFactor) = mode, scaleFactor.isFinite, scaleFactor > 0 {
+        requestedScale = CGFloat(scaleFactor)
     }
-
+    pdfView.autoScales = false
+    pdfView.scaleFactor = clampedPDFScaleFactor(requestedScale, in: pdfView)
     pdfView.layoutDocumentView()
 }
 
 func applyPDFZoomCommand(_ command: PDFZoomCommand, to pdfView: PDFView) {
+    let mode: PDFZoomMode
     switch command {
     case .zoomOut:
         guard pdfView.canZoomOut else { return }
         pdfView.autoScales = false
         pdfView.zoomOut(nil)
+        return
     case .zoomIn:
         guard pdfView.canZoomIn else { return }
         pdfView.autoScales = false
         pdfView.zoomIn(nil)
+        return
     case .fitToView:
-        let destination = pdfView.currentDestination
-        applyPDFZoomMode(.fitToView, to: pdfView)
-        if let destination {
-            pdfView.go(to: destination)
-        }
+        mode = .fitToView
     case .actualSize:
-        let destination = pdfView.currentDestination
-        applyPDFZoomMode(.fixed(scaleFactor: 1), to: pdfView)
-        if let destination {
-            pdfView.go(to: destination)
-        }
+        mode = .fixed(scaleFactor: 1)
     case .preset(let scaleFactor):
-        let destination = pdfView.currentDestination
-        applyPDFZoomMode(.fixed(scaleFactor: scaleFactor), to: pdfView)
-        if let destination {
-            pdfView.go(to: destination)
-        }
+        mode = .fixed(scaleFactor: scaleFactor)
+    }
+    // Keep the page and spot in view across the scale change.
+    let destination = pdfView.currentDestination
+    applyPDFZoomMode(mode, to: pdfView)
+    if let destination {
+        pdfView.go(to: destination)
     }
 }
 
@@ -4529,6 +4651,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         didSet {
             if oldValue != annotationMode {
                 discardActiveInkAnnotation()
+                discardActiveHighlight()
                 if let freeTextGesture {
                     restoreUncommittedFreeTextGestureIfSafe(freeTextGesture)
                     self.freeTextGesture = nil
@@ -4564,10 +4687,19 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
     var onError: (String) -> Void = { _ in }
     var onRequestLinkedExcerptCopy: (PDFSelectionSnapshot) -> Void = { _ in }
     var onAnnotationsChanged: () -> Void = {}
+    var onLayout: () -> Void = {}
     var onFreeTextSelectionChanged: (PDFFreeTextFormatting?) -> Void = { _ in }
     var linkedExcerptDocumentID: String?
     var linkedExcerptContentVersion = 0
 
+    /// False for an image whose format markup can't be saved into; it is shown read-only.
+    var isMarkupSupported = true
+    /// For an image, the file whose bytes are the edit baseline; a PDF's baseline is the document itself.
+    var imageFileURL: URL?
+    private weak var activeHighlightPage: PDFPage?
+    private var activeHighlightOrigin: CGPoint?
+    private var activeHighlightAnnotation: PDFAnnotation?
+    private var activeHighlightBaselineData: Data?
     private weak var activeInkPage: PDFPage?
     private var activeInkPoints: [CGPoint] = []
     private var activeInkAnnotation: PDFAnnotation?
@@ -4613,14 +4745,100 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
 
     override func layout() {
         super.layout()
+        // PDFKit configures its own scroll view and can replace it when the document changes.
         if let scrollView = documentView?.enclosingScrollView {
-            MonknotScrollbarStyle.apply(to: scrollView)
+            MonknotScrollbarStyle.applyDocument(to: scrollView)
         }
         updateFreeTextSelectionOverlay()
         updateFreeTextEditorFrame()
         if annotationMode == .select {
             window?.invalidateCursorRects(for: self)
         }
+        onLayout()
+    }
+
+    /// PDFKit zooms only with a trackpad pinch, so a mouse could not zoom a PDF at all. ⌘-scroll
+    /// over the document zooms around the pointer, as browsers and most document apps do. PDFKit's
+    /// internal scroll view consumes wheel events before this view sees them, so a local monitor
+    /// that lives while the view is in a window picks those out; plain scrolling and pinch are
+    /// unchanged.
+    private var commandScrollZoomMonitor: Any?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else {
+            removeCommandScrollZoomMonitor()
+            return
+        }
+        guard commandScrollZoomMonitor == nil else { return }
+        commandScrollZoomMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            // AppKit calls local event-monitor handlers on the main thread.
+            let handled = MainActor.assumeIsolated { self?.zoomForCommandScroll(event) ?? false }
+            return handled ? nil : event
+        }
+    }
+
+    deinit {
+        if let commandScrollZoomMonitor {
+            NSEvent.removeMonitor(commandScrollZoomMonitor)
+        }
+    }
+
+    private func removeCommandScrollZoomMonitor() {
+        guard let commandScrollZoomMonitor else { return }
+        NSEvent.removeMonitor(commandScrollZoomMonitor)
+        self.commandScrollZoomMonitor = nil
+    }
+
+    private func zoomForCommandScroll(_ event: NSEvent) -> Bool {
+        guard event.window === window,
+              let factor = Self.commandScrollZoomFactor(for: event),
+              let hitView = window?.contentView?.hitTest(event.locationInWindow),
+              hitView.isDescendant(of: self)
+        else { return false }
+        zoom(by: factor, keepingInPlace: convert(event.locationInWindow, from: nil))
+        return true
+    }
+
+    /// PDFKit's copy does nothing, silently, when no text is selected; say so the standard way.
+    override func copy(_ sender: Any?) {
+        guard currentSelection?.string?.isEmpty == false else {
+            NSSound.beep()
+            return
+        }
+        super.copy(sender)
+    }
+
+    /// The zoom factor for a ⌘-scroll, or nil for any other wheel event. Rolling the wheel away
+    /// from you zooms in, whatever the natural-scrolling setting; a notch is about 10%.
+    static func commandScrollZoomFactor(for event: NSEvent) -> CGFloat? {
+        guard event.type == .scrollWheel,
+              // Caps Lock and the function key are states, not modifiers the user is holding.
+              event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
+              event.scrollingDeltaY != 0
+        else { return nil }
+        let delta = event.isDirectionInvertedFromDevice ? -event.scrollingDeltaY : event.scrollingDeltaY
+        let step: CGFloat = event.hasPreciseScrollingDeltas ? 0.01 : 0.1
+        return exp(delta * step)
+    }
+
+    /// Zooms by `factor` within PDFKit's scale bounds and scrolls so the spot at `point` (in this
+    /// view's coordinates) stays under it.
+    func zoom(by factor: CGFloat, keepingInPlace point: NSPoint) {
+        guard let page = page(for: point, nearest: true),
+              let scrollView = documentView?.enclosingScrollView
+        else { return }
+        let clipView = scrollView.contentView
+        let pagePoint = convert(point, to: page)
+        applyPDFZoomMode(.fixed(scaleFactor: Double(scaleFactor * factor)), to: self)
+
+        let before = clipView.convert(point, from: self)
+        let after = clipView.convert(convert(pagePoint, from: page), from: self)
+        var origin = clipView.bounds.origin
+        origin.x += after.x - before.x
+        origin.y += after.y - before.y
+        clipView.scroll(to: origin)
+        scrollView.reflectScrolledClipView(clipView)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -4722,7 +4940,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
                     )
                 }
             }
-        case .pen, .eraser:
+        case .highlighter, .pen, .eraser:
             // In annotation modes Monknot owns the cursor; PDFView cursor rects otherwise compete with it.
             addCursorRect(bounds, cursor: toolCursor)
         }
@@ -4793,7 +5011,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         switch annotationMode {
         case .select:
             return selectFreeTextCursor(at: viewPoint) ?? .arrow
-        case .pen, .eraser:
+        case .highlighter, .pen, .eraser:
             return toolCursor
         }
     }
@@ -4838,6 +5056,13 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
             if !handleFreeTextSelectionMouseDown(event) {
                 super.mouseDown(with: event)
             }
+        case .highlighter:
+            guard canAnnotate() else { return }
+            guard let target = pagePoint(for: event) else { return }
+            activeHighlightPage = target.page
+            activeHighlightOrigin = target.point
+            activeHighlightAnnotation = nil
+            activeHighlightBaselineData = takeEditBaselineSnapshotIfNeeded()
         case .pen:
             guard canAnnotate() else { return }
             guard let target = pagePoint(for: event) else { return }
@@ -4858,6 +5083,10 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
             } else {
                 super.mouseDragged(with: event)
             }
+        case .highlighter:
+            guard let activeHighlightPage else { return }
+            let viewPoint = convert(event.locationInWindow, from: nil)
+            renderActiveHighlight(to: convert(viewPoint, to: activeHighlightPage))
         case .pen:
             guard let activeInkPage,
                   let target = pagePoint(for: event),
@@ -4903,6 +5132,8 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
                 discardActiveInkAnnotation()
             }
             activeInkBaselineData = nil
+        case .highlighter:
+            finishActiveHighlight()
         case .eraser:
             break
         }
@@ -5733,7 +5964,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
 
     private func editBaselineDataWithoutConsuming() -> Data? {
         guard needsEditBaselineSnapshot else { return nil }
-        return loadedSourceBaselineData ?? document?.dataRepresentation()
+        return loadedSourceBaselineData ?? currentFileBaselineData()
     }
 
     private func cancelFreeTextGestureWithStaleAnnotation() {
@@ -5984,14 +6215,102 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         return annotation
     }
 
+    /// The baseline for an edit when no loaded source bytes are kept: the image file, or the PDF
+    /// document as it is now.
+    private func currentFileBaselineData() -> Data? {
+        if let imageFileURL {
+            return try? Data(contentsOf: imageFileURL)
+        }
+        return document?.dataRepresentation()
+    }
+
+    /// A gesture that took the one-time baseline snapshot but made no edit gives it back.
+    private func returnUnusedEditBaseline(_ baseline: Data?) {
+        guard let baseline else { return }
+        loadedSourceBaselineData = loadedSourceBaselineData ?? baseline
+        needsEditBaselineSnapshot = true
+    }
+
     private func discardActiveInkAnnotation() {
         if let activeInkPage, let activeInkAnnotation {
             activeInkPage.removeAnnotation(activeInkAnnotation)
         }
+        returnUnusedEditBaseline(activeInkBaselineData)
         activeInkPoints = []
         activeInkPage = nil
         activeInkAnnotation = nil
         activeInkBaselineData = nil
+    }
+
+    /// Redraws the highlight being dragged out, from where the drag began to `point`, on its page.
+    private func renderActiveHighlight(to point: CGPoint) {
+        guard let page = activeHighlightPage, let origin = activeHighlightOrigin else { return }
+        if let activeHighlightAnnotation {
+            page.removeAnnotation(activeHighlightAnnotation)
+            self.activeHighlightAnnotation = nil
+        }
+        let pageBounds = page.bounds(for: displayBox)
+        let area = CGRect(
+            x: min(origin.x, point.x),
+            y: min(origin.y, point.y),
+            width: abs(point.x - origin.x),
+            height: abs(point.y - origin.y)
+        ).intersection(pageBounds)
+        guard !area.isNull, area.width >= 1, area.height >= 1 else {
+            refreshAnnotationDisplay(on: page)
+            return
+        }
+
+        let annotation = PDFAnnotation(bounds: area, forType: .highlight, withProperties: nil)
+        annotation.color = annotationColor.withAlphaComponent(0.46)
+        annotation.userName = NSFullUserName()
+        annotation.modificationDate = Date()
+        annotation.shouldDisplay = true
+        annotation.shouldPrint = true
+        annotation.quadrilateralPoints = pdfTextMarkupQuadrilateralPoints(for: area.size)
+        page.addAnnotation(annotation)
+        activeHighlightAnnotation = annotation
+        refreshAnnotationDisplay(on: page)
+    }
+
+    private func finishActiveHighlight() {
+        guard let page = activeHighlightPage,
+              let annotation = activeHighlightAnnotation,
+              let document,
+              // A click, or a drag too small to see, is not a highlight.
+              annotation.bounds.width >= 4,
+              annotation.bounds.height >= 4
+        else {
+            discardActiveHighlight()
+            return
+        }
+        let baseline = activeHighlightBaselineData
+        clearActiveHighlight()
+        registerAnnotationEdit(
+            PDFAnnotationEditOperation(
+                added: [.init(pageIndex: document.index(for: page), annotation: annotation)],
+                removed: []
+            )
+        )
+        annotationsChanged(on: page)
+        onAnnotationsChanged()
+        publishEditedDocument(previousData: baseline)
+    }
+
+    private func discardActiveHighlight() {
+        if let activeHighlightPage, let activeHighlightAnnotation {
+            activeHighlightPage.removeAnnotation(activeHighlightAnnotation)
+            refreshAnnotationDisplay(on: activeHighlightPage)
+        }
+        returnUnusedEditBaseline(activeHighlightBaselineData)
+        clearActiveHighlight()
+    }
+
+    private func clearActiveHighlight() {
+        activeHighlightPage = nil
+        activeHighlightOrigin = nil
+        activeHighlightAnnotation = nil
+        activeHighlightBaselineData = nil
     }
 
     private func inkAnnotation(points: [CGPoint]) -> PDFAnnotation? {
@@ -6143,7 +6462,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
 
     private func takeEditBaselineSnapshotIfNeeded() -> Data? {
         guard needsEditBaselineSnapshot else { return nil }
-        guard let baselineData = loadedSourceBaselineData ?? document?.dataRepresentation() else {
+        guard let baselineData = loadedSourceBaselineData ?? currentFileBaselineData() else {
             return nil
         }
         needsEditBaselineSnapshot = false
@@ -6347,6 +6666,11 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
             return false
         }
 
+        guard isMarkupSupported else {
+            onError(PDFAnnotationOperationError.imageMarkupUnsupported.localizedDescription)
+            return false
+        }
+
         if document.isLocked {
             onError(PDFAnnotationOperationError.locked.localizedDescription)
             return false
@@ -6361,7 +6685,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
     }
 
     private var allowsAnnotationMutation: Bool {
-        guard let document else { return false }
+        guard let document, isMarkupSupported else { return false }
         return !document.isLocked && document.allowsCommenting
     }
 
@@ -6412,6 +6736,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         onAnnotationsChanged = {}
         onFreeTextSelectionChanged = { _ in }
         serializeDocument = { $0.dataRepresentation() }
+        imageFileURL = nil
         document = nil
     }
 }
@@ -6427,6 +6752,9 @@ func pdfTextMarkupQuadrilateralPoints(for size: CGSize) -> [NSValue] {
 
 enum PDFAnnotationInteractionMode: Equatable {
     case select
+    /// Drags out a highlight over an area. Images have no text to select, so this is how they are
+    /// highlighted.
+    case highlighter
     case pen
     case eraser
 }
@@ -6462,6 +6790,8 @@ private enum PDFAnnotationToolCursor {
         switch mode {
         case .select:
             return .arrow
+        case .highlighter:
+            return .crosshair
         case .pen:
             return pen
         case .eraser:
@@ -6555,6 +6885,7 @@ private enum PDFAnnotationOperationError: LocalizedError {
     case noSelection
     case dataRepresentationFailed
     case annotationChanged
+    case imageMarkupUnsupported
 
     var errorDescription: String? {
         switch self {
@@ -6570,6 +6901,8 @@ private enum PDFAnnotationOperationError: LocalizedError {
             return "PDFKit could not prepare the annotated document."
         case .annotationChanged:
             return "The PDF annotation changed before the action completed."
+        case .imageMarkupUnsupported:
+            return ImageMarkupDocument.Failure.unsupportedFormat.localizedDescription
         }
     }
 }

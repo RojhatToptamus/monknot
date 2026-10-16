@@ -7,6 +7,17 @@ final class MarkdownSymbolQuickOpenState: ObservableObject {
     @Published private(set) var query = ""
     @Published private(set) var matches: [MarkdownOutlineItem] = []
     @Published var focusSerial = 0
+    /// The row Return opens; moved with ↑/↓ while the search field keeps focus.
+    @Published private(set) var selectedIndex = 0
+
+    var selectedMatch: MarkdownOutlineItem? {
+        matches.indices.contains(selectedIndex) ? matches[selectedIndex] : nil
+    }
+
+    func moveSelection(by offset: Int) {
+        guard !matches.isEmpty else { return }
+        selectedIndex = min(max(0, selectedIndex + offset), matches.count - 1)
+    }
 
     func present(items: [MarkdownOutlineItem]) {
         isPresented = true
@@ -19,6 +30,7 @@ final class MarkdownSymbolQuickOpenState: ObservableObject {
         isPresented = false
         query = ""
         matches = []
+        selectedIndex = 0
     }
 
     func setQuery(_ query: String, items: [MarkdownOutlineItem]) {
@@ -29,5 +41,6 @@ final class MarkdownSymbolQuickOpenState: ObservableObject {
 
     func refresh(items: [MarkdownOutlineItem]) {
         matches = MarkdownSymbolQuickOpenMatcher.rankedItems(query: query, items: items)
+        selectedIndex = 0
     }
 }

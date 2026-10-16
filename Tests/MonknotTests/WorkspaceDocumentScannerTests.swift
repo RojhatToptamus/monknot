@@ -9,7 +9,8 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
 
         try write("# Readme", to: root.appendingPathComponent("README.md"))
         try write("%PDF-1.7", to: root.appendingPathComponent("Guide.pdf"))
-        try write("media", to: root.appendingPathComponent("Clip.mp4"))
+        try write("not a movie", to: root.appendingPathComponent("Clip.mp4"))
+        try write("media", to: root.appendingPathComponent("Clip.avi"))
         try write("plain text", to: root.appendingPathComponent("Notes.txt"))
         try write("<h1>Hello</h1>", to: root.appendingPathComponent("Preview.html"))
         try write("graph TD; A-->B", to: root.appendingPathComponent("diagram.mmd"))
@@ -23,8 +24,13 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
         let result = try WorkspaceDocumentScanner().scan(rootURL: root)
         let relativePaths = result.documents.map(\.relativePath).sorted()
 
-        XCTAssertEqual(relativePaths, ["Guide.pdf", "Makefile", "Notes.txt", "Notes/Todo.markdown", "Preview.html", "README.md", "diagram.mmd"])
-        XCTAssertNil(result.documents.first(where: { $0.displayName == "Clip.mp4" }))
+        XCTAssertEqual(relativePaths, ["Clip.mp4", "Guide.pdf", "Makefile", "Notes.txt", "Notes/Todo.markdown", "Notes/image.png", "Preview.html", "README.md", "diagram.mmd"])
+        XCTAssertEqual(
+            result.documents.first(where: { $0.displayName == "Clip.mp4" })?.kind,
+            .media,
+            "Media is listed by its extension; the scan never reads the file"
+        )
+        XCTAssertNil(result.documents.first(where: { $0.displayName == "Clip.avi" }))
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "Guide.pdf" })?.kind, .pdf)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "README.md" })?.kind, .markdown)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "Notes.txt" })?.kind, .text)
@@ -32,10 +38,56 @@ final class WorkspaceDocumentScannerTests: XCTestCase {
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "Preview.html" })?.capabilities.canPreviewHTML, true)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "diagram.mmd" })?.kind, .text)
         XCTAssertEqual(result.documents.first(where: { $0.displayName == "Makefile" })?.kind, .text)
-        XCTAssertNil(result.documents.first(where: { $0.displayName == "image.png" }))
+        XCTAssertEqual(result.documents.first(where: { $0.displayName == "image.png" })?.kind, .image)
         XCTAssertNil(result.documents.first(where: { $0.displayName == "archive.zip" }))
-        XCTAssertEqual(result.root.children?.map(\.name), ["Empty", "Notes", "diagram.mmd", "Guide.pdf", "Makefile", "Notes.txt", "Preview.html", "README.md"])
-        XCTAssertEqual(result.root.children?.first(where: { $0.name == "Notes" })?.children?.map(\.name), ["Todo.markdown"])
+        XCTAssertEqual(result.root.children?.map(\.name), ["Empty", "Notes", "Clip.mp4", "diagram.mmd", "Guide.pdf", "Makefile", "Notes.txt", "Preview.html", "README.md"])
+        XCTAssertEqual(result.root.children?.first(where: { $0.name == "Notes" })?.children?.map(\.name), ["image.png", "Todo.markdown"])
+    }
+
+    func testNodeLookupFindsFoldersAndFilesByPath() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        for folder in ["Notes/Deep", "Notes Archive"] {
+            try FileManager.default.createDirectory(at: root.appendingPathComponent(folder), withIntermediateDirectories: true)
+        }
+        try write("# A", to: root.appendingPathComponent("Notes/Deep/a.md"))
+        try write("# B", to: root.appendingPathComponent("Notes Archive/b.md"))
+
+        let tree = try WorkspaceDocumentScanner().scan(rootURL: root).root
+        let notes = root.appendingPathComponent("Notes").standardizedFileURL.path
+
+        XCTAssertEqual(tree.node(withID: tree.id)?.id, tree.id)
+        XCTAssertEqual(tree.node(withID: notes)?.kind, .folder)
+        XCTAssertEqual(tree.node(withID: notes + "/Deep")?.name, "Deep")
+        XCTAssertEqual(tree.node(withID: notes + "/Deep/a.md")?.kind, .file)
+        XCTAssertEqual(tree.node(withID: notes + " Archive/b.md")?.name, "b.md")
+        XCTAssertNil(tree.node(withID: notes + "/Missing"))
+        XCTAssertNil(tree.node(withID: "/elsewhere/Notes"))
+    }
+
+    /// A folder named like a package is skipped by the scan, so the name check reports it hidden.
+    func testPackageNamedFoldersAreHiddenLikeTheScanSkipsThem() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        for name in ["Release.app", "X.bundle", "Notes.rtfd", "Folder", "v1.2", "Kit.framework"] {
+            let folder = root.appendingPathComponent(name, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try write("# Inside", to: folder.appendingPathComponent("Inside.md"))
+        }
+
+        let result = try WorkspaceDocumentScanner().scan(rootURL: root)
+        let listed = Set(result.root.children?.map(\.name) ?? [])
+        for name in ["Release.app", "X.bundle", "Notes.rtfd", "Folder", "v1.2", "Kit.framework"] {
+            XCTAssertEqual(
+                WorkspaceDocumentScanner.hidesItem(named: name, isDirectory: true),
+                !listed.contains(name),
+                name
+            )
+        }
+        XCTAssertEqual(listed, ["Folder", "v1.2", "Kit.framework"])
+        XCTAssertFalse(WorkspaceDocumentScanner.hidesItem(named: "Release.app.md", isDirectory: false))
     }
 
     func testScannerSkipsSymbolicLinkDirectories() throws {

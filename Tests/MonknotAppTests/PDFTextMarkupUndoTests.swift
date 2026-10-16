@@ -44,6 +44,31 @@ final class PDFTextMarkupUndoTests: PDFTextMarkupTestCase {
         )
     }
 
+    func testTerminalFocusNeverUndoesAWorkspaceReplace() {
+        XCTAssertEqual(
+            monknotUndoCommandDestination(
+                isPDFDocumentActive: false,
+                hasNativeEditingFocus: true,
+                terminalHasFocus: true,
+                canPerformNative: false,
+                canPerformWorkspaceReplace: true,
+                canPerformPDF: false
+            ),
+            .unavailable
+        )
+        XCTAssertEqual(
+            monknotUndoCommandDestination(
+                isPDFDocumentActive: false,
+                hasNativeEditingFocus: true,
+                terminalHasFocus: false,
+                canPerformNative: false,
+                canPerformWorkspaceReplace: true,
+                canPerformPDF: false
+            ),
+            .workspaceReplace
+        )
+    }
+
     func testUndoMenuRoutingMatchesWorkspaceReplaceShortcutPriority() {
         XCTAssertEqual(
             monknotUndoCommandDestination(
@@ -73,7 +98,7 @@ final class PDFTextMarkupUndoTests: PDFTextMarkupTestCase {
                 canPerformWorkspaceReplace: true,
                 canPerformPDF: true
             ),
-            .unavailable
+            .workspaceReplace
         )
     }
 

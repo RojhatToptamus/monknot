@@ -7,6 +7,10 @@ final class MarkdownScrollSyncTests: XCTestCase {
         XCTAssertEqual(MarkdownScrollSync.lineNumber(forCharacterIndex: 0, in: text), 1)
         XCTAssertEqual(MarkdownScrollSync.lineNumber(forCharacterIndex: 6, in: text), 2)
         XCTAssertEqual(MarkdownScrollSync.lineNumber(forCharacterIndex: 11, in: text), 3)
+        // An index inside a line belongs to that line.
+        XCTAssertEqual(MarkdownScrollSync.lineNumber(forCharacterIndex: 3, in: text), 1)
+        XCTAssertEqual(MarkdownScrollSync.lineNumber(forCharacterIndex: 9, in: text), 2)
+        XCTAssertEqual(MarkdownScrollSync.lineNumber(forCharacterIndex: 14, in: text), 3)
     }
 
     func testCharacterOffsetForLine() {

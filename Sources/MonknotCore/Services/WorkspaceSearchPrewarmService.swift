@@ -39,7 +39,7 @@ public struct WorkspaceSearchPrewarmService: Sendable {
                 guard warmedPDFCount < maxPDFDocuments else { continue }
                 _ = try pdfIndex.update(document: document)
                 warmedPDFCount += 1
-            case .media, .nativePreview, .unsupported:
+            case .image, .media, .nativePreview, .unsupported:
                 continue
             }
 

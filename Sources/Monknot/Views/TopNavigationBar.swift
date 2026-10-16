@@ -17,7 +17,6 @@ struct TopNavigationBar: View {
 
     @Binding var editorMode: EditorMode
     @Binding var isSplitViewEnabled: Bool
-    let emptyStateTitle: String
     let selectedDocument: WorkspaceDocument?
     let isBusy: Bool
     let isDocumentLoading: Bool
@@ -47,8 +46,8 @@ struct TopNavigationBar: View {
     var canNavigateForward = false
     @FocusState private var isSearchFocused: Bool
 
-    private var showsMarkdownViewControls: Bool {
-        selectedDocument?.kind == .markdown
+    private var hasPreviewMode: Bool {
+        selectedDocument?.hasPreviewMode == true
     }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -63,10 +62,21 @@ struct TopNavigationBar: View {
         MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
     }
 
+    /// The 1×16 divider between titlebar groups (design.md §10.7).
+    private func verticalRule(_ color: Color) -> some View {
+        Rectangle()
+            .fill(color)
+            .frame(width: 1, height: scaled(16))
+    }
+
+    private var isWorking: Bool {
+        isBusy || isDocumentLoading || isSaving
+    }
+
     var body: some View {
         HStack(spacing: scaled(MonknotMetrics.Spacing.s)) {
             Color.clear
-                .frame(width: 64)
+                .frame(width: MonknotMetrics.trafficLightReserveBase)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
 
@@ -83,45 +93,58 @@ struct TopNavigationBar: View {
             )
             .allowsTopBarWindowActivationEvents()
 
-            Rectangle()
-                .fill(theme.separatorColor)
-                .frame(width: 1, height: scaled(16))
+            verticalRule(theme.separatorColor)
                 .padding(.horizontal, scaled(2))
 
             tabsOrEmptyTitle
                 .layoutPriority(1)
 
-            if isBusy || isDocumentLoading || isSaving {
-                MonknotProgressIndicator(
-                    size: MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale),
-                    theme: theme
-                )
-                    .frame(width: scaled(18), height: scaled(18))
-                    .accessibilityLabel("Working")
-            }
+            // The spinner keeps its slot while idle, so starting work never moves the controls after it.
+            MonknotProgressIndicator(
+                size: glyphScaled(16),
+                theme: theme,
+                isAnimating: isWorking
+            )
+                .frame(width: scaled(18), height: scaled(18))
+                .opacity(isWorking ? 1 : 0)
+                .accessibilityLabel("Working")
+                .accessibilityHidden(!isWorking)
 
+            // Find sits before the trailing cluster, which never disappears (design.md §10.1–10.2).
+            // The tab strip scrolls to make room first; in a narrow, zoomed window the find bar gives
+            // way itself (see `documentSearchBar`) rather than push the row past the window.
             if documentSearch.isPresented {
                 documentSearchBar
-                    .allowsTopBarWindowActivationEvents()
-            } else {
-                viewModeControl
-                    .allowsTopBarWindowActivationEvents()
-
-                Rectangle()
-                    .fill(theme.separatorColor)
-                    .frame(width: 1, height: scaled(16))
-                    .padding(.horizontal, scaled(4))
-
-                drawerToggleButton
+                    // Above the tab strip's priority: the find bar is sized first, the tabs take the rest.
+                    .layoutPriority(2)
                     .allowsTopBarWindowActivationEvents()
             }
+
+            viewModeControl
+                .allowsTopBarWindowActivationEvents()
+
+            verticalRule(theme.separatorColor)
+                .padding(.horizontal, scaled(4))
+
+            drawerToggleButton
+                .allowsTopBarWindowActivationEvents()
         }
         .monknotChromeRowLayout(theme: theme, zoomScale: zoomScale)
         .onChange(of: documentSearch.focusSerial) { _, _ in
-            isSearchFocused = documentSearch.isPresented
+            focusDocumentSearchField()
         }
         .onChange(of: documentSearch.isPresented) { _, isPresented in
-            isSearchFocused = isPresented
+            if !isPresented {
+                isSearchFocused = false
+            }
+        }
+    }
+
+    /// The field is inserted by the same update that presents it; a focus
+    /// request made in that update is intermittently dropped.
+    private func focusDocumentSearchField() {
+        DispatchQueue.main.async {
+            isSearchFocused = documentSearch.isPresented
         }
     }
 
@@ -170,32 +193,19 @@ struct TopNavigationBar: View {
             ),
             theme: theme,
             zoomScale: zoomScale,
-            isDisabled: !showsMarkdownViewControls || isDocumentLoading
+            isDisabled: !hasPreviewMode || isDocumentLoading
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("View mode")
-        .accessibilityValue(showsMarkdownViewControls ? editorMode.rawValue : "Unavailable")
+        .accessibilityValue(hasPreviewMode ? editorMode.rawValue : "Unavailable")
     }
 
     @ViewBuilder
     private var tabsOrEmptyTitle: some View {
         if tabs.isEmpty {
-            HStack(spacing: scaled(8)) {
-                if !isSidebarVisible {
-                    Text(emptyStateTitle)
-                        .font(.system(size: textScaled(13), weight: .medium))
-                        .foregroundStyle(theme.mutedForegroundColor)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .accessibilityAddTraits(.isHeader)
-                }
-
-                WindowTitleBarDragArea()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .accessibilityHidden(true)
-            }
-            .padding(.leading, scaled(6))
-            .frame(maxWidth: .infinity, alignment: .leading)
+            WindowTitleBarDragArea()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityHidden(true)
         } else {
             DocumentTabBar(
                 tabs: tabs,
@@ -215,17 +225,19 @@ struct TopNavigationBar: View {
         }
     }
 
+    /// The find bar. Short of room it drops, in turn, the option toggles, the match count and the
+    /// match arrows (Return, Shift-Return and Command-G still step through matches); only then does the
+    /// field narrow. The field and Close always stay, and there is only ever one field, so focus and
+    /// typing survive the bar changing shape.
     private var documentSearchBar: some View {
         HStack(spacing: scaled(8)) {
             MonknotSearchGlyph(theme: theme, zoomScale: zoomScale)
                 .foregroundStyle(theme.mutedForegroundColor)
 
-            Rectangle()
-                .fill(theme.borderColor)
-                .frame(width: 1, height: scaled(20))
+            verticalRule(theme.borderColor)
 
             TextField(
-                "Search in doc...",
+                "Find in document",
                 text: Binding(
                     get: { documentSearch.query },
                     set: { documentSearch.setQuery($0) }
@@ -235,53 +247,19 @@ struct TopNavigationBar: View {
             .focused($isSearchFocused)
             .font(.system(size: textScaled(13), weight: .regular))
             .foregroundStyle(theme.foregroundColor)
-            .frame(width: scaled(150))
+            .frame(minWidth: scaled(60), idealWidth: scaled(150), maxWidth: scaled(150))
+            // Sized before the optional controls, which take what is left.
+            .layoutPriority(1)
             .onSubmit {
                 documentSearch.findNext()
             }
-            .accessibilityLabel("Search in document")
+            .accessibilityLabel("Find in document")
 
-            searchOptionButton(
-                systemImage: "textformat",
-                label: "Match Case",
-                isActive: searchOptions.isCaseSensitive
-            ) {
-                searchOptions.isCaseSensitive.toggle()
-            }
-
-            searchOptionButton(
-                systemImage: "character.cursor.ibeam",
-                label: "Match Whole Word",
-                isActive: searchOptions.isWholeWord
-            ) {
-                searchOptions.isWholeWord.toggle()
-            }
-
-            Text(documentSearch.countText)
-                .font(.system(size: textScaled(11), weight: .medium, design: .rounded))
-                .foregroundStyle(theme.mutedForegroundColor)
-                .monospacedDigit()
-                .frame(minWidth: scaled(42), alignment: .trailing)
-                .accessibilityLabel("Search result \(documentSearch.countText)")
-
-            Rectangle()
-                .fill(theme.borderColor)
-                .frame(width: 1, height: scaled(20))
-
-            findBarButton(
-                systemImage: "chevron.up",
-                label: "Previous Match",
-                isDisabled: documentSearch.totalCount == 0
-            ) {
-                documentSearch.findPrevious()
-            }
-
-            findBarButton(
-                systemImage: "chevron.down",
-                label: "Next Match",
-                isDisabled: documentSearch.totalCount == 0
-            ) {
-                documentSearch.findNext()
+            ViewThatFits(in: .horizontal) {
+                findBarControls(showsOptions: true, showsCount: true, showsNavigation: true)
+                findBarControls(showsOptions: false, showsCount: true, showsNavigation: true)
+                findBarControls(showsOptions: false, showsCount: false, showsNavigation: true)
+                findBarControls(showsOptions: false, showsCount: false, showsNavigation: false)
             }
 
             findBarButton(systemImage: "xmark", label: "Close Search") {
@@ -289,17 +267,18 @@ struct TopNavigationBar: View {
             }
         }
         .padding(.horizontal, scaled(MonknotMetrics.Spacing.l))
-        .frame(height: scaled(32))
+        .frame(height: scaled(28))
         .background(
             RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
                 .fill(theme.insetFillColor)
                 .overlay {
+                    // design.md §3: a focused field takes the 1px accent stroke.
                     RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                        .strokeBorder(theme.borderColor, lineWidth: 1)
+                        .strokeBorder(isSearchFocused ? theme.accentColor : theme.borderColor, lineWidth: 1)
                 }
         )
         .onAppear {
-            isSearchFocused = true
+            focusDocumentSearchField()
         }
         .onChange(of: isSearchFocused) { _, isFocused in
             documentSearchFocusChanged(isFocused)
@@ -308,6 +287,57 @@ struct TopNavigationBar: View {
             documentSearchFocusChanged(false)
         }
         .onExitCommand(perform: dismissDocumentSearch)
+    }
+
+    private func findBarControls(showsOptions: Bool, showsCount: Bool, showsNavigation: Bool) -> some View {
+        HStack(spacing: scaled(8)) {
+            if showsOptions {
+                searchOptionButton(
+                    systemImage: "textformat",
+                    label: "Match Case",
+                    isActive: searchOptions.isCaseSensitive
+                ) {
+                    searchOptions.isCaseSensitive.toggle()
+                }
+
+                searchOptionButton(
+                    systemImage: "character.cursor.ibeam",
+                    label: "Match Whole Word",
+                    isActive: searchOptions.isWholeWord
+                ) {
+                    searchOptions.isWholeWord.toggle()
+                }
+            }
+
+            if showsCount {
+                Text(documentSearch.countText)
+                    .monknotReservingWidth(of: DocumentSearchState.countWidthTemplate)
+                    .font(.system(size: textScaled(12), weight: .regular, design: .rounded))
+                    .foregroundStyle(theme.mutedForegroundColor)
+                    .monospacedDigit()
+                    .accessibilityLabel("Search result \(documentSearch.countText)")
+            }
+
+            if showsNavigation {
+                verticalRule(theme.borderColor)
+
+                findBarButton(
+                    systemImage: "chevron.up",
+                    label: "Previous Match",
+                    isDisabled: documentSearch.totalCount == 0
+                ) {
+                    documentSearch.findPrevious()
+                }
+
+                findBarButton(
+                    systemImage: "chevron.down",
+                    label: "Next Match",
+                    isDisabled: documentSearch.totalCount == 0
+                ) {
+                    documentSearch.findNext()
+                }
+            }
+        }
     }
 
     private func findBarButton(

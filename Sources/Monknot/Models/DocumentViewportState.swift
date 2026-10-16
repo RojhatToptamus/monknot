@@ -1,6 +1,18 @@
 import CoreGraphics
 import Foundation
 
+/// One window's per-document scroll positions, selections and PDF viewports.
+///
+/// Scrolling and caret movement update these many times per second, so they are deliberately not
+/// SwiftUI state. Readers pick up the latest values on their next update, and persistence reads them
+/// directly.
+@MainActor
+final class DocumentViewportStateCache {
+    var states: [String: DocumentViewportState] = [:]
+    /// Debounced write of `states` to user defaults.
+    var pendingPersistenceTask: Task<Void, Never>?
+}
+
 struct DocumentViewportState: Codable, Equatable {
     var textScrollPosition: DocumentScrollPosition?
     var textSelection: DocumentTextSelection?

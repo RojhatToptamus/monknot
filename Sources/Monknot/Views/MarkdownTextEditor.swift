@@ -768,18 +768,18 @@ enum EditorFlowProseContextPlanner {
 
 
 private struct EditorFlowCuePalette {
+    /// The key cap's fill: `surf3`, like every reference key cap.
     let surface: NSColor
     let editorBackground: NSColor
     let primaryText: NSColor
     let secondaryText: NSColor
     let ghostText: NSColor
     let accent: NSColor
-    let border: NSColor
     let isDark: Bool
 
     static func themed(_ theme: AppTheme) -> EditorFlowCuePalette {
         EditorFlowCuePalette(
-            surface: NSColor(theme.elevatedSurfaceColor),
+            surface: NSColor(theme.insetFillColor),
             editorBackground: NSColor(hex: theme.background),
             primaryText: NSColor(theme.foregroundColor),
             secondaryText: NSColor(theme.mutedForegroundColor),
@@ -789,9 +789,6 @@ private struct EditorFlowCuePalette {
                 amount: theme.isDark ? 0.42 : 0.54
             )),
             accent: NSColor(hex: theme.accent),
-            border: NSColor(theme.foregroundColor).withAlphaComponent(
-                theme.isDark ? 0.18 : 0.14
-            ),
             isDark: theme.isDark
         )
     }
@@ -803,7 +800,6 @@ private struct EditorFlowCuePalette {
         secondaryText: .secondaryLabelColor,
         ghostText: .tertiaryLabelColor,
         accent: .controlAccentColor,
-        border: .separatorColor,
         isDark: false
     )
 }
@@ -1637,6 +1633,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
     let textSelection: DocumentTextSelection?
     let syncScrollEnabled: Bool
     let syncScrollTargetLine: Int?
+    /// The line to show at the top when the editor is created for a document already on screen
+    /// (Source, Preview or split changed). A saved offset was measured at another pane width.
+    let openingTopLine: Int?
     @Binding var sourceLocation: MarkdownSourceLocation?
     @Binding var searchState: DocumentSearchState
     let searchOptions: MonknotSearchOptions
@@ -1671,6 +1670,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         onScrollPositionChange: @escaping (DocumentScrollPosition) -> Void,
         syncScrollEnabled: Bool = false,
         syncScrollTargetLine: Int? = nil,
+        openingTopLine: Int? = nil,
         onVisibleTopLineChange: ((Int) -> Void)? = nil,
         commandRequest: MarkdownTextEditorCommandRequest? = nil,
         markdownShortcutsEnabled: Bool = false,
@@ -1696,6 +1696,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         self.textSelection = textSelection
         self.syncScrollEnabled = syncScrollEnabled
         self.syncScrollTargetLine = syncScrollTargetLine
+        self.openingTopLine = openingTopLine
         self._sourceLocation = sourceLocation
         self._searchState = searchState
         self.searchOptions = searchOptions
@@ -1722,10 +1723,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = true
-        MonknotScrollbarStyle.apply(to: scrollView)
+        MonknotScrollbarStyle.applyDocument(to: scrollView)
 
         let textView = MarkdownNSTextView()
         textView.identifier = .monknotDocumentFocusTarget
@@ -1743,8 +1743,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.imagePasteHandler = { [weak coordinator = context.coordinator] image in
             coordinator?.requestImagePaste(image) ?? false
         }
-        textView.fileDropHandler = onFileDropRequest == nil ? nil : { [weak coordinator = context.coordinator] urls, offset in
-            coordinator?.requestFileDrop(urls, atUTF16Offset: offset) ?? false
+        textView.fileDropHandler = onFileDropRequest == nil ? nil : { [weak coordinator = context.coordinator] urls, range in
+            coordinator?.requestFileDrop(urls, replacing: range) ?? false
         }
         textView.flowSuggestionAcceptanceHandler = { [weak coordinator = context.coordinator] suggestion in
             coordinator?.acceptFlowSuggestion(suggestion) ?? false
@@ -1805,6 +1805,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.onWritingToolsStateChange = onWritingToolsStateChange
         context.coordinator.configureFlow(mode: flowSourceMode, options: textCheckingOptions)
         context.coordinator.attach(to: scrollView)
+        context.coordinator.ignoreSyncScrollLine(syncScrollTargetLine)
+        context.coordinator.acceptCurrentCommandRequest(commandRequest)
         applyTheme(theme, to: textView, in: scrollView)
         context.coordinator.markFontApplied(resolvedFont)
         context.coordinator.markThemeApplied(theme)
@@ -1834,14 +1836,14 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.flowSourceMode = flowSourceMode
         context.coordinator.configureFlow(mode: flowSourceMode, options: textCheckingOptions)
         textView.inspectLinksHandler = onInspectLinks
-        textView.fileDropHandler = onFileDropRequest == nil ? nil : { [weak coordinator = context.coordinator] urls, offset in
-            coordinator?.requestFileDrop(urls, atUTF16Offset: offset) ?? false
+        textView.fileDropHandler = onFileDropRequest == nil ? nil : { [weak coordinator = context.coordinator] urls, range in
+            coordinator?.requestFileDrop(urls, replacing: range) ?? false
         }
         textView.updateDragTypeRegistration()
         context.coordinator.syncScrollEnabled = syncScrollEnabled
         let visibleOrigin = scrollView.contentView.bounds.origin
 
-        if !context.coordinator.isWritingToolsActive, textView.string != text {
+        if !context.coordinator.isWritingToolsActive, context.coordinator.nativeText(of: textView) != text {
             let selectedRanges = didChangeDocument ? [] : textView.selectedRanges
             textView.string = text
             if selectedRanges.isEmpty {
@@ -1890,9 +1892,15 @@ struct MarkdownTextEditor: NSViewRepresentable {
             in: textView
         )
 
-        if didChangeDocument {
-            context.coordinator.restoreScrollPosition(scrollPosition?.point ?? .zero, in: scrollView)
-        } else {
+        if context.coordinator.needsScrollRestore(for: documentID) {
+            // Also true for a freshly created editor (a mode switch or split toggle rebuilds it).
+            context.coordinator.restoreDocumentScrollPosition(
+                scrollPosition?.point ?? .zero,
+                openingTopLine: openingTopLine,
+                for: documentID
+            )
+        } else if scrollView.contentView.bounds.origin != visibleOrigin {
+            // Undo only a shift this update caused; re-setting an unchanged origin cancels animated scrolls.
             context.coordinator.restoreScrollPosition(visibleOrigin, in: scrollView, shouldPublish: false)
         }
 
@@ -1978,7 +1986,19 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private let protectedRangeProvider: @Sendable (String, FlowSourceMode) -> [NSRange]
         private let writingToolsAvailability: () -> Bool
         private let writingToolsPresenter: (MarkdownNSTextView) -> Void
-        weak var textView: MarkdownNSTextView?
+        weak var textView: MarkdownNSTextView? {
+            didSet { observeTextStorage(of: textView) }
+        }
+        /// Counts character edits in the text view's storage. It is fed by AppKit's own processing
+        /// notification, so it also sees edits that bypass `textDidChange`, and answers "has the
+        /// text changed?" without comparing whole documents.
+        private(set) var storageEditCount = 0
+        private weak var observedTextStorage: NSTextStorage?
+        private var nativeTextCache: (editCount: Int, utf16Length: Int, text: String)?
+        /// The editor's own undo history. It is emptied when the editor shows another document or
+        /// its text is replaced from outside it, as by a reload from disk: undoing an earlier edit
+        /// there would change text the edit was never made in.
+        private let textUndoManager = UndoManager()
         var documentID: String?
         var onScrollPositionChange: (DocumentScrollPosition) -> Void = { _ in }
         var onVisibleTopLineChange: ((Int) -> Void)?
@@ -2012,7 +2032,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private var lastAppliedTheme: AppTheme?
         private var lastAppliedFontSmoothing: Bool?
         private var lastAppliedMarkdownShortcuts: Bool?
-        private var lastSyntaxText: String?
+        private var lastSyntaxEditCount: Int?
+        /// Range of the single character edit made since the last styling pass, if there was exactly one.
+        private var pendingSyntaxEditRange: NSRange?
         private var lastSyntaxTheme: AppTheme?
         private var lastSyntaxFontName: String?
         private var lastSyntaxFontSize: CGFloat?
@@ -2020,6 +2042,15 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private(set) var revision = 0
         private var lastPublishedSelection: MarkdownEditorSelectionSnapshot?
         private var shouldRestoreSelection = true
+        private enum PendingScroll {
+            case origin(CGPoint)
+            case lineTop(NSRange)
+        }
+        /// A scroll that waits until the scroll view has a size: a freshly created editor has none
+        /// until SwiftUI lays it out.
+        private var pendingScroll: PendingScroll?
+        /// The document whose saved scroll origin has been applied (or requested).
+        private var scrollRestoreDocumentID: String?
         private var flowSourceMode: FlowSourceMode?
         private var flowCheckingOptions = EditorTextCheckingOptions.defaultValue
         private var flowCheckTask: Task<Void, Never>?
@@ -2049,7 +2080,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private var pendingFlowProtectedRangesRetry: PendingFlowProtectedRangesRetry?
         private struct ProtectedRangesSnapshot {
             let revision: Int
-            let text: String
+            let storageEditCount: Int
             let mode: FlowSourceMode
             let ranges: [NSRange]
         }
@@ -2251,6 +2282,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         func attach(to scrollView: NSScrollView) {
             self.scrollView = scrollView
             scrollView.contentView.postsBoundsChangedNotifications = true
+            scrollView.contentView.postsFrameChangedNotifications = true
             NotificationCenter.default.addObserver(
                 self,
                 selector: #selector(scrollViewBoundsDidChange(_:)),
@@ -2259,8 +2291,20 @@ struct MarkdownTextEditor: NSViewRepresentable {
             )
             NotificationCenter.default.addObserver(
                 self,
+                selector: #selector(clipViewFrameDidChange(_:)),
+                name: NSView.frameDidChangeNotification,
+                object: scrollView.contentView
+            )
+            NotificationCenter.default.addObserver(
+                self,
                 selector: #selector(windowDidResignKey(_:)),
                 name: NSWindow.didResignKeyNotification,
+                object: nil
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(preferredScrollerStyleDidChange(_:)),
+                name: NSScroller.preferredScrollerStyleDidChangeNotification,
                 object: nil
             )
             NotificationCenter.default.addObserver(
@@ -2275,6 +2319,52 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
                 object: nil
             )
+        }
+
+        private func observeTextStorage(of textView: NSTextView?) {
+            let storage = textView?.textStorage
+            guard storage !== observedTextStorage else { return }
+            if let observedTextStorage {
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: NSTextStorage.didProcessEditingNotification,
+                    object: observedTextStorage
+                )
+            }
+            observedTextStorage = storage
+            nativeTextCache = nil
+            guard let storage else { return }
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(observedStorageDidProcessEditing(_:)),
+                name: NSTextStorage.didProcessEditingNotification,
+                object: storage
+            )
+        }
+
+        @objc private func observedStorageDidProcessEditing(_ notification: Notification) {
+            guard let storage = notification.object as? NSTextStorage,
+                  storage.editedMask.contains(.editedCharacters)
+            else { return }
+            // One edit since the last styling pass can be restyled locally. After a second edit the
+            // recorded range may have shifted, so styling falls back to a full pass.
+            pendingSyntaxEditRange = lastSyntaxEditCount == storageEditCount ? storage.editedRange : nil
+            storageEditCount &+= 1
+        }
+
+        /// The text view's text as native UTF-8, converted at most once per character edit.
+        func nativeText(of textView: NSTextView) -> String {
+            guard let storage = textView.textStorage, storage === observedTextStorage else {
+                return NativeUTF8Text.copy(of: textView.string)
+            }
+            if let nativeTextCache,
+               nativeTextCache.editCount == storageEditCount,
+               nativeTextCache.utf16Length == storage.length {
+                return nativeTextCache.text
+            }
+            let text = NativeUTF8Text.copy(of: storage.mutableString) ?? textView.string
+            nativeTextCache = (storageEditCount, storage.length, text)
+            return text
         }
 
         func detach() {
@@ -2292,6 +2382,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
             suppressedFlowSuggestion = nil
             NotificationCenter.default.removeObserver(self)
             NSWorkspace.shared.notificationCenter.removeObserver(self)
+            // The storage observer went with the others; stop trusting its edit count.
+            observedTextStorage = nil
+            nativeTextCache = nil
             scrollView = nil
             onSelectionChange = nil
             onOpenLink = nil
@@ -2377,6 +2470,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             publishCurrentScrollPosition()
             publishSelection()
             documentID = nextDocumentID
+            textUndoManager.removeAllActions()
             revision += 1
             pendingInlinePredictionEdit = nil
             inlinePredictionContinuation = nil
@@ -2390,11 +2484,17 @@ struct MarkdownTextEditor: NSViewRepresentable {
             lastPublishedSelection = nil
             shouldRestoreSelection = true
             lastPublishedScrollPosition = nil
-            lastSyntaxText = nil
+            lastPublishedTopLine = nil
+            lastSyntaxEditCount = nil
             return true
         }
 
+        func undoManager(for view: NSTextView) -> UndoManager? {
+            textUndoManager
+        }
+
         func externalTextDidChange() {
+            textUndoManager.removeAllActions()
             textView?.invalidateFlowSettlement()
             sentenceRepairGate = .blocked
             pendingFlowTrailingSpace = nil
@@ -2435,22 +2535,43 @@ struct MarkdownTextEditor: NSViewRepresentable {
             in textView: NSTextView
         ) {
             guard !isWritingToolsActive else { return }
-            let source = textView.string
-            guard lastSyntaxText != source ||
-                    lastSyntaxTheme != theme ||
-                    lastSyntaxFontName != font.fontName ||
-                    abs((lastSyntaxFontSize ?? -1) - font.pointSize) > 0.001 ||
-                    lastSyntaxEnabled != enabled
-            else { return }
+            // Character edits are counted, not compared.
+            let editCount = textView.textStorage === observedTextStorage ? storageEditCount : nil
+            let styleUnchanged = lastSyntaxTheme == theme &&
+                lastSyntaxFontName == font.fontName &&
+                abs((lastSyntaxFontSize ?? -1) - font.pointSize) <= 0.001 &&
+                lastSyntaxEnabled == enabled
+            guard editCount == nil || lastSyntaxEditCount != editCount || !styleUnchanged else { return }
+
+            // A single typed edit restyles only the lines it touched; the syntax patterns never span
+            // a line break, so the result matches a full pass without invalidating the whole layout.
+            var paragraphs: NSRange?
+            if styleUnchanged,
+               let editCount,
+               let lastSyntaxEditCount,
+               editCount == lastSyntaxEditCount &+ 1,
+               let editedRange = pendingSyntaxEditRange,
+               let storage = textView.textStorage,
+               NSMaxRange(editedRange) <= storage.length {
+                // A typed or pasted line break moves the rest of its line into a new paragraph
+                // that starts right after the edit; reach one character further to restyle it.
+                let reach = NSRange(
+                    location: editedRange.location,
+                    length: min(editedRange.length + 1, storage.length - editedRange.location)
+                )
+                paragraphs = storage.mutableString.paragraphRange(for: reach)
+            }
 
             MarkdownSyntaxHighlighter.apply(
-                source,
+                textView.string,
                 enabled: enabled,
                 theme: theme,
                 font: font,
+                paragraphs: paragraphs,
                 to: textView
             )
-            lastSyntaxText = source
+            lastSyntaxEditCount = editCount
+            pendingSyntaxEditRange = nil
             lastSyntaxTheme = theme
             lastSyntaxFontName = font.fontName
             lastSyntaxFontSize = font.pointSize
@@ -2467,9 +2588,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
             lastAppliedSyncScrollLine = line
             let offset = MarkdownScrollSync.characterOffset(forLine: line, in: textView.string)
-            let range = NSRange(location: offset, length: 0)
+            // Align the line to the top, as the preview does.
             isRestoringScrollPosition = true
-            textView.scrollRangeToVisible(range)
+            scrollLineToTop(NSRange(location: offset, length: 0))
             isRestoringScrollPosition = false
         }
 
@@ -2479,10 +2600,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 return 1
             }
 
-            var point = scrollView.contentView.bounds.origin
-            point.x += textView.textContainerInset.width + 4
-            point.y += textView.textContainerInset.height + 4
-            let containerPoint = textView.convert(point, from: scrollView.contentView)
+            // The first line below the top padding, in container coordinates: the line `.lineTop`
+            // scrolls to sits exactly here, so a reported line opens a rebuilt pane where it was.
+            let containerPoint = NSPoint(x: 1, y: scrollView.contentView.bounds.origin.y + 1)
             let glyphIndex = layoutManager.glyphIndex(for: containerPoint, in: textContainer)
             let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
             return MarkdownScrollSync.lineNumber(forCharacterIndex: charIndex, in: textView.string)
@@ -2496,6 +2616,82 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
             if shouldPublish {
                 publish(DocumentScrollPosition(point))
+            }
+        }
+
+        /// A rebuilt editor opens at `openingTopLine`; the split-sync line it is handed was set
+        /// for an earlier view and would otherwise override it.
+        func ignoreSyncScrollLine(_ line: Int?) {
+            lastAppliedSyncScrollLine = line
+        }
+
+        func needsScrollRestore(for documentID: String) -> Bool {
+            scrollRestoreDocumentID != documentID
+        }
+
+        func restoreDocumentScrollPosition(_ point: CGPoint, openingTopLine: Int?, for documentID: String) {
+            let isNewEditor = scrollRestoreDocumentID == nil
+            scrollRestoreDocumentID = documentID
+            if isNewEditor, let openingTopLine, let textView {
+                let offset = MarkdownScrollSync.characterOffset(forLine: openingTopLine, in: textView.string)
+                pendingScroll = .lineTop(NSRange(location: offset, length: 0))
+            } else {
+                pendingScroll = .origin(point)
+            }
+            applyPendingScrollIfSized()
+        }
+
+        /// Scrolls so the line holding `range` sits where the document's first line does, which
+        /// is also the line the outline rail reads as current.
+        func scrollLineToTop(_ range: NSRange) {
+            pendingScroll = .lineTop(range)
+            applyPendingScrollIfSized()
+        }
+
+        @objc private func clipViewFrameDidChange(_ notification: Notification) {
+            applyPendingScrollIfSized()
+        }
+
+        private func applyPendingScrollIfSized() {
+            guard let pending = pendingScroll,
+                  let scrollView,
+                  let textView,
+                  let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer,
+                  scrollView.contentView.bounds.width > 0
+            else { return }
+            pendingScroll = nil
+
+            switch pending {
+            case .origin(let point):
+                // Newly assigned text is not laid out yet, so the text view still has the previous
+                // height and the clip view would clamp the saved origin to it. Lay out down to the
+                // origin first; the clip view then clamps only what is really out of range.
+                layoutManager.ensureLayout(
+                    forBoundingRect: NSRect(
+                        x: 0,
+                        y: 0,
+                        width: textContainer.size.width,
+                        height: point.y + scrollView.contentView.bounds.height
+                    ),
+                    in: textContainer
+                )
+                textView.sizeToFit()
+                restoreScrollPosition(point, in: scrollView)
+            case .lineTop(let range):
+                let length = (textView.string as NSString).length
+                guard length > 0 else {
+                    scrollView.contentView.scroll(to: .zero)
+                    scrollView.reflectScrolledClipView(scrollView.contentView)
+                    return
+                }
+                let glyphIndex = layoutManager.glyphIndexForCharacter(at: min(range.location, length - 1))
+                layoutManager.ensureLayout(forGlyphRange: NSRange(location: 0, length: glyphIndex + 1))
+                textView.sizeToFit()
+                // The container's top inset stays above the line, as it does above the first line.
+                let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+                scrollView.contentView.scroll(to: NSPoint(x: scrollView.contentView.bounds.origin.x, y: lineRect.minY))
+                scrollView.reflectScrolledClipView(scrollView.contentView)
             }
         }
 
@@ -2525,6 +2721,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
             if shouldPublish {
                 publishCurrentScrollPosition()
             }
+        }
+
+        @objc private func preferredScrollerStyleDidChange(_ notification: Notification) {
+            guard let scrollView else { return }
+            MonknotScrollbarStyle.applyDocument(to: scrollView)
         }
 
         @objc private func windowDidResignKey(_ notification: Notification) {
@@ -2832,7 +3033,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             if preservesRepair, let trailingSpace {
                 protectedRangesSnapshot = ProtectedRangesSnapshot(
                     revision: revision,
-                    text: textView.string,
+                    storageEditCount: storageEditCount,
                     mode: trailingSpace.mode,
                     ranges: trailingSpace.rebasedProtectedRanges
                 )
@@ -2849,7 +3050,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
             refreshNativeFlowAvailability()
             guard !isWritingToolsActive else { return }
-            text = textView.string
+            text = nativeText(of: textView)
             publishSelection()
             if preservesRepair || matchingProseRemainder != nil { return }
             scheduleFlowCheck(
@@ -2974,7 +3175,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
                   let textView,
                   let snapshot = protectedRangesSnapshot,
                   snapshot.revision == revision,
-                  snapshot.text == textView.string,
+                  snapshot.storageEditCount == storageEditCount,
+                  textView.textStorage === observedTextStorage,
                   snapshot.mode == mode
             else { return nil }
             return snapshot.ranges
@@ -4689,7 +4891,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         ) -> [NSRange]? {
             protectedRangesSnapshot.flatMap { protectedSnapshot -> [NSRange]? in
                 guard protectedSnapshot.revision == snapshot.revision,
-                      protectedSnapshot.text == textView.string,
+                      protectedSnapshot.storageEditCount == storageEditCount,
+                      textView.textStorage === observedTextStorage,
                       protectedSnapshot.mode == snapshot.sourceMode
                 else { return nil }
                 return protectedSnapshot.ranges
@@ -5263,7 +5466,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             ))
             protectedRangesSnapshot = ProtectedRangesSnapshot(
                 revision: revision,
-                text: textView.string,
+                storageEditCount: storageEditCount,
                 mode: mode,
                 ranges: rebasedProtectedRanges
             )
@@ -5569,6 +5772,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     }
                     let text = textView.string
                     let capturedRevision = self.revision
+                    let capturedEditCount = self.storageEditCount
                     let worker = Task.detached(priority: .utility) {
                         provider(text, mode)
                     }
@@ -5584,13 +5788,15 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     guard generation == self.protectedRangesGeneration,
                           capturedRevision == self.revision,
                           self.flowSourceMode == mode,
-                          self.textView?.string == text
+                          self.textView === textView,
+                          textView.textStorage === self.observedTextStorage,
+                          capturedEditCount == self.storageEditCount
                     else {
                         continue
                     }
                     self.protectedRangesSnapshot = ProtectedRangesSnapshot(
                         revision: capturedRevision,
-                        text: text,
+                        storageEditCount: capturedEditCount,
                         mode: mode,
                         ranges: ranges
                     )
@@ -5652,7 +5858,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             inlinePredictionContinuation = nil
             sentenceRepairGate = .blocked
             cancelFlowSuggestion()
-            lastSyntaxText = nil
+            lastSyntaxEditCount = nil
             lastPublishedSelection = nil
             scheduleProtectedRangesRefresh(delayNanoseconds: 0)
 
@@ -5707,7 +5913,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             return true
         }
 
-        func requestFileDrop(_ urls: [URL], atUTF16Offset offset: Int) -> Bool {
+        func requestFileDrop(_ urls: [URL], replacing range: NSRange) -> Bool {
             guard !isWritingToolsActive,
                   !urls.isEmpty,
                   let textView,
@@ -5717,8 +5923,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
             let capturedRevision = revision
             let capturedText = textView.string
-            let boundedOffset = min(max(0, offset), (capturedText as NSString).length)
-            let capturedRange = NSRange(location: boundedOffset, length: 0)
+            let capturedRange = Self.boundedRange(range, in: capturedText)
             let request = MarkdownFileDropRequest(
                 documentID: documentID,
                 revision: capturedRevision,
@@ -5772,6 +5977,14 @@ struct MarkdownTextEditor: NSViewRepresentable {
             return true
         }
 
+        /// Treats the request in place when the editor is created as already applied: the pane
+        /// keeps its last toolbar request while Source, Preview, split and tab changes rebuild the
+        /// editor, and running it again would edit the document the user is now looking at.
+        func acceptCurrentCommandRequest(_ request: MarkdownTextEditorCommandRequest?) {
+            guard let request else { return }
+            lastCommandSerial = request.serial
+        }
+
         func apply(_ request: MarkdownTextEditorCommandRequest) {
             guard request.serial != lastCommandSerial else { return }
             lastCommandSerial = request.serial
@@ -5815,7 +6028,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
             let offset = characterOffset(for: location, in: textView.string)
             let range = NSRange(location: offset, length: 0)
             textView.setSelectedRange(range)
-            textView.scrollRangeToVisible(range)
+            // A jump shows its target line at the top, superseding a saved-origin restore still
+            // waiting for the view's size.
+            scrollLineToTop(range)
             textView.window?.makeFirstResponder(textView)
             lastNavigatedLocation = location
 
@@ -5958,16 +6173,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
             guard let layoutManager = textView.layoutManager else { return }
             (textView as? MarkdownNSTextView)?.invalidateFlowSourceHighlightCache()
-            let accent = NSColor(hex: theme.accent)
-            let matchColor = accent.withAlphaComponent(theme.isDark ? 0.24 : 0.18)
-            let currentColor = accent.withAlphaComponent(theme.isDark ? 0.44 : 0.30)
-
+            let highlightTheme = SearchHighlightTheme(theme: theme)
             for (index, range) in matches.enumerated() {
-                layoutManager.addTemporaryAttribute(
-                    .backgroundColor,
-                    value: index == currentIndex ? currentColor : matchColor,
-                    forCharacterRange: range
-                )
+                Self.highlightMatch(range, isCurrent: index == currentIndex, theme: highlightTheme, in: layoutManager)
             }
 
             highlightedRanges = matches
@@ -5987,21 +6195,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
             guard currentIndex >= 0, currentIndex < matches.count else { return }
 
             (textView as? MarkdownNSTextView)?.invalidateFlowSourceHighlightCache()
-            let accent = NSColor(hex: theme.accent)
-            let matchColor = accent.withAlphaComponent(theme.isDark ? 0.24 : 0.18)
-            let currentColor = accent.withAlphaComponent(theme.isDark ? 0.44 : 0.30)
-
-            layoutManager.addTemporaryAttribute(
-                .backgroundColor,
-                value: matchColor,
-                forCharacterRange: matches[previousIndex]
-            )
-            layoutManager.addTemporaryAttribute(
-                .backgroundColor,
-                value: currentColor,
-                forCharacterRange: matches[currentIndex]
-            )
-            lastHighlightTheme = SearchHighlightTheme(theme: theme)
+            let highlightTheme = SearchHighlightTheme(theme: theme)
+            Self.highlightMatch(matches[previousIndex], isCurrent: false, theme: highlightTheme, in: layoutManager)
+            Self.highlightMatch(matches[currentIndex], isCurrent: true, theme: highlightTheme, in: layoutManager)
+            lastHighlightTheme = highlightTheme
             (textView as? MarkdownNSTextView)?.applyFlowSourceHighlightsIfNeeded()
         }
 
@@ -6010,16 +6207,35 @@ struct MarkdownTextEditor: NSViewRepresentable {
                   let theme = lastHighlightTheme,
                   !highlightedRanges.isEmpty
             else { return }
-            let accent = NSColor(hex: theme.accent)
-            let matchColor = accent.withAlphaComponent(theme.isDark ? 0.24 : 0.18)
-            let currentColor = accent.withAlphaComponent(theme.isDark ? 0.44 : 0.30)
             for (index, range) in highlightedRanges.enumerated()
             where range.location >= 0 && NSMaxRange(range) <= (textView.string as NSString).length {
-                layoutManager.addTemporaryAttribute(
-                    .backgroundColor,
-                    value: index == currentMatchIndex ? currentColor : matchColor,
+                Self.highlightMatch(range, isCurrent: index == currentMatchIndex, theme: theme, in: layoutManager)
+            }
+        }
+
+        /// The current match is also selected, and while the find field has focus its inactive
+        /// (grey) selection covers the stronger fill; the thick accent underline stays visible.
+        private static func highlightMatch(
+            _ range: NSRange,
+            isCurrent: Bool,
+            theme: SearchHighlightTheme,
+            in layoutManager: NSLayoutManager
+        ) {
+            let accent = NSColor(hex: theme.accent)
+            let alpha: CGFloat = isCurrent ? (theme.isDark ? 0.44 : 0.30) : (theme.isDark ? 0.24 : 0.18)
+            layoutManager.addTemporaryAttribute(
+                .backgroundColor,
+                value: accent.withAlphaComponent(alpha),
+                forCharacterRange: range
+            )
+            if isCurrent {
+                layoutManager.addTemporaryAttributes(
+                    [.underlineStyle: NSUnderlineStyle.thick.rawValue, .underlineColor: accent],
                     forCharacterRange: range
                 )
+            } else {
+                layoutManager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: range)
+                layoutManager.removeTemporaryAttribute(.underlineColor, forCharacterRange: range)
             }
         }
 
@@ -6038,6 +6254,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 guard range.location >= 0, NSMaxRange(range) <= length else { continue }
                 layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: range)
             }
+            // Temporary attributes move with edits, so an underline from a match the user typed
+            // into is no longer at its recorded range; only search draws underlines here.
+            let wholeText = NSRange(location: 0, length: length)
+            layoutManager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: wholeText)
+            layoutManager.removeTemporaryAttribute(.underlineColor, forCharacterRange: wholeText)
             highlightedRanges = []
             if resetMatches {
                 searchMatches = []
@@ -6077,11 +6298,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
 enum MarkdownSyntaxStyle: Equatable {
     case heading
-    case quote
     case strong
     case wikilink
     case link
     case code
+    /// Block syntax (`#`, `>`, list bullets and numbers, task boxes), drawn quieter than the text.
+    case marker
 }
 
 struct MarkdownSyntaxToken: Equatable {
@@ -6093,40 +6315,58 @@ enum MarkdownSyntaxTokenizer {
     private struct Pattern {
         let expression: NSRegularExpression
         let style: MarkdownSyntaxStyle
+        var captureGroup = 0
     }
 
     private static let patterns: [Pattern] = [
-        Pattern(
-            expression: try! NSRegularExpression(pattern: #"(?m)^ {0,3}>.*$"#),
-            style: .quote
-        ),
         Pattern(
             expression: try! NSRegularExpression(pattern: #"(?m)^ {0,3}#{1,6}[\t ]+.*$"#),
             style: .heading
         ),
         Pattern(
-            expression: try! NSRegularExpression(pattern: #"(?:\*\*[^*\n]+\*\*|__[^_\n]+__)"#),
+            expression: try! NSRegularExpression(pattern: #"(?:\*\*[^*\r\n]+\*\*|__[^_\r\n]+__)"#),
             style: .strong
         ),
         Pattern(
-            expression: try! NSRegularExpression(pattern: #"\[\[[^\]\n]+\]\]"#),
+            expression: try! NSRegularExpression(pattern: #"\[\[[^\]\r\n]+\]\]"#),
             style: .wikilink
         ),
         Pattern(
-            expression: try! NSRegularExpression(pattern: #"\[[^\]\n]+\]\([^\)\n]+\)"#),
+            expression: try! NSRegularExpression(pattern: #"\[[^\]\r\n]+\]\([^\)\r\n]+\)"#),
             style: .link
         ),
         Pattern(
-            expression: try! NSRegularExpression(pattern: #"`[^`\n]+`"#),
+            expression: try! NSRegularExpression(pattern: #"`[^`\r\n]+`"#),
             style: .code
+        ),
+        // Markers come last so they override the heading colour of their line.
+        Pattern(
+            expression: try! NSRegularExpression(pattern: #"(?m)^ {0,3}(#{1,6})(?=[\t ]+)"#),
+            style: .marker,
+            captureGroup: 1
+        ),
+        Pattern(
+            expression: try! NSRegularExpression(pattern: #"(?m)^ {0,3}((?:>[\t ]?)+)"#),
+            style: .marker,
+            captureGroup: 1
+        ),
+        Pattern(
+            expression: try! NSRegularExpression(
+                pattern: #"(?m)^[\t ]*((?:[-*+]|\d{1,9}[.)])(?:[\t ]+\[[ xX]\])?)(?=[\t ])"#
+            ),
+            style: .marker,
+            captureGroup: 1
         )
     ]
 
-    static func tokens(in source: String) -> [MarkdownSyntaxToken] {
-        let range = NSRange(location: 0, length: (source as NSString).length)
+    /// Every pattern is confined to one line (CR, LF or CRLF, as `paragraphRange` splits), so tokens
+    /// never cross a line break and any range
+    /// that starts and ends on line boundaries can be tokenized on its own.
+    static func tokens(in source: String, range: NSRange? = nil) -> [MarkdownSyntaxToken] {
+        let range = range ?? NSRange(location: 0, length: (source as NSString).length)
         return patterns.flatMap { pattern in
             pattern.expression.matches(in: source, range: range).map {
-                MarkdownSyntaxToken(range: $0.range, style: pattern.style)
+                MarkdownSyntaxToken(range: $0.range(at: pattern.captureGroup), style: pattern.style)
             }
         }
     }
@@ -6139,15 +6379,18 @@ enum MarkdownEditorLayout {
 }
 
 private enum MarkdownSyntaxHighlighter {
+    /// Styles `paragraphs` (whole lines; the entire text when nil). Restyling only the lines an edit
+    /// touched keeps the rest of the document's layout valid.
     static func apply(
         _ source: String,
         enabled: Bool,
         theme: AppTheme,
         font: NSFont,
+        paragraphs: NSRange? = nil,
         to textView: NSTextView
     ) {
         guard let storage = textView.textStorage else { return }
-        let fullRange = NSRange(location: 0, length: (source as NSString).length)
+        let fullRange = paragraphs ?? NSRange(location: 0, length: (source as NSString).length)
         let paragraphStyle = NSMutableParagraphStyle()
         if enabled {
             let lineHeight = MarkdownEditorLayout.lineHeight(forFontSize: font.pointSize)
@@ -6155,11 +6398,12 @@ private enum MarkdownSyntaxHighlighter {
             paragraphStyle.maximumLineHeight = lineHeight
         }
 
+        // The words the user writes are `ink`, as in the preview (quotes included); Markdown
+        // block syntax steps down to `ink3`, so structure stays visible without dimming text.
         let primary = NSColor(hex: theme.foreground)
-        let baseColor = enabled ? primary.withAlphaComponent(0.62) : primary
         let baseAttributes: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: baseColor,
+            .foregroundColor: primary,
             .paragraphStyle: paragraphStyle
         ]
 
@@ -6168,7 +6412,7 @@ private enum MarkdownSyntaxHighlighter {
 
         if enabled {
             let boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
-            for token in MarkdownSyntaxTokenizer.tokens(in: source) {
+            for token in MarkdownSyntaxTokenizer.tokens(in: source, range: fullRange) {
                 let attributes: [NSAttributedString.Key: Any]
                 switch token.style {
                 case .heading:
@@ -6176,8 +6420,6 @@ private enum MarkdownSyntaxHighlighter {
                         .font: boldFont,
                         .foregroundColor: NSColor(hex: theme.accent)
                     ]
-                case .quote:
-                    attributes = [.foregroundColor: primary.withAlphaComponent(0.40)]
                 case .strong:
                     attributes = [
                         .font: boldFont,
@@ -6189,6 +6431,8 @@ private enum MarkdownSyntaxHighlighter {
                     attributes = [.foregroundColor: NSColor(hex: theme.accent)]
                 case .code:
                     attributes = [.foregroundColor: NSColor(hex: theme.accent).withAlphaComponent(0.88)]
+                case .marker:
+                    attributes = [.foregroundColor: primary.withAlphaComponent(0.40)] // ink3
                 }
                 storage.addAttributes(attributes, range: token.range)
             }
@@ -6429,7 +6673,8 @@ class MarkdownNSTextView: NSTextView {
     var workspaceLinkHandler: ((MarkdownWorkspaceLink) -> Bool)?
     var inspectLinksHandler: (() -> Void)?
     var imagePasteHandler: ((NSImage) -> Bool)?
-    var fileDropHandler: (([URL], Int) -> Bool)?
+    /// Files dragged in (at the drop point) or pasted (over the selection) replace this range.
+    var fileDropHandler: (([URL], NSRange) -> Bool)?
     var flowSuggestionAcceptanceHandler: ((EditorFlowSuggestion) -> Bool)?
     var flowProseSuggestionAcceptanceHandler: ((EditorFlowProseSuggestion, Bool) -> Bool)?
     var flowSuggestionDismissalHandler: (() -> Void)?
@@ -6936,6 +7181,15 @@ class MarkdownNSTextView: NSTextView {
         return workspaceLinkHandler(link)
     }
 
+    /// Files copied in Finder take the same path as files dragged in: a copied PDF is linked
+    /// instead of pasted as a picture of its first page.
+    @discardableResult
+    func requestFilePaste(from pasteboard: NSPasteboard) -> Bool {
+        let urls = Self.fileURLs(on: pasteboard)
+        guard !urls.isEmpty, let fileDropHandler else { return false }
+        return fileDropHandler(urls, selectedRange())
+    }
+
     @discardableResult
     func requestImagePaste(from pasteboard: NSPasteboard) -> Bool {
         guard let imagePasteHandler, let image = Self.image(from: pasteboard) else { return false }
@@ -6952,10 +7206,16 @@ class MarkdownNSTextView: NSTextView {
     }
 
     override func paste(_ sender: Any?) {
-        if requestImagePaste(from: .general) {
+        if pasteFilesOrImage(from: .general) {
             return
         }
         super.paste(sender)
+    }
+
+    /// Copied files first: Finder's pasteboard also yields an image for some files (a PDF's first
+    /// page), which must not win over the file itself.
+    func pasteFilesOrImage(from pasteboard: NSPasteboard) -> Bool {
+        requestFilePaste(from: pasteboard) || requestImagePaste(from: pasteboard)
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
@@ -6985,11 +7245,20 @@ class MarkdownNSTextView: NSTextView {
         // NSTextView defines this API as the insertion position for a point in view coordinates.
         // https://developer.apple.com/documentation/appkit/nstextview/characterindexforinsertion(at:)
         let offset = characterIndexForInsertion(at: point)
-        return fileDropHandler(urls, offset)
+        return fileDropHandler(urls, NSRange(location: offset, length: 0))
     }
 
     private func droppedFileURLs(from sender: NSDraggingInfo) -> [URL] {
-        let objects = sender.draggingPasteboard.readObjects(
+        Self.fileURLs(on: sender.draggingPasteboard)
+    }
+
+    /// A file copied in Monknot's sidebar yields its workspace URL, so it is linked rather than
+    /// imported from the pasteboard snapshot.
+    private static func fileURLs(on pasteboard: NSPasteboard) -> [URL] {
+        if let workspaceFileURLs = WorkspacePasteboardExportService.workspaceFileURLs(on: pasteboard) {
+            return workspaceFileURLs
+        }
+        let objects = pasteboard.readObjects(
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]
         ) ?? []
@@ -7038,7 +7307,7 @@ class MarkdownNSTextView: NSTextView {
            menu.items.contains(where: { $0.action == #selector(copyRenderedMarkdown(_:)) }) == false {
             addSeparatorIfNeeded()
             let item = NSMenuItem(
-                title: "Copy Rendered",
+                title: "Copy Rendered Markdown",
                 action: #selector(copyRenderedMarkdown(_:)),
                 keyEquivalent: ""
             )
@@ -8139,25 +8408,26 @@ class MarkdownNSTextView: NSTextView {
         after anchor: NSRect,
         revealDate: Date?
     ) {
+        // The shared shortcut label (design.md §4.4): keys in 12 rounded on a radius-6 `surf3` cap, the
+        // action beside it in plain 12. Inline in a text line, the cap keeps a slimmer padding.
         let scale = max(0.1, zoomScale)
-        let font = NSFont.monospacedSystemFont(
-            ofSize: max(8, (11 * scale * 2).rounded() / 2),
-            weight: .regular
-        )
+        let fontSize = max(9, (12 * scale * 2).rounded() / 2)
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
+        let keyFont = font.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: fontSize) } ?? font
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: flowCuePalette.secondaryText,
         ]
         let keyAttributes: [NSAttributedString.Key: Any] = [
-            .font: font,
+            .font: keyFont,
             .foregroundColor: flowCuePalette.primaryText,
         ]
         let horizontalPadding = max(4, (6 * scale).rounded())
-        let verticalPadding = max(1, (1 * scale).rounded())
+        let verticalPadding = max(1, (2 * scale).rounded())
         let keyActionGap = max(4, (6 * scale).rounded())
         let groupGap = max(7, (11 * scale).rounded())
-        let textHeight = ceil(font.ascender - font.descender + font.leading)
-        let keyHeight = textHeight + verticalPadding * 2 + max(1, (2 * scale).rounded())
+        let textHeight = ceil(keyFont.ascender - keyFont.descender + keyFont.leading)
+        let keyHeight = textHeight + verticalPadding * 2
         let widths = groups.map { key, action -> (CGFloat, CGFloat) in
             (
                 ceil((key as NSString).size(withAttributes: keyAttributes).width) + horizontalPadding * 2,
@@ -8189,29 +8459,14 @@ class MarkdownNSTextView: NSTextView {
         var x = origin.x
         for (index, group) in groups.enumerated() {
             let keyRect = NSRect(x: x, y: origin.y, width: widths[index].0, height: keyHeight)
-            let keyPath = NSBezierPath(
-                roundedRect: keyRect,
-                xRadius: max(2, (5 * scale).rounded()),
-                yRadius: max(2, (5 * scale).rounded())
-            )
+            let keyRadius = max(3, (6 * scale).rounded())
             flowCuePalette.surface.setFill()
-            keyPath.fill()
-            flowCuePalette.border.setStroke()
-            keyPath.lineWidth = 1 / max(1, window?.backingScaleFactor ?? 2)
-            keyPath.stroke()
-            let bottom = NSRect(
-                x: keyRect.minX + 1,
-                y: keyRect.maxY - max(1, (2 * scale).rounded()),
-                width: max(0, keyRect.width - 2),
-                height: max(1, (2 * scale).rounded())
-            )
-            flowCuePalette.border.withAlphaComponent(0.72).setFill()
-            NSBezierPath(rect: bottom).fill()
+            NSBezierPath(roundedRect: keyRect, xRadius: keyRadius, yRadius: keyRadius).fill()
             let keyText = NSAttributedString(string: group.0, attributes: keyAttributes)
             let keySize = keyText.size()
             keyText.draw(at: NSPoint(
                 x: keyRect.midX - keySize.width / 2,
-                y: keyRect.midY - keySize.height / 2 - 1
+                y: keyRect.midY - keySize.height / 2
             ))
             x = keyRect.maxX + keyActionGap
             let action = NSAttributedString(string: group.1, attributes: attributes)

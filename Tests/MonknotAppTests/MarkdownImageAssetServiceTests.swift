@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import XCTest
 @testable import MonknotApp
@@ -134,6 +135,51 @@ final class MarkdownImageAssetServiceTests: XCTestCase {
         MarkdownImageAssetService.removeUncommittedAssets(result.importedAssets, workspaceURL: workspace)
         XCTAssertFalse(FileManager.default.fileExists(atPath: result.importedAssets[0].fileURL.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: result.importedAssets[1].fileURL.path))
+    }
+
+    func testExternalWebImagesKeepTheirBytesAndOtherImagesBecomePNG() throws {
+        let container = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: container) }
+        let workspace = container.appendingPathComponent("workspace", isDirectory: true)
+        let outside = container.appendingPathComponent("outside", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let document = workspace.appendingPathComponent("Draft.md")
+        try "# Draft\n".write(to: document, atomically: true, encoding: .utf8)
+        let image = NSImage(size: NSSize(width: 8, height: 8))
+        image.lockFocus()
+        NSColor.systemTeal.setFill()
+        NSRect(x: 0, y: 0, width: 8, height: 8).fill()
+        image.unlockFocus()
+        let bitmap = try XCTUnwrap(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+        let jpeg = try XCTUnwrap(bitmap.representation(using: .jpeg, properties: [:]))
+        let tiff = try XCTUnwrap(bitmap.representation(using: .tiff, properties: [:]))
+        let photo = outside.appendingPathComponent("Photo one.jpg")
+        let scan = outside.appendingPathComponent("Scan.tiff")
+        try jpeg.write(to: photo)
+        try tiff.write(to: scan)
+
+        let plan = try MarkdownImageAssetService.planFileDrop(
+            [photo, scan],
+            workspaceURL: workspace,
+            markdownDocumentURL: document
+        )
+        let result = try MarkdownImageAssetService.importFileDrop(plan)
+
+        XCTAssertEqual(result.importedAssets.map(\.fileURL.lastPathComponent), ["Photo one.jpg", "Scan.png"])
+        XCTAssertEqual(try Data(contentsOf: result.importedAssets[0].fileURL), jpeg)
+        let converted = try Data(contentsOf: result.importedAssets[1].fileURL)
+        XCTAssertEqual(Array(converted.prefix(4)), [0x89, 0x50, 0x4e, 0x47])
+        XCTAssertEqual(result.markdown, "![Photo one](assets/Photo%20one.jpg)\n![Scan](assets/Scan.png)")
+    }
+
+    func testOnlyFormatsEveryBrowserShowsKeepTheirOriginalBytes() {
+        for name in ["photo.jpg", "photo.JPEG", "chart.png", "loop.gif", "shot.webp", "logo.svg"] {
+            XCTAssertTrue(MarkdownImageAssetService.keepsOriginalImageFormat(URL(fileURLWithPath: "/tmp/\(name)")), name)
+        }
+        for name in ["photo.heic", "scan.tiff", "old.bmp", "no-extension"] {
+            XCTAssertFalse(MarkdownImageAssetService.keepsOriginalImageFormat(URL(fileURLWithPath: "/tmp/\(name)")), name)
+        }
     }
 
     func testDropRejectsFoldersSymlinksAndUnsupportedFilesWithoutCreatingAssets() throws {

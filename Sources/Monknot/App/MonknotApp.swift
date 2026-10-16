@@ -13,6 +13,7 @@ struct MonknotApp: App {
     @StateObject private var workspaceRestoration = InitialWorkspaceRestorationCoordinator()
     @StateObject private var workspaceLibrary = WorkspaceLibraryStore()
     @StateObject private var themeStore = ThemeSettingsStore()
+    @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.defaultValue.rawValue
     private let workspaceWindowRequests = WorkspaceWindowRequestCenter.shared
     private let updaterController = SPUStandardUpdaterController(
         startingUpdater: true,
@@ -35,11 +36,21 @@ struct MonknotApp: App {
                 terminationCoordinator: appDelegate.terminationCoordinator
             )
                 .background(WorkspaceWindowRequestInstaller(requestCenter: workspaceWindowRequests))
-                .frame(minWidth: 920, minHeight: 620)
+                .frame(
+                    minWidth: WorkspaceSplitMetrics.minimumWindowWidth,
+                    minHeight: WorkspaceSplitMetrics.minimumWindowHeight
+                )
         } defaultValue: {
             MonknotWorkspaceWindowRequest()
         }
         .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 1_200, height: 760)
+        // Every window, Settings included, inherits the app's appearance; System leaves it to macOS.
+        .onChange(of: themePreferenceRawValue, initial: true) { _, rawValue in
+            NSApp.appearance = ThemePreference.resolved(rawValue: rawValue).appAppearance
+        }
+        // External opens are routed by AppDelegate through WorkspaceWindowRequestCenter.
+        .handlesExternalEvents(matching: [])
         .commands {
             MonknotCommandMenu()
             CommandGroup(after: .appInfo) {
@@ -102,6 +113,7 @@ private struct MonknotWindowRootView: View {
     @AppStorage("Monknot.reopenLastWorkspace") private var reopenLastWorkspace = true
     @State private var didHandleInitialRequest = false
     @State private var reusableWindowHandlerID = UUID()
+    @State private var hostingWindow = HostingWindowReference()
 
     var body: some View {
         ContentView(
@@ -110,51 +122,95 @@ private struct MonknotWindowRootView: View {
             workspaceLibrary: workspaceLibrary,
             terminationCoordinator: terminationCoordinator
         )
+            // Names the window in the Window menu, Mission Control and the Dock; the titlebar
+            // itself shows no title (design.md §10.1).
+            .navigationTitle(workspaceStore.workspaceURL?.lastPathComponent ?? "Monknot")
+            .background(HostingWindowReader(reference: hostingWindow))
             .onAppear {
-                workspaceWindowRequests.installReusableWindowHandler(id: reusableWindowHandlerID) { request in
-                    guard workspaceStore.workspaceURL == nil,
-                          !workspaceStore.isBusy,
-                          let workspaceURL = request.workspaceURL
-                    else {
-                        return false
-                    }
-
-                    _ = workspaceLibrary.add(workspaceURL)
-                    workspaceStore.openWorkspace(workspaceURL, selecting: request.selectedDocumentURL)
-                    Task { @MainActor in
-                        await importCaptureIfNeeded(from: request)
-                    }
-                    return true
-                }
+                workspaceWindowRequests.installReusableWindow(
+                    id: reusableWindowHandlerID,
+                    // Until its own request runs, a window counts as showing that request's workspace,
+                    // so a pending open is not routed into it.
+                    workspaceURL: {
+                        workspaceStore.openingWorkspaceURL ?? workspaceStore.workspaceURL
+                            ?? (didHandleInitialRequest ? nil : request.workspaceURL)
+                    },
+                    take: takeWindowRequest
+                )
             }
             .onDisappear {
-                workspaceWindowRequests.removeReusableWindowHandler(id: reusableWindowHandlerID)
+                workspaceWindowRequests.removeReusableWindow(id: reusableWindowHandlerID)
             }
             .task {
                 guard !didHandleInitialRequest else { return }
                 didHandleInitialRequest = true
 
-                if let workspaceURL = request.workspaceURL {
-                    _ = workspaceLibrary.add(workspaceURL)
-                    workspaceStore.openWorkspace(workspaceURL, selecting: request.selectedDocumentURL)
-                    await importCaptureIfNeeded(from: request)
-                } else if let pendingRequest = workspaceWindowRequests.consumePendingInitialWorkspaceRequest(),
-                          let workspaceURL = pendingRequest.workspaceURL {
-                    _ = workspaceLibrary.add(workspaceURL)
-                    workspaceStore.openWorkspace(workspaceURL, selecting: pendingRequest.selectedDocumentURL)
-                    await importCaptureIfNeeded(from: pendingRequest)
+                defer { workspaceWindowRequests.finishInitialWorkspaceRequestHandling() }
+                // Windows register when they appear, so a request can reach this one before it starts.
+                guard workspaceStore.openingWorkspaceURL == nil, workspaceStore.workspaceURL == nil else { return }
+
+                // A window starting with a request (a new window, or one restored at launch) or taking a
+                // pending one first checks that no other window shows or is opening the workspace;
+                // otherwise the request goes to that window (a pending one once launch handling
+                // finishes), and a window started for the request closes.
+                let startsWithOwnRequest = request.workspaceURL != nil
+                let startingRequest = startsWithOwnRequest
+                    ? request
+                    : workspaceWindowRequests.consumePendingInitialWorkspaceRequest()
+                if let startingRequest, let workspaceURL = startingRequest.workspaceURL {
+                    if isShownElsewhere(workspaceURL) {
+                        workspaceWindowRequests.openWorkspaceWindow(startingRequest)
+                        if startsWithOwnRequest {
+                            hostingWindow.close()
+                        }
+                    } else {
+                        openWorkspace(workspaceURL, for: startingRequest)
+                        await importCaptureIfNeeded(from: startingRequest)
+                    }
                 } else if reopenLastWorkspace, workspaceRestoration.claimInitialRestore() {
                     do {
-                        if let workspaceURL = try workspaceLibrary.lastActiveWorkspaceURL() {
+                        if let workspaceURL = try workspaceLibrary.lastActiveWorkspaceURL(),
+                           !isShownElsewhere(workspaceURL) {
                             workspaceStore.openWorkspace(workspaceURL)
                         }
                     } catch {
                         workspaceStore.errorMessage = "Could not restore the previous workspace: \(error.localizedDescription)"
                     }
                 }
-
-                workspaceWindowRequests.finishInitialWorkspaceRequestHandling()
             }
+    }
+
+    /// Opens the request's workspace in this window, synchronously so that the window reports it
+    /// before the next request is routed. Its file is also queued as a tab, so it joins the workspace's
+    /// saved tabs instead of being replaced by them when they are restored.
+    private func openWorkspace(_ workspaceURL: URL, for request: MonknotWorkspaceWindowRequest) {
+        _ = workspaceLibrary.add(workspaceURL)
+        workspaceStore.openWorkspace(workspaceURL, selecting: request.selectedDocumentURL)
+        if let documentURL = request.selectedDocumentURL {
+            workspaceStore.requestDocumentOpen(at: documentURL)
+        }
+    }
+
+    private func takeWindowRequest(_ request: MonknotWorkspaceWindowRequest, claim: WorkspaceWindowClaim) {
+        switch claim {
+        case .showsWorkspace, .containsDocument:
+            if let documentURL = request.selectedDocumentURL {
+                workspaceStore.requestDocumentOpen(at: documentURL)
+            }
+            // The window itself, not `openWindow(value:)`: SwiftUI does not match a window restored
+            // at launch to its value and would open a new, empty one.
+            hostingWindow.bringToFront()
+        case .empty:
+            guard let workspaceURL = request.workspaceURL else { return }
+            openWorkspace(workspaceURL, for: request)
+        }
+        Task { @MainActor in
+            await importCaptureIfNeeded(from: request)
+        }
+    }
+
+    private func isShownElsewhere(_ workspaceURL: URL) -> Bool {
+        workspaceWindowRequests.isWorkspaceShown(workspaceURL, excludingWindow: reusableWindowHandlerID)
     }
 
     private func importCaptureIfNeeded(from request: MonknotWorkspaceWindowRequest) async {
@@ -200,6 +256,28 @@ private struct WorkspaceWindowRequestInstaller: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let savedWorkspaceStore = SavedWorkspaceStore()
     let terminationCoordinator = ApplicationTerminationCoordinator()
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Monknot has its own document tabs; the system's window tabs (Show Tab Bar, Merge All
+        // Windows) would offer a second, conflicting kind.
+        NSWindow.allowsAutomaticWindowTabbing = false
+        // Before launch finishes, so a Finder service request that launches the app is delivered.
+        NSApp.servicesProvider = self
+    }
+
+    /// Finder's "Open in Monknot" service for files and folders (Info.plist `NSServices`).
+    @objc func openInMonknot(
+        _ pasteboard: NSPasteboard,
+        userData: String?,
+        error: AutoreleasingUnsafeMutablePointer<NSString>
+    ) {
+        let urls = pasteboard.fileURLs
+        guard !urls.isEmpty else {
+            error.pointee = "No files or folders were provided."
+            return
+        }
+        openWorkspaceItems(at: urls)
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)

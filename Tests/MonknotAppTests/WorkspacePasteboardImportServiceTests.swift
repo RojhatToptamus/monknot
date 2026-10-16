@@ -24,6 +24,25 @@ final class WorkspacePasteboardImportServiceTests: XCTestCase {
         )
     }
 
+    /// HTML-only clipboard text keeps its paragraphs, breaks and list items, decodes character
+    /// references, and leaves out the head, styles and scripts.
+    func testPlainTextFromHTMLKeepsParagraphsAndDropsMarkup() {
+        let html = """
+        <html><head><meta charset="utf-8"><title>Page</title><style>p { color: red; }</style></head>
+        <body><!-- note --><h1>Plan &amp; notes</h1>
+        <p>First   line<br>second line</p>
+        <p title="a > b">Caf&eacute; &#8212; &#x2603; 3 &lt; 4 and 5 < 6</p>
+        <ul><li>One</li>
+        <li>Two <img src="https://example.com/tracker.png"></li></ul>
+        <script>document.write("<p>no</p>")</script><div>End&nbsp;</div></body></html>
+        """
+
+        XCTAssertEqual(
+            WorkspacePasteboardImportService.plainText(fromHTML: html),
+            "Plan & notes\n\nFirst line\nsecond line\n\nCaf&eacute; \u{2014} \u{2603} 3 < 4 and 5 < 6\n\n- One\n- Two\n\nEnd"
+        )
+    }
+
     func testURLStringCaptureUsesReadablePathTitleAndMetadata() throws {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("monknot-url-capture-\(UUID().uuidString)"))
         pasteboard.clearContents()

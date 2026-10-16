@@ -162,8 +162,8 @@ final class TerminalChromeLayoutTests: XCTestCase {
         )
         XCTAssertTrue(html.contains("width: 12px;"))
         XCTAssertTrue(html.contains("--terminal-bg: \(theme.terminalSurfaceHex);"))
-        XCTAssertTrue(html.contains("background: '\(theme.terminalSurfaceHex)'"))
-        XCTAssertFalse(html.contains("background: '\(theme.background)'"))
+        XCTAssertTrue(html.contains("\"background\":\"\(theme.terminalSurfaceHex)\""))
+        XCTAssertFalse(html.contains("\"background\":\"\(theme.background)\""))
     }
 
     func testTerminalResizeKeepsTheFirstScrollbackAnchorAcrossObserverCallbacks() {
@@ -183,8 +183,9 @@ final class TerminalChromeLayoutTests: XCTestCase {
         XCTAssertTrue(
             html.contains("term.buffer.active.baseY - distanceFromBottom")
         )
-        XCTAssertTrue(html.contains("const wasAtBottom = buffer.baseY - buffer.viewportY <= 0;"))
-        XCTAssertTrue(html.contains("if (wasAtBottom) term.scrollToBottom();"))
+        // Live output leaves following the bottom to xterm.js, which stops while the user reads back.
+        XCTAssertTrue(html.contains("term.write(bytes);\n"))
+        XCTAssertFalse(html.contains("wasAtBottom"))
         XCTAssertFalse(html.contains("Math.min(viewportY, term.buffer.active.baseY)"))
         XCTAssertFalse(html.contains("term.write(data, () => {\n              term.scrollToBottom();"))
     }

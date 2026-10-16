@@ -5,9 +5,15 @@ public enum WorkspaceDocumentKind: String, Codable, Sendable {
     case markdown
     case pdf
     case text
+    case image
     case media
     case nativePreview
     case unsupported
+
+    /// PDFs, and images shown on a PDF page, open in the PDF viewer and take its markup.
+    public var opensInPDFViewer: Bool {
+        self == .pdf || self == .image
+    }
 }
 
 public struct WorkspaceDocumentCapabilities: Codable, Hashable, Sendable {
@@ -48,6 +54,12 @@ public struct WorkspaceDocument: Identifiable, Hashable, Codable, Sendable {
     public let localizedTypeDescription: String?
     public let capabilities: WorkspaceDocumentCapabilities
     public let depth: Int
+
+    /// Markdown notes and HTML pages have a rendered preview beside their source (Preview mode and
+    /// split view); other documents show only their source or their own viewer.
+    public var hasPreviewMode: Bool {
+        kind == .markdown || capabilities.canPreviewHTML
+    }
 
     public init(url: URL, rootURL: URL) {
         let standardizedURL = url.standardizedFileURL
@@ -115,13 +127,25 @@ public enum WorkspaceDocumentSupport {
         "css", "scss", "sass", "less",
         "json", "jsonc", "yaml", "yml", "xml", "csv", "tsv", "toml", "ini", "env"
     ]
-    public static let textFilenames: Set<String> = [
-        "dockerfile", "makefile", "procfile", "gemfile", "rakefile", "justfile"
+    /// Raster images ImageIO decodes. SVG stays a text document: its source is the file.
+    public static let imageExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "gif", "heic", "heif", "tif", "tiff", "webp", "bmp", "ico", "avif"
     ]
+    /// Video and audio AVFoundation plays. They are listed by extension alone: a file is first
+    /// read when it opens in the player, never while the workspace is scanned or searched.
+    public static let mediaExtensions: Set<String> = [
+        "mov", "mp4", "m4v", "mpg", "mpeg",
+        "mp3", "m4a", "aac", "wav", "aif", "aiff", "caf", "flac"
+    ]
+    /// Extensionless files that hold text by convention, matched case-insensitively.
+    public static let textFilenames: Set<String> = [
+        "dockerfile", "makefile", "procfile", "gemfile", "rakefile", "justfile",
+        "license", "licence", "readme", "changelog", "authors", "contributors", "copying", "notice"
+    ]
+    /// Files the scan leaves out. AVI is among them: it declares itself as video, but the codecs it
+    /// usually carries do not play in AVFoundation.
     public static let ignoredUnsupportedExtensions: Set<String> = [
-        "png", "jpg", "jpeg", "gif", "heic", "tif", "tiff", "webp", "bmp", "ico",
-        "mov", "mp4", "m4v", "avi", "mpg", "mpeg",
-        "mp3", "m4a", "aac", "wav", "aif", "aiff", "caf", "flac",
+        "avi",
         "zip", "rar", "7z", "tar", "gz", "bz2", "xz",
         "webarchive", "rtf", "rtfd",
         "doc", "docx", "xls", "xlsx", "ppt", "pptx", "pages", "numbers", "key",
@@ -131,6 +155,89 @@ public enum WorkspaceDocumentSupport {
         .union(pdfExtensions)
         .union(htmlExtensions)
         .union(textExtensions)
+        .union(imageExtensions)
+        .union(mediaExtensions)
+
+    /// Whether a file with this name is listed as a workspace document.
+    public static func isWorkspaceDocumentName(_ name: String) -> Bool {
+        workspaceClassification(for: URL(fileURLWithPath: name)) != nil
+    }
+
+    /// The classification of a file the workspace scan lists, or nil for a file it leaves out.
+    public static func workspaceClassification(for url: URL) -> Classification? {
+        guard shouldIncludeInWorkspaceScan(url) else { return nil }
+        let classification = classification(for: url)
+        return classification.kind == .unsupported ? nil : classification
+    }
+
+    /// Whether a folder with this name is a package, such as `Release.app` or `Notes.rtfd`, which
+    /// Finder shows as a single item.
+    public static func isPackageName(_ name: String) -> Bool {
+        let pathExtension = (name as NSString).pathExtension
+        guard !pathExtension.isEmpty,
+              let type = UTType(filenameExtension: pathExtension, conformingTo: .package)
+        else { return false }
+        return !type.isDynamic
+    }
+
+    /// The longest file or folder name macOS accepts, measured by `fileNameLength(_:)`.
+    public static let maximumFileNameLength = 255
+
+    /// The length macOS limits a file or folder name by: its UTF-16 code units once decomposed,
+    /// so "é" counts 2 and an emoji 2.
+    public static func fileNameLength(_ name: String) -> Int {
+        name.decomposedStringWithCanonicalMapping.utf16.count
+    }
+
+    /// `name` in `directoryURL`, or when that is taken, the first free "name copy", "name copy 2", ….
+    /// A file or package keeps its extension last ("photo copy.png"); a folder's name is used whole,
+    /// so "v1.2" becomes "v1.2 copy". As in Finder, a name too long to take the suffix is shortened
+    /// at a character boundary to fit `maximumFileNameLength`.
+    public static func availableCopyURL(
+        named name: String,
+        isDirectory: Bool,
+        in directoryURL: URL,
+        fileManager: FileManager = .default
+    ) -> URL {
+        var candidate = directoryURL.appendingPathComponent(name)
+        guard fileManager.fileExists(atPath: candidate.path) else { return candidate }
+
+        let splitsExtension = !isDirectory || isPackageName(name)
+        let pathExtension = splitsExtension ? (name as NSString).pathExtension : ""
+        let baseName = pathExtension.isEmpty ? name : (name as NSString).deletingPathExtension
+        var index = 1
+        repeat {
+            let suffix = index == 1 ? " copy" : " copy \(index)"
+            let ending = pathExtension.isEmpty ? suffix : "\(suffix).\(pathExtension)"
+            candidate = directoryURL.appendingPathComponent(fittedName(baseName, ending: ending))
+            index += 1
+        } while fileManager.fileExists(atPath: candidate.path)
+        return candidate
+    }
+
+    /// `baseName` followed by `ending`, with as many trailing characters of `baseName` dropped as
+    /// the result needs to fit `maximumFileNameLength`.
+    private static func fittedName(_ baseName: String, ending: String) -> String {
+        let budget = maximumFileNameLength - fileNameLength(ending)
+        guard fileNameLength(baseName) > budget else { return baseName + ending }
+        var base = Substring(baseName)
+        while !base.isEmpty, fileNameLength(String(base)) > budget || base.last?.isWhitespace == true {
+            base.removeLast()
+        }
+        return base + ending
+    }
+
+    /// Whether `url` is `directoryURL` or inside it, comparing standardized paths.
+    public static func isURL(_ url: URL, containedIn directoryURL: URL) -> Bool {
+        isPath(url.standardizedFileURL.path, containedIn: directoryURL.standardizedFileURL.path)
+    }
+
+    /// Whether `path` is `directoryPath` or inside it. Both are standardized paths, such as
+    /// document and sidebar node IDs.
+    public static func isPath(_ path: String, containedIn directoryPath: String) -> Bool {
+        let prefix = directoryPath.hasSuffix("/") ? directoryPath : directoryPath + "/"
+        return path == directoryPath || path.hasPrefix(prefix)
+    }
 
     public static func shouldIncludeInWorkspaceScan(_ url: URL) -> Bool {
         let fileExtension = url.pathExtension.lowercased()
@@ -194,6 +301,24 @@ public enum WorkspaceDocumentSupport {
             )
         }
 
+        if imageExtensions.contains(fileExtension) {
+            return Classification(
+                kind: .image,
+                contentTypeIdentifier: contentTypeIdentifier,
+                localizedTypeDescription: localizedTypeDescription,
+                capabilities: capabilities(for: .image)
+            )
+        }
+
+        if mediaExtensions.contains(fileExtension) {
+            return Classification(
+                kind: .media,
+                contentTypeIdentifier: contentTypeIdentifier,
+                localizedTypeDescription: localizedTypeDescription,
+                capabilities: capabilities(for: .media)
+            )
+        }
+
         if textExtensions.contains(fileExtension) || textFilenames.contains(filename) {
             return Classification(
                 kind: .text,
@@ -254,9 +379,19 @@ public enum WorkspaceDocumentSupport {
                 canShowOutline: false,
                 canPreviewHTML: false
             )
+        case .image:
+            return WorkspaceDocumentCapabilities(
+                canPreview: true,
+                canEditText: false,
+                canSearchText: false,
+                canSearchPDF: false,
+                canExportPDF: false,
+                canShowOutline: false,
+                canPreviewHTML: false
+            )
         case .media:
             return WorkspaceDocumentCapabilities(
-                canPreview: false,
+                canPreview: true,
                 canEditText: false,
                 canSearchText: false,
                 canSearchPDF: false,

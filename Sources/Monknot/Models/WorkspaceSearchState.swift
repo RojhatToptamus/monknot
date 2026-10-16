@@ -5,10 +5,26 @@ import MonknotCore
 final class WorkspaceSearchState: ObservableObject {
     @Published var isPresented = false
     @Published private(set) var isSearching = false
-    @Published private(set) var results: [WorkspaceSearchResult] = []
+    @Published private(set) var results: [WorkspaceSearchResult] = [] {
+        didSet {
+            resultGroups = WorkspaceSearchResultGrouping.groups(from: results)
+            resultListItems = WorkspaceSearchResultGrouping.listItems(from: resultGroups)
+            resultLocationWidthTemplates = WorkspaceSearchLocationColumn.widthTemplates(for: results)
+        }
+    }
+    /// Derived from `results` once per search, not on every redraw of the result list.
+    private(set) var resultGroups: [WorkspaceSearchResultGroup] = []
+    private(set) var resultListItems: [WorkspaceSearchListItem] = []
+    private(set) var resultLocationWidthTemplates: [String] = []
+    /// The query that produced `results`, which can trail `query` while a new search runs.
+    @Published private(set) var resultsQuery = ""
     @Published private(set) var selectedResultIndex = 0
     @Published private(set) var errorMessage: String?
     @Published private(set) var skippedLargeFileCount = 0
+    /// The results stop at a match limit; counts are shown as "500+".
+    @Published private(set) var reachedMatchLimit = false
+    /// Files with more matches than listed; their counts are shown as "50+".
+    @Published private(set) var truncatedDocumentIDs: Set<String> = []
     @Published private(set) var query = ""
     @Published var replaceText = ""
     @Published var replaceScope: WorkspaceReplaceScope = .entireWorkspace
@@ -155,9 +171,11 @@ final class WorkspaceSearchState: ObservableObject {
 
         searchTask?.cancel()
         errorMessage = nil
-        skippedLargeFileCount = 0
 
+        // A new search keeps the previous results, and the counts that describe them, until it
+        // replaces them.
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            clearResultDetails()
             if isSearching {
                 isSearching = false
             }
@@ -193,7 +211,10 @@ final class WorkspaceSearchState: ObservableObject {
                 await MainActor.run {
                     guard generation == self.searchGeneration else { return }
                     self.results = batch.results
+                    self.resultsQuery = query
                     self.skippedLargeFileCount = batch.skippedLargeFileCount
+                    self.reachedMatchLimit = batch.reachedMatchLimit
+                    self.truncatedDocumentIDs = batch.truncatedDocumentIDs
                     self.selectedResultIndex = 0
                     self.isSearching = false
                 }
@@ -202,11 +223,18 @@ final class WorkspaceSearchState: ObservableObject {
                 await MainActor.run {
                     guard generation == self.searchGeneration else { return }
                     self.results = []
+                    self.clearResultDetails()
                     self.errorMessage = error.localizedDescription
                     self.isSearching = false
                 }
             }
         }
+    }
+
+    private func clearResultDetails() {
+        skippedLargeFileCount = 0
+        reachedMatchLimit = false
+        truncatedDocumentIDs = []
     }
 
     private func cancelSearch() {

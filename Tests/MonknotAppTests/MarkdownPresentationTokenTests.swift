@@ -22,13 +22,13 @@ final class MarkdownPresentationTokenTests: XCTestCase {
         let expectedPointSizes: [String: CGFloat] = [
             "bold": 17,
             "italic": 17,
-            "quote.opening": 17,
+            "text.quote": 14,
             "curlybraces": 13,
             "link": 13,
             "list.bullet": 17,
             "list.number": 17,
             "checklist": 14,
-            "photo": 14,
+            "photo": 12,
             "minus": 17,
         ]
 
@@ -139,13 +139,39 @@ final class MarkdownPresentationTokenTests: XCTestCase {
 
         for expectedStyle in [
             MarkdownSyntaxStyle.heading,
-            .quote,
             .strong,
             .wikilink,
             .link,
             .code,
+            .marker,
         ] {
             XCTAssertTrue(styles.contains(expectedStyle))
+        }
+    }
+
+    func testMarkdownSyntaxMarkersCoverOnlyTheBlockSyntax() {
+        let markdown = """
+        ## Heading
+        > > Nested quote
+        - item
+          12. numbered
+        * [x] done
+        **not a list** and #not-a-heading
+        ---
+        """
+        let source = markdown as NSString
+        let markers = MarkdownSyntaxTokenizer.tokens(in: markdown)
+            .filter { $0.style == .marker }
+            .map { source.substring(with: $0.range) }
+
+        XCTAssertEqual(markers, ["##", "> > ", "-", "12.", "* [x]"])
+    }
+
+    func testMarkdownInlineSyntaxNeverSpansACarriageReturn() {
+        // `paragraphRange` splits at a lone CR, so a token crossing one would differ between a
+        // line-local restyle and a full pass.
+        for markdown in ["**a\rb**", "[[a\rb]]", "[a\rb](x.md)", "[a](x\r.md)", "`a\rb`"] {
+            XCTAssertTrue(MarkdownSyntaxTokenizer.tokens(in: markdown).isEmpty, markdown.debugDescription)
         }
     }
 

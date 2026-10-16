@@ -73,13 +73,164 @@ enum WorkspacePasteboardImportService {
             return [item]
         }
 
-        if let text = pasteboard.string(forType: .string),
+        if let text = pasteboard.string(forType: .string) ?? plainText(fromHTMLOn: pasteboard),
            let item = capturedTextItem(from: text, isURL: false) {
             return [item]
         }
 
         return []
     }
+
+    /// The text of HTML that an app put on the pasteboard without a plain-text version.
+    private static func plainText(fromHTMLOn pasteboard: NSPasteboard) -> String? {
+        guard let data = pasteboard.data(forType: .html) else { return nil }
+        return plainText(fromHTML: String(decoding: data, as: UTF8.self))
+    }
+
+    /// The text of `html`, keeping its paragraphs, line breaks and list items. Tags are dropped
+    /// and character references decoded; nothing the HTML refers to is loaded, and scripts, styles
+    /// and the document head are left out.
+    static func plainText(fromHTML html: String) -> String {
+        var text = ""
+        var skippedElement: String?
+        var index = html.startIndex
+
+        while index < html.endIndex {
+            guard html[index] == "<" else {
+                let end = html[index...].firstIndex(of: "<") ?? html.endIndex
+                if skippedElement == nil {
+                    text += decodingCharacterReferences(in: collapsingWhitespace(html[index..<end]))
+                }
+                index = end
+                continue
+            }
+            if html[index...].hasPrefix("<!--") {
+                index = html[index...].range(of: "-->")?.upperBound ?? html.endIndex
+                continue
+            }
+            // A `<` that starts no tag, as in "a < b", is text.
+            let next = html.index(after: index)
+            guard next < html.endIndex, html[next].isLetter || html[next] == "/" || html[next] == "!" else {
+                if skippedElement == nil { text += "<" }
+                index = next
+                continue
+            }
+
+            let tagEnd = endOfTag(in: html, from: index)
+            let tag = html[html.index(after: index)..<tagEnd]
+            index = tagEnd < html.endIndex ? html.index(after: tagEnd) : html.endIndex
+            let isClosing = tag.hasPrefix("/")
+            let name = tag.drop { $0 == "/" }.prefix { $0.isLetter || $0.isNumber }.lowercased()
+
+            if let skipped = skippedElement {
+                if isClosing, name == skipped {
+                    skippedElement = nil
+                }
+                continue
+            }
+            if !isClosing, htmlSkippedElements.contains(name), !tag.hasSuffix("/") {
+                skippedElement = name
+            } else if name == "br" {
+                text += "\n"
+            } else if name == "li", !isClosing {
+                text += "\n- "
+            } else if name == "tr" {
+                text += "\n"
+            } else if name == "td" || name == "th" {
+                text += " "
+            } else if htmlBlockElements.contains(name) {
+                text += "\n\n"
+            }
+        }
+
+        var lines: [Substring] = []
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty, lines.last?.isEmpty != false { continue }
+            lines.append(Substring(trimmed))
+        }
+        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static let htmlSkippedElements: Set<String> = ["head", "script", "style", "template", "title"]
+    private static let htmlBlockElements: Set<String> = [
+        "address", "article", "aside", "blockquote", "dd", "div", "dl", "dt", "figcaption", "figure",
+        "footer", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "main", "nav", "ol", "p", "pre",
+        "section", "table", "ul",
+    ]
+
+    /// The index of the `>` that ends the tag opening at `start`, past any quoted attribute value.
+    private static func endOfTag(in html: String, from start: String.Index) -> String.Index {
+        var quote: Character?
+        var index = html.index(after: start)
+        while index < html.endIndex {
+            let character = html[index]
+            if let open = quote {
+                if character == open { quote = nil }
+            } else if character == "\"" || character == "'" {
+                quote = character
+            } else if character == ">" {
+                return index
+            }
+            index = html.index(after: index)
+        }
+        return html.endIndex
+    }
+
+    /// HTML text with each run of white space as one space, as a browser shows it.
+    private static func collapsingWhitespace(_ text: Substring) -> String {
+        var result = ""
+        var lastWasSpace = false
+        for character in text {
+            if character.isWhitespace {
+                if !lastWasSpace { result.append(" ") }
+                lastWasSpace = true
+            } else {
+                result.append(character)
+                lastWasSpace = false
+            }
+        }
+        return result
+    }
+
+    /// `text` with its numeric and common named character references decoded; any other `&` stays.
+    private static func decodingCharacterReferences(in text: String) -> String {
+        guard text.contains("&") else { return text }
+        var result = ""
+        var index = text.startIndex
+        while index < text.endIndex {
+            guard text[index] == "&",
+                  let semicolon = text[index...].prefix(12).firstIndex(of: ";"),
+                  let decoded = characterReference(text[text.index(after: index)..<semicolon])
+            else {
+                result.append(text[index])
+                index = text.index(after: index)
+                continue
+            }
+            result.append(decoded)
+            index = text.index(after: semicolon)
+        }
+        return result
+    }
+
+    private static func characterReference(_ name: Substring) -> Character? {
+        if name.hasPrefix("#") {
+            let digits = name.dropFirst()
+            let value = digits.first == "x" || digits.first == "X"
+                ? UInt32(digits.dropFirst(), radix: 16)
+                : UInt32(digits)
+            guard let value, value != 0, let scalar = Unicode.Scalar(value) else { return nil }
+            return Character(scalar)
+        }
+        return htmlNamedCharacters[String(name)]
+    }
+
+    private static let htmlNamedCharacters: [String: Character] = [
+        "amp": "&", "lt": "<", "gt": ">", "quot": "\"", "apos": "'", "nbsp": " ",
+        "ndash": "\u{2013}", "mdash": "\u{2014}", "hellip": "\u{2026}", "bull": "\u{2022}",
+        "lsquo": "\u{2018}", "rsquo": "\u{2019}", "ldquo": "\u{201C}", "rdquo": "\u{201D}",
+        "copy": "\u{00A9}", "reg": "\u{00AE}", "trade": "\u{2122}", "middot": "\u{00B7}",
+    ]
 
     static func importItems(_ items: [WorkspacePasteboardImportItem], into directoryURL: URL) throws -> [URL] {
         try validateDirectory(directoryURL)
@@ -92,8 +243,9 @@ enum WorkspacePasteboardImportService {
             case .fileURL(let sourceURL):
                 importedURLs.append(try copyFile(at: sourceURL, into: directoryURL))
             case .pngImageData(let data, let suggestedName):
-                let destinationURL = uniqueURL(
-                    for: sanitizedFileName(suggestedName, fallback: "Pasted Image.png"),
+                let destinationURL = WorkspaceDocumentSupport.availableCopyURL(
+                    named: sanitizedFileName(suggestedName, fallback: "Pasted Image.png"),
+                    isDirectory: false,
                     in: directoryURL
                 )
                 try data.write(to: destinationURL, options: .atomic)
@@ -101,8 +253,9 @@ enum WorkspacePasteboardImportService {
             case .capturedMarkdown(let markdown, let suggestedName):
                 let inboxURL = directoryURL.appendingPathComponent("inbox", isDirectory: true)
                 try FileManager.default.createDirectory(at: inboxURL, withIntermediateDirectories: true)
-                let destinationURL = uniqueURL(
-                    for: sanitizedFileName(suggestedName, fallback: "Clipboard.md"),
+                let destinationURL = WorkspaceDocumentSupport.availableCopyURL(
+                    named: sanitizedFileName(suggestedName, fallback: "Clipboard.md"),
+                    isDirectory: false,
                     in: inboxURL
                 )
                 try markdown.write(to: destinationURL, atomically: true, encoding: .utf8)
@@ -121,12 +274,17 @@ enum WorkspacePasteboardImportService {
             throw WorkspacePasteboardImportError.unsupportedSource(sourceURL.lastPathComponent)
         }
 
-        if resourceValues.isDirectory == true, isURL(directoryURL, containedIn: sourceURL) {
+        let isDirectory = resourceValues.isDirectory == true
+        if isDirectory, WorkspaceDocumentSupport.isURL(directoryURL, containedIn: sourceURL) {
             throw WorkspacePasteboardImportError.sourceContainsDestination(sourceURL.lastPathComponent)
         }
 
         let fileName = sanitizedFileName(sourceURL.lastPathComponent, fallback: "Pasted File")
-        let destinationURL = uniqueURL(for: fileName, in: directoryURL)
+        let destinationURL = WorkspaceDocumentSupport.availableCopyURL(
+            named: fileName,
+            isDirectory: isDirectory,
+            in: directoryURL
+        )
         try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
         return destinationURL
     }
@@ -136,30 +294,6 @@ enum WorkspacePasteboardImportService {
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {
             throw WorkspacePasteboardImportError.invalidDestination(url.lastPathComponent)
         }
-    }
-
-    fileprivate static func uniqueURL(for proposedName: String, in directoryURL: URL) -> URL {
-        let fileManager = FileManager.default
-        let proposedURL = URL(fileURLWithPath: proposedName)
-        let sourceExtension = proposedURL.pathExtension
-        let baseName = proposedURL.deletingPathExtension().lastPathComponent
-        var candidate = directoryURL.appendingPathComponent(proposedName)
-
-        guard fileManager.fileExists(atPath: candidate.path) else {
-            return candidate
-        }
-
-        var index = 1
-        repeat {
-            let suffix = index == 1 ? " copy" : " copy \(index)"
-            let name = sourceExtension.isEmpty
-                ? "\(baseName)\(suffix)"
-                : "\(baseName)\(suffix).\(sourceExtension)"
-            candidate = directoryURL.appendingPathComponent(name)
-            index += 1
-        } while fileManager.fileExists(atPath: candidate.path)
-
-        return candidate
     }
 
     fileprivate static func sanitizedFileName(_ name: String, fallback: String) -> String {
@@ -186,7 +320,7 @@ enum WorkspacePasteboardImportService {
         let capturedURL = captureURL(from: trimmed, explicitURLType: isURL)
         let title = captureTitle(for: trimmed, url: capturedURL, override: titleOverride)
         let timestamp = captureTimestamp()
-        let fileName = sanitizedFileName("\(timestamp) \(title).md", fallback: "\(timestamp) Clipboard.md")
+        let fileName = sanitizedFileName("\(timestamp) \(fileNameTitle(title)).md", fallback: "\(timestamp) Clipboard.md")
         let markdown: String
 
         if let url = capturedURL {
@@ -218,6 +352,15 @@ enum WorkspacePasteboardImportService {
         }
 
         return .capturedMarkdown(markdown, suggestedName: fileName)
+    }
+
+    /// `title` as part of a file name, which cannot hold a colon or a slash: each becomes a dash,
+    /// so "Meeting: Q3" names "Meeting - Q3.md" and "A/B" names "A-B.md".
+    private static func fileNameTitle(_ title: String) -> String {
+        title
+            .replacingOccurrences(of: ": ", with: " - ")
+            .replacingOccurrences(of: ":", with: "-")
+            .replacingOccurrences(of: "/", with: "-")
     }
 
     private static func captureURL(from text: String, explicitURLType: Bool) -> URL? {
@@ -311,11 +454,11 @@ enum WorkspacePasteboardImportService {
         return nil
     }
 
-    private static func isURL(_ candidate: URL, containedIn directory: URL) -> Bool {
-        let candidatePath = candidate.standardizedFileURL.path
-        let directoryPath = directory.standardizedFileURL.path
-        let prefix = directoryPath.hasSuffix("/") ? directoryPath : directoryPath + "/"
-        return candidatePath == directoryPath || candidatePath.hasPrefix(prefix)
+    /// Whether `importItems(from:)` may find something on `pasteboard`, from the kinds of data it
+    /// holds and without reading them.
+    static func canImportItems(from pasteboard: NSPasteboard) -> Bool {
+        pasteboard.canReadObject(forClasses: [NSURL.self, NSImage.self], options: [.urlReadingFileURLsOnly: true])
+            || pasteboard.availableType(from: [.URL, .string, .rtf, .html]) != nil
     }
 }
 
@@ -567,14 +710,19 @@ enum MarkdownImageAssetService {
             item.sourceURL.lastPathComponent,
             fallback: item.isImage ? "Dropped Image.png" : "Dropped File"
         )
+        let convertsToPNG = item.isImage && !keepsOriginalImageFormat(item.sourceURL)
         let proposedName: String
-        if item.isImage {
+        if convertsToPNG {
             let baseName = URL(fileURLWithPath: originalName).deletingPathExtension().lastPathComponent
             proposedName = "\(baseName).png"
         } else {
             proposedName = originalName
         }
-        let destinationURL = WorkspacePasteboardImportService.uniqueURL(for: proposedName, in: assetsURL)
+        let destinationURL = WorkspaceDocumentSupport.availableCopyURL(
+            named: proposedName,
+            isDirectory: false,
+            in: assetsURL
+        )
         guard isContained(destinationURL, in: root) else {
             throw MarkdownImageAssetError.outsideWorkspace
         }
@@ -582,12 +730,18 @@ enum MarkdownImageAssetService {
         let temporaryURL = assetsURL.appendingPathComponent(".monknot-drop-\(UUID().uuidString).tmp")
         defer { try? FileManager.default.removeItem(at: temporaryURL) }
         if item.isImage {
-            guard let image = NSImage(contentsOf: item.sourceURL),
-                  let data = WorkspacePasteboardImportService.pngData(for: image)
-            else {
+            // Loading it also rejects a file that is not an image at all.
+            guard let image = NSImage(contentsOf: item.sourceURL), image.isValid else {
                 throw MarkdownImageAssetError.couldNotReadDroppedImage(item.sourceURL.lastPathComponent)
             }
-            try data.write(to: temporaryURL, options: .atomic)
+            if convertsToPNG {
+                guard let data = WorkspacePasteboardImportService.pngData(for: image) else {
+                    throw MarkdownImageAssetError.couldNotReadDroppedImage(item.sourceURL.lastPathComponent)
+                }
+                try data.write(to: temporaryURL, options: .atomic)
+            } else {
+                try FileManager.default.copyItem(at: item.sourceURL, to: temporaryURL)
+            }
         } else {
             try FileManager.default.copyItem(at: item.sourceURL, to: temporaryURL)
         }
@@ -603,6 +757,13 @@ enum MarkdownImageAssetService {
             isImage: item.isImage,
             wasImported: true
         )
+    }
+
+    /// Formats every browser shows are copied untouched, so a photo keeps its size and a GIF its
+    /// animation. Other images (HEIC, TIFF, BMP, …) become PNG so notes stay portable.
+    static func keepsOriginalImageFormat(_ url: URL) -> Bool {
+        guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
+        return [UTType.png, .jpeg, .gif, .webP, .svg].contains { type.conforms(to: $0) }
     }
 
     private static func validatedAssetsDirectory(workspaceURL: URL, root: URL) throws -> URL {
@@ -685,15 +846,15 @@ private enum MarkdownImageAssetError: LocalizedError {
         case .assetsIsNotDirectory:
             return "The workspace assets item is not a folder."
         case .invalidDropCount(let maximum):
-            return "Drop between 1 and \(maximum) files at a time."
+            return "Insert between 1 and \(maximum) files at a time."
         case .noDroppedFiles:
-            return "The drop does not contain any new files."
+            return "There are no new files to insert."
         case .unsupportedDroppedFile(let name):
             return "\(name) is not a supported file. Folders, aliases, and binary files cannot be inserted."
         case .droppedFileTooLarge(let name):
             return "\(name) is too large to import."
         case .droppedFilesChanged:
-            return "The dropped files changed before they could be imported."
+            return "The files changed before they could be imported."
         case .couldNotReadDroppedImage(let name):
             return "\(name) could not be read as an image."
         }
@@ -717,5 +878,70 @@ enum WorkspacePasteboardImportError: LocalizedError {
         case .couldNotEncodeImage:
             return "The clipboard image could not be converted to PNG."
         }
+    }
+}
+
+extension WorkspaceStore {
+    /// Copy and Cut for a workspace file or folder, as in Finder: the item goes on the pasteboard
+    /// and the next Paste in Monknot copies or moves it. A file goes on it as it is now, unsaved
+    /// changes included.
+    func putItemOnPasteboard(at url: URL, cutting: Bool, pasteboard: NSPasteboard = .general) {
+        guard !isBusy else { return }
+        let stamp: WorkspacePasteboardTransferStamp
+        do {
+            stamp = try WorkspacePasteboardExportService.copyFile(
+                at: url,
+                unsavedText: dirtyTextByDocumentID[url.standardizedFileURL.path],
+                to: pasteboard
+            )
+        } catch {
+            // The pasteboard may no longer hold the item of an earlier Copy or Cut.
+            discardPendingTransfer()
+            errorMessage = "Could not copy \(url.lastPathComponent): \(error.localizedDescription)"
+            return
+        }
+        if cutting {
+            cutItem(at: url, pasteboardStamp: stamp)
+        } else {
+            copyItem(at: url, pasteboardStamp: stamp)
+        }
+    }
+
+    /// Pastes into `directoryURL` (the root when nil): the pending Copy or Cut while the pasteboard
+    /// still holds the item it wrote, another window's Cut (which moves its item here), otherwise
+    /// the pasteboard's files, image or text. Another window's Copy or Cut, or any other app's
+    /// copy, replaces that item and so ends the transfer. Returns false when there is nothing to
+    /// paste.
+    @discardableResult
+    func pasteFromPasteboard(_ pasteboard: NSPasteboard = .general, into directoryURL: URL?) -> Bool {
+        if let stamp = pendingTransferPasteboardStamp,
+           WorkspacePasteboardExportService.holdsTransfer(stamp, on: pasteboard) {
+            pasteDocumentTransfer(into: directoryURL)
+            return true
+        }
+        discardPendingTransfer()
+
+        if let owner = otherWindowStores.first(where: { store in
+            guard store.hasPendingCut, let stamp = store.pendingTransferPasteboardStamp else { return false }
+            return WorkspacePasteboardExportService.holdsTransfer(stamp, on: pasteboard)
+        }) {
+            pasteCut(from: owner, into: directoryURL)
+            return true
+        }
+
+        do {
+            let items = try WorkspacePasteboardImportService.importItems(from: pasteboard)
+            guard !items.isEmpty else { return false }
+            importPasteboardItems(items, into: directoryURL)
+            return true
+        } catch {
+            errorMessage = "Could not read clipboard contents: \(error.localizedDescription)"
+            return true
+        }
+    }
+
+    /// Whether Paste has something to paste from `pasteboard`, checked from its types alone.
+    func canPaste(from pasteboard: NSPasteboard = .general) -> Bool {
+        workspaceURL != nil && WorkspacePasteboardImportService.canImportItems(from: pasteboard)
     }
 }

@@ -327,6 +327,7 @@ CORE_SOURCES=(
   "Sources/MonknotCore/Models/WorkspaceReplacePreview.swift"
   "Sources/MonknotCore/Models/WorkspaceSearchResult.swift"
   "Sources/MonknotCore/Models/WorkspaceTabState.swift"
+  "Sources/MonknotCore/Models/DocumentTabLabel.swift"
   "Sources/MonknotCore/Models/WorkspaceTextRevision.swift"
   "Sources/MonknotCore/Services/BetaFeedbackRecorder.swift"
   "Sources/MonknotCore/Services/DailyNotePlanner.swift"
@@ -369,6 +370,7 @@ CORE_SOURCES=(
   "Sources/MonknotCore/Services/WorkspaceTreeExpansionPersistence.swift"
   "Sources/MonknotCore/Services/WorkspaceTreeFormatter.swift"
   "Sources/MonknotCore/Support/MonknotSignposting.swift"
+  "Sources/MonknotCore/Support/NativeUTF8Text.swift"
 )
 
 APP_SOURCES=(
@@ -384,6 +386,7 @@ APP_SOURCES=(
   "Sources/Monknot/Models/MarkdownLinkInspectionState.swift"
   "Sources/Monknot/Services/FlowProseCompletionService.swift"
   "Sources/Monknot/Services/FlowSentenceRepairService.swift"
+  "Sources/Monknot/Services/ImageMarkupDocument.swift"
   "Sources/Monknot/Services/MarkdownPDFExportService.swift"
   "Sources/Monknot/Services/MarkdownSemanticPasteboardExportService.swift"
   "Sources/Monknot/Services/MonknotLaunchCaptureParser.swift"
@@ -402,9 +405,10 @@ APP_SOURCES=(
   "Sources/Monknot/Support/DocumentSplitViewRatioAccessor.swift"
   "Sources/Monknot/Support/EditorSentenceRepairPolicy.swift"
   "Sources/Monknot/Support/WorkspaceSplitView.swift"
-  "Sources/Monknot/Support/Design/MonknotAccentButton.swift"
+  "Sources/Monknot/Support/Design/MonknotActionButton.swift"
   "Sources/Monknot/Support/Design/MonknotChromePanel.swift"
   "Sources/Monknot/Support/Design/MonknotChromeSurfaceBackground.swift"
+  "Sources/Monknot/Support/Design/MonknotElevation.swift"
   "Sources/Monknot/Support/Design/MonknotIconButton.swift"
   "Sources/Monknot/Support/Design/HorizontalTabStripSupport.swift"
   "Sources/Monknot/Support/Design/MonknotMetrics.swift"
@@ -417,6 +421,7 @@ APP_SOURCES=(
   "Sources/Monknot/Support/Design/MonknotSegmentedControl.swift"
   "Sources/Monknot/Support/Design/MonknotSettingsSegmentedControl.swift"
   "Sources/Monknot/Support/Design/MonknotShortcutLabel.swift"
+  "Sources/Monknot/Support/Design/MonknotStableWidth.swift"
   "Sources/Monknot/Support/Design/MonknotStatusSurface.swift"
   "Sources/Monknot/Support/Design/MonknotTypography.swift"
   "Sources/Monknot/Support/Design/MonknotWorkspaceIcons.swift"
@@ -426,10 +431,12 @@ APP_SOURCES=(
   "Sources/Monknot/Support/KeyboardShortcutMonitor.swift"
   "Sources/Monknot/Support/MonknotCommandActions.swift"
   "Sources/Monknot/Support/PDFAnnotationHitTesting.swift"
-  "Sources/Monknot/Support/ThemePreference+SwiftUI.swift"
+  "Sources/Monknot/Support/ThemePreference+Appearance.swift"
   "Sources/Monknot/Support/WindowChromeSupport.swift"
   "Sources/Monknot/Support/WorkspaceDocumentKind+ResolvedSymbol.swift"
   "Sources/Monknot/Support/WorkspaceWindowRequestCenter.swift"
+  "Sources/Monknot/Support/WorkspaceResourceSchemeHandler.swift"
+  "Sources/Monknot/Support/WebViewBridge.swift"
   "Sources/Monknot/Views/AppearanceSettingsView.swift"
   "Sources/Monknot/Views/ContentView.swift"
   "Sources/Monknot/Views/DocumentTabBar.swift"
@@ -444,6 +451,7 @@ APP_SOURCES=(
   "Sources/Monknot/Views/MarkdownPreviewView.swift"
   "Sources/Monknot/Views/MarkdownSymbolQuickOpenView.swift"
   "Sources/Monknot/Views/MarkdownTextEditor.swift"
+  "Sources/Monknot/Views/MediaPlayerView.swift"
   "Sources/Monknot/Views/MonknotKeyboardShortcutsHelpView.swift"
   "Sources/Monknot/Views/NativeMarkdownEditorView.swift"
   "Sources/Monknot/Views/PDFPreviewView.swift"
@@ -561,7 +569,7 @@ cat >"$INFO_PLIST" <<PLIST
   <array>
     <dict>
       <key>CFBundleTypeName</key>
-      <string>Folders</string>
+      <string>Folder</string>
       <key>CFBundleTypeRole</key>
       <string>Viewer</string>
       <key>LSHandlerRank</key>
@@ -573,14 +581,141 @@ cat >"$INFO_PLIST" <<PLIST
     </dict>
     <dict>
       <key>CFBundleTypeName</key>
-      <string>Files</string>
+      <string>Markdown Document</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>net.daringfireball.markdown</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Markdown Document (Other Extensions)</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>mdown</string>
+        <string>mkd</string>
+        <string>mdx</string>
+        <string>mmd</string>
+        <string>mermaid</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Text Document</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.plain-text</string>
+        <string>public.source-code</string>
+        <string>public.json</string>
+        <string>public.yaml</string>
+        <string>public.xml</string>
+        <string>public.comma-separated-values-text</string>
+        <string>public.html</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>PDF or Image</string>
       <key>CFBundleTypeRole</key>
       <string>Viewer</string>
       <key>LSHandlerRank</key>
       <string>Alternate</string>
       <key>LSItemContentTypes</key>
       <array>
-        <string>public.data</string>
+        <string>com.adobe.pdf</string>
+        <string>public.png</string>
+        <string>public.jpeg</string>
+        <string>com.compuserve.gif</string>
+        <string>public.heic</string>
+        <string>public.heif</string>
+        <string>public.tiff</string>
+        <string>org.webmproject.webp</string>
+        <string>com.microsoft.bmp</string>
+        <string>com.microsoft.ico</string>
+        <string>public.avif</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Video or Audio</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>com.apple.quicktime-movie</string>
+        <string>public.mpeg-4</string>
+        <string>com.apple.m4v-video</string>
+        <string>public.mpeg</string>
+        <string>public.mp3</string>
+        <string>com.apple.m4a-audio</string>
+        <string>public.aac-audio</string>
+        <string>com.microsoft.waveform-audio</string>
+        <string>public.aiff-audio</string>
+        <string>com.apple.coreaudio-format</string>
+        <string>org.xiph.flac</string>
+      </array>
+    </dict>
+  </array>
+  <key>NSServices</key>
+  <array>
+    <dict>
+      <key>NSMenuItem</key>
+      <dict>
+        <key>default</key>
+        <string>Open in $APP_NAME</string>
+      </dict>
+      <key>NSMessage</key>
+      <string>openInMonknot</string>
+      <key>NSPortName</key>
+      <string>$APP_NAME</string>
+      <key>NSRequiredContext</key>
+      <dict/>
+      <key>NSSendFileTypes</key>
+      <array>
+        <string>public.folder</string>
+        <string>public.plain-text</string>
+        <string>public.source-code</string>
+        <string>public.json</string>
+        <string>public.yaml</string>
+        <string>public.xml</string>
+        <string>public.comma-separated-values-text</string>
+        <string>public.html</string>
+        <string>com.adobe.pdf</string>
+        <string>public.png</string>
+        <string>public.jpeg</string>
+        <string>com.compuserve.gif</string>
+        <string>public.heic</string>
+        <string>public.heif</string>
+        <string>public.tiff</string>
+        <string>org.webmproject.webp</string>
+        <string>com.microsoft.bmp</string>
+        <string>com.microsoft.ico</string>
+        <string>public.avif</string>
+        <string>com.apple.quicktime-movie</string>
+        <string>public.mpeg-4</string>
+        <string>com.apple.m4v-video</string>
+        <string>public.mpeg</string>
+        <string>public.mp3</string>
+        <string>com.apple.m4a-audio</string>
+        <string>public.aac-audio</string>
+        <string>com.microsoft.waveform-audio</string>
+        <string>public.aiff-audio</string>
+        <string>com.apple.coreaudio-format</string>
+        <string>org.xiph.flac</string>
       </array>
     </dict>
   </array>
@@ -633,6 +768,7 @@ verify_plist_value NSHumanReadableCopyright "$APP_COPYRIGHT"
 verify_plist_value SUFeedURL "$SPARKLE_FEED_URL"
 verify_plist_value SUPublicEDKey "$SPARKLE_PUBLIC_ED_KEY"
 verify_plist_value SURequireSignedFeed true
+verify_plist_value NSServices:0:NSMessage openInMonknot
 verify_plist_value SUVerifyUpdateBeforeExtraction true
 
 # Direct-distribution and local builds do not embed a provisioning profile.

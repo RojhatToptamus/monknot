@@ -35,4 +35,19 @@ public struct SidebarNode: Identifiable, Hashable, Codable, Sendable {
     public var isFile: Bool {
         kind == .file
     }
+
+    /// The node with `id` in this subtree. Node IDs are standardized paths, so the search descends
+    /// only into the folder whose path leads to `id`.
+    public func node(withID id: String) -> SidebarNode? {
+        if self.id == id {
+            return self
+        }
+        guard let children, WorkspaceDocumentSupport.isPath(id, containedIn: self.id) else { return nil }
+        for child in children where WorkspaceDocumentSupport.isPath(id, containedIn: child.id) {
+            if let found = child.node(withID: id) {
+                return found
+            }
+        }
+        return nil
+    }
 }

@@ -5,7 +5,7 @@ public enum WorkspaceScanResultPatcher {
         to result: WorkspaceDocumentScanResult,
         rootURL: URL,
         changedPaths: Set<String>,
-        ignoredDirectoryNames: Set<String> = [".build", ".git", "DerivedData", "dist", "node_modules"]
+        ignoredDirectoryNames: Set<String> = WorkspaceDocumentScanner.defaultIgnoredDirectoryNames
     ) -> WorkspaceDocumentScanResult? {
         let rootURL = rootURL.standardizedFileURL
         var rootNode = result.root
@@ -13,17 +13,20 @@ public enum WorkspaceScanResultPatcher {
 
         for path in changedPaths {
             let url = URL(fileURLWithPath: path).standardizedFileURL
-            guard isURL(url, containedIn: rootURL) else { continue }
+            guard WorkspaceDocumentSupport.isURL(url, containedIn: rootURL) else { continue }
             guard url != rootURL else { return nil }
 
             let fileManager = FileManager.default
             if fileManager.fileExists(atPath: url.path) {
-                guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]) else {
+                guard let values = try? url.resourceValues(
+                    forKeys: [.isDirectoryKey, .isRegularFileKey, .isPackageKey, .isSymbolicLinkKey]
+                ) else {
                     return nil
                 }
                 if values.isDirectory == true {
-                    let existingNode = findNode(id: url.path, in: rootNode)
-                    if shouldSkipDirectory(url, rootURL: rootURL, ignoredDirectoryNames: ignoredDirectoryNames) {
+                    let existingNode = rootNode.node(withID: url.path)
+                    if values.isPackage == true
+                        || shouldSkipDirectory(url, rootURL: rootURL, ignoredDirectoryNames: ignoredDirectoryNames) {
                         if existingNode?.kind == .folder {
                             removeDocuments(containedIn: url, from: &documentsByID)
                             rootNode = removingNode(id: url.path, from: rootNode)
@@ -53,19 +56,9 @@ public enum WorkspaceScanResultPatcher {
                     rootNode = removingNode(id: url.path, from: rootNode)
                     continue
                 }
-                guard !shouldSkipFile(url, rootURL: rootURL, ignoredDirectoryNames: ignoredDirectoryNames) else {
-                    documentsByID.removeValue(forKey: url.path)
-                    rootNode = removingNode(id: url.path, from: rootNode)
-                    continue
-                }
-                guard WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(url) else {
-                    documentsByID.removeValue(forKey: url.path)
-                    rootNode = removingNode(id: url.path, from: rootNode)
-                    continue
-                }
-
-                let classification = WorkspaceDocumentSupport.classification(for: url)
-                guard classification.kind != .unsupported else {
+                guard !shouldSkipFile(url, rootURL: rootURL, ignoredDirectoryNames: ignoredDirectoryNames),
+                      let classification = WorkspaceDocumentSupport.workspaceClassification(for: url)
+                else {
                     documentsByID.removeValue(forKey: url.path)
                     rootNode = removingNode(id: url.path, from: rootNode)
                     continue
@@ -75,7 +68,7 @@ public enum WorkspaceScanResultPatcher {
                 documentsByID[document.id] = document
                 rootNode = inserting(document, into: rootNode, rootURL: rootURL)
             } else {
-                if let existingNode = findNode(id: url.path, in: rootNode), existingNode.kind == .folder {
+                if let existingNode = rootNode.node(withID: url.path), existingNode.kind == .folder {
                     removeDocuments(containedIn: url, from: &documentsByID)
                     rootNode = removingNode(id: url.path, from: rootNode)
                     continue
@@ -210,18 +203,6 @@ public enum WorkspaceScanResultPatcher {
         return replacingChildren(of: node, with: sorted(children))
     }
 
-    private static func findNode(id: String, in node: SidebarNode) -> SidebarNode? {
-        if node.id == id {
-            return node
-        }
-        for child in node.children ?? [] {
-            if let found = findNode(id: id, in: child) {
-                return found
-            }
-        }
-        return nil
-    }
-
     private static func scanDirectoryNode(
         _ directoryURL: URL,
         rootURL: URL,
@@ -251,10 +232,9 @@ public enum WorkspaceScanResultPatcher {
                 )
                 children.append(child)
             } else if values.isRegularFile == true, values.isSymbolicLink != true {
-                guard WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(url) else { continue }
-
-                let classification = WorkspaceDocumentSupport.classification(for: url)
-                guard classification.kind != .unsupported else { continue }
+                guard let classification = WorkspaceDocumentSupport.workspaceClassification(for: url) else {
+                    continue
+                }
 
                 let document = WorkspaceDocument(url: url, rootURL: rootURL, classification: classification)
                 documentsByID[document.id] = document
@@ -292,9 +272,8 @@ public enum WorkspaceScanResultPatcher {
 
     private static func removeDocuments(containedIn directoryURL: URL, from documentsByID: inout [String: WorkspaceDocument]) {
         let directoryPath = directoryURL.standardizedFileURL.path
-        let prefix = directoryPath.hasSuffix("/") ? directoryPath : directoryPath + "/"
         documentsByID = documentsByID.filter { id, _ in
-            id != directoryPath && !id.hasPrefix(prefix)
+            !WorkspaceDocumentSupport.isPath(id, containedIn: directoryPath)
         }
     }
 
@@ -305,8 +284,8 @@ public enum WorkspaceScanResultPatcher {
     ) -> Bool {
         guard !ignoredDirectoryNames.contains(url.lastPathComponent) else { return true }
         guard !url.lastPathComponent.hasPrefix(".") else { return true }
-        return relativeComponents(for: url, rootURL: rootURL).contains { component in
-            ignoredDirectoryNames.contains(component) || component.hasPrefix(".")
+        return relativeComponents(for: url, rootURL: rootURL).dropLast().contains { component in
+            hidesContents(ofFolderNamed: component, ignoredDirectoryNames: ignoredDirectoryNames)
         }
     }
 
@@ -319,8 +298,14 @@ public enum WorkspaceScanResultPatcher {
         guard let fileName = components.last else { return true }
         guard !fileName.hasPrefix(".") else { return true }
         return components.dropLast().contains { component in
-            ignoredDirectoryNames.contains(component) || component.hasPrefix(".")
+            hidesContents(ofFolderNamed: component, ignoredDirectoryNames: ignoredDirectoryNames)
         }
+    }
+
+    /// Whether the scan leaves out everything inside a folder with this name: a hidden or ignored
+    /// folder, or a package, which Finder shows as one item.
+    private static func hidesContents(ofFolderNamed name: String, ignoredDirectoryNames: Set<String>) -> Bool {
+        ignoredDirectoryNames.contains(name) || name.hasPrefix(".") || WorkspaceDocumentSupport.isPackageName(name)
     }
 
     private static func relativeComponents(for url: URL, rootURL: URL) -> [String] {
@@ -348,12 +333,5 @@ public enum WorkspaceScanResultPatcher {
             }
             return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
         }
-    }
-
-    private static func isURL(_ candidate: URL, containedIn directory: URL) -> Bool {
-        let candidatePath = candidate.standardizedFileURL.path
-        let directoryPath = directory.standardizedFileURL.path
-        let prefix = directoryPath.hasSuffix("/") ? directoryPath : directoryPath + "/"
-        return candidatePath == directoryPath || candidatePath.hasPrefix(prefix)
     }
 }

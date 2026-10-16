@@ -263,7 +263,6 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
     func testSidebarRowIconsStayTwoPointsLargerThanAdjacentLabels() {
         XCTAssertEqual(MonknotMetrics.sidebarIconPointSizeBase, 15)
         XCTAssertEqual(MonknotMetrics.rowIconColumnWidthBase, 18)
-        XCTAssertEqual(MonknotMetrics.sidebarIconWeight, .regular)
 
         for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
@@ -314,11 +313,13 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
             "character.cursor.ibeam": 12.5,
             "curlybraces": 13,
             "link": 13,
+            "play.rectangle": 13,
             "magnifyingglass": 14,
             "doc.text": 14,
             "doc.richtext": 14,
             "checklist": 14,
-            "photo": 14,
+            "text.quote": 14,
+            "photo": 12,
             "arrow.up.left.and.arrow.down.right": 14,
             "arrow.down.right.and.arrow.up.left": 14,
             "sidebar.left": 15,
@@ -333,7 +334,7 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
             )
         }
 
-        for systemImage in ["bold", "italic", "quote.opening", "list.bullet", "plus", "xmark"] {
+        for systemImage in ["bold", "italic", "list.bullet", "plus", "xmark"] {
             XCTAssertNil(
                 MonknotSymbolOptics.maximumPointSizeBase(for: systemImage),
                 "\(systemImage) should retain its nominal point size"
@@ -364,7 +365,6 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
     func testSidebarHeaderActionsShareRowSymbolStyleWithoutShrinkingHitTargets() {
         let size = MonknotIconButton.IconButtonSize.sidebarHeader
 
-        XCTAssertEqual(size.iconWeight, MonknotMetrics.sidebarIconWeight)
         for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
                 XCTAssertEqual(
@@ -392,8 +392,8 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
     }
 
     func testReducedMotionDisablesSidebarAndDrawerMovement() {
-        XCTAssertNil(MonknotMotion.sidebarTransition(reduceMotion: true))
-        XCTAssertNotNil(MonknotMotion.sidebarTransition(reduceMotion: false))
+        XCTAssertNil(MonknotMotion.paneTransition(reduceMotion: true))
+        XCTAssertNotNil(MonknotMotion.paneTransition(reduceMotion: false))
     }
 
     func testPrimaryAndSecondaryChromePreserveTheirDistinctReferenceBands() {
@@ -463,69 +463,47 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
         }
     }
 
-    func testChromeButtonsOnlyDrawBackgroundWhileEnabledAndHovered() {
-        for size in [
-            MonknotIconButton.IconButtonSize.chrome,
-            .windowNavigation,
-            .sidebarHeader,
-            .compact,
-            .editorToolbar,
-            .findBar,
-            .segmented
-        ] {
-            for isDark in [false, true] {
-                XCTAssertNil(
-                    size.backgroundOpacity(isHovered: false, isDisabled: false, isDark: isDark),
-                    "Idle controls must not create a background"
-                )
-                XCTAssertNil(
-                    size.backgroundOpacity(isHovered: true, isDisabled: true, isDark: isDark),
-                    "Disabled controls must not create a hover background"
-                )
-                XCTAssertNotNil(
-                    size.backgroundOpacity(isHovered: true, isDisabled: false, isDark: isDark),
-                    "Enabled controls should retain a hover affordance"
-                )
-            }
+    func testIconButtonsFillOnlyWhileEnabledAndPressedReplacesHover() {
+        func fill(active: Bool = false, drawsActive: Bool = true, hovered: Bool = false, pressed: Bool = false, disabled: Bool = false) -> MonknotIconButton.Fill? {
+            MonknotIconButton.fill(
+                isActive: active,
+                drawsActiveBackground: drawsActive,
+                isHovered: hovered,
+                isPressed: pressed,
+                isDisabled: disabled
+            )
         }
+
+        XCTAssertNil(fill(), "Idle controls must not create a background")
+        XCTAssertNil(fill(hovered: true, pressed: true, disabled: true), "Disabled controls never fill")
+        XCTAssertEqual(fill(hovered: true), .hover)
+        // design.md §5.1: pressed is its own fill, replacing hover rather than stacking on it.
+        XCTAssertEqual(fill(hovered: true, pressed: true), .pressed)
+        XCTAssertEqual(fill(active: true), .accentSoft, "An open panel's toggle uses accsoft")
+        XCTAssertEqual(fill(active: true, pressed: true), .pressed)
     }
 
     func testSearchOptionButtonsUseAccentOnlyActiveAppearance() {
-        let size = MonknotIconButton.IconButtonSize.findBar
+        XCTAssertNil(
+            MonknotIconButton.fill(isActive: true, drawsActiveBackground: false, isHovered: false, isPressed: false, isDisabled: false),
+            "An active search option must remain unfilled at rest"
+        )
+        XCTAssertEqual(
+            MonknotIconButton.fill(isActive: true, drawsActiveBackground: false, isHovered: true, isPressed: false, isDisabled: false),
+            .hover,
+            "An active search option must use the standard hover surface"
+        )
+    }
 
-        for isDark in [false, true] {
-            XCTAssertNil(
-                size.backgroundOpacity(
-                    isActive: true,
-                    drawsActiveBackground: false,
-                    isHovered: false,
-                    isDisabled: false,
-                    isDark: isDark
-                ),
-                "An active search option must remain unfilled at rest"
-            )
-            XCTAssertEqual(
-                size.backgroundOpacity(
-                    isActive: true,
-                    drawsActiveBackground: false,
-                    isHovered: true,
-                    isDisabled: false,
-                    isDark: isDark
-                ),
-                size.hoverBackgroundOpacity(isDark: isDark),
-                "An active search option must use the standard hover surface"
-            )
-            XCTAssertEqual(
-                size.backgroundOpacity(
-                    isActive: true,
-                    drawsActiveBackground: true,
-                    isHovered: false,
-                    isDisabled: false,
-                    isDark: isDark
-                ),
-                size.activeBackgroundOpacity(isDark: isDark),
-                "Panel toggles must retain their filled active appearance"
-            )
+    func testStateFillsComeFromTheDesignTokens() {
+        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
+            XCTAssertEqual(MonknotIconButton.Fill.hover.color(theme), theme.hoverFillColor)
+            XCTAssertEqual(MonknotIconButton.Fill.pressed.color(theme), theme.pressedFillColor)
+            XCTAssertEqual(MonknotIconButton.Fill.accentSoft.color(theme), theme.accentSoftFillColor)
+            // design.md §1.2: hover ink 6 / 5.5 %, press ink 11 / 10 %, accsoft accent 18 / 14 %.
+            XCTAssertEqual(theme.hoverFillColor, theme.foregroundColor.opacity(theme.isDark ? 0.06 : 0.055))
+            XCTAssertEqual(theme.pressedFillColor, theme.foregroundColor.opacity(theme.isDark ? 0.11 : 0.10))
+            XCTAssertEqual(theme.accentSoftFillColor, theme.accentColor.opacity(theme.isDark ? 0.18 : 0.14))
         }
     }
 
@@ -598,31 +576,36 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
         }
     }
 
-    func testCommandOverlayEscapeHintUsesStandardControlHeight() {
+    func testCommandOverlayCloseIsTheStandardCompactCloseButton() {
         for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
-            let size = NSHostingView(rootView: MonknotCommandOverlayEscapeButton(
+            let size = NSHostingView(rootView: MonknotCommandOverlayCloseButton(
                 theme: theme,
                 zoomScale: 1,
                 close: {}
             )).fittingSize
 
-            XCTAssertGreaterThanOrEqual(size.width, 28)
-            XCTAssertEqual(size.height, 28, accuracy: 0.01)
+            XCTAssertEqual(size.width, 26, accuracy: 0.01)
+            XCTAssertEqual(size.height, 26, accuracy: 0.01)
         }
     }
 
-    func testSegmentedIconButtonsScaleFromTheThirtyPointEditorReferenceBox() {
-        let size = MonknotIconButton.IconButtonSize.segmented
-
-        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
-            for zoomScale in WorkspaceZoomPolicy.supportedLevels {
-                XCTAssertEqual(
-                    size.dimension(theme: theme, zoomScale: zoomScale),
-                    MonknotMetrics.interfaceControl(30, theme: theme, zoomScale: zoomScale),
-                    accuracy: 0.001
-                )
-            }
-        }
+    func testCommandOverlayPanelFitsItsRowsHeaderAndFooter() {
+        let theme = AppTheme.defaultDark
+        // 44 header + 1 rule + three 34 rows with 2 between + 12 list padding + 30 footer (its rule
+        // is drawn inside it).
+        let threeRows: CGFloat = 44 + 1 + 118 + 30
+        XCTAssertEqual(
+            MonknotCommandOverlayMetrics.panelHeight(rows: 3, hasFooter: true, theme: theme, zoomScale: 1),
+            threeRows,
+            accuracy: 0.01
+        )
+        // At most eight rows show (8 × 34 + 7 × 2 + 12); the rest scroll.
+        let eightRows: CGFloat = 44 + 1 + 298
+        XCTAssertEqual(
+            MonknotCommandOverlayMetrics.panelHeight(rows: 20, hasFooter: false, theme: theme, zoomScale: 1),
+            eightRows,
+            accuracy: 0.01
+        )
     }
 
     func testTopNavigationControlsUseSharedChromeHeightAcrossSidebarStatesAndZooms() {
@@ -634,7 +617,6 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
                 let topBar = TopNavigationBar(
                     editorMode: .constant(.source),
                     isSplitViewEnabled: .constant(false),
-                    emptyStateTitle: "Monknot",
                     selectedDocument: nil,
                     isBusy: false,
                     isDocumentLoading: false,

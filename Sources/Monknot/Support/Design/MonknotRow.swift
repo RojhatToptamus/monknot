@@ -7,6 +7,29 @@ struct MonknotRowButtonStyle: ButtonStyle {
     var isActive = false
     var cornerRadius: CGFloat = 8
 
+    /// design.md §5.1: `sel` when selected, otherwise press, then hover. A disabled row draws neither,
+    /// so it never looks clickable; a label that sets its own ink must also switch to `ink4` itself.
+    static func fill(
+        theme: AppTheme,
+        isSelected: Bool,
+        isActive: Bool,
+        isHovered: Bool,
+        isPressed: Bool,
+        isEnabled: Bool
+    ) -> Color {
+        if isSelected {
+            return theme.selectedRowColor
+        }
+        guard isEnabled else { return .clear }
+        if isPressed {
+            return theme.pressedFillColor
+        }
+        if isActive || isHovered {
+            return theme.hoverFillColor
+        }
+        return .clear
+    }
+
     func makeBody(configuration: Configuration) -> some View {
         MonknotRowButtonStyleBody(
             configuration: configuration,
@@ -27,31 +50,27 @@ struct MonknotRowButtonStyle: ButtonStyle {
         @State private var isHovered = false
 
         var body: some View {
+            // Fill and ink changes animate colour only, never a frame.
             configuration.label
-                .foregroundStyle(foreground)
+                .animation(MonknotMotion.hoverAnimation) { $0.foregroundStyle(foreground) }
                 .background {
                     RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(background)
+                        .animation(MonknotMotion.hoverAnimation) { $0.foregroundStyle(background) }
                 }
                 .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
-                .opacity(isEnabled || isSelected ? 1 : 0.4)
-                .animation(MonknotMotion.hoverAnimation, value: isHovered)
-                .animation(MonknotMotion.hoverAnimation, value: configuration.isPressed)
                 .onHover { isHovered = $0 }
                 .monknotPointerCursor(enabled: isEnabled)
         }
 
         private var background: Color {
-            if isSelected {
-                return theme.selectedRowColor
-            }
-            if configuration.isPressed {
-                return theme.foregroundColor.opacity(theme.isDark ? 0.11 : 0.10)
-            }
-            if isActive || isHovered {
-                return theme.foregroundColor.opacity(theme.isDark ? 0.06 : 0.055)
-            }
-            return .clear
+            MonknotRowButtonStyle.fill(
+                theme: theme,
+                isSelected: isSelected,
+                isActive: isActive,
+                isHovered: isHovered,
+                isPressed: configuration.isPressed,
+                isEnabled: isEnabled
+            )
         }
 
         private var foreground: Color {

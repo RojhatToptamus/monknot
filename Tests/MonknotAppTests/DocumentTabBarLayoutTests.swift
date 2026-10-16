@@ -32,8 +32,7 @@ final class DocumentTabBarLayoutTests: XCTestCase {
                 window.standardWindowButton(.zoomButton),
             ].compactMap { $0?.frame.minX }
 
-            let coordinator = WindowBackgroundDragEnabler.Coordinator(
-                suppressToolbarButton: true,
+            let coordinator = WindowChromeConfigurator.Coordinator(
                 trafficLightRowHeight: chromeHeight,
                 trafficLightLeadingInset: leadingInset
             )
@@ -111,61 +110,60 @@ final class DocumentTabBarLayoutTests: XCTestCase {
     }
 
     func testLongTabTitlesUseAStableCappedWidth() {
-        let theme = AppTheme.defaultDark
-        let shortWidth = DocumentTabWidthPolicy.preferredWidth(
-            title: "README.md",
-            isPinned: false,
-            theme: theme,
-            zoomScale: 1
-        )
-        let longWidth = DocumentTabWidthPolicy.preferredWidth(
-            title: String(repeating: "Remote_Objects_", count: 40) + ".pdf",
-            isPinned: false,
-            theme: theme,
-            zoomScale: 1
-        )
+        let metrics = DocumentTabMetrics(theme: .defaultDark, zoomScale: 1)
+        let shortWidth = width(of: "README.md", metrics: metrics)
+        let longWidth = width(of: String(repeating: "Remote_Objects_", count: 40) + ".pdf", metrics: metrics)
 
         XCTAssertGreaterThan(longWidth, shortWidth)
-        XCTAssertLessThanOrEqual(longWidth - shortWidth, MonknotMetrics.tabMaxWidthBase)
+        XCTAssertLessThanOrEqual(longWidth, metrics.maximumWidth)
     }
 
     func testDocumentTabsSizeToTheirMeasuredTitles() {
-        let theme = AppTheme.defaultDark
-        let short = DocumentTabWidthPolicy.preferredWidth(
-            title: "a.json",
-            isPinned: false,
-            theme: theme,
-            zoomScale: 1
-        )
-        let long = DocumentTabWidthPolicy.preferredWidth(
-            title: "02-sockets-claude.md",
-            isPinned: false,
-            theme: theme,
-            zoomScale: 1
-        )
+        let metrics = DocumentTabMetrics(theme: .defaultDark, zoomScale: 1)
+        let short = width(of: "a.json", metrics: metrics)
+        let long = width(of: "02-sockets-claude.md", metrics: metrics)
 
         XCTAssertGreaterThan(long, short + 40)
-        XCTAssertGreaterThanOrEqual(short, MonknotMetrics.tabMinWidthBase)
         XCTAssertLessThanOrEqual(long, MonknotMetrics.tabMaxWidthBase)
     }
 
+    func testLabelsThatFitAreNeverElidedAtAnyZoom() {
+        for zoomScale in [0.85, 1, 1.25, 1.5] {
+            let metrics = DocumentTabMetrics(theme: .defaultDark, zoomScale: zoomScale)
+            for name in ["data.csv", "README.md", "Untitled 4.md"] {
+                for isPinned in [false, true] {
+                    XCTAssertEqual(metrics.fittedLabel(name, isPinned: isPinned, isMissing: true), name)
+                }
+            }
+        }
+    }
+
+    func testOverlongLabelsAreMiddleElidedKeepingTheExtension() {
+        let metrics = DocumentTabMetrics(theme: .defaultDark, zoomScale: 1)
+        let name = String(repeating: "improving-onboarding-", count: 6) + "conversion-rate.md"
+
+        let fitted = metrics.fittedLabel(name, isPinned: false, isMissing: false)
+
+        XCTAssertTrue(fitted.hasPrefix("improving-onb"), fitted)
+        XCTAssertTrue(fitted.hasSuffix(".md"))
+        XCTAssertEqual(fitted.filter { $0 == "\u{2026}" }.count, 1)
+        XCTAssertLessThanOrEqual(
+            metrics.width(fittedLabel: fitted, isPinned: false, isMissing: false),
+            metrics.maximumWidth
+        )
+    }
+
+    private func width(of name: String, metrics: DocumentTabMetrics) -> CGFloat {
+        let fitted = metrics.fittedLabel(name, isPinned: false, isMissing: false)
+        return metrics.width(fittedLabel: fitted, isPinned: false, isMissing: false)
+    }
+
     func testPinnedTabsRetainTheirTitleAndPinAffordanceWidth() {
-        let theme = AppTheme.defaultDark
-        let short = DocumentTabWidthPolicy.preferredWidth(
-            title: "a.md",
-            isPinned: true,
-            theme: theme,
-            zoomScale: 1
-        )
-        let readme = DocumentTabWidthPolicy.preferredWidth(
-            title: "README.md",
-            isPinned: true,
-            theme: theme,
-            zoomScale: 1
-        )
+        let metrics = DocumentTabMetrics(theme: .defaultDark, zoomScale: 1)
+        let short = metrics.width(fittedLabel: "a.md", isPinned: true, isMissing: false)
+        let readme = metrics.width(fittedLabel: "README.md", isPinned: true, isMissing: false)
 
         XCTAssertGreaterThan(readme, short)
-        XCTAssertGreaterThanOrEqual(short, MonknotMetrics.tabMinWidthBase)
         XCTAssertLessThanOrEqual(readme, MonknotMetrics.tabMaxWidthBase)
     }
 
@@ -194,7 +192,6 @@ final class DocumentTabBarLayoutTests: XCTestCase {
         let topBar = TopNavigationBar(
             editorMode: .constant(.source),
             isSplitViewEnabled: .constant(false),
-            emptyStateTitle: "Monknot",
             selectedDocument: nil,
             isBusy: false,
             isDocumentLoading: false,
@@ -251,7 +248,6 @@ final class DocumentTabBarLayoutTests: XCTestCase {
         let topBar = TopNavigationBar(
             editorMode: .constant(.source),
             isSplitViewEnabled: .constant(false),
-            emptyStateTitle: "Monknot",
             selectedDocument: nil,
             isBusy: false,
             isDocumentLoading: false,
@@ -392,6 +388,104 @@ final class DocumentTabBarLayoutTests: XCTestCase {
             viewportWidth: 180
         ))
         XCTAssertNil(request.pendingID)
+    }
+
+    func testMouseWheelNotchBecomesHorizontalButTrackpadAndModifiedWheelsPassThrough() throws {
+        let notch = try XCTUnwrap(Self.wheelEvent(units: .line, vertical: -3))
+        let horizontal = try XCTUnwrap(HorizontalTabWheelScrolling.horizontalEvent(for: notch))
+        XCTAssertEqual(horizontal.scrollingDeltaY, 0)
+        XCTAssertEqual(horizontal.scrollingDeltaX, notch.scrollingDeltaY, accuracy: 0.001)
+        XCTAssertNotEqual(horizontal.scrollingDeltaX, 0)
+
+        let trackpad = try XCTUnwrap(Self.wheelEvent(units: .pixel, vertical: -12))
+        XCTAssertTrue(trackpad.hasPreciseScrollingDeltas)
+        XCTAssertNil(HorizontalTabWheelScrolling.horizontalEvent(for: trackpad))
+
+        let shiftWheel = try XCTUnwrap(Self.wheelEvent(units: .line, vertical: -3, flags: .maskShift))
+        XCTAssertNil(
+            HorizontalTabWheelScrolling.horizontalEvent(for: shiftWheel),
+            "AppKit already turns ⇧-wheel into a horizontal scroll"
+        )
+        let commandWheel = try XCTUnwrap(Self.wheelEvent(units: .line, vertical: -3, flags: .maskCommand))
+        XCTAssertNil(HorizontalTabWheelScrolling.horizontalEvent(for: commandWheel))
+    }
+
+    func testMouseWheelOverOverflowingTabStripScrollsItSideways() async throws {
+        let theme = AppTheme.defaultDark
+        let tabs = (0..<12).map { index in
+            WorkspaceTabItem(
+                documentID: "tab-\(index)",
+                displayName: "Long production document \(index).md",
+                relativePath: "Long production document \(index).md",
+                kind: .markdown
+            )
+        }
+        let chromeHeight = MonknotMetrics.chromeHeight(theme: theme, zoomScale: 1)
+        let host = NSHostingView(rootView: DocumentTabBar(
+            tabs: tabs,
+            selectedDocumentID: tabs[0].documentID,
+            missingDocumentIDs: [],
+            theme: theme,
+            zoomScale: 1,
+            isDisabled: false,
+            saveState: { _ in .clean },
+            selectTab: { _ in },
+            closeTab: { _ in },
+            togglePin: { _ in },
+            reorderTab: { _, _ in }
+        ).frame(width: 400, height: chromeHeight))
+        host.frame = NSRect(x: 0, y: 0, width: 400, height: chromeHeight)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer {
+            window.orderOut(nil)
+            window.contentView = nil
+        }
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        window.layoutIfNeeded()
+        host.layoutSubtreeIfNeeded()
+
+        let bridge = try XCTUnwrap(
+            host.allDescendantsForTesting().compactMap { $0 as? HorizontalTabWheelScrolling.MonitorView }.first
+        )
+        let scrollView = try XCTUnwrap(bridge.enclosingScrollView)
+        let start = scrollView.contentView.bounds.origin.x
+
+        let inside = scrollView.convert(NSPoint(x: scrollView.bounds.midX, y: scrollView.bounds.midY), to: nil)
+        let notch = try XCTUnwrap(Self.wheelEvent(units: .line, vertical: -3))
+        XCTAssertTrue(bridge.scrollStrip(for: notch, at: inside))
+        // AppKit animates line scrolls, as it does for any mouse wheel.
+        for _ in 0..<20 where scrollView.contentView.bounds.origin.x <= start {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertGreaterThan(scrollView.contentView.bounds.origin.x, start, "Wheel down reveals later tabs")
+
+        let trackpad = try XCTUnwrap(Self.wheelEvent(units: .pixel, vertical: -12))
+        XCTAssertFalse(
+            bridge.scrollStrip(for: trackpad, at: inside),
+            "A trackpad's vertical swipe over the strip stays inert"
+        )
+        let outside = NSPoint(x: inside.x, y: inside.y + 200)
+        XCTAssertFalse(bridge.scrollStrip(for: notch, at: outside), "Only a wheel over the strip moves it")
+        withExtendedLifetime(window) {}
+    }
+
+    private static func wheelEvent(
+        units: CGScrollEventUnit,
+        vertical: Int32,
+        flags: CGEventFlags = []
+    ) -> NSEvent? {
+        guard let cgEvent = CGEvent(
+            scrollWheelEvent2Source: nil,
+            units: units,
+            wheelCount: 1,
+            wheel1: vertical,
+            wheel2: 0,
+            wheel3: 0
+        ) else { return nil }
+        cgEvent.flags = flags
+        return NSEvent(cgEvent: cgEvent)
     }
 
     func testMountedDocumentTabBarSupportsHorizontalScrolling() async {

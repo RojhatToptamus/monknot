@@ -835,7 +835,7 @@ class WorkspaceSplitViewTestCase: XCTestCase {
         in splitView: WorkspaceNativeSplitView,
         window: NSWindow
     ) throws {
-        let hitRect = splitView.centerBiasedHitRect(forDividerAt: dividerIndex)
+        let hitRect = splitView.hitRect(forDividerAt: dividerIndex)
         let leadingView = splitView.arrangedSubviews[dividerIndex]
         let trailingView = splitView.arrangedSubviews[dividerIndex + 1]
         let currentDividerPosition = leadingView.isHidden
@@ -1229,5 +1229,96 @@ final class SplitResizeCounter: @unchecked Sendable {
         lock.lock()
         value += 1
         lock.unlock()
+    }
+}
+
+/// Mirrors ContentView's pane state: a toolbar button shows a pane that is not visible, with a
+/// reveal request, and hides one that is.
+@MainActor
+final class ChromeToggleModel: ObservableObject {
+    @Published var sidebarPreferred = true
+    @Published var terminalPreferred = true
+    @Published private(set) var sidebarVisible = true
+    @Published private(set) var terminalVisible = true
+    @Published private(set) var sidebarRevealRequest: UInt = 0
+    @Published private(set) var terminalRevealRequest: UInt = 0
+    let layoutScale: CGFloat
+
+    init(layoutScale: CGFloat) {
+        self.layoutScale = layoutScale
+    }
+
+    func toggleSidebar(animated: Bool = false) {
+        let isPresented = !sidebarVisible
+        apply(animated: animated) {
+            sidebarPreferred = isPresented
+            if isPresented {
+                sidebarRevealRequest &+= 1
+            } else {
+                sidebarVisible = false
+            }
+        }
+    }
+
+    func toggleTerminal(animated: Bool = false) {
+        let isPresented = !terminalVisible
+        apply(animated: animated) {
+            terminalPreferred = isPresented
+            if isPresented {
+                terminalRevealRequest &+= 1
+            } else {
+                terminalVisible = false
+            }
+        }
+    }
+
+    func handleSidebar(_ isPresented: Bool, userInitiated: Bool) {
+        apply(animated: false) {
+            if userInitiated {
+                sidebarPreferred = isPresented
+            }
+            sidebarVisible = isPresented
+        }
+    }
+
+    func handleTerminal(_ isPresented: Bool, userInitiated: Bool) {
+        apply(animated: false) {
+            if userInitiated {
+                terminalPreferred = isPresented
+            }
+            terminalVisible = isPresented
+        }
+    }
+
+    private func apply(animated: Bool, _ updates: () -> Void) {
+        if animated {
+            withAnimation(MonknotMotion.paneTransition, updates)
+        } else {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction, updates)
+        }
+    }
+}
+
+struct ChromeToggleFixture: View {
+    @ObservedObject var model: ChromeToggleModel
+
+    var body: some View {
+        WorkspaceSplitView(
+            isSidebarPresented: model.sidebarPreferred,
+            isTerminalPresented: model.terminalPreferred,
+            layoutScale: model.layoutScale,
+            separatorColor: .separatorColor,
+            accentColor: .controlAccentColor,
+            sidebarRevealRequest: model.sidebarRevealRequest,
+            terminalRevealRequest: model.terminalRevealRequest,
+            onSidebarPresentationChange: model.handleSidebar,
+            onTerminalPresentationChange: model.handleTerminal,
+            sidebar: { Color.red },
+            detail: { Color.blue },
+            terminal: { Color.black }
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

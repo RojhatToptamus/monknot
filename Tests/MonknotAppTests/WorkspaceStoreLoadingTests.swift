@@ -192,7 +192,79 @@ final class WorkspaceStoreLoadingTests: WorkspaceStoreConflictTestCase {
         XCTAssertTrue(didLoad)
         XCTAssertEqual(store.documentText, "")
         XCTAssertFalse(store.hasUnsavedChanges)
-        XCTAssertTrue(store.errorMessage?.localizedCaseInsensitiveContains("too large") == true)
+        // Shown in the pane instead of an editable editor (no modal alert).
+        let failure = try XCTUnwrap(store.documentLoadFailure)
+        XCTAssertEqual(failure.documentID, fileURL.standardizedFileURL.path)
+        XCTAssertTrue(failure.message.contains("up to 4.0 MB"))
+        XCTAssertNil(store.errorMessage)
+
+        // Saving cannot write the empty placeholder text over the file.
+        store.saveSelectedFile()
+        _ = await waitUntil { !store.isSaving }
+        XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8).count, largeText.count)
+    }
+
+    func testDocumentsAskedForFromOutsideAreQueuedOnceInOrder() {
+        let store = makeWorkspaceStore()
+        let first = URL(fileURLWithPath: "/tmp/Monknot/Notes/a.md")
+        let second = URL(fileURLWithPath: "/tmp/Monknot/Notes/./b.md")
+
+        // Finder hands over several files in one go; none may replace another.
+        store.requestDocumentOpen(at: first)
+        store.requestDocumentOpen(at: second)
+        store.requestDocumentOpen(at: first)
+
+        XCTAssertEqual(store.takePendingDocumentOpens(), [first.path, "/tmp/Monknot/Notes/b.md"])
+        XCTAssertEqual(store.pendingDocumentOpenIDs, [])
+    }
+
+    func testFilesThatCannotOpenAreNotAddedToRecents() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let hugeURL = root.appendingPathComponent("Huge.md")
+        try String(repeating: "x", count: Int(WorkspaceStore.interactiveTextOpenMaxBytes) + 1)
+            .write(to: hugeURL, atomically: true, encoding: .utf8)
+        let smallURL = root.appendingPathComponent("Small.md")
+        try "# Small\n".write(to: smallURL, atomically: true, encoding: .utf8)
+        let store = makeWorkspaceStore()
+        store.openWorkspace(root)
+        _ = await waitUntil { !store.isBusy && !store.isDocumentLoading }
+
+        XCTAssertTrue(store.selectDocument(id: nil))
+
+        // The size check fails while the file is being selected, before Recents is scheduled.
+        XCTAssertTrue(store.selectDocument(id: hugeURL.standardizedFileURL.path))
+        _ = await waitUntil { store.documentLoadFailure != nil }
+        try await Task.sleep(nanoseconds: 700_000_000)
+        XCTAssertFalse(store.recentDocuments().contains { $0.documentID == hugeURL.standardizedFileURL.path })
+
+        XCTAssertTrue(store.selectDocument(id: smallURL.standardizedFileURL.path))
+        let smallRecorded = await waitUntil {
+            store.recentDocuments().contains { $0.documentID == smallURL.standardizedFileURL.path }
+        }
+        XCTAssertTrue(smallRecorded)
+    }
+
+    func testLoadFailureClearsWhenAnotherDocumentOpens() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let hugeURL = root.appendingPathComponent("Huge.md")
+        try String(repeating: "x", count: Int(WorkspaceStore.interactiveTextOpenMaxBytes) + 1)
+            .write(to: hugeURL, atomically: true, encoding: .utf8)
+        let smallURL = root.appendingPathComponent("Small.md")
+        try "# Small\n".write(to: smallURL, atomically: true, encoding: .utf8)
+
+        let store = makeWorkspaceStore()
+        store.openWorkspace(root)
+        _ = await waitUntil { !store.isBusy && !store.isDocumentLoading }
+        XCTAssertTrue(store.selectDocument(id: hugeURL.standardizedFileURL.path))
+        _ = await waitUntil { store.documentLoadFailure != nil }
+
+        XCTAssertTrue(store.selectDocument(id: smallURL.standardizedFileURL.path))
+        let didLoad = await waitUntil { !store.isDocumentLoading && store.documentText == "# Small\n" }
+        XCTAssertTrue(didLoad)
+        XCTAssertNil(store.documentLoadFailure)
     }
 
     func testReloadSelectedDocumentFromDiskDiscardsLocalEdits() async throws {

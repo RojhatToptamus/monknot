@@ -10,18 +10,7 @@ struct MarkdownPDFExportOptionsSheet: View {
     let export: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Export PDF")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(theme.foregroundColor)
-                Text(document.displayName)
-                    .font(.system(size: 13))
-                    .foregroundStyle(theme.mutedForegroundColor)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-
+        MonknotSheetLayout(title: "Export PDF", message: document.displayName, theme: theme, width: 520) {
             SettingsGroupCard(theme: theme) {
                 SettingsRow(theme: theme, title: "Page size", detail: "Choose the export page format.") {
                     MonknotSettingsSegmentedControl(
@@ -114,19 +103,17 @@ struct MarkdownPDFExportOptionsSheet: View {
                 }
             }
 
-            HStack {
-                Spacer()
-                SettingsOutlineButton(title: "Cancel", theme: theme, isDisabled: isExporting, action: cancel)
-                MonknotAccentButton(
-                    title: isExporting ? "Exporting..." : "Export...",
-                    theme: theme,
-                    isDisabled: isExporting,
-                    action: export
-                )
-            }
+        } buttons: {
+            MonknotActionButton(title: "Cancel", role: .secondary, theme: theme, isDisabled: isExporting, action: cancel)
+                .keyboardShortcut(.cancelAction)
+            MonknotActionButton(
+                title: isExporting ? "Exporting…" : "Export…",
+                role: .primary,
+                theme: theme,
+                isDisabled: isExporting,
+                action: export
+            )
+            .keyboardShortcut(.defaultAction)
         }
-        .padding(22)
-        .frame(width: 520)
-        .background(theme.surfaceColor)
     }
 }

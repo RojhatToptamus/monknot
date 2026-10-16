@@ -339,7 +339,7 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         )
     }
 
-    func testNarrowSwiftUIFeedbackKeepsTheOppositePanePressureCollapsedAfterReveal() async throws {
+    func testNarrowSwiftUIFeedbackKeepsTheTerminalASidebarRevealPushedOutClosed() async throws {
         let model = LiveSplitFeedbackModel()
         let host = NSHostingView(rootView: LiveSplitFeedbackFixture(model: model))
         host.sizingOptions = []
@@ -391,6 +391,7 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
                     && splitView.arrangedSubviews[2].isHidden
                     && model.sidebarEffective
                     && !model.terminalEffective
+                    && !model.terminalPreferred
                     && model.sidebarEvents.last
                         == PresentationEvent(isPresented: true, userInitiated: true)
             }
@@ -399,23 +400,24 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
         XCTAssertFalse(splitView.arrangedSubviews[0].isHidden)
         XCTAssertTrue(
             splitView.arrangedSubviews[2].isHidden,
-            "SwiftUI feedback during the outward drag must not clear the opposite divider-pressure collapse"
+            "SwiftUI feedback during the outward drag must not reopen the terminal the drag pushed out"
         )
         XCTAssertGreaterThanOrEqual(
             splitView.arrangedSubviews[0].frame.width,
             WorkspaceSplitMetrics.sidebarMinimumWidth - 1
         )
         XCTAssertTrue(model.sidebarPreferred)
-        XCTAssertTrue(model.terminalPreferred)
+        XCTAssertFalse(model.terminalPreferred, "A pane the drag pushed out is closed, like its toolbar button")
         XCTAssertTrue(model.sidebarEffective)
         XCTAssertFalse(model.terminalEffective)
         XCTAssertEqual(
             model.sidebarEvents.last,
             PresentationEvent(isPresented: true, userInitiated: true)
         )
-        XCTAssertTrue(model.terminalEvents.contains(
-            PresentationEvent(isPresented: false, userInitiated: false)
-        ))
+        XCTAssertEqual(
+            model.terminalEvents.last,
+            PresentationEvent(isPresented: false, userInitiated: true)
+        )
     }
 
     func testMountedScaleIncreaseKeepsTheSplitInsideItsHostWhileTerminalPressureCollapses() async throws {

@@ -5,7 +5,7 @@ struct AppearanceSettingsView: View {
     @ObservedObject var themeStore: ThemeSettingsStore
     let uiTheme: AppTheme
     @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.defaultValue.rawValue
-    @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var systemAppearance = SystemAppearanceMonitor.shared
     @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
     @State private var lightDraft = ThemeConfiguration(theme: AppTheme.defaultLight)
     @State private var darkDraft = ThemeConfiguration(theme: AppTheme.defaultDark)
@@ -20,7 +20,7 @@ struct AppearanceSettingsView: View {
     private var activeSlot: ThemeSlot {
         themeStore.activeSlot(
             themePreference: themePreference,
-            systemAppearance: colorScheme == .dark ? .dark : .light
+            systemAppearance: systemAppearance.appearance
         )
     }
 
@@ -85,11 +85,8 @@ struct AppearanceSettingsView: View {
 
         return HStack(alignment: .center, spacing: scaled(10)) {
             Text(activeSlot.title)
-                .font(.system(
-                    size: MonknotMetrics.interfaceText(11, theme: uiTheme, zoomScale: settingsZoomScale),
-                    weight: .semibold
-                ))
-                .tracking(scaled(1.1))
+                .font(MonknotTypography.eyebrow(theme: uiTheme, zoomScale: settingsZoomScale))
+                .tracking(MonknotTypography.eyebrowTracking(theme: uiTheme, zoomScale: settingsZoomScale))
                 .foregroundStyle(uiTheme.mutedForegroundColor)
                 .textCase(.uppercase)
 
@@ -97,7 +94,7 @@ struct AppearanceSettingsView: View {
 
             HStack(alignment: .center, spacing: scaled(10)) {
                 Text("Edited")
-                    .font(.system(size: MonknotMetrics.interfaceText(11, theme: uiTheme, zoomScale: settingsZoomScale)))
+                    .font(.system(size: MonknotMetrics.interfaceText(12, theme: uiTheme, zoomScale: settingsZoomScale)))
                     .foregroundStyle(uiTheme.mutedForegroundColor)
 
                 SettingsOutlineButton(title: "Revert", theme: uiTheme) {
@@ -240,7 +237,7 @@ private struct ThemeEditorSection: View {
             SettingsToggleRow(
                 theme: uiTheme,
                 title: "Quiet sidebar",
-                detail: "Subdue sidebar text and icons by 20%",
+                detail: "Subdue sidebar text and icons",
                 showsDivider: false,
                 isOn: quietSidebar
             )
@@ -307,39 +304,36 @@ private struct ThemeLivePreview: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("LIVE PREVIEW")
-                .font(.system(
-                    size: MonknotMetrics.interfaceText(10, theme: chromeTheme, zoomScale: settingsZoomScale),
-                    weight: .semibold
-                ))
-                .tracking(scaled(1.1))
-                .foregroundStyle(chromeTheme.mutedForegroundColor)
+            Text("Live Preview")
+                .font(MonknotTypography.eyebrow(theme: chromeTheme, zoomScale: settingsZoomScale))
+                .tracking(MonknotTypography.eyebrowTracking(theme: chromeTheme, zoomScale: settingsZoomScale))
+                .textCase(.uppercase)
+                .foregroundStyle(chromeTheme.tertiaryForegroundColor)
                 .padding(.horizontal, scaled(14))
                 .frame(height: scaled(28))
 
+            // A miniature of the window in the draft theme: sidebar rows (one selected) beside a note.
             HStack(spacing: 0) {
-                VStack(spacing: scaled(8)) {
-                    RoundedRectangle(cornerRadius: scaled(4))
-                        .fill(theme.accentColor.opacity(0.34))
-                        .frame(height: scaled(14))
-                    RoundedRectangle(cornerRadius: scaled(4))
-                        .fill(theme.mutedForegroundColor.opacity(0.22))
-                        .frame(height: scaled(14))
+                VStack(alignment: .leading, spacing: scaled(2)) {
+                    previewRow("Weekly review.md", isSelected: true)
+                    previewRow("Ideas.md", isSelected: false)
                 }
-                .padding(scaled(10))
-                .frame(width: scaled(132))
+                .padding(scaled(6))
+                .frame(width: scaled(150), alignment: .topLeading)
+                .frame(maxHeight: .infinity, alignment: .top)
                 .background(theme.sidebarSurfaceColor)
 
                 VStack(alignment: .leading, spacing: scaled(5)) {
-                    Text("Aurora Project")
+                    Text("Weekly review")
                         .font(.system(
-                            size: MonknotMetrics.interfaceText(13, theme: chromeTheme, zoomScale: settingsZoomScale),
+                            size: MonknotMetrics.interfaceText(15, theme: chromeTheme, zoomScale: settingsZoomScale),
                             weight: .semibold
                         ))
                         .foregroundStyle(theme.foregroundColor)
-                    Text("Calm writing environment.")
-                        .font(.system(size: MonknotMetrics.interfaceText(11, theme: chromeTheme, zoomScale: settingsZoomScale)))
+                    Text("Draft the outline, then link the project brief.")
+                        .font(.system(size: MonknotMetrics.interfaceText(12, theme: chromeTheme, zoomScale: settingsZoomScale)))
                         .foregroundStyle(theme.mutedForegroundColor)
+                        .lineLimit(1)
                 }
                 .padding(.horizontal, scaled(14))
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -355,6 +349,26 @@ private struct ThemeLivePreview: View {
         .overlay {
             RoundedRectangle(cornerRadius: chromeTheme.chromeRadius(chromeTheme.settingsCardCornerRadius, zoomScale: settingsZoomScale))
                 .strokeBorder(chromeTheme.borderColor, lineWidth: 1)
+        }
+    }
+
+    private func previewRow(_ title: String, isSelected: Bool) -> some View {
+        HStack(spacing: scaled(6)) {
+            Image(systemName: "doc.text")
+                .font(.system(size: MonknotMetrics.interfaceGlyph(11, theme: chromeTheme, zoomScale: settingsZoomScale)))
+                .foregroundStyle(isSelected ? theme.accentColor : theme.tertiaryForegroundColor)
+            Text(title)
+                .font(.system(size: MonknotMetrics.interfaceText(11, theme: chromeTheme, zoomScale: settingsZoomScale)))
+                .foregroundStyle(isSelected ? theme.foregroundColor : theme.mutedForegroundColor)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, scaled(8))
+        .frame(maxWidth: .infinity, minHeight: scaled(22), alignment: .leading)
+        .background {
+            if isSelected {
+                RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: settingsZoomScale))
+                    .fill(theme.selectedRowColor)
+            }
         }
     }
 }

@@ -10,6 +10,9 @@ public struct WorkspaceFileSignature: Equatable, Sendable {
     }
 }
 
+/// A file's text as read or written, with the file's signature at that moment. Revisions are equal
+/// when their text is: the signature only hints that the file may have changed, and a file that was
+/// touched, or saved again with the same text by another app, still holds the same revision.
 public struct WorkspaceTextRevision: Equatable, Sendable {
     public let text: String
     public let signature: WorkspaceFileSignature
@@ -17,6 +20,10 @@ public struct WorkspaceTextRevision: Equatable, Sendable {
     public init(text: String, signature: WorkspaceFileSignature) {
         self.text = text
         self.signature = signature
+    }
+
+    public static func == (lhs: WorkspaceTextRevision, rhs: WorkspaceTextRevision) -> Bool {
+        lhs.text == rhs.text
     }
 }
 
@@ -55,7 +62,7 @@ public enum WorkspaceConditionalTextWriter {
         guard let data = try? Data(contentsOf: url) else {
             throw WorkspaceTextRevisionError.unreadable
         }
-        guard let text = String(data: data, encoding: .utf8) else {
+        guard let text = WorkspaceTextFileGuard.decodeUTF8(data) else {
             throw WorkspaceTextRevisionError.invalidUTF8
         }
         return WorkspaceTextRevision(
@@ -97,8 +104,7 @@ public enum WorkspaceConditionalTextWriter {
                     }
                 }
 
-                let data = Data(text.utf8)
-                try data.write(to: coordinatedURL, options: .atomic)
+                try WorkspaceTextFileGuard.writeUTF8Text(text, to: coordinatedURL)
                 writtenRevision = try read(from: coordinatedURL)
             } catch {
                 operationError = error

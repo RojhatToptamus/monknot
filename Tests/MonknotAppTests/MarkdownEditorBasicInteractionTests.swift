@@ -21,6 +21,142 @@ final class MarkdownEditorBasicInteractionTests: FlowEditorTestCase {
         XCTAssertNil(EditorFlowEligibility.sourceMode(for: html))
     }
 
+    func testEditedTextReachesTheBindingAsNativeUTF8() {
+        let box = EditorTextBox("Café — notes\n")
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: box.value)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+
+        textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
+        textView.insertText("x", replacementRange: textView.selectedRange())
+
+        XCTAssertEqual(box.value, "Café — notes\nx")
+        XCTAssertEqual(box.value.utf8.withContiguousStorageIfAvailable { _ in true }, true)
+    }
+
+    func testStorageEditCountTracksCharacterEditsIncludingDirectStorageEdits() throws {
+        let box = EditorTextBox("alpha beta\n")
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: box.value)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let storage = try XCTUnwrap(textView.textStorage)
+
+        let initialCount = coordinator.storageEditCount
+        XCTAssertEqual(coordinator.nativeText(of: textView), "alpha beta\n")
+
+        storage.addAttribute(.foregroundColor, value: NSColor.red, range: NSRange(location: 0, length: 5))
+        XCTAssertEqual(coordinator.storageEditCount, initialCount, "Styling must not count as a text edit")
+
+        textView.insertText("!", replacementRange: NSRange(location: 5, length: 0))
+        XCTAssertEqual(coordinator.storageEditCount, initialCount + 1)
+
+        // Same-length replacement straight into the storage, bypassing textDidChange.
+        storage.replaceCharacters(in: NSRange(location: 0, length: 5), with: "gamma")
+        XCTAssertEqual(coordinator.storageEditCount, initialCount + 2)
+        XCTAssertEqual(coordinator.nativeText(of: textView), "gamma! beta\n")
+    }
+
+    func testLineLocalRestylingMatchesAFullPassAfterEachKindOfEdit() throws {
+        let source = "# Title\n\nplain line with `code`\n> quote\nsee [[note]] and [link](x.md)\n**bold** tail\n"
+        let edits: [(range: NSRange, replacement: String)] = [
+            (NSRange(location: 9, length: 0), "## "),            // a plain line becomes a heading
+            (NSRange(location: 0, length: 2), ""),               // a heading stops being one
+            (NSRange(location: 20, length: 0), "\n"),           // split a line inside inline code
+            (NSRange(location: 35, length: 1), ""),              // join two lines
+            (NSRange(location: 40, length: 0), "**more**"),       // add strong text mid-line
+            (NSRange(location: 3, length: 0), "\n"),            // split a heading: its tail is plain
+            (NSRange(location: 2, length: 0), "x\n"),           // insert a line break mid-heading
+            (NSRange(location: 1, length: 0), "\n## "),         // the moved tail becomes a heading
+        ]
+        let font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+
+        for edit in edits {
+            let box = EditorTextBox(source)
+            let coordinator = makeCoordinator(box)
+            let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+            defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+            coordinator.applySyntaxHighlighting(enabled: true, theme: .defaultDark, font: font, in: textView)
+
+            textView.insertText(edit.replacement, replacementRange: edit.range)
+            coordinator.applySyntaxHighlighting(enabled: true, theme: .defaultDark, font: font, in: textView)
+
+            let referenceBox = EditorTextBox(textView.string)
+            let reference = makeCoordinator(referenceBox)
+            let (referenceWindow, referenceScrollView, referenceTextView) = makeHostedTextView(
+                coordinator: reference,
+                text: textView.string
+            )
+            defer {
+                dismantleHostedTextView(referenceWindow, scrollView: referenceScrollView, coordinator: reference)
+            }
+            reference.applySyntaxHighlighting(enabled: true, theme: .defaultDark, font: font, in: referenceTextView)
+
+            let storage = try XCTUnwrap(textView.textStorage)
+            let expected = try XCTUnwrap(referenceTextView.textStorage)
+            XCTAssertEqual(storage.string, expected.string)
+            for location in 0..<storage.length {
+                XCTAssertEqual(
+                    storage.attribute(.foregroundColor, at: location, effectiveRange: nil) as? NSColor,
+                    expected.attribute(.foregroundColor, at: location, effectiveRange: nil) as? NSColor,
+                    "colour differs at \(location) after replacing \(edit.range) with \(edit.replacement.debugDescription)"
+                )
+                XCTAssertEqual(
+                    storage.attribute(.font, at: location, effectiveRange: nil) as? NSFont,
+                    expected.attribute(.font, at: location, effectiveRange: nil) as? NSFont,
+                    "font differs at \(location) after replacing \(edit.range) with \(edit.replacement.debugDescription)"
+                )
+            }
+        }
+    }
+
+    func testSavedScrollOriginSurvivesBeingAppliedRightAfterTheTextIsReplaced() throws {
+        let box = EditorTextBox("short note")
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: box.value)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        textView.isVerticallyResizable = true
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = true
+
+        // A tab switch assigns the long document's text and restores its origin in the same update,
+        // before layout.
+        let longText = (1...2000).map { "Line \($0) of the long document." }.joined(separator: "\n")
+        textView.string = longText
+        coordinator.restoreDocumentScrollPosition(CGPoint(x: 0, y: 8000), openingTopLine: nil, for: "long.md")
+        XCTAssertEqual(scrollView.contentView.bounds.origin.y, 8000, accuracy: 0.5)
+
+        // A jump puts its line at the top of the viewport.
+        let offset = MarkdownScrollSync.characterOffset(forLine: 1200, in: longText)
+        coordinator.scrollLineToTop(NSRange(location: offset, length: 0))
+        let layoutManager = try XCTUnwrap(textView.layoutManager)
+        let lineTop = layoutManager.lineFragmentRect(
+            forGlyphAt: layoutManager.glyphIndexForCharacter(at: offset),
+            effectiveRange: nil
+        ).minY
+        XCTAssertEqual(scrollView.contentView.bounds.origin.y, lineTop, accuracy: 0.5)
+
+        // The reported top line round-trips, so rebuilt panes open where the reader was.
+        XCTAssertEqual(coordinator.visibleTopLine(in: textView, scrollView: scrollView), 1200)
+        coordinator.scrollLineToTop(NSRange(location: 0, length: 0))
+        XCTAssertEqual(coordinator.visibleTopLine(in: textView, scrollView: scrollView), 1)
+    }
+
+    func testTextStatisticsCountLinesAndWords() {
+        XCTAssertEqual(MarkdownTextStatistics(text: ""), MarkdownTextStatistics(lineCount: 1, wordCount: 0))
+        XCTAssertEqual(
+            MarkdownTextStatistics(text: "# Title\n\nOne two, three.\n"),
+            MarkdownTextStatistics(lineCount: 4, wordCount: 4)
+        )
+        XCTAssertEqual(MarkdownTextStatistics(text: "a\r\nb\r\nc").lineCount, 3, "CRLF lines are counted")
+        XCTAssertEqual(MarkdownTextStatistics(text: "a\rb\rc").lineCount, 3, "CR-only lines are counted")
+        XCTAssertEqual(MarkdownTextStatistics(text: "a\r\n\rb\n").lineCount, 4)
+        XCTAssertEqual(MarkdownSourceToolbar.wordCountLabel(1), "1 word")
+        XCTAssertEqual(
+            MarkdownSourceToolbar.statisticsDescription(MarkdownTextStatistics(lineCount: 1, wordCount: 0)),
+            "1 line, 0 words"
+        )
+    }
+
     func testMarkdownContextMenuExposesLinkInspectionWithoutASelection() throws {
         let textView = MarkdownNSTextView()
         textView.string = "[Guide](Guide.md)"
@@ -1007,7 +1143,7 @@ final class MarkdownEditorBasicInteractionTests: FlowEditorTestCase {
         coordinator.onFileDropRequest = { request = $0 }
         let urls = [URL(fileURLWithPath: "/tmp/Guide.md"), URL(fileURLWithPath: "/tmp/Map.png")]
 
-        XCTAssertTrue(coordinator.requestFileDrop(urls, atUTF16Offset: 7))
+        XCTAssertTrue(coordinator.requestFileDrop(urls, replacing: NSRange(location: 7, length: 0)))
         XCTAssertEqual(textView.string, source)
         let captured = try XCTUnwrap(request)
         XCTAssertEqual(captured.urls, urls)
@@ -1029,12 +1165,92 @@ final class MarkdownEditorBasicInteractionTests: FlowEditorTestCase {
         var request: MarkdownFileDropRequest?
         coordinator.onFileDropRequest = { request = $0 }
 
-        XCTAssertTrue(coordinator.requestFileDrop([URL(fileURLWithPath: "/tmp/Guide.md")], atUTF16Offset: 2))
+        XCTAssertTrue(coordinator.requestFileDrop(
+            [URL(fileURLWithPath: "/tmp/Guide.md")],
+            replacing: NSRange(location: 2, length: 0)
+        ))
         let captured = try XCTUnwrap(request)
         textView.insertText(" changed", replacementRange: textView.selectedRange())
 
         XCTAssertFalse(captured.insertMarkdown("[Guide](Guide.md)"))
         XCTAssertEqual(textView.string, "draft changed")
+        withExtendedLifetime(window) {}
+    }
+
+    func testPastingCopiedFilesTakesTheFileFlowAndReplacesTheSelection() throws {
+        let source = "before selected after"
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let selection = (source as NSString).range(of: "selected")
+        textView.setSelectedRange(selection)
+        var fileRequest: MarkdownFileDropRequest?
+        var pastedImage = false
+        coordinator.onFileDropRequest = { fileRequest = $0 }
+        textView.fileDropHandler = { coordinator.requestFileDrop($0, replacing: $1) }
+        textView.imagePasteHandler = { _ in pastedImage = true; return true }
+        // Finder puts file URLs on the pasteboard; NSImage(pasteboard:) renders a copied PDF as an
+        // image of its first page, so the PDF must exist for this to catch the image path winning.
+        let pdfURL = try makeTemporaryPDF()
+        defer { try? FileManager.default.removeItem(at: pdfURL) }
+        XCTAssertNotNil(NSImage(pasteboard: try singleFilePasteboard(pdfURL)))
+        let urls = [pdfURL, URL(fileURLWithPath: "/tmp/Photo.jpg")]
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MonknotTests.filePaste.\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        pasteboard.writeObjects(urls.map { $0 as NSURL })
+
+        XCTAssertTrue(textView.pasteFilesOrImage(from: pasteboard))
+        XCTAssertFalse(pastedImage)
+        let captured = try XCTUnwrap(fileRequest)
+        XCTAssertEqual(captured.urls, urls)
+        XCTAssertEqual(captured.insertionRange, selection)
+
+        XCTAssertTrue(captured.insertMarkdown("[Paper](Paper.pdf)"))
+        XCTAssertEqual(textView.string, "before [Paper](Paper.pdf) after")
+        withExtendedLifetime(window) {}
+    }
+
+    private func makeTemporaryPDF() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MonknotPaste-\(UUID().uuidString).pdf")
+        let data = NSMutableData()
+        var mediaBox = CGRect(x: 0, y: 0, width: 200, height: 100)
+        let consumer = try XCTUnwrap(CGDataConsumer(data: data as CFMutableData))
+        let context = try XCTUnwrap(CGContext(consumer: consumer, mediaBox: &mediaBox, nil))
+        context.beginPDFPage(nil)
+        context.fill(CGRect(x: 20, y: 20, width: 60, height: 60))
+        context.endPDFPage()
+        context.closePDF()
+        try (data as Data).write(to: url)
+        return url
+    }
+
+    private func singleFilePasteboard(_ url: URL) throws -> NSPasteboard {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MonknotTests.singleFile.\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        pasteboard.writeObjects([url as NSURL])
+        addTeardownBlock { pasteboard.releaseGlobally() }
+        return pasteboard
+    }
+
+    func testPastingImageDataDoesNotTakeTheFileFlow() {
+        let source = "draft"
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        var fileRequest: MarkdownFileDropRequest?
+        coordinator.onFileDropRequest = { fileRequest = $0 }
+        textView.fileDropHandler = { coordinator.requestFileDrop($0, replacing: $1) }
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MonknotTests.imagePaste.\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        pasteboard.writeObjects([testImage()])
+
+        XCTAssertFalse(textView.requestFilePaste(from: pasteboard))
+        XCTAssertNil(fileRequest)
         withExtendedLifetime(window) {}
     }
 
@@ -1059,6 +1275,38 @@ final class MarkdownEditorBasicInteractionTests: FlowEditorTestCase {
 
         XCTAssertEqual(result.totalCount, 2)
         XCTAssertEqual(textView.string, source)
+        withExtendedLifetime(window) {}
+    }
+
+    func testOnlyTheCurrentFindMatchIsUnderlinedAndTheMarkFollowsFindNext() throws {
+        let source = "one cat, two cat"
+        let box = EditorTextBox(source)
+        let coordinator = makeCoordinator(box)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let layoutManager = try XCTUnwrap(textView.layoutManager)
+        let first = (source as NSString).range(of: "cat")
+        let second = (source as NSString).range(of: "cat", options: .backwards)
+        func isUnderlined(_ range: NSRange) -> Bool {
+            layoutManager.temporaryAttribute(.underlineStyle, atCharacterIndex: range.location, effectiveRange: nil) != nil
+        }
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        var search = DocumentSearchState()
+        search.present()
+        search.setQuery("cat")
+
+        _ = coordinator.applySearch(search, theme: .defaultDark, in: textView)
+        XCTAssertTrue(isUnderlined(first))
+        XCTAssertFalse(isUnderlined(second))
+
+        search.findNext()
+        _ = coordinator.applySearch(search, theme: .defaultDark, in: textView)
+        XCTAssertFalse(isUnderlined(first))
+        XCTAssertTrue(isUnderlined(second))
+
+        search.dismiss()
+        _ = coordinator.applySearch(search, theme: .defaultDark, in: textView)
+        XCTAssertFalse(isUnderlined(second))
         withExtendedLifetime(window) {}
     }
 

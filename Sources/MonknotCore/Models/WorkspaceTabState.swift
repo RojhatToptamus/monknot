@@ -268,7 +268,17 @@ public struct WorkspaceTabState: Codable, Equatable, Sendable {
             return selectedDocumentID
         }
 
+        // A removed selected tab hands the selection to the tab after it, as closing it does.
+        let remainingTabsBeforeSelection = selectedDocumentID
+            .flatMap { selectedID in tabs.firstIndex { $0.documentID == selectedID } }
+            .map { index in tabs[..<index].filter { allowedDocumentIDs.contains($0.documentID) }.count }
         tabs.removeAll { !allowedDocumentIDs.contains($0.documentID) }
+        if let selectedDocumentID,
+           !contains(documentID: selectedDocumentID),
+           let remainingTabsBeforeSelection,
+           !tabs.isEmpty {
+            self.selectedDocumentID = tabs[min(remainingTabsBeforeSelection, tabs.count - 1)].documentID
+        }
         normalizeSelection()
         return selectedDocumentID
     }

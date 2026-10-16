@@ -37,9 +37,61 @@ enum MarkdownOutlineRailLayout {
     }
 }
 
-struct MarkdownOutlineRail: View {
+/// The source line at the top of the visible document. Only the outline rail observes it, so scroll
+/// ticks don't re-render the editor pane.
+@MainActor
+final class MarkdownOutlinePosition: ObservableObject {
+    @Published private(set) var visibleLine = 1
+    /// The document `visibleLine` was reported for.
+    private(set) var documentID: String?
+
+    func update(_ line: Int, documentID: String?) {
+        self.documentID = documentID
+        guard line != visibleLine else { return }
+        visibleLine = line
+    }
+
+    /// The line last shown at the top of `documentID`, if this position belongs to it.
+    func visibleLine(in documentID: String) -> Int? {
+        self.documentID == documentID ? visibleLine : nil
+    }
+}
+
+/// The rail is redrawn when its headings, theme or zoom change, not on every keystroke in the editor
+/// pane around it. The visible line is observed one level down, so scrolling still moves the current
+/// marker. `select` forwards to the pane and is not compared; `documentID` stands in for it.
+struct MarkdownOutlineRail: View, Equatable {
+    let documentID: String
     let items: [MarkdownOutlineItem]
-    let visibleLine: Int
+    let position: MarkdownOutlinePosition
+    let theme: AppTheme
+    let zoomScale: Double
+    let select: (MarkdownOutlineItem) -> Void
+
+    nonisolated static func == (lhs: MarkdownOutlineRail, rhs: MarkdownOutlineRail) -> Bool {
+        MainActor.assumeIsolated {
+            lhs.documentID == rhs.documentID &&
+                lhs.position === rhs.position &&
+                lhs.zoomScale == rhs.zoomScale &&
+                lhs.items == rhs.items &&
+                lhs.theme == rhs.theme
+        }
+    }
+
+    var body: some View {
+        MarkdownOutlineRailContent(
+            items: items,
+            position: position,
+            theme: theme,
+            zoomScale: zoomScale,
+            select: select
+        )
+    }
+}
+
+private struct MarkdownOutlineRailContent: View {
+    let items: [MarkdownOutlineItem]
+    @ObservedObject var position: MarkdownOutlinePosition
     let theme: AppTheme
     let zoomScale: Double
     let select: (MarkdownOutlineItem) -> Void
@@ -51,7 +103,7 @@ struct MarkdownOutlineRail: View {
 
     private var activeIndex: Int? {
         MarkdownOutlineRailLayout.activeIndex(
-            forVisibleLine: visibleLine,
+            forVisibleLine: position.visibleLine,
             items: items
         )
     }
@@ -172,7 +224,7 @@ struct MarkdownOutlineRail: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .focusable()
+        .focusable(NSApp.isFullKeyboardAccessEnabled)
         .focused($focusedMarkerID, equals: item.id)
         .focusEffectDisabled()
         .onHover { hovering in
@@ -253,10 +305,11 @@ private struct MarkdownOutlineHoverPanel: View {
                 .frame(height: 1)
 
             ScrollViewReader { scrollProxy in
-                MonknotScrollView {
+                let lineNumberWidthTemplate = lineNumberWidthTemplate
+                MonknotScrollView(theme: theme) {
                     LazyVStack(alignment: .leading, spacing: scaled(2)) {
                         ForEach(items) { item in
-                            outlineRow(for: item)
+                            outlineRow(for: item, lineNumberWidthTemplate: lineNumberWidthTemplate)
                                 .id(item.id)
                         }
                     }
@@ -292,7 +345,7 @@ private struct MarkdownOutlineHoverPanel: View {
     private var header: some View {
         HStack(spacing: scaled(7)) {
             Image(systemName: MonknotWorkspaceIcons.outline)
-                .font(.system(size: textScaled(11.5), weight: .medium))
+                .font(.system(size: textScaled(11.5), weight: .regular))
                 .foregroundStyle(theme.accentColor)
                 .accessibilityHidden(true)
 
@@ -303,7 +356,7 @@ private struct MarkdownOutlineHoverPanel: View {
             Spacer(minLength: 0)
 
             Text("\(items.count)")
-                .font(.system(size: textScaled(10), weight: .medium, design: .monospaced))
+                .font(.system(size: textScaled(10), weight: .regular, design: .monospaced))
                 .foregroundStyle(theme.mutedForegroundColor)
                 .monospacedDigit()
                 .accessibilityLabel("\(items.count) headings")
@@ -312,7 +365,12 @@ private struct MarkdownOutlineHoverPanel: View {
         .frame(height: scaled(38))
     }
 
-    private func outlineRow(for item: MarkdownOutlineItem) -> some View {
+    /// One line-number column for the whole list, as wide as its largest line number.
+    private var lineNumberWidthTemplate: String {
+        MonknotStableWidth.lineNumberTemplate(maximumLine: items.map(\.location.line).max() ?? 0)
+    }
+
+    private func outlineRow(for item: MarkdownOutlineItem, lineNumberWidthTemplate: String) -> some View {
         let isRevealed = item.id == revealedItemID
 
         return Button {
@@ -320,7 +378,8 @@ private struct MarkdownOutlineHoverPanel: View {
         } label: {
             HStack(spacing: scaled(7)) {
                 Text(item.title)
-                    .font(.system(size: textScaled(11), weight: isRevealed ? .medium : .regular))
+                    // Never bolder for being current (design.md §4.2); the row's fill and ink carry it.
+                    .font(.system(size: textScaled(11), weight: .regular))
                     .foregroundStyle(isRevealed ? theme.accentColor : theme.foregroundColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -328,7 +387,8 @@ private struct MarkdownOutlineHoverPanel: View {
                 Spacer(minLength: scaled(6))
 
                 Text("\(item.location.line)")
-                    .font(.system(size: textScaled(9.5), weight: .medium, design: .monospaced))
+                    .monknotReservingWidth(of: lineNumberWidthTemplate)
+                    .font(.system(size: textScaled(9.5), weight: .regular, design: .monospaced))
                     .foregroundStyle(theme.mutedForegroundColor)
                     .monospacedDigit()
             }
@@ -399,14 +459,16 @@ private struct MarkdownOutlineRowButtonStyle: ButtonStyle {
                     RoundedRectangle(cornerRadius: cornerRadius)
                         .fill(backgroundColor)
                 }
-                .opacity(configuration.isPressed ? 0.82 : 1)
                 .onHover { isHovered = $0 }
                 .monknotPointerCursor()
         }
 
         private var backgroundColor: Color {
+            if configuration.isPressed {
+                return theme.pressedFillColor
+            }
             if isHovered {
-                return theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.055)
+                return theme.hoverFillColor
             }
             if isActive {
                 return theme.accentColor.opacity(theme.isDark ? 0.10 : 0.075)

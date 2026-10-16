@@ -4,6 +4,9 @@ import SwiftUI
 struct MonknotCommandActions {
     let newMarkdown: () -> Void
     let newDailyNote: () -> Void
+    let newFile: () -> Void
+    let newFolder: () -> Void
+    let canCreateItems: Bool
     let openFolder: () -> Void
     let workspaceNames: [String]
     let switchWorkspaceAtIndex: (Int) -> Void
@@ -96,6 +99,7 @@ struct MonknotCommandMenu: Commands {
         monknotUndoCommandDestination(
             isPDFDocumentActive: actions?.isPDFDocumentActive == true,
             hasNativeEditingFocus: MonknotNativePasteboardCommand.hasNativeEditingFocus,
+            terminalHasFocus: MonknotNativeUndoCommand.terminalHasFocus,
             canPerformNative: MonknotNativeUndoCommand.canUndo,
             canPerformWorkspaceReplace: actions?.canUndoWorkspaceReplace == true,
             canPerformPDF: actions?.canUndoPDFAnnotation == true
@@ -106,12 +110,26 @@ struct MonknotCommandMenu: Commands {
         monknotUndoCommandDestination(
             isPDFDocumentActive: actions?.isPDFDocumentActive == true,
             hasNativeEditingFocus: MonknotNativePasteboardCommand.hasNativeEditingFocus,
+            terminalHasFocus: MonknotNativeUndoCommand.terminalHasFocus,
             canPerformNative: MonknotNativeUndoCommand.canRedo,
             canPerformPDF: actions?.canRedoPDFAnnotation == true
         )
     }
 
+    /// One property per menu group, so each type-checks quickly.
     var body: some Commands {
+        newItemCommands
+        workspaceMenu
+        saveCommands
+        undoRedoCommands
+        pasteboardCommands
+        writingCommands
+        exportCommands
+        viewCommands
+        helpCommands
+    }
+
+    private var newItemCommands: some Commands {
         CommandGroup(replacing: .newItem) {
             Button("New Markdown") {
                 actions?.newMarkdown()
@@ -125,13 +143,26 @@ struct MonknotCommandMenu: Commands {
             .keyboardShortcut("n", modifiers: [.command, .shift])
             .disabled(actions == nil)
 
-            Button("Add Workspace...") {
+            Button("New File…") {
+                actions?.newFile()
+            }
+            .disabled(actions?.canCreateItems != true)
+
+            Button("New Folder…") {
+                actions?.newFolder()
+            }
+            .keyboardShortcut("n", modifiers: [.command, .option])
+            .disabled(actions?.canCreateItems != true)
+
+            Button("Add Workspace…") {
                 actions?.openFolder()
             }
             .keyboardShortcut("o", modifiers: [.command])
             .disabled(actions == nil)
         }
+    }
 
+    private var workspaceMenu: some Commands {
         CommandMenu("Workspace") {
             if let actions {
                 ForEach(Array(actions.workspaceNames.prefix(9).enumerated()), id: \.offset) { index, name in
@@ -183,7 +214,9 @@ struct MonknotCommandMenu: Commands {
             .keyboardShortcut("s", modifiers: [.command, .control])
             .disabled(actions == nil)
         }
+    }
 
+    private var saveCommands: some Commands {
         CommandGroup(replacing: .saveItem) {
             Button("Close Tab") {
                 actions?.closeTab()
@@ -209,7 +242,9 @@ struct MonknotCommandMenu: Commands {
             .keyboardShortcut("s", modifiers: [.command, .option])
             .disabled(actions?.canSaveAllDocuments != true)
         }
+    }
 
+    private var undoRedoCommands: some Commands {
         CommandGroup(replacing: .undoRedo) {
             Button("Undo") {
                 switch undoDestination {
@@ -241,27 +276,17 @@ struct MonknotCommandMenu: Commands {
             .keyboardShortcut("z", modifiers: [.command, .shift])
             .disabled(redoDestination == .unavailable)
         }
+    }
 
+    private var pasteboardCommands: some Commands {
         CommandGroup(replacing: .pasteboard) {
-            Button("Cut") {
-                if let actions {
-                    actions.cut()
-                } else {
-                    _ = MonknotNativePasteboardCommand.performCutIfAvailable()
-                }
+            editingButton("Cut", key: "x", perform: { $0.cut() }) {
+                MonknotNativePasteboardCommand.performCutIfAvailable()
             }
-            .keyboardShortcut("x", modifiers: [.command])
-            .disabled(actions == nil && !MonknotNativePasteboardCommand.hasNativeEditingFocus)
 
-            Button("Copy") {
-                if let actions {
-                    actions.copy()
-                } else {
-                    _ = MonknotNativePasteboardCommand.performCopyIfAvailable()
-                }
+            editingButton("Copy", key: "c", perform: { $0.copy() }) {
+                MonknotNativePasteboardCommand.performCopyIfAvailable()
             }
-            .keyboardShortcut("c", modifiers: [.command])
-            .disabled(actions == nil && !MonknotNativePasteboardCommand.hasNativeEditingFocus)
 
             Button("Copy Rendered Markdown") {
                 actions?.copyRenderedMarkdown()
@@ -274,29 +299,38 @@ struct MonknotCommandMenu: Commands {
             }
             .disabled(actions?.canCopyPDFLinkedExcerpt != true)
 
-            Button("Paste") {
-                if let actions {
-                    actions.paste()
-                } else {
-                    _ = MonknotNativePasteboardCommand.performPasteIfAvailable()
-                }
+            editingButton("Paste", key: "v", perform: { $0.paste() }) {
+                MonknotNativePasteboardCommand.performPasteIfAvailable()
             }
-            .keyboardShortcut("v", modifiers: [.command])
-            .disabled(actions == nil && !MonknotNativePasteboardCommand.hasNativeEditingFocus)
 
             Divider()
 
-            Button("Select All") {
-                if let actions {
-                    actions.selectAll()
-                } else {
-                    _ = MonknotNativePasteboardCommand.performSelectAllIfAvailable()
-                }
+            editingButton("Select All", key: "a", perform: { $0.selectAll() }) {
+                MonknotNativePasteboardCommand.performSelectAllIfAvailable()
             }
-            .keyboardShortcut("a", modifiers: [.command])
-            .disabled(actions == nil && !MonknotNativePasteboardCommand.hasNativeEditingFocus)
         }
+    }
 
+    /// Cut, Copy, Paste and Select All go through the workspace window's actions, or straight to the
+    /// focused text when no workspace window is focused.
+    private func editingButton(
+        _ title: String,
+        key: KeyEquivalent,
+        perform: @escaping (MonknotCommandActions) -> Void,
+        performNatively: @escaping () -> Bool
+    ) -> some View {
+        Button(title) {
+            if let actions {
+                perform(actions)
+            } else {
+                _ = performNatively()
+            }
+        }
+        .keyboardShortcut(key, modifiers: [.command])
+        .disabled(actions == nil && !MonknotNativePasteboardCommand.hasNativeEditingFocus)
+    }
+
+    private var writingCommands: some Commands {
         CommandGroup(after: .pasteboard) {
             if #available(macOS 15.2, *) {
                 Button("Show Writing Tools…") {
@@ -321,29 +355,33 @@ struct MonknotCommandMenu: Commands {
                 Toggle("Check Grammar While Typing", isOn: $checksGrammar)
             }
         }
+    }
 
+    private var exportCommands: some Commands {
         CommandGroup(replacing: .printItem) {
-            Button("Export PDF...") {
+            Button("Export PDF…") {
                 actions?.exportPDF()
             }
             .disabled(actions?.canExportPDF != true)
 
-            Button("Export PDF Annotations as Markdown...") {
+            Button("Export PDF Annotations as Markdown…") {
                 actions?.exportPDFAnnotationsMarkdown()
             }
             .disabled(actions?.canExportPDFAnnotationsMarkdown != true)
 
-            Button("Export All PDF Annotations as Markdown...") {
+            Button("Export All PDF Annotations as Markdown…") {
                 actions?.exportAllPDFAnnotationsMarkdown()
             }
             .disabled(actions?.canExportAllPDFAnnotationsMarkdown != true)
 
-            Button("Export Annotated PDF Copy...") {
+            Button("Export Annotated PDF Copy…") {
                 actions?.exportAnnotatedPDFCopy()
             }
             .disabled(actions?.canExportAnnotatedPDFCopy != true)
         }
+    }
 
+    private var viewCommands: some Commands {
         CommandGroup(after: .toolbar) {
             Button("Toggle Split Editor") {
                 actions?.toggleSplitView()
@@ -372,13 +410,13 @@ struct MonknotCommandMenu: Commands {
 
             Divider()
 
-            Button("Quick Open...") {
+            Button("Quick Open…") {
                 actions?.showQuickOpen()
             }
             .keyboardShortcut("p", modifiers: [.command])
             .disabled(actions?.canShowQuickOpen != true)
 
-            Button("Go to Line...") {
+            Button("Go to Line…") {
                 actions?.showGoToLine()
             }
             .disabled(actions?.canShowGoToLine != true)
@@ -483,7 +521,9 @@ struct MonknotCommandMenu: Commands {
             }
             .disabled(actions == nil)
         }
+    }
 
+    private var helpCommands: some Commands {
         CommandGroup(after: .help) {
             Button("Keyboard Shortcuts") {
                 actions?.showKeyboardShortcutsHelp()
@@ -503,12 +543,23 @@ enum MonknotUndoCommandDestination: Equatable {
 func monknotUndoCommandDestination(
     isPDFDocumentActive: Bool,
     hasNativeEditingFocus: Bool,
+    terminalHasFocus: Bool = false,
     canPerformNative: Bool,
     canPerformWorkspaceReplace: Bool = false,
     canPerformPDF: Bool
 ) -> MonknotUndoCommandDestination {
+    // The terminal keeps ⌘Z and ⇧⌘Z for its shell. The window's undo manager it would otherwise
+    // reach holds the editor's edits.
+    if terminalHasFocus {
+        return .unavailable
+    }
     if hasNativeEditingFocus {
-        return canPerformNative ? .native : .unavailable
+        if canPerformNative {
+            return .native
+        }
+        // Nothing to undo in the focused text: the workspace Replace All is next, as its
+        // confirmation promises that ⌘Z undoes it.
+        return canPerformWorkspaceReplace ? .workspaceReplace : .unavailable
     }
     if canPerformWorkspaceReplace {
         return .workspaceReplace

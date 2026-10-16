@@ -204,9 +204,11 @@ final class FlowPresentationTests: FlowEditorTestCase {
         textView.frame = scrollView.bounds
         textView.refreshContentWidthLayout()
         textView.insertText("x", replacementRange: textView.selectedRange())
-        let secondAttemptFinished = await waitUntil { prose.requestCount == 2 }
+        // The spy counts a request when it starts, so wait for the suggestion as well.
+        let secondAttemptFinished = await waitUntil {
+            prose.requestCount == 2 && textView.flowProseSuggestion != nil
+        }
         XCTAssertTrue(secondAttemptFinished)
-        XCTAssertNotNil(textView.flowProseSuggestion)
     }
 
     func testOnDeviceCompletionContextIncludesPreviousHardWrappedLine() async {

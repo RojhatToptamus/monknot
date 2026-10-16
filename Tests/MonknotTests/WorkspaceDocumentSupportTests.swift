@@ -1,3 +1,5 @@
+import AVFoundation
+import UniformTypeIdentifiers
 import XCTest
 @testable import MonknotCore
 
@@ -11,6 +13,74 @@ final class WorkspaceDocumentSupportTests: XCTestCase {
             WorkspaceDocumentSupport.displayName(forRelativePath: "README.md"),
             "README.md"
         )
+    }
+
+    func testAvailableCopyURLKeepsFolderNamesWholeAndExtensionsLast() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for name in ["v1.2", "photo.png", "Release.app", "Makefile"] {
+            try FileManager.default.createDirectory(
+                at: root.appendingPathComponent(name),
+                withIntermediateDirectories: true
+            )
+        }
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("v1.2 copy"),
+            withIntermediateDirectories: true
+        )
+
+        func copyName(_ name: String, isDirectory: Bool) -> String {
+            WorkspaceDocumentSupport.availableCopyURL(named: name, isDirectory: isDirectory, in: root)
+                .lastPathComponent
+        }
+        XCTAssertEqual(copyName("v1.2", isDirectory: true), "v1.2 copy 2")
+        XCTAssertEqual(copyName("photo.png", isDirectory: false), "photo copy.png")
+        XCTAssertEqual(copyName("Release.app", isDirectory: true), "Release copy.app")
+        XCTAssertEqual(copyName("Makefile", isDirectory: false), "Makefile copy")
+        XCTAssertEqual(copyName("new.md", isDirectory: false), "new.md")
+    }
+
+    func testAvailableCopyURLShortensALongNameToFitTheSuffix() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let limit = WorkspaceDocumentSupport.maximumFileNameLength
+        // Hangul syllables (3 code units each once decomposed) and an emoji (2), so a cut by code
+        // unit could split either.
+        let file = String(repeating: "한", count: 82) + "📄.md"
+        let folder = String(repeating: "f", count: limit)
+        for name in [file, folder] {
+            try FileManager.default.createDirectory(
+                at: root.appendingPathComponent(name),
+                withIntermediateDirectories: true
+            )
+        }
+
+        let fileCopy = WorkspaceDocumentSupport.availableCopyURL(named: file, isDirectory: false, in: root)
+            .lastPathComponent
+        XCTAssertEqual(WorkspaceDocumentSupport.fileNameLength(fileCopy), 254)
+        XCTAssertLessThanOrEqual(WorkspaceDocumentSupport.fileNameLength(fileCopy), limit)
+        XCTAssertTrue(fileCopy.hasSuffix("한 copy.md"), fileCopy)
+        XCTAssertTrue(fileCopy.hasPrefix("한한"), fileCopy)
+
+        let folderCopy = WorkspaceDocumentSupport.availableCopyURL(named: folder, isDirectory: true, in: root)
+            .lastPathComponent
+        XCTAssertEqual(folderCopy, String(repeating: "f", count: limit - 5) + " copy")
+
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent(folderCopy),
+            withIntermediateDirectories: true
+        )
+        let secondCopy = WorkspaceDocumentSupport.availableCopyURL(named: folder, isDirectory: true, in: root)
+            .lastPathComponent
+        XCTAssertEqual(secondCopy, String(repeating: "f", count: limit - 7) + " copy 2")
+    }
+
+    func testIsURLContainedInComparesWholePathComponents() {
+        let root = URL(fileURLWithPath: "/tmp/Work")
+        XCTAssertTrue(WorkspaceDocumentSupport.isURL(root, containedIn: root))
+        XCTAssertTrue(WorkspaceDocumentSupport.isURL(URL(fileURLWithPath: "/tmp/Work/a/b.md"), containedIn: root))
+        XCTAssertFalse(WorkspaceDocumentSupport.isURL(URL(fileURLWithPath: "/tmp/Workshop/b.md"), containedIn: root))
+        XCTAssertFalse(WorkspaceDocumentSupport.isURL(URL(fileURLWithPath: "/tmp"), containedIn: root))
     }
 
     func testValidatedRelativePathReturnsPlainPOSIXPathsForFilesAndFolders() throws {
@@ -122,9 +192,10 @@ final class WorkspaceDocumentSupportTests: XCTestCase {
         XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/guide.PDF")))
         XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/notes.TXT")))
         XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/Preview.HTML")))
-        XCTAssertFalse(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/image.PNG")))
-        XCTAssertFalse(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/movie.MP4")))
-        XCTAssertFalse(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/sound.M4A")))
+        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/image.PNG")))
+        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/movie.MP4")))
+        XCTAssertTrue(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/sound.M4A")))
+        XCTAssertFalse(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/movie.AVI")))
         XCTAssertTrue(WorkspaceDocumentSupport.isPDFDocument(URL(fileURLWithPath: "/tmp/guide.pdf")))
         XCTAssertTrue(WorkspaceDocumentSupport.isMarkdownDocument(URL(fileURLWithPath: "/tmp/doc.mkd")))
         XCTAssertFalse(WorkspaceDocumentSupport.isWorkspaceDocument(URL(fileURLWithPath: "/tmp/archive.zip")))
@@ -132,8 +203,9 @@ final class WorkspaceDocumentSupportTests: XCTestCase {
         XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/preview.html"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .text)
         XCTAssertTrue(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/preview.html"), rootURL: URL(fileURLWithPath: "/tmp")).capabilities.canPreviewHTML)
         XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/Makefile"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .text)
-        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/image.png"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .unsupported)
-        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/movie.mp4"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .unsupported)
+        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/image.png"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .image)
+        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/movie.mp4"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .media)
+        XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/movie.avi"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .unsupported)
         XCTAssertEqual(WorkspaceDocument(url: URL(fileURLWithPath: "/tmp/archive.zip"), rootURL: URL(fileURLWithPath: "/tmp")).kind, .unsupported)
     }
 
@@ -141,8 +213,11 @@ final class WorkspaceDocumentSupportTests: XCTestCase {
         XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/README.md")))
         XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/Guide.PDF")))
         XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/Makefile")))
-        XCTAssertFalse(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/image.PNG")))
-        XCTAssertFalse(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/movie.MP4")))
+        XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/image.PNG")))
+        XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/movie.MP4")))
+        XCTAssertFalse(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/movie.avi")))
+        XCTAssertFalse(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/movie.mkv")))
+        XCTAssertFalse(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/movie.webm")))
         XCTAssertFalse(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(URL(fileURLWithPath: "/tmp/archive.zip")))
     }
 
@@ -170,11 +245,83 @@ final class WorkspaceDocumentSupportTests: XCTestCase {
         XCTAssertTrue(html.capabilities.canPreviewHTML)
         XCTAssertTrue(mermaid.capabilities.canEditText)
         XCTAssertTrue(mermaid.capabilities.canSearchText)
-        XCTAssertFalse(image.capabilities.canPreview)
-        XCTAssertFalse(media.capabilities.canPreview)
+        XCTAssertTrue(image.capabilities.canPreview)
+        XCTAssertFalse(image.capabilities.canEditText)
+        XCTAssertFalse(image.capabilities.canSearchText)
+        XCTAssertFalse(image.capabilities.canSearchPDF)
+        XCTAssertFalse(image.hasPreviewMode, "Images have one view, so the Source/Preview control stays disabled")
+        XCTAssertTrue(media.capabilities.canPreview)
         XCTAssertFalse(media.capabilities.canEditText)
         XCTAssertFalse(media.capabilities.canSearchText)
+        XCTAssertFalse(media.capabilities.canSearchPDF)
+        XCTAssertFalse(media.hasPreviewMode, "Media has one view, so the Source/Preview control stays disabled")
         XCTAssertFalse(archive.capabilities.canPreview)
+    }
+
+    func testRasterImagesAreImageDocumentsAndSVGStaysEditableSource() {
+        let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        for name in ["photo.JPG", "photo.jpeg", "shot.png", "anim.gif", "live.heic", "scan.tiff", "pic.webp", "icon.ico", "a.avif", "b.bmp"] {
+            let url = root.appendingPathComponent(name)
+            XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(url), name)
+            XCTAssertEqual(WorkspaceDocument(url: url, rootURL: root).kind, .image, name)
+            XCTAssertTrue(WorkspaceDocumentKind.image.opensInPDFViewer)
+        }
+
+        let svg = WorkspaceDocument(url: root.appendingPathComponent("logo.svg"), rootURL: root)
+        XCTAssertEqual(svg.kind, .text, "An SVG is markup; its source is what you edit")
+        XCTAssertTrue(svg.capabilities.canEditText)
+    }
+
+    func testVideoAndAudioThatAVFoundationPlaysAreMediaDocuments() {
+        let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        let playableTypes = Set(AVURLAsset.audiovisualTypes().map(\.rawValue))
+        for fileExtension in WorkspaceDocumentSupport.mediaExtensions {
+            for name in ["clip.\(fileExtension)", "CLIP.\(fileExtension.uppercased())"] {
+                let url = root.appendingPathComponent(name)
+                let document = WorkspaceDocument(url: url, rootURL: root)
+                XCTAssertTrue(WorkspaceDocumentSupport.shouldIncludeInWorkspaceScan(url), name)
+                XCTAssertEqual(document.kind, .media, name)
+                XCTAssertFalse(document.kind.opensInPDFViewer, name)
+                let contentType = document.contentTypeIdentifier.flatMap(UTType.init)
+                XCTAssertTrue(
+                    contentType.map { playableTypes.contains($0.identifier) } == true,
+                    "\(name) must be a type AVFoundation plays"
+                )
+                XCTAssertTrue(contentType?.conforms(to: .audiovisualContent) == true, name)
+            }
+        }
+
+        // TypeScript keeps its extension, which UTType also reads as an MPEG-2 transport stream.
+        XCTAssertEqual(WorkspaceDocument(url: root.appendingPathComponent("app.ts"), rootURL: root).kind, .text)
+        for skipped in ["clip.avi", "clip.mkv", "clip.webm", "clip.ogg", "clip.wmv"] {
+            XCTAssertNil(
+                WorkspaceDocumentSupport.workspaceClassification(for: root.appendingPathComponent(skipped)),
+                skipped
+            )
+        }
+    }
+
+    func testExtensionlessFilesAreTextOnlyByConventionalName() {
+        let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        for name in ["LICENSE", "License", "README", "CHANGELOG", "AUTHORS", "NOTICE", "COPYING", "Makefile", "Dockerfile"] {
+            let classification = WorkspaceDocumentSupport.workspaceClassification(for: root.appendingPathComponent(name))
+            XCTAssertEqual(classification?.kind, .text, name)
+            XCTAssertEqual(classification?.capabilities.canEditText, true, name)
+        }
+        for name in ["data", "a.out", "Icon"] {
+            XCTAssertNil(WorkspaceDocumentSupport.workspaceClassification(for: root.appendingPathComponent(name)), name)
+        }
+    }
+
+    func testUppercaseExtensionsClassifyLikeLowercaseOnes() {
+        let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        for name in ["photo.png", "notes.md", "guide.pdf", "page.html", "data.json", "clip.mov", "song.mp3", "app.swift", "logo.svg"] {
+            let lower = WorkspaceDocument(url: root.appendingPathComponent(name), rootURL: root)
+            let upper = WorkspaceDocument(url: root.appendingPathComponent(name.uppercased()), rootURL: root)
+            XCTAssertEqual(upper.kind, lower.kind, name)
+            XCTAssertEqual(upper.capabilities, lower.capabilities, name)
+            XCTAssertEqual(upper.contentTypeIdentifier, lower.contentTypeIdentifier, name)
+        }
     }
 
     func testRelativePathFallsBackToFilenameOutsideRoot() {

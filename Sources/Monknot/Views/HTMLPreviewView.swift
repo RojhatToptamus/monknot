@@ -6,6 +6,8 @@ struct HTMLPreviewView: NSViewRepresentable {
     let documentID: String
     let html: String
     let baseURL: URL?
+    /// The workspace root; relative images and stylesheets load from inside it only.
+    let resourceRoot: URL?
     let theme: AppTheme
     let zoomScale: Double
     let contentWidthPercent: Double
@@ -29,7 +31,10 @@ struct HTMLPreviewView: NSViewRepresentable {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.userContentController.add(context.coordinator, name: Coordinator.scrollPositionHandlerName)
         configuration.userContentController.addUserScript(Coordinator.previewBehaviorScript)
-        configuration.userContentController.addUserScript(MonknotScrollbarStyle.webUserScript())
+        configuration.setURLSchemeHandler(
+            context.coordinator.resourceHandler,
+            forURLScheme: WorkspaceResourceSchemeHandler.scheme
+        )
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.identifier = .monknotDocumentFocusTarget
@@ -49,23 +54,15 @@ struct HTMLPreviewView: NSViewRepresentable {
         context.coordinator.syncScrollEnabled = syncScrollEnabled
         context.coordinator.sourceLineCount = sourceLineCount
         context.coordinator.setPendingSearchOptions(searchOptions)
-        context.coordinator.onSearchResult = { result in
-            DispatchQueue.main.async {
-                let current = DocumentSearchResult(
-                    currentIndex: self.searchState.currentIndex,
-                    totalCount: self.searchState.totalCount
-                )
-                if current != result {
-                    self.searchState.updateResult(result)
-                }
-            }
-        }
+        context.coordinator.onSearchResult = WebViewBridge.searchResultPublisher(for: $searchState)
         let didChangeDocument = context.coordinator.prepareForDocument(documentID, in: webView)
         context.coordinator.setPendingScrollPosition(scrollPosition, force: didChangeDocument)
 
-        let request = HTMLPreviewContentRequest(documentID: documentID, html: html, baseURL: baseURL)
+        context.coordinator.resourceHandler.rootURL = resourceRoot
+        let pageBaseURL = WorkspaceResourceSchemeHandler.pageBaseURL(forDirectory: baseURL)
+        let request = HTMLPreviewContentRequest(documentID: documentID, html: html, baseURL: pageBaseURL)
         if context.coordinator.shouldLoad(request, pendingSearch: searchState) {
-            webView.loadHTMLString(html, baseURL: baseURL)
+            webView.loadHTMLString(html, baseURL: pageBaseURL)
             return
         }
 
@@ -81,6 +78,7 @@ struct HTMLPreviewView: NSViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         static let scrollPositionHandlerName = "monknotHTMLScrollPosition"
+        let resourceHandler = WorkspaceResourceSchemeHandler()
         static let previewBehaviorScript = WKUserScript(
             source: """
             (() => {
@@ -169,7 +167,9 @@ struct HTMLPreviewView: NSViewRepresentable {
                 if (document.getElementById("monknot-html-content-width-style")) return;
                 const style = document.createElement("style");
                 style.id = "monknot-html-content-width-style";
+                // Zero specificity, so a page's own overflow rule wins.
                 style.textContent = `
+                  :where(html) { overflow-y: scroll; }
                   body {
                     box-sizing: border-box !important;
                     max-width: var(--monknot-content-max-width, 100%) !important;
@@ -462,11 +462,7 @@ struct HTMLPreviewView: NSViewRepresentable {
 
         fileprivate func prepareForDocument(_ nextDocumentID: String, in webView: WKWebView) -> Bool {
             guard documentID != nextDocumentID else { return false }
-            let publishPreviousScrollPosition = onScrollPositionChange
-            webView.evaluateJavaScript("({ x: window.scrollX || 0, y: window.scrollY || 0 })") { value, error in
-                guard error == nil else { return }
-                publishPreviousScrollPosition(Self.scrollPosition(from: value))
-            }
+            WebViewBridge.readScrollPosition(of: webView, then: onScrollPositionChange)
             documentID = nextDocumentID
             lastPublishedScrollPosition = nil
             shouldRestorePendingScrollPosition = true
@@ -503,19 +499,10 @@ struct HTMLPreviewView: NSViewRepresentable {
             guard request != lastSearchRequest else { return }
             lastSearchRequest = request
 
-            let payload: [String: Any] = [
-                "query": request.query,
-                "direction": request.navigationDirection.rawValue,
-                "navigationSerial": request.navigationSerial,
-                "isPresented": request.isPresented,
-                "isCaseSensitive": request.options.isCaseSensitive,
-                "isWholeWord": request.options.isWholeWord
-            ]
-
             do {
-                let json = try javaScriptPayload(payload)
+                let json = try WebViewBridge.literal(WebViewBridge.searchPayload(request))
                 webView.evaluateJavaScript("window.monknotHTMLSearch && window.monknotHTMLSearch(\(json));") { [weak self] value, _ in
-                    self?.onSearchResult(Self.parseSearchResult(value))
+                    self?.onSearchResult(WebViewBridge.searchResult(from: value))
                 }
             } catch {
                 onSearchResult(.init())
@@ -525,14 +512,7 @@ struct HTMLPreviewView: NSViewRepresentable {
         fileprivate func applyPendingScrollPositionIfNeeded(in webView: WKWebView) {
             guard isLoaded, shouldRestorePendingScrollPosition else { return }
             shouldRestorePendingScrollPosition = false
-
-            let position = pendingScrollPosition ?? DocumentScrollPosition(x: 0, y: 0)
-            guard position.x.isFinite, position.y.isFinite else {
-                webView.evaluateJavaScript("window.scrollTo(0, 0);")
-                return
-            }
-
-            webView.evaluateJavaScript("window.scrollTo(\(position.x), \(position.y));")
+            WebViewBridge.scroll(webView, to: pendingScrollPosition)
         }
 
         fileprivate func applySyncScrollTargetLine(_ line: Int?, in webView: WKWebView) {
@@ -548,13 +528,22 @@ struct HTMLPreviewView: NSViewRepresentable {
                 "totalLines": max(sourceLineCount, 1)
             ]
             do {
-                let json = try javaScriptPayload(payload)
+                let json = try WebViewBridge.literal(payload)
                 webView.evaluateJavaScript("window.__monknotHTMLSourceLineCount = \(max(sourceLineCount, 1)); window.monknotHTMLScrollToLine && window.monknotHTMLScrollToLine(\(json));") { [weak self] _, _ in
                     self?.isApplyingSyncScroll = false
                 }
             } catch {
                 isApplyingSyncScroll = false
             }
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            let allows = WorkspaceResourceSchemeHandler.allowsPreviewNavigation(navigationAction)
+            decisionHandler(allows ? .allow : .cancel)
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -584,59 +573,17 @@ struct HTMLPreviewView: NSViewRepresentable {
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard message.name == Self.scrollPositionHandlerName else { return }
-            let position = Self.scrollPosition(from: message.body)
+            let position = WebViewBridge.scrollPosition(from: message.body)
             if position.isMeaningfullyDifferent(from: lastPublishedScrollPosition) {
                 lastPublishedScrollPosition = position
                 onScrollPositionChange(position)
             }
 
             guard syncScrollEnabled, !isApplyingSyncScroll else { return }
-            let sourceLine = Self.sourceLine(from: message.body)
+            let sourceLine = WebViewBridge.sourceLine(from: message.body)
             guard sourceLine > 0, sourceLine != lastPublishedSourceLine else { return }
             lastPublishedSourceLine = sourceLine
             onVisibleSourceLineChange?(sourceLine)
-        }
-
-        private static func scrollPosition(from body: Any?) -> DocumentScrollPosition {
-            guard let body = body as? [String: Any] else {
-                return DocumentScrollPosition(x: 0, y: 0)
-            }
-
-            let x = (body["x"] as? NSNumber)?.doubleValue ?? body["x"] as? Double ?? 0
-            let y = (body["y"] as? NSNumber)?.doubleValue ?? body["y"] as? Double ?? 0
-            return DocumentScrollPosition(x: x, y: y)
-        }
-
-        private static func sourceLine(from body: Any?) -> Int {
-            guard let body = body as? [String: Any] else { return 0 }
-            return (body["sourceLine"] as? NSNumber)?.intValue
-                ?? body["sourceLine"] as? Int
-                ?? 0
-        }
-
-        private static func parseSearchResult(_ value: Any?) -> DocumentSearchResult {
-            guard let payload = value as? [String: Any] else {
-                return .init()
-            }
-
-            let current = (payload["currentIndex"] as? NSNumber)?.intValue
-                ?? payload["currentIndex"] as? Int
-                ?? 0
-            let total = (payload["totalCount"] as? NSNumber)?.intValue
-                ?? payload["totalCount"] as? Int
-                ?? 0
-
-            return DocumentSearchResult(currentIndex: current, totalCount: total)
-        }
-
-        private func javaScriptPayload(_ payload: Any) throws -> String {
-            let data = try JSONSerialization.data(withJSONObject: payload)
-            guard var literal = String(data: data, encoding: .utf8) else {
-                throw HTMLPreviewError.invalidPayload
-            }
-
-            literal = literal.replacingOccurrences(of: "</", with: "<\\/")
-            return literal
         }
     }
 }
@@ -645,8 +592,4 @@ private struct HTMLPreviewContentRequest: Equatable {
     let documentID: String
     let html: String
     let baseURL: URL?
-}
-
-private enum HTMLPreviewError: Error {
-    case invalidPayload
 }

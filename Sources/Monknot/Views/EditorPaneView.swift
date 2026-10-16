@@ -35,7 +35,12 @@ struct EditorPaneView: View {
     @State private var splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
     @State private var previewSyncLine: Int?
     @State private var sourceSyncLine: Int?
-    @State private var currentVisibleSourceLine = 1
+    /// Held, not observed: only the outline rail observes the visible line, so scrolling past a
+    /// line never re-runs the editor bridge (which would cancel an animated scroll-bar page click).
+    @State private var outlinePosition = MarkdownOutlinePosition()
+    /// The outline rail sits left of the document's vertical scroll bar; laid over it, the bar could
+    /// not be grabbed or clicked. The width follows the "Show scroll bars" preference.
+    @State private var documentScrollBarWidth = Self.systemScrollBarWidth()
     let theme: AppTheme
     let zoomScale: Double
     let codeFontSize: CGFloat
@@ -61,6 +66,7 @@ struct EditorPaneView: View {
     let openFolder: () -> Void
     let saveDocument: () -> Void
     let outlineItems: [MarkdownOutlineItem]
+    let textStatistics: MarkdownTextStatistics?
     let selectOutlineItem: (MarkdownOutlineItem) -> Void
     let onPreviewSourceJump: (MarkdownSourceLocation) -> Void
     let copyPDFLinkedExcerpt: (PDFSelectionSnapshot) -> Void
@@ -93,8 +99,14 @@ struct EditorPaneView: View {
                     splitSourcePaneRatio = DocumentSplitViewPersistence.sourcePaneRatio(forDocumentPath: documentID)
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: NSScroller.preferredScrollerStyleDidChangeNotification)) { _ in
+                documentScrollBarWidth = Self.systemScrollBarWidth()
+            }
             .onChange(of: store.selectedDocument?.id) { oldDocumentID, newDocumentID in
-                currentVisibleSourceLine = 1
+                // The new document's editor may already have reported its restored line.
+                if outlinePosition.documentID != newDocumentID {
+                    outlinePosition.update(1, documentID: nil)
+                }
                 if let oldDocumentID,
                    supportsSplitViewRatioPersistence(forDocumentID: oldDocumentID) {
                     DocumentSplitViewPersistence.setSourcePaneRatio(
@@ -131,32 +143,35 @@ struct EditorPaneView: View {
             }
     }
 
-    private var showsMarkdownSourceSubchrome: Bool {
-        guard let document = store.selectedDocument,
-              document.kind == .markdown,
-              document.capabilities.canEditText
-        else {
-            return false
-        }
-        return editorMode == .source || isSplitViewEnabled
+    /// An editable Markdown document keeps its toolbar row in every view mode, so switching between
+    /// Source and Preview never moves the document.
+    private var showsMarkdownToolbar: Bool {
+        guard let document = store.selectedDocument else { return false }
+        return document.kind == .markdown && document.capabilities.canEditText
+    }
+
+    /// The toolbar edits the source, so it acts only while the source is on screen.
+    private var isMarkdownToolbarEnabled: Bool {
+        (editorMode == .source || isSplitViewEnabled) && store.activeWritingToolsDocumentID == nil
     }
 
     private func supportsSplitViewRatioPersistence(forDocumentID documentID: String) -> Bool {
         guard let document = store.document(id: documentID) else { return false }
-        return document.kind == .markdown || document.capabilities.canPreviewHTML
+        return document.hasPreviewMode
     }
 
     private var editorColumn: some View {
         VStack(spacing: 0) {
-            if showsMarkdownSourceSubchrome {
+            if showsMarkdownToolbar {
                 MonknotChromePanel(theme: theme) {
                     MarkdownSourceToolbar(
                         theme: theme,
                         zoomScale: zoomScale,
-                        text: store.documentText,
+                        statistics: textStatistics,
                         sendCommand: sendMarkdownCommand
                     )
-                    .disabled(store.activeWritingToolsDocumentID != nil)
+                    .equatable()
+                    .disabled(!isMarkdownToolbarEnabled)
                 }
             }
 
@@ -173,7 +188,7 @@ struct EditorPaneView: View {
     }
 
     private func sendMarkdownCommand(_ command: MarkdownTextEditorCommand) {
-        guard store.activeWritingToolsDocumentID == nil else { return }
+        guard isMarkdownToolbarEnabled else { return }
         markdownCommandSerial += 1
         markdownCommandRequest = MarkdownTextEditorCommandRequest(
             serial: markdownCommandSerial,
@@ -214,7 +229,14 @@ struct EditorPaneView: View {
             }
 
             if let selectedDocument = store.selectedDocument {
-                if store.isDocumentLoading, selectedDocument.capabilities.canEditText {
+                if let failure = store.documentLoadFailure, failure.documentID == selectedDocument.id {
+                    UnsupportedDocumentView(
+                        document: selectedDocument,
+                        detail: failure.message,
+                        theme: theme,
+                        zoomScale: zoomScale
+                    )
+                } else if store.isDocumentLoading, selectedDocument.capabilities.canEditText {
                     DocumentLoadingPlaceholder(
                         documentName: selectedDocument.displayName,
                         theme: theme,
@@ -222,6 +244,10 @@ struct EditorPaneView: View {
                     )
                 } else {
                     editor(for: selectedDocument)
+                        .background(
+                            DocumentFocusClaim()
+                                .id("\(selectedDocument.id)|\(editorMode)|\(isSplitViewEnabled)")
+                        )
                 }
             } else {
                 EmptyDetailView(
@@ -275,7 +301,8 @@ struct EditorPaneView: View {
             } else {
                 textEditor(for: selectedDocument)
             }
-        case .pdf:
+        case .pdf, .image:
+            // Images use the PDF viewer's zoom and markup tools on a page that draws the image.
             PDFPreviewView(
                 document: selectedDocument,
                 theme: theme,
@@ -321,7 +348,11 @@ struct EditorPaneView: View {
                 },
                 updateAnnotationUndoState: updatePDFAnnotationUndoState
             )
-        case .media, .nativePreview, .unsupported:
+        case .media:
+            // One player per document, so switching tabs releases the previous file.
+            MediaPlayerView(document: selectedDocument, theme: theme, zoomScale: zoomScale)
+                .id(selectedDocument.id)
+        case .nativePreview, .unsupported:
             UnsupportedDocumentView(
                 document: selectedDocument,
                 theme: theme,
@@ -385,6 +416,7 @@ struct EditorPaneView: View {
             documentID: selectedDocument.id,
             html: store.documentText,
             baseURL: URL(fileURLWithPath: selectedDocument.id).deletingLastPathComponent(),
+            resourceRoot: store.workspaceURL,
             theme: theme,
             zoomScale: zoomScale,
             contentWidthPercent: contentWidthPercent,
@@ -457,16 +489,19 @@ struct EditorPaneView: View {
 
             if showsDocumentOutline, outlineItems.count >= 2 {
                 MarkdownOutlineRail(
+                    documentID: selectedDocument.id,
                     items: outlineItems,
-                    visibleLine: currentVisibleSourceLine,
+                    position: outlinePosition,
                     theme: theme,
                     zoomScale: zoomScale,
                     select: { item in
-                        currentVisibleSourceLine = item.location.line
+                        outlinePosition.update(item.location.line, documentID: selectedDocument.id)
                         selectOutlineItem(item)
                     }
                 )
+                .equatable()
                 .frame(maxHeight: .infinity)
+                .padding(.trailing, documentScrollBarWidth)
                 .zIndex(5)
             }
         }
@@ -490,6 +525,7 @@ struct EditorPaneView: View {
             textSelection: activeViewportState?.textSelection,
             syncScrollEnabled: isSplitViewEnabled,
             syncScrollTargetLine: sourceSyncLine,
+            openingTopLine: outlinePosition.visibleLine(in: selectedDocument.id),
             sourceLocation: $sourceLocation,
             searchState: $documentSearch,
             searchOptions: searchOptions,
@@ -510,7 +546,7 @@ struct EditorPaneView: View {
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
             },
             onVisibleTopLineChange: { line in
-                currentVisibleSourceLine = line
+                outlinePosition.update(line, documentID: selectedDocument.id)
                 syncPreviewScroll(to: line)
             }
         )
@@ -521,6 +557,7 @@ struct EditorPaneView: View {
             documentID: selectedDocument.id,
             markdown: store.documentText,
             baseURL: URL(fileURLWithPath: selectedDocument.id).deletingLastPathComponent(),
+            resourceRoot: store.workspaceURL,
             theme: theme,
             zoomScale: zoomScale,
             codeFontSize: Double(codeFontSize),
@@ -530,6 +567,7 @@ struct EditorPaneView: View {
             scrollPosition: activeViewportState?.markdownPreviewScrollPosition,
             syncScrollEnabled: isSplitViewEnabled,
             syncScrollTargetLine: previewSyncLine,
+            openingTopLine: outlinePosition.visibleLine(in: selectedDocument.id),
             sourceLocation: $previewLocation,
             searchState: $documentSearch,
             searchOptions: searchOptions,
@@ -540,7 +578,7 @@ struct EditorPaneView: View {
                 updateViewportState(selectedDocument.id, .markdownPreviewScrollPosition(position))
             },
             onVisibleSourceLineChange: { line in
-                currentVisibleSourceLine = line
+                outlinePosition.update(line, documentID: selectedDocument.id)
                 syncSourceScroll(to: line)
             }
         )
@@ -573,6 +611,10 @@ struct EditorPaneView: View {
         }
     }
 
+    private static func systemScrollBarWidth() -> CGFloat {
+        NSScroller.scrollerWidth(for: .regular, scrollerStyle: NSScroller.preferredScrollerStyle)
+    }
+
     private func splitViewRatioAccessor(for document: WorkspaceDocument) -> some View {
         DocumentSplitViewRatioAccessor(
             sourcePaneRatio: $splitSourcePaneRatio,
@@ -590,6 +632,7 @@ struct EditorPaneView: View {
 
 private struct UnsupportedDocumentView: View {
     let document: WorkspaceDocument
+    var detail = "Preview is not available for this file type."
     let theme: AppTheme
     let zoomScale: Double
 
@@ -597,11 +640,19 @@ private struct UnsupportedDocumentView: View {
         MonknotEmptyState(
             systemImage: "doc",
             title: document.displayName,
-            detail: "Preview is not available for this file type.",
+            detail: detail,
             theme: theme,
             zoomScale: zoomScale
         ) {
-            EmptyView()
+            MonknotActionButton(
+                title: "Reveal in Finder",
+                systemImage: MonknotWorkspaceIcons.revealInFinder,
+                role: .secondary,
+                theme: theme,
+                zoomScale: zoomScale
+            ) {
+                NSWorkspace.shared.activateFileViewerSelecting([document.url])
+            }
         }
         .background(theme.surfaceColor)
     }
@@ -618,12 +669,14 @@ private struct DocumentLoadingPlaceholder: View {
 
     var body: some View {
         VStack(spacing: scaled(12)) {
-            ProgressView()
-                .controlSize(.small)
+            MonknotProgressIndicator(
+                size: MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale),
+                theme: theme
+            )
 
             Text(documentName)
-                .font(.system(size: scaled(13), weight: .medium))
-                .foregroundStyle(theme.mutedForegroundColor)
+                .font(.system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale)))
+                .foregroundStyle(theme.tertiaryForegroundColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: scaled(280))
@@ -643,101 +696,95 @@ private struct EmptyDetailView: View {
     let bootstrapStarterWorkspace: () -> Void
     let openFolder: () -> Void
 
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
-    }
-
     var body: some View {
         MonknotEmptyState(
-            systemImage: emptyStateSystemImage,
+            systemImage: hasWorkspace && !isLoadingWorkspace ? "doc.text" : MonknotWorkspaceIcons.openFolder,
             title: title,
-            detail: message,
+            detail: detail,
             theme: theme,
             zoomScale: zoomScale
         ) {
             if isLoadingWorkspace {
-                ProgressView()
-                    .controlSize(.small)
-            } else {
-                HStack(spacing: scaled(MonknotMetrics.Spacing.s)) {
-                    if hasWorkspace {
+                MonknotProgressIndicator(
+                    size: MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale),
+                    theme: theme
+                )
+            } else if hasWorkspace {
+                VStack(spacing: MonknotMetrics.interfaceDensity(8, theme: theme, zoomScale: zoomScale)) {
+                    MonknotShortcutActionButton(
+                        title: "New Markdown",
+                        shortcut: "⌘N",
+                        theme: theme,
+                        zoomScale: zoomScale,
+                        action: newMarkdown
+                    )
+                    if canBootstrapStarterWorkspace {
                         MonknotActionButton(
-                            title: "New Markdown",
-                            systemImage: "square.and.pencil",
-                            role: .primary,
+                            title: "Add Starter Notes",
+                            role: .quiet,
                             theme: theme,
                             zoomScale: zoomScale,
-                            action: newMarkdown
+                            size: .bar,
+                            action: bootstrapStarterWorkspace
                         )
-
-                        if canBootstrapStarterWorkspace {
-                            MonknotActionButton(
-                                title: "Starter Workspace",
-                                systemImage: "wand.and.stars",
-                                role: .secondary,
-                                theme: theme,
-                                zoomScale: zoomScale,
-                                action: bootstrapStarterWorkspace
-                            )
-                        }
-                    } else {
-                        MonknotActionButton(
-                            title: "Open Folder",
-                            systemImage: MonknotWorkspaceIcons.openFolder,
-                            role: .primary,
-                            theme: theme,
-                            zoomScale: zoomScale,
-                            action: openFolder
-                        )
+                        .help("Adds a README, a project brief and an ideas note")
                     }
                 }
-
-                Text(hasWorkspace ? "⌘N for a new note" : "⌘O to open a folder")
-                    .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
-                    .foregroundStyle(theme.foregroundColor.opacity(0.48))
-                    .multilineTextAlignment(.center)
-
-                if !hasWorkspace, SavedWorkspaceStore().lastActiveWorkspace() != nil {
-                    Text("Your last workspace reopens automatically on launch.")
-                        .font(MonknotTypography.emptyStateDetail(theme: theme, zoomScale: zoomScale))
-                        .foregroundStyle(theme.foregroundColor.opacity(0.48))
-                        .multilineTextAlignment(.center)
-                }
+            } else {
+                MonknotShortcutActionButton(
+                    title: "Open Folder…",
+                    shortcut: "⌘O",
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    action: openFolder
+                )
             }
         }
-    }
-
-    private var emptyStateSystemImage: String {
-        if isLoadingWorkspace || !hasWorkspace {
-            return MonknotWorkspaceIcons.openFolder
-        }
-        return WorkspaceDocumentKind.markdown.resolvedSystemImage
     }
 
     private var title: String {
         if isLoadingWorkspace {
             return "Opening workspace"
         }
-
         if canBootstrapStarterWorkspace {
-            return "No documents yet"
+            return "This workspace is empty"
         }
-
-        return hasWorkspace ? "Select a document" : "Open a workspace"
+        return hasWorkspace ? "No document open" : "No workspace open"
     }
 
-    private var message: String {
+    private var detail: String {
         if isLoadingWorkspace {
-            return "Scanning files..."
+            return "Reading files…"
         }
-
         if canBootstrapStarterWorkspace {
-            return "Create a note or generate starter files."
+            return "Create a note to start writing."
         }
-
         return hasWorkspace
-            ? "Choose a file from the sidebar, or start a new Markdown note."
-            : "Open a folder to browse Markdown, text, and PDF files."
+            ? "Choose a file in the sidebar, or create a note."
+            : "Open a folder of Markdown, text and PDF files."
+    }
+}
+
+/// Gives a newly shown document keyboard focus when nothing else in the window
+/// holds it. It runs once AppKit attaches the view: a state-change hook runs
+/// before SwiftUI swaps the document views. The `id` remounts it per document
+/// and mode.
+private struct DocumentFocusClaim: NSViewRepresentable {
+    func makeNSView(context: Context) -> AttachmentView {
+        AttachmentView(frame: .zero)
     }
 
+    func updateNSView(_ nsView: AttachmentView, context: Context) {}
+
+    final class AttachmentView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard window != nil else { return }
+            TerminalFocusRestorer.focusDocumentIfUnfocused(in: window)
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            nil
+        }
+    }
 }

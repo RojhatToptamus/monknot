@@ -29,10 +29,8 @@ struct MonknotSettingsSegmentedControl: View {
             }
         }
         .padding(scaled(2))
-        .background(
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .fill(theme.controlTrackFillColor)
-        )
+        // Same treatment as the window's segmented controls: no track fill, the selected
+        // segment takes `sel`.
         .overlay(
             RoundedRectangle(cornerRadius: cornerRadius)
                 .strokeBorder(theme.borderColor, lineWidth: 1)
@@ -52,6 +50,7 @@ private struct MonknotSettingsSegmentButton: View {
     let action: () -> Void
 
     @State private var isHovered = false
+    @State private var isPressed = false
     @FocusState private var isFocused: Bool
     @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
 
@@ -75,9 +74,10 @@ private struct MonknotSettingsSegmentButton: View {
                 .frame(minHeight: scaled(28))
                 .background(background, in: RoundedRectangle(cornerRadius: max(0, cornerRadius - 1)))
                 .contentShape(RoundedRectangle(cornerRadius: max(0, cornerRadius - 1)))
+                .monknotFocusRing(isVisible: isFocused, cornerRadius: max(0, cornerRadius - 1), theme: theme)
         }
-        .buttonStyle(.plain)
-        .focusable(true)
+        .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
+        .focusable(NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
         .focusEffectDisabled()
         .onHover { isHovered = $0 }
@@ -88,18 +88,19 @@ private struct MonknotSettingsSegmentButton: View {
     }
 
     private var labelColor: Color {
-        if isSelected {
-            return theme.foregroundColor
-        }
-        return theme.foregroundColor.opacity(isHovered ? 0.92 : 0.72)
+        // design.md §1.4: `ink2` at rest, `ink` hovered or selected.
+        isSelected || isHovered ? theme.foregroundColor : theme.mutedForegroundColor
     }
 
     private var background: Color {
         if isSelected {
-            return theme.insetFillColor
+            return theme.selectedRowColor
         }
-        if isHovered || isFocused {
-            return theme.foregroundColor.opacity(theme.isDark ? 0.06 : 0.04)
+        if isPressed {
+            return theme.pressedFillColor
+        }
+        if isHovered {
+            return theme.hoverFillColor
         }
         return .clear
     }
@@ -151,36 +152,44 @@ struct MonknotSettingsMenuPicker: View {
             isMenuPresented = true
         } label: {
             HStack(spacing: scaled(6)) {
+                // As wide as the longest option, so previewing options while the menu tracks never
+                // resizes the button or moves the row.
                 Text(selectedTitle)
+                    .monknotReservingWidth(of: options.map(\.title), alignment: .leading)
                     .font(MonknotTypography.settingsButton(theme: theme, zoomScale: settingsZoomScale))
                     .foregroundStyle(theme.foregroundColor)
                     .lineLimit(1)
+                    .truncationMode(.middle)
 
                 Image(systemName: "chevron.down")
-                    .font(.system(size: scaled(9), weight: .semibold))
+                    .font(.system(
+                        size: MonknotMetrics.interfaceGlyph(10, theme: theme, zoomScale: settingsZoomScale),
+                        weight: .regular
+                    ))
                     .foregroundStyle(theme.mutedForegroundColor)
             }
             .padding(.horizontal, scaled(12))
             .padding(.vertical, scaled(6))
             .frame(minHeight: scaled(28))
-            .background(
+            .background {
                 RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(
-                        isHovered || isFocused
-                            ? theme.foregroundColor.opacity(theme.isDark ? 0.08 : 0.055)
-                            : theme.insetFillColor
-                    )
-            )
+                    .fill(theme.insetFillColor)
+                if isHovered {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(theme.hoverFillColor)
+                }
+            }
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .strokeBorder(theme.borderColor, lineWidth: 1)
             )
+            .monknotFocusRing(isVisible: isFocused, cornerRadius: cornerRadius, theme: theme)
         }
         .buttonStyle(.plain)
-        .focusable(true)
+        .focusable(NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
         .focusEffectDisabled()
-        .fixedSize()
+        .fixedSize(horizontal: false, vertical: true)
         .background(
             SettingsMenuPresenter(
                 isPresented: $isMenuPresented,

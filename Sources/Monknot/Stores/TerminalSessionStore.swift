@@ -8,23 +8,79 @@ enum TerminalSessionStatus: Equatable {
     case failed(String)
 }
 
+/// The raw bytes a terminal session has produced, so that its view can show output that arrived before
+/// it finished loading. Bytes rather than a String: a read can end inside a UTF-8 sequence, and only
+/// the terminal emulator's decoder joins the halves correctly.
+struct TerminalOutputLog {
+    static let defaultCapacity = 2 * 1024 * 1024
+
+    let capacity: Int
+    private(set) var chunks: [Data] = []
+    /// Absolute offset of the first kept byte; older bytes were dropped to stay within `capacity`.
+    private(set) var startOffset = 0
+    private(set) var endOffset = 0
+
+    init(capacity: Int = Self.defaultCapacity) {
+        self.capacity = capacity
+    }
+
+    mutating func append(_ bytes: Data) {
+        guard !bytes.isEmpty else { return }
+        chunks.append(bytes)
+        endOffset += bytes.count
+        while endOffset - startOffset > capacity, chunks.count > 1 {
+            startOffset += chunks.removeFirst().count
+        }
+    }
+
+    /// The bytes from `offset` to the end, or `nil` when some of them were already dropped.
+    func bytes(from offset: Int) -> Data? {
+        guard offset >= startOffset else { return nil }
+        var result = Data()
+        var chunkStart = startOffset
+        for chunk in chunks {
+            let chunkEnd = chunkStart + chunk.count
+            if chunkEnd > offset {
+                result.append(chunk.dropFirst(max(0, offset - chunkStart)))
+            }
+            chunkStart = chunkEnd
+        }
+        return result
+    }
+}
+
+/// The live view of a terminal session. It stays with the session, so hiding the drawer or switching
+/// terminal tabs never throws away the screen, its modes or its scrollback.
+@MainActor
+protocol TerminalSessionPresentation: AnyObject {
+    /// New output was appended to `output`, or `outputEpoch` changed because the session restarted.
+    func sessionOutputDidChange()
+    /// The session was stopped for good; release the view.
+    func sessionDidStop()
+}
+
 @MainActor
 final class TerminalSessionStore: ObservableObject {
-    @Published private(set) var transcript = ""
     @Published private(set) var isRunning = false
     @Published private(set) var workingDirectory: URL
-    @Published private(set) var outputRevision = 0
     @Published private(set) var status: TerminalSessionStatus = .idle
+    /// Everything the current process printed. Not published: output arrives every frame and only the
+    /// presentation reads it.
+    private(set) var output = TerminalOutputLog()
+    /// Changes when the output starts over (a restart), so a view knows to reset rather than append.
+    private(set) var outputEpoch = 0
+    var presentation: TerminalSessionPresentation?
 
     static let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
-    private let maxTranscriptLength = 240_000
-    private let trimmedTranscriptLength = 180_000
     private let maxPendingOutputBeforeFlush = 32_000
     private let outputFlushIntervalNanoseconds: UInt64 = 16_000_000
     private var ptySession: TerminalPTYSession?
     private var sessionGeneration = 0
-    private var pendingOutput = ""
+    private var pendingOutput = Data()
     private var outputFlushTask: Task<Void, Never>?
+    /// The size the view last reported. A restarted shell starts at it: the view keeps its size across
+    /// a restart and reports only changes.
+    private var terminalSize = (columns: 100, rows: 32)
 
     init(initialDirectory: URL? = nil) {
         workingDirectory = Self.resolvedDirectory(initialDirectory) ?? Self.homeDirectory
@@ -39,19 +95,16 @@ final class TerminalSessionStore: ObservableObject {
         guard status == .idle else { return }
 
         workingDirectory = Self.resolvedDirectory(directory ?? workingDirectory) ?? workingDirectory
-        transcript = ""
-        pendingOutput = ""
-        outputFlushTask?.cancel()
-        outputFlushTask = nil
+        beginNewOutput()
         isRunning = true
         status = .running
         sessionGeneration += 1
         let generation = sessionGeneration
 
         let session = TerminalPTYSession(
-            outputHandler: { [weak self] output in
+            outputHandler: { [weak self] bytes in
                 Task { @MainActor in
-                    self?.enqueueOutput(output, generation: generation)
+                    self?.enqueueOutput(bytes, generation: generation)
                 }
             },
             exitHandler: { [weak self] status in
@@ -62,14 +115,18 @@ final class TerminalSessionStore: ObservableObject {
         )
 
         do {
-            try session.start(workingDirectory: workingDirectory)
+            try session.start(
+                workingDirectory: workingDirectory,
+                columns: terminalSize.columns,
+                rows: terminalSize.rows
+            )
             ptySession = session
         } catch {
-            transcript = "monknot: \(error.localizedDescription)\n"
+            appendStatusLine("monknot: \(error.localizedDescription)")
             isRunning = false
             status = .failed(error.localizedDescription)
-            outputRevision += 1
         }
+        presentation?.sessionOutputDidChange()
     }
 
     func restart() {
@@ -81,13 +138,8 @@ final class TerminalSessionStore: ObservableObject {
         sessionGeneration += 1
         ptySession?.stop()
         ptySession = nil
-        transcript = ""
-        pendingOutput = ""
-        outputFlushTask?.cancel()
-        outputFlushTask = nil
         isRunning = false
         status = .idle
-        outputRevision += 1
         startIfNeeded()
     }
 
@@ -97,7 +149,14 @@ final class TerminalSessionStore: ObservableObject {
         ptySession?.write(text)
     }
 
+    func send(_ bytes: Data) {
+        startIfNeeded()
+        guard isRunning else { return }
+        ptySession?.write(bytes)
+    }
+
     func resize(columns: Int, rows: Int) {
+        terminalSize = (columns, rows)
         ptySession?.resize(columns: columns, rows: rows)
     }
 
@@ -106,17 +165,27 @@ final class TerminalSessionStore: ObservableObject {
         sessionGeneration += 1
         ptySession?.stop()
         ptySession = nil
-        pendingOutput = ""
+        pendingOutput = Data()
         outputFlushTask?.cancel()
         outputFlushTask = nil
         isRunning = false
         status = .idle
+        presentation?.sessionDidStop()
+        presentation = nil
     }
 
-    private func enqueueOutput(_ rawOutput: String, generation: Int) {
+    private func beginNewOutput() {
+        output = TerminalOutputLog()
+        outputEpoch += 1
+        pendingOutput = Data()
+        outputFlushTask?.cancel()
+        outputFlushTask = nil
+    }
+
+    private func enqueueOutput(_ bytes: Data, generation: Int) {
         guard generation == sessionGeneration else { return }
 
-        pendingOutput += rawOutput
+        pendingOutput.append(bytes)
 
         if pendingOutput.count >= maxPendingOutputBeforeFlush {
             outputFlushTask?.cancel()
@@ -140,17 +209,14 @@ final class TerminalSessionStore: ObservableObject {
     private func flushPendingOutput(generation: Int) {
         outputFlushTask = nil
         guard generation == sessionGeneration else {
-            pendingOutput = ""
+            pendingOutput = Data()
             return
         }
         guard !pendingOutput.isEmpty else { return }
 
-        transcript += pendingOutput
-        pendingOutput = ""
-        if transcript.count > maxTranscriptLength {
-            transcript = String(transcript.suffix(trimmedTranscriptLength))
-        }
-        outputRevision += 1
+        output.append(pendingOutput)
+        pendingOutput = Data()
+        presentation?.sessionOutputDidChange()
     }
 
     private func handleExit(_ status: Int32?, generation: Int) {
@@ -162,13 +228,18 @@ final class TerminalSessionStore: ObservableObject {
         ptySession = nil
 
         if let status {
-            transcript += "\n[Process exited with status \(status)]\n"
+            appendStatusLine("[Process exited with status \(status)]")
         } else {
-            transcript += "\n[Process exited]\n"
+            appendStatusLine("[Process exited]")
         }
-
-        outputRevision += 1
+        presentation?.sessionOutputDidChange()
     }
+
+    /// A line of Monknot's own on its own row; the terminal does not translate a bare newline.
+    private func appendStatusLine(_ line: String) {
+        output.append(Data("\r\n\(line)\r\n".utf8))
+    }
+
     deinit {
         outputFlushTask?.cancel()
         ptySession?.stop()

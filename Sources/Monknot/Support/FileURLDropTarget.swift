@@ -1,9 +1,12 @@
 import AppKit
 import SwiftUI
 
+/// A drop target for file URLs. `operation` names what a drop of the dragged URLs does, so the
+/// drag cursor shows it, and `handleURLs` receives the URLs with that operation.
 struct FileURLDropTarget: NSViewRepresentable {
     @Binding var isTargeted: Bool
-    let handleURLs: ([URL]) -> Void
+    let operation: ([URL]) -> NSDragOperation
+    let handleURLs: ([URL], NSDragOperation) -> Void
 
     func makeNSView(context: Context) -> DropView {
         let view = DropView()
@@ -14,19 +17,26 @@ struct FileURLDropTarget: NSViewRepresentable {
 
     func updateNSView(_ nsView: DropView, context: Context) {
         context.coordinator.isTargeted = $isTargeted
+        context.coordinator.operation = operation
         context.coordinator.handleURLs = handleURLs
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(isTargeted: $isTargeted, handleURLs: handleURLs)
+        Coordinator(isTargeted: $isTargeted, operation: operation, handleURLs: handleURLs)
     }
 
     final class Coordinator {
         var isTargeted: Binding<Bool>
-        var handleURLs: ([URL]) -> Void
+        var operation: ([URL]) -> NSDragOperation
+        var handleURLs: ([URL], NSDragOperation) -> Void
 
-        init(isTargeted: Binding<Bool>, handleURLs: @escaping ([URL]) -> Void) {
+        init(
+            isTargeted: Binding<Bool>,
+            operation: @escaping ([URL]) -> NSDragOperation,
+            handleURLs: @escaping ([URL], NSDragOperation) -> Void
+        ) {
             self.isTargeted = isTargeted
+            self.operation = operation
             self.handleURLs = handleURLs
         }
     }
@@ -35,13 +45,14 @@ struct FileURLDropTarget: NSViewRepresentable {
         weak var coordinator: Coordinator?
 
         override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-            guard fileURLs(from: sender).isEmpty == false else { return [] }
+            let operation = proposedOperation(for: sender)
+            guard !operation.isEmpty else { return [] }
             coordinator?.isTargeted.wrappedValue = true
-            return .copy
+            return operation
         }
 
         override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-            fileURLs(from: sender).isEmpty ? [] : .copy
+            proposedOperation(for: sender)
         }
 
         override func draggingExited(_ sender: NSDraggingInfo?) {
@@ -54,9 +65,9 @@ struct FileURLDropTarget: NSViewRepresentable {
 
         override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
             let urls = fileURLs(from: sender)
-            guard !urls.isEmpty else { return false }
+            guard !urls.isEmpty, let coordinator else { return false }
 
-            coordinator?.handleURLs(urls)
+            coordinator.handleURLs(urls, coordinator.operation(urls))
             return true
         }
 
@@ -64,21 +75,21 @@ struct FileURLDropTarget: NSViewRepresentable {
             coordinator?.isTargeted.wrappedValue = false
         }
 
-        private func fileURLs(from sender: NSDraggingInfo) -> [URL] {
-            let objects = sender.draggingPasteboard.readObjects(
-                forClasses: [NSURL.self],
-                options: [.urlReadingFileURLsOnly: true]
-            ) ?? []
-
-            return objects.compactMap { object in
-                if let url = object as? URL {
-                    return url
-                }
-                if let url = object as? NSURL {
-                    return url as URL
-                }
-                return nil
-            }
+        private func proposedOperation(for sender: NSDraggingInfo) -> NSDragOperation {
+            let urls = fileURLs(from: sender)
+            guard !urls.isEmpty, let coordinator else { return [] }
+            return coordinator.operation(urls)
         }
+
+        private func fileURLs(from sender: NSDraggingInfo) -> [URL] {
+            sender.draggingPasteboard.fileURLs
+        }
+    }
+}
+
+extension NSPasteboard {
+    /// The file URLs on the pasteboard, in order; empty when it holds none.
+    var fileURLs: [URL] {
+        readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
     }
 }

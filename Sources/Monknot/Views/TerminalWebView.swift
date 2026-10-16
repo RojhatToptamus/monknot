@@ -49,7 +49,7 @@ enum MonknotNativeTerminalSearchCommand {
         guard let webView = focusedTerminalWebView,
               let action = MonknotTerminalSearchShortcut.action(
                   for: event,
-                  isSearchPresented: webView.terminalCoordinator?.isSearchPresented == true
+                  isSearchPresented: webView.terminalController?.isSearchPresented == true
               )
         else {
             return false
@@ -73,16 +73,16 @@ enum MonknotNativeTerminalSearchCommand {
         let script: String
         switch action {
         case .show:
-            webView.terminalCoordinator?.isSearchPresented = true
+            webView.terminalController?.isSearchPresented = true
             script = "window.monknotTerminalSearchOpen && window.monknotTerminalSearchOpen();"
         case .next:
-            webView.terminalCoordinator?.isSearchPresented = true
+            webView.terminalController?.isSearchPresented = true
             script = "window.monknotTerminalSearchNext && window.monknotTerminalSearchNext();"
         case .previous:
-            webView.terminalCoordinator?.isSearchPresented = true
+            webView.terminalController?.isSearchPresented = true
             script = "window.monknotTerminalSearchPrevious && window.monknotTerminalSearchPrevious();"
         case .close:
-            webView.terminalCoordinator?.isSearchPresented = false
+            webView.terminalController?.isSearchPresented = false
             script = "window.monknotTerminalSearchClose && window.monknotTerminalSearchClose();"
         }
         webView.evaluateJavaScript(script)
@@ -96,9 +96,6 @@ enum MonknotNativeTerminalSearchCommand {
         for window in [NSApp.mainWindow, NSApp.keyWindow].compactMap({ $0 }) {
             var responder = window.firstResponder
             while let current = responder {
-                if let webView = current as? TerminalWKWebView {
-                    return webView
-                }
                 if let view = current as? NSView,
                    let webView = enclosingTerminalWebView(for: view) {
                     return webView
@@ -123,71 +120,82 @@ enum MonknotNativeTerminalSearchCommand {
 
 @MainActor
 final class TerminalWKWebView: WKWebView {
-    weak var terminalCoordinator: TerminalWebView.Coordinator?
+    weak var terminalController: TerminalWebController?
+
+    // Files dragged from Finder are typed as shell-escaped paths, as in Terminal, instead of
+    // WebKit opening the first file in place of the terminal page.
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        Self.fileURLs(on: sender.draggingPasteboard).isEmpty ? super.draggingEntered(sender) : .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        Self.fileURLs(on: sender.draggingPasteboard).isEmpty ? super.draggingUpdated(sender) : .copy
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        if let sender, !Self.fileURLs(on: sender.draggingPasteboard).isEmpty { return }
+        super.draggingExited(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        Self.fileURLs(on: sender.draggingPasteboard).isEmpty ? super.prepareForDragOperation(sender) : true
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = Self.fileURLs(on: sender.draggingPasteboard)
+        guard !urls.isEmpty else { return super.performDragOperation(sender) }
+        guard let terminalController else { return false }
+        terminalController.typeDroppedFileURLs(urls)
+        return true
+    }
+
+    override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+        if let sender, !Self.fileURLs(on: sender.draggingPasteboard).isEmpty { return }
+        super.concludeDragOperation(sender)
+    }
+
+    private static func fileURLs(on pasteboard: NSPasteboard) -> [URL] {
+        let objects = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) ?? []
+        return objects.compactMap { ($0 as? NSURL).map { $0 as URL } }
+    }
 }
 
+/// Shows a terminal session. The xterm web view belongs to the session's `TerminalWebController`, so
+/// hiding the drawer or switching terminal tabs only moves it out of the window: the screen, its modes
+/// and the scrollback stay exactly as the program left them.
 struct TerminalWebView: NSViewRepresentable {
-    @ObservedObject var session: TerminalSessionStore
+    let session: TerminalSessionStore
     let theme: AppTheme
     let fontSize: CGFloat
     let usePointerCursors: Bool
     let fontSmoothing: Bool
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(session: session)
-    }
-
-    func makeNSView(context: Context) -> WKWebView {
-        let configuration = WKWebViewConfiguration()
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
-        configuration.userContentController.add(context.coordinator, name: Coordinator.inputHandlerName)
-        configuration.userContentController.add(context.coordinator, name: Coordinator.resizeHandlerName)
-        configuration.userContentController.add(context.coordinator, name: Coordinator.searchVisibilityHandlerName)
-
-        let webView = TerminalWKWebView(frame: .zero, configuration: configuration)
-        webView.terminalCoordinator = context.coordinator
-        webView.navigationDelegate = context.coordinator
-        webView.setValue(false, forKey: "drawsBackground")
-        Self.configureBackground(of: webView, theme: theme)
-        context.coordinator.webView = webView
-        context.coordinator.requestFocusOnLoad(
-            from: (NSApp.mainWindow ?? NSApp.keyWindow)?.firstResponder
-        )
-        webView.loadHTMLString(
-            Self.html(
-                theme: theme,
-                fontSize: fontSize,
-                usePointerCursors: usePointerCursors,
-                fontSmoothing: fontSmoothing
-            ),
-            baseURL: nil
-        )
-        return webView
-    }
-
-    func updateNSView(_ webView: WKWebView, context: Context) {
-        Self.configureBackground(of: webView, theme: theme)
-        if context.coordinator.session !== session {
-            context.coordinator.switchSession(to: session)
-        }
-        context.coordinator.updateTheme(
-            theme,
+    private var appearance: TerminalAppearance {
+        TerminalAppearance(
+            theme: theme,
             fontSize: fontSize,
             usePointerCursors: usePointerCursors,
             fontSmoothing: fontSmoothing
         )
-        context.coordinator.render(transcript: session.transcript)
     }
 
-    static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
-        coordinator.prepareForDismantle(webView)
-        webView.navigationDelegate = nil
-        webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.inputHandlerName)
-        webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.resizeHandlerName)
-        webView.configuration.userContentController.removeScriptMessageHandler(
-            forName: Coordinator.searchVisibilityHandlerName
-        )
-        coordinator.finishDismantle()
+    func makeNSView(context: Context) -> TerminalWebHostView {
+        let controller = TerminalWebController.controller(for: session)
+        controller.requestFocus(from: (NSApp.mainWindow ?? NSApp.keyWindow)?.firstResponder)
+        let host = TerminalWebHostView()
+        host.show(controller.webView(appearance: appearance))
+        return host
+    }
+
+    func updateNSView(_ host: TerminalWebHostView, context: Context) {
+        let controller = TerminalWebController.controller(for: session)
+        host.show(controller.webView(appearance: appearance))
+        controller.updateAppearance(appearance)
+    }
+
+    static func dismantleNSView(_ host: TerminalWebHostView, coordinator: ()) {
+        host.show(nil)
     }
 
     static func html(
@@ -196,6 +204,15 @@ struct TerminalWebView: NSViewRepresentable {
         usePointerCursors: Bool,
         fontSmoothing: Bool
     ) -> String {
+        let appearance = TerminalAppearance(
+            theme: theme,
+            fontSize: fontSize,
+            usePointerCursors: usePointerCursors,
+            fontSmoothing: fontSmoothing
+        )
+        let cssVariables = appearance.cssVariables
+            .map { "\($0.name): \($0.value);" }
+            .joined(separator: "\n    ")
         let xtermCSS = bundledResource(named: "xterm", extension: "css")
         let xtermJS = bundledResource(named: "xterm", extension: "js")
         let fitJS = bundledResource(named: "xterm-addon-fit", extension: "js")
@@ -209,12 +226,7 @@ struct TerminalWebView: NSViewRepresentable {
           <style>
           \(xtermCSS)
           :root {
-            \(Self.cssVariables(
-                theme,
-                fontSize: fontSize,
-                usePointerCursors: usePointerCursors,
-                fontSmoothing: fontSmoothing
-            ))
+            \(cssVariables)
             color-scheme: \(theme.isDark ? "dark" : "light");
           }
           html, body, #terminal {
@@ -222,6 +234,7 @@ struct TerminalWebView: NSViewRepresentable {
             height: 100%;
             margin: 0;
             overflow: hidden;
+            overscroll-behavior: none;
             background: var(--terminal-bg);
             -webkit-font-smoothing: var(--terminal-font-smoothing);
           }
@@ -245,6 +258,7 @@ struct TerminalWebView: NSViewRepresentable {
           }
           .xterm-viewport {
             scrollbar-gutter: stable;
+            overscroll-behavior: none;
           }
           #terminal-search {
             position: absolute;
@@ -263,7 +277,7 @@ struct TerminalWebView: NSViewRepresentable {
             color: var(--terminal-fg);
             background: var(--terminal-search-bg);
             box-shadow: 0 5px 18px var(--terminal-search-shadow);
-            font: 500 calc(var(--terminal-font-size) * 0.88) system-ui, sans-serif;
+            font: 400 calc(var(--terminal-font-size) * 0.88) system-ui, sans-serif;
           }
           #terminal-search[hidden] {
             display: none;
@@ -285,7 +299,7 @@ struct TerminalWebView: NSViewRepresentable {
           }
           #terminal-search-status {
             flex: none;
-            min-width: 48px;
+            min-width: 10ch;
             color: var(--terminal-muted-fg);
             text-align: right;
             font-variant-numeric: tabular-nums;
@@ -298,7 +312,7 @@ struct TerminalWebView: NSViewRepresentable {
             border-radius: 4px;
             color: var(--terminal-fg);
             background: transparent;
-            font: 600 13px system-ui, sans-serif;
+            font: 400 13px system-ui, sans-serif;
           }
           .terminal-search-button:hover,
           .terminal-search-button:focus-visible {
@@ -357,22 +371,12 @@ struct TerminalWebView: NSViewRepresentable {
             cursorBlink: true,
             cursorStyle: 'block',
             convertEol: false,
-            scrollback: 5000,
+            scrollback: 10000,
+            // ⌥-drag selects text even while a program (Claude Code, vim) has mouse reporting on.
+            macOptionClickForcesSelection: true,
             fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
             fontSize: \(fontSize),
-            theme: {
-              background: '\(theme.terminalSurfaceHex)',
-              foreground: '\(theme.foreground)',
-              cursor: '\(theme.accent)',
-              selectionBackground: '\(theme.selectionBackground)',
-              black: '\(theme.terminalSurfaceHex)',
-              white: '\(theme.foreground)',
-              brightWhite: '\(theme.foreground)',
-              blue: '\(theme.accent)',
-              green: '\(theme.semanticColors.diffAdded)',
-              red: '\(theme.semanticColors.diffRemoved)',
-              magenta: '\(theme.semanticColors.skill)'
-            }
+            theme: \(Self.javaScriptLiteral(Self.xtermTheme(theme)))
           });
           const fitAddon = new FitAddon.FitAddon();
           const searchHighlightLimit = 1000;
@@ -380,6 +384,84 @@ struct TerminalWebView: NSViewRepresentable {
           term.loadAddon(fitAddon);
           term.loadAddon(searchAddon);
           term.open(document.getElementById('terminal'));
+          const screenElement = document.querySelector('.xterm-screen');
+          // While a write is replaying output this view already answered once, its device queries
+          // must not be answered again: the replies would arrive as typed input.
+          let quietWrites = 0;
+          let sgrMouseEncoding = false;
+          let sgrPixelMouseEncoding = false;
+          let wheelLines = 0;
+          let lastNotifiedSize = null;
+          let notifyResizeTimer = null;
+
+          function sendInput(data) {
+            if (disposed || quietWrites > 0) return;
+            window.webkit.messageHandlers.\(TerminalWebController.inputHandlerName).postMessage(data);
+          }
+
+          // Bytes rather than text: each character code is one byte (X10 mouse reports go above 0x7F).
+          function sendBinary(data) {
+            if (disposed || quietWrites > 0) return;
+            window.webkit.messageHandlers.\(TerminalWebController.binaryInputHandlerName).postMessage(data);
+          }
+
+          // xterm.js does not expose the mouse encoding, so follow DECSET/DECRST 1006 (SGR) ourselves.
+          const sgrSetDisposable = term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, params => {
+            if (params.includes(1006)) sgrMouseEncoding = true;
+            if (params.includes(1016)) sgrPixelMouseEncoding = true;
+            return false;
+          });
+          const sgrResetDisposable = term.parser.registerCsiHandler({ prefix: '?', final: 'l' }, params => {
+            if (params.includes(1006) || params.includes(1016)) sgrMouseEncoding = false;
+            if (params.includes(1016)) sgrPixelMouseEncoding = false;
+            return false;
+          });
+          // A full reset (RIS) also ends SGR mouse encoding.
+          const risDisposable = term.parser.registerEscHandler({ final: 'c' }, () => {
+            sgrMouseEncoding = false;
+            sgrPixelMouseEncoding = false;
+            return false;
+          });
+          // XTVERSION: programs use it to pick terminal-specific behaviour such as wheel speed. Keep the
+          // version in step with the vendored xterm.js (THIRD_PARTY_NOTICES.md).
+          const versionDisposable = term.parser.registerCsiHandler({ prefix: '>', final: 'q' }, params => {
+            if ((params[0] || 0) === 0) sendInput('\\x1bP>|xterm.js(5.5.0)\\x1b\\\\');
+            return true;
+          });
+
+          function sendWheelReports(button, count, event) {
+            const rect = screenElement.getBoundingClientRect();
+            const col = Math.min(term.cols, Math.max(1, Math.floor((event.clientX - rect.left) / (rect.width / term.cols)) + 1));
+            const row = Math.min(term.rows, Math.max(1, Math.floor((event.clientY - rect.top) / (rect.height / term.rows)) + 1));
+            if (sgrMouseEncoding) {
+              sendInput(`\\x1b[<${button};${col};${row}M`.repeat(count));
+              return;
+            }
+            const report = '\\x1b[M' + String.fromCharCode(32 + button, 32 + Math.min(col, 223), 32 + Math.min(row, 223));
+            sendBinary(report.repeat(count));
+          }
+
+          // With mouse reporting on, xterm.js sends one wheel report per wheel event however far it
+          // scrolled, so a trackpad flick moves a program like Claude Code by a line or two. Send one
+          // report per line actually scrolled instead.
+          term.attachCustomWheelEventHandler(event => {
+            // X10 mode (DECSET 9) reports presses only, never the wheel; pixel reports are xterm.js's.
+            if (term.modes.mouseTrackingMode === 'none' || term.modes.mouseTrackingMode === 'x10') return true;
+            if (sgrPixelMouseEncoding) return true;
+            const cellHeight = screenElement.getBoundingClientRect().height / term.rows;
+            const lines = event.deltaMode === 1
+              ? event.deltaY
+              : event.deltaMode === 2 ? event.deltaY * term.rows : event.deltaY / cellHeight;
+            wheelLines += lines;
+            const count = Math.trunc(wheelLines);
+            if (count !== 0) {
+              wheelLines -= count;
+              sendWheelReports(count < 0 ? 64 : 65, Math.min(Math.abs(count), 12), event);
+            }
+            event.preventDefault();
+            return false;
+          });
+
           const searchContainer = document.getElementById('terminal-search');
           const searchInput = document.getElementById('terminal-search-input');
           const searchStatus = document.getElementById('terminal-search-status');
@@ -389,19 +471,12 @@ struct TerminalWebView: NSViewRepresentable {
           let pendingResizeFrame = null;
           let pendingResizeRequestFrame = null;
           let pendingScrollDistanceFromBottom = null;
-          let searchDecorationOptions = {
-            matchBackground: '\(theme.selectionBackground)',
-            matchBorder: '\(theme.accent)',
-            matchOverviewRuler: '\(theme.accent)',
-            activeMatchBackground: '\(theme.accent)',
-            activeMatchBorder: '\(theme.foreground)',
-            activeMatchColorOverviewRuler: '\(theme.foreground)'
-          };
+          let searchDecorationOptions = \(Self.javaScriptLiteral(Self.searchDecorations(theme)));
           let disposed = false;
 
           function notifySearchVisibility(isPresented) {
             if (disposed) return;
-            window.webkit.messageHandlers.\(Coordinator.searchVisibilityHandlerName).postMessage(isPresented);
+            window.webkit.messageHandlers.\(TerminalWebController.searchVisibilityHandlerName).postMessage(isPresented);
           }
 
           function searchOptions(incremental = false) {
@@ -509,16 +584,30 @@ struct TerminalWebView: NSViewRepresentable {
             }
           }
 
+          // Each size change reaches the program as SIGWINCH, and full-screen programs redraw everything
+          // on it; tell the PTY once the size settles, and only when it changed.
           function notifyResize() {
             if (disposed) return;
-            window.webkit.messageHandlers.\(Coordinator.resizeHandlerName).postMessage({
-              cols: term.cols,
-              rows: term.rows
-            });
+            clearTimeout(notifyResizeTimer);
+            notifyResizeTimer = setTimeout(() => {
+              notifyResizeTimer = null;
+              if (disposed) return;
+              const size = `${term.cols}x${term.rows}`;
+              if (size === lastNotifiedSize) return;
+              lastNotifiedSize = size;
+              window.webkit.messageHandlers.\(TerminalWebController.resizeHandlerName).postMessage({
+                cols: term.cols,
+                rows: term.rows
+              });
+            }, 80);
           }
 
           function postResize(options = {}) {
             if (disposed) return;
+            // A collapsed or animating panel measures a few cells; FitAddon would shrink the terminal
+            // to 2×1 and every program would reflow its output to that.
+            const proposed = fitAddon.proposeDimensions();
+            if (!proposed || proposed.cols < 20 || proposed.rows < 4) return;
             const buffer = term.buffer.active;
             if (options.preserveScroll && pendingScrollDistanceFromBottom === null) {
               pendingScrollDistanceFromBottom = buffer.baseY - buffer.viewportY;
@@ -554,22 +643,36 @@ struct TerminalWebView: NSViewRepresentable {
             });
           }
 
-          function writeAndFollow(data) {
-            if (disposed) return;
-            const buffer = term.buffer.active;
-            const wasAtBottom = buffer.baseY - buffer.viewportY <= 0;
-            term.write(data, () => {
-              if (wasAtBottom) term.scrollToBottom();
-            });
+          function bytesFromBase64(encoded) {
+            const binary = atob(encoded);
+            const bytes = new Uint8Array(binary.length);
+            for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+            return bytes;
           }
 
-          window.monknotWrite = function(data) {
-            writeAndFollow(data);
-          };
-          window.monknotReset = function() {
+          // Output arrives as raw bytes so xterm's UTF-8 decoder can join characters split across reads.
+          window.monknotWriteBytes = function(encoded, options = {}) {
             if (disposed) return;
-            resetTerminalSearch();
-            term.reset();
+            if (options.reset) {
+              // Through the stream (RIS), so output still queued from before is parsed first.
+              resetTerminalSearch();
+              wheelLines = 0;
+              term.write('\\x1bc');
+              lastNotifiedSize = null;
+              notifyResize();
+            }
+            const bytes = bytesFromBase64(encoded);
+            // xterm.js follows output only while the view is at the bottom, so reading back through
+            // the scrollback is never pulled down by new output.
+            if (!options.quiet) {
+              term.write(bytes);
+              return;
+            }
+            quietWrites += 1;
+            term.write(bytes, () => {
+              quietWrites -= 1;
+              term.scrollToBottom();
+            });
           };
           window.monknotFocus = function() {
             if (disposed) return;
@@ -601,11 +704,8 @@ struct TerminalWebView: NSViewRepresentable {
             closeTerminalSearch();
           };
 
-          const inputDisposable = term.onData(data => {
-            if (!disposed) {
-              window.webkit.messageHandlers.\(Coordinator.inputHandlerName).postMessage(data);
-            }
-          });
+          const inputDisposable = term.onData(sendInput);
+          const binaryDisposable = term.onBinary(sendBinary);
           const resizeListener = () => scheduleResize({ preserveScroll: true });
           window.addEventListener('resize', resizeListener);
           const resizeObserver = new ResizeObserver(() => {
@@ -619,6 +719,12 @@ struct TerminalWebView: NSViewRepresentable {
             disposed = true;
             if (pendingResizeFrame !== null) cancelAnimationFrame(pendingResizeFrame);
             if (pendingResizeRequestFrame !== null) cancelAnimationFrame(pendingResizeRequestFrame);
+            clearTimeout(notifyResizeTimer);
+            sgrSetDisposable.dispose();
+            sgrResetDisposable.dispose();
+            risDisposable.dispose();
+            versionDisposable.dispose();
+            binaryDisposable.dispose();
             resizeObserver.disconnect();
             window.removeEventListener('resize', resizeListener);
             searchInput.removeEventListener('input', searchInputListener);
@@ -638,7 +744,7 @@ struct TerminalWebView: NSViewRepresentable {
         """
     }
 
-    private static func configureBackground(of webView: WKWebView, theme: AppTheme) {
+    static func configureBackground(of webView: WKWebView, theme: AppTheme) {
         webView.wantsLayer = true
         webView.layer?.backgroundColor = NSColor(hex: theme.terminalSurfaceHex).cgColor
     }
@@ -653,30 +759,41 @@ struct TerminalWebView: NSViewRepresentable {
         return contents
     }
 
-    private static func cssVariables(
-        _ theme: AppTheme,
-        fontSize: CGFloat,
-        usePointerCursors: Bool,
-        fontSmoothing: Bool
-    ) -> String {
-        """
-        --terminal-bg: \(theme.terminalSurfaceHex);
-        --terminal-fg: \(theme.foreground);
-        --terminal-muted-fg: \(rgba(theme.foreground, alpha: 0.62));
-        --terminal-accent: \(theme.accent);
-        --terminal-font-size: \(fontSize)px;
-        --terminal-font-smoothing: \(fontSmoothing ? "antialiased" : "auto");
-        --terminal-interactive-cursor: \(usePointerCursors ? "pointer" : "default");
-        --terminal-scrollbar-thumb: \(rgba(theme.foreground, alpha: Double(MonknotScrollbarStyle.restingOpacity)));
-        --terminal-scrollbar-thumb-hover: \(rgba(theme.foreground, alpha: Double(MonknotScrollbarStyle.hoveredOpacity)));
-        --terminal-search-bg: \(theme.recessedSurfaceHex(amount: theme.isDark ? 0.13 : 0.055));
-        --terminal-search-border: \(rgba(theme.foreground, alpha: 0.16));
-        --terminal-search-hover: \(rgba(theme.foreground, alpha: theme.isDark ? 0.10 : 0.07));
-        --terminal-search-shadow: rgba(0, 0, 0, \(theme.isDark ? "0.30" : "0.14"));
-        """
+    /// The xterm.js theme, for the page and for every later theme change alike. `term.options.theme`
+    /// replaces the whole theme, so a key missing from either would fall back to xterm's default.
+    static func xtermTheme(_ theme: AppTheme) -> [String: String] {
+        [
+            "background": theme.terminalSurfaceHex,
+            "foreground": theme.foreground,
+            "cursor": theme.accent,
+            "selectionBackground": theme.selectionBackground,
+            "black": theme.terminalSurfaceHex,
+            "white": theme.foreground,
+            "brightWhite": theme.foreground,
+            "blue": theme.accent,
+            "green": theme.semanticColors.diffAdded,
+            "red": theme.semanticColors.diffRemoved,
+            "magenta": theme.semanticColors.skill,
+        ]
     }
 
-    private static func rgba(_ hex: String, alpha: Double) -> String {
+    /// The search addon's match decorations, for the page and for every later theme change alike.
+    static func searchDecorations(_ theme: AppTheme) -> [String: String] {
+        [
+            "matchBackground": theme.selectionBackground,
+            "matchBorder": theme.accent,
+            "matchOverviewRuler": theme.accent,
+            "activeMatchBackground": theme.accent,
+            "activeMatchBorder": theme.foreground,
+            "activeMatchColorOverviewRuler": theme.foreground,
+        ]
+    }
+
+    static func javaScriptLiteral(_ value: [String: String]) -> String {
+        (try? WebViewBridge.literal(value)) ?? "{}"
+    }
+
+    static func rgba(_ hex: String, alpha: Double) -> String {
         guard let rgb = RGBHex(hex) else {
             return String(format: "rgba(128, 128, 128, %.3f)", alpha)
         }
@@ -690,261 +807,405 @@ struct TerminalWebView: NSViewRepresentable {
         )
     }
 
-    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
-        static let inputHandlerName = "terminalInput"
-        static let resizeHandlerName = "terminalResize"
-        static let searchVisibilityHandlerName = "terminalSearchVisibility"
-
-        var session: TerminalSessionStore
-        var isSearchPresented = false
-        weak var webView: WKWebView?
-        private var isLoaded = false
-        private var renderedTranscript = ""
-        private var lastAppearance: TerminalAppearance?
-        private weak var focusOwnerAtLoadRequest: NSResponder?
-        private var shouldFocusWhenLoaded = false
-        init(session: TerminalSessionStore) {
-            self.session = session
-        }
-
-        func requestFocusOnLoad(from responder: NSResponder?) {
-            focusOwnerAtLoadRequest = Self.stableFocusOwner(for: responder)
-            shouldFocusWhenLoaded = true
-        }
-
-        func switchSession(to session: TerminalSessionStore) {
-            self.session = session
-            renderedTranscript = ""
-            guard isLoaded, let webView else { return }
-            evaluate("window.monknotReset && window.monknotReset();", in: webView)
-            render(transcript: session.transcript)
-            focus()
-        }
-
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            isLoaded = true
-            render(transcript: session.transcript)
-            let requestedFocusOwner = focusOwnerAtLoadRequest
-            let shouldFocus = shouldFocusWhenLoaded
-            shouldFocusWhenLoaded = false
-            focusOwnerAtLoadRequest = nil
-            DispatchQueue.main.async { [weak self, weak webView, weak requestedFocusOwner] in
-                guard let self, let webView, shouldFocus,
-                      let window = webView.window,
-                      Self.focusHasNotMoved(
-                        in: window,
-                        from: requestedFocusOwner,
-                        to: webView
-                      ),
-                      !webView.isHiddenOrHasHiddenAncestor,
-                      window.makeFirstResponder(webView) else { return }
-                self.focus()
-            }
-        }
-
-        private static func focusHasNotMoved(
-            in window: NSWindow,
-            from requestedFocusOwner: NSResponder?,
-            to webView: WKWebView
-        ) -> Bool {
-            guard let currentResponder = window.firstResponder else {
-                return requestedFocusOwner == nil
-            }
-            var current: NSResponder? = currentResponder
-            while let candidate = current {
-                if candidate === webView {
-                    return true
-                }
-                if let view = candidate as? NSView, view.isDescendant(of: webView) {
-                    return true
-                }
-                current = candidate.nextResponder
-            }
-            let currentFocusOwner = stableFocusOwner(for: currentResponder)
-            switch (currentFocusOwner, requestedFocusOwner) {
-            case (nil, nil):
-                return true
-            case let (current?, requested?):
-                return current === requested
-            default:
-                return false
-            }
-        }
-
-        /// AppKit reuses one field-editor NSTextView across every NSTextField in
-        /// a window. The field's delegate is the stable owner that distinguishes
-        /// a real focus transfer between search controls.
-        private static func stableFocusOwner(for responder: NSResponder?) -> NSResponder? {
-            guard let fieldEditor = responder as? NSTextView,
-                  fieldEditor.isFieldEditor,
-                  let owner = fieldEditor.delegate as? NSResponder else {
-                return responder
-            }
-            return owner
-        }
-
-        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            switch message.name {
-            case Self.inputHandlerName:
-                if let text = message.body as? String {
-                    session.send(text)
-                }
-            case Self.resizeHandlerName:
-                if let payload = message.body as? [String: Any],
-                   let columns = payload["cols"] as? Int,
-                   let rows = payload["rows"] as? Int {
-                    session.resize(columns: columns, rows: rows)
-                }
-            case Self.searchVisibilityHandlerName:
-                if let isPresented = message.body as? Bool {
-                    isSearchPresented = isPresented
-                }
-            default:
-                break
-            }
-        }
-
-        func prepareForDismantle(_ webView: WKWebView) {
-            if isLoaded {
-                webView.evaluateJavaScript("window.monknotDispose && window.monknotDispose();")
-            }
-            isSearchPresented = false
-            isLoaded = false
-            webView.stopLoading()
-        }
-
-        func finishDismantle() {
-            webView = nil
-        }
-
-        func render(transcript: String) {
-            guard isLoaded, let webView else { return }
-
-            if transcript.hasPrefix(renderedTranscript) {
-                let chunk = String(transcript.dropFirst(renderedTranscript.count))
-                renderedTranscript = transcript
-                write(chunk, in: webView)
-            } else {
-                renderedTranscript = transcript
-                evaluate("window.monknotReset && window.monknotReset();", in: webView)
-                write(transcript, in: webView)
-            }
-        }
-
-        func updateTheme(
-            _ theme: AppTheme,
-            fontSize: CGFloat,
-            usePointerCursors: Bool,
-            fontSmoothing: Bool
-        ) {
-            guard isLoaded, let webView else { return }
-            let appearance = TerminalAppearance(
-                theme: theme,
-                fontSize: fontSize,
-                usePointerCursors: usePointerCursors,
-                fontSmoothing: fontSmoothing
-            )
-            guard appearance != lastAppearance else { return }
-            lastAppearance = appearance
-
-            let payload: [String: Any] = [
-                "fontSize": fontSize,
-                "colorScheme": theme.isDark ? "dark" : "light",
-                "css": [
-                    "--terminal-bg": theme.terminalSurfaceHex,
-                    "--terminal-fg": theme.foreground,
-                    "--terminal-muted-fg": TerminalWebView.rgba(theme.foreground, alpha: 0.62),
-                    "--terminal-accent": theme.accent,
-                    "--terminal-font-size": "\(fontSize)px",
-                    "--terminal-font-smoothing": fontSmoothing ? "antialiased" : "auto",
-                    "--terminal-interactive-cursor": usePointerCursors ? "pointer" : "default",
-                    "--terminal-scrollbar-thumb": TerminalWebView.rgba(
-                        theme.foreground,
-                        alpha: Double(MonknotScrollbarStyle.restingOpacity)
-                    ),
-                    "--terminal-scrollbar-thumb-hover": TerminalWebView.rgba(
-                        theme.foreground,
-                        alpha: Double(MonknotScrollbarStyle.hoveredOpacity)
-                    ),
-                    "--terminal-search-bg": theme.recessedSurfaceHex(amount: theme.isDark ? 0.13 : 0.055),
-                    "--terminal-search-border": TerminalWebView.rgba(theme.foreground, alpha: 0.16),
-                    "--terminal-search-hover": TerminalWebView.rgba(
-                        theme.foreground,
-                        alpha: theme.isDark ? 0.10 : 0.07
-                    ),
-                    "--terminal-search-shadow": theme.isDark
-                        ? "rgba(0, 0, 0, 0.30)"
-                        : "rgba(0, 0, 0, 0.14)"
-                ],
-                "searchDecorations": [
-                    "matchBackground": theme.selectionBackground,
-                    "matchBorder": theme.accent,
-                    "matchOverviewRuler": theme.accent,
-                    "activeMatchBackground": theme.accent,
-                    "activeMatchBorder": theme.foreground,
-                    "activeMatchColorOverviewRuler": theme.foreground
-                ],
-                "theme": [
-                    "background": theme.terminalSurfaceHex,
-                    "foreground": theme.foreground,
-                    "cursor": theme.accent,
-                    "selectionBackground": theme.selectionBackground,
-                    "black": theme.terminalSurfaceHex,
-                    "blue": theme.accent,
-                    "green": theme.semanticColors.diffAdded,
-                    "red": theme.semanticColors.diffRemoved,
-                    "magenta": theme.semanticColors.skill
-                ]
-            ]
-            guard let json = Self.jsonLiteral(payload) else { return }
-            evaluate("window.monknotTheme && window.monknotTheme(\(json));", in: webView)
-        }
-
-        func focus() {
-            guard isLoaded, let webView else { return }
-            evaluate("window.monknotFocus && window.monknotFocus();", in: webView)
-        }
-
-        private func write(_ text: String, in webView: WKWebView) {
-            guard !text.isEmpty, let json = Self.jsonLiteral(text) else { return }
-            evaluate("window.monknotWrite && window.monknotWrite(\(json));", in: webView)
-        }
-
-        private func evaluate(_ script: String, in webView: WKWebView) {
-            webView.evaluateJavaScript(script)
-        }
-
-        private static func jsonLiteral(_ value: Any) -> String? {
-            guard JSONSerialization.isValidJSONObject(value) || value is String else {
-                return nil
-            }
-
-            let object: Any
-            if let string = value as? String {
-                object = [string]
-            } else {
-                object = value
-            }
-
-            guard let data = try? JSONSerialization.data(withJSONObject: object),
-                  var literal = String(data: data, encoding: .utf8)
-            else {
-                return nil
-            }
-
-            literal = literal.replacingOccurrences(of: "</", with: "<\\/")
-            if value is String {
-                literal.removeFirst()
-                literal.removeLast()
-            }
-            return literal
-        }
-    }
 }
 
-private struct TerminalAppearance: Equatable {
+struct TerminalAppearance: Equatable {
     let theme: AppTheme
     let fontSize: CGFloat
     let usePointerCursors: Bool
     let fontSmoothing: Bool
+
+    /// The page's CSS custom properties, set in its stylesheet and again on every theme change.
+    var cssVariables: [(name: String, value: String)] {
+        let foreground = theme.foreground
+        return [
+            ("--terminal-bg", theme.terminalSurfaceHex),
+            ("--terminal-fg", foreground),
+            ("--terminal-muted-fg", TerminalWebView.rgba(foreground, alpha: 0.62)),
+            ("--terminal-accent", theme.accent),
+            ("--terminal-font-size", "\(fontSize)px"),
+            ("--terminal-font-smoothing", fontSmoothing ? "antialiased" : "auto"),
+            ("--terminal-interactive-cursor", usePointerCursors ? "pointer" : "default"),
+            ("--terminal-scrollbar-thumb", TerminalWebView.rgba(foreground, alpha: Double(MonknotScrollbarStyle.restingOpacity))),
+            ("--terminal-scrollbar-thumb-hover", TerminalWebView.rgba(foreground, alpha: Double(MonknotScrollbarStyle.hoveredOpacity))),
+            ("--terminal-search-bg", theme.recessedSurfaceHex(amount: theme.isDark ? 0.13 : 0.055)),
+            ("--terminal-search-border", TerminalWebView.rgba(foreground, alpha: 0.16)),
+            ("--terminal-search-hover", TerminalWebView.rgba(foreground, alpha: theme.isDark ? 0.10 : 0.07)),
+            ("--terminal-search-shadow", "rgba(0, 0, 0, \(theme.isDark ? "0.30" : "0.14"))"),
+        ]
+    }
+}
+
+/// Hosts a session's terminal web view while it is on screen. Taking it out never destroys the view.
+final class TerminalWebHostView: NSView {
+    private weak var hostedView: NSView?
+
+    func show(_ view: NSView?) {
+        guard hostedView !== view else { return }
+        // Another host may already have adopted the view (a new drawer appears before the old one is
+        // dismantled); only take back what is still ours.
+        if let hostedView, hostedView.superview === self {
+            hostedView.removeFromSuperview()
+        }
+        hostedView = view
+        guard let view else { return }
+        view.removeFromSuperview()
+        view.frame = bounds
+        view.autoresizingMask = [.width, .height]
+        addSubview(view)
+    }
+}
+
+/// Owns a terminal session's xterm web view for the life of the session (it is the session's
+/// `presentation`). It writes the session's output into the view as raw bytes, each byte once, and
+/// routes input, resize and search messages back.
+@MainActor
+final class TerminalWebController: NSObject, TerminalSessionPresentation, WKNavigationDelegate {
+    static let inputHandlerName = "terminalInput"
+    static let resizeHandlerName = "terminalResize"
+    static let searchVisibilityHandlerName = "terminalSearchVisibility"
+    static let binaryInputHandlerName = "terminalBinaryInput"
+    private static let messageHandlerNames = [
+        inputHandlerName, resizeHandlerName, searchVisibilityHandlerName, binaryInputHandlerName,
+    ]
+
+    static func controller(for session: TerminalSessionStore) -> TerminalWebController {
+        if let existing = session.presentation as? TerminalWebController {
+            return existing
+        }
+        let controller = TerminalWebController(session: session)
+        session.presentation = controller
+        return controller
+    }
+
+    private weak var session: TerminalSessionStore?
+    var isSearchPresented = false
+    var webView: WKWebView?
+    private var isLoaded = false
+    private var renderedEpoch: Int?
+    private var renderedOffset = 0
+    private var appearance: TerminalAppearance?
+    private var appliedAppearance: TerminalAppearance?
+    /// Set when WebKit's content process died: the reloaded page replays output it already answered.
+    private var replaysQuietly = false
+    private weak var focusOwnerAtRequest: NSResponder?
+    private var shouldFocusWhenReady = false
+
+    init(session: TerminalSessionStore) {
+        self.session = session
+    }
+
+    /// The session's web view, created and loaded on first use.
+    func webView(appearance: TerminalAppearance) -> WKWebView {
+        if let webView {
+            return webView
+        }
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        let messageProxy = TerminalScriptMessageProxy(controller: self)
+        for name in Self.messageHandlerNames {
+            configuration.userContentController.add(messageProxy, name: name)
+        }
+
+        let webView = TerminalWKWebView(frame: .zero, configuration: configuration)
+        webView.terminalController = self
+        webView.navigationDelegate = self
+        webView.setValue(false, forKey: "drawsBackground")
+        TerminalWebView.configureBackground(of: webView, theme: appearance.theme)
+        self.webView = webView
+        self.appearance = appearance
+        loadPage(in: webView, appearance: appearance)
+        return webView
+    }
+
+    private func loadPage(in webView: WKWebView, appearance: TerminalAppearance) {
+        appliedAppearance = appearance
+        webView.loadHTMLString(
+            TerminalWebView.html(
+                theme: appearance.theme,
+                fontSize: appearance.fontSize,
+                usePointerCursors: appearance.usePointerCursors,
+                fontSmoothing: appearance.fontSmoothing
+            ),
+            baseURL: nil
+        )
+    }
+
+    func updateAppearance(_ appearance: TerminalAppearance) {
+        self.appearance = appearance
+        applyAppearanceIfNeeded()
+    }
+
+    /// Focuses the terminal once it is ready, unless focus moved elsewhere in the meantime.
+    func requestFocus(from responder: NSResponder?) {
+        focusOwnerAtRequest = Self.stableFocusOwner(for: responder)
+        shouldFocusWhenReady = true
+        if isLoaded {
+            performRequestedFocus()
+        }
+    }
+
+    func focus() {
+        evaluate("window.monknotFocus && window.monknotFocus();")
+    }
+
+    /// Types the paths into the session, separated and followed by a space, as Terminal does.
+    func typeDroppedFileURLs(_ urls: [URL]) {
+        let paths = urls.map { Self.shellEscapedPath($0.path) }
+        session?.send(paths.joined(separator: " ") + " ")
+    }
+
+    /// Escapes shell syntax with backslashes and leaves other characters, including non-ASCII ones,
+    /// as typed. A path with control characters is ANSI-C quoted (`$'…'`) with every control
+    /// character written as an escape, so no control byte reaches the terminal, where the line
+    /// editor would act on it as a keystroke.
+    nonisolated static func shellEscapedPath(_ path: String) -> String {
+        if path.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) {
+            return ansiCQuotedPath(path)
+        }
+        let unescaped = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-+,:@%")
+        var escaped = ""
+        for scalar in path.unicodeScalars {
+            if scalar.isASCII, !unescaped.contains(scalar) {
+                escaped.append("\\")
+            }
+            escaped.unicodeScalars.append(scalar)
+        }
+        return escaped
+    }
+
+    private nonisolated static func ansiCQuotedPath(_ path: String) -> String {
+        var quoted = "$'"
+        for scalar in path.unicodeScalars {
+            switch scalar {
+            case "\\": quoted += "\\\\"
+            case "'": quoted += "\\'"
+            case "\n": quoted += "\\n"
+            case "\t": quoted += "\\t"
+            default:
+                if scalar.properties.generalCategory == .control {
+                    for byte in String(scalar).utf8 {
+                        quoted += String(format: "\\x%02X", byte)
+                    }
+                } else {
+                    quoted.unicodeScalars.append(scalar)
+                }
+            }
+        }
+        return quoted + "'"
+    }
+
+    // MARK: TerminalSessionPresentation
+
+    func sessionOutputDidChange() {
+        render()
+    }
+
+    func sessionDidStop() {
+        if isLoaded {
+            evaluate("window.monknotDispose && window.monknotDispose();")
+        }
+        if let webView {
+            webView.navigationDelegate = nil
+            for name in Self.messageHandlerNames {
+                webView.configuration.userContentController.removeScriptMessageHandler(forName: name)
+            }
+            (webView as? TerminalWKWebView)?.terminalController = nil
+            webView.stopLoading()
+            webView.removeFromSuperview()
+        }
+        webView = nil
+        isLoaded = false
+        isSearchPresented = false
+    }
+
+    // MARK: WKNavigationDelegate
+
+    /// Only the terminal page, loaded from a string, may load; any other navigation would replace it.
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        decisionHandler(Self.allowsNavigation(to: navigationAction.request.url) ? .allow : .cancel)
+    }
+
+    nonisolated static func allowsNavigation(to url: URL?) -> Bool {
+        url?.absoluteString == "about:blank"
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        isLoaded = true
+        applyAppearanceIfNeeded()
+        render()
+        performRequestedFocus()
+    }
+
+    /// The view outlives the drawer, so a crashed or reclaimed web process must not leave it blank:
+    /// reload the page and replay what the session printed, without answering its queries again.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard let appearance else { return }
+        isLoaded = false
+        renderedEpoch = nil
+        replaysQuietly = true
+        // The reloaded page starts with its search box closed.
+        isSearchPresented = false
+        loadPage(in: webView, appearance: appearance)
+    }
+
+    // MARK: Messages
+
+    fileprivate func receive(_ message: WKScriptMessage) {
+        switch message.name {
+        case Self.inputHandlerName:
+            if let text = message.body as? String {
+                session?.send(text)
+            }
+        case Self.binaryInputHandlerName:
+            if let text = message.body as? String, let bytes = text.data(using: .isoLatin1) {
+                session?.send(bytes)
+            }
+        case Self.resizeHandlerName:
+            if let payload = message.body as? [String: Any],
+               let columns = payload["cols"] as? Int,
+               let rows = payload["rows"] as? Int {
+                session?.resize(columns: columns, rows: rows)
+            }
+        case Self.searchVisibilityHandlerName:
+            if let isPresented = message.body as? Bool {
+                isSearchPresented = isPresented
+            }
+        default:
+            break
+        }
+    }
+
+    // MARK: Output
+
+    private func render() {
+        guard isLoaded, let session else { return }
+        let output = session.output
+
+        if renderedEpoch != session.outputEpoch {
+            // A new view, or the session restarted: the screen starts over with this process's output.
+            // These bytes were never shown, so their device queries are answered as usual.
+            let isRestart = renderedEpoch != nil
+            renderedEpoch = session.outputEpoch
+            renderedOffset = output.endOffset
+            write(output.bytes(from: output.startOffset) ?? Data(), reset: isRestart, quiet: replaysQuietly)
+            replaysQuietly = false
+            return
+        }
+
+        // The log always keeps the newest chunk, which starts at the offset rendered last.
+        guard let bytes = output.bytes(from: renderedOffset) else { return }
+        renderedOffset = output.endOffset
+        guard !bytes.isEmpty else { return }
+        write(bytes, reset: false, quiet: false)
+    }
+
+    private func write(_ bytes: Data, reset: Bool, quiet: Bool) {
+        guard reset || !bytes.isEmpty else { return }
+        let options = "{ reset: \(reset), quiet: \(quiet) }"
+        evaluate("window.monknotWriteBytes && window.monknotWriteBytes('\(bytes.base64EncodedString())', \(options));")
+    }
+
+    // MARK: Appearance
+
+    private func applyAppearanceIfNeeded() {
+        guard let appearance, let webView else { return }
+        TerminalWebView.configureBackground(of: webView, theme: appearance.theme)
+        guard isLoaded, appearance != appliedAppearance else { return }
+        appliedAppearance = appearance
+
+        let theme = appearance.theme
+        let payload: [String: Any] = [
+            "fontSize": appearance.fontSize,
+            "colorScheme": theme.isDark ? "dark" : "light",
+            "css": Dictionary(uniqueKeysWithValues: appearance.cssVariables.map { ($0.name, $0.value) }),
+            "searchDecorations": TerminalWebView.searchDecorations(theme),
+            "theme": TerminalWebView.xtermTheme(theme),
+        ]
+        guard let json = try? WebViewBridge.literal(payload) else { return }
+        evaluate("window.monknotTheme && window.monknotTheme(\(json));")
+    }
+
+    // MARK: Focus
+
+    private func performRequestedFocus() {
+        guard shouldFocusWhenReady else { return }
+        let requestedFocusOwner = focusOwnerAtRequest
+        shouldFocusWhenReady = false
+        focusOwnerAtRequest = nil
+        DispatchQueue.main.async { [weak self, weak requestedFocusOwner] in
+            guard let self, let webView = self.webView,
+                  let window = webView.window,
+                  Self.focusHasNotMoved(in: window, from: requestedFocusOwner, to: webView),
+                  !webView.isHiddenOrHasHiddenAncestor,
+                  window.makeFirstResponder(webView) else { return }
+            self.focus()
+        }
+    }
+
+    private static func focusHasNotMoved(
+        in window: NSWindow,
+        from requestedFocusOwner: NSResponder?,
+        to webView: WKWebView
+    ) -> Bool {
+        guard let currentResponder = window.firstResponder else {
+            return requestedFocusOwner == nil
+        }
+        var current: NSResponder? = currentResponder
+        while let candidate = current {
+            if candidate === webView {
+                return true
+            }
+            if let view = candidate as? NSView, view.isDescendant(of: webView) {
+                return true
+            }
+            current = candidate.nextResponder
+        }
+        let currentFocusOwner = stableFocusOwner(for: currentResponder)
+        switch (currentFocusOwner, requestedFocusOwner) {
+        case (nil, nil):
+            return true
+        case let (current?, requested?):
+            return current === requested
+        default:
+            return false
+        }
+    }
+
+    /// AppKit reuses one field-editor NSTextView across every NSTextField in
+    /// a window. The field's delegate is the stable owner that distinguishes
+    /// a real focus transfer between search controls.
+    private static func stableFocusOwner(for responder: NSResponder?) -> NSResponder? {
+        guard let fieldEditor = responder as? NSTextView,
+              fieldEditor.isFieldEditor,
+              let owner = fieldEditor.delegate as? NSResponder else {
+            return responder
+        }
+        return owner
+    }
+
+    private func evaluate(_ script: String) {
+        guard isLoaded, let webView else { return }
+        webView.evaluateJavaScript(script)
+    }
+}
+
+/// WKUserContentController keeps its handlers alive; this proxy keeps the controller out of that
+/// retain cycle (controller → web view → configuration → handler).
+private final class TerminalScriptMessageProxy: NSObject, WKScriptMessageHandler {
+    private weak var controller: TerminalWebController?
+
+    init(controller: TerminalWebController) {
+        self.controller = controller
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        MainActor.assumeIsolated {
+            controller?.receive(message)
+        }
+    }
 }

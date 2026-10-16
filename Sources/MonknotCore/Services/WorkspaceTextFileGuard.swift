@@ -6,6 +6,7 @@ public enum WorkspaceTextFileGuard {
     public enum Error: LocalizedError, Equatable {
         case fileTooLarge(path: String, size: Int64, maxBytes: Int64)
         case unreadableEncoding(path: String)
+        case binaryContent(path: String)
 
         public var errorDescription: String? {
             switch self {
@@ -15,6 +16,8 @@ public enum WorkspaceTextFileGuard {
                 return "\(path) is too large to open (\(String(format: "%.1f", sizeMB)) MB; limit \(String(format: "%.0f", maxMB)) MB)."
             case .unreadableEncoding(let path):
                 return "\(path) is not valid UTF-8 text."
+            case .binaryContent(let path):
+                return "\(path) holds binary data, not text."
             }
         }
     }
@@ -46,11 +49,47 @@ public enum WorkspaceTextFileGuard {
             return cached
         }
 
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+        let data = try Data(contentsOf: url)
+        guard let text = decodeUTF8(data) else {
             throw Error.unreadableEncoding(path: url.lastPathComponent)
+        }
+        // A NUL byte is valid UTF-8 but never appears in text; the editor would show it as garbage.
+        guard !containsNULByte(data) else {
+            throw Error.binaryContent(path: url.lastPathComponent)
         }
 
         cache?.store(text: text, for: url)
         return text
+    }
+
+    private static let byteOrderMark = Data([0xEF, 0xBB, 0xBF])
+
+    /// The text of UTF-8 `data` without a leading byte order mark, which some macOS versions keep
+    /// when decoding and others drop.
+    public static func decodeUTF8(_ data: Data) -> String? {
+        let body = data.starts(with: byteOrderMark) ? data.dropFirst(byteOrderMark.count) : data[...]
+        return String(data: Data(body), encoding: .utf8)
+    }
+
+    /// Decoding drops a UTF-8 byte order mark, so a save puts it back when the file starts with one.
+    public static func utf8Data(for text: String, preservingByteOrderMarkOf url: URL) -> Data {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return Data(text.utf8) }
+        defer { try? handle.close() }
+        guard (try? handle.read(upToCount: byteOrderMark.count)) == byteOrderMark else {
+            return Data(text.utf8)
+        }
+        return byteOrderMark + Data(text.utf8)
+    }
+
+    /// Writes `text` atomically as UTF-8, keeping the file's byte order mark if it has one.
+    public static func writeUTF8Text(_ text: String, to url: URL) throws {
+        try utf8Data(for: text, preservingByteOrderMarkOf: url).write(to: url, options: .atomic)
+    }
+
+    private static func containsNULByte(_ data: Data) -> Bool {
+        data.withUnsafeBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else { return false }
+            return memchr(baseAddress, 0, buffer.count) != nil
+        }
     }
 }

@@ -131,6 +131,8 @@ public enum MonknotKeyboardShortcutAction: Equatable, Sendable {
     case dismissQuickOpen
     case showGoToSymbol
     case dismissGoToSymbol
+    case selectPreviousPickerResult
+    case selectNextPickerResult
     case workspaceSearchNext
     case workspaceSearchPrevious
     case dismissKeyboardShortcutsHelp
@@ -141,6 +143,8 @@ public enum MonknotKeyboardShortcutAction: Equatable, Sendable {
 
 public enum MonknotKeyboardShortcutRouter {
     public static let escapeKeyCode: UInt16 = 53
+    public static let upArrowKeyCode: UInt16 = 126
+    public static let downArrowKeyCode: UInt16 = 125
 
     public static func action(
         for event: MonknotKeyboardShortcutEvent,
@@ -148,6 +152,12 @@ public enum MonknotKeyboardShortcutRouter {
     ) -> MonknotKeyboardShortcutAction? {
         let key = event.key.lowercased()
         let modifiers = event.modifiers
+
+        // Quick Open and Go to Heading lists follow ↑/↓ while their search field keeps focus.
+        if context.isQuickOpenPresented || context.isSymbolQuickOpenPresented, modifiers.isEmpty {
+            if event.keyCode == upArrowKeyCode { return .selectPreviousPickerResult }
+            if event.keyCode == downArrowKeyCode { return .selectNextPickerResult }
+        }
 
         if event.keyCode == escapeKeyCode, modifiers.isEmpty {
             if context.isQuickOpenPresented { return .dismissQuickOpen }
@@ -192,7 +202,9 @@ public enum MonknotKeyboardShortcutRouter {
                 if context.canUndoWorkspaceReplace {
                     return .undoWorkspaceReplace
                 }
-                return context.selectedDocumentKind == .pdf && context.canUndoPDFAnnotation ? .undoPDFAnnotation : nil
+                return context.selectedDocumentKind?.opensInPDFViewer == true && context.canUndoPDFAnnotation
+                    ? .undoPDFAnnotation
+                    : nil
             case "v":
                 return context.hasWorkspace && !context.isBusy ? .importPasteboard : nil
             case "\\", "|":
@@ -223,7 +235,9 @@ public enum MonknotKeyboardShortcutRouter {
             case "t":
                 return context.canReopenClosedTab ? .reopenClosedTab : nil
             case "z":
-                return context.selectedDocumentKind == .pdf && context.canRedoPDFAnnotation ? .redoPDFAnnotation : nil
+                return context.selectedDocumentKind?.opensInPDFViewer == true && context.canRedoPDFAnnotation
+                    ? .redoPDFAnnotation
+                    : nil
             default:
                 return nil
             }

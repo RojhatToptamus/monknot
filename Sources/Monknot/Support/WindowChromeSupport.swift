@@ -7,22 +7,20 @@ extension NSUserInterfaceItemIdentifier {
     static let monknotTerminalFocusRegion = Self("Monknot.TerminalFocusRegion")
 }
 
-/// Aligns the NSWindow's appearance with our SwiftUI surface and suppresses
-/// the AppKit-injected `.toolbarButton`, which duplicates our sidebar toggle.
-/// AppKit remains the owner of the native traffic-light controls and their
-/// inter-button spacing, targets, accessibility, and window behavior.
-struct WindowBackgroundDragEnabler: NSViewRepresentable {
+/// Aligns the NSWindow's appearance with our SwiftUI surface and centres the native traffic
+/// lights on Monknot's titlebar row. AppKit remains the owner of the traffic-light controls and
+/// their inter-button spacing, targets, accessibility, and window behavior.
+struct WindowChromeConfigurator: NSViewRepresentable {
     var surfaceColor: Color
-    var suppressToolbarButton: Bool = true
+    /// The window's controls, menus and scroll bars follow the theme surface, not the system.
+    var isDark: Bool
     var trafficLightRowHeight: CGFloat?
     var trafficLightLeadingInset: CGFloat?
-    var usesDarkAppearance: Bool?
     var windowTitle: String?
     var enablesStandardWindowControls = false
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
-            suppressToolbarButton: suppressToolbarButton,
             trafficLightRowHeight: trafficLightRowHeight,
             trafficLightLeadingInset: trafficLightLeadingInset,
             enablesStandardWindowControls: enablesStandardWindowControls
@@ -50,23 +48,19 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             // Deliberate title-bar gaps opt in to dragging below. Making the
             // whole background draggable lets transparent controls and editor
             // gaps accidentally move the window.
-            window.isMovableByWindowBackground = false
-            window.titlebarAppearsTransparent = true
-            if let windowTitle {
-                window.title = windowTitle
-                window.titleVisibility = .visible
-            } else {
-                window.titleVisibility = .hidden
-            }
-            window.styleMask.insert(.fullSizeContentView)
-            window.backgroundColor = NSColor(surfaceColor)
-            window.isOpaque = true
-            if #available(macOS 11.0, *) {
-                window.titlebarSeparatorStyle = .none
-            }
-            if let usesDarkAppearance {
-                window.appearance = NSAppearance(named: usesDarkAppearance ? .darkAqua : .aqua)
-            }
+            // Each change retiles or redraws the window, so only real changes are applied.
+            if window.isMovableByWindowBackground { window.isMovableByWindowBackground = false }
+            if !window.titlebarAppearsTransparent { window.titlebarAppearsTransparent = true }
+            if let windowTitle, window.title != windowTitle { window.title = windowTitle }
+            let titleVisibility: NSWindow.TitleVisibility = windowTitle == nil ? .hidden : .visible
+            if window.titleVisibility != titleVisibility { window.titleVisibility = titleVisibility }
+            if !window.styleMask.contains(.fullSizeContentView) { window.styleMask.insert(.fullSizeContentView) }
+            let backgroundColor = NSColor(surfaceColor)
+            if window.backgroundColor != backgroundColor { window.backgroundColor = backgroundColor }
+            if !window.isOpaque { window.isOpaque = true }
+            let appearanceName: NSAppearance.Name = isDark ? .darkAqua : .aqua
+            if window.appearance?.name != appearanceName { window.appearance = NSAppearance(named: appearanceName) }
+            if window.titlebarSeparatorStyle != .none { window.titlebarSeparatorStyle = .none }
 
             coordinator.observeWindow(window)
             coordinator.configureWindowChrome(in: window)
@@ -75,17 +69,13 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
         view.configureAttachedWindow()
     }
 
-    /// AppKit reinstalls `.toolbarButton` whenever the window changes state.
-    /// Hide + remove it on every relevant notification so our own SwiftUI
-    /// sidebar toggle is the only one visible.
-    fileprivate static func suppressSystemToolbarButton(in window: NSWindow) {
-        guard let button = window.standardWindowButton(.toolbarButton) else { return }
-        button.isHidden = true
-        button.removeFromSuperview()
-    }
-
     final class Coordinator {
-        let suppressToolbarButton: Bool
+        private static let trafficLightButtonTypes: [NSWindow.ButtonType] = [
+            .closeButton,
+            .miniaturizeButton,
+            .zoomButton,
+        ]
+
         var trafficLightRowHeight: CGFloat?
         var trafficLightLeadingInset: CGFloat?
         let enablesStandardWindowControls: Bool
@@ -93,12 +83,10 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
         private var observers: [NSObjectProtocol] = []
 
         init(
-            suppressToolbarButton: Bool,
             trafficLightRowHeight: CGFloat? = nil,
             trafficLightLeadingInset: CGFloat? = nil,
             enablesStandardWindowControls: Bool = false
         ) {
-            self.suppressToolbarButton = suppressToolbarButton
             self.trafficLightRowHeight = trafficLightRowHeight
             self.trafficLightLeadingInset = trafficLightLeadingInset
             self.enablesStandardWindowControls = enablesStandardWindowControls
@@ -114,15 +102,13 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             observedWindow = window
 
             let center = NotificationCenter.default
+            // The window retiles its titlebar on these; nothing else moves the traffic lights.
             let windowLayoutNames: [NSNotification.Name] = [
                 NSWindow.didResizeNotification,
                 NSWindow.didBecomeKeyNotification,
-                NSWindow.didResignKeyNotification,
                 NSWindow.didEnterFullScreenNotification,
                 NSWindow.didExitFullScreenNotification,
                 NSWindow.didChangeBackingPropertiesNotification,
-                NSWindow.didChangeOcclusionStateNotification,
-                NSWindow.didUpdateNotification
             ]
             for name in windowLayoutNames {
                 let token = center.addObserver(forName: name, object: window, queue: .main) { [weak self, weak window] _ in
@@ -137,20 +123,16 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
             if enablesStandardWindowControls {
                 enableStandardWindowControls(in: window)
             }
-            if suppressToolbarButton {
-                WindowBackgroundDragEnabler.suppressSystemToolbarButton(in: window)
-            }
             alignTrafficLights(in: window)
         }
 
         private func enableStandardWindowControls(in window: NSWindow) {
-            window.styleMask.formUnion([.closable, .miniaturizable, .resizable])
-            [
-                NSWindow.ButtonType.closeButton,
-                .miniaturizeButton,
-                .zoomButton,
-            ].forEach { buttonType in
-                guard let button = window.standardWindowButton(buttonType) else { return }
+            let controls: NSWindow.StyleMask = [.closable, .miniaturizable, .resizable]
+            if !window.styleMask.isSuperset(of: controls) {
+                window.styleMask.formUnion(controls)
+            }
+            for buttonType in Self.trafficLightButtonTypes {
+                guard let button = window.standardWindowButton(buttonType) else { continue }
                 button.isHidden = false
                 button.isEnabled = true
             }
@@ -204,12 +186,13 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
                 horizontalOffset = 0
             }
 
-            let buttonTypes: [NSWindow.ButtonType] = [
-                .closeButton,
-                .miniaturizeButton,
-                .zoomButton,
-            ]
-            for buttonType in buttonTypes {
+            if titlebarView.clipsToBounds {
+                titlebarView.clipsToBounds = false
+            }
+            let titlebarTopY = titlebarView.isFlipped
+                ? titlebarView.bounds.minY
+                : titlebarView.bounds.maxY
+            for buttonType in Self.trafficLightButtonTypes {
                 guard let button = window.standardWindowButton(buttonType),
                       !button.isHidden,
                       button.superview === titlebarView
@@ -217,17 +200,12 @@ struct WindowBackgroundDragEnabler: NSViewRepresentable {
                     continue
                 }
 
-                let titlebarTopY = titlebarView.isFlipped
-                    ? titlebarView.bounds.minY
-                    : titlebarView.bounds.maxY
                 let originY = NativeWindowChromeGeometry.centeredButtonOriginY(
                     buttonHeight: button.frame.height,
                     chromeHeight: trafficLightRowHeight,
                     contentTopY: titlebarTopY,
                     isFlipped: titlebarView.isFlipped
                 )
-
-                titlebarView.clipsToBounds = false
                 let originX = button.frame.minX + horizontalOffset
                 guard abs(button.frame.minX - originX) > 0.25
                     || abs(button.frame.minY - originY) > 0.25
@@ -371,6 +349,50 @@ final class ApplicationTerminationCoordinator {
             application?.reply(toApplicationShouldTerminate: shouldTerminate)
         }
         return .terminateLater
+    }
+}
+
+/// The window a SwiftUI view is in, for AppKit calls the view cannot make itself.
+@MainActor
+final class HostingWindowReference {
+    fileprivate(set) weak var window: NSWindow?
+
+    func bringToFront() {
+        guard let window else { return }
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    func close() {
+        window?.close()
+    }
+}
+
+/// Records the window it is placed in into `reference`.
+struct HostingWindowReader: NSViewRepresentable {
+    let reference: HostingWindowReference
+
+    func makeNSView(context: Context) -> ReaderView {
+        let view = ReaderView(frame: .zero)
+        view.reference = reference
+        return view
+    }
+
+    func updateNSView(_ nsView: ReaderView, context: Context) {
+        nsView.reference = reference
+    }
+
+    final class ReaderView: NSView {
+        weak var reference: HostingWindowReference? {
+            didSet { reference?.window = window }
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            reference?.window = window
+        }
     }
 }
 

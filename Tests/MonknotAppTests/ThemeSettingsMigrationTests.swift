@@ -405,6 +405,28 @@ final class ThemeSettingsMigrationTests: XCTestCase {
         }
     }
 
+    func testQuietSidebarSubduesRowInkOnceAndKeepsItLegible() {
+        for baseTheme in [AppTheme.defaultLight, AppTheme.defaultDark] {
+            let quietTheme = baseTheme.replacing(quietSidebar: true)
+            let floor = baseTheme.isDark ? 0.48 : 0.52
+
+            XCTAssertEqual(baseTheme.sidebarOpacity(AppTheme.mutedInkOpacity), AppTheme.mutedInkOpacity)
+            XCTAssertEqual(quietTheme.sidebarOpacity(1), 0.8, accuracy: 0.0001)
+
+            // A resting label (`ink2`) is subdued, but never below the legibility floor.
+            let quietLabel = quietTheme.sidebarOpacity(AppTheme.mutedInkOpacity)
+            XCTAssertLessThan(quietLabel, AppTheme.mutedInkOpacity)
+            XCTAssertGreaterThanOrEqual(quietLabel, floor)
+
+            // A resting glyph (`ink3`) is already under the floor, so it stays put instead of sinking
+            // toward the disabled `ink4`.
+            XCTAssertEqual(
+                quietTheme.sidebarOpacity(AppTheme.tertiaryInkOpacity),
+                AppTheme.tertiaryInkOpacity
+            )
+        }
+    }
+
     func testInterfaceGlyphsNeverOutgrowTextAcrossSupportedZoomsAndThemes() {
         for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {

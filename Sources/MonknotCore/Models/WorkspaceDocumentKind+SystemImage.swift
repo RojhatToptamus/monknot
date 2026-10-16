@@ -11,6 +11,8 @@ extension WorkspaceDocumentKind {
             return "doc.fill"
         case .text:
             return "doc.text"
+        case .image:
+            return "photo"
         case .media:
             return "play.rectangle.fill"
         case .nativePreview:

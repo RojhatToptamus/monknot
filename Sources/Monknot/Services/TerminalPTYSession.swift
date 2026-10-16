@@ -25,7 +25,9 @@ enum TerminalPTYError: LocalizedError {
 }
 
 final class TerminalPTYSession {
-    private let outputHandler: @Sendable (String) -> Void
+    /// Receives raw bytes as read. A read can end inside a UTF-8 sequence, so decoding is left to the
+    /// terminal emulator, which joins the halves.
+    private let outputHandler: @Sendable (Data) -> Void
     private let exitHandler: @Sendable (Int32?) -> Void
     private var masterFD: Int32 = -1
     private var childPID: pid_t = -1
@@ -36,7 +38,7 @@ final class TerminalPTYSession {
     private var didFinish = false
 
     init(
-        outputHandler: @escaping @Sendable (String) -> Void,
+        outputHandler: @escaping @Sendable (Data) -> Void,
         exitHandler: @escaping @Sendable (Int32?) -> Void
     ) {
         self.outputHandler = outputHandler
@@ -44,7 +46,9 @@ final class TerminalPTYSession {
         ioQueue.setSpecific(key: queueKey, value: ())
     }
 
-    func start(workingDirectory: URL) throws {
+    /// Starts the login shell. `columns` × `rows` is the terminal's current size, so a restarted
+    /// session lays out at the size it is shown at rather than a default.
+    func start(workingDirectory: URL, columns: Int = 100, rows: Int = 32) throws {
         guard childPID <= 0 else { return }
 
         let shellPath = strdup("/bin/zsh")
@@ -62,8 +66,26 @@ final class TerminalPTYSession {
             throw TerminalPTYError.openMasterFailed
         }
 
+        // Built before fork: the child only calls async-signal-safe functions.
+        var environment: [UnsafeMutablePointer<CChar>?] = Self.childEnvironment(
+            from: ProcessInfo.processInfo.environment,
+            appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        )
+        .map { strdup("\($0.key)=\($0.value)") }
+        environment.append(nil)
+        defer {
+            for entry in environment {
+                free(entry)
+            }
+        }
+
         var master: Int32 = -1
-        var windowSize = winsize(ws_row: 32, ws_col: 100, ws_xpixel: 0, ws_ypixel: 0)
+        var windowSize = winsize(
+            ws_row: UInt16(clamping: max(1, rows)),
+            ws_col: UInt16(clamping: max(1, columns)),
+            ws_xpixel: 0,
+            ws_ypixel: 0
+        )
         let pid = forkpty(&master, nil, nil, &windowSize)
 
         guard pid >= 0 else {
@@ -72,13 +94,8 @@ final class TerminalPTYSession {
 
         if pid == 0 {
             chdir(cwdPath)
-            setenv("TERM", "xterm-256color", 1)
-            setenv("COLORTERM", "truecolor", 1)
-            setenv("CLICOLOR", "1", 1)
-            setenv("MONKNOT_TERMINAL", "1", 1)
-
             var argv: [UnsafeMutablePointer<CChar>?] = [arg0, arg1, nil]
-            execv(shellPath, &argv)
+            execve(shellPath, &argv, &environment)
             _exit(127)
         }
 
@@ -96,7 +113,13 @@ final class TerminalPTYSession {
     }
 
     func write(_ string: String) {
-        guard masterFD >= 0, let data = string.data(using: .utf8) else { return }
+        guard let data = string.data(using: .utf8) else { return }
+        write(data)
+    }
+
+    /// Raw bytes, for input that is not UTF-8 text (X10 mouse reports carry bytes above 0x7F).
+    func write(_ data: Data) {
+        guard masterFD >= 0 else { return }
         ioQueue.async { [weak self] in
             self?.writeOnQueue(data)
         }
@@ -140,7 +163,7 @@ final class TerminalPTYSession {
         let count = Darwin.read(masterFD, &buffer, buffer.count)
 
         if count > 0 {
-            outputHandler(String(decoding: buffer.prefix(count), as: UTF8.self))
+            outputHandler(Data(buffer.prefix(count)))
         } else {
             cancelReadSourceOnQueue()
         }
@@ -237,6 +260,36 @@ final class TerminalPTYSession {
         } else {
             ioQueue.sync(execute: work)
         }
+    }
+
+    /// Variables other terminal emulators export. Inherited from whatever launched Monknot, they would
+    /// tell programs in this terminal that they run in iTerm, VS Code, Ghostty or tmux.
+    private static let foreignTerminalVariables: Set<String> = [
+        "TERM_SESSION_ID", "LC_TERMINAL", "LC_TERMINAL_VERSION", "TERMINAL_EMULATOR",
+        "TMUX", "TMUX_PANE", "STY", "WT_SESSION", "COLORFGBG", "SHLVL",
+    ]
+    private static let foreignTerminalVariablePrefixes = [
+        "ITERM_", "VSCODE_", "GHOSTTY_", "KITTY_", "WEZTERM_", "ALACRITTY_", "WARP_", "KONSOLE_", "ZELLIJ",
+    ]
+
+    /// The shell's environment: the app's own, minus another terminal's identity, plus this terminal's
+    /// (xterm-compatible, truecolor, UTF-8 when no locale is set).
+    static func childEnvironment(from base: [String: String], appVersion: String?) -> [String: String] {
+        var environment = base.filter { name, _ in
+            !foreignTerminalVariables.contains(name)
+                && !foreignTerminalVariablePrefixes.contains { name.hasPrefix($0) }
+        }
+        environment["TERM"] = "xterm-256color"
+        environment["COLORTERM"] = "truecolor"
+        environment["CLICOLOR"] = "1"
+        environment["TERM_PROGRAM"] = "Monknot"
+        environment["TERM_PROGRAM_VERSION"] = appVersion ?? "1.0"
+        environment["MONKNOT_TERMINAL"] = "1"
+        if environment["LANG"] == nil, environment["LC_ALL"] == nil, environment["LC_CTYPE"] == nil {
+            // Launched from Finder there is no locale, and programs then fall back to ASCII.
+            environment["LANG"] = "en_US.UTF-8"
+        }
+        return environment
     }
 
     private static func exitCode(from waitStatus: Int32) -> Int32? {
