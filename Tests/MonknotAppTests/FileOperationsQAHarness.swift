@@ -341,7 +341,7 @@ final class QAGatedScanner: WorkspaceDocumentScanning, @unchecked Sendable {
     }
 }
 
-/// Shared helpers for the QA sweep suites: real stores on temporary workspaces.
+/// Shared helpers for the file-operation and sidebar menu suites: real stores on temporary workspaces.
 @MainActor
 class FileOperationsQATestCase: WorkspaceStoreTestCase {
     // MARK: - Helpers
