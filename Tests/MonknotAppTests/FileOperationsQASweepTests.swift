@@ -492,9 +492,15 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: nil))
         await idle(store)
         let second = try XCTUnwrap(store.selectedDocument)
-        XCTExpectFailure("A first line containing ':' or '/' loses the whole title: the note is named '<timestamp> Clipboard.md'") {
-            XCTAssertTrue(second.relativePath.contains("Meeting"), second.relativePath)
-        }
+        XCTAssertTrue(second.relativePath.hasSuffix(" Meeting - Q3 plan.md"), second.relativePath)
+        _ = await wait { !store.isDocumentLoading }
+        XCTAssertTrue(store.documentText.hasPrefix("# Meeting: Q3 plan\n"), store.documentText)
+
+        pasteboard.clearContents()
+        pasteboard.setString("A/B testing\nresults", forType: .string)
+        XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: nil))
+        await idle(store)
+        XCTAssertTrue(store.selectedDocument?.relativePath.hasSuffix(" A-B testing.md") == true, store.selectedDocument?.relativePath ?? "")
     }
 
     func testPastePNGImageDataCreatesAnImageFile() async throws {
@@ -521,8 +527,7 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         XCTAssertNotNil(doc(store, "Pics/Pasted Image.png"))
     }
 
-    /// Rich text copied from apps that publish only RTF or HTML has words in it; Paste should not
-    /// end in a beep with nothing created. (RTF works through the pasteboard's own conversion.)
+    /// Rich text copied from apps that publish only RTF or HTML becomes a note of its text.
     func testPasteRichTextOnlyClipboardCreatesANote() async throws {
         let root = try makeRoot()
         let store = try await openStore(root)
@@ -544,9 +549,12 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         await idle(store)
 
         XCTAssertTrue(rtfPasted, "RTF-only clipboard")
-        XCTExpectFailure("A clipboard holding only HTML pastes nothing (Paste beeps); its text is never read") {
-            XCTAssertTrue(htmlPasted, "HTML-only clipboard")
-        }
+        XCTAssertTrue(htmlPasted, "HTML-only clipboard")
+        XCTAssertNil(store.errorMessage)
+        _ = await wait { !store.isDocumentLoading }
+        XCTAssertTrue(store.selectedDocument?.relativePath.hasSuffix(" Html words here.md") == true, store.selectedDocument?.relativePath ?? "")
+        XCTAssertTrue(store.documentText.contains("Html words here"), store.documentText)
+        XCTAssertFalse(store.documentText.contains("<p>"), store.documentText)
     }
 
     // MARK: - Finder drops

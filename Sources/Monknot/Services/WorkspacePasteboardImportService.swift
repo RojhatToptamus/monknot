@@ -73,12 +73,24 @@ enum WorkspacePasteboardImportService {
             return [item]
         }
 
-        if let text = pasteboard.string(forType: .string),
+        if let text = pasteboard.string(forType: .string) ?? plainText(fromHTMLOn: pasteboard),
            let item = capturedTextItem(from: text, isURL: false) {
             return [item]
         }
 
         return []
+    }
+
+    /// The text of HTML that an app put on the pasteboard without a plain-text version.
+    private static func plainText(fromHTMLOn pasteboard: NSPasteboard) -> String? {
+        guard let data = pasteboard.data(forType: .html),
+              let text = try? NSAttributedString(
+                  data: data,
+                  options: [.documentType: NSAttributedString.DocumentType.html, .characterEncoding: String.Encoding.utf8.rawValue],
+                  documentAttributes: nil
+              ).string
+        else { return nil }
+        return text
     }
 
     static func importItems(_ items: [WorkspacePasteboardImportItem], into directoryURL: URL) throws -> [URL] {
@@ -169,7 +181,7 @@ enum WorkspacePasteboardImportService {
         let capturedURL = captureURL(from: trimmed, explicitURLType: isURL)
         let title = captureTitle(for: trimmed, url: capturedURL, override: titleOverride)
         let timestamp = captureTimestamp()
-        let fileName = sanitizedFileName("\(timestamp) \(title).md", fallback: "\(timestamp) Clipboard.md")
+        let fileName = sanitizedFileName("\(timestamp) \(fileNameTitle(title)).md", fallback: "\(timestamp) Clipboard.md")
         let markdown: String
 
         if let url = capturedURL {
@@ -201,6 +213,15 @@ enum WorkspacePasteboardImportService {
         }
 
         return .capturedMarkdown(markdown, suggestedName: fileName)
+    }
+
+    /// `title` as part of a file name, which cannot hold a colon or a slash: each becomes a dash,
+    /// so "Meeting: Q3" names "Meeting - Q3.md" and "A/B" names "A-B.md".
+    private static func fileNameTitle(_ title: String) -> String {
+        title
+            .replacingOccurrences(of: ": ", with: " - ")
+            .replacingOccurrences(of: ":", with: "-")
+            .replacingOccurrences(of: "/", with: "-")
     }
 
     private static func captureURL(from text: String, explicitURLType: Bool) -> URL? {
