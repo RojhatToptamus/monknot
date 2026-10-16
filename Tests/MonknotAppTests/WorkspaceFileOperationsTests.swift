@@ -732,14 +732,15 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         store.setDocumentText("unsaved\n")
 
         store.copyItem(at: a.url)
-        XCTAssertTrue(store.canPasteDocumentTransfer)
         store.pasteDocumentTransfer()
         await idle(store)
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("a copy.txt"), encoding: .utf8), "unsaved\n")
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("a.txt"), encoding: .utf8), "disk\n")
         XCTAssertEqual(store.selectedDocumentID, root.appendingPathComponent("a copy.txt").path)
-        XCTAssertTrue(store.canPasteDocumentTransfer, "A Copy can be pasted again")
+        store.pasteDocumentTransfer()
+        await idle(store)
+        XCTAssertTrue(exists(root.appendingPathComponent("a copy 2.txt")), "A Copy can be pasted again")
 
         // The original's unsaved text survives the selection change.
         XCTAssertFalse(store.saveState(for: a.id).isClean)
@@ -782,7 +783,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         store.pasteDocumentTransfer() // same folder
         XCTAssertFalse(store.isBusy)
         XCTAssertTrue(exists(root.appendingPathComponent("a.txt")))
-        XCTAssertFalse(store.canPasteDocumentTransfer)
+        XCTAssertFalse(store.hasPendingCut)
 
         store.cutItem(at: a.url)
         store.pasteDocumentTransfer(into: root.appendingPathComponent("Sub"))
@@ -791,7 +792,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertEqual(names(in: root.appendingPathComponent("Sub")), ["a.txt"])
         XCTAssertFalse(exists(root.appendingPathComponent("a.txt")))
         XCTAssertEqual(store.selectedDocumentID, root.appendingPathComponent("Sub/a.txt").path)
-        XCTAssertFalse(store.canPasteDocumentTransfer)
+        XCTAssertFalse(store.hasPendingCut)
     }
 
     func testCutPasteOntoExistingNameRenamesWithCopySuffix() async throws {
@@ -909,8 +910,8 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertNil(windowA.errorMessage)
         XCTAssertTrue(exists(root.appendingPathComponent("a.txt")), "Window A moved its cut file")
         XCTAssertEqual(names(in: root.appendingPathComponent("Sub")), ["b.txt"])
-        XCTAssertFalse(windowA.canPasteDocumentTransfer)
-        XCTAssertTrue(windowB.canPasteDocumentTransfer)
+        XCTAssertNil(windowA.pendingTransferPasteboardStamp)
+        XCTAssertNotNil(windowB.pendingTransferPasteboardStamp)
     }
 
     /// Any other copy replaces the item a Cut wrote, so Paste imports the new clipboard contents.
@@ -933,7 +934,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         await idle(store)
         XCTAssertTrue(exists(root.appendingPathComponent("a.txt")))
         XCTAssertFalse(exists(root.appendingPathComponent("Sub/a.txt")))
-        XCTAssertFalse(store.canPasteDocumentTransfer)
+        XCTAssertNil(store.pendingTransferPasteboardStamp)
     }
 
     /// A Copy or Cut that fails ends the earlier one, whose item the clipboard may no longer hold.
@@ -948,10 +949,10 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         }
 
         store.putItemOnPasteboard(at: root.appendingPathComponent("a.txt"), cutting: true, pasteboard: pasteboard)
-        XCTAssertTrue(store.canPasteDocumentTransfer)
+        XCTAssertNotNil(store.pendingTransferPasteboardStamp)
         store.putItemOnPasteboard(at: root.appendingPathComponent("missing.txt"), cutting: false, pasteboard: pasteboard)
         XCTAssertNotNil(store.errorMessage)
-        XCTAssertFalse(store.canPasteDocumentTransfer)
+        XCTAssertNil(store.pendingTransferPasteboardStamp)
     }
 
     func testPasteFromAForeignClipboardImportsItsFiles() async throws {

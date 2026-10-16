@@ -228,10 +228,6 @@ final class WorkspaceStore: ObservableObject {
         workspaceURL != nil && rootNode != nil && documents.isEmpty && !isBusy
     }
 
-    var canPasteDocumentTransfer: Bool {
-        pendingDocumentTransfer != nil && workspaceURL != nil
-    }
-
     func saveState(for documentID: String) -> DocumentSaveState {
         documentSaveStates[documentID] ?? .clean
     }
@@ -5037,14 +5033,6 @@ struct WorkspaceDocumentIDRemapEvent: Equatable, Sendable {
     /// Where `path` is now: the moved item and everything inside it follow it, any other path stays.
     func remappedPath(_ path: String) -> String {
         WorkspaceStore.path(path, afterMoving: itemSourcePath, to: itemDestinationPath)
-    }
-
-    var sourceID: String {
-        mappings.first?.sourceID ?? ""
-    }
-
-    var destinationID: String {
-        mappings.first?.destinationID ?? ""
     }
 }
 

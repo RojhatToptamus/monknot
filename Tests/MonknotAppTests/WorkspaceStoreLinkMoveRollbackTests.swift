@@ -120,7 +120,7 @@ final class WorkspaceStoreLinkMoveRollbackTests: WorkspaceStoreLinkTestCase {
 
         store.confirmMarkdownLinkMoveReview(id: review.id)
         await assertEventually {
-            !store.isBusy && store.documentIDRemapEvent?.destinationID == destination.path
+            !store.isBusy && store.documentIDRemapEvent?.itemDestinationPath == destination.path
         }
 
         let names = try FileManager.default.contentsOfDirectory(
@@ -133,7 +133,7 @@ final class WorkspaceStoreLinkMoveRollbackTests: WorkspaceStoreLinkTestCase {
             try String(contentsOf: fixture.source, encoding: .utf8),
             "[target](target.md)\n"
         )
-        XCTAssertEqual(store.documentIDRemapEvent?.sourceID, fixture.target.path)
+        XCTAssertEqual(store.documentIDRemapEvent?.itemSourcePath, fixture.target.path)
     }
 
     func testCaseOnlyFolderRenameRollsBackThroughTemporaryHopAfterScanFailure() async throws {
@@ -221,8 +221,11 @@ final class WorkspaceStoreLinkMoveRollbackTests: WorkspaceStoreLinkTestCase {
             try String(contentsOf: source, encoding: .utf8),
             "[target](Archive/Target.md)\n"
         )
-        XCTAssertEqual(store.documentIDRemapEvent?.sourceID, target.path)
-        XCTAssertEqual(store.documentIDRemapEvent?.destinationID, destination.path)
+        XCTAssertEqual(store.documentIDRemapEvent?.itemSourcePath, folder.path)
+        XCTAssertEqual(
+            store.documentIDRemapEvent?.mappings,
+            [WorkspaceDocumentIDMapping(sourceID: target.path, destinationID: destination.path)]
+        )
     }
 
     func testRenamePreviewsAndUpdatesLinksBeforePublishingRemap() async throws {
@@ -253,7 +256,7 @@ final class WorkspaceStoreLinkMoveRollbackTests: WorkspaceStoreLinkTestCase {
         let didCommit = await waitUntil {
             !store.isBusy &&
                 FileManager.default.fileExists(atPath: destination.path) &&
-                store.documentIDRemapEvent?.destinationID == destination.path
+                store.documentIDRemapEvent?.itemDestinationPath == destination.path
         }
         XCTAssertTrue(didCommit, store.errorMessage ?? "Move did not finish.")
 
@@ -262,7 +265,7 @@ final class WorkspaceStoreLinkMoveRollbackTests: WorkspaceStoreLinkTestCase {
             try String(contentsOf: fixture.source, encoding: .utf8),
             "[target](Moved.md)\n"
         )
-        XCTAssertEqual(store.documentIDRemapEvent?.sourceID, fixture.target.path)
+        XCTAssertEqual(store.documentIDRemapEvent?.itemSourcePath, fixture.target.path)
     }
 
     func testMoveReviewCancellationLeavesFilesAndRemapUntouched() async throws {
@@ -389,7 +392,7 @@ final class WorkspaceStoreLinkMoveRollbackTests: WorkspaceStoreLinkTestCase {
         await assertEventually {
             !store.isBusy && store.pendingMarkdownLinkMoveReview != nil
         }
-        XCTAssertTrue(store.canPasteDocumentTransfer)
+        XCTAssertTrue(store.hasPendingCut)
         guard let review = store.pendingMarkdownLinkMoveReview else {
             return XCTFail("Expected link move review")
         }
@@ -399,11 +402,11 @@ final class WorkspaceStoreLinkMoveRollbackTests: WorkspaceStoreLinkTestCase {
         await assertEventually {
             !store.isBusy && FileManager.default.fileExists(atPath: destination.path)
         }
-        XCTAssertFalse(store.canPasteDocumentTransfer)
+        XCTAssertFalse(store.hasPendingCut)
         XCTAssertEqual(
             try String(contentsOf: fixture.source, encoding: .utf8),
             "[target](Archive/Target.md)\n"
         )
-        XCTAssertEqual(store.documentIDRemapEvent?.destinationID, destination.path)
+        XCTAssertEqual(store.documentIDRemapEvent?.itemDestinationPath, destination.path)
     }
 }
