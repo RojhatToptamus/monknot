@@ -42,9 +42,8 @@ public struct SidebarNode: Identifiable, Hashable, Codable, Sendable {
         if self.id == id {
             return self
         }
-        let prefix = self.id.hasSuffix("/") ? self.id : self.id + "/"
-        guard let children, id.hasPrefix(prefix) else { return nil }
-        for child in children where child.id == id || id.hasPrefix(child.id + "/") {
+        guard let children, WorkspaceDocumentSupport.isPath(id, containedIn: self.id) else { return nil }
+        for child in children where WorkspaceDocumentSupport.isPath(id, containedIn: child.id) {
             if let found = child.node(withID: id) {
                 return found
             }

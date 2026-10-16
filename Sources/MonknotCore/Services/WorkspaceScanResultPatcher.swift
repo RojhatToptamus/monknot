@@ -24,7 +24,7 @@ public enum WorkspaceScanResultPatcher {
                     return nil
                 }
                 if values.isDirectory == true {
-                    let existingNode = findNode(id: url.path, in: rootNode)
+                    let existingNode = rootNode.node(withID: url.path)
                     if values.isPackage == true
                         || shouldSkipDirectory(url, rootURL: rootURL, ignoredDirectoryNames: ignoredDirectoryNames) {
                         if existingNode?.kind == .folder {
@@ -68,7 +68,7 @@ public enum WorkspaceScanResultPatcher {
                 documentsByID[document.id] = document
                 rootNode = inserting(document, into: rootNode, rootURL: rootURL)
             } else {
-                if let existingNode = findNode(id: url.path, in: rootNode), existingNode.kind == .folder {
+                if let existingNode = rootNode.node(withID: url.path), existingNode.kind == .folder {
                     removeDocuments(containedIn: url, from: &documentsByID)
                     rootNode = removingNode(id: url.path, from: rootNode)
                     continue
@@ -203,18 +203,6 @@ public enum WorkspaceScanResultPatcher {
         return replacingChildren(of: node, with: sorted(children))
     }
 
-    private static func findNode(id: String, in node: SidebarNode) -> SidebarNode? {
-        if node.id == id {
-            return node
-        }
-        for child in node.children ?? [] {
-            if let found = findNode(id: id, in: child) {
-                return found
-            }
-        }
-        return nil
-    }
-
     private static func scanDirectoryNode(
         _ directoryURL: URL,
         rootURL: URL,
@@ -284,9 +272,8 @@ public enum WorkspaceScanResultPatcher {
 
     private static func removeDocuments(containedIn directoryURL: URL, from documentsByID: inout [String: WorkspaceDocument]) {
         let directoryPath = directoryURL.standardizedFileURL.path
-        let prefix = directoryPath.hasSuffix("/") ? directoryPath : directoryPath + "/"
         documentsByID = documentsByID.filter { id, _ in
-            id != directoryPath && !id.hasPrefix(prefix)
+            !WorkspaceDocumentSupport.isPath(id, containedIn: directoryPath)
         }
     }
 

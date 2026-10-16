@@ -229,8 +229,12 @@ public enum WorkspaceDocumentSupport {
 
     /// Whether `url` is `directoryURL` or inside it, comparing standardized paths.
     public static func isURL(_ url: URL, containedIn directoryURL: URL) -> Bool {
-        let path = url.standardizedFileURL.path
-        let directoryPath = directoryURL.standardizedFileURL.path
+        isPath(url.standardizedFileURL.path, containedIn: directoryURL.standardizedFileURL.path)
+    }
+
+    /// Whether `path` is `directoryPath` or inside it. Both are standardized paths, such as
+    /// document and sidebar node IDs.
+    public static func isPath(_ path: String, containedIn directoryPath: String) -> Bool {
         let prefix = directoryPath.hasSuffix("/") ? directoryPath : directoryPath + "/"
         return path == directoryPath || path.hasPrefix(prefix)
     }
