@@ -12,6 +12,9 @@ final class WorkspaceFileWatcher {
     private let queue = DispatchQueue(label: "com.monknot.app.workspace-file-watcher", qos: .utility)
     private var callback: (@Sendable (Event) -> Void)?
     private var rootPath: String?
+    /// FSEvents reports paths under the folder's resolved location, such as `/private/var/…` for
+    /// `/var/…`; events are reported under the path the workspace was opened with.
+    private var resolvedRootPath: String?
 
     func start(rootURL: URL, onChange: @escaping @Sendable (Event) -> Void) {
         let path = rootURL.standardizedFileURL.path
@@ -22,6 +25,7 @@ final class WorkspaceFileWatcher {
 
         stop()
         rootPath = path
+        resolvedRootPath = rootURL.standardizedFileURL.resolvingSymlinksInPath().path
         callback = onChange
 
         var context = FSEventStreamContext(
@@ -57,6 +61,7 @@ final class WorkspaceFileWatcher {
         guard let stream else {
             callback = nil
             rootPath = nil
+            resolvedRootPath = nil
             return
         }
 
@@ -66,18 +71,30 @@ final class WorkspaceFileWatcher {
         self.stream = nil
         callback = nil
         rootPath = nil
+        resolvedRootPath = nil
     }
 
     private static let handleEvents: FSEventStreamCallback = { _, clientInfo, eventCount, eventPaths, eventFlags, _ in
         guard let clientInfo else { return }
         let watcher = Unmanaged<WorkspaceFileWatcher>.fromOpaque(clientInfo).takeUnretainedValue()
         let pathArray = unsafeBitCast(eventPaths, to: NSArray.self)
-        let paths = (pathArray as? [String]) ?? []
+        let paths = ((pathArray as? [String]) ?? []).map {
+            rebased($0, from: watcher.resolvedRootPath, to: watcher.rootPath)
+        }
 
         guard let event = WorkspaceFileWatcher.makeEvent(paths: paths, flags: Array(UnsafeBufferPointer(start: eventFlags, count: eventCount))) else {
             return
         }
         watcher.callback?(event)
+    }
+
+    /// `path` under `root` when it lies under `resolvedRoot`, the same folder reached without
+    /// symbolic links.
+    internal static func rebased(_ path: String, from resolvedRoot: String?, to root: String?) -> String {
+        guard let resolvedRoot, let root, resolvedRoot != root else { return path }
+        if path == resolvedRoot { return root }
+        guard path.hasPrefix(resolvedRoot + "/") else { return path }
+        return root + path.dropFirst(resolvedRoot.count)
     }
 
     internal static func makeEvent(paths: [String], flags eventFlags: [FSEventStreamEventFlags]) -> Event? {
