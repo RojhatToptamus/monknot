@@ -317,10 +317,24 @@ final class SidebarMenuHarness {
 }
 
 /// A scanner that can be held, so a file operation stays in flight while a test acts.
+/// Holds scans until released. With `scansBeforeWaiting`, a held scan reads the disk first and
+/// returns that result once released, as a scan that finishes after the disk changed does.
 final class GatedWorkspaceScanner: WorkspaceDocumentScanning, @unchecked Sendable {
     private let base = WorkspaceDocumentScanner()
     private let lock = NSLock()
     private var gate: DispatchSemaphore?
+    private var heldScanCount = 0
+    let scansBeforeWaiting: Bool
+
+    init(scansBeforeWaiting: Bool = false) {
+        self.scansBeforeWaiting = scansBeforeWaiting
+    }
+
+    /// Scans waiting at the gate.
+    var waitingScanCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return heldScanCount
+    }
 
     func hold() {
         lock.lock(); gate = DispatchSemaphore(value: 0); lock.unlock()
@@ -332,12 +346,14 @@ final class GatedWorkspaceScanner: WorkspaceDocumentScanning, @unchecked Sendabl
     }
 
     func scan(rootURL: URL) throws -> WorkspaceDocumentScanResult {
-        lock.lock(); let current = gate; lock.unlock()
+        let earlyResult = scansBeforeWaiting ? try base.scan(rootURL: rootURL) : nil
+        lock.lock(); let current = gate; if current != nil { heldScanCount += 1 }; lock.unlock()
         if let current {
             _ = current.wait(timeout: .now() + 10)
             current.signal()
+            lock.lock(); heldScanCount -= 1; lock.unlock()
         }
-        return try base.scan(rootURL: rootURL)
+        return try earlyResult ?? base.scan(rootURL: rootURL)
     }
 }
 

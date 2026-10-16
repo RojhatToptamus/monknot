@@ -1006,6 +1006,36 @@ final class FileOperationsScenarioTests: FileOperationsTestCase {
         XCTAssertTrue(converged, "\(store.documents.map(\.relativePath))")
     }
 
+    /// A change reported while a file operation runs waits for it, so the operation's scan, which
+    /// read the disk before the change, can't put a deleted file back.
+    func testADeletionDuringAFileOperationOutlastsTheOperationsScan() async throws {
+        let root = try makeRoot()
+        try write("x\n", "a.txt", in: root)
+        try write("gone\n", "doomed.txt", in: root)
+        let scanner = GatedWorkspaceScanner(scansBeforeWaiting: true)
+        let store = try await openStore(root, scanner: scanner)
+
+        scanner.hold()
+        store.duplicateItem(at: root.appendingPathComponent("a.txt"))
+        let scanned = await wait(timeout: 6) { scanner.waitingScanCount == 1 }
+        XCTAssertTrue(scanned)
+        let doomed = root.appendingPathComponent("doomed.txt").standardizedFileURL.path
+        try FileManager.default.removeItem(atPath: doomed)
+        store.testing_clearWatcherSuppression()
+        store.testing_scheduleExternalWorkspaceRefresh(WorkspaceFileWatcher.Event(
+            changedPaths: [doomed],
+            modifiedOnlyPaths: [],
+            requiresFullRescan: false
+        ))
+        scanner.release()
+        await idle(store)
+
+        let converged = await wait(timeout: 6) {
+            Set(store.documents.map(\.relativePath)) == ["a.txt", "a copy.txt"]
+        }
+        XCTAssertTrue(converged, "\(store.documents.map(\.relativePath))")
+    }
+
     func testRapidRepeatedDuplicateRunsOnceAndReportsTheRest() async throws {
         let root = try makeRoot()
         try write("x\n", "a.txt", in: root)

@@ -3955,7 +3955,7 @@ final class WorkspaceStore: ObservableObject {
             deferExternalRefreshUntilWritingToolsEnd()
             return
         }
-        guard bypassingSuppression || Date() >= suppressWatcherUntil else {
+        guard bypassingSuppression || !holdsWatcherEvents else {
             deferSuppressedWatcherEvent(event)
             return
         }
@@ -3990,6 +3990,12 @@ final class WorkspaceStore: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
     }
 
+    /// Watcher events wait while a file operation runs, whose scan replaces the sidebar when it
+    /// finishes, and while Monknot's own change settles.
+    private var holdsWatcherEvents: Bool {
+        isBusy || Date() < suppressWatcherUntil
+    }
+
     /// Holds watcher events that arrive while Monknot's own file change settles and replays them
     /// once the window ends, so external changes made meanwhile still reach the sidebar.
     private func deferSuppressedWatcherEvent(_ event: WorkspaceFileWatcher.Event) {
@@ -4017,13 +4023,14 @@ final class WorkspaceStore: ObservableObject {
             }
         }
         suppressedWatcherReplayWorkItem = item
-        let delay = max(0, suppressWatcherUntil.timeIntervalSinceNow)
+        // A running operation has no known end, so its events are checked again shortly.
+        let delay = max(isBusy ? 0.3 : 0, suppressWatcherUntil.timeIntervalSinceNow)
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
     }
 
     private func replaySuppressedWatcherEvent() {
         suppressedWatcherReplayWorkItem = nil
-        guard Date() >= suppressWatcherUntil else {
+        guard !holdsWatcherEvents else {
             scheduleSuppressedWatcherReplay()
             return
         }
