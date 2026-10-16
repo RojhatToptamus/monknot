@@ -109,8 +109,9 @@ final class WorkspaceStore: ObservableObject {
     nonisolated static let interactiveTextOpenMaxBytes: Int64 = 4 * 1024 * 1024
     private static let recentDocumentRecordDelayNanoseconds: UInt64 = 350_000_000
     @Published private var pendingDocumentTransfer: WorkspaceDocumentTransfer?
-    /// Moves still to run, in order, after the one in progress (a drop of several items).
-    private var queuedMoves: [WorkspaceQueuedMove] = []
+    /// The moves of a drop of several items, made one after another.
+    private var moveRun: WorkspaceMoveRun?
+    private var moveRunSerial = 0
     /// The store of every open window, so a Paste in one window can finish a Cut made in another.
     private static let openStores = NSHashTable<WorkspaceStore>.weakObjects()
 
@@ -1136,7 +1137,13 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    func importPasteboardItems(_ items: [WorkspacePasteboardImportItem], into directoryURL: URL? = nil) {
+    /// Copies `items` into `directoryURL` (the root when nil). `moveRunID` names the move run whose
+    /// drop the items came with, which goes on once they are in.
+    func importPasteboardItems(
+        _ items: [WorkspacePasteboardImportItem],
+        into directoryURL: URL? = nil,
+        moveRunID: Int? = nil
+    ) {
         guard let workspaceURL else {
             errorMessage = "Open a workspace before pasting clipboard contents."
             return
@@ -1157,7 +1164,7 @@ final class WorkspaceStore: ObservableObject {
         noteInternalFileMutation()
         let preserveSelection = selectedDocumentID
         let shouldSelectImportedCapture = items.contains { $0.prefersSelectionAfterImport }
-        let generation = beginDocumentFileOperation()
+        let generation = beginDocumentFileOperation(continuingMoveRun: moveRunID)
         revealFolder(targetDirectory)
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
@@ -1171,6 +1178,7 @@ final class WorkspaceStore: ObservableObject {
                     selectsImport: shouldSelectImportedCapture,
                     workspaceURL: workspaceURL,
                     preserveSelection: preserveSelection,
+                    moveRunID: moveRunID,
                     generation: generation
                 )
             } catch {
@@ -1182,6 +1190,7 @@ final class WorkspaceStore: ObservableObject {
                     workspaceURL: workspaceURL,
                     preserveSelection: preserveSelection,
                     message: "Could not paste clipboard contents",
+                    moveRunID: moveRunID,
                     generation: generation
                 )
             }
@@ -1189,13 +1198,15 @@ final class WorkspaceStore: ObservableObject {
     }
 
     /// Shows imported items and selects an imported capture. Items the sidebar does not list are
-    /// reported, as New File reports a file it would not show.
+    /// reported, as New File reports a file it would not show, at the end of the move run when the
+    /// items came with one.
     private func finishPasteboardImport(
         result: WorkspaceDocumentScanResult,
         importedURLs: [URL],
         selectsImport: Bool,
         workspaceURL: URL,
         preserveSelection: String?,
+        moveRunID: Int?,
         generation: Int
     ) {
         guard generation == workspaceGeneration else { return }
@@ -1215,11 +1226,16 @@ final class WorkspaceStore: ObservableObject {
             .filter { result.root.node(withID: $0.standardizedFileURL.path) == nil }
             .map(\.lastPathComponent)
         if let name = unlistedNames.first {
-            errorMessage = unlistedNames.count == 1
+            let message = unlistedNames.count == 1
                 ? "Pasted \(name), but Monknot does not show this kind of item."
                 : "Pasted \(ListFormatter.localizedString(byJoining: unlistedNames)), but Monknot does not show these kinds of items."
+            if let moveRunID, moveRun?.id == moveRunID {
+                moveRun?.notes.append(message)
+            } else {
+                errorMessage = message
+            }
         }
-        continueQueuedMoves()
+        continueMoveRun(moveRunID)
     }
 
     /// Imports files dropped from Finder into `directoryURL` (the root when nil). Items that are
@@ -1250,27 +1266,93 @@ final class WorkspaceStore: ObservableObject {
             !workspaceItems.contains { $0 != url && WorkspaceDocumentSupport.isURL(url, containedIn: $0) }
         }
 
-        queuedMoves = movedItems.map { WorkspaceQueuedMove(sourcePath: $0.path, directoryURL: directoryURL) }
+        moveRunSerial &+= 1
+        let runID = moveRunSerial
+        moveRun = WorkspaceMoveRun(
+            id: runID,
+            moves: movedItems.map { WorkspaceQueuedMove(sourcePath: $0.path, directoryURL: directoryURL) }
+        )
         guard !importedItems.isEmpty else {
-            continueQueuedMoves()
+            continueMoveRun(runID)
             return
         }
-        importPasteboardItems(importedItems.map(WorkspacePasteboardImportItem.fileURL), into: directoryURL)
+        importPasteboardItems(importedItems.map(WorkspacePasteboardImportItem.fileURL), into: directoryURL, moveRunID: runID)
         // The moves follow the import, and are dropped with it when it is refused.
         if !isBusy {
-            queuedMoves = []
+            moveRun = nil
         }
     }
 
-    /// Starts the next queued move once the previous operation has finished, skipping moves with
-    /// nothing to do. A move that cannot start ends the queue with its message.
-    private func continueQueuedMoves() {
-        while !queuedMoves.isEmpty, !isBusy, pendingMarkdownLinkMoveReview == nil {
-            let move = queuedMoves.removeFirst()
-            if !moveItem(id: move.sourcePath, toDirectory: move.directoryURL) {
-                queuedMoves = []
+    /// Starts the next move of the run `runID` once the step before it has finished. A move with
+    /// nothing to do is skipped; one that cannot be made is skipped and reported when the run
+    /// ends, as Finder does. A step that is not this run's, or a refused start, ends the run.
+    private func continueMoveRun(_ runID: Int?) {
+        guard let runID, var run = moveRun, run.id == runID,
+              !isBusy, pendingMarkdownLinkMoveReview == nil,
+              let workspaceURL
+        else { return }
+
+        while !run.moves.isEmpty {
+            let move = run.moves.removeFirst()
+            let sourceURL = URL(fileURLWithPath: move.sourcePath).standardizedFileURL
+            let destinationURL: URL
+            do {
+                destinationURL = try Self.moveDestinationURL(
+                    for: sourceURL,
+                    toDirectory: (move.directoryURL ?? workspaceURL).standardizedFileURL,
+                    workspaceURL: workspaceURL
+                )
+            } catch {
+                run.failures.append(Self.notMovedMessage(sourceURL.lastPathComponent, error))
+                continue
             }
+            guard destinationURL.standardizedFileURL != sourceURL else { continue }
+
+            moveRun = run
+            if !requestMarkdownLinkAwareMove(
+                sourceURL: sourceURL,
+                destinationURL: destinationURL,
+                workspaceURL: workspaceURL,
+                failureMessage: "Could not move \(sourceURL.lastPathComponent)",
+                moveRunID: runID
+            ) {
+                moveRun = nil
+            }
+            return
         }
+
+        moveRun = nil
+        reportMoveRun(run)
+    }
+
+    /// Ends the run `runID` when its link review is cancelled, reporting the items left unmoved.
+    private func cancelMoveRun(_ runID: Int?) {
+        guard let runID, let run = moveRun, run.id == runID else { return }
+        moveRun = nil
+        reportMoveRun(run, unmovedCount: 1 + run.moves.count)
+    }
+
+    /// Says how a move run went: nothing when every item moved, otherwise how many moved and why
+    /// the others did not, then anything its import had to say.
+    private func reportMoveRun(_ run: WorkspaceMoveRun, unmovedCount: Int = 0) {
+        let reportsUnmoved = unmovedCount > 1
+            || (unmovedCount == 1 && (run.movedCount > 0 || !run.failures.isEmpty))
+        var sentences: [String] = []
+        if run.movedCount > 0, reportsUnmoved || !run.failures.isEmpty {
+            sentences.append(run.movedCount == 1 ? "Moved 1 item." : "Moved \(run.movedCount) items.")
+        }
+        sentences += run.failures
+        if reportsUnmoved {
+            sentences.append(unmovedCount == 1 ? "1 item wasn't moved." : "\(unmovedCount) items weren't moved.")
+        }
+        sentences += run.notes
+        if !sentences.isEmpty {
+            errorMessage = sentences.joined(separator: " ")
+        }
+    }
+
+    nonisolated private static func notMovedMessage(_ name: String, _ error: Error) -> String {
+        "\(name) wasn't moved: \(error.localizedDescription)"
     }
 
     func createMarkdownImageAsset(
@@ -1485,7 +1567,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     /// Plans a rename or move that updates the Markdown links to the item, then runs it or asks
-    /// for review. Returns false when it cannot start.
+    /// for review. `moveRunID` names the move run it is a step of. Returns false when it cannot
+    /// start.
     @discardableResult
     private func requestMarkdownLinkAwareMove(
         sourceURL: URL,
@@ -1493,7 +1576,8 @@ final class WorkspaceStore: ObservableObject {
         workspaceURL: URL,
         failureMessage: String,
         selectDestinationAfterMove: Bool = false,
-        completedTransfer: WorkspaceDocumentTransfer? = nil
+        completedTransfer: WorkspaceDocumentTransfer? = nil,
+        moveRunID: Int? = nil
     ) -> Bool {
         guard !isBusy else {
             errorMessage = Self.busyMessage
@@ -1523,10 +1607,12 @@ final class WorkspaceStore: ObservableObject {
             reloadSelection: selectsDocument || selectedURL != nil,
             sidebarSelection: sidebarSelection,
             completedTransfer: completedTransfer,
-            failureMessage: failureMessage
+            failureMessage: failureMessage,
+            itemName: sourceURL.lastPathComponent,
+            moveRunID: moveRunID
         )
         let documentSnapshot = documents
-        let generation = beginDocumentFileOperation()
+        let generation = beginDocumentFileOperation(continuingMoveRun: moveRunID)
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
@@ -1543,20 +1629,17 @@ final class WorkspaceStore: ObservableObject {
                     generation: generation
                 )
             } catch {
-                await self?.finishWorkspaceFailure(
-                    error,
-                    generation: generation,
-                    message: failureMessage
-                )
+                await self?.finishMarkdownLinkMoveFailure(error, request: request, generation: generation)
             }
         }
         return true
     }
 
+    /// Cancels the move a link review was shown for, and the rest of its move run.
     func cancelMarkdownLinkMoveReview(id: Int) {
-        guard !isBusy, pendingMarkdownLinkMoveReview?.id == id else { return }
+        guard !isBusy, let review = pendingMarkdownLinkMoveReview, review.id == id else { return }
         pendingMarkdownLinkMoveReview = nil
-        queuedMoves = []
+        cancelMoveRun(review.request.moveRunID)
     }
 
     func confirmMarkdownLinkMoveReview(id: Int) {
@@ -1574,7 +1657,7 @@ final class WorkspaceStore: ObservableObject {
     ) {
         guard generation == workspaceGeneration else { return }
         if let unsaved = unsavedDocumentRewritten(by: plan) {
-            refuseMove(of: unsaved)
+            refuseMove(of: unsaved, request: request)
             return
         }
 
@@ -1604,12 +1687,12 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         if let unsaved = unsavedDocumentRewritten(by: review.plan) {
-            refuseMove(of: unsaved)
+            refuseMove(of: unsaved, request: review.request)
             return
         }
 
         noteInternalFileMutation()
-        let generation = beginDocumentFileOperation()
+        let generation = beginDocumentFileOperation(continuingMoveRun: review.request.moveRunID)
         let reviewedPlan = review.plan
         let request = review.request
 
@@ -1669,11 +1752,7 @@ final class WorkspaceStore: ObservableObject {
                 } else {
                     finalError = error
                 }
-                await self?.finishWorkspaceFailure(
-                    finalError,
-                    generation: generation,
-                    message: request.failureMessage
-                )
+                await self?.finishMarkdownLinkMoveFailure(finalError, request: request, generation: generation)
             }
         }
     }
@@ -1687,11 +1766,36 @@ final class WorkspaceStore: ObservableObject {
             .first { !self.saveState(for: $0.id).isClean }
     }
 
-    private func refuseMove(of unsavedDocument: WorkspaceDocument) {
+    /// Refuses a move that would rewrite the links in a document with unsaved changes. A step of
+    /// a move run is reported when the run ends, and the run goes on.
+    private func refuseMove(of unsavedDocument: WorkspaceDocument, request: WorkspaceMarkdownLinkMoveRequest) {
         pendingMarkdownLinkMoveReview = nil
-        queuedMoves = []
         isBusy = false
-        errorMessage = WorkspaceMarkdownLinkMoveError.unsavedLinkingDocument(unsavedDocument.displayName).errorDescription
+        let error = WorkspaceMarkdownLinkMoveError.unsavedLinkingDocument(unsavedDocument.displayName)
+        if let runID = request.moveRunID, moveRun?.id == runID {
+            moveRun?.failures.append(Self.notMovedMessage(request.itemName, error))
+            continueMoveRun(runID)
+        } else {
+            errorMessage = error.errorDescription
+        }
+    }
+
+    /// Reports a rename or move that failed. A step of a move run is reported when the run ends,
+    /// and the run goes on.
+    private func finishMarkdownLinkMoveFailure(
+        _ error: Error,
+        request: WorkspaceMarkdownLinkMoveRequest,
+        generation: Int
+    ) {
+        guard let runID = request.moveRunID, moveRun?.id == runID else {
+            finishWorkspaceFailure(error, generation: generation, message: request.failureMessage)
+            return
+        }
+        guard generation == workspaceGeneration else { return }
+        isBusy = false
+        setDocumentLoadingIfChanged(false)
+        moveRun?.failures.append(Self.notMovedMessage(request.itemName, error))
+        continueMoveRun(runID)
     }
 
     private func finishMarkdownLinkMove(
@@ -1742,7 +1846,10 @@ final class WorkspaceStore: ObservableObject {
             generation: generation
         )
         remapRecentDocuments(request.mappings)
-        continueQueuedMoves()
+        if let runID = request.moveRunID, moveRun?.id == runID {
+            moveRun?.movedCount += 1
+            continueMoveRun(runID)
+        }
         return true
     }
 
@@ -2739,11 +2846,16 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func beginWorkspaceOperation() -> Int {
+    /// Starts an operation that replaces any in flight. It ends a move run unless it is the step of
+    /// the run `continuingMoveRun`.
+    private func beginWorkspaceOperation(continuingMoveRun moveRunID: Int? = nil) -> Int {
         workspaceTask?.cancel()
         documentTask?.cancel()
         recentDocumentRecordTask?.cancel()
         pendingMarkdownLinkMoveReview = nil
+        if moveRunID == nil || moveRun?.id != moveRunID {
+            moveRun = nil
+        }
         workspaceGeneration += 1
         openingWorkspaceURL = nil
         isBusy = true
@@ -2752,12 +2864,12 @@ final class WorkspaceStore: ObservableObject {
         return workspaceGeneration
     }
 
-    private func beginDocumentFileOperation() -> Int {
+    private func beginDocumentFileOperation(continuingMoveRun moveRunID: Int? = nil) -> Int {
         saveTask?.cancel()
         markdownImageAssetTask?.cancel()
         saveGeneration += 1
         setSavingIfChanged(false)
-        return beginWorkspaceOperation()
+        return beginWorkspaceOperation(continuingMoveRun: moveRunID)
     }
 
     private func finishWorkspaceLoad(
@@ -2859,7 +2971,7 @@ final class WorkspaceStore: ObservableObject {
     private func clearStateForWorkspaceTransition() {
         cancelSuppressedWatcherReplay()
         pendingDocumentTransfer = nil
-        queuedMoves = []
+        moveRun = nil
         dirtyDocumentTexts = [:]
         dirtyDocumentBaselines = [:]
         dirtyDocumentRevisionExpectations = [:]
@@ -2945,7 +3057,6 @@ final class WorkspaceStore: ObservableObject {
     private func finishWorkspaceFailure(_ error: Error, generation: Int, message: String) {
         guard generation == workspaceGeneration else { return }
 
-        queuedMoves = []
         isBusy = false
         setDocumentLoadingIfChanged(false)
         errorMessage = "\(message): \(error.localizedDescription)"
@@ -3049,13 +3160,15 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    /// Shows what a copy or import left on disk before it failed, then reports the failure.
+    /// Shows what a copy or import left on disk before it failed, then reports the failure: at
+    /// the end of the move run `moveRunID`, which goes on, when the import came with one.
     private func finishCopyFailure(
         _ error: Error,
         result: WorkspaceDocumentScanResult?,
         workspaceURL: URL,
         preserveSelection: String?,
         message: String,
+        moveRunID: Int? = nil,
         generation: Int
     ) {
         if let result {
@@ -3068,7 +3181,14 @@ final class WorkspaceStore: ObservableObject {
                 generation: generation
             )
         }
-        finishWorkspaceFailure(error, generation: generation, message: message)
+        guard let moveRunID, moveRun?.id == moveRunID else {
+            finishWorkspaceFailure(error, generation: generation, message: message)
+            return
+        }
+        guard generation == workspaceGeneration else { return }
+        isBusy = false
+        moveRun?.failures.append("\(message): \(error.localizedDescription)")
+        continueMoveRun(moveRunID)
     }
 
     private func updateSecurityScope(for url: URL) {
@@ -4775,6 +4895,9 @@ private struct WorkspaceMarkdownLinkMoveRequest: Equatable, Sendable {
     let sidebarSelection: SidebarSelectionAfterLoad
     let completedTransfer: WorkspaceDocumentTransfer?
     let failureMessage: String
+    let itemName: String
+    /// The move run this move is a step of.
+    let moveRunID: Int?
 }
 
 private struct WorkspaceMarkdownLinkMoveWrittenFile: Sendable {
@@ -4931,6 +5054,18 @@ private struct WorkspaceDocumentTransfer: Equatable, Sendable {
 private struct WorkspaceQueuedMove: Equatable, Sendable {
     let sourcePath: String
     let directoryURL: URL?
+}
+
+/// The moves of a drop of several items, made one after another, and what the run reports when
+/// it ends.
+private struct WorkspaceMoveRun {
+    let id: Int
+    var moves: [WorkspaceQueuedMove]
+    var movedCount = 0
+    /// Why items were not moved, in order.
+    var failures: [String] = []
+    /// What the drop's import had to say.
+    var notes: [String] = []
 }
 
 private enum WorkspaceDocumentTransferOperation: Equatable, Sendable {

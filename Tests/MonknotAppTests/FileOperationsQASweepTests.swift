@@ -680,6 +680,89 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         XCTAssertEqual(names("", in: outside), ["o.txt"])
     }
 
+    /// A drop of several items goes on past an item that cannot move, as Finder does, and says
+    /// once at the end what did not move and why.
+    func testFinderDropSkipsAnItemThatCannotMoveAndReportsIt() async throws {
+        let root = try makeRoot()
+        for name in ["a.txt", "b.txt", "c.txt", "Sub/b.txt"] {
+            try write("\(name)\n", name, in: root)
+        }
+        let store = try await openStore(root)
+
+        store.dropFileURLs(["a.txt", "b.txt", "c.txt"].map { root.appendingPathComponent($0) }, into: root.appendingPathComponent("Sub"))
+        _ = await wait { self.names("Sub", in: root).count == 3 && !store.isBusy }
+        await idle(store)
+        XCTAssertEqual(names("Sub", in: root), ["a.txt", "b.txt", "c.txt"])
+        XCTAssertEqual(names("", in: root), ["Sub", "b.txt"])
+        XCTAssertEqual(store.errorMessage, "Moved 2 items. b.txt wasn't moved: An item named b.txt already exists.")
+    }
+
+    /// Cancelling the link review of one item of a drop stops the drop and says how many items
+    /// stayed where they were.
+    func testCancellingALinkReviewDuringADropStopsItAndSaysWhatWasLeft() async throws {
+        let root = try makeRoot()
+        try write("x\n", "x.txt", in: root)
+        try write("# A\n", "a.md", in: root)
+        try write("y\n", "y.txt", in: root)
+        try write("[a](a.md)\n", "index.md", in: root)
+        try mkdir("Archive", in: root)
+        let store = try await openStore(root)
+
+        store.dropFileURLs(["x.txt", "a.md", "y.txt"].map { root.appendingPathComponent($0) }, into: root.appendingPathComponent("Archive"))
+        _ = await wait { store.pendingMarkdownLinkMoveReview != nil }
+        let review = try XCTUnwrap(store.pendingMarkdownLinkMoveReview)
+        store.cancelMarkdownLinkMoveReview(id: review.id)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        await idle(store)
+
+        XCTAssertEqual(names("Archive", in: root), ["x.txt"])
+        XCTAssertEqual(names("", in: root), ["Archive", "a.md", "index.md", "y.txt"])
+        XCTAssertEqual(store.errorMessage, "Moved 1 item. 2 items weren't moved.")
+    }
+
+    /// A drop's remaining moves belong to the drop: another operation that begins while one of its
+    /// link reviews is open ends the drop, and finishing that operation moves nothing more.
+    func testAnotherOperationEndsAPendingDropAndItsMovesNeverRun() async throws {
+        let root = try makeRoot()
+        try write("# A\n", "a.md", in: root)
+        try write("b\n", "b.txt", in: root)
+        try write("o\n", "other.txt", in: root)
+        try write("[a](a.md)\n", "index.md", in: root)
+        try mkdir("Archive", in: root)
+        let store = try await openStore(root)
+        let other = try XCTUnwrap(doc(store, "other.txt"))
+
+        store.dropFileURLs(["a.md", "b.txt"].map { root.appendingPathComponent($0) }, into: root.appendingPathComponent("Archive"))
+        _ = await wait { store.pendingMarkdownLinkMoveReview != nil }
+        XCTAssertNotNil(store.pendingMarkdownLinkMoveReview)
+
+        store.renameDocument(id: other.id, to: "renamed.txt")
+        await settle(store)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        await settle(store)
+
+        XCTAssertNil(store.pendingMarkdownLinkMoveReview)
+        XCTAssertEqual(names("Archive", in: root), [])
+        XCTAssertEqual(names("", in: root), ["Archive", "a.md", "b.txt", "index.md", "renamed.txt"])
+    }
+
+    /// A drop that moves a workspace item and copies in an outside item the sidebar does not
+    /// list still says the copy will not show.
+    func testMixedDropStillSaysAnUnlistedCopyWillNotShow() async throws {
+        let root = try makeRoot()
+        let outside = try makeRoot()
+        try write("a\n", "a.txt", in: root)
+        try write("zip", "archive.zip", in: outside)
+        try mkdir("Sub", in: root)
+        let store = try await openStore(root)
+
+        store.dropFileURLs([root.appendingPathComponent("a.txt"), outside.appendingPathComponent("archive.zip")], into: root.appendingPathComponent("Sub"))
+        _ = await wait { self.names("Sub", in: root).count == 2 && !store.isBusy }
+        await idle(store)
+        XCTAssertEqual(names("Sub", in: root), ["a.txt", "archive.zip"])
+        XCTAssertEqual(store.errorMessage, "Pasted archive.zip, but Monknot does not show this kind of item.")
+    }
+
     func testFinderDropWhileBusyIsReported() async throws {
         let root = try makeRoot()
         let outside = try makeRoot()
