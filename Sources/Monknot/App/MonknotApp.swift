@@ -273,10 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         userData: String?,
         error: AutoreleasingUnsafeMutablePointer<NSString>
     ) {
-        let urls = pasteboard.readObjects(
-            forClasses: [NSURL.self],
-            options: [.urlReadingFileURLsOnly: true]
-        ) as? [URL] ?? []
+        let urls = pasteboard.fileURLs
         guard !urls.isEmpty else {
             error.pointee = "No files or folders were provided."
             return

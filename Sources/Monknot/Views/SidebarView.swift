@@ -327,9 +327,7 @@ struct SidebarView: View {
                                 (store.document(id: entry.documentID)?.kind ?? .markdown).resolvedSystemImage
                             },
                             openDocument: openDocument,
-                            revealInFinder: revealInFinder(_:),
-                            copyPath: copyPath,
-                            copyRelativePath: copyRelativePath
+                            location: locationActions
                         )
                         .layoutPriority(2)
                     }
@@ -548,9 +546,7 @@ struct SidebarView: View {
             createFile: beginCreateFile(in:),
             createFolder: beginCreateFolder(in:),
             rename: beginRename(_:),
-            copyPath: copyPath,
-            copyRelativePath: copyRelativePath,
-            revealInFinder: revealInFinder(_:),
+            location: locationActions,
             exportPDF: exportPDF,
             copy: { store.putItemOnPasteboard(at: $0, cutting: false, pasteboard: pasteboard) },
             cut: { store.putItemOnPasteboard(at: $0, cutting: true, pasteboard: pasteboard) },
@@ -567,45 +563,34 @@ struct SidebarView: View {
         )
     }
 
+    private var locationActions: SidebarLocationActions {
+        SidebarLocationActions(
+            copyPath: copyPath,
+            copyRelativePath: copyRelativePath,
+            revealInFinder: revealInFinder(_:)
+        )
+    }
+
+    /// The menu of the space around the rows, which acts on the workspace root.
     @ViewBuilder
     private var sidebarContextMenu: some View {
-        Button {
-            beginCreateFile(in: nil)
-        } label: {
-            Label("New File", systemImage: MonknotWorkspaceIcons.newFile)
-        }
-        .disabled(store.workspaceURL == nil || store.isBusy)
-
-        Button {
-            beginCreateFolder(in: nil)
-        } label: {
-            Label("New Folder", systemImage: MonknotWorkspaceIcons.newFolder)
-        }
-        .disabled(store.workspaceURL == nil || store.isBusy)
+        let isDisabled = store.workspaceURL == nil || store.isBusy
+        SidebarMenuItems.newItems(
+            isDisabled: isDisabled,
+            createFile: { beginCreateFile(in: nil) },
+            createFolder: { beginCreateFolder(in: nil) }
+        )
 
         Divider()
 
-        Button {
+        SidebarMenuItems.paste(isDisabled: isDisabled || !canPaste) {
             paste(into: nil)
-        } label: {
-            Label("Paste", systemImage: "doc.on.clipboard")
         }
-        .disabled(store.workspaceURL == nil || store.isBusy || !canPaste)
 
         if let workspaceURL = store.workspaceURL {
             Divider()
 
-            Button {
-                copyPath(workspaceURL)
-            } label: {
-                Label("Copy Path", systemImage: MonknotWorkspaceIcons.copyPath)
-            }
-
-            Button {
-                revealInFinder(workspaceURL)
-            } label: {
-                Label("Reveal in Finder", systemImage: MonknotWorkspaceIcons.revealInFinder)
-            }
+            locationActions.menuItems(for: workspaceURL, includesRelativePath: false)
         }
     }
 
@@ -1349,6 +1334,63 @@ private struct WorkspaceSwitcherActionRow: View {
 
 // MARK: - Sidebar Row
 
+/// Copy Path, Copy Relative Path and Reveal in Finder, which every sidebar menu offers for its item.
+private struct SidebarLocationActions {
+    let copyPath: (URL) -> Void
+    let copyRelativePath: (URL) -> Void
+    let revealInFinder: (URL) -> Void
+
+    @ViewBuilder
+    func menuItems(for url: URL, includesRelativePath: Bool = true) -> some View {
+        Button {
+            copyPath(url)
+        } label: {
+            Label("Copy Path", systemImage: MonknotWorkspaceIcons.copyPath)
+        }
+
+        if includesRelativePath {
+            Button {
+                copyRelativePath(url)
+            } label: {
+                Label("Copy Relative Path", systemImage: "doc.on.doc")
+            }
+        }
+
+        Button {
+            revealInFinder(url)
+        } label: {
+            Label("Reveal in Finder", systemImage: MonknotWorkspaceIcons.revealInFinder)
+        }
+    }
+}
+
+/// Menu items shared by the row menus and the menu of the space around the rows.
+private enum SidebarMenuItems {
+    @ViewBuilder
+    static func newItems(
+        isDisabled: Bool,
+        createFile: @escaping () -> Void,
+        createFolder: @escaping () -> Void
+    ) -> some View {
+        Button(action: createFile) {
+            Label("New File", systemImage: MonknotWorkspaceIcons.newFile)
+        }
+        .disabled(isDisabled)
+
+        Button(action: createFolder) {
+            Label("New Folder", systemImage: MonknotWorkspaceIcons.newFolder)
+        }
+        .disabled(isDisabled)
+    }
+
+    static func paste(isDisabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label("Paste", systemImage: "doc.on.clipboard")
+        }
+        .disabled(isDisabled)
+    }
+}
+
 /// What a sidebar row's clicks, drags, drops and context menu do. Folder actions take the deepest
 /// folder of a compact row ("A/B" acts on B).
 private struct SidebarRowActions {
@@ -1357,9 +1399,7 @@ private struct SidebarRowActions {
     let createFile: (URL) -> Void
     let createFolder: (URL) -> Void
     let rename: (SidebarNode) -> Void
-    let copyPath: (URL) -> Void
-    let copyRelativePath: (URL) -> Void
-    let revealInFinder: (URL) -> Void
+    let location: SidebarLocationActions
     let exportPDF: (WorkspaceDocument) -> Void
     let copy: (URL) -> Void
     let cut: (URL) -> Void
@@ -1441,25 +1481,82 @@ private struct SidebarNodeRow: View {
 
     /// Folder row: its disclosure chevron takes the glyph column (design.md §10.4).
     private var folderRow: some View {
-        Button {
-            actions.clickFolder(visibleNode)
-        } label: {
+        rowButton(
+            leading: .disclosure(isExpanded: isExpanded),
+            title: visibleNode.displayName,
+            action: { actions.clickFolder(visibleNode) }
+        ) {
+            EmptyView()
+        }
+        .help(visibleNode.displayRelativePath)
+        .accessibilityLabel(folderAccessibilityLabel)
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .contextMenu {
+            contextMenuItems
+        }
+    }
+
+    private var folderAccessibilityLabel: String {
+        if visibleNode.folderNodes.count > 1 {
+            return "\(visibleNode.displayName), compact folder path"
+        }
+        return "\(node.name), folder"
+    }
+
+    private var fileRow: some View {
+        rowButton(
+            leading: .kind(systemImage: documentIconName),
+            title: node.name,
+            action: {
+                if let document = node.document {
+                    actions.openDocument(document.id)
+                }
+            }
+        ) {
+            if let gitStatus {
+                GitStatusBadge(status: gitStatus, theme: theme, zoomScale: zoomScale)
+            }
+
+            if !saveState.isClean {
+                SaveStateIndicator(
+                    state: saveState,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    size: glyphScaled(12)
+                )
+            }
+        }
+        .monknotHelp(isSelected ? nil : (node.relativePath.isEmpty ? node.name : node.relativePath))
+        .accessibilityLabel(fileAccessibilityLabel)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .contextMenu {
+            if node.document != nil {
+                contextMenuItems
+            }
+        }
+    }
+
+    /// The row's button with what folder and file rows share: the move drag, the move-target
+    /// outline, its frame while a move is tracked, and Finder drops.
+    private func rowButton<Trailing: View>(
+        leading: SidebarRowGlyph,
+        title: String,
+        action: @escaping () -> Void,
+        @ViewBuilder trailing: @escaping () -> Trailing
+    ) -> some View {
+        Button(action: action) {
             SidebarRowLabel(
-                leading: .disclosure(isExpanded: isExpanded),
-                title: visibleNode.displayName,
+                leading: leading,
+                title: title,
                 depth: visibleNode.depth,
                 isSelected: isSelected,
                 theme: theme,
-                zoomScale: zoomScale
-            ) {
-                EmptyView()
-            }
+                zoomScale: zoomScale,
+                trailing: trailing
+            )
         }
-        .buttonStyle(SidebarRowButtonStyle(
-            theme: theme,
-            isSelected: isSelected,
-            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
-        ))
+        .buttonStyle(SidebarRowButtonStyle(theme: theme, zoomScale: zoomScale, isSelected: isSelected))
         .background {
             if tracksMoveFrame {
                 SidebarNodeFrameReader(id: node.id)
@@ -1474,72 +1571,6 @@ private struct SidebarNodeRow: View {
         .opacity(isMoveSource ? 0.45 : 1)
         .highPriorityGesture(sidebarMoveGesture)
         .onDrop(of: [.fileURL], delegate: fileDropDelegate)
-        .help(visibleNode.displayRelativePath)
-        .accessibilityLabel(folderAccessibilityLabel)
-        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .contextMenu {
-            folderContextMenu()
-        }
-    }
-
-    private var folderAccessibilityLabel: String {
-        if visibleNode.folderNodes.count > 1 {
-            return "\(visibleNode.displayName), compact folder path"
-        }
-        return "\(node.name), folder"
-    }
-
-    /// File row — larger text, generous padding, Monknot-style selection highlight.
-    private var fileRow: some View {
-        Button {
-            if let document = node.document {
-                actions.openDocument(document.id)
-            }
-        } label: {
-            SidebarRowLabel(
-                leading: .kind(systemImage: documentIconName),
-                title: node.name,
-                depth: visibleNode.depth,
-                isSelected: isSelected,
-                theme: theme,
-                zoomScale: zoomScale
-            ) {
-                if let gitStatus {
-                    GitStatusBadge(status: gitStatus, theme: theme, zoomScale: zoomScale)
-                }
-
-                if !saveState.isClean {
-                    SaveStateIndicator(
-                        state: saveState,
-                        theme: theme,
-                        zoomScale: zoomScale,
-                        size: glyphScaled(12)
-                    )
-                }
-            }
-        }
-        .buttonStyle(SidebarRowButtonStyle(
-            theme: theme,
-            isSelected: isSelected,
-            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
-        ))
-        .background {
-            if tracksMoveFrame {
-                SidebarNodeFrameReader(id: node.id)
-            }
-        }
-        .opacity(isMoveSource ? 0.45 : 1)
-        .highPriorityGesture(sidebarMoveGesture)
-        .onDrop(of: [.fileURL], delegate: fileDropDelegate)
-        .monknotHelp(isSelected ? nil : (node.relativePath.isEmpty ? node.name : node.relativePath))
-        .accessibilityLabel(fileAccessibilityLabel)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .contextMenu {
-            if let document = node.document {
-                documentContextMenu(for: document)
-            }
-        }
     }
 
     private var fileAccessibilityLabel: String {
@@ -1560,34 +1591,28 @@ private struct SidebarNodeRow: View {
         node.document?.kind.resolvedSystemImage ?? WorkspaceDocumentKind.unsupported.resolvedSystemImage
     }
 
+    /// New File and New Folder (in the folder, or beside the file), Rename and the location items,
+    /// the clipboard items, then Move to Trash (design.md §10.4).
     @ViewBuilder
-    private func folderContextMenu() -> some View {
-        newItemButtons
+    private var contextMenuItems: some View {
+        SidebarMenuItems.newItems(
+            isDisabled: isBusy,
+            createFile: { actions.createFile(visibleNode.destinationURL) },
+            createFolder: { actions.createFolder(visibleNode.destinationURL) }
+        )
 
         Divider()
 
-        renameButton
-        locationButtons
+        Button {
+            actions.rename(item)
+        } label: {
+            Label("Rename", systemImage: "pencil")
+        }
+        .disabled(isBusy)
 
-        Divider()
+        actions.location.menuItems(for: item.url)
 
-        clipboardButtons
-
-        Divider()
-
-        moveToTrashButton
-    }
-
-    @ViewBuilder
-    private func documentContextMenu(for document: WorkspaceDocument) -> some View {
-        newItemButtons
-
-        Divider()
-
-        renameButton
-        locationButtons
-
-        if document.capabilities.canExportPDF {
+        if let document = node.document, document.capabilities.canExportPDF {
             Button {
                 actions.exportPDF(document)
             } label: {
@@ -1601,55 +1626,12 @@ private struct SidebarNodeRow: View {
 
         Divider()
 
-        moveToTrashButton
-    }
-
-    /// New File and New Folder, in the folder itself or beside the file.
-    @ViewBuilder
-    private var newItemButtons: some View {
-        Button {
-            actions.createFile(visibleNode.destinationURL)
+        Button(role: .destructive) {
+            actions.moveToTrash(item)
         } label: {
-            Label("New File", systemImage: MonknotWorkspaceIcons.newFile)
+            Label("Move to Trash", systemImage: "trash")
         }
         .disabled(isBusy)
-
-        Button {
-            actions.createFolder(visibleNode.destinationURL)
-        } label: {
-            Label("New Folder", systemImage: MonknotWorkspaceIcons.newFolder)
-        }
-        .disabled(isBusy)
-    }
-
-    private var renameButton: some View {
-        Button {
-            actions.rename(item)
-        } label: {
-            Label("Rename", systemImage: "pencil")
-        }
-        .disabled(isBusy)
-    }
-
-    @ViewBuilder
-    private var locationButtons: some View {
-        Button {
-            actions.copyPath(item.url)
-        } label: {
-            Label("Copy Path", systemImage: MonknotWorkspaceIcons.copyPath)
-        }
-
-        Button {
-            actions.copyRelativePath(item.url)
-        } label: {
-            Label("Copy Relative Path", systemImage: "doc.on.doc")
-        }
-
-        Button {
-            actions.revealInFinder(item.url)
-        } label: {
-            Label("Reveal in Finder", systemImage: MonknotWorkspaceIcons.revealInFinder)
-        }
     }
 
     /// Copy, Cut, Paste and Duplicate, the same for files and folders.
@@ -1669,26 +1651,14 @@ private struct SidebarNodeRow: View {
         }
         .disabled(isBusy)
 
-        Button {
+        SidebarMenuItems.paste(isDisabled: isBusy || !canPaste) {
             actions.paste(visibleNode.destinationURL)
-        } label: {
-            Label("Paste", systemImage: "doc.on.clipboard")
         }
-        .disabled(isBusy || !canPaste)
 
         Button {
             actions.duplicate(item.url)
         } label: {
             Label("Duplicate", systemImage: "plus.square.on.square")
-        }
-        .disabled(isBusy)
-    }
-
-    private var moveToTrashButton: some View {
-        Button(role: .destructive) {
-            actions.moveToTrash(item)
-        } label: {
-            Label("Move to Trash", systemImage: "trash")
         }
         .disabled(isBusy)
     }
@@ -1733,15 +1703,6 @@ enum SidebarFileDrop {
         let isOptionPressed = NSEvent.modifierFlags.contains(.option)
         return copies(urls, workspaceURL: workspaceURL, isOptionPressed: isOptionPressed) ? .copy : .move
     }
-
-    /// The file URLs of the drag in progress.
-    static func draggedFileURLs(on pasteboard: NSPasteboard = NSPasteboard(name: .drag)) -> [URL] {
-        let objects = pasteboard.readObjects(
-            forClasses: [NSURL.self],
-            options: [.urlReadingFileURLsOnly: true]
-        ) ?? []
-        return objects.compactMap { ($0 as? NSURL) as URL? }
-    }
 }
 
 /// A Finder drop on a sidebar row, proposing the operation `SidebarFileDrop` performs.
@@ -1762,17 +1723,19 @@ private struct SidebarFileDropDelegate: DropDelegate {
         targetingChanged(false)
     }
 
+    /// `DropInfo` hands over file URLs only asynchronously, so the drag pasteboard is read directly.
+    private var draggedFileURLs: [URL] {
+        NSPasteboard(name: .drag).fileURLs
+    }
+
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        let operation = SidebarFileDrop.operation(
-            for: SidebarFileDrop.draggedFileURLs(),
-            workspaceURL: workspaceURL
-        )
+        let operation = SidebarFileDrop.operation(for: draggedFileURLs, workspaceURL: workspaceURL)
         return DropProposal(operation: operation == .move ? .move : .copy)
     }
 
     func performDrop(info: DropInfo) -> Bool {
         targetingChanged(false)
-        let urls = SidebarFileDrop.draggedFileURLs()
+        let urls = draggedFileURLs
         guard !urls.isEmpty else { return false }
         drop(urls, SidebarFileDrop.operation(for: urls, workspaceURL: workspaceURL) == .copy)
         return true
@@ -2016,11 +1979,16 @@ private extension EnvironmentValues {
 /// Fills a sidebar row: `sel` when selected, `press` while held, `hover` under the pointer.
 private struct SidebarRowButtonStyle: ButtonStyle {
     let theme: AppTheme
-    let isSelected: Bool
-    let cornerRadius: CGFloat
+    let zoomScale: Double
+    var isSelected = false
 
     func makeBody(configuration: Configuration) -> some View {
-        RowBody(configuration: configuration, theme: theme, isSelected: isSelected, cornerRadius: cornerRadius)
+        RowBody(
+            configuration: configuration,
+            theme: theme,
+            isSelected: isSelected,
+            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
+        )
     }
 
     private struct RowBody: View {
@@ -2076,16 +2044,17 @@ struct SidebarDisclosureChevron: View {
     }
 }
 
+/// What a sidebar row shows in its glyph column.
+private enum SidebarRowGlyph {
+    case disclosure(isExpanded: Bool)
+    case kind(systemImage: String)
+}
+
 /// The sidebar's row primitive, design.md §0 and §10.4: 10 padding · 16 per depth · glyph in the 18
 /// column · 8 gap · 13 label · 10 padding. A folder's disclosure chevron takes the glyph column, so
 /// every row has one glyph, names at one depth share an edge, and a child steps right by one indent.
 private struct SidebarRowLabel<Trailing: View>: View {
-    enum Leading {
-        case disclosure(isExpanded: Bool)
-        case kind(systemImage: String)
-    }
-
-    let leading: Leading
+    let leading: SidebarRowGlyph
     let title: String
     let depth: Int
     let isSelected: Bool
@@ -2150,6 +2119,27 @@ private struct SidebarRowLabel<Trailing: View>: View {
     }
 }
 
+extension SidebarRowLabel where Trailing == EmptyView {
+    init(
+        leading: SidebarRowGlyph,
+        title: String,
+        depth: Int,
+        isSelected: Bool = false,
+        theme: AppTheme,
+        zoomScale: Double
+    ) {
+        self.init(
+            leading: leading,
+            title: title,
+            depth: depth,
+            isSelected: isSelected,
+            theme: theme,
+            zoomScale: zoomScale,
+            trailing: { EmptyView() }
+        )
+    }
+}
+
 private struct SaveStateIndicator: View {
     let state: DocumentSaveState
     let theme: AppTheme
@@ -2208,11 +2198,7 @@ private struct SidebarSettingsButton: View {
                 )
             }
         }
-        .buttonStyle(SidebarRowButtonStyle(
-            theme: theme,
-            isSelected: false,
-            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
-        ))
+        .buttonStyle(SidebarRowButtonStyle(theme: theme, zoomScale: zoomScale))
         .padding(.horizontal, scaled(6))
         .padding(.vertical, scaled(5))
         .help("Open Settings (⌘,)")
@@ -2297,9 +2283,7 @@ private struct SidebarRecentDocumentsSection: View {
     let availableSidebarHeight: CGFloat
     let kindGlyph: (RecentDocumentEntry) -> String
     let openDocument: (String) -> Void
-    let revealInFinder: (URL) -> Void
-    let copyPath: (URL) -> Void
-    let copyRelativePath: (URL) -> Void
+    let location: SidebarLocationActions
     @State private var isExpanded = false
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -2336,11 +2320,7 @@ private struct SidebarRecentDocumentsSection: View {
                     zoomScale: zoomScale
                 )
             }
-            .buttonStyle(SidebarRowButtonStyle(
-                theme: theme,
-                isSelected: false,
-                cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
-            ))
+            .buttonStyle(SidebarRowButtonStyle(theme: theme, zoomScale: zoomScale))
             .padding(.horizontal, scaled(6))
             .help(isExpanded ? "Hide recent documents" : "Show recent documents")
             .accessibilityLabel("Recent documents")
@@ -2357,18 +2337,11 @@ private struct SidebarRecentDocumentsSection: View {
                                     leading: .kind(systemImage: kindGlyph(entry)),
                                     title: entry.displayName,
                                     depth: 1,
-                                    isSelected: false,
                                     theme: theme,
                                     zoomScale: zoomScale
-                                ) {
-                                    EmptyView()
-                                }
+                                )
                             }
-                            .buttonStyle(SidebarRowButtonStyle(
-                                theme: theme,
-                                isSelected: false,
-                                cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
-                            ))
+                            .buttonStyle(SidebarRowButtonStyle(theme: theme, zoomScale: zoomScale))
                             .help(entry.relativePath)
                             .contextMenu {
                                 recentDocumentContextMenu(for: entry)
@@ -2385,8 +2358,6 @@ private struct SidebarRecentDocumentsSection: View {
 
     @ViewBuilder
     private func recentDocumentContextMenu(for entry: RecentDocumentEntry) -> some View {
-        let url = URL(fileURLWithPath: entry.documentID)
-
         Button {
             openDocument(entry.documentID)
         } label: {
@@ -2395,23 +2366,7 @@ private struct SidebarRecentDocumentsSection: View {
 
         Divider()
 
-        Button {
-            copyPath(url)
-        } label: {
-            Label("Copy Path", systemImage: MonknotWorkspaceIcons.copyPath)
-        }
-
-        Button {
-            copyRelativePath(url)
-        } label: {
-            Label("Copy Relative Path", systemImage: "doc.on.doc")
-        }
-
-        Button {
-            revealInFinder(url)
-        } label: {
-            Label("Reveal in Finder", systemImage: MonknotWorkspaceIcons.revealInFinder)
-        }
+        location.menuItems(for: URL(fileURLWithPath: entry.documentID))
     }
 }
 
@@ -2535,18 +2490,11 @@ private struct EmptySidebarView: View {
                                 leading: .kind(systemImage: "folder"),
                                 title: entry.displayName,
                                 depth: 0,
-                                isSelected: false,
                                 theme: theme,
                                 zoomScale: zoomScale
-                            ) {
-                                EmptyView()
-                            }
+                            )
                         }
-                        .buttonStyle(SidebarRowButtonStyle(
-                            theme: theme,
-                            isSelected: false,
-                            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
-                        ))
+                        .buttonStyle(SidebarRowButtonStyle(theme: theme, zoomScale: zoomScale))
                         .help((entry.path as NSString).abbreviatingWithTildeInPath)
                     }
                 }

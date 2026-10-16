@@ -82,20 +82,14 @@ struct FileURLDropTarget: NSViewRepresentable {
         }
 
         private func fileURLs(from sender: NSDraggingInfo) -> [URL] {
-            let objects = sender.draggingPasteboard.readObjects(
-                forClasses: [NSURL.self],
-                options: [.urlReadingFileURLsOnly: true]
-            ) ?? []
-
-            return objects.compactMap { object in
-                if let url = object as? URL {
-                    return url
-                }
-                if let url = object as? NSURL {
-                    return url as URL
-                }
-                return nil
-            }
+            sender.draggingPasteboard.fileURLs
         }
+    }
+}
+
+extension NSPasteboard {
+    /// The file URLs on the pasteboard, in order; empty when it holds none.
+    var fileURLs: [URL] {
+        readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
     }
 }
