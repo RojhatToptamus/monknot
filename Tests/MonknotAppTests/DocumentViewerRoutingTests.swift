@@ -237,8 +237,11 @@ final class DocumentViewerRoutingTests: WorkspaceStoreTestCase {
         let player = try XCTUnwrap(playerView(in: host)?.player)
         XCTAssertEqual(
             playerView(in: host)?.frame.size,
-            CGSize(width: 480, height: 270),
-            "Audio shows the system player at a fixed size"
+            CGSize(
+                width: MonknotMetrics.scale(360, theme: .defaultDark, zoomScale: 1),
+                height: MonknotMetrics.scale(MediaPlayerView.audioControlsHeight, theme: .defaultDark, zoomScale: 1)
+            ),
+            "Audio shows only the player's control bar"
         )
         player.play()
         let plays = await waitUntil { player.timeControlStatus == .playing }

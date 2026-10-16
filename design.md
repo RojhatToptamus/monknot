@@ -739,7 +739,8 @@ Video and audio that AVFoundation plays (MOV, MP4, M4V, MPEG, MP3, M4A, AAC, WAV
 are workspace documents, listed by extension and never read until they open. They play in AVKit's
 own player with its standard inline controls; Monknot draws no controls of its own. A video keeps
 its proportions inside the pane with the theme's `surface` around it, never letterbox bars. Audio
-shows the system audio player at 480 × 270, centred on the surface.
+has no picture: the empty-state layout (§5.7) with a `waveform` glyph and the file name sits above
+AVKit's control bar, 360 × 48 with radius 8.
 
 Nothing plays on its own. Space plays and pauses while the player has focus. The player belongs to
 the visible tab: switching or closing the tab, or closing the window, stops playback and releases

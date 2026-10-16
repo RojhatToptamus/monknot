@@ -9,7 +9,7 @@ import UniformTypeIdentifiers
 /// the file when the tab is switched or closed or its window closes.
 ///
 /// A video keeps its own proportions inside the pane, so the theme's surface surrounds it instead
-/// of letterbox bars; audio shows the system's audio player at a fixed size.
+/// of letterbox bars. Audio has no picture: it shows the file's name above a compact control bar.
 struct MediaPlayerView: View {
     let document: WorkspaceDocument
     let theme: AppTheme
@@ -19,10 +19,25 @@ struct MediaPlayerView: View {
 
     var body: some View {
         ZStack {
-            MediaPlayerRepresentable(url: document.url, updateLoadState: updateLoadState(_:))
-                .aspectRatio(playerAspectRatio, contentMode: .fit)
-                .frame(maxWidth: playerMaximumSize.width, maxHeight: playerMaximumSize.height)
+            if isVideo {
+                player
+                    .aspectRatio(videoAspectRatio, contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .opacity(loadState.isReady ? 1 : 0)
+            } else {
+                MonknotEmptyState(
+                    systemImage: "waveform",
+                    title: document.displayName,
+                    detail: nil,
+                    theme: theme,
+                    zoomScale: zoomScale
+                ) {
+                    player
+                        .frame(width: scaled(360), height: scaled(Self.audioControlsHeight))
+                        .clipShape(RoundedRectangle(cornerRadius: scaled(8), style: .continuous))
+                }
                 .opacity(loadState.isReady ? 1 : 0)
+            }
 
             loadStatus
         }
@@ -30,26 +45,23 @@ struct MediaPlayerView: View {
         .background(theme.surfaceColor)
     }
 
-    private var videoSize: CGSize? {
+    /// AVKit's inline control bar at its minimum height, with no picture area.
+    static let audioControlsHeight: CGFloat = 48
+
+    private var player: some View {
+        MediaPlayerRepresentable(url: document.url, updateLoadState: updateLoadState(_:))
+    }
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    private var videoAspectRatio: CGFloat {
         guard case .ready(let presentationSize) = loadState,
               presentationSize.width > 0,
               presentationSize.height > 0
-        else { return nil }
-        return presentationSize
-    }
-
-    private var playerAspectRatio: CGFloat {
-        videoSize.map { $0.width / $0.height } ?? 16 / 9
-    }
-
-    private var playerMaximumSize: CGSize {
-        guard videoSize == nil else {
-            return CGSize(width: CGFloat.infinity, height: .infinity)
-        }
-        return CGSize(
-            width: MonknotMetrics.scale(480, theme: theme, zoomScale: zoomScale),
-            height: MonknotMetrics.scale(270, theme: theme, zoomScale: zoomScale)
-        )
+        else { return 16 / 9 }
+        return presentationSize.width / presentationSize.height
     }
 
     private func updateLoadState(_ state: MediaLoadState) {
