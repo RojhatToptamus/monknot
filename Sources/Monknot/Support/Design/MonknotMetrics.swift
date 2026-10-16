@@ -26,13 +26,8 @@ enum MonknotMetrics {
     static let iconCornerRadiusBase: CGFloat = 8
     /// The fixed-size native traffic lights and their leading inset.
     static let trafficLightReserveBase: CGFloat = 64
-    static let windowNavigationLeadingGapBase: CGFloat = 8
-    // File tabs follow their measured title width. The bounds only protect the
-    // icon/close affordances and prevent one unusually long path from owning
-    // the entire titlebar.
-    static let tabMinWidthBase: CGFloat = 0
+    /// File tabs hug their label up to this width and have no minimum (design.md §10.3).
     static let tabMaxWidthBase: CGFloat = 220
-    static let settingsMaxContentWidth: CGFloat = 720
     /// Native settings content is 532 points tall so the standard 28-point
     /// macOS title bar produces the specification's 600 × 560 window.
     /// The window scales with workspace zoom, up to the screen's visible area.
@@ -41,14 +36,10 @@ enum MonknotMetrics {
     static let settingsSidebarWidth: CGFloat = 168
 
     enum Spacing {
-        static let xxs: CGFloat = 2
         static let xs: CGFloat = 4
         static let s: CGFloat = 6
         static let m: CGFloat = 8
         static let l: CGFloat = 12
-        static let xl: CGFloat = 16
-        static let xxl: CGFloat = 20
-        static let windowMargin: CGFloat = 24
         static let settingsRowHorizontal: CGFloat = 14
         static let settingsRowVertical: CGFloat = 11
     }
@@ -92,16 +83,6 @@ enum MonknotMetrics {
     static func chromeButtonDimension(theme: AppTheme, zoomScale: Double) -> CGFloat {
         interfaceControl(iconButtonSizeBase, theme: theme, zoomScale: zoomScale)
     }
-
-
-    static func windowNavigationButtonDimension(theme: AppTheme, zoomScale: Double) -> CGFloat {
-        chromeButtonDimension(theme: theme, zoomScale: zoomScale)
-    }
-
-    static func windowNavigationLeadingGap(theme: AppTheme, zoomScale: Double) -> CGFloat {
-        interfaceDensity(windowNavigationLeadingGapBase, theme: theme, zoomScale: zoomScale)
-    }
-
 }
 
 /// Optical corrections for SF Symbols whose visible bounds are materially
@@ -179,8 +160,6 @@ enum WorkspaceZoomPolicy {
     static let maximum = 2.0
     static let step = 0.1
     static let defaultValue = 1.0
-    static let minimumDocumentScale = 0.8
-    static let maximumDocumentScale = 2.0
     static let supportedLevels = [0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0]
     static let shortcutDocumentScales = supportedLevels
 

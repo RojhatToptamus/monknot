@@ -124,7 +124,6 @@ final class DocumentTabBarLayoutTests: XCTestCase {
         let long = width(of: "02-sockets-claude.md", metrics: metrics)
 
         XCTAssertGreaterThan(long, short + 40)
-        XCTAssertGreaterThanOrEqual(short, MonknotMetrics.tabMinWidthBase)
         XCTAssertLessThanOrEqual(long, MonknotMetrics.tabMaxWidthBase)
     }
 
@@ -165,7 +164,6 @@ final class DocumentTabBarLayoutTests: XCTestCase {
         let readme = metrics.width(fittedLabel: "README.md", isPinned: true, isMissing: false)
 
         XCTAssertGreaterThan(readme, short)
-        XCTAssertGreaterThanOrEqual(short, MonknotMetrics.tabMinWidthBase)
         XCTAssertLessThanOrEqual(readme, MonknotMetrics.tabMaxWidthBase)
     }
 

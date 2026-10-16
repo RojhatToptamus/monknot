@@ -405,7 +405,7 @@ APP_SOURCES=(
   "Sources/Monknot/Support/DocumentSplitViewRatioAccessor.swift"
   "Sources/Monknot/Support/EditorSentenceRepairPolicy.swift"
   "Sources/Monknot/Support/WorkspaceSplitView.swift"
-  "Sources/Monknot/Support/Design/MonknotAccentButton.swift"
+  "Sources/Monknot/Support/Design/MonknotActionButton.swift"
   "Sources/Monknot/Support/Design/MonknotChromePanel.swift"
   "Sources/Monknot/Support/Design/MonknotChromeSurfaceBackground.swift"
   "Sources/Monknot/Support/Design/MonknotElevation.swift"

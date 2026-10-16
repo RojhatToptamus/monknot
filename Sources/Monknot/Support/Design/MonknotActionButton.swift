@@ -154,20 +154,3 @@ struct MonknotActionButton: View {
         return isHovered ? theme.hoverFillColor : nil
     }
 }
-
-struct MonknotAccentButton: View {
-    let title: String
-    let theme: AppTheme
-    var isDisabled: Bool = false
-    let action: () -> Void
-
-    var body: some View {
-        MonknotActionButton(
-            title: title,
-            role: .primary,
-            theme: theme,
-            isDisabled: isDisabled,
-            action: action
-        )
-    }
-}
