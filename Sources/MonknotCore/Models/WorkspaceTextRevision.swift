@@ -104,8 +104,7 @@ public enum WorkspaceConditionalTextWriter {
                     }
                 }
 
-                let data = Data(text.utf8)
-                try data.write(to: coordinatedURL, options: .atomic)
+                try WorkspaceTextFileGuard.writeUTF8Text(text, to: coordinatedURL)
                 writtenRevision = try read(from: coordinatedURL)
             } catch {
                 operationError = error

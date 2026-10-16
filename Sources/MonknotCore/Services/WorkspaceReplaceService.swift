@@ -75,7 +75,7 @@ public struct WorkspaceReplaceService: Sendable {
 
         for document in documents {
             guard let updatedText = plan.updatedTexts[document.id] else { continue }
-            try updatedText.write(to: document.url, atomically: true, encoding: .utf8)
+            try WorkspaceTextFileGuard.writeUTF8Text(updatedText, to: document.url)
             textCache.store(text: updatedText, for: document.url)
         }
 
@@ -219,7 +219,7 @@ public struct WorkspaceReplaceService: Sendable {
             try Task.checkCancellation()
             guard let previousText = previousTextsByDocumentID[document.id] else { continue }
 
-            try previousText.write(to: document.url, atomically: true, encoding: .utf8)
+            try WorkspaceTextFileGuard.writeUTF8Text(previousText, to: document.url)
             textCache.store(text: previousText, for: document.url)
 
             fileResults.append(WorkspaceReplaceFileResult(

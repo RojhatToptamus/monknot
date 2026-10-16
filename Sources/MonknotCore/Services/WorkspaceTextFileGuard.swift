@@ -62,6 +62,22 @@ public enum WorkspaceTextFileGuard {
         return text
     }
 
+    /// Decoding drops a UTF-8 byte order mark, so a save puts it back when the file starts with one.
+    public static func utf8Data(for text: String, preservingByteOrderMarkOf url: URL) -> Data {
+        let byteOrderMark = Data([0xEF, 0xBB, 0xBF])
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return Data(text.utf8) }
+        defer { try? handle.close() }
+        guard (try? handle.read(upToCount: byteOrderMark.count)) == byteOrderMark else {
+            return Data(text.utf8)
+        }
+        return byteOrderMark + Data(text.utf8)
+    }
+
+    /// Writes `text` atomically as UTF-8, keeping the file's byte order mark if it has one.
+    public static func writeUTF8Text(_ text: String, to url: URL) throws {
+        try utf8Data(for: text, preservingByteOrderMarkOf: url).write(to: url, options: .atomic)
+    }
+
     private static func containsNULByte(_ data: Data) -> Bool {
         data.withUnsafeBytes { buffer in
             guard let baseAddress = buffer.baseAddress else { return false }

@@ -149,6 +149,29 @@ final class WorkspaceTextFileGuardTests: XCTestCase {
         XCTAssertEqual(batch.skippedLargeFileCount, 1)
     }
 
+    func testSavingKeepsAByteOrderMarkTheFileStartsWith() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let byteOrderMark = Data([0xEF, 0xBB, 0xBF])
+        let marked = root.appendingPathComponent("marked.md")
+        let plain = root.appendingPathComponent("plain.md")
+        try (byteOrderMark + Data("# Old".utf8)).write(to: marked)
+        try Data("# Old".utf8).write(to: plain)
+
+        let loaded = try WorkspaceTextFileGuard.readUTF8Text(from: marked, cache: nil)
+        XCTAssertEqual(loaded, "# Old")
+        try WorkspaceTextFileGuard.writeUTF8Text("# New", to: marked)
+        try WorkspaceTextFileGuard.writeUTF8Text("# New", to: plain)
+        try WorkspaceConditionalTextWriter.write(
+            "# Newer",
+            to: marked,
+            expecting: .present(try WorkspaceConditionalTextWriter.read(from: marked))
+        )
+
+        XCTAssertEqual(try Data(contentsOf: marked), byteOrderMark + Data("# Newer".utf8))
+        XCTAssertEqual(try Data(contentsOf: plain), Data("# New".utf8))
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("monknot-text-guard-tests")

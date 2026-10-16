@@ -4539,7 +4539,7 @@ final class WorkspaceStore: ObservableObject {
 
     nonisolated private static func writeText(_ text: String, to url: URL) async throws {
         try await Task.detached(priority: .utility) {
-            try text.write(to: url, atomically: true, encoding: .utf8)
+            try WorkspaceTextFileGuard.writeUTF8Text(text, to: url)
         }.value
     }
 
