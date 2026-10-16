@@ -231,7 +231,8 @@ App-layer code should stay in `Sources/Monknot` when it uses SwiftUI state, AppK
 - `WorkspaceStore`: central workspace state machine. It uses generation counters and cancellable tasks to prevent stale async results from overwriting newer state. Preserve this pattern when adding async workspace, document, save, or refresh behavior.
 - `WorkspaceLibraryStore`: app-wide observable owner for saved workspace order, labels, bookmark resolution, and reversible removal. Saved workspaces are folder references, not on-disk manifests.
 - Tab state is owned by `ContentView`, but `WorkspaceStore` remains the source of truth for the active document text, dirty buffers, save state, external refresh, and file operations. Do not create per-tab editor state or per-tab preview instances.
-- `WorkspaceStore` publishes document-ID remap events for rename/cut-paste operations so inactive tabs can survive path changes.
+- `WorkspaceStore` publishes document-ID remap events for rename/cut-paste operations so inactive tabs can survive path changes; each event also names the moved item, so the sidebar's open folders, Recents and a pending Copy or Cut follow it.
+- Every window's `WorkspaceStore` registers in a weak table, so a Paste in one window can finish a Cut made in another (moving the item, or refusing while that window has unsaved changes the move would touch).
 - `WorkspaceStore` tracks open document IDs so dirty open documents removed externally are not silently pruned before the UI can surface the conflict.
 - `WorkspaceFileWatcher`: wraps macOS FSEvents and reports changed paths, modification-only paths, and full-rescan requirements back to `WorkspaceStore`. Modification-only events can refresh the active document without a full workspace scan.
 - `ThemeSettingsStore`: persists selected light/dark theme IDs and sanitized per-theme customizations in `UserDefaults`.

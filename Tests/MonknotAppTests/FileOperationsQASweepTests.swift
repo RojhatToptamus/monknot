@@ -35,8 +35,7 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         XCTAssertNotNil(doc(store, "Empty/a.md"), "The sidebar does not list the pasted file")
     }
 
-    /// Paste selects (opens) the pasted copy so it is revealed; every paste of the same Copy should
-    /// behave the same.
+    /// Paste selects (opens) the pasted copy so it is revealed, every time the same Copy is pasted.
     func testEveryPasteOfOneCopySelectsItsNewCopy() async throws {
         let root = try makeRoot()
         try write("# A\n", "a.md", in: root)
@@ -54,13 +53,11 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Sub")))
         await idle(store)
         XCTAssertEqual(names("Sub", in: root), ["a.md", "a copy.md"])
-        XCTExpectFailure("The second Paste of one Copy goes through the import path and neither selects nor reveals the new copy, unlike the first") {
-            XCTAssertEqual(store.selectedDocument?.relativePath, "Sub/a copy.md")
-        }
+        XCTAssertEqual(store.selectedDocument?.relativePath, "Sub/a copy.md")
     }
 
-    /// One Copy pasted twice should give two identical copies. The first Paste copies the live
-    /// file (with its unsaved edits); later ones copy the hard-link snapshot taken at Copy time.
+    /// One Copy pasted twice gives two identical copies: each Paste copies the file as it is then,
+    /// with its unsaved edits.
     func testRepeatedPastesOfOneCopyOfAnEditedFileProduceTheSameContent() async throws {
         let root = try makeRoot()
         try write("saved\n", "a.txt", in: root)
@@ -81,9 +78,7 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         let first = try String(contentsOf: root.appendingPathComponent("a copy.txt"), encoding: .utf8)
         let second = try String(contentsOf: root.appendingPathComponent("a copy 2.txt"), encoding: .utf8)
         XCTAssertEqual(first, "unsaved edit\n")
-        XCTExpectFailure("Second Paste of the same Copy pastes the on-disk snapshot, not the unsaved text the first Paste used") {
-            XCTAssertEqual(second, first)
-        }
+        XCTAssertEqual(second, first)
     }
 
     func testRepeatedPastesAfterTheSourceWasSavedOverProduceTheSameContent() async throws {
@@ -103,9 +98,8 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
 
         let first = try String(contentsOf: root.appendingPathComponent("a copy.txt"), encoding: .utf8)
         let second = try String(contentsOf: root.appendingPathComponent("a copy 2.txt"), encoding: .utf8)
-        XCTExpectFailure("First Paste copies the file as it is now (v2), the second pastes the snapshot from Copy time (v1)") {
-            XCTAssertEqual(first, second)
-        }
+        XCTAssertEqual(first, "v2\n")
+        XCTAssertEqual(second, first)
     }
 
     /// Monknot knows it renamed the copied item; the pending Copy should follow it.
@@ -125,10 +119,8 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
 
         XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Sub")))
         await idle(store)
-        XCTExpectFailure("A pending Copy is not remapped when Monknot renames the item: Paste fails with 'no such file'") {
-            XCTAssertNil(store.errorMessage)
-            XCTAssertEqual(names("Sub", in: root).count, 1)
-        }
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(names("Sub", in: root), ["b.txt"])
     }
 
     func testCutThenRenameInMonknotThenPasteMovesTheRenamedFile() async throws {
@@ -146,13 +138,9 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
 
         XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Sub")))
         await settle(store)
-        XCTExpectFailure("A pending Cut is not remapped when Monknot renames the item: Paste fails and nothing moves") {
-            XCTAssertNil(store.errorMessage)
-            XCTAssertEqual(names("Sub", in: root), ["b.txt"])
-        }
-        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("b.txt").path)
-            || FileManager.default.fileExists(atPath: root.appendingPathComponent("Sub/b.txt").path),
-            "The cut file was lost")
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(names("Sub", in: root), ["b.txt"])
+        XCTAssertFalse(names("", in: root).contains("b.txt"))
     }
 
     // MARK: - Cut → Paste
@@ -212,7 +200,29 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         XCTAssertEqual(names("", in: root), ["a.txt", "b.txt", "Sub"])
     }
 
-    func testCutFolderWithOpenUnsavedMarkdownIsRefusedWithAReason() async throws {
+    /// Moving the folder would rewrite the relative link in the unsaved note, so it waits.
+    func testCutFolderWithAnUnsavedNoteWhoseLinksTheMoveRewritesIsRefusedWithAReason() async throws {
+        let root = try makeRoot()
+        try write("# N\n[top](../top.md)\n", "Folder/n.md", in: root)
+        try write("# Top\n", "top.md", in: root)
+        try mkdir("Archive", in: root)
+        let store = try await openStore(root, selecting: "Folder/n.md")
+        let n = try XCTUnwrap(doc(store, "Folder/n.md"))
+        _ = await wait { !store.isDocumentLoading }
+        store.setOpenDocumentIDs([n.id])
+        store.setDocumentText("# N edited\n")
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
+
+        store.putItemOnPasteboard(at: root.appendingPathComponent("Folder"), cutting: true, pasteboard: pasteboard)
+        XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Archive")))
+        await settle(store)
+        XCTAssertEqual(store.errorMessage, "Save n.md first: this move updates the links in it.")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: n.url.path))
+        XCTAssertEqual(store.documentText, "# N edited\n", "Unsaved text lost")
+    }
+
+    func testCutFolderWithAnOpenUnsavedNoteMovesAndKeepsTheEdit() async throws {
         let root = try makeRoot()
         try write("# N\n", "Folder/n.md", in: root)
         try mkdir("Archive", in: root)
@@ -227,9 +237,10 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         store.putItemOnPasteboard(at: root.appendingPathComponent("Folder"), cutting: true, pasteboard: pasteboard)
         XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Archive")))
         await settle(store)
-        XCTAssertNotNil(store.errorMessage, "Refused silently")
-        XCTAssertTrue(FileManager.default.fileExists(atPath: n.url.path))
-        XCTAssertEqual(store.documentText, "# N edited\n", "Unsaved text lost")
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(store.selectedDocument?.relativePath, "Archive/Folder/n.md")
+        XCTAssertEqual(store.documentText, "# N edited\n")
+        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("Archive/Folder/n.md"), encoding: .utf8), "# N\n")
     }
 
     func testCutFolderWithOpenUnsavedTextFileMovesAndKeepsTheEdit() async throws {
@@ -253,8 +264,8 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         XCTAssertFalse(store.saveState(for: root.appendingPathComponent("Archive/Folder/n.txt").path).isClean)
     }
 
-    /// Two windows on two workspaces share one clipboard. Cut in one, Paste in the other moves in
-    /// Finder; here the original stays put and the first window can still move it later.
+    /// Two windows on two workspaces share one clipboard. Cut in one and Paste in the other moves
+    /// the item, as in Finder, and the moved item cannot be pasted again.
     func testCutInOneWindowPastedInAnotherWorkspaceMovesTheItem() async throws {
         let rootA = try makeRoot()
         let rootB = try makeRoot()
@@ -267,10 +278,62 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         windowA.putItemOnPasteboard(at: rootA.appendingPathComponent("a.txt"), cutting: true, pasteboard: pasteboard)
         XCTAssertTrue(windowB.pasteFromPasteboard(pasteboard, into: nil))
         await idle(windowB)
+        XCTAssertNil(windowB.errorMessage)
         XCTAssertEqual(names("", in: rootB), ["a.txt"])
-        XCTExpectFailure("Cut in one window then Paste in another window copies: the cut original stays, so the user ends with two") {
-            XCTAssertFalse(FileManager.default.fileExists(atPath: rootA.appendingPathComponent("a.txt").path))
-        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rootA.appendingPathComponent("a.txt").path))
+        XCTAssertEqual(windowB.selectedDocument?.relativePath, "a.txt")
+
+        XCTAssertFalse(windowA.pasteFromPasteboard(pasteboard, into: nil), "The moved item is still on the clipboard")
+        XCTAssertFalse(windowB.pasteFromPasteboard(pasteboard, into: nil), "The moved item is still on the clipboard")
+    }
+
+    func testCutInOneWindowWithUnsavedEditsIsNotMovedByAnotherWindow() async throws {
+        let rootA = try makeRoot()
+        let rootB = try makeRoot()
+        try write("disk\n", "a.txt", in: rootA)
+        let windowA = try await openStore(rootA, selecting: "a.txt")
+        let windowB = try await openStore(rootB)
+        let a = try XCTUnwrap(doc(windowA, "a.txt"))
+        _ = await wait { !windowA.isDocumentLoading }
+        windowA.setOpenDocumentIDs([a.id])
+        windowA.setDocumentText("unsaved\n")
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
+
+        windowA.putItemOnPasteboard(at: a.url, cutting: true, pasteboard: pasteboard)
+        XCTAssertTrue(windowB.pasteFromPasteboard(pasteboard, into: nil))
+        await idle(windowB)
+        XCTAssertEqual(windowB.errorMessage, "Save or close a.txt in its window first.")
+        XCTAssertEqual(names("", in: rootA), ["a.txt"])
+        XCTAssertEqual(names("", in: rootB), [])
+        XCTAssertEqual(windowA.documentText, "unsaved\n")
+
+        let saved = await windowA.saveDocument(id: a.id)
+        XCTAssertTrue(saved)
+        XCTAssertTrue(windowB.pasteFromPasteboard(pasteboard, into: nil))
+        await idle(windowB)
+        XCTAssertNil(windowB.errorMessage)
+        XCTAssertEqual(try String(contentsOf: rootB.appendingPathComponent("a.txt"), encoding: .utf8), "unsaved\n")
+        XCTAssertEqual(names("", in: rootA), [])
+    }
+
+    /// Two windows on one workspace: a Cut in one and Paste in the other is a link-aware move.
+    func testCutInOneWindowPastedInAnotherWindowOfTheSameWorkspaceUpdatesLinks() async throws {
+        let root = try makeRoot()
+        try write("# T\n", "target.md", in: root)
+        try write("See [t](target.md)\n", "index.md", in: root)
+        try mkdir("Archive", in: root)
+        let windowA = try await openStore(root)
+        let windowB = try await openStore(root)
+        let pasteboard = makePasteboard()
+        defer { pasteboard.releaseGlobally() }
+
+        windowA.putItemOnPasteboard(at: root.appendingPathComponent("target.md"), cutting: true, pasteboard: pasteboard)
+        XCTAssertTrue(windowB.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Archive")))
+        await settle(windowB)
+        XCTAssertNil(windowB.errorMessage)
+        XCTAssertEqual(names("Archive", in: root), ["target.md"])
+        XCTAssertTrue(try String(contentsOf: root.appendingPathComponent("index.md"), encoding: .utf8).contains("Archive/target.md"))
     }
 
     // MARK: - Names
@@ -366,9 +429,8 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         store.duplicateItem(at: root.appendingPathComponent("Folder"))
         await idle(store)
         let inFolderCopy = try String(contentsOf: root.appendingPathComponent("Folder copy/a.txt"), encoding: .utf8)
-        XCTExpectFailure("Duplicate (and Copy/Paste) of a folder copies its open documents' saved text, dropping unsaved edits that Duplicate of the file keeps") {
-            XCTAssertEqual(inFolderCopy, "unsaved\n")
-        }
+        XCTAssertEqual(inFolderCopy, "unsaved\n")
+        XCTAssertEqual(try String(contentsOf: a.url, encoding: .utf8), "disk\n")
     }
 
     func testDuplicateWhileBusyIsReported() async throws {
@@ -417,10 +479,8 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         await idle(store)
 
         let applied = names("", in: root)
-        XCTAssertFalse(applied.contains("new.txt") && applied.contains("New"), "Unexpectedly queued")
-        XCTExpectFailure("New File, New Folder, Rename and Move are dropped without any message while busy (Paste, Duplicate and imports do report)") {
-            XCTAssertEqual(silent, [])
-        }
+        XCTAssertFalse(applied.contains("new.txt") || applied.contains("New"), "Unexpectedly queued")
+        XCTAssertEqual(silent, [])
     }
 
     // MARK: - Foreign clipboard contents
@@ -570,11 +630,54 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         // A plain Finder drag of workspace items proposes Move (the drag cursor says move).
         XCTAssertFalse(SidebarFileDrop.copies(urls, workspaceURL: root, isOptionPressed: false))
         store.dropFileURLs(urls, into: root.appendingPathComponent("Sub"), copying: false)
-        await settle(store)
-        XCTExpectFailure("Dropping two or more workspace files from Finder with the Move cursor is refused: 'Move items that are already in the workspace one at a time.'") {
-            XCTAssertNil(store.errorMessage)
-            XCTAssertEqual(names("Sub", in: root), ["a.txt", "b.txt"])
+        _ = await wait { self.names("Sub", in: root).count == 2 && !store.isBusy }
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(names("Sub", in: root), ["a.txt", "b.txt"])
+        XCTAssertEqual(names("", in: root), ["Sub"])
+    }
+
+    /// Each moved item updates the links to it, after its own review; a folder and a file inside
+    /// it dropped together move as the folder.
+    func testFinderDropOfSeveralWorkspaceItemsUpdatesLinksAndFollowsEarlierMoves() async throws {
+        let root = try makeRoot()
+        try write("# A\n", "a.md", in: root)
+        try write("# N\n", "Notes/n.md", in: root)
+        try write("[a](a.md) [n](Notes/n.md)\n", "index.md", in: root)
+        try mkdir("Archive", in: root)
+        let store = try await openStore(root)
+        let urls = ["a.md", "Notes", "Notes/n.md"].map { root.appendingPathComponent($0) }
+
+        store.dropFileURLs(urls, into: root.appendingPathComponent("Archive"), copying: false)
+        for _ in 0..<3 {
+            _ = await wait { !store.isBusy }
+            if let review = store.pendingMarkdownLinkMoveReview {
+                store.confirmMarkdownLinkMoveReview(id: review.id)
+            }
         }
+        await settle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(names("Archive", in: root), ["a.md", "Notes"])
+        XCTAssertEqual(names("Archive/Notes", in: root), ["n.md"])
+        XCTAssertEqual(
+            try String(contentsOf: root.appendingPathComponent("index.md"), encoding: .utf8),
+            "[a](Archive/a.md) [n](Archive/Notes/n.md)\n"
+        )
+    }
+
+    func testFinderDropOfWorkspaceAndOutsideItemsMovesOneAndCopiesTheOther() async throws {
+        let root = try makeRoot()
+        let outside = try makeRoot()
+        try write("a\n", "a.txt", in: root)
+        try write("o\n", "o.txt", in: outside)
+        try mkdir("Sub", in: root)
+        let store = try await openStore(root)
+
+        store.dropFileURLs([root.appendingPathComponent("a.txt"), outside.appendingPathComponent("o.txt")], into: root.appendingPathComponent("Sub"))
+        _ = await wait { self.names("Sub", in: root).count == 2 && !store.isBusy }
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(names("Sub", in: root), ["a.txt", "o.txt"])
+        XCTAssertEqual(names("", in: root), ["Sub"])
+        XCTAssertEqual(names("", in: outside), ["o.txt"])
     }
 
     func testFinderDropWhileBusyIsReported() async throws {
@@ -593,31 +696,37 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         await idle(store)
     }
 
-    /// Paste (and Finder drop) of items the sidebar does not list copies them into the workspace
-    /// and shows nothing, with no message; New File reports the same situation.
+    /// Paste (and Finder drop) of items the sidebar does not list copies them in and says they
+    /// will not show, as New File does.
     func testPastingFinderItemsTheSidebarDoesNotListIsNotSilent() async throws {
         let root = try makeRoot()
         let outside = try makeRoot()
         try write("zip", "archive.zip", in: outside)
-        try write("mp3", "song.mp3", in: outside)
+        try write("doc", "report.docx", in: outside)
         try write("# x\n", "dist/inner.md", in: outside)
+        try write("# shown\n", "shown.md", in: outside)
         let store = try await openStore(root)
         let pasteboard = makePasteboard()
         defer { pasteboard.releaseGlobally() }
 
         pasteboard.clearContents()
-        pasteboard.writeObjects(["archive.zip", "song.mp3", "dist"].map { outside.appendingPathComponent($0) as NSURL })
+        pasteboard.writeObjects(["archive.zip", "report.docx", "dist", "shown.md"].map { outside.appendingPathComponent($0) as NSURL })
         XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: nil))
         await idle(store)
-        XCTAssertEqual(names("", in: root), ["archive.zip", "song.mp3", "dist"], "Not copied in")
-        XCTAssertEqual(store.rootNode?.children?.map(\.name) ?? [], [], "Sidebar shows them")
-        XCTExpectFailure("Pasted or dropped zip/mp3 files and a folder named 'dist' are copied into the workspace but never shown, and nothing says so") {
-            XCTAssertNotNil(store.errorMessage)
+        XCTAssertEqual(names("", in: root), ["archive.zip", "report.docx", "dist", "shown.md"], "Not copied in")
+        XCTAssertEqual(store.rootNode?.children?.map(\.name) ?? [], ["shown.md"])
+        let message = try XCTUnwrap(store.errorMessage)
+        for name in ["archive.zip", "report.docx", "dist", "does not show these kinds of items"] {
+            XCTAssertTrue(message.contains(name), message)
         }
+        XCTAssertFalse(message.contains("shown.md"), message)
+
+        store.dropFileURLs([outside.appendingPathComponent("archive.zip")], into: nil)
+        await idle(store)
+        XCTAssertEqual(store.errorMessage, "Pasted archive copy.zip, but Monknot does not show this kind of item.")
     }
 
-    /// "Rename while dirty": an unrelated plain-text file cannot be renamed (or moved, cut/pasted,
-    /// dragged) while any Markdown note anywhere in the workspace has unsaved edits.
+    /// An unsaved note does not stop renaming or moving items it does not link to.
     func testRenamingAnUnrelatedFileWhileANoteIsUnsavedWorks() async throws {
         let root = try makeRoot()
         try write("# a\n", "a.md", in: root)
@@ -633,17 +742,46 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         await settle(store)
         let renameError = store.errorMessage
         store.errorMessage = nil
-        store.moveItem(id: b.id, toDirectory: nil)
+        store.moveItem(id: root.appendingPathComponent("Other/c.txt").path, toDirectory: nil)
         await settle(store)
         let moveError = store.errorMessage
         XCTAssertEqual(store.documentText, "# a typing\n")
-        XCTExpectFailure("Rename and Move of any item are refused ('Save Markdown changes before renaming or moving workspace items.') while any note is unsaved, even one unrelated to the item") {
-            XCTAssertNil(renameError)
-            XCTAssertNil(moveError)
-        }
+        XCTAssertNil(renameError)
+        XCTAssertNil(moveError)
+        XCTAssertEqual(names("", in: root), ["a.md", "Other", "c.txt"])
+        XCTAssertFalse(store.saveState(for: a.id).isClean)
     }
 
-    /// Finder shortens a long name to fit " copy"; here Duplicate and the second Paste fail.
+    /// A move rewrites the links in the notes that link to the item; an unsaved one of those would
+    /// lose its edits or its updated links, so the move waits until it is saved.
+    func testMovingAnItemAnUnsavedNoteLinksToIsRefusedUntilTheNoteIsSaved() async throws {
+        let root = try makeRoot()
+        try write("[b](Other/b.txt)\n", "a.md", in: root)
+        try write("x\n", "Other/b.txt", in: root)
+        let store = try await openStore(root, selecting: "a.md")
+        let a = try XCTUnwrap(doc(store, "a.md"))
+        _ = await wait { !store.isDocumentLoading }
+        store.setOpenDocumentIDs([a.id])
+        store.setDocumentText("[b](Other/b.txt) typing\n")
+
+        let b = try XCTUnwrap(doc(store, "Other/b.txt"))
+        store.renameDocument(id: b.id, to: "c.txt")
+        await idle(store)
+        XCTAssertNil(store.pendingMarkdownLinkMoveReview)
+        XCTAssertEqual(store.errorMessage, "Save a.md first: this move updates the links in it.")
+        XCTAssertEqual(names("Other", in: root), ["b.txt"])
+        XCTAssertEqual(store.documentText, "[b](Other/b.txt) typing\n")
+
+        let saved = await store.saveDocument(id: a.id)
+        XCTAssertTrue(saved)
+        store.renameDocument(id: b.id, to: "c.txt")
+        await settle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(names("Other", in: root), ["c.txt"])
+        XCTAssertEqual(try String(contentsOf: a.url, encoding: .utf8), "[b](Other/c.txt) typing\n")
+    }
+
+    /// As Finder does, a long name is shortened to fit " copy".
     func testDuplicateOfALongNameFitsTheCopySuffix() async throws {
         let root = try makeRoot()
         let base = String(repeating: "d", count: 250)
@@ -743,8 +881,8 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         await settle(store)
         XCTAssertNotNil(doc(store, "renamed.md"))
         let renamedID = root.appendingPathComponent("renamed.md").path
-        XCTExpectFailure("Recents are not remapped on rename or move: the renamed document drops out of Recents") {
-            XCTAssertTrue(store.recentDocuments().contains { $0.documentID == renamedID }, "\(store.recentDocuments().map(\.documentID))")
-        }
+        XCTAssertEqual(store.recentDocuments().first?.documentID, renamedID)
+        XCTAssertEqual(store.recentDocuments().first?.relativePath, "renamed.md")
+        XCTAssertFalse(store.recentDocuments().contains { $0.documentID == a.id })
     }
 }

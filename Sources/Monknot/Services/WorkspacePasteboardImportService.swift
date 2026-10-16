@@ -757,9 +757,10 @@ extension WorkspaceStore {
     }
 
     /// Pastes into `directoryURL` (the root when nil): the pending Copy or Cut while the pasteboard
-    /// still holds the item it wrote, otherwise the pasteboard's files, image or text. Another
-    /// window's Copy or Cut, or any other app's copy, replaces that item and so ends the transfer.
-    /// Returns false when there is nothing to paste.
+    /// still holds the item it wrote, another window's Cut (which moves its item here), otherwise
+    /// the pasteboard's files, image or text. Another window's Copy or Cut, or any other app's
+    /// copy, replaces that item and so ends the transfer. Returns false when there is nothing to
+    /// paste.
     @discardableResult
     func pasteFromPasteboard(_ pasteboard: NSPasteboard = .general, into directoryURL: URL?) -> Bool {
         if let stamp = pendingTransferPasteboardStamp,
@@ -768,6 +769,14 @@ extension WorkspaceStore {
             return true
         }
         discardPendingTransfer()
+
+        if let owner = otherWindowStores.first(where: { store in
+            guard store.hasPendingCut, let stamp = store.pendingTransferPasteboardStamp else { return false }
+            return WorkspacePasteboardExportService.holdsTransfer(stamp, on: pasteboard)
+        }) {
+            pasteCut(from: owner, into: directoryURL)
+            return true
+        }
 
         do {
             let items = try WorkspacePasteboardImportService.importItems(from: pasteboard)

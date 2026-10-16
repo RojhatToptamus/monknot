@@ -492,7 +492,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertNil(node(store, "folder"))
     }
 
-    func testRenameIsRefusedWhileAnyMarkdownDocumentIsDirty() async throws {
+    func testRenameDirtyMarkdownDocumentCarriesUnsavedText() async throws {
         let root = try makeRoot()
         try write("# A\n", to: root.appendingPathComponent("A.md"))
         let store = try await openStore(root)
@@ -503,9 +503,36 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
 
         store.renameDocument(id: a.id, to: "B")
         await settleMove(store)
-        XCTAssertNotNil(store.errorMessage)
-        XCTAssertEqual(names(in: root), ["A.md"])
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(names(in: root), ["B.md"])
+        let renamedID = root.appendingPathComponent("B.md").path
+        XCTAssertEqual(store.selectedDocumentID, renamedID)
         XCTAssertEqual(store.documentText, "# A\nedited\n")
+        XCTAssertFalse(store.saveState(for: renamedID).isClean)
+    }
+
+    func testRenameIsRefusedWhileADirtyDocumentWouldHaveItsLinksRewritten() async throws {
+        let root = try makeRoot()
+        try write("# A\n[b](B.md)\n", to: root.appendingPathComponent("A.md"))
+        try write("# B\n", to: root.appendingPathComponent("B.md"))
+        let store = try await openStore(root)
+        let a = try await select(store, "A.md")
+        store.setOpenDocumentIDs([a.id])
+        store.setDocumentText("# A\n[b](B.md)\nedited\n")
+        let b = try XCTUnwrap(document(store, "B.md"))
+
+        store.renameDocument(id: b.id, to: "C")
+        await settleMove(store)
+        XCTAssertEqual(store.errorMessage, "Save A.md first: this move updates the links in it.")
+        XCTAssertEqual(names(in: root), ["A.md", "B.md"])
+        XCTAssertEqual(store.documentText, "# A\n[b](B.md)\nedited\n")
+
+        // Renaming the unsaved note itself rewrites no other file, so its text moves with it.
+        store.renameDocument(id: a.id, to: "Renamed")
+        await settleMove(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(names(in: root), ["Renamed.md", "B.md"])
+        XCTAssertEqual(store.documentText, "# A\n[b](B.md)\nedited\n")
     }
 
     func testRenameDirtyPlainTextDocumentCarriesUnsavedTextAndSelection() async throws {
@@ -712,7 +739,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("a copy.txt"), encoding: .utf8), "unsaved\n")
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("a.txt"), encoding: .utf8), "disk\n")
         XCTAssertEqual(store.selectedDocumentID, root.appendingPathComponent("a copy.txt").path)
-        XCTAssertFalse(store.canPasteDocumentTransfer, "A copy is pasted once (sidebar Paste disappears)")
+        XCTAssertTrue(store.canPasteDocumentTransfer, "A Copy can be pasted again")
 
         // The original's unsaved text survives the selection change.
         XCTAssertFalse(store.saveState(for: a.id).isClean)
@@ -1148,9 +1175,15 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertEqual(names(in: root.appendingPathComponent("Sub")), [])
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("Index.md"), encoding: .utf8), "[a](Other/a.md)\n")
 
-        store.dropFileURLs([root.appendingPathComponent("Other/a.md"), root.appendingPathComponent("Index.md")])
-        XCTAssertNotNil(store.errorMessage, "Several workspace items are not moved at once")
-        XCTAssertFalse(store.isBusy)
+        // Several items move one after another to the root; a.md is already there.
+        try makeFolder(root.appendingPathComponent("Other/Deeper"))
+        store.dropFileURLs([root.appendingPathComponent("Other/a.md"), root.appendingPathComponent("Other/Deeper")])
+        for _ in 0..<2 {
+            await settleMove(store)
+        }
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(names(in: root), ["Index.md", "Sub", "Other", "a.md", "Deeper"])
+        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("Index.md"), encoding: .utf8), "[a](a.md)\n")
     }
 
     /// An Option-drop copies a workspace item, leaving the original and its links in place.
