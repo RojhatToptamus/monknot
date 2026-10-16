@@ -3428,7 +3428,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
                     currentOwnedData: dirtyData
                 )
                 isImageDocument = isImage
-                applyPDFZoomMode(.fixed(scaleFactor: Double(openingScale(in: pdfView))), to: pdfView)
+                applyOpeningZoom(to: pdfView)
             }
             onLoadStateChange(
                 loadedDocument == nil ? .failed : .loaded(isMarkupSupported: isMarkupSupported)
@@ -3601,17 +3601,14 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         }
 
         /// A PDF opens at its actual size. An image opens whole, at no more than its actual size,
-        /// as in Preview.
+        /// as in Preview; until the view has a size it opens at actual size and fits on first layout.
+        private func applyOpeningZoom(to pdfView: PDFView) {
+            awaitsOpeningImageFit = isImageDocument && pdfView.document != nil && pdfView.bounds.isEmpty
+            applyPDFZoomMode(.fixed(scaleFactor: Double(openingScale(in: pdfView))), to: pdfView)
+        }
+
         private func openingScale(in pdfView: PDFView) -> CGFloat {
-            guard isImageDocument, pdfView.document != nil else {
-                awaitsOpeningImageFit = false
-                return 1
-            }
-            guard !pdfView.bounds.isEmpty else {
-                awaitsOpeningImageFit = true
-                return 1
-            }
-            awaitsOpeningImageFit = false
+            guard isImageDocument, pdfView.document != nil, !pdfView.bounds.isEmpty else { return 1 }
             // PDFKit's size-to-fit matches the width; a whole image must fit the height too.
             let widthFit = pdfView.scaleFactorForSizeToFit
             let margins = pdfView.displaysPageBreaks ? pdfView.pageBreakMargins : NSEdgeInsetsZero
@@ -3626,7 +3623,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
         func applyOpeningImageFitIfNeeded(in pdfView: AnnotatingPDFView) {
             guard awaitsOpeningImageFit, !pdfView.bounds.isEmpty else { return }
             performWithoutPublishingViewportStateChanges {
-                applyPDFZoomMode(.fixed(scaleFactor: Double(openingScale(in: pdfView))), to: pdfView)
+                applyOpeningZoom(to: pdfView)
             }
             publishViewportState(from: pdfView)
         }
@@ -3687,19 +3684,12 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             shouldRestoreViewportState = false
 
             performWithoutPublishingViewportStateChanges {
-                let restoredZoomMode: PDFZoomMode
-                switch state?.zoomMode {
-                case .fixed(let scaleFactor):
+                if let zoomMode = state?.zoomMode {
                     awaitsOpeningImageFit = false
-                    restoredZoomMode = .fixed(scaleFactor: scaleFactor)
-                case .fitToView:
-                    awaitsOpeningImageFit = false
-                    restoredZoomMode = .fixed(scaleFactor: 1)
-                case .none:
-                    restoredZoomMode = .fixed(scaleFactor: Double(openingScale(in: pdfView)))
+                    applyPDFZoomMode(zoomMode, to: pdfView)
+                } else {
+                    applyOpeningZoom(to: pdfView)
                 }
-                applyPDFZoomMode(restoredZoomMode, to: pdfView)
-                pdfView.layoutDocumentView()
 
                 if !skipPosition,
                    let position = state?.position,
@@ -4032,53 +4022,40 @@ extension PDFPageStatus {
 /// PDFKit's own minimum/maximum scale bounds.
 /// https://developer.apple.com/documentation/pdfkit/pdfview/scalefactor
 func applyPDFZoomMode(_ mode: PDFZoomMode, to pdfView: PDFView) {
-    switch mode {
-    case .fitToView:
-        pdfView.autoScales = false
-        pdfView.scaleFactor = clampedPDFScaleFactor(1, in: pdfView)
-    case .fixed(let scaleFactor):
-        let requestedScale = CGFloat(scaleFactor)
-        guard requestedScale.isFinite, requestedScale > 0 else {
-            pdfView.autoScales = false
-            pdfView.scaleFactor = clampedPDFScaleFactor(1, in: pdfView)
-            break
-        }
-
-        pdfView.autoScales = false
-        pdfView.scaleFactor = clampedPDFScaleFactor(requestedScale, in: pdfView)
+    var requestedScale: CGFloat = 1
+    if case .fixed(let scaleFactor) = mode, scaleFactor.isFinite, scaleFactor > 0 {
+        requestedScale = CGFloat(scaleFactor)
     }
-
+    pdfView.autoScales = false
+    pdfView.scaleFactor = clampedPDFScaleFactor(requestedScale, in: pdfView)
     pdfView.layoutDocumentView()
 }
 
 func applyPDFZoomCommand(_ command: PDFZoomCommand, to pdfView: PDFView) {
+    let mode: PDFZoomMode
     switch command {
     case .zoomOut:
         guard pdfView.canZoomOut else { return }
         pdfView.autoScales = false
         pdfView.zoomOut(nil)
+        return
     case .zoomIn:
         guard pdfView.canZoomIn else { return }
         pdfView.autoScales = false
         pdfView.zoomIn(nil)
+        return
     case .fitToView:
-        let destination = pdfView.currentDestination
-        applyPDFZoomMode(.fitToView, to: pdfView)
-        if let destination {
-            pdfView.go(to: destination)
-        }
+        mode = .fitToView
     case .actualSize:
-        let destination = pdfView.currentDestination
-        applyPDFZoomMode(.fixed(scaleFactor: 1), to: pdfView)
-        if let destination {
-            pdfView.go(to: destination)
-        }
+        mode = .fixed(scaleFactor: 1)
     case .preset(let scaleFactor):
-        let destination = pdfView.currentDestination
-        applyPDFZoomMode(.fixed(scaleFactor: scaleFactor), to: pdfView)
-        if let destination {
-            pdfView.go(to: destination)
-        }
+        mode = .fixed(scaleFactor: scaleFactor)
+    }
+    // Keep the page and spot in view across the scale change.
+    let destination = pdfView.currentDestination
+    applyPDFZoomMode(mode, to: pdfView)
+    if let destination {
+        pdfView.go(to: destination)
     }
 }
 
@@ -4849,9 +4826,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         else { return }
         let clipView = scrollView.contentView
         let pagePoint = convert(point, to: page)
-        autoScales = false
-        scaleFactor = clampedPDFScaleFactor(scaleFactor * factor, in: self)
-        layoutDocumentView()
+        applyPDFZoomMode(.fixed(scaleFactor: Double(scaleFactor * factor)), to: self)
 
         let before = clipView.convert(point, from: self)
         let after = clipView.convert(convert(pagePoint, from: page), from: self)
