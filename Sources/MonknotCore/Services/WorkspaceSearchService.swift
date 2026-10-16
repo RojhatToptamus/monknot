@@ -200,6 +200,8 @@ public struct WorkspaceSearchService: Sendable {
             )
         } catch WorkspaceTextFileGuard.Error.fileTooLarge {
             return WorkspaceSearchIndex.DocumentMatchBatch(results: [], skippedLargeFileCount: 1)
+        } catch is WorkspaceTextFileGuard.Error {
+            return WorkspaceSearchIndex.DocumentMatchBatch(results: [], skippedLargeFileCount: 0)
         }
 
         return try textMatches(

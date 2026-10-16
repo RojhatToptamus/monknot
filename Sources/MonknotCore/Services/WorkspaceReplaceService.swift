@@ -175,6 +175,8 @@ public struct WorkspaceReplaceService: Sendable {
             } catch WorkspaceTextFileGuard.Error.fileTooLarge {
                 skippedLargeFileCount += 1
                 continue
+            } catch is WorkspaceTextFileGuard.Error {
+                continue
             }
 
             let replaced = Self.replacedText(

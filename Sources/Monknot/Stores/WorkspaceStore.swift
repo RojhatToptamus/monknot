@@ -2888,6 +2888,8 @@ final class WorkspaceStore: ObservableObject {
             return "This file is \(megabytes(size)) MB. The editor opens text files up to \(megabytes(maxBytes)) MB."
         case WorkspaceTextFileGuard.Error.unreadableEncoding:
             return "This file is not UTF-8 text, so it cannot be edited here."
+        case WorkspaceTextFileGuard.Error.binaryContent:
+            return "This file holds binary data, not text, so it cannot be edited here."
         default:
             return "The file could not be read: \(error.localizedDescription)"
         }

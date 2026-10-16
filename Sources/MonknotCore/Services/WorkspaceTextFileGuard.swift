@@ -6,6 +6,7 @@ public enum WorkspaceTextFileGuard {
     public enum Error: LocalizedError, Equatable {
         case fileTooLarge(path: String, size: Int64, maxBytes: Int64)
         case unreadableEncoding(path: String)
+        case binaryContent(path: String)
 
         public var errorDescription: String? {
             switch self {
@@ -15,6 +16,8 @@ public enum WorkspaceTextFileGuard {
                 return "\(path) is too large to open (\(String(format: "%.1f", sizeMB)) MB; limit \(String(format: "%.0f", maxMB)) MB)."
             case .unreadableEncoding(let path):
                 return "\(path) is not valid UTF-8 text."
+            case .binaryContent(let path):
+                return "\(path) holds binary data, not text."
             }
         }
     }
@@ -46,11 +49,23 @@ public enum WorkspaceTextFileGuard {
             return cached
         }
 
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+        let data = try Data(contentsOf: url)
+        guard let text = String(data: data, encoding: .utf8) else {
             throw Error.unreadableEncoding(path: url.lastPathComponent)
+        }
+        // A NUL byte is valid UTF-8 but never appears in text; the editor would show it as garbage.
+        guard !containsNULByte(data) else {
+            throw Error.binaryContent(path: url.lastPathComponent)
         }
 
         cache?.store(text: text, for: url)
         return text
+    }
+
+    private static func containsNULByte(_ data: Data) -> Bool {
+        data.withUnsafeBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else { return false }
+            return memchr(baseAddress, 0, buffer.count) != nil
+        }
     }
 }
