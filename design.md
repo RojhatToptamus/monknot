@@ -635,9 +635,20 @@ column, and folders carry no folder glyph. Files use `doc.text` / `doc.richtext`
 `play.rectangle` in the same column. Names at one depth therefore share a left edge, and a child
 steps right by exactly the 16 indent.
 
-Label `ink2` and glyph `ink3` at rest, both `ink` on hover or press; the selected file's label is `ink`
-and its glyph `accent` (§1.3, §1.4). Quiet Sidebar takes a fifth off each opacity, once, never below
+Label `ink2` and glyph `ink3` at rest, both `ink` on hover or press; the selected row's label is `ink`
+and its glyph (a file's kind glyph, a folder's chevron) `accent`, on a `sel` fill (§1.3, §1.4). Quiet Sidebar takes a fifth off each opacity, once, never below
 52% light / 48% dark; ink already under that floor (resting glyphs at `ink3`) stays put, clear of `ink4`.
+
+**Selection.** The tree has one selection, as in Finder: a folder, or else the open document. Clicking a
+folder selects it and opens or closes it; clicking a file opens it. Either click gives the tree keyboard
+focus without closing the open document. New Markdown, New File, New Folder and Paste put items in the
+selected folder, or the selected document's folder, or the root when nothing is selected; a row's context
+menu acts on that row, and the empty tree's menu and Finder drops on empty space on the root. While the
+tree has focus, ⌘C, ⌘X and ⌘V copy, cut and paste the selection, Return renames it, ⌘D duplicates it and
+⌘⌫ moves it to the Trash; with the editor, terminal or a field focused those keys stay theirs. A created
+or pasted item is selected and its folder opens; files pasted or dropped in from elsewhere open their
+folder. The selection follows a rename or move, moves up to the nearest remaining folder when its folder
+is removed, and clears when the workspace changes.
 
 **Recents** is a collapsible group between the tree and the footer: the chevron in the glyph column, an
 eyebrow title (§4.3) and a trailing count in 12 `ink3`. Its entries are file rows one level in. It never

@@ -169,7 +169,7 @@ Shorter and more specific is preferable to polished but meaningless copy.
 
 1. `MonknotApp` creates shared `WorkspaceStore` and `ThemeSettingsStore`, then renders `ContentView`.
 2. `ContentView` owns UI preferences via `@AppStorage`, restores the previous workspace, coordinates lightweight document tabs, sidebar/detail layout, document search, workspace search, Markdown outline parsing, source jumps, terminal visibility, and Markdown PDF export.
-3. `SidebarView` displays the workspace tree from `WorkspaceStore.rootNode`, recent documents, optional git status badges when a status map is supplied, opens folders, handles drops, manages file/folder context menu actions, routes file opens through `ContentView` tab actions, and presents `WorkspaceSearchView`.
+3. `SidebarView` displays the workspace tree from `WorkspaceStore.rootNode`, recent documents, optional git status badges when a status map is supplied, selects and opens folders, takes keyboard focus when clicked (Return, ⌘D and ⌘⌫ act on the selection), handles drops, manages file/folder context menu actions, routes file opens through `ContentView` tab actions, and presents `WorkspaceSearchView`.
 4. Markdown/HTML split editor: `EditorPaneView` can show source and preview side by side via `HSplitView` when split view is enabled (View menu or ⌘\\). Split view preference persists per document via `DocumentSplitViewPersistence` (`Monknot.markdownSplitView.<path-hash>` with legacy fallback to `Monknot.markdownSplitView`). Split divider ratio (source pane fraction) persists per document via `Monknot.markdownSplitRatio.<path-hash>` and is applied through `DocumentSplitViewRatioAccessor` (NSSplitView delegate on the editor split). Markdown split syncs scroll by source line via `MarkdownScrollSync`, `renderer.js` (`monknotScrollToLine` / `monknotVisibleSourceLine`), and `MarkdownPreviewView`/`NativeMarkdownEditorView` callbacks. HTML split uses proportional line sync via `HTMLScrollSync` and `HTMLPreviewView` (`monknotHTMLScrollToLine` / `monknotHTMLVisibleSourceLine`). PDF and other kinds are unchanged.
 5. `EditorPaneView` switches on `WorkspaceDocument.kind`:
    - The `DocumentTabBar` above the editor renders open tab metadata only; inactive tabs do not instantiate hidden editors/previews.
@@ -181,7 +181,7 @@ Shorter and more specific is preferable to polished but meaningless copy.
    - Image (raster formats in `WorkspaceDocumentSupport.imageExtensions`): `PDFPreviewView` on an `ImageMarkupPage`. SVG stays a text document.
    - Media (video and audio in `WorkspaceDocumentSupport.mediaExtensions`): `MediaPlayerView`, AVKit's `AVPlayerView` with inline controls.
    - Native preview/unsupported files: skipped by the scanner when possible. Generic Quick Look preview is intentionally disabled for performance.
-6. `WorkspaceStore` is the main app state owner for workspace selection, document loading, dirty text, save state, file operations, security-scoped bookmarks, external file refresh, and selected document state.
+6. `WorkspaceStore` is the main app state owner for workspace selection, document loading, dirty text, save state, file operations, security-scoped bookmarks, external file refresh, selected document state, and the sidebar's folder selection (`selectedFolderID`; `sidebarTargetFolderURL` is where New and Paste put items).
 7. `WorkspaceDocumentScanner` builds the sidebar tree and document list from the selected workspace.
 
 ## Core Domain And Service Boundaries
