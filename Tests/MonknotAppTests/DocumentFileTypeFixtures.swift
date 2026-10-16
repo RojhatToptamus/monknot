@@ -73,8 +73,10 @@ enum DocumentFileTypeFixtures {
     /// Half a second of a 440 Hz tone as 16-bit mono PCM.
     static func writeWAV(to url: URL) throws {
         let sampleRate = 8_000
-        let samples = (0..<(sampleRate / 2)).map { index -> Int16 in
-            Int16(sin(Double(index) * 2 * .pi * 440 / Double(sampleRate)) * 8_000)
+        let radiansPerSample: Double = 2 * Double.pi * 440 / Double(sampleRate)
+        let samples: [Int16] = (0..<(sampleRate / 2)).map { index in
+            let amplitude: Double = sin(Double(index) * radiansPerSample) * 8_000
+            return Int16(amplitude)
         }
         var data = Data()
         func append<Value: FixedWidthInteger>(_ value: Value) {
