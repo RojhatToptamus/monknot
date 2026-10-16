@@ -745,35 +745,7 @@ private struct PDFFreeTextFormattingPopover: View {
                 }
             }
         } label: {
-            HStack(spacing: metrics.itemSpacing) {
-                Text(formatting.fontFamily)
-                    .font(.system(size: metrics.labelFontSize, weight: .regular))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Image(systemName: "chevron.down")
-                    .font(.system(size: metrics.secondaryGlyphFontSize, weight: .regular))
-                    .foregroundStyle(theme.tertiaryForegroundColor)
-            }
-            .foregroundStyle(theme.foregroundColor)
-            .padding(.horizontal, metrics.itemSpacing)
-            .frame(width: metrics.fontMenuWidth, height: metrics.controlHeight)
-            .background {
-                controlShape.fill(theme.insetFillColor)
-                if isFontMenuHovered {
-                    controlShape.fill(theme.hoverFillColor)
-                }
-            }
-            .overlay {
-                controlShape.strokeBorder(theme.borderColor, lineWidth: 1)
-            }
-            .monknotFocusRing(
-                isVisible: focusedControl == .fontFamily,
-                cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale),
-                theme: theme
-            )
-            .contentShape(controlShape)
+            fontFamilyMenuLabel
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -786,6 +758,38 @@ private struct PDFFreeTextFormattingPopover: View {
         .help("Font Family")
         .accessibilityLabel("Font Family")
         .accessibilityValue(formatting.fontFamily)
+    }
+
+    private var fontFamilyMenuLabel: some View {
+        HStack(spacing: metrics.itemSpacing) {
+            Text(formatting.fontFamily)
+                .font(.system(size: metrics.labelFontSize, weight: .regular))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Image(systemName: "chevron.down")
+                .font(.system(size: metrics.secondaryGlyphFontSize, weight: .regular))
+                .foregroundStyle(theme.tertiaryForegroundColor)
+        }
+        .foregroundStyle(theme.foregroundColor)
+        .padding(.horizontal, metrics.itemSpacing)
+        .frame(width: metrics.fontMenuWidth, height: metrics.controlHeight)
+        .background {
+            controlShape.fill(theme.insetFillColor)
+            if isFontMenuHovered {
+                controlShape.fill(theme.hoverFillColor)
+            }
+        }
+        .overlay {
+            controlShape.strokeBorder(theme.borderColor, lineWidth: 1)
+        }
+        .monknotFocusRing(
+            isVisible: focusedControl == .fontFamily,
+            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale),
+            theme: theme
+        )
+        .contentShape(controlShape)
     }
 
     private var fontSizeControl: some View {
