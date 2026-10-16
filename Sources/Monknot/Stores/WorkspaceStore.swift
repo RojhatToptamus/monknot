@@ -8,7 +8,6 @@ struct DocumentLoadFailure: Equatable {
     let message: String
 }
 
-
 @MainActor
 final class WorkspaceStore: ObservableObject {
     @Published private(set) var workspaceURL: URL?
@@ -177,7 +176,7 @@ final class WorkspaceStore: ObservableObject {
             selectedFolderID = nil
             return
         }
-        while folderID != rootNode.id, folderID.hasPrefix(rootNode.id + "/") {
+        while folderID != rootNode.id, WorkspaceDocumentSupport.isPath(folderID, containedIn: rootNode.id) {
             if rootNode.node(withID: folderID)?.kind == .folder {
                 if folderID != selectedFolderID {
                     selectedFolderID = folderID
@@ -901,11 +900,11 @@ final class WorkspaceStore: ObservableObject {
             pasteboardStamp: pasteboardStamp
         )
     }
+
     /// Whether the standardized `url` is a document of the workspace or a folder inside it.
     private func isWorkspaceItem(_ url: URL) -> Bool {
         documentsByID[url.path] != nil || isWorkspaceFolder(url)
     }
-
 
     private func isWorkspaceFolder(_ url: URL) -> Bool {
         guard let workspaceURL,
@@ -997,10 +996,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     /// The first document at or inside `url` with unsaved changes.
-    func unsavedDocument(at url: URL) -> WorkspaceDocument? {
+    private func unsavedDocument(at url: URL) -> WorkspaceDocument? {
         let path = url.standardizedFileURL.path
         return documentSaveStates
-            .filter { !$0.value.isClean && ($0.key == path || $0.key.hasPrefix(path + "/")) }
+            .filter { !$0.value.isClean && WorkspaceDocumentSupport.isPath($0.key, containedIn: path) }
             .keys
             .sorted()
             .lazy
@@ -1068,13 +1067,7 @@ final class WorkspaceStore: ObservableObject {
         failureMessage: String
     ) {
         let sourceID = sourceURL.path
-        let dirtyCopyTexts: [(subpath: String, text: String)] = moving || contentsURL != nil ? [] : dirtyDocumentTexts.compactMap { documentID, text in
-            if documentID == sourceID {
-                return ("", text)
-            }
-            guard documentID.hasPrefix(sourceID + "/") else { return nil }
-            return (String(documentID.dropFirst(sourceID.count + 1)), text)
-        }
+        let dirtyCopyTexts = moving || contentsURL != nil ? [] : unsavedTexts(inItemAt: sourceID)
         let preserveSelection = selectedDocumentID
         noteInternalFileMutation()
         let generation = beginDocumentFileOperation()
@@ -1082,7 +1075,7 @@ final class WorkspaceStore: ObservableObject {
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
             do {
                 let destinationURL = Self.uniqueDocumentURL(for: sourceURL, in: targetDirectory)
-                let isFolder = (try? sourceURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+                let isFolder = Self.isDirectory(sourceURL)
                 if moving {
                     try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
                 } else {
@@ -1116,6 +1109,15 @@ final class WorkspaceStore: ObservableObject {
                     generation: generation
                 )
             }
+        }
+    }
+
+    /// The unsaved text of the document at `path` and of each document inside it, by its path
+    /// relative to `path` ("" for the item itself).
+    private func unsavedTexts(inItemAt path: String) -> [(subpath: String, text: String)] {
+        dirtyDocumentTexts.compactMap { documentID, text in
+            guard WorkspaceDocumentSupport.isPath(documentID, containedIn: path) else { return nil }
+            return (String(documentID.dropFirst(path.count).drop { $0 == "/" }), text)
         }
     }
 
@@ -1233,9 +1235,9 @@ final class WorkspaceStore: ObservableObject {
         }
         guard ensureNotBusy() else { return }
 
-        let isWorkspaceItem = { (url: URL) in url != workspaceURL && WorkspaceDocumentSupport.isURL(url, containedIn: workspaceURL) }
-        let workspaceItems = copying ? [] : fileURLs.filter(isWorkspaceItem)
-        let importedItems = copying ? fileURLs : fileURLs.filter { !isWorkspaceItem($0) }
+        let isInsideWorkspace = { (url: URL) in url != workspaceURL && WorkspaceDocumentSupport.isURL(url, containedIn: workspaceURL) }
+        let workspaceItems = copying ? [] : fileURLs.filter(isInsideWorkspace)
+        let importedItems = copying ? fileURLs : fileURLs.filter { !isInsideWorkspace($0) }
         // An item inside another dropped folder moves with that folder.
         let movedItems = workspaceItems.filter { url in
             !workspaceItems.contains { $0 != url && WorkspaceDocumentSupport.isURL(url, containedIn: $0) }
@@ -2014,12 +2016,7 @@ final class WorkspaceStore: ObservableObject {
         else { return false }
 
         guard let diskData = try? Data(contentsOf: file.url), diskData == baseline else {
-            if selectedDocumentID == documentID {
-                setSelectedDocumentExternalChangeIfChanged(true)
-            }
-            errorMessage = file.kind == .image
-                ? "\(file.displayName) changed on disk. Reload it to continue."
-                : "\(file.displayName) changed on disk. Reload it or save your annotated version as a copy."
+            reportPDFViewerDiskConflict(file)
             return false
         }
 
@@ -2622,7 +2619,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         let savedEditCheckpoint = dirtyPDFDocumentEditCheckpoints[file.id]
-        let imageMarkupSource = file.kind == .image ? imageMarkupSources[file.id] ?? baseline : nil
+        let imageMarkupSource = self.imageMarkupSource(for: file, baseline: baseline)
 
         saveGeneration += 1
         let generation = saveGeneration
@@ -2663,7 +2660,7 @@ final class WorkspaceStore: ObservableObject {
             errorMessage = "Could not safely save \(file.displayName) because its original contents are unavailable."
             return false
         }
-        let imageMarkupSource = file.kind == .image ? imageMarkupSources[file.id] ?? baseline : nil
+        let imageMarkupSource = self.imageMarkupSource(for: file, baseline: baseline)
 
         saveGeneration += 1
         let generation = saveGeneration
@@ -2692,6 +2689,11 @@ final class WorkspaceStore: ObservableObject {
             finishPDFSaveFailure(error, file: file, generation: generation)
             return false
         }
+    }
+
+    /// For a marked-up image, the pixels a save draws the markup onto; nil for a PDF.
+    private func imageMarkupSource(for file: WorkspaceDocument, baseline: Data) -> Data? {
+        file.kind == .image ? imageMarkupSources[file.id] ?? baseline : nil
     }
 
     /// What a save writes for a document in the PDF viewer: the PDF itself, or for an image, the
@@ -2922,7 +2924,7 @@ final class WorkspaceStore: ObservableObject {
         )
         if let selectedURL,
            documentsByID[selectedURL.standardizedFileURL.path] == nil,
-           (try? selectedURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true {
+           !Self.isDirectory(selectedURL) {
             errorMessage = "Monknot can't open “\(selectedURL.lastPathComponent)”."
         }
     }
@@ -3339,7 +3341,7 @@ final class WorkspaceStore: ObservableObject {
         documentLoadFailure = DocumentLoadFailure(documentID: file.id, message: Self.loadFailureMessage(for: error))
     }
 
-    nonisolated static func loadFailureMessage(for error: Error) -> String {
+    nonisolated private static func loadFailureMessage(for error: Error) -> String {
         switch error {
         case WorkspaceTextFileGuard.Error.fileTooLarge(_, let size, let maxBytes):
             let megabytes = { (bytes: Int64) in String(format: "%.1f", Double(bytes) / (1024 * 1024)) }
@@ -3694,15 +3696,20 @@ final class WorkspaceStore: ObservableObject {
         setSaveState(.failed(error.localizedDescription), for: file.id)
         if error as? WorkspaceTextRevisionError == .changedOnDisk
             || error as? WorkspaceTextRevisionError == .unexpectedlyCreated {
-            if selectedDocumentID == file.id {
-                setSelectedDocumentExternalChangeIfChanged(true)
-            }
-            errorMessage = file.kind == .image
-                ? "\(file.displayName) changed on disk. Reload it to continue."
-                : "\(file.displayName) changed on disk. Reload it or save your annotated version as a copy."
+            reportPDFViewerDiskConflict(file)
         } else {
             errorMessage = "Could not save \(file.displayName): \(error.localizedDescription)"
         }
+    }
+
+    /// Reports that the file of `file`, a PDF or image with unsaved markup, changed on disk.
+    private func reportPDFViewerDiskConflict(_ file: WorkspaceDocument) {
+        if selectedDocumentID == file.id {
+            setSelectedDocumentExternalChangeIfChanged(true)
+        }
+        errorMessage = file.kind == .image
+            ? "\(file.displayName) changed on disk. Reload it to continue."
+            : "\(file.displayName) changed on disk. Reload it or save your annotated version as a copy."
     }
 
     private func finishSaveFailure(_ error: Error, file: WorkspaceDocument, generation: Int) {
@@ -4032,14 +4039,13 @@ final class WorkspaceStore: ObservableObject {
     /// content change, which is checked against the signature Monknot recorded for it.
     private func unmodelledChanges(in event: WorkspaceFileWatcher.Event) -> WorkspaceFileWatcher.Event? {
         guard !event.requiresFullRescan else { return event }
-        let folderIDs = rootNode.map(Self.folderIDs(in:)) ?? []
         var structuralPaths = Set<String>()
         var modifiedOnlyPaths = event.modifiedOnlyPaths
         for path in event.changedPaths.subtracting(event.modifiedOnlyPaths) {
             let isOnDisk = FileManager.default.fileExists(atPath: path)
             if isOnDisk, documentsByID[path] != nil {
                 modifiedOnlyPaths.insert(path)
-            } else if isOnDisk != folderIDs.contains(path) {
+            } else if isOnDisk != (rootNode?.node(withID: path)?.kind == .folder) {
                 structuralPaths.insert(path)
             }
         }
@@ -4050,13 +4056,6 @@ final class WorkspaceStore: ObservableObject {
             modifiedOnlyPaths: modifiedOnlyPaths,
             requiresFullRescan: false
         )
-    }
-
-    private static func folderIDs(in node: SidebarNode) -> Set<String> {
-        guard node.kind == .folder else { return [] }
-        return (node.children ?? []).reduce(into: [node.id]) { ids, child in
-            ids.formUnion(folderIDs(in: child))
-        }
     }
 
     private func cancelSuppressedWatcherReplay() {
@@ -4265,6 +4264,7 @@ final class WorkspaceStore: ObservableObject {
         guard !gitStatusByRelativePath.isEmpty else { return }
         gitStatusByRelativePath = [:]
     }
+
     /// Whether no file operation is running; otherwise says to wait for it.
     private func ensureNotBusy() -> Bool {
         guard !isBusy else {
@@ -4273,7 +4273,6 @@ final class WorkspaceStore: ObservableObject {
         }
         return true
     }
-
 
     @discardableResult
     private func ensureWritingToolsInactive(for action: String) -> Bool {
@@ -4735,12 +4734,16 @@ final class WorkspaceStore: ObservableObject {
     /// Where a copy or move of `sourceURL` into `directoryURL` lands: its own name, or a "copy"
     /// name when that is taken.
     nonisolated private static func uniqueDocumentURL(for sourceURL: URL, in directoryURL: URL) -> URL {
-        let isDirectory = (try? sourceURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
-        return WorkspaceDocumentSupport.availableCopyURL(
+        WorkspaceDocumentSupport.availableCopyURL(
             named: sourceURL.lastPathComponent,
-            isDirectory: isDirectory,
+            isDirectory: isDirectory(sourceURL),
             in: directoryURL
         )
+    }
+
+    /// Whether `url` is a folder (or package); false when it cannot be read.
+    nonisolated private static func isDirectory(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
     }
 
     nonisolated private static func moveDestinationURL(
@@ -4817,7 +4820,6 @@ final class WorkspaceStore: ObservableObject {
         guard path.hasPrefix(sourcePrefix) else { return path }
         return destinationPath + "/" + path.dropFirst(sourcePrefix.count)
     }
-
 
     nonisolated private static func resolveDroppedTarget(for url: URL) async throws -> DroppedTarget {
         try await Task.detached(priority: .userInitiated) {
