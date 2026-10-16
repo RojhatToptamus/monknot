@@ -2,6 +2,8 @@ import MonknotCore
 import XCTest
 
 final class MonknotKeyboardShortcutCatalogTests: XCTestCase {
+    private let allEntries = MonknotKeyboardShortcutCatalog.sections.flatMap(\.entries)
+
     func testCatalogMatchesTheCompleteUserFacingShortcutTable() {
         let expected: [String: [MonknotKeyboardShortcutHelpEntry]] = [
             "Files": [
@@ -58,26 +60,26 @@ final class MonknotKeyboardShortcutCatalogTests: XCTestCase {
         for section in MonknotKeyboardShortcutCatalog.sections {
             XCTAssertEqual(section.entries, expected[section.title], section.title)
         }
-        XCTAssertEqual(MonknotKeyboardShortcutCatalog.entries.count, 33)
+        XCTAssertEqual(allEntries.count, 33)
     }
 
     func testShortcutsUseAppleKeySymbolsRatherThanWordsOrAscii() {
-        for entry in MonknotKeyboardShortcutCatalog.entries {
+        for entry in allEntries {
             XCTAssertFalse(entry.shortcut.contains("Tab"), entry.title)
             XCTAssertFalse(entry.shortcut.hasSuffix("-"), "\(entry.title) uses an ASCII hyphen for minus")
         }
     }
 
     func testCatalogTitlesAreUnique() {
-        let titles = MonknotKeyboardShortcutCatalog.entries.map(\.title)
+        let titles = allEntries.map(\.title)
         XCTAssertEqual(Set(titles).count, titles.count)
     }
 
     func testCatalogDoesNotAdvertiseUnroutedQuestionMarkOrTerminalPasteActions() {
-        XCTAssertFalse(MonknotKeyboardShortcutCatalog.entries.contains {
+        XCTAssertFalse(allEntries.contains {
             $0.shortcut == "?" || $0.title == "Keyboard Shortcuts Help"
         })
-        XCTAssertFalse(MonknotKeyboardShortcutCatalog.entries.contains {
+        XCTAssertFalse(allEntries.contains {
             $0.title == "Paste Selection into Terminal"
         })
     }

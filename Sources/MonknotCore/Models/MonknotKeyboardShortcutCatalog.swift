@@ -72,8 +72,4 @@ public enum MonknotKeyboardShortcutCatalog {
             Entry(title: "Dismiss Search or Overlay", shortcut: "Esc"),
         ]),
     ]
-
-    public static var entries: [MonknotKeyboardShortcutHelpEntry] {
-        sections.flatMap(\.entries)
-    }
 }
