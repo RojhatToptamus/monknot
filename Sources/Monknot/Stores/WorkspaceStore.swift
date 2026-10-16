@@ -1309,6 +1309,17 @@ final class WorkspaceStore: ObservableObject {
         reportMoveRun(run, unmovedCount: 1 + run.moves.count)
     }
 
+    /// Skips a failed step of the move run `runID` while that run is in progress: the run reports
+    /// `reason` when it ends, and goes on. Returns false when there is no such run, so the caller
+    /// reports the failure itself.
+    private func skipFailedMoveRunStep(_ runID: Int?, reason: @autoclosure () -> String) -> Bool {
+        guard let runID, moveRun?.id == runID else { return false }
+        isBusy = false
+        moveRun?.failures.append(reason())
+        continueMoveRun(runID)
+        return true
+    }
+
     /// Says how a move run went: nothing when every item moved, otherwise how many moved and why
     /// the others did not, then anything its import had to say.
     private func reportMoveRun(_ run: WorkspaceMoveRun, unmovedCount: Int = 0) {
@@ -1744,10 +1755,7 @@ final class WorkspaceStore: ObservableObject {
         pendingMarkdownLinkMoveReview = nil
         isBusy = false
         let error = WorkspaceMarkdownLinkMoveError.unsavedLinkingDocument(unsavedDocument.displayName)
-        if let runID = request.moveRunID, moveRun?.id == runID {
-            moveRun?.failures.append(Self.notMovedMessage(request.itemName, error))
-            continueMoveRun(runID)
-        } else {
+        if !skipFailedMoveRunStep(request.moveRunID, reason: Self.notMovedMessage(request.itemName, error)) {
             errorMessage = error.errorDescription
         }
     }
@@ -1759,15 +1767,11 @@ final class WorkspaceStore: ObservableObject {
         request: WorkspaceMarkdownLinkMoveRequest,
         generation: Int
     ) {
-        guard let runID = request.moveRunID, moveRun?.id == runID else {
-            finishWorkspaceFailure(error, generation: generation, message: request.failureMessage)
-            return
-        }
         guard generation == workspaceGeneration else { return }
-        isBusy = false
         setDocumentLoadingIfChanged(false)
-        moveRun?.failures.append(Self.notMovedMessage(request.itemName, error))
-        continueMoveRun(runID)
+        if !skipFailedMoveRunStep(request.moveRunID, reason: Self.notMovedMessage(request.itemName, error)) {
+            finishWorkspaceFailure(error, generation: generation, message: request.failureMessage)
+        }
     }
 
     private func finishMarkdownLinkMove(
@@ -3153,14 +3157,10 @@ final class WorkspaceStore: ObservableObject {
                 generation: generation
             )
         }
-        guard let moveRunID, moveRun?.id == moveRunID else {
-            finishWorkspaceFailure(error, generation: generation, message: message)
-            return
-        }
         guard generation == workspaceGeneration else { return }
-        isBusy = false
-        moveRun?.failures.append("\(message): \(error.localizedDescription)")
-        continueMoveRun(moveRunID)
+        if !skipFailedMoveRunStep(moveRunID, reason: "\(message): \(error.localizedDescription)") {
+            finishWorkspaceFailure(error, generation: generation, message: message)
+        }
     }
 
     private func updateSecurityScope(for url: URL) {
