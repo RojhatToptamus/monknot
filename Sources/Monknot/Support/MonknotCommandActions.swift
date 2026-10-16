@@ -116,7 +116,20 @@ struct MonknotCommandMenu: Commands {
         )
     }
 
+    /// One property per menu group, so each type-checks quickly.
     var body: some Commands {
+        newItemCommands
+        workspaceMenu
+        saveCommands
+        undoRedoCommands
+        pasteboardCommands
+        writingCommands
+        exportCommands
+        viewCommands
+        helpCommands
+    }
+
+    private var newItemCommands: some Commands {
         CommandGroup(replacing: .newItem) {
             Button("New Markdown") {
                 actions?.newMarkdown()
@@ -147,7 +160,9 @@ struct MonknotCommandMenu: Commands {
             .keyboardShortcut("o", modifiers: [.command])
             .disabled(actions == nil)
         }
+    }
 
+    private var workspaceMenu: some Commands {
         CommandMenu("Workspace") {
             if let actions {
                 ForEach(Array(actions.workspaceNames.prefix(9).enumerated()), id: \.offset) { index, name in
@@ -199,7 +214,9 @@ struct MonknotCommandMenu: Commands {
             .keyboardShortcut("s", modifiers: [.command, .control])
             .disabled(actions == nil)
         }
+    }
 
+    private var saveCommands: some Commands {
         CommandGroup(replacing: .saveItem) {
             Button("Close Tab") {
                 actions?.closeTab()
@@ -225,7 +242,9 @@ struct MonknotCommandMenu: Commands {
             .keyboardShortcut("s", modifiers: [.command, .option])
             .disabled(actions?.canSaveAllDocuments != true)
         }
+    }
 
+    private var undoRedoCommands: some Commands {
         CommandGroup(replacing: .undoRedo) {
             Button("Undo") {
                 switch undoDestination {
@@ -257,27 +276,17 @@ struct MonknotCommandMenu: Commands {
             .keyboardShortcut("z", modifiers: [.command, .shift])
             .disabled(redoDestination == .unavailable)
         }
+    }
 
+    private var pasteboardCommands: some Commands {
         CommandGroup(replacing: .pasteboard) {
-            Button("Cut") {
-                if let actions {
-                    actions.cut()
-                } else {
-                    _ = MonknotNativePasteboardCommand.performCutIfAvailable()
-                }
+            editingButton("Cut", key: "x", perform: { $0.cut() }) {
+                MonknotNativePasteboardCommand.performCutIfAvailable()
             }
-            .keyboardShortcut("x", modifiers: [.command])
-            .disabled(actions == nil && !MonknotNativePasteboardCommand.hasNativeEditingFocus)
 
-            Button("Copy") {
-                if let actions {
-                    actions.copy()
-                } else {
-                    _ = MonknotNativePasteboardCommand.performCopyIfAvailable()
-                }
+            editingButton("Copy", key: "c", perform: { $0.copy() }) {
+                MonknotNativePasteboardCommand.performCopyIfAvailable()
             }
-            .keyboardShortcut("c", modifiers: [.command])
-            .disabled(actions == nil && !MonknotNativePasteboardCommand.hasNativeEditingFocus)
 
             Button("Copy Rendered Markdown") {
                 actions?.copyRenderedMarkdown()
@@ -290,29 +299,38 @@ struct MonknotCommandMenu: Commands {
             }
             .disabled(actions?.canCopyPDFLinkedExcerpt != true)
 
-            Button("Paste") {
-                if let actions {
-                    actions.paste()
-                } else {
-                    _ = MonknotNativePasteboardCommand.performPasteIfAvailable()
-                }
+            editingButton("Paste", key: "v", perform: { $0.paste() }) {
+                MonknotNativePasteboardCommand.performPasteIfAvailable()
             }
-            .keyboardShortcut("v", modifiers: [.command])
-            .disabled(actions == nil && !MonknotNativePasteboardCommand.hasNativeEditingFocus)
 
             Divider()
 
-            Button("Select All") {
-                if let actions {
-                    actions.selectAll()
-                } else {
-                    _ = MonknotNativePasteboardCommand.performSelectAllIfAvailable()
-                }
+            editingButton("Select All", key: "a", perform: { $0.selectAll() }) {
+                MonknotNativePasteboardCommand.performSelectAllIfAvailable()
             }
-            .keyboardShortcut("a", modifiers: [.command])
-            .disabled(actions == nil && !MonknotNativePasteboardCommand.hasNativeEditingFocus)
         }
+    }
 
+    /// Cut, Copy, Paste and Select All go through the workspace window's actions, or straight to the
+    /// focused text when no workspace window is focused.
+    private func editingButton(
+        _ title: String,
+        key: KeyEquivalent,
+        perform: @escaping (MonknotCommandActions) -> Void,
+        performNatively: @escaping () -> Bool
+    ) -> some View {
+        Button(title) {
+            if let actions {
+                perform(actions)
+            } else {
+                _ = performNatively()
+            }
+        }
+        .keyboardShortcut(key, modifiers: [.command])
+        .disabled(actions == nil && !MonknotNativePasteboardCommand.hasNativeEditingFocus)
+    }
+
+    private var writingCommands: some Commands {
         CommandGroup(after: .pasteboard) {
             if #available(macOS 15.2, *) {
                 Button("Show Writing Tools…") {
@@ -337,7 +355,9 @@ struct MonknotCommandMenu: Commands {
                 Toggle("Check Grammar While Typing", isOn: $checksGrammar)
             }
         }
+    }
 
+    private var exportCommands: some Commands {
         CommandGroup(replacing: .printItem) {
             Button("Export PDF…") {
                 actions?.exportPDF()
@@ -359,7 +379,9 @@ struct MonknotCommandMenu: Commands {
             }
             .disabled(actions?.canExportAnnotatedPDFCopy != true)
         }
+    }
 
+    private var viewCommands: some Commands {
         CommandGroup(after: .toolbar) {
             Button("Toggle Split Editor") {
                 actions?.toggleSplitView()
@@ -499,7 +521,9 @@ struct MonknotCommandMenu: Commands {
             }
             .disabled(actions == nil)
         }
+    }
 
+    private var helpCommands: some Commands {
         CommandGroup(after: .help) {
             Button("Keyboard Shortcuts") {
                 actions?.showKeyboardShortcutsHelp()
