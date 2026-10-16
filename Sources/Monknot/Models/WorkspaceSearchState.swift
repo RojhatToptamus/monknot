@@ -5,7 +5,17 @@ import MonknotCore
 final class WorkspaceSearchState: ObservableObject {
     @Published var isPresented = false
     @Published private(set) var isSearching = false
-    @Published private(set) var results: [WorkspaceSearchResult] = []
+    @Published private(set) var results: [WorkspaceSearchResult] = [] {
+        didSet {
+            resultGroups = WorkspaceSearchResultGrouping.groups(from: results)
+            resultListItems = WorkspaceSearchResultGrouping.listItems(from: resultGroups)
+            resultLocationWidthTemplates = WorkspaceSearchLocationColumn.widthTemplates(for: results)
+        }
+    }
+    /// Derived from `results` once per search, not on every redraw of the result list.
+    private(set) var resultGroups: [WorkspaceSearchResultGroup] = []
+    private(set) var resultListItems: [WorkspaceSearchListItem] = []
+    private(set) var resultLocationWidthTemplates: [String] = []
     /// The query that produced `results`, which can trail `query` while a new search runs.
     @Published private(set) var resultsQuery = ""
     @Published private(set) var selectedResultIndex = 0

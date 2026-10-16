@@ -62,10 +62,6 @@ struct WorkspaceSearchView: View {
         MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
     }
 
-    private var groupedResults: [WorkspaceSearchResultGroup] {
-        WorkspaceSearchResultGrouping.groups(from: state.results)
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             searchHeader
@@ -460,7 +456,7 @@ struct WorkspaceSearchView: View {
         }
 
         let matchCount = state.results.count
-        let fileCount = groupedResults.count
+        let fileCount = state.resultGroups.count
         let matches = state.reachedMatchLimit
             ? "\(matchCount)+ matches"
             : "\(matchCount) match\(matchCount == 1 ? "" : "es")"
@@ -529,9 +525,9 @@ struct WorkspaceSearchView: View {
     /// estimates its length correctly. Rows are equatable: moving the selection redraws two rows.
     private var resultList: some View {
         let query = state.resultsQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        let locationWidthTemplates = WorkspaceSearchLocationColumn.widthTemplates(for: state.results)
+        let locationWidthTemplates = state.resultLocationWidthTemplates
         return LazyVStack(alignment: .leading, spacing: scaled(2)) {
-            ForEach(WorkspaceSearchResultGrouping.listItems(from: groupedResults)) { item in
+            ForEach(state.resultListItems) { item in
                 switch item {
                 case .header(let group):
                     WorkspaceSearchFileRow(
