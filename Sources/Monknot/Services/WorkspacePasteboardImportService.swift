@@ -883,12 +883,17 @@ enum WorkspacePasteboardImportError: LocalizedError {
 
 extension WorkspaceStore {
     /// Copy and Cut for a workspace file or folder, as in Finder: the item goes on the pasteboard
-    /// and the next Paste in Monknot copies or moves it.
+    /// and the next Paste in Monknot copies or moves it. A file goes on it as it is now, unsaved
+    /// changes included.
     func putItemOnPasteboard(at url: URL, cutting: Bool, pasteboard: NSPasteboard = .general) {
         guard !isBusy else { return }
         let stamp: WorkspacePasteboardTransferStamp
         do {
-            stamp = try WorkspacePasteboardExportService.copyFile(at: url, to: pasteboard)
+            stamp = try WorkspacePasteboardExportService.copyFile(
+                at: url,
+                unsavedText: dirtyTextByDocumentID[url.standardizedFileURL.path],
+                to: pasteboard
+            )
         } catch {
             // The pasteboard may no longer hold the item of an earlier Copy or Cut.
             discardPendingTransfer()

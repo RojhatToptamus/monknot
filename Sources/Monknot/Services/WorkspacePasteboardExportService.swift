@@ -7,6 +7,8 @@ import MonknotCore
 struct WorkspacePasteboardTransferStamp: Equatable, Sendable {
     let pasteboardName: String
     let id: String
+    /// The file as of the Copy or Cut, which the item holds in place of the file itself.
+    let snapshotURL: URL?
 }
 
 @MainActor
@@ -17,17 +19,26 @@ enum WorkspacePasteboardExportService {
 
     private static var exportedDirectoryURL: URL?
 
-    /// Puts a file snapshot (or a folder itself) on the pasteboard, as Finder's Copy does, together
-    /// with the item's workspace URL so Monknot can link to the original instead of importing a copy.
+    /// Puts a snapshot of a file (or a folder itself) on the pasteboard, together with the item's
+    /// workspace URL so Monknot can link to the original instead of importing a copy. The snapshot
+    /// is the file as of the Copy, with `unsavedText` in place of its saved text: what any app, and
+    /// a Paste in Monknot, copies for as long as the pasteboard holds it. A folder is copied as it
+    /// is at Paste.
     @discardableResult
-    static func copyFile(at url: URL, to pasteboard: NSPasteboard = .general) throws -> WorkspacePasteboardTransferStamp {
+    static func copyFile(
+        at url: URL,
+        unsavedText: String? = nil,
+        to pasteboard: NSPasteboard = .general
+    ) throws -> WorkspacePasteboardTransferStamp {
         let sourceURL = url.standardizedFileURL
         let isRegularFile = try sourceURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true
-        let snapshotDirectoryURL = isRegularFile ? makeSnapshot(of: sourceURL) : nil
-        let exportedURL = snapshotDirectoryURL?.appendingPathComponent(sourceURL.lastPathComponent) ?? sourceURL
+        let snapshotDirectoryURL = isRegularFile ? makeSnapshot(of: sourceURL, unsavedText: unsavedText) : nil
+        let snapshotURL = snapshotDirectoryURL?.appendingPathComponent(sourceURL.lastPathComponent)
+        let exportedURL = snapshotURL ?? sourceURL
         let stamp = WorkspacePasteboardTransferStamp(
             pasteboardName: pasteboard.name.rawValue,
-            id: UUID().uuidString
+            id: UUID().uuidString,
+            snapshotURL: snapshotURL
         )
 
         let item = NSPasteboardItem()
@@ -125,16 +136,19 @@ enum WorkspacePasteboardExportService {
         return directoryURL
     }
 
-    /// A hard link to the file in a fresh export folder, so the pasted content is the copied one
-    /// even when the original is saved over before Paste. Nil when the volume has no hard links;
-    /// the file then goes on the pasteboard as itself, without copying its contents.
-    private static func makeSnapshot(of sourceURL: URL) -> URL? {
+    /// The file as it is now, in a fresh export folder, so the pasted content is the copied one even
+    /// when the original is saved over before Paste: `unsavedText` written out when given, otherwise
+    /// a hard link to the file. Nil when the volume has no hard links; the file then goes on the
+    /// pasteboard as itself, without copying its contents.
+    private static func makeSnapshot(of sourceURL: URL, unsavedText: String?) -> URL? {
         guard let directoryURL = try? makeExportDirectory() else { return nil }
+        let snapshotURL = directoryURL.appendingPathComponent(sourceURL.lastPathComponent)
         do {
-            try FileManager.default.linkItem(
-                at: sourceURL,
-                to: directoryURL.appendingPathComponent(sourceURL.lastPathComponent)
-            )
+            if let unsavedText {
+                try Data(unsavedText.utf8).write(to: snapshotURL, options: .withoutOverwriting)
+            } else {
+                try FileManager.default.linkItem(at: sourceURL, to: snapshotURL)
+            }
             return directoryURL
         } catch {
             try? FileManager.default.removeItem(at: directoryURL)

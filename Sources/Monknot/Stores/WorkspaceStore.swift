@@ -1000,8 +1000,14 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
+        // A Copy pastes the file as it was at Copy while its snapshot is on the pasteboard, as
+        // a Paste in another app does.
+        let snapshotURL = transfer.operation == .copy
+            ? transfer.pasteboardStamp?.snapshotURL.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+            : nil
         startItemTransfer(
             from: sourceURL,
+            contentsOf: snapshotURL,
             into: targetDirectory,
             moving: transfer.operation == .cut,
             workspaceURL: workspaceURL,
@@ -1024,7 +1030,7 @@ final class WorkspaceStore: ObservableObject {
 
     /// Ends a pasted Cut, which also leaves the pasteboard while it still holds the item, so a
     /// second Paste does not copy the moved item back from its snapshot. A Copy stays pending, so
-    /// every Paste of it copies the item as it is then.
+    /// every Paste of it makes another copy.
     private func completeTransfer(_ transfer: WorkspaceDocumentTransfer) {
         guard transfer.operation == .cut else { return }
         if pendingDocumentTransfer == transfer {
@@ -1074,11 +1080,13 @@ final class WorkspaceStore: ObservableObject {
     }
 
     /// Copies a file or folder, or moves one cut in another workspace, into `targetDirectory` and
-    /// selects the result: a file opens, a folder is selected in the sidebar. A copy carries the
-    /// unsaved text of the copied file, or of every document in the copied folder. Whatever was
-    /// copied before a failure stays on disk, so a failure rescans too.
+    /// selects the result: a file opens, a folder is selected in the sidebar. A copy is made of
+    /// `contentsURL`, a snapshot of the file, when given; otherwise it carries the unsaved text of
+    /// the copied file, or of every document in the copied folder. Whatever was copied before a
+    /// failure stays on disk, so a failure rescans too.
     private func startItemTransfer(
         from sourceURL: URL,
+        contentsOf contentsURL: URL? = nil,
         into targetDirectory: URL,
         moving: Bool,
         workspaceURL: URL,
@@ -1086,7 +1094,7 @@ final class WorkspaceStore: ObservableObject {
         failureMessage: String
     ) {
         let sourceID = sourceURL.path
-        let dirtyCopyTexts: [(subpath: String, text: String)] = moving ? [] : dirtyDocumentTexts.compactMap { documentID, text in
+        let dirtyCopyTexts: [(subpath: String, text: String)] = moving || contentsURL != nil ? [] : dirtyDocumentTexts.compactMap { documentID, text in
             if documentID == sourceID {
                 return ("", text)
             }
@@ -1104,7 +1112,7 @@ final class WorkspaceStore: ObservableObject {
                 if moving {
                     try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
                 } else {
-                    try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+                    try FileManager.default.copyItem(at: contentsURL ?? sourceURL, to: destinationURL)
                     for (subpath, text) in dirtyCopyTexts {
                         let copiedURL = subpath.isEmpty ? destinationURL : destinationURL.appendingPathComponent(subpath)
                         try await Self.writeText(text, to: copiedURL)

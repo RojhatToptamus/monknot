@@ -56,8 +56,8 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         XCTAssertEqual(store.selectedDocument?.relativePath, "Sub/a copy.md")
     }
 
-    /// One Copy pasted twice gives two identical copies: each Paste copies the file as it is then,
-    /// with its unsaved edits.
+    /// One Copy pasted twice gives two identical copies of the file as it was at Copy, its unsaved
+    /// edits included; later edits do not reach them.
     func testRepeatedPastesOfOneCopyOfAnEditedFileProduceTheSameContent() async throws {
         let root = try makeRoot()
         try write("saved\n", "a.txt", in: root)
@@ -70,6 +70,10 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         defer { pasteboard.releaseGlobally() }
 
         store.putItemOnPasteboard(at: a.url, cutting: false, pasteboard: pasteboard)
+        // What another app pastes is the same file.
+        let exported = try XCTUnwrap(pasteboard.readObjects(forClasses: [NSURL.self])?.first as? URL)
+        XCTAssertEqual(try String(contentsOf: exported, encoding: .utf8), "unsaved edit\n")
+        store.setDocumentText("edited after the Copy\n")
         XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: nil))
         await idle(store)
         XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: nil))
@@ -81,6 +85,8 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         XCTAssertEqual(second, first)
     }
 
+    /// A Paste copies the file as it was at Copy, as a Paste in another app does, even once the
+    /// file has been saved over.
     func testRepeatedPastesAfterTheSourceWasSavedOverProduceTheSameContent() async throws {
         let root = try makeRoot()
         try write("v1\n", "a.txt", in: root)
@@ -98,7 +104,7 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
 
         let first = try String(contentsOf: root.appendingPathComponent("a copy.txt"), encoding: .utf8)
         let second = try String(contentsOf: root.appendingPathComponent("a copy 2.txt"), encoding: .utf8)
-        XCTAssertEqual(first, "v2\n")
+        XCTAssertEqual(first, "v1\n")
         XCTAssertEqual(second, first)
     }
 

@@ -180,6 +180,23 @@ final class WorkspacePasteboardExportServiceTests: XCTestCase {
         XCTAssertNil(WorkspacePasteboardExportService.workspaceFileURLs(on: pasteboard), "Missing originals are ignored")
     }
 
+    /// A file's snapshot holds its unsaved text in place of the saved one; the file stays as saved.
+    func testCopiedFileSnapshotHoldsItsUnsavedText() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("Source.md")
+        try "saved".write(to: sourceURL, atomically: true, encoding: .utf8)
+        let pasteboard = makePasteboard()
+        defer { pasteboard.clearContents() }
+
+        let stamp = try WorkspacePasteboardExportService.copyFile(at: sourceURL, unsavedText: "unsaved", to: pasteboard)
+        let snapshotURL = try XCTUnwrap(pasteboard.readObjects(forClasses: [NSURL.self])?.first as? URL)
+        XCTAssertEqual(stamp.snapshotURL?.standardizedFileURL, snapshotURL.standardizedFileURL)
+        XCTAssertEqual(snapshotURL.lastPathComponent, "Source.md")
+        XCTAssertEqual(try String(contentsOf: snapshotURL, encoding: .utf8), "unsaved")
+        XCTAssertEqual(try String(contentsOf: sourceURL, encoding: .utf8), "saved")
+    }
+
     /// A file that cannot be hard-linked into the snapshot folder (here, one on the read-only
     /// system volume) goes on the pasteboard as itself instead of being copied.
     func testFileOnAnotherVolumeIsNotCopiedForTheSnapshot() throws {
