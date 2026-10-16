@@ -383,12 +383,14 @@ private struct DocumentTabItemView: View {
             } label: {
                 Label(tab.isPinned ? "Unpin Tab" : "Pin Tab", systemImage: tab.isPinned ? "pin.slash" : "pin")
             }
+            .disabled(isDisabled)
 
             Button {
                 close()
             } label: {
                 Label("Close Tab", systemImage: "xmark")
             }
+            .disabled(isDisabled)
         }
         .monknotHelp(isSelected ? nil : helpText)
         .accessibilityElement(children: .combine)

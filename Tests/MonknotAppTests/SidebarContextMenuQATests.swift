@@ -558,10 +558,7 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         menu?.update()
         let items = try XCTUnwrap(menu).items
         XCTAssertEqual(items.map(\.title), ["Pin Tab", "Close Tab"])
-        let closeItem = try XCTUnwrap(items.first { $0.title == "Close Tab" })
-        XCTExpectFailure("While busy the tab strip is disabled but its Close Tab menu item stays enabled; ContentView.closeTab then ignores it silently") {
-            XCTAssertFalse(closeItem.isEnabled)
-        }
+        XCTAssertEqual(items.map(\.isEnabled), [false, false])
         _ = (closed, pinned)
     }
 }
