@@ -464,11 +464,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        guard !isBusy else {
-            errorMessage = Self.busyMessage
-            return
-        }
-        guard ensureWritingToolsInactive(for: "changing the workspace") else { return }
+        guard ensureNotBusy(), ensureWritingToolsInactive(for: "changing the workspace") else { return }
 
         noteInternalFileMutation()
 
@@ -690,11 +686,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        guard !isBusy else {
-            errorMessage = Self.busyMessage
-            return
-        }
-        guard ensureWritingToolsInactive(for: "changing the workspace") else { return }
+        guard ensureNotBusy(), ensureWritingToolsInactive(for: "changing the workspace") else { return }
 
         let fileURL: URL
         do {
@@ -734,11 +726,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        guard !isBusy else {
-            errorMessage = Self.busyMessage
-            return
-        }
-        guard ensureWritingToolsInactive(for: "changing the workspace") else { return }
+        guard ensureNotBusy(), ensureWritingToolsInactive(for: "changing the workspace") else { return }
 
         let folderURL: URL
         do {
@@ -774,10 +762,7 @@ final class WorkspaceStore: ObservableObject {
 
     func renameDocument(id: String, to proposedName: String) {
         guard let workspaceURL, let document = document(id: id) else { return }
-        guard !isBusy else {
-            errorMessage = Self.busyMessage
-            return
-        }
+        guard ensureNotBusy() else { return }
 
         let targetURL: URL
         do {
@@ -801,10 +786,7 @@ final class WorkspaceStore: ObservableObject {
 
     func renameFolder(id: String, to proposedName: String) {
         guard let workspaceURL else { return }
-        guard !isBusy else {
-            errorMessage = Self.busyMessage
-            return
-        }
+        guard ensureNotBusy() else { return }
 
         let sourceURL = URL(fileURLWithPath: id, isDirectory: true).standardizedFileURL
         guard sourceURL != workspaceURL.standardizedFileURL else {
@@ -842,10 +824,7 @@ final class WorkspaceStore: ObservableObject {
     @discardableResult
     func moveItem(id: String, toDirectory directoryURL: URL?) -> Bool {
         guard let workspaceURL else { return false }
-        guard !isBusy else {
-            errorMessage = Self.busyMessage
-            return false
-        }
+        guard ensureNotBusy() else { return false }
 
         let sourceURL = URL(fileURLWithPath: id).standardizedFileURL
         let targetDirectory = (directoryURL ?? workspaceURL).standardizedFileURL
@@ -912,7 +891,7 @@ final class WorkspaceStore: ObservableObject {
         pasteboardStamp: WorkspacePasteboardTransferStamp?
     ) {
         let url = url.standardizedFileURL
-        guard documentsByID[url.path] != nil || isWorkspaceFolder(url) else {
+        guard isWorkspaceItem(url) else {
             pendingDocumentTransfer = nil
             return
         }
@@ -922,6 +901,11 @@ final class WorkspaceStore: ObservableObject {
             pasteboardStamp: pasteboardStamp
         )
     }
+    /// Whether the standardized `url` is a document of the workspace or a folder inside it.
+    private func isWorkspaceItem(_ url: URL) -> Bool {
+        documentsByID[url.path] != nil || isWorkspaceFolder(url)
+    }
+
 
     private func isWorkspaceFolder(_ url: URL) -> Bool {
         guard let workspaceURL,
@@ -1046,14 +1030,8 @@ final class WorkspaceStore: ObservableObject {
     /// suffix when its name is taken there.
     func duplicateItem(at url: URL, into directoryURL: URL?) {
         let sourceURL = url.standardizedFileURL
-        guard let workspaceURL,
-              documentsByID[sourceURL.path] != nil || isWorkspaceFolder(sourceURL)
-        else { return }
-        guard !isBusy else {
-            errorMessage = Self.busyMessage
-            return
-        }
-        guard ensureWritingToolsInactive(for: "changing the workspace") else { return }
+        guard let workspaceURL, isWorkspaceItem(sourceURL) else { return }
+        guard ensureNotBusy(), ensureWritingToolsInactive(for: "changing the workspace") else { return }
 
         let targetDirectory = (directoryURL ?? workspaceURL).standardizedFileURL
         guard WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: workspaceURL) else {
@@ -1153,11 +1131,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         guard !items.isEmpty else { return }
-        guard !isBusy else {
-            errorMessage = Self.busyMessage
-            return
-        }
-        guard ensureWritingToolsInactive(for: "changing the workspace") else { return }
+        guard ensureNotBusy(), ensureWritingToolsInactive(for: "changing the workspace") else { return }
 
         let targetDirectory = directoryURL ?? workspaceURL
         guard WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: workspaceURL) else {
@@ -1257,10 +1231,7 @@ final class WorkspaceStore: ObservableObject {
             handleDroppedURL(fileURLs[0])
             return
         }
-        guard !isBusy else {
-            errorMessage = Self.busyMessage
-            return
-        }
+        guard ensureNotBusy() else { return }
 
         let isWorkspaceItem = { (url: URL) in url != workspaceURL && WorkspaceDocumentSupport.isURL(url, containedIn: workspaceURL) }
         let workspaceItems = copying ? [] : fileURLs.filter(isWorkspaceItem)
@@ -1485,43 +1456,15 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func deleteDocument(_ document: WorkspaceDocument) {
-        guard let workspaceURL, documents.contains(where: { $0.id == document.id }) else { return }
-        guard !isBusy else {
-            errorMessage = Self.busyMessage
-            return
-        }
-        guard ensureWritingToolsInactive(for: "moving a document to the Trash") else { return }
+        guard workspaceURL != nil, documents.contains(where: { $0.id == document.id }) else { return }
+        guard ensureNotBusy(), ensureWritingToolsInactive(for: "moving a document to the Trash") else { return }
 
         if openDocumentIDs.contains(document.id), saveState(for: document.id).isClean == false {
             errorMessage = "Save or close \(document.displayName) before moving it to the Trash."
             return
         }
 
-        let preserveSelection = selectedDocumentID
-        let didDeleteSelectedDocument = selectedDocumentID == document.id
-        let sidebarSelection: SidebarSelectionAfterLoad = sidebarSelectionID == document.id ? .cleared : .unchanged
-        noteInternalFileMutation()
-        invalidateWorkspaceSearchCaches(paths: [document.id])
-        let generation = beginDocumentFileOperation()
-
-        workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner, moveItemToTrash] in
-            do {
-                try moveItemToTrash(document.url)
-                let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
-                guard !Task.isCancelled else { return }
-                await self?.finishWorkspaceLoad(
-                    result: result,
-                    workspaceURL: workspaceURL,
-                    selectedURL: nil,
-                    preserveSelection: didDeleteSelectedDocument ? nil : preserveSelection,
-                    reloadSelection: didDeleteSelectedDocument,
-                    sidebarSelection: sidebarSelection,
-                    generation: generation
-                )
-            } catch {
-                await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not move \(document.displayName) to the Trash")
-            }
-        }
+        startMovingToTrash(document.url, documentIDs: [document.id])
     }
 
     /// Moves a folder and everything in it to the Trash, as `deleteDocument` does for one file.
@@ -1529,32 +1472,36 @@ final class WorkspaceStore: ObservableObject {
         guard let workspaceURL else { return }
         let folderPath = folderURL.standardizedFileURL.path
         let rootPath = workspaceURL.standardizedFileURL.path
-        guard folderPath != rootPath, folderPath.hasPrefix(rootPath + "/") else { return }
-        guard !isBusy else {
-            errorMessage = Self.busyMessage
-            return
-        }
-        guard ensureWritingToolsInactive(for: "moving a folder to the Trash") else { return }
+        guard folderPath != rootPath, WorkspaceDocumentSupport.isPath(folderPath, containedIn: rootPath) else { return }
+        guard ensureNotBusy(), ensureWritingToolsInactive(for: "moving a folder to the Trash") else { return }
 
-        let contained = documents.filter { $0.id.hasPrefix(folderPath + "/") }
+        let contained = documents.filter { WorkspaceDocumentSupport.isPath($0.id, containedIn: folderPath) }
         if let unsaved = contained.first(where: { openDocumentIDs.contains($0.id) && !saveState(for: $0.id).isClean }) {
             errorMessage = "Save or close \(unsaved.displayName) before moving \(folderURL.lastPathComponent) to the Trash."
             return
         }
 
-        let containsSelection = contained.contains { $0.id == selectedDocumentID }
+        startMovingToTrash(folderURL, documentIDs: Set(contained.map(\.id)))
+    }
+
+    /// Moves the item at `url`, which holds the documents `documentIDs`, to the Trash and rescans.
+    /// A selected document among them closes, and nothing is selected in the sidebar once the
+    /// selection, or the folder holding it, is in the Trash.
+    private func startMovingToTrash(_ url: URL, documentIDs: Set<String>) {
+        guard let workspaceURL else { return }
+        let path = url.standardizedFileURL.path
+        let containsSelection = selectedDocumentID.map(documentIDs.contains) == true
         let preserveSelection = containsSelection ? nil : selectedDocumentID
-        // Nothing is selected once the selection, or the folder holding it, is in the Trash.
         let sidebarSelection: SidebarSelectionAfterLoad = sidebarSelectionID.map {
-            $0 == folderPath || $0.hasPrefix(folderPath + "/")
+            WorkspaceDocumentSupport.isPath($0, containedIn: path)
         } == true ? .cleared : .unchanged
         noteInternalFileMutation()
-        invalidateWorkspaceSearchCaches(paths: Set(contained.map(\.id)))
+        invalidateWorkspaceSearchCaches(paths: documentIDs)
         let generation = beginDocumentFileOperation()
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner, moveItemToTrash] in
             do {
-                try moveItemToTrash(folderURL)
+                try moveItemToTrash(url)
                 let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
                 guard !Task.isCancelled else { return }
                 await self?.finishWorkspaceLoad(
@@ -1567,7 +1514,7 @@ final class WorkspaceStore: ObservableObject {
                     generation: generation
                 )
             } catch {
-                await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not move \(folderURL.lastPathComponent) to the Trash")
+                await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not move \(url.lastPathComponent) to the Trash")
             }
         }
     }
@@ -1585,11 +1532,7 @@ final class WorkspaceStore: ObservableObject {
         completedTransfer: WorkspaceDocumentTransfer? = nil,
         moveRunID: Int? = nil
     ) -> Bool {
-        guard !isBusy else {
-            errorMessage = Self.busyMessage
-            return false
-        }
-        guard ensureWritingToolsInactive(for: "renaming or moving files") else { return false }
+        guard ensureNotBusy(), ensureWritingToolsInactive(for: "renaming or moving files") else { return false }
 
         let mappings = Self.documentIDMappings(forMoving: sourceURL, to: destinationURL, documents: documents)
         let preserveSelection = selectedDocumentID
@@ -4322,6 +4265,15 @@ final class WorkspaceStore: ObservableObject {
         guard !gitStatusByRelativePath.isEmpty else { return }
         gitStatusByRelativePath = [:]
     }
+    /// Whether no file operation is running; otherwise says to wait for it.
+    private func ensureNotBusy() -> Bool {
+        guard !isBusy else {
+            errorMessage = Self.busyMessage
+            return false
+        }
+        return true
+    }
+
 
     @discardableResult
     private func ensureWritingToolsInactive(for action: String) -> Bool {
