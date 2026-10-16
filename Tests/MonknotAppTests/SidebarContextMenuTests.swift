@@ -8,7 +8,7 @@ import XCTest
 /// performed item by item. Rows are identified by what their own "Copy Path" item reports, so
 /// the assertions read the rows the sidebar actually shows.
 @MainActor
-final class SidebarContextMenuQATests: FileOperationsQATestCase {
+final class SidebarContextMenuTests: FileOperationsTestCase {
     static let folderMenu = [
         "New File", "New Folder", "-", "Rename", "Copy Path", "Copy Relative Path", "Reveal in Finder", "-",
         "Copy", "Cut", "Paste", "Duplicate", "-", "Move to Trash",
@@ -20,7 +20,7 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
     static let emptyAreaMenu = ["New File", "New Folder", "-", "Paste", "-", "Copy Path", "Reveal in Finder"]
 
     /// docs/{a.md,b.md}, A/B/t.txt (a compact "A/B" row), Collapsed/inner.md, top.md; docs/a.md selected.
-    func makeFixture() async throws -> (URL, WorkspaceStore, QASidebarHarness) {
+    func makeFixture() async throws -> (URL, WorkspaceStore, SidebarMenuHarness) {
         let root = try makeRoot()
         try write("# a\n", "docs/a.md", in: root)
         try write("# b\n", "docs/b.md", in: root)
@@ -32,7 +32,7 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         return (root, store, h)
     }
 
-    func rowIndex(_ h: QASidebarHarness, _ relativePath: String) -> Int? {
+    func rowIndex(_ h: SidebarMenuHarness, _ relativePath: String) -> Int? {
         h.visibleRowPaths().firstIndex(of: relativePath)
     }
 
@@ -43,12 +43,12 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         defer { h.close() }
         XCTAssertEqual(h.visibleRowPaths(), ["A/B", "Collapsed", "docs", "docs/a.md", "docs/b.md", "top.md"])
 
-        XCTAssertEqual(QASidebarHarness.titles(h.contextMenu(row: try XCTUnwrap(rowIndex(h, "docs")))), Self.folderMenu)
-        XCTAssertEqual(QASidebarHarness.titles(h.contextMenu(row: try XCTUnwrap(rowIndex(h, "A/B")))), Self.folderMenu)
-        XCTAssertEqual(QASidebarHarness.titles(h.contextMenu(row: try XCTUnwrap(rowIndex(h, "docs/b.md")))), Self.fileMenu)
-        XCTAssertEqual(QASidebarHarness.titles(h.contextMenu(at: try XCTUnwrap(h.emptyTreePoint()))), Self.emptyAreaMenu)
+        XCTAssertEqual(SidebarMenuHarness.titles(h.contextMenu(row: try XCTUnwrap(rowIndex(h, "docs")))), Self.folderMenu)
+        XCTAssertEqual(SidebarMenuHarness.titles(h.contextMenu(row: try XCTUnwrap(rowIndex(h, "A/B")))), Self.folderMenu)
+        XCTAssertEqual(SidebarMenuHarness.titles(h.contextMenu(row: try XCTUnwrap(rowIndex(h, "docs/b.md")))), Self.fileMenu)
+        XCTAssertEqual(SidebarMenuHarness.titles(h.contextMenu(at: try XCTUnwrap(h.emptyTreePoint()))), Self.emptyAreaMenu)
         // A plain-text file has no Export PDF….
-        let txtMenu = QASidebarHarness.titles(h.contextMenu(row: 0))
+        let txtMenu = SidebarMenuHarness.titles(h.contextMenu(row: 0))
         XCTAssertFalse(txtMenu.contains("Export PDF…"))
     }
 
@@ -71,7 +71,7 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         XCTAssertEqual(names("docs", in: root), ["a.md", "b.md", "beside.md", "Inner"])
     }
 
-    func openRecents(_ h: QASidebarHarness, _ store: WorkspaceStore, recording document: WorkspaceDocument) async throws {
+    func openRecents(_ h: SidebarMenuHarness, _ store: WorkspaceStore, recording document: WorkspaceDocument) async throws {
         store.selectDocument(id: document.id)
         _ = await wait(timeout: 3) { store.recentDocuments().contains { $0.documentID == document.id } }
         try await Task.sleep(nanoseconds: 300_000_000)
@@ -99,7 +99,7 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         defer { h.close() }
         try await openRecents(h, store, recording: try XCTUnwrap(doc(store, "docs/b.md")))
         let menu = h.recentsRowMenus().first
-        XCTAssertEqual(QASidebarHarness.titles(menu), ["Open", "-", "Copy Path", "Copy Relative Path", "Reveal in Finder"])
+        XCTAssertEqual(SidebarMenuHarness.titles(menu), ["Open", "-", "Copy Path", "Copy Relative Path", "Reveal in Finder"])
         h.perform("Copy Relative Path", in: menu)
         XCTAssertEqual(h.copiedRelativePaths.last, root.appendingPathComponent("docs/b.md").standardizedFileURL)
     }
@@ -112,9 +112,9 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         let empty = try XCTUnwrap(h.emptyTreePoint())
         func pasteEnabled() -> [Bool?] {
             [
-                QASidebarHarness.item("Paste", in: h.contextMenu(row: 0))?.isEnabled,
-                QASidebarHarness.item("Paste", in: h.contextMenu(row: try! XCTUnwrap(rowIndex(h, "top.md"))))?.isEnabled,
-                QASidebarHarness.item("Paste", in: h.contextMenu(at: empty))?.isEnabled,
+                SidebarMenuHarness.item("Paste", in: h.contextMenu(row: 0))?.isEnabled,
+                SidebarMenuHarness.item("Paste", in: h.contextMenu(row: try! XCTUnwrap(rowIndex(h, "top.md"))))?.isEnabled,
+                SidebarMenuHarness.item("Paste", in: h.contextMenu(at: empty))?.isEnabled,
             ]
         }
 
@@ -142,12 +142,12 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         try await openRecents(h, store, recording: try XCTUnwrap(doc(store, "docs/b.md")))
         let tree = try XCTUnwrap(h.treeFrameInWindow())
         let recentsHeader = NSPoint(x: tree.midX, y: tree.minY - 16)
-        XCTAssertEqual(QASidebarHarness.titles(h.contextMenu(at: recentsHeader)), Self.emptyAreaMenu)
+        XCTAssertEqual(SidebarMenuHarness.titles(h.contextMenu(at: recentsHeader)), Self.emptyAreaMenu)
 
         h.pasteboard.clearContents()
-        XCTAssertEqual(QASidebarHarness.item("Paste", in: h.contextMenu(at: recentsHeader))?.isEnabled, false)
+        XCTAssertEqual(SidebarMenuHarness.item("Paste", in: h.contextMenu(at: recentsHeader))?.isEnabled, false)
         h.pasteboard.setString("Some words", forType: .string)
-        XCTAssertEqual(QASidebarHarness.item("Paste", in: h.contextMenu(at: recentsHeader))?.isEnabled, true)
+        XCTAssertEqual(SidebarMenuHarness.item("Paste", in: h.contextMenu(at: recentsHeader))?.isEnabled, true)
 
         let emptyRoot = try makeRoot()
         let emptyStore = try await openStore(emptyRoot)
@@ -155,11 +155,11 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         defer { empty.close() }
         let point = NSPoint(x: 140, y: 320)
         empty.pasteboard.clearContents()
-        XCTAssertEqual(QASidebarHarness.item("Paste", in: empty.contextMenu(at: point))?.isEnabled, false)
+        XCTAssertEqual(SidebarMenuHarness.item("Paste", in: empty.contextMenu(at: point))?.isEnabled, false)
         empty.pasteboard.setString("Some words", forType: .string)
-        XCTAssertEqual(QASidebarHarness.item("Paste", in: empty.contextMenu(at: point))?.isEnabled, true)
+        XCTAssertEqual(SidebarMenuHarness.item("Paste", in: empty.contextMenu(at: point))?.isEnabled, true)
         empty.pasteboard.clearContents()
-        XCTAssertEqual(QASidebarHarness.item("Paste", in: empty.contextMenu(at: point))?.isEnabled, false)
+        XCTAssertEqual(SidebarMenuHarness.item("Paste", in: empty.contextMenu(at: point))?.isEnabled, false)
     }
 
     func testMoveToTrashFromAFolderMenuWithAnUnsavedDocumentInsideIsRefused() async throws {
@@ -326,7 +326,7 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         let h = await harness(store, root)
         defer { h.close() }
         let point = NSPoint(x: 140, y: 320)
-        XCTAssertEqual(QASidebarHarness.titles(h.contextMenu(at: point)), Self.emptyAreaMenu)
+        XCTAssertEqual(SidebarMenuHarness.titles(h.contextMenu(at: point)), Self.emptyAreaMenu)
 
         let opened = await h.performAndWaitForSheet("New Folder", in: h.contextMenu(at: point))
         XCTAssertTrue(opened, "New Folder sheet did not open")
@@ -393,7 +393,7 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
     func testMutatingItemsAreDisabledWhileAFileOperationRuns() async throws {
         let root = try makeRoot()
         try write("# a\n", "docs/a.md", in: root)
-        let scanner = QAGatedScanner()
+        let scanner = GatedWorkspaceScanner()
         let store = try await openStore(root, scanner: scanner, selecting: "docs/a.md")
         let h = await harness(store, root)
         defer { h.close() }
@@ -505,7 +505,7 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
 
         pasteboard.clearContents()
         pasteboard.writeObjects([outside.appendingPathComponent("dropped.md") as NSURL])
-        var info = QAFakeDraggingInfo(pasteboard: pasteboard, location: point, window: h.window)
+        var info = FakeDraggingInfo(pasteboard: pasteboard, location: point, window: h.window)
         XCTAssertEqual(dropView.draggingEntered(info), .copy)
         XCTAssertTrue(dropView.performDragOperation(info))
         await idle(store)
@@ -514,7 +514,7 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
 
         pasteboard.clearContents()
         pasteboard.writeObjects([root.appendingPathComponent("docs/b.md") as NSURL])
-        info = QAFakeDraggingInfo(pasteboard: pasteboard, location: point, window: h.window)
+        info = FakeDraggingInfo(pasteboard: pasteboard, location: point, window: h.window)
         XCTAssertEqual(dropView.draggingEntered(info), .move)
         XCTAssertTrue(dropView.performDragOperation(info))
         await settle(store)
@@ -528,7 +528,7 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         let root = try makeRoot()
         try write("# a\n", "docs/a.md", in: root)
         try write("# top\n", "top.md", in: root)
-        let scanner = QAGatedScanner()
+        let scanner = GatedWorkspaceScanner()
         let store = try await openStore(root, scanner: scanner, selecting: "docs/a.md")
         let h = await harness(store, root)
         defer { h.close() }

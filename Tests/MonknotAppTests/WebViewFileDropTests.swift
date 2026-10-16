@@ -3,38 +3,6 @@ import WebKit
 import XCTest
 @testable import MonknotApp
 
-private final class FakeDraggingInfo: NSObject, NSDraggingInfo {
-    let pasteboard: NSPasteboard
-    let location: NSPoint
-    weak var window: NSWindow?
-    init(pasteboard: NSPasteboard, location: NSPoint, window: NSWindow) {
-        self.pasteboard = pasteboard
-        self.location = location
-        self.window = window
-    }
-    var draggingDestinationWindow: NSWindow? { window }
-    var draggingSourceOperationMask: NSDragOperation { [.copy, .generic, .link] }
-    var draggingLocation: NSPoint { location }
-    var draggedImageLocation: NSPoint { location }
-    var draggedImage: NSImage? { nil }
-    var draggingPasteboard: NSPasteboard { pasteboard }
-    var draggingSource: Any? { nil }
-    var draggingSequenceNumber: Int { 4242 }
-    func slideDraggedImage(to screenPoint: NSPoint) {}
-    var draggingFormation: NSDraggingFormation = .default
-    var animatesToDestination: Bool = false
-    var numberOfValidItemsForDrop: Int = 1
-    func enumerateDraggingItems(
-        options enumOpts: NSDraggingItemEnumerationOptions = [],
-        for view: NSView?,
-        classes classArray: [AnyClass],
-        searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [:],
-        using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void
-    ) {}
-    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
-    func resetSpringLoading() {}
-}
-
 private final class LoadProbe: NSObject, WKNavigationDelegate {
     var finished = 0
     var navigationCount = 0
@@ -87,7 +55,12 @@ final class WebViewFileDropTests: XCTestCase {
         defer { pasteboard.releaseGlobally() }
         pasteboard.clearContents()
         pasteboard.writeObjects([file as NSURL])
-        let info = FakeDraggingInfo(pasteboard: pasteboard, location: NSPoint(x: 200, y: 150), window: window)
+        let info = FakeDraggingInfo(
+            pasteboard: pasteboard,
+            location: NSPoint(x: 200, y: 150),
+            window: window,
+            sourceOperationMask: [.copy, .generic, .link]
+        )
         XCTAssertEqual(webView.draggingEntered(info), .copy)
         XCTAssertEqual(webView.draggingUpdated(info), .copy)
         XCTAssertTrue(webView.prepareForDragOperation(info))

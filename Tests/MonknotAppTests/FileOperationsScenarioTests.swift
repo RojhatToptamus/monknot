@@ -7,7 +7,7 @@ import XCTest
 /// `WorkspaceStore` level, through the same entry points the sidebar and ⌘C/⌘X/⌘V use.
 /// Every clipboard here is a private named pasteboard.
 @MainActor
-final class FileOperationsQASweepTests: FileOperationsQATestCase {
+final class FileOperationsScenarioTests: FileOperationsTestCase {
 
     // MARK: - Copy → Paste
 
@@ -489,7 +489,7 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
     func testDuplicateWhileBusyIsReported() async throws {
         let root = try makeRoot()
         try write("x\n", "a.txt", in: root)
-        let scanner = QAGatedScanner()
+        let scanner = GatedWorkspaceScanner()
         let store = try await openStore(root, scanner: scanner)
 
         scanner.hold()
@@ -508,7 +508,7 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         let root = try makeRoot()
         try write("x\n", "a.txt", in: root)
         try mkdir("Sub", in: root)
-        let scanner = QAGatedScanner()
+        let scanner = GatedWorkspaceScanner()
         let store = try await openStore(root, scanner: scanner)
         let a = try XCTUnwrap(doc(store, "a.txt"))
 
@@ -844,7 +844,7 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         let outside = try makeRoot()
         try write("o\n", "o.txt", in: outside)
         try write("x\n", "x.txt", in: root)
-        let scanner = QAGatedScanner()
+        let scanner = GatedWorkspaceScanner()
         let store = try await openStore(root, scanner: scanner)
 
         scanner.hold()

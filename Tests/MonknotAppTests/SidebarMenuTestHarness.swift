@@ -12,12 +12,12 @@ import XCTest
 /// `NSPasteboard.general`. Never performs Reveal in Finder; the store's Move to Trash, from
 /// `makeWorkspaceStore`, leaves the user's Trash alone.
 @MainActor
-final class QASidebarHarness {
+final class SidebarMenuHarness {
     let store: WorkspaceStore
     let window: NSWindow
     let host: NSView
     let root: URL
-    let pasteboard = NSPasteboard(name: NSPasteboard.Name("MonknotQASidebar-\(UUID().uuidString)"))
+    let pasteboard = NSPasteboard(name: NSPasteboard.Name("MonknotSidebarTests-\(UUID().uuidString)"))
     var copiedPaths: [URL] = []
     var copiedRelativePaths: [URL] = []
     var exportedPDFs: [String] = []
@@ -26,7 +26,7 @@ final class QASidebarHarness {
     init(store: WorkspaceStore, root: URL, theme: AppTheme = .defaultDark) {
         self.store = store
         self.root = root
-        let defaults = UserDefaults(suiteName: "Monknot.QASidebar.\(UUID().uuidString)")!
+        let defaults = UserDefaults(suiteName: "Monknot.SidebarTests.\(UUID().uuidString)")!
         let library = WorkspaceLibraryStore(userDefaults: defaults)
         let search = WorkspaceSearchState()
         var copiedPathsSink: (URL) -> Void = { _ in }
@@ -317,7 +317,7 @@ final class QASidebarHarness {
 }
 
 /// A scanner that can be held, so a file operation stays in flight while a test acts.
-final class QAGatedScanner: WorkspaceDocumentScanning, @unchecked Sendable {
+final class GatedWorkspaceScanner: WorkspaceDocumentScanning, @unchecked Sendable {
     private let base = WorkspaceDocumentScanner()
     private let lock = NSLock()
     private var gate: DispatchSemaphore?
@@ -343,7 +343,7 @@ final class QAGatedScanner: WorkspaceDocumentScanning, @unchecked Sendable {
 
 /// Shared helpers for the file-operation and sidebar menu suites: real stores on temporary workspaces.
 @MainActor
-class FileOperationsQATestCase: WorkspaceStoreTestCase {
+class FileOperationsTestCase: WorkspaceStoreTestCase {
     // MARK: - Helpers
 
     func wait(timeout: TimeInterval = 6, _ condition: @escaping @MainActor () -> Bool) async -> Bool {
@@ -356,7 +356,7 @@ class FileOperationsQATestCase: WorkspaceStoreTestCase {
     }
 
     func makeRoot() throws -> URL {
-        try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotQA").standardizedFileURL
+        try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotFileOperations").standardizedFileURL
     }
 
     func write(_ text: String, _ relativePath: String, in root: URL) throws {
@@ -407,28 +407,36 @@ class FileOperationsQATestCase: WorkspaceStoreTestCase {
     }
 
     func makePasteboard() -> NSPasteboard {
-        NSPasteboard(name: NSPasteboard.Name("MonknotQA-\(UUID().uuidString)"))
+        NSPasteboard(name: NSPasteboard.Name("MonknotFileOperations-\(UUID().uuidString)"))
     }
 
-    func harness(_ store: WorkspaceStore, _ root: URL) async -> QASidebarHarness {
-        let harness = QASidebarHarness(store: store, root: root)
+    func harness(_ store: WorkspaceStore, _ root: URL) async -> SidebarMenuHarness {
+        let harness = SidebarMenuHarness(store: store, root: root)
         try? await Task.sleep(nanoseconds: 500_000_000)
         return harness
     }
 }
 
 /// A Finder drag as AppKit hands it to a drop target, over a private pasteboard.
-final class QAFakeDraggingInfo: NSObject, NSDraggingInfo {
+/// A drag from Finder, delivered straight to a drop target.
+final class FakeDraggingInfo: NSObject, NSDraggingInfo {
     let pasteboard: NSPasteboard
     let location: NSPoint
+    let sourceOperationMask: NSDragOperation
     weak var window: NSWindow?
-    init(pasteboard: NSPasteboard, location: NSPoint, window: NSWindow) {
+    init(
+        pasteboard: NSPasteboard,
+        location: NSPoint,
+        window: NSWindow,
+        sourceOperationMask: NSDragOperation = [.copy, .move, .generic, .link]
+    ) {
         self.pasteboard = pasteboard
         self.location = location
         self.window = window
+        self.sourceOperationMask = sourceOperationMask
     }
     var draggingDestinationWindow: NSWindow? { window }
-    var draggingSourceOperationMask: NSDragOperation { [.copy, .move, .generic, .link] }
+    var draggingSourceOperationMask: NSDragOperation { sourceOperationMask }
     var draggingLocation: NSPoint { location }
     var draggedImageLocation: NSPoint { location }
     var draggedImage: NSImage? { nil }
@@ -450,7 +458,7 @@ final class QAFakeDraggingInfo: NSObject, NSDraggingInfo {
     func resetSpringLoading() {}
 }
 
-extension QASidebarHarness {
+extension SidebarMenuHarness {
     /// The sidebar-wide Finder drop target (`FileURLDropTarget`).
     func sidebarDropView() -> NSView? {
         func find(_ view: NSView) -> NSView? {
