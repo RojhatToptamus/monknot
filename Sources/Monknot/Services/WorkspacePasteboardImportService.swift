@@ -83,15 +83,154 @@ enum WorkspacePasteboardImportService {
 
     /// The text of HTML that an app put on the pasteboard without a plain-text version.
     private static func plainText(fromHTMLOn pasteboard: NSPasteboard) -> String? {
-        guard let data = pasteboard.data(forType: .html),
-              let text = try? NSAttributedString(
-                  data: data,
-                  options: [.documentType: NSAttributedString.DocumentType.html, .characterEncoding: String.Encoding.utf8.rawValue],
-                  documentAttributes: nil
-              ).string
-        else { return nil }
-        return text
+        guard let data = pasteboard.data(forType: .html) else { return nil }
+        return plainText(fromHTML: String(decoding: data, as: UTF8.self))
     }
+
+    /// The text of `html`, keeping its paragraphs, line breaks and list items. Tags are dropped
+    /// and character references decoded; nothing the HTML refers to is loaded, and scripts, styles
+    /// and the document head are left out.
+    static func plainText(fromHTML html: String) -> String {
+        var text = ""
+        var skippedElement: String?
+        var index = html.startIndex
+
+        while index < html.endIndex {
+            guard html[index] == "<" else {
+                let end = html[index...].firstIndex(of: "<") ?? html.endIndex
+                if skippedElement == nil {
+                    text += decodingCharacterReferences(in: collapsingWhitespace(html[index..<end]))
+                }
+                index = end
+                continue
+            }
+            if html[index...].hasPrefix("<!--") {
+                index = html[index...].range(of: "-->")?.upperBound ?? html.endIndex
+                continue
+            }
+            // A `<` that starts no tag, as in "a < b", is text.
+            let next = html.index(after: index)
+            guard next < html.endIndex, html[next].isLetter || html[next] == "/" || html[next] == "!" else {
+                if skippedElement == nil { text += "<" }
+                index = next
+                continue
+            }
+
+            let tagEnd = endOfTag(in: html, from: index)
+            let tag = html[html.index(after: index)..<tagEnd]
+            index = tagEnd < html.endIndex ? html.index(after: tagEnd) : html.endIndex
+            let isClosing = tag.hasPrefix("/")
+            let name = tag.drop { $0 == "/" }.prefix { $0.isLetter || $0.isNumber }.lowercased()
+
+            if let skipped = skippedElement {
+                if isClosing, name == skipped {
+                    skippedElement = nil
+                }
+                continue
+            }
+            if !isClosing, htmlSkippedElements.contains(name), !tag.hasSuffix("/") {
+                skippedElement = name
+            } else if name == "br" {
+                text += "\n"
+            } else if name == "li", !isClosing {
+                text += "\n- "
+            } else if name == "tr" {
+                text += "\n"
+            } else if name == "td" || name == "th" {
+                text += " "
+            } else if htmlBlockElements.contains(name) {
+                text += "\n\n"
+            }
+        }
+
+        var lines: [Substring] = []
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty, lines.last?.isEmpty != false { continue }
+            lines.append(Substring(trimmed))
+        }
+        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static let htmlSkippedElements: Set<String> = ["head", "script", "style", "template", "title"]
+    private static let htmlBlockElements: Set<String> = [
+        "address", "article", "aside", "blockquote", "dd", "div", "dl", "dt", "figcaption", "figure",
+        "footer", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "main", "nav", "ol", "p", "pre",
+        "section", "table", "ul",
+    ]
+
+    /// The index of the `>` that ends the tag opening at `start`, past any quoted attribute value.
+    private static func endOfTag(in html: String, from start: String.Index) -> String.Index {
+        var quote: Character?
+        var index = html.index(after: start)
+        while index < html.endIndex {
+            let character = html[index]
+            if let open = quote {
+                if character == open { quote = nil }
+            } else if character == "\"" || character == "'" {
+                quote = character
+            } else if character == ">" {
+                return index
+            }
+            index = html.index(after: index)
+        }
+        return html.endIndex
+    }
+
+    /// HTML text with each run of white space as one space, as a browser shows it.
+    private static func collapsingWhitespace(_ text: Substring) -> String {
+        var result = ""
+        var lastWasSpace = false
+        for character in text {
+            if character.isWhitespace {
+                if !lastWasSpace { result.append(" ") }
+                lastWasSpace = true
+            } else {
+                result.append(character)
+                lastWasSpace = false
+            }
+        }
+        return result
+    }
+
+    /// `text` with its numeric and common named character references decoded; any other `&` stays.
+    private static func decodingCharacterReferences(in text: String) -> String {
+        guard text.contains("&") else { return text }
+        var result = ""
+        var index = text.startIndex
+        while index < text.endIndex {
+            guard text[index] == "&",
+                  let semicolon = text[index...].prefix(12).firstIndex(of: ";"),
+                  let decoded = characterReference(text[text.index(after: index)..<semicolon])
+            else {
+                result.append(text[index])
+                index = text.index(after: index)
+                continue
+            }
+            result.append(decoded)
+            index = text.index(after: semicolon)
+        }
+        return result
+    }
+
+    private static func characterReference(_ name: Substring) -> Character? {
+        if name.hasPrefix("#") {
+            let digits = name.dropFirst()
+            let value = digits.first == "x" || digits.first == "X"
+                ? UInt32(digits.dropFirst(), radix: 16)
+                : UInt32(digits)
+            guard let value, value != 0, let scalar = Unicode.Scalar(value) else { return nil }
+            return Character(scalar)
+        }
+        return htmlNamedCharacters[String(name)]
+    }
+
+    private static let htmlNamedCharacters: [String: Character] = [
+        "amp": "&", "lt": "<", "gt": ">", "quot": "\"", "apos": "'", "nbsp": " ",
+        "ndash": "\u{2013}", "mdash": "\u{2014}", "hellip": "\u{2026}", "bull": "\u{2022}",
+        "lsquo": "\u{2018}", "rsquo": "\u{2019}", "ldquo": "\u{201C}", "rdquo": "\u{201D}",
+        "copy": "\u{00A9}", "reg": "\u{00AE}", "trade": "\u{2122}", "middot": "\u{00B7}",
+    ]
 
     static func importItems(_ items: [WorkspacePasteboardImportItem], into directoryURL: URL) throws -> [URL] {
         try validateDirectory(directoryURL)
