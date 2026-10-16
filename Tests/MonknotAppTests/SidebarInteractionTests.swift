@@ -328,11 +328,36 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
         XCTAssertEqual(fixture.store.selectedDocumentID, fixture.path("docs/b.md"))
         XCTAssertEqual(fixture.store.sidebarTargetFolderURL?.path, fixture.path("docs"))
 
-        // The window's open action hands focus on to the document, ready for typing.
+        // The window's open action hands focus on to a document shown for typing.
         XCTAssertTrue(fixture.treeHasFocus())
+        let document = try XCTUnwrap(fixture.store.selectedDocument)
+        XCTAssertTrue(SidebarDocumentOpenFocus.movesFocusToDocument(document, editorMode: .source, isSplitViewEnabled: false))
         TerminalFocusRestorer.focusVisibleDocument(in: fixture.window)
         let editorFocused = await waitUntil { fixture.window.firstResponder === fixture.editor }
         XCTAssertTrue(editorFocused)
+    }
+
+    /// Only a document shown for typing takes focus from the tree when chosen there. Anything else
+    /// leaves focus in the tree, where ⌘C, ⌘X and ⌘V act on the selected file.
+    func testOnlyADocumentShownForTypingTakesFocusFromTheTree() {
+        let root = URL(fileURLWithPath: "/workspace", isDirectory: true)
+        func takesFocus(_ name: String, _ mode: EditorMode, split: Bool = false) -> Bool {
+            SidebarDocumentOpenFocus.movesFocusToDocument(
+                WorkspaceDocument(url: root.appendingPathComponent(name), rootURL: root),
+                editorMode: mode,
+                isSplitViewEnabled: split
+            )
+        }
+
+        XCTAssertTrue(takesFocus("note.md", .source))
+        XCTAssertTrue(takesFocus("note.md", .preview, split: true), "Its source shows beside the preview")
+        XCTAssertFalse(takesFocus("note.md", .preview))
+        XCTAssertTrue(takesFocus("notes.txt", .preview), "Text has no preview")
+        XCTAssertTrue(takesFocus("page.html", .source))
+        XCTAssertFalse(takesFocus("page.html", .preview))
+        for name in ["photo.png", "paper.pdf", "clip.mov", "tone.wav"] {
+            XCTAssertFalse(takesFocus(name, .source), name)
+        }
     }
 
     /// ⌘D and Return act on the selection only while the tree has keyboard focus; with the editor

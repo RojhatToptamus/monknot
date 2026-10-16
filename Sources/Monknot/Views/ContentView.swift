@@ -3,6 +3,21 @@ import MonknotCore
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Where keyboard focus goes when a file is chosen in the sidebar.
+enum SidebarDocumentOpenFocus {
+    /// Whether the document takes keyboard focus: one shown for typing does, ready for it. Any
+    /// other file, such as an image, a PDF, a video or a preview, leaves focus in the tree, where
+    /// the Edit menu's Copy, Cut and Paste act on the selected file.
+    static func movesFocusToDocument(
+        _ document: WorkspaceDocument,
+        editorMode: EditorMode,
+        isSplitViewEnabled: Bool
+    ) -> Bool {
+        guard document.capabilities.canEditText else { return false }
+        return !document.hasPreviewMode || editorMode == .source || isSplitViewEnabled
+    }
+}
+
 @MainActor
 final class TerminalFocusRestorer: ObservableObject {
     private weak var window: NSWindow?
@@ -800,7 +815,14 @@ struct ContentView: View {
             exportPDF: exportMarkdownPDF(_:),
             openDocument: { documentID in
                 openDocumentTab(id: documentID)
-                TerminalFocusRestorer.focusVisibleDocument(in: responderWindow)
+                if let document = store.document(id: documentID),
+                   SidebarDocumentOpenFocus.movesFocusToDocument(
+                       document,
+                       editorMode: editorMode,
+                       isSplitViewEnabled: DocumentSplitViewPersistence.isEnabled(forDocumentPath: documentID)
+                   ) {
+                    TerminalFocusRestorer.focusVisibleDocument(in: responderWindow)
+                }
             },
             openWorkspaceSearchResult: openWorkspaceSearchResult(_:),
             showWorkspaceSearch: showWorkspaceSearch,
