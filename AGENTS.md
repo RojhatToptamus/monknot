@@ -4,7 +4,7 @@ This file orients AI agents and contributors working in this repository. Keep it
 
 ## Project Overview
 
-Monknot is a SwiftPM macOS app for browsing a workspace, opening multiple files in lightweight tabs, editing Markdown and text-like files, previewing Markdown, viewing and marking up PDFs and images, skipping unsupported binary/media file types, searching text/PDF documents, exporting Markdown to PDF, and running an embedded terminal.
+Monknot is a SwiftPM macOS app for browsing a workspace, opening multiple files in lightweight tabs, editing Markdown and text-like files, previewing Markdown, viewing and marking up PDFs and images, playing video and audio, skipping archives, Office documents and other unsupported binary files, searching text/PDF documents, exporting Markdown to PDF, and running an embedded terminal.
 
 Direct releases use Sparkle 2 for standard in-app updates. The custom bundle
 builder embeds and signs Sparkle.framework; GitHub Releases host immutable
@@ -179,7 +179,8 @@ Shorter and more specific is preferable to polished but meaningless copy.
    - Text/source/data text files: `MarkdownTextEditor` as a generic plain text editor.
    - PDF: `PDFPreviewView`.
    - Image (raster formats in `WorkspaceDocumentSupport.imageExtensions`): `PDFPreviewView` on an `ImageMarkupPage`. SVG stays a text document.
-   - Media/native preview/unsupported files: skipped by the scanner when possible. Generic Quick Look/media preview is intentionally disabled for performance.
+   - Media (video and audio in `WorkspaceDocumentSupport.mediaExtensions`): `MediaPlayerView`, AVKit's `AVPlayerView` with inline controls.
+   - Native preview/unsupported files: skipped by the scanner when possible. Generic Quick Look preview is intentionally disabled for performance.
 6. `WorkspaceStore` is the main app state owner for workspace selection, document loading, dirty text, save state, file operations, security-scoped bookmarks, external file refresh, and selected document state.
 7. `WorkspaceDocumentScanner` builds the sidebar tree and document list from the selected workspace.
 
@@ -245,12 +246,13 @@ App-layer code should stay in `Sources/Monknot` when it uses SwiftUI state, AppK
 
 Use Apple-native APIs where they fit the feature:
 
-- PDF viewing: `PDFPreviewView` renders PDFs in-app with PDFKit, including annotation/search state. Generic Quick Look/media preview remains disabled for file-switching performance.
+- PDF viewing: `PDFPreviewView` renders PDFs in-app with PDFKit, including annotation/search state. Generic Quick Look preview remains disabled for file-switching performance.
 - Image viewing and markup: images reuse `PDFPreviewView` through a `PDFPage` subclass (`ImageMarkupPage`) that draws the decoded `CGImage`; `PDFPage(image:)` is not used because PDFKit recompresses the pixels. Decoding, orientation, DPI and saving go through ImageIO (`CGImageSource` / `CGImageDestination`). Unsaved markup travels as a small annotations-only PDF; never serialize the image into it on each edit. `WorkspaceDocumentKind.opensInPDFViewer` covers both kinds in the store and commands.
 - PDF search/text extraction: `PDFDocument` and `PDFSelection` in `WorkspaceSearchService`; keep this out of the file-selection/render hot path.
 - Markdown preview/export rendering: `WKWebView`; the HTML shell comes from `MarkdownRenderService`.
 - PDF export: `WKWebView.createPDF(configuration:)` plus `PDFKit.PDFDocument` pagination.
-- Generic native previews: disabled. Raster images are workspace documents (opened on demand in the PDF viewer, never decoded during scanning or search); do not route video/Office/native files into Quick Look or the workspace document list without an explicit performance decision.
+- Video and audio playback: `MediaPlayerView` hosts AVKit's `AVPlayerView` (`MediaPlayerNSView`). Media files are listed by extension only (`WorkspaceDocumentSupport.mediaExtensions`, formats AVFoundation plays; AVI stays skipped) and are never read during scanning or search. The player is created only while a media document is the visible tab, never autoplays, and is paused and released when the tab is switched or closed or the window closes. Missing or unplayable files show the player's failure state. Space plays and pauses while the player has focus.
+- Generic native previews: disabled. Raster images and video/audio are workspace documents opened on demand in their own viewers, never decoded during scanning or search; do not route Office/archive/native files into Quick Look or the workspace document list without an explicit performance decision.
 - File type detection: `UniformTypeIdentifiers.UTType` in `WorkspaceDocumentSupport`, with extension fallbacks for formats UTType may not classify consistently.
 - Text editing: `NSTextView` through `MarkdownTextEditor`, used for Markdown source and generic editable text/source/data files. Interactive editor opens are capped by `WorkspaceStore.interactiveTextOpenMaxBytes` so very large text files do not block file switching; search/export services can still use their own guarded limits. `WorkspaceTextFileGuard` rejects files that are not UTF-8 or that hold NUL bytes (binary data under a text name): the editor shows the reason instead of the bytes, and search and replace skip the file.
 - File watching: FSEvents in `WorkspaceFileWatcher`.
@@ -307,7 +309,8 @@ Before adding custom parsing, indexing, PDF handling, file watching, or renderin
 - App menu commands flow through `MonknotCommandActions` and `FocusedValues`. Quick Open uses ⌘P; Export PDF is menu-only.
 - Markdown preview behavior belongs in `MarkdownPreviewView` and `renderer.js`, not scattered across unrelated views.
 - PDF and image viewing behavior belongs in `PDFPreviewView`; image decoding and saving belong in `ImageMarkupDocument`.
-- Generic preview-only behavior is intentionally disabled; media/native preview files other than raster images should be skipped by scanning and must not mount preview runtimes.
+- Video and audio playback belongs in `MediaPlayerView`. Keep one player per visible media tab; inactive tabs must not hold an `AVPlayer`.
+- Generic preview-only behavior is intentionally disabled; native preview files other than raster images and video/audio should be skipped by scanning and must not mount preview runtimes.
 - Route behavior by `WorkspaceDocument.capabilities` when possible. Keep `WorkspaceDocumentKind` coarse; do not add one enum case per file extension.
 - Theme colors should flow through `AppTheme` and `Color+Theme.swift`.
 - User-facing persisted UI preferences generally use `@AppStorage` keys prefixed with `Monknot.`.
@@ -380,6 +383,7 @@ Current XCTest coverage focuses on `MonknotCore`:
 - `WorkspaceContextOrderingTests`: related-note-first ordering for context chips.
 - `RepositoryContractTests`: manual build, workflow, release, security, license, governance, Sparkle, and CLI process contracts.
 - `WorkspaceTabStateTests`: open, order, pin, close, remap, prune, and closed-tab history behavior.
+- `DocumentViewerRoutingTests` (app target): generated fixtures of every listed file type (text, extensionless, uppercase, binary and oversized text, PDF, raster images, video and audio) are scanned and opened in a hosted `EditorPaneView`; also image fit, media playback lifecycle, Open With and Recents.
 
 Manual Core smoke verification used in this repo when SwiftPM is blocked:
 
@@ -448,7 +452,7 @@ script/build_and_run.sh --debug
 - Read `WorkspaceTabState`, `DocumentTabBar`, `ContentView`, and `WorkspaceStore` before changing tab behavior. Tabs are metadata around the active `WorkspaceStore` document, not independent document runtimes.
 - Read `MarkdownRenderService`, `MarkdownPreviewView`, `renderer.js`, and `preview.css` together before changing Markdown preview or export behavior.
 - Read `PDFPreviewView`, `WorkspaceSearchService`, and `MarkdownPDFExportService` before changing PDF behavior.
-- Read `PDFPreviewView` and `WorkspaceDocumentSupport` before changing PDF viewing or file-format support.
+- Read `PDFPreviewView`, `MediaPlayerView`, and `WorkspaceDocumentSupport` before changing PDF, image or media viewing or file-format support.
 - Read `ThemeSettingsStore`, `AppTheme`, and `Color+Theme.swift` before changing theming.
 - Read `TerminalSessionCollectionStore`, `TerminalSessionStore`, `TerminalPTYSession`, `TerminalDrawerView`, and `TerminalWebView` before changing terminal behavior.
 - Keep `MonknotCore` independent from SwiftUI/AppKit view types unless there is a deliberate architectural change.

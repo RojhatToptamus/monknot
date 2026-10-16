@@ -450,6 +450,7 @@ APP_SOURCES=(
   "Sources/Monknot/Views/MarkdownPreviewView.swift"
   "Sources/Monknot/Views/MarkdownSymbolQuickOpenView.swift"
   "Sources/Monknot/Views/MarkdownTextEditor.swift"
+  "Sources/Monknot/Views/MediaPlayerView.swift"
   "Sources/Monknot/Views/MonknotKeyboardShortcutsHelpView.swift"
   "Sources/Monknot/Views/NativeMarkdownEditorView.swift"
   "Sources/Monknot/Views/PDFPreviewView.swift"
@@ -645,6 +646,28 @@ cat >"$INFO_PLIST" <<PLIST
         <string>public.avif</string>
       </array>
     </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Video or Audio</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>com.apple.quicktime-movie</string>
+        <string>public.mpeg-4</string>
+        <string>com.apple.m4v-video</string>
+        <string>public.mpeg</string>
+        <string>public.mp3</string>
+        <string>com.apple.m4a-audio</string>
+        <string>public.aac-audio</string>
+        <string>com.microsoft.waveform-audio</string>
+        <string>public.aiff-audio</string>
+        <string>com.apple.coreaudio-format</string>
+        <string>org.xiph.flac</string>
+      </array>
+    </dict>
   </array>
   <key>NSServices</key>
   <array>
@@ -681,6 +704,17 @@ cat >"$INFO_PLIST" <<PLIST
         <string>com.microsoft.bmp</string>
         <string>com.microsoft.ico</string>
         <string>public.avif</string>
+        <string>com.apple.quicktime-movie</string>
+        <string>public.mpeg-4</string>
+        <string>com.apple.m4v-video</string>
+        <string>public.mpeg</string>
+        <string>public.mp3</string>
+        <string>com.apple.m4a-audio</string>
+        <string>public.aac-audio</string>
+        <string>com.microsoft.waveform-audio</string>
+        <string>public.aiff-audio</string>
+        <string>com.apple.coreaudio-format</string>
+        <string>org.xiph.flac</string>
       </array>
     </dict>
   </array>

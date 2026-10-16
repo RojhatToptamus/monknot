@@ -131,14 +131,21 @@ public enum WorkspaceDocumentSupport {
     public static let imageExtensions: Set<String> = [
         "png", "jpg", "jpeg", "gif", "heic", "heif", "tif", "tiff", "webp", "bmp", "ico", "avif"
     ]
+    /// Video and audio AVFoundation plays. They are listed by extension alone: a file is first
+    /// read when it opens in the player, never while the workspace is scanned or searched.
+    public static let mediaExtensions: Set<String> = [
+        "mov", "mp4", "m4v", "mpg", "mpeg",
+        "mp3", "m4a", "aac", "wav", "aif", "aiff", "caf", "flac"
+    ]
     /// Extensionless files that hold text by convention, matched case-insensitively.
     public static let textFilenames: Set<String> = [
         "dockerfile", "makefile", "procfile", "gemfile", "rakefile", "justfile",
         "license", "licence", "readme", "changelog", "authors", "contributors", "copying", "notice"
     ]
+    /// Files the scan leaves out. AVI is among them: it declares itself as video, but the codecs it
+    /// usually carries do not play in AVFoundation.
     public static let ignoredUnsupportedExtensions: Set<String> = [
-        "mov", "mp4", "m4v", "avi", "mpg", "mpeg",
-        "mp3", "m4a", "aac", "wav", "aif", "aiff", "caf", "flac",
+        "avi",
         "zip", "rar", "7z", "tar", "gz", "bz2", "xz",
         "webarchive", "rtf", "rtfd",
         "doc", "docx", "xls", "xlsx", "ppt", "pptx", "pages", "numbers", "key",
@@ -149,6 +156,7 @@ public enum WorkspaceDocumentSupport {
         .union(htmlExtensions)
         .union(textExtensions)
         .union(imageExtensions)
+        .union(mediaExtensions)
 
     /// Whether a file with this name is listed as a workspace document.
     public static func isWorkspaceDocumentName(_ name: String) -> Bool {
@@ -278,6 +286,15 @@ public enum WorkspaceDocumentSupport {
             )
         }
 
+        if mediaExtensions.contains(fileExtension) {
+            return Classification(
+                kind: .media,
+                contentTypeIdentifier: contentTypeIdentifier,
+                localizedTypeDescription: localizedTypeDescription,
+                capabilities: capabilities(for: .media)
+            )
+        }
+
         if textExtensions.contains(fileExtension) || textFilenames.contains(filename) {
             return Classification(
                 kind: .text,
@@ -350,7 +367,7 @@ public enum WorkspaceDocumentSupport {
             )
         case .media:
             return WorkspaceDocumentCapabilities(
-                canPreview: false,
+                canPreview: true,
                 canEditText: false,
                 canSearchText: false,
                 canSearchPDF: false,

@@ -118,7 +118,7 @@ enum MonknotSymbolOptics {
         switch systemImage {
         case "character.cursor.ibeam":
             return 12.5
-        case "curlybraces", "link":
+        case "curlybraces", "link", "play.rectangle":
             return 13
         case "magnifyingglass",
              "doc", "doc.fill",

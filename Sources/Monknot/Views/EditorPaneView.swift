@@ -349,7 +349,11 @@ struct EditorPaneView: View {
                 },
                 updateAnnotationUndoState: updatePDFAnnotationUndoState
             )
-        case .media, .nativePreview, .unsupported:
+        case .media:
+            // One player per document, so switching tabs releases the previous file.
+            MediaPlayerView(document: selectedDocument, theme: theme, zoomScale: zoomScale)
+                .id(selectedDocument.id)
+        case .nativePreview, .unsupported:
             UnsupportedDocumentView(
                 document: selectedDocument,
                 theme: theme,

@@ -1,7 +1,7 @@
 # Monknot — design language and UI rules
 
-Authoritative reference for the Monknot macOS app (markdown, PDF, image and code editor). Read this
-before implementing, refining or proposing any interface work.
+Authoritative reference for the Monknot macOS app (markdown, PDF, image and code editor, with a
+video and audio player). Read this before implementing, refining or proposing any interface work.
 
 Monknot is a **native SwiftUI/AppKit app**. Glyphs are **SF Symbols**. Type is **SF Pro Text** for
 UI and **SF Mono** for code. Everything below is prescriptive: if a choice is not derivable from
@@ -397,11 +397,11 @@ size.
 - **Beside a label:** nominally `size = label + 2` → 15pt next to a 13pt label. The tall
   `doc.text` / `doc.richtext` contours use a 14pt optical size inside the same 18pt column.
 - **Alone in a button:** nominally 17pt in a 28pt button. Optical ceilings are measured from the
-  rendered symbol bounds: whole-word search is 12.5pt; `curlybraces` and `link` are 13pt;
-  `magnifyingglass`, `checklist`, `text.quote`, document glyphs, and the diagonal terminal arrows are
-  14pt; the two sidebar glyphs are 15pt. `photo` is sized for its ink weight instead: its solid
-  mountains and sun carry more ink than an outline, so at 12pt it matches its neighbours. Other
-  symbols retain the nominal size.
+  rendered symbol bounds: whole-word search is 12.5pt; `curlybraces`, `link` and `play.rectangle`
+  are 13pt; `magnifyingglass`, `checklist`, `text.quote`, document glyphs, and the diagonal
+  terminal arrows are 14pt; the two sidebar glyphs are 15pt. `photo` is sized for its ink weight
+  instead: its solid mountains and sun carry more ink than an outline, so at 12pt it matches its
+  neighbours. Other symbols retain the nominal size.
 
 Both scale by the zoom factor. Weight is `.regular` **everywhere** — `.medium` on a 15pt symbol
 reads as a different icon set two rows down.
@@ -440,8 +440,8 @@ neither changes the control or glyph-column geometry.
 
 `sidebar.left` · `chevron.left` / `chevron.right` · `chevron.right` / `chevron.down` (disclosure) ·
 `line.3.horizontal` (source) · `eye` (preview) · `sidebar.right` · `doc.text` markdown · `doc.richtext`
-PDF · `photo` image · `folder` (a workspace) · `terminal` · `xmark` · `plus` · `gearshape` · `list.bullet.indent`
-(outline peek).
+PDF · `photo` image · `play.rectangle` video and audio · `folder` (a workspace) · `terminal` · `xmark` ·
+`plus` · `gearshape` · `list.bullet.indent` (outline peek).
 
 Use the **outline (non-fill) variant everywhere** except for three status marks, where the fill is the
 state: `folder.fill` for the active workspace, `pin.fill` on a pinned tab, and
@@ -577,11 +577,11 @@ in the cluster.**
 a view mode — it belongs in the Window menu with its own shortcut, not in a control whose other
 cells switch how one pane renders.
 
-**Disabled, not hidden.** For PDFs, images and plain text the view-mode control takes the disabled treatment of
-§5.1: `ink4` glyphs, its border at 40 %, and no selected cell. Controls never appear or disappear
-between file kinds — the toolbar must not reflow. The same holds for the Markdown toolbar row under
-the titlebar: an editable Markdown document keeps it in Preview, its controls disabled, so switching
-view mode never moves the document.
+**Disabled, not hidden.** For PDFs, images, video, audio and plain text the view-mode control takes
+the disabled treatment of §5.1: `ink4` glyphs, its border at 40 %, and no selected cell. Controls
+never appear or disappear between file kinds — the toolbar must not reflow. The same holds for the
+Markdown toolbar row under the titlebar: an editable Markdown document keeps it in Preview, its
+controls disabled, so switching view mode never moves the document.
 
 ### 10.3 Tab strip — hug, cap, scroll
 
@@ -631,8 +631,9 @@ per depth · disclosure chevron 10 · Recents group · footer row 30, Settings o
 Rows are the **row primitive, identical to a tab**, on purpose.
 
 **One glyph per row.** A folder's disclosure chevron (10pt, nudged per §8.6) sits in the 18pt glyph
-column, and folders carry no folder glyph. Files use `doc.text` / `doc.richtext` / `photo` in the same column.
-Names at one depth therefore share a left edge, and a child steps right by exactly the 16 indent.
+column, and folders carry no folder glyph. Files use `doc.text` / `doc.richtext` / `photo` /
+`play.rectangle` in the same column. Names at one depth therefore share a left edge, and a child
+steps right by exactly the 16 indent.
 
 Label `ink2` and glyph `ink3` at rest, both `ink` on hover or press; the selected file's label is `ink`
 and its glyph `accent` (§1.3, §1.4). Quiet Sidebar takes a fifth off each opacity, once, never below
@@ -731,6 +732,20 @@ own format** (a PNG stays a PNG), and the image reopens from what was written. F
 write (WebP), animations, and images deeper than 8 bits or neither RGB nor gray open read-only: the
 tools are disabled, zoom still works. An animation shows its first frame. SVG is source and opens in
 the text editor.
+
+### 10.9 Video and audio
+
+Video and audio that AVFoundation plays (MOV, MP4, M4V, MPEG, MP3, M4A, AAC, WAV, AIFF, CAF, FLAC)
+are workspace documents, listed by extension and never read until they open. They play in AVKit's
+own player with its standard inline controls; Monknot draws no controls of its own. A video keeps
+its proportions inside the pane with the theme's `surface` around it, never letterbox bars. Audio
+shows the system audio player at 480 × 270, centred on the surface.
+
+Nothing plays on its own. Space plays and pauses while the player has focus. The player belongs to
+the visible tab: switching or closing the tab, or closing the window, stops playback and releases
+the file. A file that is missing or cannot be played shows the empty-state layout (§5.7) with a
+warning glyph, the way a damaged PDF or image does. AVI and other containers AVFoundation does not
+reliably play are not listed.
 
 ---
 

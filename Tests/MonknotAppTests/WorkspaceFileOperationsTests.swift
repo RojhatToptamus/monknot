@@ -320,6 +320,9 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         try Data([0x89, 0x50, 0x4E, 0x47]).write(to: root.appendingPathComponent("photo.png"))
         try Data([0xFF, 0xD8, 0xFF]).write(to: root.appendingPathComponent("shot.jpg"))
         try write("%PDF-1.7\n", to: root.appendingPathComponent("paper.pdf"))
+        try Data("RIFF".utf8).write(to: root.appendingPathComponent("tone.wav"))
+        try Data("FORM".utf8).write(to: root.appendingPathComponent("loop.aif"))
+        try Data([0x00, 0x00, 0x00, 0x14]).write(to: root.appendingPathComponent("clip.mov"))
         let store = try await openStore(root)
 
         for (source, proposed, expected) in [
@@ -327,6 +330,10 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
             ("photo.md.png", "diagram.jpg", "diagram.jpg.png"),
             ("shot.jpg", "shot.jpeg", "shot.jpeg"),
             ("paper.pdf", "paper.txt", "paper.txt.pdf"),
+            ("tone.wav", "tone.mp3", "tone.mp3.wav"),
+            ("loop.aif", "loop.aiff", "loop.aiff"),
+            ("clip.mov", "Clip Final", "Clip Final.mov"),
+            ("Clip Final.mov", "Clip Final.md", "Clip Final.md.mov"),
         ] {
             let document = try XCTUnwrap(self.document(store, source), source)
             store.renameDocument(id: document.id, to: proposed)
@@ -935,6 +942,35 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Sub")))
         await idle(store)
         XCTAssertEqual(names(in: root.appendingPathComponent("Sub")), ["o.txt"])
+    }
+
+    /// Video and audio are workspace documents, so they copy, duplicate and import like any other.
+    func testMediaFilesCopyDuplicateAndImportFromFinder() async throws {
+        let root = try makeRoot()
+        let outside = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotFileOpsMediaOutside")
+        try makeFolder(root.appendingPathComponent("Sub"))
+        try Data("RIFF".utf8).write(to: root.appendingPathComponent("tone.wav"))
+        try Data([0x00, 0x00, 0x00, 0x14]).write(to: outside.appendingPathComponent("Trip.MOV"))
+        let store = try await openStore(root)
+        let tone = try XCTUnwrap(document(store, "tone.wav"))
+        XCTAssertEqual(tone.kind, .media)
+
+        store.duplicateItem(at: tone.url)
+        await idle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(document(store, "tone copy.wav")?.kind, .media)
+        XCTAssertEqual(store.selectedDocumentID, root.appendingPathComponent("tone copy.wav").path)
+
+        store.copyItem(at: tone.url)
+        store.pasteDocumentTransfer(into: root.appendingPathComponent("Sub"))
+        await idle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(document(store, "Sub/tone.wav")?.kind, .media)
+
+        store.dropFileURLs([outside.appendingPathComponent("Trip.MOV")], into: root.appendingPathComponent("Sub"))
+        await idle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(document(store, "Sub/Trip.MOV")?.kind, .media)
     }
 
     func testCopyCutAndDuplicateFolders() async throws {

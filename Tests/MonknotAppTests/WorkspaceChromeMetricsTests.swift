@@ -313,6 +313,7 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
             "character.cursor.ibeam": 12.5,
             "curlybraces": 13,
             "link": 13,
+            "play.rectangle": 13,
             "magnifyingglass": 14,
             "doc.text": 14,
             "doc.richtext": 14,

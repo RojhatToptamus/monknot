@@ -89,6 +89,23 @@ final class ManualBuildContractTests: RepositoryContractTestCase {
         XCTAssertFalse(script.contains("<string>public.data</string>"))
         XCTAssertTrue(script.contains("<string>openInMonknot</string>"))
         XCTAssertTrue(script.contains("<key>LSSupportsOpeningDocumentsInPlace</key>"))
+
+        // Video and audio open in the player, from Open With and from the Services menu alike. The
+        // claims name the formats AVFoundation plays rather than public.movie or public.audio.
+        XCTAssertTrue(script.contains("<string>Video or Audio</string>"))
+        XCTAssertFalse(script.contains("<string>public.movie</string>"))
+        XCTAssertFalse(script.contains("<string>public.audio</string>"))
+        for mediaType in [
+            "com.apple.quicktime-movie", "public.mpeg-4", "com.apple.m4v-video", "public.mpeg",
+            "public.mp3", "com.apple.m4a-audio", "public.aac-audio", "com.microsoft.waveform-audio",
+            "public.aiff-audio", "com.apple.coreaudio-format", "org.xiph.flac",
+        ] {
+            XCTAssertEqual(
+                script.components(separatedBy: "<string>\(mediaType)</string>").count - 1,
+                2,
+                "\(mediaType) must be both an openable document type and a Services file type"
+            )
+        }
     }
 
     func testRunActionUsesManualBuildScript() throws {
