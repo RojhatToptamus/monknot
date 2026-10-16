@@ -134,6 +134,34 @@ final class SidebarContextMenuQATests: FileOperationsQATestCase {
         XCTAssertEqual(names("docs", in: root), ["a.md", "b.md", "top.md"])
     }
 
+    /// Menus opened outside the tree, on the Recents header or in an empty workspace's sidebar,
+    /// check the clipboard as they open too.
+    func testPasteOutsideTheTreeFollowsTheClipboard() async throws {
+        let (_, store, h) = try await makeFixture()
+        defer { h.close() }
+        try await openRecents(h, store, recording: try XCTUnwrap(doc(store, "docs/b.md")))
+        let tree = try XCTUnwrap(h.treeFrameInWindow())
+        let recentsHeader = NSPoint(x: tree.midX, y: tree.minY - 16)
+        XCTAssertEqual(QASidebarHarness.titles(h.contextMenu(at: recentsHeader)), Self.emptyAreaMenu)
+
+        h.pasteboard.clearContents()
+        XCTAssertEqual(QASidebarHarness.item("Paste", in: h.contextMenu(at: recentsHeader))?.isEnabled, false)
+        h.pasteboard.setString("Some words", forType: .string)
+        XCTAssertEqual(QASidebarHarness.item("Paste", in: h.contextMenu(at: recentsHeader))?.isEnabled, true)
+
+        let emptyRoot = try makeRoot()
+        let emptyStore = try await openStore(emptyRoot)
+        let empty = await harness(emptyStore, emptyRoot)
+        defer { empty.close() }
+        let point = NSPoint(x: 140, y: 320)
+        empty.pasteboard.clearContents()
+        XCTAssertEqual(QASidebarHarness.item("Paste", in: empty.contextMenu(at: point))?.isEnabled, false)
+        empty.pasteboard.setString("Some words", forType: .string)
+        XCTAssertEqual(QASidebarHarness.item("Paste", in: empty.contextMenu(at: point))?.isEnabled, true)
+        empty.pasteboard.clearContents()
+        XCTAssertEqual(QASidebarHarness.item("Paste", in: empty.contextMenu(at: point))?.isEnabled, false)
+    }
+
     func testMoveToTrashFromAFolderMenuWithAnUnsavedDocumentInsideIsRefused() async throws {
         let (root, store, h) = try await makeFixture()
         defer { h.close() }

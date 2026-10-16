@@ -255,96 +255,100 @@ struct SidebarView: View {
                 }
             }
         } else {
-            let nodes = displayedVisibleNodes
+            // A right-click anywhere here, as in the tree, checks the clipboard before its menu
+            // is built, so the menu's Paste is current.
+            SidebarMenuRegion(menuWillOpen: refreshCanPaste) {
+                workspaceContent
+            }
+        }
+    }
 
-            if !nodes.isEmpty {
-                GeometryReader { geometry in
-                    VStack(spacing: 0) {
-                        SidebarScrollContainer(
+    /// The tree and Recents, or the empty sidebar.
+    @ViewBuilder
+    private var workspaceContent: some View {
+        let nodes = displayedVisibleNodes
+
+        if !nodes.isEmpty {
+            GeometryReader { geometry in
+                VStack(spacing: 0) {
+                    SidebarScrollContainer(
+                        theme: theme,
+                        revealedRow: revealedRow(in: nodes),
+                        keyDown: handleTreeKeyDown(_:),
+                        menuWillOpen: refreshCanPaste,
+                        mouse: treeMouse
+                    ) {
+                        LazyVStack(alignment: .leading, spacing: scaled(2)) {
+                            ForEach(nodes) { visibleNode in
+                                SidebarNodeRow(
+                                    visibleNode: visibleNode,
+                                    isSelected: visibleNode.shows(sidebarSelectionID),
+                                    saveState: visibleNode.node.document.map { store.saveState(for: $0.id) } ?? .clean,
+                                    gitStatus: visibleNode.node.document.flatMap { document in
+                                        store.gitStatusByRelativePath[document.relativePath]
+                                    },
+                                    isExpanded: visibleNode.isExpanded(in: expandedFolderIDs),
+                                    tracksMoveFrame: tracksSidebarMoveFrames,
+                                    isBusy: store.isBusy,
+                                    canPaste: canPaste,
+                                    isMoveSource: draggedSidebarNodeID == visibleNode.id,
+                                    isMoveTarget: moveDropTargetFolderID == visibleNode.dropTargetFolderID,
+                                    theme: theme,
+                                    zoomScale: zoomScale,
+                                    actions: rowActions
+                                )
+                                .equatable()
+                            }
+                        }
+                        .padding(.horizontal, scaled(6))
+                        .padding(.vertical, scaled(6))
+                        // Inside the scroll view's hosting view, so the rows' drag gesture and
+                        // frame readers measure in the same space.
+                        .coordinateSpace(name: SidebarMoveCoordinateSpace.name)
+                        .onPreferenceChange(SidebarNodeFramePreferenceKey.self) { frames in
+                            sidebarNodeFrames = frames
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .layoutPriority(1)
+                    .onGeometryChange(for: CGSize.self) { proxy in
+                        proxy.size
+                    } action: { size in
+                        sidebarTreeSize = size
+                    }
+
+                    if !recentDocuments.isEmpty {
+                        SidebarRecentDocumentsSection(
+                            entries: recentDocuments,
                             theme: theme,
-                            revealedRow: revealedRow(in: nodes),
-                            keyDown: handleTreeKeyDown(_:),
-                            menuWillOpen: refreshCanPaste,
-                            mouse: treeMouse
-                        ) {
-                            LazyVStack(alignment: .leading, spacing: scaled(2)) {
-                                ForEach(nodes) { visibleNode in
-                                    SidebarNodeRow(
-                                        visibleNode: visibleNode,
-                                        isSelected: visibleNode.shows(sidebarSelectionID),
-                                        saveState: visibleNode.node.document.map { store.saveState(for: $0.id) } ?? .clean,
-                                        gitStatus: visibleNode.node.document.flatMap { document in
-                                            store.gitStatusByRelativePath[document.relativePath]
-                                        },
-                                        isExpanded: visibleNode.isExpanded(in: expandedFolderIDs),
-                                        tracksMoveFrame: tracksSidebarMoveFrames,
-                                        isBusy: store.isBusy,
-                                        canPaste: canPaste,
-                                        isMoveSource: draggedSidebarNodeID == visibleNode.id,
-                                        isMoveTarget: moveDropTargetFolderID == visibleNode.dropTargetFolderID,
-                                        theme: theme,
-                                        zoomScale: zoomScale,
-                                        actions: rowActions
-                                    )
-                                    .equatable()
-                                }
-                            }
-                            .padding(.horizontal, scaled(6))
-                            .padding(.vertical, scaled(6))
-                            // Inside the scroll view's hosting view, so the rows' drag gesture and
-                            // frame readers measure in the same space.
-                            .coordinateSpace(name: SidebarMoveCoordinateSpace.name)
-                            .onPreferenceChange(SidebarNodeFramePreferenceKey.self) { frames in
-                                sidebarNodeFrames = frames
-                            }
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        .layoutPriority(1)
-                        .onGeometryChange(for: CGSize.self) { proxy in
-                            proxy.size
-                        } action: { size in
-                            sidebarTreeSize = size
-                        }
-
-                        if !recentDocuments.isEmpty {
-                            SidebarRecentDocumentsSection(
-                                entries: recentDocuments,
-                                theme: theme,
-                                zoomScale: zoomScale,
-                                availableSidebarHeight: geometry.size.height,
-                                kindGlyph: { entry in
-                                    (store.document(id: entry.documentID)?.kind ?? .markdown).resolvedSystemImage
-                                },
-                                openDocument: openDocument,
-                                revealInFinder: revealInFinder(_:),
-                                copyPath: copyPath,
-                                copyRelativePath: copyRelativePath
-                            )
-                            .layoutPriority(2)
-                        }
+                            zoomScale: zoomScale,
+                            availableSidebarHeight: geometry.size.height,
+                            kindGlyph: { entry in
+                                (store.document(id: entry.documentID)?.kind ?? .markdown).resolvedSystemImage
+                            },
+                            openDocument: openDocument,
+                            revealInFinder: revealInFinder(_:),
+                            copyPath: copyPath,
+                            copyRelativePath: copyRelativePath
+                        )
+                        .layoutPriority(2)
                     }
                 }
-                .contextMenu {
-                    sidebarContextMenu
-                }
-            } else {
-                EmptySidebarView(
-                    theme: theme,
-                    zoomScale: zoomScale,
-                    workspaceURL: store.workspaceURL,
-                    workspaces: workspaceLibrary.entries,
-                    isLoadingWorkspace: store.isWorkspaceOpening,
-                    switchWorkspace: switchWorkspace
-                )
-                    // The menu's Paste checks the clipboard as the pointer arrives for a right-click.
-                    .onHover { isHovered in
-                        if isHovered {
-                            refreshCanPaste()
-                        }
-                    }
-                    .contextMenu {
-                        sidebarContextMenu
-                    }
+            }
+            .contextMenu {
+                sidebarContextMenu
+            }
+        } else {
+            EmptySidebarView(
+                theme: theme,
+                zoomScale: zoomScale,
+                workspaceURL: store.workspaceURL,
+                workspaces: workspaceLibrary.entries,
+                isLoadingWorkspace: store.isWorkspaceOpening,
+                switchWorkspace: switchWorkspace
+            )
+            .contextMenu {
+                sidebarContextMenu
             }
         }
     }
@@ -1863,16 +1867,52 @@ private struct SidebarRevealedRow {
     let frame: CGRect
 }
 
-/// The tree takes keyboard focus when clicked, as a Finder or Xcode outline does, so the Edit
-/// menu's Cut, Copy and Paste and the tree's own keys act on the sidebar's selection.
-private final class SidebarHostingView<Content: View>: NSHostingView<Content> {
-    var keyDownHandler: (NSEvent) -> Bool = { _ in false }
+/// Sidebar content in its own hosting view, so a right-click in it can bring the sidebar's menus
+/// up to date before one is built.
+private struct SidebarMenuRegion<Content: View>: NSViewRepresentable {
+    let menuWillOpen: () -> Void
+    let content: Content
+
+    init(menuWillOpen: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+        self.menuWillOpen = menuWillOpen
+        self.content = content()
+    }
+
+    func makeNSView(context: Context) -> SidebarMenuHostingView<Content> {
+        let hostingView = SidebarMenuHostingView(rootView: content)
+        // The region fills the space the sidebar gives it, whatever its content measures.
+        hostingView.sizingOptions = []
+        hostingView.menuWillOpenHandler = menuWillOpen
+        return hostingView
+    }
+
+    func updateNSView(_ hostingView: SidebarMenuHostingView<Content>, context: Context) {
+        hostingView.rootView = content
+        hostingView.menuWillOpenHandler = menuWillOpen
+    }
+}
+
+/// A right-click, on a row or anywhere around the rows, lets the sidebar bring its menus up to
+/// date and applies that to the window's views, so the menu is built as things are now.
+private class SidebarMenuHostingView<Content: View>: NSHostingView<Content> {
     var menuWillOpenHandler: () -> Void = {}
-    var mouse: SidebarTreeMouse?
 
     override var mouseDownCanMoveWindow: Bool {
         false
     }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        menuWillOpenHandler()
+        window?.contentView?.layoutSubtreeIfNeeded()
+        return super.menu(for: event)
+    }
+}
+
+/// The tree takes keyboard focus when clicked, as a Finder or Xcode outline does, so the Edit
+/// menu's Cut, Copy and Paste and the tree's own keys act on the sidebar's selection.
+private final class SidebarHostingView<Content: View>: SidebarMenuHostingView<Content> {
+    var keyDownHandler: (NSEvent) -> Bool = { _ in false }
+    var mouse: SidebarTreeMouse?
 
     override var acceptsFirstResponder: Bool {
         true
@@ -1904,14 +1944,6 @@ private final class SidebarHostingView<Content: View>: NSHostingView<Content> {
         if !keyDownHandler(event) {
             super.keyDown(with: event)
         }
-    }
-
-    /// A right-click in the tree, on a row or below the rows, lets the sidebar bring its menus up
-    /// to date and applies that to the window's views, so the menu is built as things are now.
-    override func menu(for event: NSEvent) -> NSMenu? {
-        menuWillOpenHandler()
-        window?.contentView?.layoutSubtreeIfNeeded()
-        return super.menu(for: event)
     }
 }
 
