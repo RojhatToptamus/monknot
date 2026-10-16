@@ -25,7 +25,7 @@ final class WorkspaceFileWatcher {
 
         stop()
         rootPath = path
-        resolvedRootPath = rootURL.standardizedFileURL.resolvingSymlinksInPath().path
+        resolvedRootPath = Self.resolvedPath(of: path)
         callback = onChange
 
         var context = FSEventStreamContext(
@@ -86,6 +86,14 @@ final class WorkspaceFileWatcher {
             return
         }
         watcher.callback?(event)
+    }
+
+    /// The path without symbolic links, as FSEvents reports it. `resolvingSymlinksInPath()` keeps
+    /// `/var` rather than `/private/var`, so this asks the file system.
+    internal static func resolvedPath(of path: String) -> String {
+        guard let resolved = realpath(path, nil) else { return path }
+        defer { free(resolved) }
+        return String(cString: resolved)
     }
 
     /// `path` under `root` when it lies under `resolvedRoot`, the same folder reached without
