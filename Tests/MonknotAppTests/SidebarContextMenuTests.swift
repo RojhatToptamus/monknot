@@ -218,6 +218,9 @@ final class SidebarContextMenuTests: FileOperationsTestCase {
         await idle(store)
         XCTAssertEqual(names("docs", in: root), ["a.md", "b.md", "b copy.md"])
 
+        // The duplicate's row shows once the tree has re-rendered.
+        let rendered = await wait(timeout: 3) { self.rowIndex(h, "docs/b copy.md") != nil }
+        XCTAssertTrue(rendered, "\(h.visibleRowPaths())")
         let renameIndex = try XCTUnwrap(rowIndex(h, "docs/b.md"))
         let opened = await h.performAndWaitForSheet("Rename", in: h.contextMenu(row: renameIndex))
         XCTAssertTrue(opened, "Rename sheet did not open")
