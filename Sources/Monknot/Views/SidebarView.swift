@@ -40,7 +40,6 @@ struct SidebarView: View {
     @State private var recentDocuments: [RecentDocumentEntry] = []
     @State private var visibleNodes: [VisibleSidebarNode] = []
     /// Whether the clipboard held something to paste when a context menu last opened.
-    @State private var canPaste = false
     @State private var treeMouse = SidebarTreeMouse()
     private let treeExpansionPersistence = WorkspaceTreeExpansionPersistence()
 
@@ -255,9 +254,8 @@ struct SidebarView: View {
                 }
             }
         } else {
-            // A right-click anywhere here, as in the tree, checks the clipboard before its menu
-            // is built, so the menu's Paste is current.
-            SidebarMenuRegion(menuWillOpen: refreshCanPaste) {
+            // A right-click anywhere here, as in the tree, checks the clipboard as its menu opens.
+            SidebarMenuRegion(canPaste: canPaste) {
                 workspaceContent
             }
         }
@@ -275,7 +273,7 @@ struct SidebarView: View {
                         theme: theme,
                         revealedRow: revealedRow(in: nodes),
                         keyDown: handleTreeKeyDown(_:),
-                        menuWillOpen: refreshCanPaste,
+                        canPaste: canPaste,
                         mouse: treeMouse
                     ) {
                         LazyVStack(alignment: .leading, spacing: scaled(2)) {
@@ -290,7 +288,6 @@ struct SidebarView: View {
                                     isExpanded: visibleNode.isExpanded(in: expandedFolderIDs),
                                     tracksMoveFrame: tracksSidebarMoveFrames,
                                     isBusy: store.isBusy,
-                                    canPaste: canPaste,
                                     isMoveSource: draggedSidebarNodeID == visibleNode.id,
                                     isMoveTarget: moveDropTargetFolderID == visibleNode.dropTargetFolderID,
                                     theme: theme,
@@ -583,7 +580,7 @@ struct SidebarView: View {
 
         Divider()
 
-        SidebarMenuItems.paste(isDisabled: isDisabled || !canPaste) {
+        SidebarMenuItems.paste(isDisabled: isDisabled) {
             paste(into: nil)
         }
 
@@ -625,8 +622,8 @@ struct SidebarView: View {
         }
     }
 
-    private func refreshCanPaste() {
-        canPaste = store.canPaste(from: pasteboard)
+    private func canPaste() -> Bool {
+        store.canPaste(from: pasteboard)
     }
 
     private func paste(into directoryURL: URL?) {
@@ -1383,9 +1380,12 @@ private enum SidebarMenuItems {
         .disabled(isDisabled)
     }
 
+    /// The menu's host disables Paste as the menu opens when the clipboard holds nothing to paste.
+    static let pasteTitle = "Paste"
+
     static func paste(isDisabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Label("Paste", systemImage: "doc.on.clipboard")
+            Label(pasteTitle, systemImage: "doc.on.clipboard")
         }
         .disabled(isDisabled)
     }
@@ -1431,7 +1431,6 @@ extension SidebarNodeRow: Equatable {
             lhs.isExpanded == rhs.isExpanded &&
             lhs.tracksMoveFrame == rhs.tracksMoveFrame &&
             lhs.isBusy == rhs.isBusy &&
-            lhs.canPaste == rhs.canPaste &&
             lhs.isMoveSource == rhs.isMoveSource &&
             lhs.isMoveTarget == rhs.isMoveTarget &&
             lhs.zoomScale == rhs.zoomScale &&
@@ -1447,7 +1446,6 @@ private struct SidebarNodeRow: View {
     let isExpanded: Bool
     let tracksMoveFrame: Bool
     let isBusy: Bool
-    let canPaste: Bool
     let isMoveSource: Bool
     let isMoveTarget: Bool
     let theme: AppTheme
@@ -1651,7 +1649,7 @@ private struct SidebarNodeRow: View {
         }
         .disabled(isBusy)
 
-        SidebarMenuItems.paste(isDisabled: isBusy || !canPaste) {
+        SidebarMenuItems.paste(isDisabled: isBusy) {
             actions.paste(visibleNode.destinationURL)
         }
 
@@ -1746,7 +1744,7 @@ private struct SidebarScrollContainer<Content: View>: NSViewRepresentable {
     let thumbColor: NSColor
     let revealedRow: SidebarRevealedRow?
     let keyDown: (NSEvent) -> Bool
-    let menuWillOpen: () -> Void
+    let canPaste: () -> Bool
     let mouse: SidebarTreeMouse
     let content: Content
 
@@ -1754,14 +1752,14 @@ private struct SidebarScrollContainer<Content: View>: NSViewRepresentable {
         theme: AppTheme,
         revealedRow: SidebarRevealedRow?,
         keyDown: @escaping (NSEvent) -> Bool,
-        menuWillOpen: @escaping () -> Void,
+        canPaste: @escaping () -> Bool,
         mouse: SidebarTreeMouse,
         @ViewBuilder content: () -> Content
     ) {
         self.thumbColor = MonknotScrollbarStyle.thumbColor(for: theme)
         self.revealedRow = revealedRow
         self.keyDown = keyDown
-        self.menuWillOpen = menuWillOpen
+        self.canPaste = canPaste
         self.mouse = mouse
         self.content = content()
     }
@@ -1797,7 +1795,7 @@ private struct SidebarScrollContainer<Content: View>: NSViewRepresentable {
         guard let hostingView = context.coordinator.hostingView else { return }
         hostingView.rootView = content
         hostingView.keyDownHandler = keyDown
-        hostingView.menuWillOpenHandler = menuWillOpen
+        hostingView.canPaste = canPaste
         hostingView.mouse = mouse
         scrollView.thumbColor = thumbColor
 
@@ -1830,14 +1828,14 @@ private struct SidebarRevealedRow {
     let frame: CGRect
 }
 
-/// Sidebar content in its own hosting view, so a right-click in it can bring the sidebar's menus
-/// up to date before one is built.
+/// Sidebar content in its own hosting view, so a right-click in it checks the clipboard as the
+/// menu opens.
 private struct SidebarMenuRegion<Content: View>: NSViewRepresentable {
-    let menuWillOpen: () -> Void
+    let canPaste: () -> Bool
     let content: Content
 
-    init(menuWillOpen: @escaping () -> Void, @ViewBuilder content: () -> Content) {
-        self.menuWillOpen = menuWillOpen
+    init(canPaste: @escaping () -> Bool, @ViewBuilder content: () -> Content) {
+        self.canPaste = canPaste
         self.content = content()
     }
 
@@ -1845,29 +1843,35 @@ private struct SidebarMenuRegion<Content: View>: NSViewRepresentable {
         let hostingView = SidebarMenuHostingView(rootView: content)
         // The region fills the space the sidebar gives it, whatever its content measures.
         hostingView.sizingOptions = []
-        hostingView.menuWillOpenHandler = menuWillOpen
+        hostingView.canPaste = canPaste
         return hostingView
     }
 
     func updateNSView(_ hostingView: SidebarMenuHostingView<Content>, context: Context) {
         hostingView.rootView = content
-        hostingView.menuWillOpenHandler = menuWillOpen
+        hostingView.canPaste = canPaste
     }
 }
 
-/// A right-click, on a row or anywhere around the rows, lets the sidebar bring its menus up to
-/// date and applies that to the window's views, so the menu is built as things are now.
+/// Hosts sidebar content whose context menus offer Paste. SwiftUI builds a menu from the view's
+/// last update, which can be older than the clipboard, so Paste is checked as the menu opens.
 private class SidebarMenuHostingView<Content: View>: NSHostingView<Content> {
-    var menuWillOpenHandler: () -> Void = {}
+    var canPaste: () -> Bool = { false }
 
     override var mouseDownCanMoveWindow: Bool {
         false
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
-        menuWillOpenHandler()
-        window?.contentView?.layoutSubtreeIfNeeded()
-        return super.menu(for: event)
+        let menu = super.menu(for: event)
+        if let paste = menu?.items.first(where: { $0.title == SidebarMenuItems.pasteTitle }),
+           !canPaste() {
+            // Without an action the item stays disabled whether or not the menu validates items.
+            paste.isEnabled = false
+            paste.action = nil
+            paste.target = nil
+        }
+        return menu
     }
 }
 
