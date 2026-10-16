@@ -131,8 +131,10 @@ public enum WorkspaceDocumentSupport {
     public static let imageExtensions: Set<String> = [
         "png", "jpg", "jpeg", "gif", "heic", "heif", "tif", "tiff", "webp", "bmp", "ico", "avif"
     ]
+    /// Extensionless files that hold text by convention, matched case-insensitively.
     public static let textFilenames: Set<String> = [
-        "dockerfile", "makefile", "procfile", "gemfile", "rakefile", "justfile"
+        "dockerfile", "makefile", "procfile", "gemfile", "rakefile", "justfile",
+        "license", "licence", "readme", "changelog", "authors", "contributors", "copying", "notice"
     ]
     public static let ignoredUnsupportedExtensions: Set<String> = [
         "mov", "mp4", "m4v", "avi", "mpg", "mpeg",

@@ -228,6 +228,18 @@ final class WorkspaceDocumentSupportTests: XCTestCase {
         XCTAssertTrue(svg.capabilities.canEditText)
     }
 
+    func testExtensionlessFilesAreTextOnlyByConventionalName() {
+        let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        for name in ["LICENSE", "License", "README", "CHANGELOG", "AUTHORS", "NOTICE", "COPYING", "Makefile", "Dockerfile"] {
+            let classification = WorkspaceDocumentSupport.workspaceClassification(for: root.appendingPathComponent(name))
+            XCTAssertEqual(classification?.kind, .text, name)
+            XCTAssertEqual(classification?.capabilities.canEditText, true, name)
+        }
+        for name in ["data", "a.out", "Icon"] {
+            XCTAssertNil(WorkspaceDocumentSupport.workspaceClassification(for: root.appendingPathComponent(name)), name)
+        }
+    }
+
     func testRelativePathFallsBackToFilenameOutsideRoot() {
         let root = URL(fileURLWithPath: "/tmp/workspace", isDirectory: true)
         let outside = URL(fileURLWithPath: "/tmp/other/readme.md")
