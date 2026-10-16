@@ -1270,6 +1270,8 @@ final class WorkspaceStore: ObservableObject {
             !workspaceItems.contains { $0 != url && WorkspaceDocumentSupport.isURL(url, containedIn: $0) }
         }
 
+        // The drop replaces a move waiting for its link review, as any other operation does.
+        pendingMarkdownLinkMoveReview = nil
         moveRunSerial &+= 1
         let runID = moveRunSerial
         moveRun = WorkspaceMoveRun(

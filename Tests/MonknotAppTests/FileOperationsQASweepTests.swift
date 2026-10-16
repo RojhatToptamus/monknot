@@ -799,6 +799,29 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         XCTAssertEqual(names("", in: root), ["Archive", "a.md", "b.txt", "index.md", "renamed.txt"])
     }
 
+    /// A drop made while an earlier drop waits for its link review replaces that drop.
+    func testADropWhileALinkReviewIsOpenReplacesTheEarlierDrop() async throws {
+        let root = try makeRoot()
+        try write("# A\n", "a.md", in: root)
+        try write("b\n", "b.txt", in: root)
+        try write("c\n", "c.txt", in: root)
+        try write("[a](a.md)\n", "index.md", in: root)
+        try mkdir("Archive", in: root)
+        let store = try await openStore(root)
+
+        store.dropFileURLs(["a.md", "b.txt"].map { root.appendingPathComponent($0) }, into: root.appendingPathComponent("Archive"))
+        _ = await wait { store.pendingMarkdownLinkMoveReview != nil }
+        XCTAssertNotNil(store.pendingMarkdownLinkMoveReview)
+
+        store.dropFileURLs([root.appendingPathComponent("c.txt")], into: root.appendingPathComponent("Archive"))
+        _ = await wait { self.names("Archive", in: root) == ["c.txt"] && !store.isBusy }
+        await settle(store)
+        XCTAssertNil(store.pendingMarkdownLinkMoveReview)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(names("Archive", in: root), ["c.txt"])
+        XCTAssertEqual(names("", in: root), ["Archive", "a.md", "b.txt", "index.md"])
+    }
+
     /// A drop that moves a workspace item and copies in an outside item the sidebar does not
     /// list still says the copy will not show.
     func testMixedDropStillSaysAnUnlistedCopyWillNotShow() async throws {
