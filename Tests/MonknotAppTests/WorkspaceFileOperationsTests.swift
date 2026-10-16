@@ -1060,6 +1060,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         await settleMove(store)
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(store.selectedDocumentID, root.appendingPathComponent("Folder/N.md").path)
+        _ = await wait { !store.isDocumentLoading }
         XCTAssertEqual(store.documentText, "# N\n")
     }
 
