@@ -97,6 +97,20 @@ final class TerminalFocusRestorer: ObservableObject {
         restore(fallbackFrom: window)
     }
 
+    /// Gives the visible document keyboard focus once it has mounted, as after a file is chosen in
+    /// the sidebar.
+    static func focusVisibleDocument(in window: NSWindow?) {
+        DispatchQueue.main.async { [weak window] in
+            guard let window,
+                  window.attachedSheet == nil,
+                  let target = fallbackDocumentFocusTarget(in: window)
+            else {
+                return
+            }
+            window.makeFirstResponder(target)
+        }
+    }
+
     /// Gives the visible document keyboard focus when nothing in the window
     /// holds it, such as after the focused view was replaced by another one.
     static func focusDocumentIfUnfocused(in window: NSWindow?) {
@@ -784,7 +798,10 @@ struct ContentView: View {
             manageWorkspaces: openWorkspaceSettings,
             newMarkdown: createMarkdownFile,
             exportPDF: exportMarkdownPDF(_:),
-            openDocument: openDocumentTab(id:),
+            openDocument: { documentID in
+                openDocumentTab(id: documentID)
+                TerminalFocusRestorer.focusVisibleDocument(in: responderWindow)
+            },
             openWorkspaceSearchResult: openWorkspaceSearchResult(_:),
             showWorkspaceSearch: showWorkspaceSearch,
             dismissWorkspaceSearch: { dismissWorkspaceSearch(restoreFocus: true) },

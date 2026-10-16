@@ -640,8 +640,8 @@ and its glyph (a file's kind glyph, a folder's chevron) `accent`, on a `sel` fil
 52% light / 48% dark; ink already under that floor (resting glyphs at `ink3`) stays put, clear of `ink4`.
 
 **Selection.** The tree has one selection, as in Finder: a folder, or else the open document. Clicking a
-folder selects it and opens or closes it; clicking a file opens it. Either click gives the tree keyboard
-focus without closing the open document. New Markdown, New File, New Folder and Paste put items in the
+folder selects it, opens or closes it and gives the tree keyboard focus, without closing the open
+document; clicking a file opens it and gives the document keyboard focus, ready for typing. New Markdown, New File, New Folder and Paste put items in the
 selected folder, or the selected document's folder, or the root when nothing is selected; a row's context
 menu acts on that row, and the empty tree's menu and Finder drops on empty space on the root. While the
 tree has focus, ⌘C, ⌘X and ⌘V copy, cut and paste the selection, Return renames it, ⌘D duplicates it and

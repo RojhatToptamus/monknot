@@ -327,7 +327,12 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
         XCTAssertNil(fixture.store.selectedFolderID, "Opening a document moves the selection to it")
         XCTAssertEqual(fixture.store.selectedDocumentID, fixture.path("docs/b.md"))
         XCTAssertEqual(fixture.store.sidebarTargetFolderURL?.path, fixture.path("docs"))
+
+        // The window's open action hands focus on to the document, ready for typing.
         XCTAssertTrue(fixture.treeHasFocus())
+        TerminalFocusRestorer.focusVisibleDocument(in: fixture.window)
+        let editorFocused = await waitUntil { fixture.window.firstResponder === fixture.editor }
+        XCTAssertTrue(editorFocused)
     }
 
     /// ⌘D and Return act on the selection only while the tree has keyboard focus; with the editor
