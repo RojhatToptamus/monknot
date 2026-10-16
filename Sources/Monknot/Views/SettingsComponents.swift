@@ -101,7 +101,7 @@ struct SettingsOutlineButton: View {
         .focused($isFocused)
         .focusEffectDisabled()
         .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(MonknotMotion.hoverAnimation, value: isHovered)
         .monknotPointerCursor(enabled: !isDisabled)
     }
 }

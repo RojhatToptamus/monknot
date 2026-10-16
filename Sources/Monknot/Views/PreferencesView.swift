@@ -60,12 +60,15 @@ struct PreferencesView: View {
         MonknotMetrics.interfaceDensity(base, theme: panelTheme, zoomScale: settingsZoomScale)
     }
 
+    /// The height the Settings window's title bar adds to its content.
+    private static let titlebarHeight = NSWindow.frameRect(
+        forContentRect: CGRect(x: 0, y: 0, width: 100, height: 100),
+        styleMask: [.titled, .closable]
+    ).height - 100
+
     private var windowSize: CGSize {
         let visible = NSScreen.main?.visibleFrame.size ?? .zero
-        let titlebarHeight = NSWindow.frameRect(
-            forContentRect: CGRect(x: 0, y: 0, width: 100, height: 100),
-            styleMask: [.titled, .closable]
-        ).height - 100
+        let titlebarHeight = Self.titlebarHeight
         return CGSize(
             width: min(scaled(MonknotMetrics.settingsWindowWidth), visible.width > 0 ? visible.width : .infinity),
             height: min(

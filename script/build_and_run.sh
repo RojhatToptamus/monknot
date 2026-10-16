@@ -431,7 +431,7 @@ APP_SOURCES=(
   "Sources/Monknot/Support/KeyboardShortcutMonitor.swift"
   "Sources/Monknot/Support/MonknotCommandActions.swift"
   "Sources/Monknot/Support/PDFAnnotationHitTesting.swift"
-  "Sources/Monknot/Support/ThemePreference+SwiftUI.swift"
+  "Sources/Monknot/Support/ThemePreference+Appearance.swift"
   "Sources/Monknot/Support/WindowChromeSupport.swift"
   "Sources/Monknot/Support/WorkspaceDocumentKind+ResolvedSymbol.swift"
   "Sources/Monknot/Support/WorkspaceWindowRequestCenter.swift"
