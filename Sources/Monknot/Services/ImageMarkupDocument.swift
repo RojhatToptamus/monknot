@@ -44,11 +44,11 @@ enum ImageMarkupDocument {
 
     static func decode(_ data: Data) -> DecodedImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let contentType = CGImageSourceGetType(source) as String?,
-              let image = uprightImage(from: source)
+              let contentType = CGImageSourceGetType(source) as String?
         else { return nil }
-
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
+        guard let image = uprightImage(from: source, properties: properties) else { return nil }
+
         let colorModel = image.colorSpace?.model
         let isEightBitRGBOrGray = image.bitsPerComponent <= 8
             && (colorModel == .rgb || colorModel == .monochrome)
@@ -152,12 +152,11 @@ enum ImageMarkupDocument {
         return output as Data
     }
 
-    private static func uprightImage(from source: CGImageSource) -> CGImage? {
-        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
-        let orientation = (properties?[kCGImagePropertyOrientation] as? NSNumber)?.uint32Value ?? 1
+    private static func uprightImage(from source: CGImageSource, properties: [CFString: Any]) -> CGImage? {
+        let orientation = (properties[kCGImagePropertyOrientation] as? NSNumber)?.uint32Value ?? 1
         guard orientation != CGImagePropertyOrientation.up.rawValue,
-              let width = (properties?[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
-              let height = (properties?[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue
+              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue
         else {
             return CGImageSourceCreateImageAtIndex(source, 0, nil)
         }

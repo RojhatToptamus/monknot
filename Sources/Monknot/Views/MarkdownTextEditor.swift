@@ -2377,6 +2377,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
             suppressedFlowSuggestion = nil
             NotificationCenter.default.removeObserver(self)
             NSWorkspace.shared.notificationCenter.removeObserver(self)
+            // The storage observer went with the others; stop trusting its edit count.
+            observedTextStorage = nil
+            nativeTextCache = nil
             scrollView = nil
             onSelectionChange = nil
             onOpenLink = nil
