@@ -284,8 +284,8 @@ public enum WorkspaceScanResultPatcher {
     ) -> Bool {
         guard !ignoredDirectoryNames.contains(url.lastPathComponent) else { return true }
         guard !url.lastPathComponent.hasPrefix(".") else { return true }
-        return relativeComponents(for: url, rootURL: rootURL).contains { component in
-            ignoredDirectoryNames.contains(component) || component.hasPrefix(".")
+        return relativeComponents(for: url, rootURL: rootURL).dropLast().contains { component in
+            hidesContents(ofFolderNamed: component, ignoredDirectoryNames: ignoredDirectoryNames)
         }
     }
 
@@ -298,8 +298,14 @@ public enum WorkspaceScanResultPatcher {
         guard let fileName = components.last else { return true }
         guard !fileName.hasPrefix(".") else { return true }
         return components.dropLast().contains { component in
-            ignoredDirectoryNames.contains(component) || component.hasPrefix(".")
+            hidesContents(ofFolderNamed: component, ignoredDirectoryNames: ignoredDirectoryNames)
         }
+    }
+
+    /// Whether the scan leaves out everything inside a folder with this name: a hidden or ignored
+    /// folder, or a package, which Finder shows as one item.
+    private static func hidesContents(ofFolderNamed name: String, ignoredDirectoryNames: Set<String>) -> Bool {
+        ignoredDirectoryNames.contains(name) || name.hasPrefix(".") || WorkspaceDocumentSupport.isPackageName(name)
     }
 
     private static func relativeComponents(for url: URL, rootURL: URL) -> [String] {
