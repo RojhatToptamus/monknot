@@ -359,7 +359,7 @@ private struct DocumentTabItemView: View {
             .frame(maxWidth: .infinity)
 
             if !tab.isPinned {
-                trailingSlot
+                trailingSlot(width: metrics.trailingSlot)
                     .padding(.trailing, metrics.padding)
             }
         }
@@ -400,24 +400,22 @@ private struct DocumentTabItemView: View {
 
     @ViewBuilder
     private var tabBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
         if isSelected {
-            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+            shape
                 .fill(theme.elevatedSurfaceColor)
                 .overlay {
-                    RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                        .strokeBorder(theme.borderColor, lineWidth: 1)
+                    shape.strokeBorder(theme.borderColor, lineWidth: 1)
                 }
         } else if isPressed && !isDisabled {
-            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                .fill(theme.pressedFillColor)
+            shape.fill(theme.pressedFillColor)
         } else if isHovered && !isDisabled {
-            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                .fill(theme.hoverFillColor)
+            shape.fill(theme.hoverFillColor)
         }
     }
 
     @ViewBuilder
-    private var trailingSlot: some View {
+    private func trailingSlot(width: CGFloat) -> some View {
         if isSelected || isHovered {
             MonknotTabCloseButton(
                 label: "Close \(label)",
@@ -433,10 +431,7 @@ private struct DocumentTabItemView: View {
                 zoomScale: zoomScale,
                 size: glyphScaled(10)
             )
-            .frame(
-                width: MonknotTabCloseButton.dimension(theme: theme, zoomScale: zoomScale),
-                height: MonknotTabCloseButton.dimension(theme: theme, zoomScale: zoomScale)
-            )
+            .frame(width: width, height: width)
         }
     }
 

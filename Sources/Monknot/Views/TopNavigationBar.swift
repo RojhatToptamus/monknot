@@ -62,6 +62,13 @@ struct TopNavigationBar: View {
         MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
     }
 
+    /// The 1×16 divider between titlebar groups (design.md §10.7).
+    private func verticalRule(_ color: Color) -> some View {
+        Rectangle()
+            .fill(color)
+            .frame(width: 1, height: scaled(16))
+    }
+
     private var isWorking: Bool {
         isBusy || isDocumentLoading || isSaving
     }
@@ -86,9 +93,7 @@ struct TopNavigationBar: View {
             )
             .allowsTopBarWindowActivationEvents()
 
-            Rectangle()
-                .fill(theme.separatorColor)
-                .frame(width: 1, height: scaled(16))
+            verticalRule(theme.separatorColor)
                 .padding(.horizontal, scaled(2))
 
             tabsOrEmptyTitle
@@ -96,7 +101,7 @@ struct TopNavigationBar: View {
 
             // The spinner keeps its slot while idle, so starting work never moves the controls after it.
             MonknotProgressIndicator(
-                size: MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale),
+                size: glyphScaled(16),
                 theme: theme,
                 isAnimating: isWorking
             )
@@ -118,9 +123,7 @@ struct TopNavigationBar: View {
             viewModeControl
                 .allowsTopBarWindowActivationEvents()
 
-            Rectangle()
-                .fill(theme.separatorColor)
-                .frame(width: 1, height: scaled(16))
+            verticalRule(theme.separatorColor)
                 .padding(.horizontal, scaled(4))
 
             drawerToggleButton
@@ -231,9 +234,7 @@ struct TopNavigationBar: View {
             MonknotSearchGlyph(theme: theme, zoomScale: zoomScale)
                 .foregroundStyle(theme.mutedForegroundColor)
 
-            Rectangle()
-                .fill(theme.borderColor)
-                .frame(width: 1, height: scaled(16))
+            verticalRule(theme.borderColor)
 
             TextField(
                 "Find in document",
@@ -318,9 +319,7 @@ struct TopNavigationBar: View {
             }
 
             if showsNavigation {
-                Rectangle()
-                    .fill(theme.borderColor)
-                    .frame(width: 1, height: scaled(16))
+                verticalRule(theme.borderColor)
 
                 findBarButton(
                     systemImage: "chevron.up",
