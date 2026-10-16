@@ -62,7 +62,7 @@ public enum WorkspaceConditionalTextWriter {
         guard let data = try? Data(contentsOf: url) else {
             throw WorkspaceTextRevisionError.unreadable
         }
-        guard let text = String(data: data, encoding: .utf8) else {
+        guard let text = WorkspaceTextFileGuard.decodeUTF8(data) else {
             throw WorkspaceTextRevisionError.invalidUTF8
         }
         return WorkspaceTextRevision(

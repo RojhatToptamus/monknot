@@ -50,7 +50,7 @@ public enum WorkspaceTextFileGuard {
         }
 
         let data = try Data(contentsOf: url)
-        guard let text = String(data: data, encoding: .utf8) else {
+        guard let text = decodeUTF8(data) else {
             throw Error.unreadableEncoding(path: url.lastPathComponent)
         }
         // A NUL byte is valid UTF-8 but never appears in text; the editor would show it as garbage.
@@ -62,9 +62,17 @@ public enum WorkspaceTextFileGuard {
         return text
     }
 
+    private static let byteOrderMark = Data([0xEF, 0xBB, 0xBF])
+
+    /// The text of UTF-8 `data` without a leading byte order mark, which some macOS versions keep
+    /// when decoding and others drop.
+    public static func decodeUTF8(_ data: Data) -> String? {
+        let body = data.starts(with: byteOrderMark) ? data.dropFirst(byteOrderMark.count) : data[...]
+        return String(data: Data(body), encoding: .utf8)
+    }
+
     /// Decoding drops a UTF-8 byte order mark, so a save puts it back when the file starts with one.
     public static func utf8Data(for text: String, preservingByteOrderMarkOf url: URL) -> Data {
-        let byteOrderMark = Data([0xEF, 0xBB, 0xBF])
         guard let handle = try? FileHandle(forReadingFrom: url) else { return Data(text.utf8) }
         defer { try? handle.close() }
         guard (try? handle.read(upToCount: byteOrderMark.count)) == byteOrderMark else {
