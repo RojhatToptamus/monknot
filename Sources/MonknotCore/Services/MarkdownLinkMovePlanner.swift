@@ -188,15 +188,11 @@ public struct MarkdownLinkMovePlanner: Sendable {
             throw MarkdownLinkMovePlannerError.destinationExists
         }
 
-        let markdownDocuments = documents.filter { $0.kind == .markdown }
-        let documentByCanonicalPath = Dictionary(
-            markdownDocuments.map { (canonical($0.url).path, $0) },
-            uniquingKeysWith: { first, _ in first }
-        )
+        let documentByCanonicalPath = markdownDocumentsByCanonicalPath(documents)
         var examinedFiles: [MarkdownLinkExaminedFile] = []
         var rewriteFiles: [MarkdownLinkRewriteFilePlan] = []
 
-        for document in markdownDocuments.sorted(by: { $0.relativePath < $1.relativePath }) {
+        for document in documents.filter({ $0.kind == .markdown }).sorted(by: { $0.relativePath < $1.relativePath }) {
             try Task.checkCancellation()
             try WorkspaceTextFileGuard.ensureWithinLimit(at: document.url)
             let revision = try WorkspaceConditionalTextWriter.read(from: document.url)
@@ -207,42 +203,16 @@ public struct MarkdownLinkMovePlanner: Sendable {
                 sourceURL: source,
                 destinationURL: destination
             ) ?? document.url
-            var replacements: [(range: NSRange, rewrite: MarkdownLinkRewrite)] = []
-
-            for link in parser.links(in: revision.text) {
-                guard link.kind != .referenceUsage else { continue }
-                guard let oldTargetURL = resolvedTargetURL(
-                    for: link,
-                    sourceDocument: document,
-                    root: root,
-                    documents: documents,
-                    documentByCanonicalPath: documentByCanonicalPath
-                ) else { continue }
-
-                let newTargetURL = movedURL(
-                    oldTargetURL,
-                    sourceURL: source,
-                    destinationURL: destination
-                ) ?? oldTargetURL
-                guard newSourceURL.standardizedFileURL != document.url.standardizedFileURL
-                        || newTargetURL.standardizedFileURL != oldTargetURL.standardizedFileURL
-                else { continue }
-
-                let newPath = try rewrittenPath(
-                    for: link,
-                    newSourceURL: newSourceURL,
-                    newTargetURL: newTargetURL,
-                    root: root
-                )
-                let newDestination = link.destinationComponents.replacingPath(with: newPath)
-                guard newDestination != link.destination else { continue }
-                let rewrite = MarkdownLinkRewrite(
-                    sourceRange: link.destinationRange,
-                    oldDestination: link.destination,
-                    newDestination: newDestination
-                )
-                replacements.append((link.destinationRange.nsRange, rewrite))
-            }
+            let replacements = try linkReplacements(
+                in: revision.text,
+                of: document,
+                movedTo: newSourceURL,
+                source: source,
+                destination: destination,
+                root: root,
+                documents: documents,
+                documentByCanonicalPath: documentByCanonicalPath
+            )
 
             guard !replacements.isEmpty else { continue }
             let updated = NSMutableString(string: revision.text)
@@ -276,6 +246,88 @@ public struct MarkdownLinkMovePlanner: Sendable {
             examinedFiles: examinedFiles,
             rewriteFiles: rewriteFiles
         )
+    }
+
+    /// The link rewrites that moving `sourceURL` to `destinationURL` makes in `text`, the text of
+    /// the Markdown `document` (such as its unsaved changes): links to the moved item or anything
+    /// in it and, when the document moves with it, its own relative links.
+    public func rewrites(
+        in text: String,
+        of document: WorkspaceDocument,
+        moving sourceURL: URL,
+        to destinationURL: URL,
+        workspaceRootURL: URL,
+        documents: [WorkspaceDocument]
+    ) throws -> [MarkdownLinkRewrite] {
+        let source = sourceURL.standardizedFileURL
+        let destination = destinationURL.standardizedFileURL
+        return try linkReplacements(
+            in: text,
+            of: document,
+            movedTo: movedURL(document.url, sourceURL: source, destinationURL: destination) ?? document.url,
+            source: source,
+            destination: destination,
+            root: canonical(workspaceRootURL),
+            documents: documents,
+            documentByCanonicalPath: markdownDocumentsByCanonicalPath(documents)
+        ).map(\.rewrite)
+    }
+
+    private func markdownDocumentsByCanonicalPath(_ documents: [WorkspaceDocument]) -> [String: WorkspaceDocument] {
+        Dictionary(
+            documents.filter { $0.kind == .markdown }.map { (canonical($0.url).path, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+    }
+
+    /// The links in `text` that point at the moved item, or that move with `document` to
+    /// `newSourceURL`, with their new destinations.
+    private func linkReplacements(
+        in text: String,
+        of document: WorkspaceDocument,
+        movedTo newSourceURL: URL,
+        source: URL,
+        destination: URL,
+        root: URL,
+        documents: [WorkspaceDocument],
+        documentByCanonicalPath: [String: WorkspaceDocument]
+    ) throws -> [(range: NSRange, rewrite: MarkdownLinkRewrite)] {
+        var replacements: [(range: NSRange, rewrite: MarkdownLinkRewrite)] = []
+        for link in parser.links(in: text) {
+            guard link.kind != .referenceUsage else { continue }
+            guard let oldTargetURL = resolvedTargetURL(
+                for: link,
+                sourceDocument: document,
+                root: root,
+                documents: documents,
+                documentByCanonicalPath: documentByCanonicalPath
+            ) else { continue }
+
+            let newTargetURL = movedURL(
+                oldTargetURL,
+                sourceURL: source,
+                destinationURL: destination
+            ) ?? oldTargetURL
+            guard newSourceURL.standardizedFileURL != document.url.standardizedFileURL
+                    || newTargetURL.standardizedFileURL != oldTargetURL.standardizedFileURL
+            else { continue }
+
+            let newPath = try rewrittenPath(
+                for: link,
+                newSourceURL: newSourceURL,
+                newTargetURL: newTargetURL,
+                root: root
+            )
+            let newDestination = link.destinationComponents.replacingPath(with: newPath)
+            guard newDestination != link.destination else { continue }
+            let rewrite = MarkdownLinkRewrite(
+                sourceRange: link.destinationRange,
+                oldDestination: link.destination,
+                newDestination: newDestination
+            )
+            replacements.append((link.destinationRange.nsRange, rewrite))
+        }
+        return replacements
     }
 
     private func resolvedTargetURL(

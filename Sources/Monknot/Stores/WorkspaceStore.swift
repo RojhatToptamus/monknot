@@ -1612,19 +1612,39 @@ final class WorkspaceStore: ObservableObject {
             moveRunID: moveRunID
         )
         let documentSnapshot = documents
+        let unsavedMarkdownTexts = dirtyDocumentTexts
+            .compactMap { documentID, text in
+                documentsByID[documentID].flatMap { $0.kind == .markdown ? (document: $0, text: text) : nil }
+            }
+            .sorted { $0.document.relativePath < $1.document.relativePath }
         let generation = beginDocumentFileOperation(continuingMoveRun: moveRunID)
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                let plan = try MarkdownLinkMovePlanner().plan(
+                let planner = MarkdownLinkMovePlanner()
+                let plan = try planner.plan(
                     moving: sourceURL,
                     to: destinationURL,
                     workspaceRootURL: workspaceURL,
                     documents: documentSnapshot
                 )
+                // The plan rewrites files on disk. A link the move would change in unsaved text
+                // would break, so the move waits until that document is saved.
+                let unsavedLinkingDocumentID = unsavedMarkdownTexts.first { document, text in
+                    let rewrites = try? planner.rewrites(
+                        in: text,
+                        of: document,
+                        moving: sourceURL,
+                        to: destinationURL,
+                        workspaceRootURL: workspaceURL,
+                        documents: documentSnapshot
+                    )
+                    return rewrites?.isEmpty != true
+                }?.document.id
                 guard !Task.isCancelled else { return }
                 await self?.finishMarkdownLinkMovePlanning(
                     plan: plan,
+                    unsavedLinkingDocumentID: unsavedLinkingDocumentID,
                     request: request,
                     generation: generation
                 )
@@ -1650,13 +1670,16 @@ final class WorkspaceStore: ObservableObject {
         startMarkdownLinkMoveCommit(review)
     }
 
+    /// Runs a planned move, or shows it for review. `unsavedLinkingDocumentID` is a document whose
+    /// unsaved text links to what moves, which refuses the move as a rewritten file does.
     private func finishMarkdownLinkMovePlanning(
         plan: MarkdownLinkMovePlan,
+        unsavedLinkingDocumentID: String?,
         request: WorkspaceMarkdownLinkMoveRequest,
         generation: Int
     ) {
         guard generation == workspaceGeneration else { return }
-        if let unsaved = unsavedDocumentRewritten(by: plan) {
+        if let unsaved = unsavedDocumentRewritten(by: plan) ?? unsavedLinkingDocumentID.flatMap(document(id:)) {
             refuseMove(of: unsaved, request: request)
             return
         }
@@ -1758,7 +1781,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     /// A document with unsaved changes whose file the move would rewrite to update its links. A
-    /// moved document that is not rewritten keeps its unsaved changes at its new path.
+    /// moved document whose links stay as they are keeps its unsaved changes at its new path.
     private func unsavedDocumentRewritten(by plan: MarkdownLinkMovePlan) -> WorkspaceDocument? {
         plan.rewriteFiles
             .lazy

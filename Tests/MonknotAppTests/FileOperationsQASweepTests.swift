@@ -222,6 +222,53 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         XCTAssertEqual(store.documentText, "# N edited\n", "Unsaved text lost")
     }
 
+    /// A link that exists only in a note's unsaved text would break as surely as one on disk, so
+    /// moving its target waits until the note is saved.
+    func testMovingAnItemLinkedOnlyFromUnsavedTextIsRefused() async throws {
+        let root = try makeRoot()
+        try write("# N\n", "n.md", in: root)
+        try write("# A\n", "a.md", in: root)
+        try mkdir("Sub", in: root)
+        let store = try await openStore(root, selecting: "n.md")
+        let n = try XCTUnwrap(doc(store, "n.md"))
+        let a = try XCTUnwrap(doc(store, "a.md"))
+        _ = await wait { !store.isDocumentLoading }
+        store.setOpenDocumentIDs([n.id])
+        store.setDocumentText("# N\n[a](a.md)\n")
+
+        XCTAssertTrue(store.moveItem(id: a.id, toDirectory: root.appendingPathComponent("Sub")))
+        await settle(store)
+        XCTAssertEqual(store.errorMessage, "Save n.md first: this move updates the links in it.")
+        XCTAssertEqual(names("", in: root), ["a.md", "n.md", "Sub"])
+        XCTAssertEqual(store.documentText, "# N\n[a](a.md)\n")
+    }
+
+    /// A moved note's own relative links change with it, unsaved ones too.
+    func testMovingANoteWhoseUnsavedTextHasARelativeLinkIsRefused() async throws {
+        let root = try makeRoot()
+        try write("# N\n", "Notes/n.md", in: root)
+        try write("# Top\n", "top.md", in: root)
+        try mkdir("Archive/Deep", in: root)
+        let store = try await openStore(root, selecting: "Notes/n.md")
+        let n = try XCTUnwrap(doc(store, "Notes/n.md"))
+        _ = await wait { !store.isDocumentLoading }
+        store.setOpenDocumentIDs([n.id])
+        store.setDocumentText("# N\n[top](../top.md)\n")
+
+        XCTAssertTrue(store.moveItem(id: n.id, toDirectory: root.appendingPathComponent("Archive/Deep")))
+        await settle(store)
+        XCTAssertEqual(store.errorMessage, "Save n.md first: this move updates the links in it.")
+        XCTAssertEqual(names("Notes", in: root), ["n.md"])
+
+        // Unsaved text with no link the move changes moves with the note.
+        store.setDocumentText("# N\nNo links.\n")
+        XCTAssertTrue(store.moveItem(id: n.id, toDirectory: root.appendingPathComponent("Archive/Deep")))
+        await settle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertEqual(names("Archive/Deep", in: root), ["n.md"])
+        XCTAssertEqual(store.documentText, "# N\nNo links.\n")
+    }
+
     func testCutFolderWithAnOpenUnsavedNoteMovesAndKeepsTheEdit() async throws {
         let root = try makeRoot()
         try write("# N\n", "Folder/n.md", in: root)

@@ -88,6 +88,60 @@ final class MarkdownLinkMovePlannerTests: XCTestCase {
         )
     }
 
+    /// Text other than the file on disk, such as unsaved changes, gets the rewrites the plan
+    /// would make in the file: links to the moved item, and a moved note's own relative links.
+    func testRewritesInSuppliedTextMatchThePlansRewrites() throws {
+        let root = try temporaryWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let noteURL = root.appendingPathComponent("Notes/Note.md")
+        let targetURL = root.appendingPathComponent("Reference.md")
+        try FileManager.default.createDirectory(at: noteURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "# Note\n".write(to: noteURL, atomically: true, encoding: .utf8)
+        try "# Reference\n".write(to: targetURL, atomically: true, encoding: .utf8)
+        let note = WorkspaceDocument(url: noteURL, rootURL: root)
+        let documents = [note, WorkspaceDocument(url: targetURL, rootURL: root)]
+        let planner = MarkdownLinkMovePlanner()
+
+        let inbound = try planner.rewrites(
+            in: "[ref](../Reference.md)\n",
+            of: note,
+            moving: targetURL,
+            to: root.appendingPathComponent("Archive.md"),
+            workspaceRootURL: root,
+            documents: documents
+        )
+        XCTAssertEqual(inbound.map(\.newDestination), ["../Archive.md"])
+
+        let outgoing = try planner.rewrites(
+            in: "[ref](../Reference.md) [self](#note)\n",
+            of: note,
+            moving: noteURL,
+            to: root.appendingPathComponent("Note.md"),
+            workspaceRootURL: root,
+            documents: documents
+        )
+        XCTAssertEqual(outgoing.map(\.newDestination), ["Reference.md"])
+
+        let unrelated = try planner.rewrites(
+            in: "[ref](../Reference.md)\n",
+            of: note,
+            moving: root.appendingPathComponent("Notes"),
+            to: root.appendingPathComponent("Notes Renamed"),
+            workspaceRootURL: root,
+            documents: documents
+        )
+        XCTAssertTrue(unrelated.isEmpty, "A note moving with its folder keeps a link that still resolves")
+
+        XCTAssertTrue(try planner.rewrites(
+            in: "No links.\n",
+            of: note,
+            moving: targetURL,
+            to: root.appendingPathComponent("Archive.md"),
+            workspaceRootURL: root,
+            documents: documents
+        ).isEmpty)
+    }
+
     func testMovingSourceRewritesOutgoingImageAndReferenceLinksButNotCode() throws {
         let root = try temporaryWorkspace()
         defer { try? FileManager.default.removeItem(at: root) }
