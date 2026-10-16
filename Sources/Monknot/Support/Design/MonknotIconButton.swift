@@ -69,27 +69,18 @@ struct MonknotIconButton: View {
         case smallAction
         case editorToolbar
         case findBar
-        case segmented
 
         func dimension(theme: AppTheme, zoomScale: Double) -> CGFloat {
             switch self {
             case .chrome:
                 return MonknotMetrics.chromeButtonDimension(theme: theme, zoomScale: zoomScale)
-            case .windowNavigation:
+            case .windowNavigation, .settings, .findBar:
                 return MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)
             case .compact:
                 return MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale)
-            case .settings:
-                return MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)
-            case .smallAction:
+            case .sidebarHeader, .smallAction:
                 return MonknotMetrics.interfaceControl(22, theme: theme, zoomScale: zoomScale)
             case .editorToolbar:
-                return MonknotMetrics.interfaceControl(30, theme: theme, zoomScale: zoomScale)
-            case .sidebarHeader:
-                return MonknotMetrics.interfaceControl(22, theme: theme, zoomScale: zoomScale)
-            case .findBar:
-                return MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)
-            case .segmented:
                 return MonknotMetrics.interfaceControl(30, theme: theme, zoomScale: zoomScale)
             }
         }
@@ -98,7 +89,7 @@ struct MonknotIconButton: View {
             switch self {
             case .windowNavigation:
                 return MonknotMetrics.interfaceControl(22, theme: theme, zoomScale: zoomScale)
-            case .chrome, .sidebarHeader, .compact, .settings, .smallAction, .editorToolbar, .findBar, .segmented:
+            case .chrome, .sidebarHeader, .compact, .settings, .smallAction, .editorToolbar, .findBar:
                 return dimension(theme: theme, zoomScale: zoomScale)
             }
         }
@@ -115,35 +106,23 @@ struct MonknotIconButton: View {
             switch self {
             case .chrome:
                 return MonknotMetrics.iconPointSizeBase
-            case .windowNavigation:
-                return 16
-            case .sidebarHeader:
-                return 16
-            case .compact:
+            case .windowNavigation, .sidebarHeader, .compact:
                 return 16
             case .settings:
                 return 15
             case .smallAction:
                 return 11
-            case .findBar:
+            case .findBar, .editorToolbar:
                 return 17
-            case .editorToolbar:
-                return 17
-            case .segmented:
-                return 18
             }
         }
 
         func cornerRadius(theme: AppTheme, zoomScale: Double) -> CGFloat {
             switch self {
-            case .chrome:
+            case .chrome, .sidebarHeader, .compact, .settings, .smallAction, .editorToolbar, .findBar:
                 return theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
-            case .sidebarHeader, .compact, .settings, .smallAction, .editorToolbar, .findBar:
-                return theme.chromeRadius(8, zoomScale: zoomScale)
             case .windowNavigation:
                 return theme.chromeRadius(6, zoomScale: zoomScale)
-            case .segmented:
-                return theme.chromeRadius(5, zoomScale: zoomScale)
             }
         }
     }
@@ -180,6 +159,10 @@ struct MonknotIconButton: View {
     /// A disabled button keeps its border at this opacity; its glyph is `ink4` (design.md §5.1).
     static let disabledBorderOpacity = 0.4
 
+    private var cornerRadius: CGFloat {
+        size.cornerRadius(theme: theme, zoomScale: zoomScale)
+    }
+
     var body: some View {
         Button(action: action) {
             MonknotSystemGlyph(
@@ -198,11 +181,11 @@ struct MonknotIconButton: View {
                         focusRing
                     }
                 }
-                .contentShape(RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale)))
+                .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
         }
         .buttonStyle(MonknotIconButtonStyle(
             theme: theme,
-            cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale),
+            cornerRadius: cornerRadius,
             isActive: isActive,
             drawsActiveBackground: drawsActiveBackground,
             isHovered: isHovered,
@@ -215,7 +198,7 @@ struct MonknotIconButton: View {
         .overlay {
             // The border is structure: it never turns accent with state (design.md §5.2).
             if drawsBorder {
-                RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
+                RoundedRectangle(cornerRadius: cornerRadius)
                     .strokeBorder(
                         theme.borderColor.opacity(isDisabled ? Self.disabledBorderOpacity : 1),
                         lineWidth: 1
@@ -246,21 +229,17 @@ struct MonknotIconButton: View {
 
     @ViewBuilder
     private var focusRing: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius)
+        let color = theme.accentColor.opacity(Self.focusRingOpacity)
         switch focusRingPlacement {
         case .outside:
-            RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
-                .stroke(
-                    theme.accentColor.opacity(Self.focusRingOpacity),
-                    lineWidth: Self.focusRingLineWidth
-                )
+            shape
+                .stroke(color, lineWidth: Self.focusRingLineWidth)
                 .padding(-Self.focusRingOutset)
                 .allowsHitTesting(false)
         case .contained:
-            RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
-                .strokeBorder(
-                    theme.accentColor.opacity(Self.focusRingOpacity),
-                    lineWidth: Self.focusRingLineWidth
-                )
+            shape
+                .strokeBorder(color, lineWidth: Self.focusRingLineWidth)
                 .allowsHitTesting(false)
         }
     }

@@ -608,20 +608,6 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
         )
     }
 
-    func testSegmentedIconButtonsScaleFromTheThirtyPointEditorReferenceBox() {
-        let size = MonknotIconButton.IconButtonSize.segmented
-
-        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
-            for zoomScale in WorkspaceZoomPolicy.supportedLevels {
-                XCTAssertEqual(
-                    size.dimension(theme: theme, zoomScale: zoomScale),
-                    MonknotMetrics.interfaceControl(30, theme: theme, zoomScale: zoomScale),
-                    accuracy: 0.001
-                )
-            }
-        }
-    }
-
     func testTopNavigationControlsUseSharedChromeHeightAcrossSidebarStatesAndZooms() {
         let theme = AppTheme.defaultDark
 

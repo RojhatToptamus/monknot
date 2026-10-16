@@ -8,18 +8,15 @@ enum MonknotStableWidth {
         String(repeating: "0", count: max(1, count))
     }
 
-    static func digitCount(of value: Int) -> Int {
-        String(abs(value)).count
-    }
-
     /// As wide as any "page/pageCount" label of a document with `pageCount` pages.
     static func pageTemplate(pageCount: Int) -> String {
-        "\(digits(digitCount(of: pageCount)))/\(digits(digitCount(of: pageCount)))"
+        let number = lineNumberTemplate(maximumLine: pageCount)
+        return "\(number)/\(number)"
     }
 
     /// As wide as any line number up to `maximumLine`.
     static func lineNumberTemplate(maximumLine: Int) -> String {
-        digits(digitCount(of: maximumLine))
+        digits(String(abs(maximumLine)).count)
     }
 }
 
