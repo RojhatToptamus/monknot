@@ -116,6 +116,160 @@ final class UnsavedChangesIntegrityTests: WorkspaceStoreTestCase {
         assertClean(store, "after undo in another document")
     }
 
+    // MARK: - Files whose contents did not change
+
+    func testTouchingACleanDocumentKeepsItCleanWithoutReloadingIt() async throws {
+        let (store, url) = try await openNote()
+        var reloads = 0
+        let observation = store.$isDocumentLoading.dropFirst().sink { if $0 { reloads += 1 } }
+        defer { observation.cancel() }
+        try touch(url)
+        deliverModification(of: url, to: store)
+        await settle(0.6)
+        try Data("# Note\n\nBody\n".utf8).write(to: url, options: .atomic)
+        deliverModification(of: url, to: store)
+        await settle(0.6)
+        assertClean(store, "after touch")
+        XCTAssertEqual(store.documentText, "# Note\n\nBody\n")
+        XCTAssertEqual(reloads, 0, "the editor keeps the text it already shows")
+
+        try Data("# Note\n\nChanged elsewhere\n".utf8).write(to: url, options: .atomic)
+        deliverModification(of: url, to: store)
+        let reloaded = await waitUntil { store.documentText == "# Note\n\nChanged elsewhere\n" }
+        XCTAssertTrue(reloaded, "a clean document still follows a real change")
+        assertClean(store, "after a real change")
+    }
+
+    func testTouchingAnEditedDocumentIsNotAnExternalChange() async throws {
+        let (store, url) = try await openNote()
+        store.setDocumentText("# Note\n\nEdited\n")
+        XCTAssertTrue(store.hasUnsavedChanges)
+        try touch(url)
+        deliverModification(of: url, to: store)
+        await settle(0.6)
+        XCTAssertFalse(store.selectedDocumentExternalChange, "an mtime-only change is not a content change")
+
+        store.saveSelectedFile()
+        let saved = await waitUntil { !store.isSaving && store.saveState(for: url.path).isClean }
+        XCTAssertTrue(saved, "save failed: \(store.errorMessage ?? "")")
+        assertClean(store, "after saving")
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "# Note\n\nEdited\n")
+    }
+
+    func testAnIdenticalAtomicRewriteOfAnEditedDocumentIsNotAnExternalChange() async throws {
+        let (store, url) = try await openNote()
+        store.setDocumentText("# Note\n\nEdited\n")
+        try await Task.sleep(nanoseconds: 20_000_000)
+        try Data("# Note\n\nBody\n".utf8).write(to: url, options: .atomic)
+        deliverModification(of: url, to: store)
+        await settle(0.6)
+        XCTAssertFalse(store.selectedDocumentExternalChange)
+
+        store.saveSelectedFile()
+        let saved = await waitUntil { !store.isSaving && store.saveState(for: url.path).isClean }
+        XCTAssertTrue(saved, "save failed: \(store.errorMessage ?? "")")
+        assertClean(store, "after saving")
+    }
+
+    func testAnEditedDocumentTouchedWhileInAnotherTabIsNotAnExternalChange() async throws {
+        let (store, url) = try await openNote()
+        let other = url.deletingLastPathComponent().appendingPathComponent("Other.md")
+        try Data("# Other\n".utf8).write(to: other)
+        store.refresh()
+        let listed = await waitUntil { store.document(id: other.standardizedFileURL.path) != nil }
+        XCTAssertTrue(listed)
+        store.testing_stopFileWatcher()
+
+        store.setDocumentText("# Note\n\nEdited\n")
+        XCTAssertTrue(store.selectDocument(id: other.standardizedFileURL.path))
+        let switched = await waitUntil { !store.isDocumentLoading && store.documentText == "# Other\n" }
+        XCTAssertTrue(switched)
+        try touch(url)
+        try Data("# Note\n\nBody\n".utf8).write(to: url, options: .atomic)
+        XCTAssertTrue(store.selectDocument(id: url.path))
+        XCTAssertEqual(store.documentText, "# Note\n\nEdited\n")
+        XCTAssertTrue(store.hasUnsavedChanges)
+        XCTAssertFalse(store.selectedDocumentExternalChange)
+
+        XCTAssertTrue(store.selectDocument(id: other.standardizedFileURL.path))
+        let savedInBackground = await store.saveDocument(id: url.path)
+        XCTAssertTrue(savedInBackground, store.errorMessage ?? "")
+        XCTAssertTrue(store.selectDocument(id: url.path))
+        let reopened = await waitUntil { !store.isDocumentLoading }
+        XCTAssertTrue(reopened)
+        assertClean(store, "after saving from another tab")
+        XCTAssertEqual(store.documentText, "# Note\n\nEdited\n")
+    }
+
+    func testAWritingToolsResultForATouchedFileIsNotAnExternalChange() async throws {
+        let (store, url) = try await openNote()
+        XCTAssertTrue(store.setWritingToolsActive(true, documentID: url.path))
+        try touch(url)
+        store.commitWritingToolsText("# Note\n\nRewritten\n", documentID: url.path)
+        XCTAssertTrue(store.setWritingToolsActive(false, documentID: url.path))
+        XCTAssertTrue(store.hasUnsavedChanges)
+        XCTAssertFalse(store.selectedDocumentExternalChange, "the file still holds the text the session started from")
+        store.saveSelectedFile()
+        let saved = await waitUntil { !store.isSaving && store.documentSaveStates.isEmpty }
+        XCTAssertTrue(saved, store.errorMessage ?? "")
+    }
+
+    func testTouchingAPDFWithUnsavedMarkupIsNotAnExternalChange() async throws {
+        let root = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotUnsavedPDF")
+        let url = root.appendingPathComponent("plain.pdf").standardizedFileURL
+        try DocumentFileTypeFixtures.writePDF(to: url)
+        let store = try await openStore(root)
+        XCTAssertTrue(store.selectDocument(id: url.path))
+        let original = try Data(contentsOf: url)
+        let pdf = try XCTUnwrap(PDFDocument(data: original))
+        let page = try XCTUnwrap(pdf.page(at: 0))
+        page.addAnnotation(PDFAnnotation(bounds: CGRect(x: 10, y: 10, width: 40, height: 20), forType: .square, withProperties: nil))
+        store.markPDFDocumentEdited(id: url.path, previousData: original, data: try XCTUnwrap(pdf.dataRepresentation()))
+        XCTAssertTrue(store.hasUnsavedChanges)
+
+        try touch(url)
+        deliverModification(of: url, to: store)
+        await settle(0.6)
+        XCTAssertFalse(store.selectedDocumentExternalChange, "an mtime-only change is not a content change")
+        XCTAssertTrue(store.hasUnsavedChanges)
+    }
+
+    func testKeepingMyTextAfterAReviewSavesWithoutAnotherConflict() async throws {
+        let (store, url) = try await openNote(stopWatcher: false)
+        store.setDocumentText("# Note\n\nMine\n")
+        try await Task.sleep(nanoseconds: 20_000_000)
+        try Data("# Note\n\nTheirs\n".utf8).write(to: url, options: .atomic)
+        let reported = await waitUntil(timeout: 8) { store.selectedDocumentExternalChange }
+        XCTAssertTrue(reported)
+
+        store.resolveSelectedExternalDocumentWithoutReview(.keepLocal)
+        let resolved = await waitUntil { !store.selectedDocumentExternalChange }
+        XCTAssertTrue(resolved)
+        XCTAssertTrue(store.hasUnsavedChanges, "the kept text differs from the file")
+        try touch(url)
+        deliverModification(of: url, to: store)
+        await settle(0.6)
+        XCTAssertFalse(store.selectedDocumentExternalChange)
+
+        store.saveSelectedFile()
+        let saved = await waitUntil { !store.isSaving && store.documentSaveStates.isEmpty }
+        XCTAssertTrue(saved, store.errorMessage ?? "")
+        await settle(2)
+        assertClean(store, "after saving the kept text")
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "# Note\n\nMine\n")
+    }
+
+    func testAContentChangeToAnEditedDocumentIsStillReported() async throws {
+        let (store, url) = try await openNote()
+        store.setDocumentText("# Note\n\nEdited\n")
+        try await Task.sleep(nanoseconds: 20_000_000)
+        try Data("# Note\n\nChanged elsewhere\n".utf8).write(to: url, options: .atomic)
+        deliverModification(of: url, to: store)
+        let reported = await waitUntil { store.selectedDocumentExternalChange }
+        XCTAssertTrue(reported)
+        XCTAssertTrue(store.hasUnsavedChanges)
+    }
+
     // MARK: - Fixtures
 
     private static let textFixtures: [(name: String, contents: String)] = [

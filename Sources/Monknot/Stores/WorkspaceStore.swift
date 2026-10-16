@@ -1912,7 +1912,7 @@ final class WorkspaceStore: ObservableObject {
         let text = NativeUTF8Text.copy(of: committedText)
         guard text != documentText else { return }
 
-        if Self.fileSignature(for: document.url) != selectedDocumentSignature {
+        if (try? WorkspaceConditionalTextWriter.read(from: document.url))?.text != lastSavedText {
             setSelectedDocumentExternalChangeIfChanged(true)
         }
         clearReplaceUndoSnapshot()
@@ -4112,7 +4112,7 @@ final class WorkspaceStore: ObservableObject {
                 setSelectedDocumentExternalChangeIfChanged(true)
             }
         } else if !hasUnsavedChanges, !isSaving, nextSignature != selectedDocumentSignature {
-            loadSelectedDocument()
+            reloadSelectedTextIfChangedOnDisk(selectedDocument, signature: nextSignature)
         } else if selectedDocumentSignature == nil {
             setSelectedDocumentSignatureIfChanged(nextSignature)
         }
@@ -4205,15 +4205,34 @@ final class WorkspaceStore: ObservableObject {
                   !isSaving,
                   selectedDocumentSignature != nil,
                   nextSignature != selectedDocumentSignature {
-            loadSelectedDocument()
+            reloadSelectedTextIfChangedOnDisk(selectedDocument, signature: nextSignature)
         } else if selectedDocumentSignature == nil {
             setSelectedDocumentSignatureIfChanged(nextSignature)
         }
     }
 
+    /// Reloads the clean selected text document when its file holds other text. A file that was
+    /// only touched, or saved again with the same text, keeps the editor as it is and takes
+    /// `signature`, read before the text so a later change still differs from it.
+    private func reloadSelectedTextIfChangedOnDisk(_ document: WorkspaceDocument, signature: FileSignature?) {
+        guard documentLoadFailure == nil,
+              !isDocumentLoading,
+              let text = try? WorkspaceTextFileGuard.readUTF8Text(
+                  from: document.url,
+                  maxBytes: Self.interactiveTextOpenMaxBytes
+              ),
+              text == lastSavedText
+        else {
+            loadSelectedDocument()
+            return
+        }
+        setSelectedDocumentSignatureIfChanged(signature)
+    }
+
     /// Compares the selected PDF or image with its file on disk. A file other than the one
     /// Monknot last loaded or saved is an external change: a conflict while markup is unsaved,
-    /// otherwise a reload. A save in progress settles the signature when it finishes.
+    /// otherwise a reload. A file that was only touched, or saved again with the same bytes, is
+    /// not. A save in progress settles the signature when it finishes.
     private func reconcileSelectedPDFViewerDocument(_ document: WorkspaceDocument, nextSignature: FileSignature?) {
         guard selectedDocumentSignature != nil else {
             if !hasUnsavedChanges {
@@ -4223,7 +4242,12 @@ final class WorkspaceStore: ObservableObject {
         }
         guard !isSaving, nextSignature != selectedDocumentSignature else { return }
         if hasUnsavedChanges {
-            setSelectedDocumentExternalChangeIfChanged(true)
+            if let baseline = pdfDocumentBaselines[document.id],
+               (try? Data(contentsOf: document.url)) == baseline {
+                setSelectedDocumentSignatureIfChanged(nextSignature)
+            } else {
+                setSelectedDocumentExternalChangeIfChanged(true)
+            }
         } else {
             setSelectedDocumentSignatureIfChanged(nextSignature)
             publishPDFContentReplacement(for: document.id)

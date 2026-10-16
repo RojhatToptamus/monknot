@@ -10,6 +10,9 @@ public struct WorkspaceFileSignature: Equatable, Sendable {
     }
 }
 
+/// A file's text as read or written, with the file's signature at that moment. Revisions are equal
+/// when their text is: the signature only hints that the file may have changed, and a file that was
+/// touched, or saved again with the same text by another app, still holds the same revision.
 public struct WorkspaceTextRevision: Equatable, Sendable {
     public let text: String
     public let signature: WorkspaceFileSignature
@@ -17,6 +20,10 @@ public struct WorkspaceTextRevision: Equatable, Sendable {
     public init(text: String, signature: WorkspaceFileSignature) {
         self.text = text
         self.signature = signature
+    }
+
+    public static func == (lhs: WorkspaceTextRevision, rhs: WorkspaceTextRevision) -> Bool {
+        lhs.text == rhs.text
     }
 }
 

@@ -43,6 +43,25 @@ final class ConditionalTextWriterTests: ExternalDocumentReconciliationTestCase {
         XCTAssertNotEqual(current.signature.fileSize, initial.signature.fileSize)
     }
 
+    func testConditionalWriterAcceptsAFileWhoseTextIsUnchanged() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let url = directory.appendingPathComponent("note.md")
+        try Data("baseline\n".utf8).write(to: url)
+        let expected = try WorkspaceConditionalTextWriter.read(from: url)
+        // Another app saves the same text, and something else touches the file.
+        try Data("baseline\n".utf8).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(60)],
+            ofItemAtPath: url.path
+        )
+        XCTAssertNotEqual(try WorkspaceConditionalTextWriter.read(from: url).signature, expected.signature)
+
+        try WorkspaceConditionalTextWriter.write("local\n", to: url, expecting: .present(expected))
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "local\n")
+    }
+
     func testConditionalWriterCreatesOnlyWhenStillAbsent() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
