@@ -30,6 +30,7 @@ public enum MonknotKeyboardShortcutCatalog {
             Entry(title: "Quick Open", shortcut: "⌘P"),
             Entry(title: "New Markdown", shortcut: "⌘N"),
             Entry(title: "Daily Note", shortcut: "⇧⌘N"),
+            Entry(title: "New Folder", shortcut: "⌥⌘N"),
             Entry(title: "Save", shortcut: "⌘S"),
             Entry(title: "Save All", shortcut: "⌥⌘S"),
             Entry(title: "Close Tab", shortcut: "⌘W"),
@@ -42,6 +43,11 @@ public enum MonknotKeyboardShortcutCatalog {
             Entry(title: "Refresh Workspace", shortcut: "⌘R"),
             Entry(title: "Find in Workspace", shortcut: "⇧⌘F"),
             Entry(title: "Undo Workspace Replace", shortcut: "⌘Z"),
+        ]),
+        MonknotKeyboardShortcutSection(title: "Sidebar", entries: [
+            Entry(title: "Rename Selected Item", shortcut: "↩"),
+            Entry(title: "Duplicate Selected Item", shortcut: "⌘D"),
+            Entry(title: "Move Selected Item to Trash", shortcut: "⌘⌫"),
         ]),
         MonknotKeyboardShortcutSection(title: "Find", entries: [
             Entry(title: "Find in Document or Terminal", shortcut: "⌘F"),

@@ -8,6 +8,7 @@ final class MonknotKeyboardShortcutCatalogTests: XCTestCase {
                 .init(title: "Quick Open", shortcut: "⌘P"),
                 .init(title: "New Markdown", shortcut: "⌘N"),
                 .init(title: "Daily Note", shortcut: "⇧⌘N"),
+                .init(title: "New Folder", shortcut: "⌥⌘N"),
                 .init(title: "Save", shortcut: "⌘S"),
                 .init(title: "Save All", shortcut: "⌥⌘S"),
                 .init(title: "Close Tab", shortcut: "⌘W"),
@@ -20,6 +21,11 @@ final class MonknotKeyboardShortcutCatalogTests: XCTestCase {
                 .init(title: "Refresh Workspace", shortcut: "⌘R"),
                 .init(title: "Find in Workspace", shortcut: "⇧⌘F"),
                 .init(title: "Undo Workspace Replace", shortcut: "⌘Z"),
+            ],
+            "Sidebar": [
+                .init(title: "Rename Selected Item", shortcut: "↩"),
+                .init(title: "Duplicate Selected Item", shortcut: "⌘D"),
+                .init(title: "Move Selected Item to Trash", shortcut: "⌘⌫"),
             ],
             "Find": [
                 .init(title: "Find in Document or Terminal", shortcut: "⌘F"),
@@ -47,12 +53,12 @@ final class MonknotKeyboardShortcutCatalogTests: XCTestCase {
 
         XCTAssertEqual(
             MonknotKeyboardShortcutCatalog.sections.map(\.title),
-            ["Files", "Workspace", "Find", "Writing", "View"]
+            ["Files", "Workspace", "Sidebar", "Find", "Writing", "View"]
         )
         for section in MonknotKeyboardShortcutCatalog.sections {
             XCTAssertEqual(section.entries, expected[section.title], section.title)
         }
-        XCTAssertEqual(MonknotKeyboardShortcutCatalog.entries.count, 29)
+        XCTAssertEqual(MonknotKeyboardShortcutCatalog.entries.count, 33)
     }
 
     func testShortcutsUseAppleKeySymbolsRatherThanWordsOrAscii() {

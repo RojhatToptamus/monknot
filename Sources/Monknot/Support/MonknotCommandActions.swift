@@ -4,6 +4,9 @@ import SwiftUI
 struct MonknotCommandActions {
     let newMarkdown: () -> Void
     let newDailyNote: () -> Void
+    let newFile: () -> Void
+    let newFolder: () -> Void
+    let canCreateItems: Bool
     let openFolder: () -> Void
     let workspaceNames: [String]
     let switchWorkspaceAtIndex: (Int) -> Void
@@ -126,6 +129,17 @@ struct MonknotCommandMenu: Commands {
             }
             .keyboardShortcut("n", modifiers: [.command, .shift])
             .disabled(actions == nil)
+
+            Button("New File…") {
+                actions?.newFile()
+            }
+            .disabled(actions?.canCreateItems != true)
+
+            Button("New Folder…") {
+                actions?.newFolder()
+            }
+            .keyboardShortcut("n", modifiers: [.command, .option])
+            .disabled(actions?.canCreateItems != true)
 
             Button("Add Workspace…") {
                 actions?.openFolder()

@@ -286,6 +286,7 @@ struct ContentView: View {
     @State private var isSidebarVisible = true
     @SceneStorage("Monknot.sidebarPreferredVisible") private var sidebarPreferredVisible = true
     @State private var sidebarRevealRequest: UInt = 0
+    @State private var sidebarNewItemRequest: SidebarNewItemRequest?
     @State private var successNotice: SuccessNotice?
     @State private var pendingWorkspaceRemoval: SavedWorkspaceRemoval?
     @State private var pendingPDFExportDocument: WorkspaceDocument?
@@ -781,7 +782,7 @@ struct ContentView: View {
             switchWorkspace: requestWorkspaceSwitch(_:),
             removeWorkspace: removeWorkspace(_:),
             manageWorkspaces: openWorkspaceSettings,
-            newMarkdown: { store.createMarkdownFile() },
+            newMarkdown: createMarkdownFile,
             exportPDF: exportMarkdownPDF(_:),
             openDocument: openDocumentTab(id:),
             openWorkspaceSearchResult: openWorkspaceSearchResult(_:),
@@ -789,7 +790,8 @@ struct ContentView: View {
             dismissWorkspaceSearch: { dismissWorkspaceSearch(restoreFocus: true) },
             workspaceSearchFocusChanged: searchFieldFocusChanged,
             copyPath: copyPath(_:),
-            copyRelativePath: copyRelativePath(_:)
+            copyRelativePath: copyRelativePath(_:),
+            newItemRequest: $sidebarNewItemRequest
         )
         .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
     }
@@ -823,7 +825,7 @@ struct ContentView: View {
                 pdfNavigatorToggleCommandSerial: pdfNavigatorToggleCommandSerial,
                 documentSearch: $documentSearch,
                 searchOptions: searchOptions,
-                newMarkdown: { store.createMarkdownFile() },
+                newMarkdown: createMarkdownFile,
                 bootstrapStarterWorkspace: { store.bootstrapStarterWorkspace() },
                 openFolder: openFolderPanel,
                 saveDocument: saveSelectedDocument,
@@ -1975,8 +1977,11 @@ struct ContentView: View {
 
     private var commandActions: MonknotCommandActions {
         MonknotCommandActions(
-            newMarkdown: { store.createMarkdownFile() },
+            newMarkdown: createMarkdownFile,
             newDailyNote: { store.createDailyNote() },
+            newFile: { requestSidebarNewItem(.file) },
+            newFolder: { requestSidebarNewItem(.folder) },
+            canCreateItems: store.workspaceURL != nil && !store.isBusy,
             openFolder: openFolderPanel,
             workspaceNames: workspaceLibrary.entries.map(\.displayName),
             switchWorkspaceAtIndex: { index in
@@ -2247,7 +2252,7 @@ struct ContentView: View {
             return performInFocusedDocument(#selector(NSText.cut(_:)))
         }
 
-        return cutSelectedDocumentFromCommand()
+        return cutSidebarSelectionFromCommand()
     }
 
     private func copyFromCommand() -> Bool {
@@ -2263,7 +2268,7 @@ struct ContentView: View {
             return performInFocusedDocument(#selector(NSText.copy(_:)))
         }
 
-        return copySelectedDocumentFromCommand()
+        return copySidebarSelectionFromCommand()
     }
 
     private func pasteFromCommand() -> Bool {
@@ -2279,8 +2284,20 @@ struct ContentView: View {
             return performInFocusedDocument(#selector(NSText.paste(_:)))
         }
 
-        // Into the selected document's folder, as Finder pastes into the folder it shows.
-        return store.pasteFromPasteboard(into: store.selectedDocument?.url.deletingLastPathComponent())
+        return store.pasteFromPasteboard(into: store.sidebarTargetFolderURL)
+    }
+
+    /// New Markdown goes into the sidebar's target folder: the selected folder, or the selected
+    /// document's folder.
+    private func createMarkdownFile() {
+        store.createMarkdownFile(in: store.sidebarTargetFolderURL)
+    }
+
+    /// New File and New Folder ask for a name in the sidebar, which shows first if it is hidden.
+    private func requestSidebarNewItem(_ request: SidebarNewItemRequest) {
+        guard store.workspaceURL != nil, !store.isBusy else { return }
+        requestSidebarPresentation(true, animated: true)
+        sidebarNewItemRequest = request
     }
 
     private func selectAllFromCommand() {
@@ -2301,15 +2318,15 @@ struct ContentView: View {
         return true
     }
 
-    private func copySelectedDocumentFromCommand() -> Bool {
-        guard let document = store.selectedDocument, !store.isBusy else { return false }
-        store.putItemOnPasteboard(at: document.url, cutting: false)
+    private func copySidebarSelectionFromCommand() -> Bool {
+        guard let url = store.sidebarSelectionURL, !store.isBusy else { return false }
+        store.putItemOnPasteboard(at: url, cutting: false)
         return true
     }
 
-    private func cutSelectedDocumentFromCommand() -> Bool {
-        guard let document = store.selectedDocument, !store.isBusy else { return false }
-        store.putItemOnPasteboard(at: document.url, cutting: true)
+    private func cutSidebarSelectionFromCommand() -> Bool {
+        guard let url = store.sidebarSelectionURL, !store.isBusy else { return false }
+        store.putItemOnPasteboard(at: url, cutting: true)
         return true
     }
 
@@ -2344,7 +2361,7 @@ struct ContentView: View {
     private func performKeyboardShortcutAction(_ action: MonknotKeyboardShortcutAction) {
         switch action {
         case .newMarkdown:
-            store.createMarkdownFile()
+            createMarkdownFile()
         case .newDailyNote:
             store.createDailyNote()
         case .openFolder:
@@ -2597,7 +2614,8 @@ struct ContentView: View {
     }
 
     /// A focused document view that is not a text view (the PDF view) handles Cut, Copy and
-    /// Paste itself. Files are cut, copied and pasted only from the sidebar or when nothing has focus.
+    /// Paste itself. Files are cut, copied and pasted only from the sidebar or when nothing has
+    /// focus: Cut and Copy take the sidebar's selection, and Paste goes into its target folder.
     private var documentViewOwnsFocus: Bool {
         TerminalFocusRestorer.firstResponder(in: responderWindow, isInside: .monknotDocumentFocusTarget)
     }

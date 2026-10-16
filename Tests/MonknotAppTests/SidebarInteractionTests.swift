@@ -271,6 +271,129 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
         XCTAssertEqual(plan.items.map(\.isExternal), [false])
     }
 
+    // MARK: - Selection and keyboard focus
+
+    /// Clicking a folder selects it and moves keyboard focus from the editor to the tree, so the
+    /// Edit menu's Paste, which goes to the editor while the editor has focus, pastes into it.
+    func testClickingAFolderSelectsItAndPastesIntoIt() async throws {
+        let fixture = try await makeSidebarFixture()
+        defer { fixture.close() }
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MonknotSidebarSelection-\(UUID().uuidString)"))
+        defer {
+            pasteboard.clearContents()
+            pasteboard.releaseGlobally()
+        }
+        XCTAssertTrue(fixture.window.makeFirstResponder(fixture.editor))
+        XCTAssertTrue(MonknotNativePasteboardCommand.monknotIsNativeTextTarget(fixture.editor))
+        let openDocument = fixture.store.selectedDocumentID
+        XCTAssertFalse(fixture.expandedFolderIDs.contains(fixture.path("other")))
+
+        try await fixture.click(rowNamed: "other")
+
+        XCTAssertEqual(fixture.store.selectedFolderID, fixture.path("other"))
+        XCTAssertEqual(fixture.store.selectedDocumentID, openDocument, "The open document stays open")
+        XCTAssertTrue(fixture.treeHasFocus())
+        let responder = try XCTUnwrap(fixture.window.firstResponder)
+        XCTAssertFalse(MonknotNativePasteboardCommand.monknotIsNativeTextTarget(responder))
+        XCTAssertEqual(fixture.store.sidebarTargetFolderURL?.path, fixture.path("other"))
+
+        // A second click closes the folder and keeps it selected; a paste opens it to show the copy.
+        try await fixture.click(rowNamed: "other")
+        XCTAssertEqual(fixture.store.selectedFolderID, fixture.path("other"))
+        XCTAssertFalse(fixture.expandedFolderIDs.contains(fixture.path("other")))
+
+        fixture.store.putItemOnPasteboard(
+            at: fixture.workspaceURL.appendingPathComponent("top.md"),
+            cutting: false,
+            pasteboard: pasteboard
+        )
+        XCTAssertTrue(fixture.store.pasteFromPasteboard(pasteboard, into: fixture.store.sidebarTargetFolderURL))
+        let pasted = await waitUntil { fixture.listing().contains("other/top.md") && !fixture.store.isBusy }
+        XCTAssertTrue(pasted)
+        XCTAssertEqual(fixture.store.selectedDocumentID, fixture.path("other/top.md"))
+        let revealed = await waitUntil { fixture.expandedFolderIDs.contains(fixture.path("other")) }
+        XCTAssertTrue(revealed, "The folder the copy landed in opens")
+    }
+
+    func testClickingADocumentSelectsItAndTargetsItsFolder() async throws {
+        let fixture = try await makeSidebarFixture()
+        defer { fixture.close() }
+
+        try await fixture.click(rowNamed: "other")
+        XCTAssertEqual(fixture.store.selectedFolderID, fixture.path("other"))
+        // "other" is open now, so b.md sits a row lower than the fixture's first layout.
+        try await fixture.click(rowNamed: "b.md")
+
+        XCTAssertNil(fixture.store.selectedFolderID, "Opening a document moves the selection to it")
+        XCTAssertEqual(fixture.store.selectedDocumentID, fixture.path("docs/b.md"))
+        XCTAssertEqual(fixture.store.sidebarTargetFolderURL?.path, fixture.path("docs"))
+        XCTAssertTrue(fixture.treeHasFocus())
+    }
+
+    /// ⌘D and Return act on the selection only while the tree has keyboard focus; with the editor
+    /// focused they are the editor's keys.
+    func testTreeKeysActOnlyWhileTheTreeHasFocus() async throws {
+        let fixture = try await makeSidebarFixture()
+        defer { fixture.close() }
+        try await fixture.click(rowNamed: "other")
+        XCTAssertTrue(fixture.window.makeFirstResponder(fixture.editor))
+
+        fixture.press("d", keyCode: 2, modifiers: .command)
+        fixture.press("\r", keyCode: 36)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertFalse(fixture.listing().contains("other copy"), "⌘D in the editor duplicated the folder")
+        XCTAssertNil(fixture.window.attachedSheet, "Return in the editor began a rename")
+
+        try await fixture.click(rowNamed: "other")
+        XCTAssertTrue(fixture.treeHasFocus())
+        fixture.press("d", keyCode: 2, modifiers: .command)
+        let duplicated = await waitUntil { fixture.listing().contains("other copy") && !fixture.store.isBusy }
+        XCTAssertTrue(duplicated)
+        XCTAssertEqual(fixture.store.selectedFolderID, fixture.path("other copy"), "The duplicate is selected")
+
+        fixture.press("\r", keyCode: 36)
+        let renaming = await waitUntil { fixture.window.attachedSheet != nil }
+        XCTAssertTrue(renaming, "Return renames the selected item")
+    }
+
+    /// ⌘⌫ moves the selected folder to the Trash through the menu command's guards: a folder that
+    /// holds an unsaved open document stays.
+    func testMoveToTrashKeyUsesTheMenuCommandsGuards() async throws {
+        let fixture = try await makeSidebarFixture()
+        defer { fixture.close() }
+        let a = fixture.path("docs/a.md")
+        fixture.store.setOpenDocumentIDs([a])
+        fixture.store.setDocumentText("# Unsaved")
+        XCTAssertFalse(fixture.store.saveState(for: a).isClean)
+
+        try await fixture.click(rowNamed: "docs")
+        XCTAssertEqual(fixture.store.selectedFolderID, fixture.path("docs"))
+        fixture.press("\u{7F}", keyCode: 51, modifiers: .command)
+
+        XCTAssertEqual(fixture.store.errorMessage, "Save or close a.md before moving docs to the Trash.")
+        XCTAssertTrue(fixture.listing().contains("docs/a.md"))
+    }
+
+    /// File ▸ New Folder asks for a name for the sidebar's target folder.
+    func testNewFolderCommandAsksForANameInTheSidebar() async throws {
+        let fixture = try await makeSidebarFixture()
+        defer { fixture.close() }
+        try await fixture.click(rowNamed: "other")
+
+        fixture.newItemRequest.value = .folder
+        let prompted = await waitUntil { fixture.window.attachedSheet != nil }
+        XCTAssertTrue(prompted)
+        XCTAssertNil(fixture.newItemRequest.value, "The request is answered once")
+    }
+
+    /// The tree takes keyboard focus only when clicked, so a newly shown document still claims it.
+    func testTreeDoesNotTakeFocusUntilClicked() async throws {
+        let fixture = try await makeSidebarFixture()
+        defer { fixture.close() }
+
+        XCTAssertFalse(fixture.treeHasFocus())
+    }
+
     // MARK: - Helpers
 
     private func folder(_ name: String, in parent: URL, children: [SidebarNode]) -> SidebarNode {
@@ -317,43 +440,76 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
         XCTAssertTrue(opened)
 
         let defaults = UserDefaults(suiteName: "Monknot.SidebarDrag.\(UUID().uuidString)")!
+        let newItemRequest = NewItemRequestBox()
         let library = WorkspaceLibraryStore(userDefaults: defaults)
         let search = WorkspaceSearchState()
-        let view = SidebarView(
-            store: store,
-            workspaceLibrary: library,
-            workspaceSearch: search,
-            searchOptions: .constant(MonknotSearchOptions()),
-            theme: .defaultDark,
-            zoomScale: 1,
-            openFolder: {},
-            switchWorkspace: { _ in },
-            removeWorkspace: { _ in },
-            manageWorkspaces: {},
-            newMarkdown: {},
-            exportPDF: { _ in },
-            openDocument: { id in _ = store.selectDocument(id: id) },
-            openWorkspaceSearchResult: { _ in },
-            showWorkspaceSearch: {},
-            dismissWorkspaceSearch: {},
-            workspaceSearchFocusChanged: { _ in },
-            copyPath: { _ in },
-            copyRelativePath: { _ in }
-        )
+        let view = SidebarFixtureRoot(requests: newItemRequest) { newItemRequest in
+            SidebarView(
+                store: store,
+                workspaceLibrary: library,
+                workspaceSearch: search,
+                searchOptions: .constant(MonknotSearchOptions()),
+                theme: .defaultDark,
+                zoomScale: 1,
+                openFolder: {},
+                switchWorkspace: { _ in },
+                removeWorkspace: { _ in },
+                manageWorkspaces: {},
+                newMarkdown: {},
+                exportPDF: { _ in },
+                openDocument: { id in _ = store.selectDocument(id: id) },
+                openWorkspaceSearchResult: { _ in },
+                showWorkspaceSearch: {},
+                dismissWorkspaceSearch: {},
+                workspaceSearchFocusChanged: { _ in },
+                copyPath: { _ in },
+                copyRelativePath: { _ in },
+                newItemRequest: newItemRequest
+            )
+        }
         .frame(width: 280, height: 600)
 
         let host = NSHostingView(rootView: view)
         host.frame = NSRect(x: 0, y: 0, width: 280, height: 600)
+        // The document beside the sidebar, holding keyboard focus as an open editor does.
+        let editor = NSTextView(frame: NSRect(x: 280, y: 0, width: 200, height: 600))
+        editor.identifier = .monknotDocumentFocusTarget
+        editor.string = "Editor text"
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 600))
+        content.addSubview(host)
+        content.addSubview(editor)
         let window = NSWindow(
-            contentRect: host.frame,
+            contentRect: content.frame,
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
-        window.contentView = host
+        window.contentView = content
         window.makeKeyAndOrderFront(nil)
         try await Task.sleep(nanoseconds: 400_000_000)
-        return SidebarFixture(window: window, host: host, store: store, workspaceURL: root)
+        return SidebarFixture(
+            window: window,
+            host: host,
+            editor: editor,
+            store: store,
+            workspaceURL: root,
+            newItemRequest: newItemRequest
+        )
+    }
+}
+
+@MainActor
+private final class NewItemRequestBox: ObservableObject {
+    @Published var value: SidebarNewItemRequest?
+}
+
+/// Hosts the sidebar with its New File and New Folder request bound to `requests`.
+private struct SidebarFixtureRoot: View {
+    @ObservedObject var requests: NewItemRequestBox
+    let sidebar: (Binding<SidebarNewItemRequest?>) -> SidebarView
+
+    var body: some View {
+        sidebar($requests.value)
     }
 }
 
@@ -361,12 +517,59 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
 private struct SidebarFixture {
     let window: NSWindow
     let host: NSView
+    let editor: NSTextView
     let store: WorkspaceStore
     let workspaceURL: URL
+    let newItemRequest: NewItemRequestBox
 
     func close() {
+        if let sheet = window.attachedSheet {
+            window.endSheet(sheet)
+        }
         window.orderOut(nil)
         window.contentView = nil
+        UserDefaults.standard.removeObject(forKey: WorkspaceTreeExpansionPersistence().key(for: workspaceURL))
+    }
+
+    func path(_ relativePath: String) -> String {
+        workspaceURL.appendingPathComponent(relativePath).standardizedFileURL.path
+    }
+
+    /// The folders the sidebar has open, as it saves them for the workspace.
+    var expandedFolderIDs: Set<String> {
+        WorkspaceTreeExpansionPersistence().load(for: workspaceURL) ?? []
+    }
+
+    /// The tree's hosting view, which holds keyboard focus while the sidebar has it.
+    func treeHasFocus() -> Bool {
+        guard let documentView = treeDocumentView() else { return false }
+        return window.firstResponder === documentView
+    }
+
+    func click(rowNamed name: String) async throws {
+        let frame = try XCTUnwrap(frameOfRow(labelPrefix: name), "No row named \(name)")
+        let point = NSPoint(x: frame.midX, y: frame.midY)
+        await drag(from: point, to: point)
+        try? await Task.sleep(nanoseconds: 150_000_000)
+    }
+
+    /// Sends a key press to the window, as AppKit delivers it to the focused view.
+    func press(_ characters: String, keyCode: UInt16, modifiers: NSEvent.ModifierFlags = []) {
+        for type in [NSEvent.EventType.keyDown, .keyUp] {
+            guard let event = NSEvent.keyEvent(
+                with: type,
+                location: .zero,
+                modifierFlags: modifiers,
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                characters: characters,
+                charactersIgnoringModifiers: characters,
+                isARepeat: false,
+                keyCode: keyCode
+            ) else { continue }
+            window.sendEvent(event)
+        }
     }
 
     private func treeDocumentView() -> NSView? {
@@ -382,10 +585,9 @@ private struct SidebarFixture {
     }
 
     func visibleRows() -> [VisibleSidebarNode] {
-        let docsID = store.rootNode?.children?.first(where: { $0.name == "docs" })?.id
-        return SidebarTreePresentation.visibleNodes(
+        SidebarTreePresentation.visibleNodes(
             from: store.rootNode?.children ?? [],
-            expandedFolderIDs: Set([docsID].compactMap { $0 })
+            expandedFolderIDs: expandedFolderIDs
         )
     }
 
