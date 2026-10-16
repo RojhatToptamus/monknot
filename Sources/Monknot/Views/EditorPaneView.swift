@@ -35,9 +35,8 @@ struct EditorPaneView: View {
     @State private var splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
     @State private var previewSyncLine: Int?
     @State private var sourceSyncLine: Int?
-    /// Held, not observed: only the outline rail observes the visible line. Observing it here
-    /// re-ran the editor bridge on every line scrolled past, which also cancelled animated
-    /// scroll-bar page clicks.
+    /// Held, not observed: only the outline rail observes the visible line, so scrolling past a
+    /// line never re-runs the editor bridge (which would cancel an animated scroll-bar page click).
     @State private var outlinePosition = MarkdownOutlinePosition()
     /// The outline rail sits left of the document's vertical scroll bar; laid over it, the bar could
     /// not be grabbed or clicked. The width follows the "Show scroll bars" preference.

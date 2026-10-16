@@ -1989,8 +1989,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
             didSet { observeTextStorage(of: textView) }
         }
         /// Counts character edits in the text view's storage. It is fed by AppKit's own processing
-        /// notification, so it also sees edits that bypass `textDidChange`, and it replaces
-        /// whole-document string comparisons as the "has the text changed?" check.
+        /// notification, so it also sees edits that bypass `textDidChange`, and answers "has the
+        /// text changed?" without comparing whole documents.
         private(set) var storageEditCount = 0
         private weak var observedTextStorage: NSTextStorage?
         private var nativeTextCache: (editCount: Int, utf16Length: Int, text: String)?
