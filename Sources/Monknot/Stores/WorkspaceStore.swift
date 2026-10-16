@@ -4043,9 +4043,11 @@ final class WorkspaceStore: ObservableObject {
         var modifiedOnlyPaths = event.modifiedOnlyPaths
         for path in event.changedPaths.subtracting(event.modifiedOnlyPaths) {
             let isOnDisk = FileManager.default.fileExists(atPath: path)
-            if isOnDisk, documentsByID[path] != nil {
+            let isListedDocument = documentsByID[path] != nil
+            let isListed = isListedDocument || rootNode?.node(withID: path)?.kind == .folder
+            if isOnDisk, isListedDocument {
                 modifiedOnlyPaths.insert(path)
-            } else if isOnDisk != (rootNode?.node(withID: path)?.kind == .folder) {
+            } else if isOnDisk != isListed {
                 structuralPaths.insert(path)
             }
         }

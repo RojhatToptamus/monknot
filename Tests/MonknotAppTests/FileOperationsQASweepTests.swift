@@ -983,6 +983,29 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         XCTAssertTrue(converged, "\(store.documents.map(\.relativePath))")
     }
 
+    /// A deletion reported while Monknot's own change settles is replayed afterwards and removes
+    /// the file from the sidebar.
+    func testADeletionHeldDuringAFileOperationReachesTheSidebar() async throws {
+        let root = try makeRoot()
+        try write("x\n", "a.txt", in: root)
+        try write("gone\n", "doomed.txt", in: root)
+        let store = try await openStore(root)
+        store.duplicateItem(at: root.appendingPathComponent("a.txt"))
+        await idle(store)
+
+        let doomed = root.appendingPathComponent("doomed.txt").standardizedFileURL.path
+        try FileManager.default.removeItem(atPath: doomed)
+        store.testing_scheduleExternalWorkspaceRefresh(WorkspaceFileWatcher.Event(
+            changedPaths: [doomed],
+            modifiedOnlyPaths: [],
+            requiresFullRescan: false
+        ))
+        let converged = await wait(timeout: 6) {
+            Set(store.documents.map(\.relativePath)) == ["a.txt", "a copy.txt"]
+        }
+        XCTAssertTrue(converged, "\(store.documents.map(\.relativePath))")
+    }
+
     func testRapidRepeatedDuplicateRunsOnceAndReportsTheRest() async throws {
         let root = try makeRoot()
         try write("x\n", "a.txt", in: root)
