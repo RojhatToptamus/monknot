@@ -400,9 +400,8 @@ struct SidebarView: View {
         ancestorFolderIDs(of: sidebarSelectionID ?? store.documents.first?.id)
     }
 
-    /// The sidebar's one selection: the selected folder, otherwise the selected document.
     private var sidebarSelectionID: String? {
-        store.selectedFolderID ?? store.selectedDocumentID
+        store.sidebarSelectionID
     }
 
     /// The folders between the workspace root and the item `itemID`, which is a path.
@@ -452,6 +451,7 @@ struct SidebarView: View {
 
     /// The tree's own keys while it has keyboard focus: Return renames the selection, ⌘D
     /// duplicates it and ⌘⌫ moves it to the Trash. Cut, Copy and Paste come through the Edit menu.
+    /// A held key acts once: its repeats are ignored.
     private func handleTreeKeyDown(_ event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
         let command: SidebarTreeKeyCommand?
@@ -466,6 +466,7 @@ struct SidebarView: View {
                 : nil
         }
         guard let command else { return false }
+        guard !event.isARepeat else { return true }
         guard !store.isBusy,
               let selectionID = sidebarSelectionID,
               let item = store.rootNode?.node(withID: selectionID)

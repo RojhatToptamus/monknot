@@ -9,7 +9,8 @@ import XCTest
 /// are identified by what their own "Copy Path" item reports.
 ///
 /// The sidebar's Copy, Cut and Paste use the harness's own private `pasteboard`, never
-/// `NSPasteboard.general`. Never performs Reveal in Finder or a successful Move to Trash.
+/// `NSPasteboard.general`. Never performs Reveal in Finder; the store's Move to Trash, from
+/// `makeWorkspaceStore`, leaves the user's Trash alone.
 @MainActor
 final class QASidebarHarness {
     let store: WorkspaceStore

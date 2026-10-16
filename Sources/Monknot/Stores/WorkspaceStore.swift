@@ -34,6 +34,10 @@ final class WorkspaceStore: ObservableObject {
     /// The folder selected in the sidebar. The sidebar has one selection: this folder, or the
     /// selected document while no folder is selected. Selecting a folder leaves the document open.
     @Published private(set) var selectedFolderID: String?
+    /// Whether the sidebar selects the open document while no folder is selected. It stops when
+    /// the selection goes to the Trash or the selected document leaves the workspace, so the
+    /// document a tab shows in its place is not selected until the user picks one.
+    @Published private(set) var sidebarSelectsOpenDocument = true
     /// A folder the sidebar expands to show items pasted or dropped into it.
     @Published private(set) var revealedFolder: WorkspaceFolderReveal?
     @Published private(set) var documentText = ""
@@ -61,6 +65,7 @@ final class WorkspaceStore: ObservableObject {
     private var replaceUndoSnapshot: WorkspaceReplaceUndoSnapshot?
 
     private let scanner: any WorkspaceDocumentScanning
+    private let moveItemToTrash: @Sendable (URL) throws -> Void
     private let recentDocumentStore: RecentDocumentStore
     private let fileWatcher = WorkspaceFileWatcher()
     private var lastSavedText = ""
@@ -109,11 +114,17 @@ final class WorkspaceStore: ObservableObject {
     /// The store of every open window, so a Paste in one window can finish a Cut made in another.
     private static let openStores = NSHashTable<WorkspaceStore>.weakObjects()
 
+    /// `moveItemToTrash` moves a file or folder to the Trash; tests pass one that leaves the
+    /// user's Trash alone.
     init(
         scanner: any WorkspaceDocumentScanning = WorkspaceDocumentScanner(),
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        moveItemToTrash: @escaping @Sendable (URL) throws -> Void = { url in
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        }
     ) {
         self.scanner = scanner
+        self.moveItemToTrash = moveItemToTrash
         recentDocumentStore = RecentDocumentStore(userDefaults: userDefaults)
         Self.openStores.add(self)
     }
@@ -123,12 +134,19 @@ final class WorkspaceStore: ObservableObject {
         return document(id: selectedDocumentID)
     }
 
-    /// The sidebar's selected item: the selected folder, otherwise the selected document.
+    /// The path of the sidebar's selected item: the selected folder, otherwise the selected
+    /// document while the sidebar selects it.
+    var sidebarSelectionID: String? {
+        selectedFolderID ?? (sidebarSelectsOpenDocument ? selectedDocumentID : nil)
+    }
+
+    /// The sidebar's selected item: the selected folder, otherwise the selected document while the
+    /// sidebar selects it.
     var sidebarSelectionURL: URL? {
         if let selectedFolderID {
             return URL(fileURLWithPath: selectedFolderID, isDirectory: true)
         }
-        return selectedDocument?.url
+        return sidebarSelectsOpenDocument ? selectedDocument?.url : nil
     }
 
     /// Where New and Paste put items when no row names a folder: the selected folder, the selected
@@ -137,7 +155,7 @@ final class WorkspaceStore: ObservableObject {
         if let selectedFolderID {
             return URL(fileURLWithPath: selectedFolderID, isDirectory: true)
         }
-        return selectedDocument?.url.deletingLastPathComponent()
+        return sidebarSelectsOpenDocument ? selectedDocument?.url.deletingLastPathComponent() : nil
     }
 
     /// Selects a folder of the workspace tree in the sidebar; the workspace root is never selected.
@@ -150,7 +168,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     /// Keeps the selected folder in the tree: when it is gone, the nearest folder above it that
-    /// remains is selected instead, and nothing when that is the root.
+    /// remains is selected instead, and nothing when that is the root. Moving the selection to the
+    /// Trash from Monknot selects nothing instead (`SidebarSelectionAfterLoad.cleared`).
     private func reconcileSelectedFolder() {
         guard var folderID = selectedFolderID else { return }
         guard let rootNode else {
@@ -167,6 +186,25 @@ final class WorkspaceStore: ObservableObject {
             folderID = (folderID as NSString).deletingLastPathComponent
         }
         selectedFolderID = nil
+    }
+
+    private func selectOpenDocumentInSidebar() {
+        selectedFolderID = nil
+        sidebarSelectsOpenDocument = true
+    }
+
+    /// Leaves nothing selected in the sidebar.
+    private func clearSidebarSelection() {
+        selectedFolderID = nil
+        sidebarSelectsOpenDocument = false
+    }
+
+    /// Drops the selection of a document that is no longer in the workspace. The window's tabs then
+    /// show the tab that takes its place, as when it closes, and the sidebar selects nothing in
+    /// its place.
+    private func deselectRemovedDocument() {
+        selectedDocumentID = nil
+        sidebarSelectsOpenDocument = false
     }
 
     /// Asks the sidebar to expand `directoryURL` so the items just added to it show.
@@ -395,14 +433,15 @@ final class WorkspaceStore: ObservableObject {
         return pendingDocumentOpenIDs
     }
 
-    /// Opens the document `id` and moves the sidebar selection to it; nil leaves no document open
-    /// and keeps a selected folder.
+    /// Opens the document `id` and, when `selectingInSidebar`, moves the sidebar selection to it;
+    /// nil leaves no document open and keeps a selected folder. The window's tabs pass false when
+    /// they show a document on their own, as after its neighbour left the workspace.
     @discardableResult
-    func selectDocument(id: String?) -> Bool {
+    func selectDocument(id: String?, selectingInSidebar: Bool = true) -> Bool {
         guard !isBusy else { return false }
         guard id != selectedDocumentID else {
-            if id != nil {
-                selectedFolderID = nil
+            if id != nil, selectingInSidebar {
+                selectOpenDocumentInSidebar()
             }
             return true
         }
@@ -411,8 +450,8 @@ final class WorkspaceStore: ObservableObject {
         let signpostID = MonknotSignposting.documentSelection.beginInterval("SelectDocument")
         defer { MonknotSignposting.documentSelection.endInterval("SelectDocument", signpostID) }
 
-        if id != nil {
-            selectedFolderID = nil
+        if id != nil, selectingInSidebar {
+            selectOpenDocumentInSidebar()
         }
         selectedDocumentID = id
         loadSelectedDocument()
@@ -1372,14 +1411,14 @@ final class WorkspaceStore: ObservableObject {
 
         let preserveSelection = selectedDocumentID
         let didDeleteSelectedDocument = selectedDocumentID == document.id
+        let sidebarSelection: SidebarSelectionAfterLoad = sidebarSelectionID == document.id ? .cleared : .unchanged
         noteInternalFileMutation()
         invalidateWorkspaceSearchCaches(paths: [document.id])
         let generation = beginDocumentFileOperation()
 
-        workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
+        workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner, moveItemToTrash] in
             do {
-                var trashedURL: NSURL?
-                try FileManager.default.trashItem(at: document.url, resultingItemURL: &trashedURL)
+                try moveItemToTrash(document.url)
                 let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
                 guard !Task.isCancelled else { return }
                 await self?.finishWorkspaceLoad(
@@ -1388,6 +1427,7 @@ final class WorkspaceStore: ObservableObject {
                     selectedURL: nil,
                     preserveSelection: didDeleteSelectedDocument ? nil : preserveSelection,
                     reloadSelection: didDeleteSelectedDocument,
+                    sidebarSelection: sidebarSelection,
                     generation: generation
                 )
             } catch {
@@ -1416,14 +1456,17 @@ final class WorkspaceStore: ObservableObject {
 
         let containsSelection = contained.contains { $0.id == selectedDocumentID }
         let preserveSelection = containsSelection ? nil : selectedDocumentID
+        // Nothing is selected once the selection, or the folder holding it, is in the Trash.
+        let sidebarSelection: SidebarSelectionAfterLoad = sidebarSelectionID.map {
+            $0 == folderPath || $0.hasPrefix(folderPath + "/")
+        } == true ? .cleared : .unchanged
         noteInternalFileMutation()
         invalidateWorkspaceSearchCaches(paths: Set(contained.map(\.id)))
         let generation = beginDocumentFileOperation()
 
-        workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
+        workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner, moveItemToTrash] in
             do {
-                var trashedURL: NSURL?
-                try FileManager.default.trashItem(at: folderURL, resultingItemURL: &trashedURL)
+                try moveItemToTrash(folderURL)
                 let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
                 guard !Task.isCancelled else { return }
                 await self?.finishWorkspaceLoad(
@@ -1432,6 +1475,7 @@ final class WorkspaceStore: ObservableObject {
                     selectedURL: nil,
                     preserveSelection: preserveSelection,
                     reloadSelection: containsSelection,
+                    sidebarSelection: sidebarSelection,
                     generation: generation
                 )
             } catch {
@@ -2723,6 +2767,7 @@ final class WorkspaceStore: ObservableObject {
         preserveSelection: String?,
         reloadSelection: Bool,
         sidebarSelection: SidebarSelectionAfterLoad = .unchanged,
+        opensFirstDocument: Bool = false,
         generation: Int
     ) {
         guard generation == workspaceGeneration else { return }
@@ -2738,17 +2783,21 @@ final class WorkspaceStore: ObservableObject {
             selectedDocumentID = selectedDocument.id
         } else if let preserveSelection, documentsByID[preserveSelection] != nil {
             selectedDocumentID = preserveSelection
-        } else {
+        } else if opensFirstDocument {
             selectedDocumentID = documents.first?.id
+        } else if let selectedDocumentID, documentsByID[selectedDocumentID] == nil {
+            deselectRemovedDocument()
         }
 
         switch sidebarSelection {
         case .unchanged:
             break
         case .document:
-            selectedFolderID = nil
+            selectOpenDocumentInSidebar()
         case .folder(let folderURL):
             selectFolder(id: folderURL.standardizedFileURL.path)
+        case .cleared:
+            clearSidebarSelection()
         }
 
         isBusy = false
@@ -2780,6 +2829,7 @@ final class WorkspaceStore: ObservableObject {
             selectedURL: selectedURL,
             preserveSelection: preserveSelection,
             reloadSelection: reloadSelection,
+            opensFirstDocument: true,
             generation: generation
         )
         if let selectedURL,
@@ -2826,6 +2876,7 @@ final class WorkspaceStore: ObservableObject {
         documentSaveStates = [:]
         selectedDocumentID = nil
         selectedFolderID = nil
+        sidebarSelectsOpenDocument = true
         setDocumentTextIfChanged("")
         lastSavedText = ""
         setHasUnsavedChangesIfChanged(false)
@@ -2854,14 +2905,14 @@ final class WorkspaceStore: ObservableObject {
             // The scan does not list the file, so the current document stays selected.
             isBusy = false
             if let selectedDocumentID, documentsByID[selectedDocumentID] == nil {
-                self.selectedDocumentID = documents.first?.id
+                deselectRemovedDocument()
                 loadSelectedDocument()
             }
             errorMessage = "Created \(fileURL.lastPathComponent), but Monknot does not show this kind of file."
             return
         }
         selectedDocumentID = createdDocument.id
-        selectedFolderID = nil
+        selectOpenDocumentInSidebar()
         setDocumentTextIfChanged(initialText)
         lastSavedText = initialText
         setHasUnsavedChangesIfChanged(false)
@@ -2886,7 +2937,7 @@ final class WorkspaceStore: ObservableObject {
         pruneSaveStates(previousDocuments: previousDocuments)
         ensureFileWatcher(for: workspaceURL)
         selectedDocumentID = documentsByID[fileURL.standardizedFileURL.path]?.id ?? documents.first?.id
-        selectedFolderID = nil
+        selectOpenDocumentInSidebar()
         loadSelectedDocument()
         isBusy = false
     }
@@ -4033,11 +4084,10 @@ final class WorkspaceStore: ObservableObject {
         } else if dirtySelectionRemoved, let previousSelection {
             selectedDocumentID = previousSelection
             setSelectedDocumentExternalChangeIfChanged(true)
-        } else if previousSelection == nil {
-            selectedDocumentID = nil
-            setSelectedDocumentSignatureIfChanged(nil)
         } else {
-            selectedDocumentID = documents.first?.id
+            if previousSelection != nil {
+                deselectRemovedDocument()
+            }
             setSelectedDocumentSignatureIfChanged(nil)
         }
 
@@ -4819,6 +4869,8 @@ private enum SidebarSelectionAfterLoad: Equatable, Sendable {
     case document
     /// A folder the operation created or pasted.
     case folder(URL)
+    /// Nothing: the operation moved the selection to the Trash.
+    case cleared
 }
 
 /// A file or folder Monknot renamed or moved, with the documents that moved with it.

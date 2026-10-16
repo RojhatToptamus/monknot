@@ -10,10 +10,20 @@ final class WorkspaceStoreTestContext {
     private var stores: [WorkspaceStore] = []
     private var temporaryRoots: [URL] = []
 
+    /// A store whose Move to Trash moves items into a temporary folder instead of the user's Trash.
     func makeStore(
         scanner: any WorkspaceDocumentScanning = WorkspaceDocumentScanner()
     ) -> WorkspaceStore {
-        let store = WorkspaceStore(scanner: scanner, userDefaults: userDefaults)
+        let trashURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MonknotTestTrash-\(UUID().uuidString)", isDirectory: true)
+        temporaryRoots.append(trashURL)
+        let store = WorkspaceStore(scanner: scanner, userDefaults: userDefaults) { url in
+            try FileManager.default.createDirectory(at: trashURL, withIntermediateDirectories: true)
+            try FileManager.default.moveItem(
+                at: url,
+                to: trashURL.appendingPathComponent("\(UUID().uuidString)-\(url.lastPathComponent)")
+            )
+        }
         stores.append(store)
         return store
     }

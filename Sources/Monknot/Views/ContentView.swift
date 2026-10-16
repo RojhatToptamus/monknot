@@ -1443,13 +1443,22 @@ struct ContentView: View {
         }
 
         if tabState.selectedDocumentID != store.selectedDocumentID {
-            _ = store.selectDocument(id: tabState.selectedDocumentID)
+            _ = store.selectDocument(id: tabState.selectedDocumentID, selectingInSidebar: false)
         }
     }
 
     private func syncSelectedTabWithStore() {
         guard !store.isBusy else { return }
         if restorePersistedTabsIfNeeded() {
+            return
+        }
+        // The store let go of a document that left the workspace; its tab closes and the next
+        // tab takes its place, as when the tab is closed.
+        if store.selectedDocumentID == nil,
+           let tabDocumentID = tabState.selectedDocumentID,
+           store.document(id: tabDocumentID) == nil,
+           !store.removedDirtyOpenDocumentIDs.contains(tabDocumentID) {
+            reconcileTabsWithStore()
             return
         }
 
@@ -1464,7 +1473,7 @@ struct ContentView: View {
         }
 
         if tabState.selectedDocumentID != store.selectedDocumentID {
-            _ = store.selectDocument(id: tabState.selectedDocumentID)
+            _ = store.selectDocument(id: tabState.selectedDocumentID, selectingInSidebar: false)
         }
 
         if tabState != previousState {
@@ -1538,7 +1547,7 @@ struct ContentView: View {
         publishOpenTabIDs()
 
         if tabState.selectedDocumentID != store.selectedDocumentID {
-            _ = store.selectDocument(id: tabState.selectedDocumentID)
+            _ = store.selectDocument(id: tabState.selectedDocumentID, selectingInSidebar: false)
         }
 
         return true

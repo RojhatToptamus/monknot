@@ -6,8 +6,8 @@ import XCTest
 
 /// Workspace file and folder operations at the `WorkspaceStore` level.
 ///
-/// No test here runs a successful `deleteDocument` / `deleteFolder`: those call
-/// `FileManager.trashItem` and would put test files into the user's real Trash.
+/// Stores come from `makeWorkspaceStore`, whose Move to Trash moves items into a temporary
+/// folder rather than the user's Trash.
 @MainActor
 final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
 
@@ -1357,7 +1357,9 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         let refreshed = await wait { self.node(store, "Folder") == nil }
         XCTAssertTrue(refreshed)
         XCTAssertNil(document(store, "Folder/B.md"))
-        XCTAssertEqual(store.selectedDocumentID, document(store, "A.md")?.id)
+        // The window's tabs show the tab that takes its place; the sidebar selects none of them.
+        XCTAssertNil(store.selectedDocumentID, "No other document is opened in its place")
+        XCTAssertNil(store.sidebarSelectionID)
     }
 
     func testRemovingOpenDirtyDocumentKeepsItsUnsavedText() async throws {

@@ -379,6 +379,73 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
         XCTAssertTrue(fixture.listing().contains("docs/a.md"))
     }
 
+    /// Holding ⌘⌫ on a selected folder trashes that folder alone: the key's repeats are ignored,
+    /// and nothing is selected afterwards, so a second press finds nothing to trash rather than
+    /// the folder above it.
+    func testHoldingMoveToTrashTrashesOnlyTheSelectedFolder() async throws {
+        let fixture = try await makeSidebarFixture()
+        defer { fixture.close() }
+        try await fixture.click(rowNamed: "inner")
+        XCTAssertEqual(fixture.store.selectedFolderID, fixture.path("docs/inner"))
+
+        fixture.press("\u{7F}", keyCode: 51, modifiers: .command, repeats: 5)
+        let trashed = await waitUntil { !fixture.listing().contains("docs/inner") && !fixture.store.isBusy }
+        XCTAssertTrue(trashed)
+        XCTAssertNil(fixture.store.selectedFolderID, "The folder above is not selected")
+        XCTAssertNil(fixture.store.sidebarSelectionID)
+
+        fixture.press("\u{7F}", keyCode: 51, modifiers: .command, repeats: 5)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(
+            fixture.listing().filter { !$0.hasPrefix(".") },
+            ["docs", "docs/a.md", "docs/b.md", "other", "other/x.md", "top.md"]
+        )
+    }
+
+    /// ⌘⌫ on the open document trashes it alone: the document shown next is not selected in the
+    /// tree, so the next ⌘⌫ trashes nothing.
+    func testMoveToTrashOfTheOpenDocumentLeavesNothingSelected() async throws {
+        let fixture = try await makeSidebarFixture()
+        defer { fixture.close() }
+        try await fixture.click(rowNamed: "b.md")
+        XCTAssertEqual(fixture.store.sidebarSelectionID, fixture.path("docs/b.md"))
+        XCTAssertTrue(fixture.treeHasFocus())
+
+        fixture.press("\u{7F}", keyCode: 51, modifiers: .command, repeats: 5)
+        let trashed = await waitUntil { !fixture.listing().contains("docs/b.md") && !fixture.store.isBusy }
+        XCTAssertTrue(trashed)
+        XCTAssertNil(fixture.store.selectedDocumentID, "No other document is opened in its place")
+        XCTAssertNil(fixture.store.sidebarSelectionID)
+        XCTAssertNil(fixture.store.sidebarTargetFolderURL, "New items go to the root")
+
+        // The window's tabs show another document without selecting it in the tree.
+        XCTAssertTrue(fixture.store.selectDocument(id: fixture.path("docs/a.md"), selectingInSidebar: false))
+        XCTAssertNil(fixture.store.sidebarSelectionID)
+        fixture.press("\u{7F}", keyCode: 51, modifiers: .command)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(
+            fixture.listing().filter { !$0.hasPrefix(".") },
+            ["docs", "docs/a.md", "docs/inner", "docs/inner/c.md", "other", "other/x.md", "top.md"]
+        )
+
+        // Choosing the document selects it again.
+        XCTAssertTrue(fixture.store.selectDocument(id: fixture.path("docs/a.md")))
+        XCTAssertEqual(fixture.store.sidebarSelectionID, fixture.path("docs/a.md"))
+    }
+
+    /// Holding ⌘D duplicates the selection once.
+    func testHoldingDuplicateDuplicatesOnce() async throws {
+        let fixture = try await makeSidebarFixture()
+        defer { fixture.close() }
+        try await fixture.click(rowNamed: "top.md")
+
+        fixture.press("d", keyCode: 2, modifiers: .command, repeats: 5)
+        let duplicated = await waitUntil { fixture.listing().contains("top copy.md") && !fixture.store.isBusy }
+        XCTAssertTrue(duplicated)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(fixture.listing().filter { $0.hasPrefix("top") }, ["top copy.md", "top.md"])
+    }
+
     /// File ▸ New Folder asks for a name for the sidebar's target folder.
     func testNewFolderCommandAsksForANameInTheSidebar() async throws {
         let fixture = try await makeSidebarFixture()
@@ -558,9 +625,11 @@ private struct SidebarFixture {
         try? await Task.sleep(nanoseconds: 150_000_000)
     }
 
-    /// Sends a key press to the window, as AppKit delivers it to the focused view.
-    func press(_ characters: String, keyCode: UInt16, modifiers: NSEvent.ModifierFlags = []) {
-        for type in [NSEvent.EventType.keyDown, .keyUp] {
+    /// Sends a key press to the window, as AppKit delivers it to the focused view; `repeats`
+    /// adds the key-down repeats of a held key.
+    func press(_ characters: String, keyCode: UInt16, modifiers: NSEvent.ModifierFlags = [], repeats: Int = 0) {
+        let types = [NSEvent.EventType.keyDown] + Array(repeating: .keyDown, count: repeats) + [.keyUp]
+        for (index, type) in types.enumerated() {
             guard let event = NSEvent.keyEvent(
                 with: type,
                 location: .zero,
@@ -570,7 +639,7 @@ private struct SidebarFixture {
                 context: nil,
                 characters: characters,
                 charactersIgnoringModifiers: characters,
-                isARepeat: false,
+                isARepeat: type == .keyDown && index > 0,
                 keyCode: keyCode
             ) else { continue }
             window.sendEvent(event)
