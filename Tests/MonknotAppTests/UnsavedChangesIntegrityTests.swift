@@ -69,6 +69,53 @@ final class UnsavedChangesIntegrityTests: WorkspaceStoreTestCase {
         XCTAssertTrue(store.hasUnsavedChanges)
     }
 
+    // MARK: - Undo
+
+    func testUndoAfterSwitchingDocumentsDoesNotEditTheOtherDocument() async throws {
+        let root = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotUnsavedUndo")
+        try Data("alpha\n".utf8).write(to: root.appendingPathComponent("A.md"))
+        try Data("bravo charlie delta\n".utf8).write(to: root.appendingPathComponent("B.md"))
+        let store = try await openStore(root)
+        let controls = PaneControls()
+        let host = hostEditorPane(store: store, controls: controls)
+        let a = root.appendingPathComponent("A.md").standardizedFileURL.path
+        let b = root.appendingPathComponent("B.md").standardizedFileURL.path
+
+        // Both documents have been open before, so switching keeps the same editor.
+        for id in [b, a, b] {
+            XCTAssertTrue(store.selectDocument(id: id))
+            await settle(0.5)
+        }
+        XCTAssertTrue(store.selectDocument(id: a))
+        let shownA = await waitUntil { self.documentTextView(in: host)?.string == "alpha\n" }
+        XCTAssertTrue(shownA)
+        let textView = try XCTUnwrap(documentTextView(in: host))
+        host.window?.makeFirstResponder(textView)
+        type(" typed", at: 5, in: textView)
+        let edited = await waitUntil { store.documentText == "alpha typed\n" }
+        XCTAssertTrue(edited)
+        undo(in: textView)
+        XCTAssertEqual(store.documentText, "alpha\n")
+        assertClean(store, "after undoing back to the saved text")
+        textView.undoManager?.redo()
+        XCTAssertEqual(store.documentText, "alpha typed\n")
+        XCTAssertTrue(store.hasUnsavedChanges)
+        store.saveSelectedFile()
+        let saved = await waitUntil { !store.isSaving && store.documentSaveStates.isEmpty }
+        XCTAssertTrue(saved)
+
+        XCTAssertTrue(store.selectDocument(id: b))
+        let shownB = await waitUntil { self.documentTextView(in: host)?.string == "bravo charlie delta\n" }
+        XCTAssertTrue(shownB)
+        let bTextView = try XCTUnwrap(documentTextView(in: host))
+        host.window?.makeFirstResponder(bTextView)
+        XCTAssertTrue(bTextView === textView, "the editor is reused")
+        undo(in: bTextView)
+        await settle()
+        XCTAssertEqual(store.documentText, "bravo charlie delta\n", "undo must not replay another document's typing")
+        assertClean(store, "after undo in another document")
+    }
+
     // MARK: - Fixtures
 
     private static let textFixtures: [(name: String, contents: String)] = [

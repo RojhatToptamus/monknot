@@ -1995,6 +1995,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
         private(set) var storageEditCount = 0
         private weak var observedTextStorage: NSTextStorage?
         private var nativeTextCache: (editCount: Int, utf16Length: Int, text: String)?
+        /// The editor's own undo history. It is emptied when the editor shows another document or
+        /// its text is replaced from outside it, as by a reload from disk: undoing an earlier edit
+        /// there would change text the edit was never made in.
+        private let textUndoManager = UndoManager()
         var documentID: String?
         var onScrollPositionChange: (DocumentScrollPosition) -> Void = { _ in }
         var onVisibleTopLineChange: ((Int) -> Void)?
@@ -2466,6 +2470,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             publishCurrentScrollPosition()
             publishSelection()
             documentID = nextDocumentID
+            textUndoManager.removeAllActions()
             revision += 1
             pendingInlinePredictionEdit = nil
             inlinePredictionContinuation = nil
@@ -2484,7 +2489,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
             return true
         }
 
+        func undoManager(for view: NSTextView) -> UndoManager? {
+            textUndoManager
+        }
+
         func externalTextDidChange() {
+            textUndoManager.removeAllActions()
             textView?.invalidateFlowSettlement()
             sentenceRepairGate = .blocked
             pendingFlowTrailingSpace = nil
