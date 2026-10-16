@@ -32,6 +32,14 @@ final class WorkspaceResourceSchemeHandler: NSObject, WKURLSchemeHandler {
         return url?.scheme == scheme || url?.absoluteString == "about:blank"
     }
 
+    static func allowsPreviewNavigation(_ action: WKNavigationAction) -> Bool {
+        allowsPreviewNavigation(
+            type: action.navigationType,
+            isMainFrame: action.targetFrame?.isMainFrame != false,
+            to: action.request.url
+        )
+    }
+
     static func fileURL(for resourceURL: URL) -> URL? {
         guard resourceURL.scheme == scheme, !resourceURL.path.isEmpty else { return nil }
         return URL(fileURLWithPath: resourceURL.path)

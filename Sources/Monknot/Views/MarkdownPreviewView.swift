@@ -137,17 +137,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         context.coordinator.onLinkRequest = onLinkRequest
         context.coordinator.onTaskRequest = onTaskRequest
         context.coordinator.syncScrollEnabled = syncScrollEnabled
-        context.coordinator.onSearchResult = { result in
-            DispatchQueue.main.async {
-                let current = DocumentSearchResult(
-                    currentIndex: self.searchState.currentIndex,
-                    totalCount: self.searchState.totalCount
-                )
-                if current != result {
-                    self.searchState.updateResult(result)
-                }
-            }
-        }
+        context.coordinator.onSearchResult = WebViewBridge.searchResultPublisher(for: $searchState)
         context.coordinator.onSourceRevealConsumed = {
             DispatchQueue.main.async {
                 self.sourceLocation = nil
@@ -289,31 +279,6 @@ struct MarkdownPreviewView: NSViewRepresentable {
         coordinator.applyPendingScrollPositionIfNeeded(in: webView)
     }
 
-    private static func javaScriptPayload(
-        markdown: String,
-        themeName: String,
-        documentID: String,
-        renderID: Int
-    ) throws -> String {
-        let payload: [String: Any] = [
-            "markdown": markdown,
-            "theme": themeName,
-            "documentID": documentID,
-            "renderID": renderID,
-        ]
-        return try javaScriptPayload(payload)
-    }
-
-    private static func javaScriptPayload(_ payload: Any) throws -> String {
-        let data = try JSONSerialization.data(withJSONObject: payload)
-        guard var literal = String(data: data, encoding: .utf8) else {
-            throw PreviewRenderError.invalidPayload
-        }
-
-        literal = literal.replacingOccurrences(of: "</", with: "<\\/")
-        return literal
-    }
-
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
         webView.evaluateJavaScript(
             "window.monknotTearDown && window.monknotTearDown(); window.monknotScrollTrackingTeardown && window.monknotScrollTrackingTeardown();"
@@ -425,11 +390,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
 
         fileprivate func prepareForDocument(_ nextDocumentID: String, in webView: WKWebView) -> Bool {
             guard documentID != nextDocumentID else { return false }
-            let publishPreviousScrollPosition = onScrollPositionChange
-            webView.evaluateJavaScript("({ x: window.scrollX || 0, y: window.scrollY || 0 })") { value, error in
-                guard error == nil else { return }
-                publishPreviousScrollPosition(Self.scrollPosition(from: value))
-            }
+            WebViewBridge.readScrollPosition(of: webView, then: onScrollPositionChange)
             documentID = nextDocumentID
             activeRenderID = nil
             lastPublishedScrollPosition = nil
@@ -566,7 +527,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
             ]
 
             do {
-                let json = try MarkdownPreviewView.javaScriptPayload(payload)
+                let json = try WebViewBridge.literal(payload)
                 webView.evaluateJavaScript("window.monknotApplyAppearance && window.monknotApplyAppearance(\(json));") { [weak self] _, error in
                     if error == nil {
                         self?.markAppliedAppearance(request)
@@ -588,20 +549,10 @@ struct MarkdownPreviewView: NSViewRepresentable {
             guard request != lastSearchRequest else { return }
             lastSearchRequest = request
 
-            let payload: [String: Any] = [
-                "query": request.query,
-                "direction": request.navigationDirection.rawValue,
-                "navigationSerial": request.navigationSerial,
-                "isPresented": request.isPresented,
-                "isCaseSensitive": request.options.isCaseSensitive,
-                "isWholeWord": request.options.isWholeWord
-            ]
-
             do {
-                let json = try MarkdownPreviewView.javaScriptPayload(payload)
+                let json = try WebViewBridge.literal(WebViewBridge.searchPayload(request))
                 webView.evaluateJavaScript("window.monknotSearch && window.monknotSearch(\(json));") { [weak self] value, _ in
-                    let result = Self.parseSearchResult(value)
-                    self?.onSearchResult(result)
+                    self?.onSearchResult(WebViewBridge.searchResult(from: value))
                 }
             } catch {
                 onSearchResult(.init())
@@ -642,12 +593,12 @@ struct MarkdownPreviewView: NSViewRepresentable {
 
                 let payload: String
                 do {
-                    payload = try MarkdownPreviewView.javaScriptPayload(
-                        markdown: request.markdown,
-                        themeName: latestThemeName,
-                        documentID: request.documentID,
-                        renderID: serial
-                    )
+                    payload = try WebViewBridge.literal([
+                        "markdown": request.markdown,
+                        "theme": latestThemeName,
+                        "documentID": request.documentID,
+                        "renderID": serial,
+                    ] as [String: Any])
                 } catch {
                     await MainActor.run {
                         _ = webView?.loadHTMLString(MarkdownPreviewView.errorHTML(error.localizedDescription), baseURL: nil)
@@ -715,7 +666,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
             ]
 
             do {
-                let json = try MarkdownPreviewView.javaScriptPayload(payload)
+                let json = try WebViewBridge.literal(payload)
                 webView.evaluateJavaScript("window.monknotRevealSourceLine && window.monknotRevealSourceLine(\(json));") { [weak self] value, _ in
                     let didReveal = (value as? NSNumber)?.boolValue ?? value as? Bool ?? false
                     guard didReveal else { return }
@@ -758,7 +709,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
 
             let payload: [String: Any] = ["line": line]
             do {
-                let json = try MarkdownPreviewView.javaScriptPayload(payload)
+                let json = try WebViewBridge.literal(payload)
                 webView.evaluateJavaScript("window.monknotScrollToLine && window.monknotScrollToLine(\(json));") { [weak self] _, _ in
                     // If nothing scrolled, no report comes; stop waiting for one.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
@@ -779,29 +730,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
             }
             guard shouldRestorePendingScrollPosition else { return }
             shouldRestorePendingScrollPosition = false
-
-            let position = pendingScrollPosition ?? DocumentScrollPosition(x: 0, y: 0)
-            guard position.x.isFinite, position.y.isFinite else {
-                webView.evaluateJavaScript("window.scrollTo(0, 0);")
-                return
-            }
-
-            webView.evaluateJavaScript("window.scrollTo(\(position.x), \(position.y));")
-        }
-
-        private static func parseSearchResult(_ value: Any?) -> DocumentSearchResult {
-            guard let payload = value as? [String: Any] else {
-                return .init()
-            }
-
-            let current = (payload["currentIndex"] as? NSNumber)?.intValue
-                ?? payload["currentIndex"] as? Int
-                ?? 0
-            let total = (payload["totalCount"] as? NSNumber)?.intValue
-                ?? payload["totalCount"] as? Int
-                ?? 0
-
-            return DocumentSearchResult(currentIndex: current, totalCount: total)
+            WebViewBridge.scroll(webView, to: pendingScrollPosition)
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -841,11 +770,8 @@ struct MarkdownPreviewView: NSViewRepresentable {
             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
         ) {
             guard navigationAction.navigationType == .linkActivated else {
-                let allows = !isTornDown && WorkspaceResourceSchemeHandler.allowsPreviewNavigation(
-                    type: navigationAction.navigationType,
-                    isMainFrame: navigationAction.targetFrame?.isMainFrame != false,
-                    to: navigationAction.request.url
-                )
+                let allows = !isTornDown
+                    && WorkspaceResourceSchemeHandler.allowsPreviewNavigation(navigationAction)
                 decisionHandler(allows ? .allow : .cancel)
                 return
             }
@@ -898,10 +824,10 @@ struct MarkdownPreviewView: NSViewRepresentable {
             guard message.name == Self.sourceJumpHandlerName else { return }
             guard let body = message.body as? [String: Any],
                   validatedIdentity(from: body) != nil,
-                  let line = Self.integer(body["line"]),
+                  let line = WebViewBridge.integer(body["line"]),
                   line > 0
             else { return }
-            let offset = max(0, Self.integer(body["offset"]) ?? 0)
+            let offset = max(0, WebViewBridge.integer(body["offset"]) ?? 0)
             let location = MarkdownSourceLocation(line: line, offset: offset)
 
             DispatchQueue.main.async { [weak self] in
@@ -919,7 +845,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
             guard let body = body as? [String: Any],
                   let messageDocumentID = body["documentID"] as? String,
                   !messageDocumentID.isEmpty,
-                  let messageRenderID = Self.integer(body["renderID"]),
+                  let messageRenderID = WebViewBridge.integer(body["renderID"]),
                   messageRenderID > 0
             else { return nil }
             let identity = MarkdownPreviewRenderIdentity(
@@ -964,10 +890,10 @@ struct MarkdownPreviewView: NSViewRepresentable {
                     destination: destination
                 ))
             case "task":
-                guard let sourceLine = integer(body["sourceLine"]),
+                guard let sourceLine = WebViewBridge.integer(body["sourceLine"]),
                       sourceLine > 0,
-                      let expectedChecked = boolean(body["expectedChecked"]),
-                      let desiredChecked = boolean(body["desiredChecked"]),
+                      let expectedChecked = WebViewBridge.boolean(body["expectedChecked"]),
+                      let desiredChecked = WebViewBridge.boolean(body["desiredChecked"]),
                       expectedChecked != desiredChecked
                 else { return nil }
                 return .task(MarkdownPreviewTaskRequest(
@@ -984,29 +910,19 @@ struct MarkdownPreviewView: NSViewRepresentable {
         private static func messageIdentity(from body: [String: Any]) -> MarkdownPreviewRenderIdentity? {
             guard let documentID = body["documentID"] as? String,
                   !documentID.isEmpty,
-                  let renderID = integer(body["renderID"]),
+                  let renderID = WebViewBridge.integer(body["renderID"]),
                   renderID > 0
             else { return nil }
             return MarkdownPreviewRenderIdentity(documentID: documentID, renderID: renderID)
         }
 
-        private static func integer(_ value: Any?) -> Int? {
-            if let number = value as? NSNumber { return number.intValue }
-            return value as? Int
-        }
-
-        private static func boolean(_ value: Any?) -> Bool? {
-            if let number = value as? NSNumber { return number.boolValue }
-            return value as? Bool
-        }
-
         private func publishScrollPosition(from body: Any) {
-            let position = Self.scrollPosition(from: body)
+            let position = WebViewBridge.scrollPosition(from: body)
             guard position.isMeaningfullyDifferent(from: lastPublishedScrollPosition) else { return }
             lastPublishedScrollPosition = position
             onScrollPositionChange(position)
 
-            let sourceLine = Self.sourceLine(from: body)
+            let sourceLine = WebViewBridge.sourceLine(from: body)
             guard sourceLine > 0, sourceLine != lastPublishedSourceLine else { return }
             lastPublishedSourceLine = sourceLine
             if suppressesNextSourceLine {
@@ -1014,21 +930,6 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 return
             }
             onVisibleSourceLineChange?(sourceLine)
-        }
-
-        private static func sourceLine(from body: Any?) -> Int {
-            guard let body = body as? [String: Any] else { return 0 }
-            return (body["sourceLine"] as? NSNumber)?.intValue ?? body["sourceLine"] as? Int ?? 0
-        }
-
-        private static func scrollPosition(from body: Any?) -> DocumentScrollPosition {
-            guard let body = body as? [String: Any] else {
-                return DocumentScrollPosition(x: 0, y: 0)
-            }
-
-            let x = (body["x"] as? NSNumber)?.doubleValue ?? body["x"] as? Double ?? 0
-            let y = (body["y"] as? NSNumber)?.doubleValue ?? body["y"] as? Double ?? 0
-            return DocumentScrollPosition(x: x, y: y)
         }
     }
 }
@@ -1053,12 +954,4 @@ fileprivate struct PreviewAppearanceRequest: Equatable {
 fileprivate struct PreviewContentRequest: Equatable {
     let documentID: String
     let markdown: String
-}
-
-private enum PreviewRenderError: Error, LocalizedError {
-    case invalidPayload
-
-    var errorDescription: String? {
-        "Could not encode Markdown preview payload."
-    }
 }

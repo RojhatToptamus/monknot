@@ -436,6 +436,7 @@ APP_SOURCES=(
   "Sources/Monknot/Support/WorkspaceDocumentKind+ResolvedSymbol.swift"
   "Sources/Monknot/Support/WorkspaceWindowRequestCenter.swift"
   "Sources/Monknot/Support/WorkspaceResourceSchemeHandler.swift"
+  "Sources/Monknot/Support/WebViewBridge.swift"
   "Sources/Monknot/Views/AppearanceSettingsView.swift"
   "Sources/Monknot/Views/ContentView.swift"
   "Sources/Monknot/Views/DocumentTabBar.swift"
