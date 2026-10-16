@@ -180,9 +180,19 @@ public enum WorkspaceDocumentSupport {
         return !type.isDynamic
     }
 
+    /// The longest file or folder name macOS accepts, measured by `fileNameLength(_:)`.
+    public static let maximumFileNameLength = 255
+
+    /// The length macOS limits a file or folder name by: its UTF-16 code units once decomposed,
+    /// so "é" counts 2 and an emoji 2.
+    public static func fileNameLength(_ name: String) -> Int {
+        name.decomposedStringWithCanonicalMapping.utf16.count
+    }
+
     /// `name` in `directoryURL`, or when that is taken, the first free "name copy", "name copy 2", ….
     /// A file or package keeps its extension last ("photo copy.png"); a folder's name is used whole,
-    /// so "v1.2" becomes "v1.2 copy".
+    /// so "v1.2" becomes "v1.2 copy". As in Finder, a name too long to take the suffix is shortened
+    /// at a character boundary to fit `maximumFileNameLength`.
     public static func availableCopyURL(
         named name: String,
         isDirectory: Bool,
@@ -198,13 +208,23 @@ public enum WorkspaceDocumentSupport {
         var index = 1
         repeat {
             let suffix = index == 1 ? " copy" : " copy \(index)"
-            let copyName = pathExtension.isEmpty
-                ? "\(baseName)\(suffix)"
-                : "\(baseName)\(suffix).\(pathExtension)"
-            candidate = directoryURL.appendingPathComponent(copyName)
+            let ending = pathExtension.isEmpty ? suffix : "\(suffix).\(pathExtension)"
+            candidate = directoryURL.appendingPathComponent(fittedName(baseName, ending: ending))
             index += 1
         } while fileManager.fileExists(atPath: candidate.path)
         return candidate
+    }
+
+    /// `baseName` followed by `ending`, with as many trailing characters of `baseName` dropped as
+    /// the result needs to fit `maximumFileNameLength`.
+    private static func fittedName(_ baseName: String, ending: String) -> String {
+        let budget = maximumFileNameLength - fileNameLength(ending)
+        guard fileNameLength(baseName) > budget else { return baseName + ending }
+        var base = Substring(baseName)
+        while !base.isEmpty, fileNameLength(String(base)) > budget || base.last?.isWhitespace == true {
+            base.removeLast()
+        }
+        return base + ending
     }
 
     /// Whether `url` is `directoryURL` or inside it, comparing standardized paths.

@@ -308,24 +308,24 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         XCTAssertNotNil(doc(store, "v1.3 ☕️/read me.TXT"))
     }
 
-    /// The prompt's validation promises the name works, then creation fails after the sheet closed.
+    /// A name longer than macOS allows is refused while the name sheet is still open.
     func testOverlongNamesAreRefusedByValidationBeforeTheSheetCloses() async throws {
         let root = try makeRoot()
         try write("x\n", "a.md", in: root)
         let store = try await openStore(root)
         let tooLong = String(repeating: "n", count: 260) + ".md"
 
-        let createMessage = store.validationMessage(forNewItemNamed: tooLong, in: nil, isDirectory: false)
-        let renameMessage = store.validationMessage(forRenaming: root.appendingPathComponent("a.md"), to: tooLong, isDirectory: false)
+        XCTAssertNotNil(store.validationMessage(forNewItemNamed: tooLong, in: nil, isDirectory: false))
+        XCTAssertNotNil(store.validationMessage(forRenaming: root.appendingPathComponent("a.md"), to: tooLong, isDirectory: false))
+        // 85 Hangul syllables fill the limit (3 each once decomposed); a rename's kept extension
+        // takes the name past it.
+        let longRename = String(repeating: "한", count: 85)
+        XCTAssertNotNil(store.validationMessage(forRenaming: root.appendingPathComponent("a.md"), to: longRename, isDirectory: false))
+        XCTAssertNil(store.validationMessage(forNewItemNamed: longRename, in: nil, isDirectory: true))
         store.createFile(named: tooLong)
         await idle(store)
-        let createError = store.errorMessage
-        XCTAssertNotNil(createError, "Creation of a 263-character name neither failed nor reported")
-
-        XCTExpectFailure("Validation accepts a name longer than the 255-byte file-name limit; the sheet closes and creation fails afterwards") {
-            XCTAssertNotNil(createMessage)
-            XCTAssertNotNil(renameMessage)
-        }
+        XCTAssertNotNil(store.errorMessage)
+        XCTAssertEqual(names("", in: root), ["a.md"])
     }
 
     func testInvalidNewNamesAreRefusedWithoutTouchingDisk() async throws {
@@ -650,11 +650,12 @@ final class FileOperationsQASweepTests: FileOperationsQATestCase {
         store.duplicateItem(at: root.appendingPathComponent(String(repeating: "f", count: 252)))
         await idle(store)
         let folderError = store.errorMessage
-        XCTExpectFailure("Duplicate of a file or folder whose name is near the 255-byte limit fails with 'file name too long' instead of shortening the copy's name") {
-            XCTAssertNil(fileError)
-            XCTAssertNil(folderError)
-            XCTAssertEqual(names("", in: root).count, 4)
-        }
+        XCTAssertNil(fileError)
+        XCTAssertNil(folderError)
+        XCTAssertTrue(names("", in: root).isSuperset(of: [
+            String(repeating: "d", count: 247) + " copy.md",
+            String(repeating: "f", count: 250) + " copy",
+        ]), "\(names("", in: root))")
     }
 
     // MARK: - Concurrency and external changes

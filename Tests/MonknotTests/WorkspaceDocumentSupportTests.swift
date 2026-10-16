@@ -40,6 +40,41 @@ final class WorkspaceDocumentSupportTests: XCTestCase {
         XCTAssertEqual(copyName("new.md", isDirectory: false), "new.md")
     }
 
+    func testAvailableCopyURLShortensALongNameToFitTheSuffix() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let limit = WorkspaceDocumentSupport.maximumFileNameLength
+        // Hangul syllables (3 code units each once decomposed) and an emoji (2), so a cut by code
+        // unit could split either.
+        let file = String(repeating: "한", count: 82) + "📄.md"
+        let folder = String(repeating: "f", count: limit)
+        for name in [file, folder] {
+            try FileManager.default.createDirectory(
+                at: root.appendingPathComponent(name),
+                withIntermediateDirectories: true
+            )
+        }
+
+        let fileCopy = WorkspaceDocumentSupport.availableCopyURL(named: file, isDirectory: false, in: root)
+            .lastPathComponent
+        XCTAssertEqual(WorkspaceDocumentSupport.fileNameLength(fileCopy), 254)
+        XCTAssertLessThanOrEqual(WorkspaceDocumentSupport.fileNameLength(fileCopy), limit)
+        XCTAssertTrue(fileCopy.hasSuffix("한 copy.md"), fileCopy)
+        XCTAssertTrue(fileCopy.hasPrefix("한한"), fileCopy)
+
+        let folderCopy = WorkspaceDocumentSupport.availableCopyURL(named: folder, isDirectory: true, in: root)
+            .lastPathComponent
+        XCTAssertEqual(folderCopy, String(repeating: "f", count: limit - 5) + " copy")
+
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent(folderCopy),
+            withIntermediateDirectories: true
+        )
+        let secondCopy = WorkspaceDocumentSupport.availableCopyURL(named: folder, isDirectory: true, in: root)
+            .lastPathComponent
+        XCTAssertEqual(secondCopy, String(repeating: "f", count: limit - 7) + " copy 2")
+    }
+
     func testIsURLContainedInComparesWholePathComponents() {
         let root = URL(fileURLWithPath: "/tmp/Work")
         XCTAssertTrue(WorkspaceDocumentSupport.isURL(root, containedIn: root))

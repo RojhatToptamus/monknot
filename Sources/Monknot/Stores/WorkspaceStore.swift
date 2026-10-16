@@ -4219,6 +4219,7 @@ final class WorkspaceStore: ObservableObject {
 
     nonisolated private static func childURL(in directoryURL: URL, proposedName: String, isDirectory: Bool) throws -> URL {
         let fileName = try validatedItemName(proposedName)
+        try validateLength(of: fileName)
         try validateVisibility(of: fileName, isDirectory: isDirectory)
 
         let destinationURL = directoryURL.appendingPathComponent(fileName)
@@ -4303,6 +4304,13 @@ final class WorkspaceStore: ObservableObject {
         return name
     }
 
+    /// Refuses a name longer than macOS allows, before anything is written.
+    nonisolated private static func validateLength(of name: String) throws {
+        guard WorkspaceDocumentSupport.fileNameLength(name) <= WorkspaceDocumentSupport.maximumFileNameLength else {
+            throw WorkspaceDocumentOperationError.nameTooLong
+        }
+    }
+
     /// Refuses names the workspace scan leaves out, so a new or renamed item never vanishes.
     nonisolated private static func validateVisibility(of name: String, isDirectory: Bool) throws {
         guard WorkspaceDocumentScanner.hidesItem(named: name, isDirectory: isDirectory) else { return }
@@ -4335,6 +4343,7 @@ final class WorkspaceStore: ObservableObject {
                 fileName += ".\(sourceExtension)"
             }
         }
+        try validateLength(of: fileName)
         try validateVisibility(of: fileName, isDirectory: isDirectory)
 
         let destinationURL = sourceURL.deletingLastPathComponent().appendingPathComponent(fileName)
@@ -4652,6 +4661,7 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
     case emptyName
     case nestedName
     case invalidName(String)
+    case nameTooLong
     case couldNotCreateFile(String)
     case unsupportedPDFExport(String)
     case writingToolsActive(String)
@@ -4673,6 +4683,8 @@ private enum WorkspaceDocumentOperationError: LocalizedError {
             return "File name cannot contain path separators."
         case .invalidName(let name):
             return "\(name) is not a valid file name."
+        case .nameTooLong:
+            return "This name is longer than macOS allows. Shorten it."
         case .couldNotCreateFile(let name):
             return "Could not create \(name)."
         case .unsupportedPDFExport(let name):
