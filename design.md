@@ -645,10 +645,14 @@ document; clicking a file opens it and gives the document keyboard focus, ready 
 selected folder, or the selected document's folder, or the root when nothing is selected; a row's context
 menu acts on that row, and the empty tree's menu and Finder drops on empty space on the root. While the
 tree has focus, ⌘C, ⌘X and ⌘V copy, cut and paste the selection, Return renames it, ⌘D duplicates it and
-⌘⌫ moves it to the Trash; with the editor, terminal or a field focused those keys stay theirs. A created
+⌘⌫ moves it to the Trash, once per press however long the key is held; with the editor, terminal or a
+field focused those keys stay theirs. A created
 or pasted item is selected and its folder opens; files pasted or dropped in from elsewhere open their
 folder. The selection follows a rename or move, moves up to the nearest remaining folder when its folder
-is removed, and clears when the workspace changes; open folders stay open when renamed or moved.
+is removed outside Monknot, and clears when the workspace changes; open folders stay open when renamed
+or moved. Nothing is selected after the selection goes to the Trash, or after the open document leaves
+the workspace: the tab beside it shows, as when its tab closes, but the tree selects it only once the
+user picks it.
 
 **Row menus.** Folder and file rows start with New File and New Folder (in the folder, or beside the
 file), then Rename and the location items, then Copy, Cut, Paste and Duplicate, then Move to Trash.
