@@ -99,7 +99,8 @@ final class DocumentViewerRoutingTests: WorkspaceStoreTestCase {
                 store.documentLoadFailure?.message.contains(fragment) == true,
                 "\(name): \(store.documentLoadFailure?.message ?? "no message")"
             )
-            XCTAssertNil(documentTextView(in: host), "\(name) must not show its bytes in the editor")
+            let editorClosed = await waitUntil { self.documentTextView(in: host) == nil }
+            XCTAssertTrue(editorClosed, "\(name) must not show its bytes in the editor")
             XCTAssertNil(store.recentDocuments().first { $0.documentID == document.id })
         case .pdf:
             let shown = await waitUntil { self.pdfView(in: host)?.document?.pageCount == 1 }
