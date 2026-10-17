@@ -334,7 +334,7 @@ final class FlowProseCompletionServiceTests: XCTestCase {
         let result = await service.completion(for: request)
 
         XCTAssertEqual(result, .timedOut)
-        XCTAssertLessThan(start.duration(to: .now), .milliseconds(100))
+        XCTAssertLessThan(start.duration(to: .now), .milliseconds(500))
     }
 
     func testTimedOutClientKeepsCopiedServiceAdmissionUntilUnderlyingCallEnds() async throws {
@@ -383,7 +383,7 @@ final class FlowProseCompletionServiceTests: XCTestCase {
         let result = await task.value
 
         XCTAssertEqual(result, .failed)
-        XCTAssertLessThan(start.duration(to: .now), .milliseconds(100))
+        XCTAssertLessThan(start.duration(to: .now), .milliseconds(500))
     }
 
     func testSanitizerProducesInsertionReadySpacingWithoutBreakingNoSpaceScripts() {
@@ -490,9 +490,10 @@ private actor FlowProseCompletionBlockingClient {
     }
 }
 
+/// Work that ignores cancellation and takes far longer than any test waits for it.
 private func flowProseCompletionNonCooperativeDelay() async {
     await withCheckedContinuation { continuation in
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) {
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
             continuation.resume()
         }
     }
