@@ -683,7 +683,7 @@ enum MarkdownImageAssetService {
         }
     }
 
-    fileprivate static func escapeMarkdownLabel(_ value: String) -> String {
+    static func escapeMarkdownLabel(_ value: String) -> String {
         var escaped = value.replacingOccurrences(of: "\\", with: "\\\\")
         for character in ["[", "]", "(", ")"] {
             escaped = escaped.replacingOccurrences(of: character, with: "\\\(character)")
@@ -691,7 +691,7 @@ enum MarkdownImageAssetService {
         return escaped
     }
 
-    fileprivate static func percentEncodedMarkdownPath(_ path: String) -> String {
+    static func percentEncodedMarkdownPath(_ path: String) -> String {
         let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
         return path.precomposedStringWithCanonicalMapping
             .split(separator: "/", omittingEmptySubsequences: false)

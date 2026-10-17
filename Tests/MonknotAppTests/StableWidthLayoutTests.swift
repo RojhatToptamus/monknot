@@ -29,20 +29,6 @@ final class StableWidthLayoutTests: XCTestCase {
         XCTAssertEqual(Set(widths).count, 1, "Turning pages must not resize the page indicator: \(widths)")
     }
 
-    func testWordCountSlotCoversLargeDocuments() {
-        func width(_ value: String) -> CGFloat {
-            let view = Text(verbatim: value)
-                .monknotReservingWidth(of: MarkdownSourceToolbar.wordCountWidthTemplate)
-                .font(.system(size: 12, weight: .regular))
-                .monospacedDigit()
-                .fixedSize()
-            return NSHostingView(rootView: view).fittingSize.width
-        }
-
-        XCTAssertEqual(width(""), width(MarkdownSourceToolbar.wordCountLabel(1)))
-        XCTAssertEqual(width(""), width(MarkdownSourceToolbar.wordCountLabel(123_456)))
-    }
-
     func testSearchLocationColumnFitsTheWidestLabelOfEachKind() {
         func result(_ kind: WorkspaceSearchResultKind, line: Int) -> WorkspaceSearchResult {
             WorkspaceSearchResult(

@@ -699,7 +699,7 @@ struct SidebarView: View {
             operation: .createFile(directoryURL),
             title: "New File",
             message: "Create a file in \(directoryName).",
-            placeholder: "example.txt",
+            placeholder: "Untitled.md",
             confirmTitle: "Create",
             name: store.suggestedNewFileName(in: directoryURL)
         )

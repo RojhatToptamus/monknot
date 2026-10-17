@@ -47,10 +47,13 @@ short completions.
 - **Markdown:** Edit with syntax highlighting, formatting controls, tabs, Quick
   Open, heading navigation, daily notes, and wikilinks.
 - **Editing in Preview:** Edit Markdown as rendered text in the full-width
-  preview. Selected text gets a formatting bar, `/` inserts headings, lists,
-  to-dos, quotes, code blocks, tables and dividers, `[[` lists workspace notes
-  to link, and tables are edited cell by cell. Each edit is written to the
-  file as Markdown text, so syntax Monknot does not render is kept as written.
+  preview, with Notion's block menu: `/` at the start of a line inserts text,
+  headings, lists, to-dos, toggles, callouts, quotes, tables, dividers, code,
+  images, video, audio, files, a new page or a table of contents. Drag a
+  block's handle to reorder it, or click it to turn the block into another
+  kind, duplicate or delete it. Selected text gets a floating format bar, and
+  `[[` lists workspace notes to link. Each edit is written to the file as
+  Markdown text, so syntax Monknot does not render is kept as written.
 - **Preview and export:** Render Markdown beside the source with synchronized
   scrolling. Export Markdown to PDF with page and layout controls.
 - **Search and replace:** Search text files and selectable PDF text across a

@@ -187,12 +187,12 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
 
     func testSuggestedNamesSkipExistingItems() async throws {
         let root = try makeRoot()
-        try write("", to: root.appendingPathComponent("Untitled.txt"))
+        try write("", to: root.appendingPathComponent("Untitled.md"))
         try makeFolder(root.appendingPathComponent("New Folder"))
         try makeFolder(root.appendingPathComponent("New Folder 2"))
         let store = try await openStore(root)
 
-        XCTAssertEqual(store.suggestedNewFileName(), "Untitled 2.txt")
+        XCTAssertEqual(store.suggestedNewFileName(), "Untitled 2.md")
         XCTAssertEqual(store.suggestedNewFolderName(), "New Folder 3")
     }
 
@@ -220,7 +220,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         let store = try await openStore(root)
         let before = names(in: root)
 
-        for name in ["", " ", ".", "..", "a/b.md", "x:y.md", "Note.md", "note.md", "Folder", "folder"] {
+        for name in ["", " ", ".", "..", "a/b.md", "x:y.md", "Note.md", "note.md", "Note", "note"] {
             store.errorMessage = nil
             store.createFile(named: name)
             await idle(store)
@@ -238,7 +238,7 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
         let store = try await openStore(root)
         let keep = try await select(store, "Keep.md")
 
-        for name in [".env", "archive.xyz", "Buildfile"] {
+        for name in [".env", "archive.xyz"] {
             store.errorMessage = nil
             store.createFile(named: name)
             await idle(store)
@@ -247,6 +247,24 @@ final class WorkspaceFileOperationsTests: WorkspaceStoreTestCase {
             XCTAssertEqual(store.selectedDocumentID, keep.id)
             XCTAssertEqual(store.documentText, "# Keep\n")
         }
+    }
+
+    /// New files are Markdown: a name typed without an extension gets `.md`; one with an extension
+    /// keeps it.
+    func testNewFileNamedWithoutAnExtensionIsMarkdown() async throws {
+        let root = try makeRoot()
+        try makeFolder(root.appendingPathComponent("Meeting notes"))
+        let store = try await openStore(root)
+
+        XCTAssertEqual(WorkspaceStore.newFileName(" Meeting notes "), "Meeting notes.md")
+        XCTAssertEqual(WorkspaceStore.newFileName("Notes.txt"), "Notes.txt")
+        XCTAssertEqual(WorkspaceStore.newFileName(".env"), ".env")
+        store.createFile(named: "Meeting notes")
+        await idle(store)
+        XCTAssertNil(store.errorMessage)
+        XCTAssertTrue(exists(root.appendingPathComponent("Meeting notes.md")))
+        XCTAssertEqual(store.selectedDocument?.url.lastPathComponent, "Meeting notes.md")
+        XCTAssertEqual(store.selectedDocument?.kind, .markdown)
     }
 
     func testNameValidationMatchesCreateAndRename() async throws {

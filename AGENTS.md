@@ -200,9 +200,23 @@ Shorter and more specific is preferable to polished but meaningless copy.
 - `MarkdownVisualEditingSession` is owned by `EditorPaneView`, so Preview's undo history survives a
   switch to Source and back; steps verify the text they change. `MarkdownEditorWebView` hands the Edit
   menu that undo manager and drops WebKit's own undo registrations.
-- Menus, the format bar, link card and editor, table bar and code language menu live in the page
-  (`editor.js` `UI`), styled by `editor.css` from theme tokens; SF Symbols come from
-  `MarkdownEditorSymbolAssets` as mask images. design.md §10.10 is the interaction spec.
+- Menus (slash, block menu with its Turn Into submenu, callout kind, wikilinks, table, code language),
+  the floating format bar, link card and editor, and table bar live in the page (`editor.js` `UI`);
+  the block handles and drag-and-drop are `editor.js` `Handles`. All are styled by `editor.css` from
+  theme tokens; SF Symbols come from `MarkdownEditorSymbolAssets` as mask images, and
+  `MarkdownPresentationTokenTests` checks every glyph the page asks for is drawn. There is no docked
+  Markdown toolbar in any view mode; the word count is `MarkdownWordCountLabel` in the editor's corner.
+  design.md §10.10 is the interaction spec.
+- Notion's blocks map to Markdown the renderer parses: toggles are `<details>`/`<summary>` (an unclosed
+  one runs to the end, which keeps re-parsing local), callouts are `> [!KIND]` quotes, `[TOC]` lists the
+  top-level h1–h3. A toggle's open state on the page is view state carried across re-parses
+  (`carryToggleState`), never written to the file. Units carry `scope` (the toggle whose body holds
+  them); joins never cross it, so toggle markup cannot be broken by Delete or Backspace.
+- Whole-block operations (`planMoveBlock`, `planDuplicateBlock`, `planDeleteBlock`, `planWrapToggle`,
+  `planWrapCallout`, `planUnwrapQuote`) move source lines: a top-level block, or a list item with its
+  nested items. The page messages `requestFile` (image, video, audio, file), `createPage`,
+  `showEmoji` and `copyText` reach `MarkdownPreviewView.Coordinator`; `WorkspaceStore.createPage`
+  writes the Page block's file beside the note.
 - Typing `[[` posts `wikilinkQuery` messages; the coordinator ranks `wikilinkDocuments` with
   `WikilinkAutocompleteService` off the main actor and answers `MonknotEditor.wikilinkSuggestions`
   with the query's serial, so Preview lists the same notes, in the same order, as Source completes.
@@ -253,6 +267,7 @@ App-layer code should stay in `Sources/Monknot` when it uses SwiftUI state, AppK
 ## Important App-Layer Owners
 
 - `WorkspaceStore`: central workspace state machine. It uses generation counters and cancellable tasks to prevent stale async results from overwriting newer state. Preserve this pattern when adding async workspace, document, save, or refresh behavior.
+- New files are Markdown: the sidebar's New File suggests `Untitled.md`, and `WorkspaceStore.newFileName` gives a name typed without an extension `.md` (a name with an extension keeps it).
 - `WorkspaceLibraryStore`: app-wide observable owner for saved workspace order, labels, bookmark resolution, and reversible removal. Saved workspaces are folder references, not on-disk manifests.
 - Tab state is owned by `ContentView`, but `WorkspaceStore` remains the source of truth for the active document text, dirty buffers, save state, external refresh, and file operations. Do not create per-tab editor state or per-tab preview instances.
 - `WorkspaceStore` publishes document-ID remap events for rename/cut-paste operations so inactive tabs can survive path changes; each event also names the moved item, so the sidebar's open folders, Recents and a pending Copy or Cut follow it.
@@ -412,7 +427,7 @@ Current XCTest coverage focuses on `MonknotCore`:
 - `WorkspaceTabStateTests`: open, order, pin, close, remap, prune, and closed-tab history behavior.
 - `UnsavedChangesIntegrityTests` (app target): hosted editor and PDF viewer sweeps showing that opening, viewing, switching, saving, renaming and reviewing documents never marks unedited files as unsaved, and that a file only counts as changed on disk when its contents changed.
 - `MarkdownRendererJavaScriptTests`: renderer output in JavaScriptCore.
-- `MarkdownVisualEditorTests` (app target): Preview editing in real WebKit: typing, Return and Delete, Markdown shortcuts, Edit-menu undo and redo (also across a switch to Source), formatting, tasks, links, paste and copy, composition, tables, external changes, 50 KB and 1 MB keystroke timing, and theme and narrow-window snapshots (written to `MONKNOT_EDITOR_SNAPSHOT_DIR` when set).
+- `MarkdownVisualEditorTests` (app target): Preview editing in real WebKit: typing, Return and Delete, Markdown shortcuts, Edit-menu undo and redo (also across a switch to Source), formatting, tasks, links, paste and copy, composition, tables, external changes, the slash rule, toggles, callouts, the + handle, drag-and-drop, the block menu and its shortcuts, 50 KB and 1 MB keystroke timing, and theme and narrow-window snapshots of the page, menus and handles (written to `MONKNOT_EDITOR_SNAPSHOT_DIR` when set).
 - `DocumentViewerRoutingTests` (app target): generated fixtures of every listed file type (text, extensionless, uppercase, binary and oversized text, PDF, raster images, video and audio) are scanned and opened in a hosted `EditorPaneView`; also image fit, media playback lifecycle, Open With and Recents.
 
 Manual Core smoke verification used in this repo when SwiftPM is blocked:

@@ -636,9 +636,35 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    /// A new Markdown page for Preview's Page block: `name.md` beside the document at
+    /// `documentURL` (`name 2.md` when that exists), titled with the name. The file watcher lists
+    /// it; the open document and its unsaved text are untouched. Returns the page's URL.
+    func createPage(named proposedName: String, besideDocumentAt documentURL: URL) async throws -> URL {
+        guard let workspaceURL else {
+            throw WorkspaceDocumentOperationError.invalidCreation("Open a workspace first.")
+        }
+        let directory = documentURL.deletingLastPathComponent().standardizedFileURL
+        guard WorkspaceDocumentSupport.isURL(directory, containedIn: workspaceURL) else {
+            throw WorkspaceDocumentOperationError.invalidCreation("Create pages inside the current workspace.")
+        }
+        var title = try Self.validatedItemName(proposedName)
+        if (title as NSString).pathExtension.lowercased() == "md" {
+            title = (title as NSString).deletingPathExtension
+        }
+        let fileName = Self.suggestedChildName(in: directory, baseName: title, pathExtension: "md")
+        try Self.validateLength(of: fileName)
+        try Self.validateVisibility(of: fileName, isDirectory: false)
+        let fileURL = directory.appendingPathComponent(fileName)
+        let text = "# \(title)\n\n"
+        try await Task.detached(priority: .userInitiated) {
+            try Data(text.utf8).write(to: fileURL, options: .withoutOverwriting)
+        }.value
+        return fileURL
+    }
+
     func suggestedNewFileName(in directoryURL: URL? = nil) -> String {
         let targetDirectory = directoryURL ?? workspaceURL
-        return Self.suggestedChildName(in: targetDirectory, baseName: "Untitled", pathExtension: "txt")
+        return Self.suggestedChildName(in: targetDirectory, baseName: "Untitled", pathExtension: "md")
     }
 
     func suggestedNewFolderName(in directoryURL: URL? = nil) -> String {
@@ -676,7 +702,18 @@ final class WorkspaceStore: ObservableObject {
         guard WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: workspaceURL) else {
             throw WorkspaceDocumentOperationError.invalidCreation("Create items inside the current workspace.")
         }
-        return try Self.childURL(in: targetDirectory, proposedName: proposedName, isDirectory: isDirectory)
+        let name = isDirectory ? proposedName : Self.newFileName(proposedName)
+        return try Self.childURL(in: targetDirectory, proposedName: name, isDirectory: isDirectory)
+    }
+
+    /// New files are Markdown: a name typed without an extension gets `.md`. A name with an
+    /// extension is kept, and names refused anyway (empty, dotfiles, paths) pass through unchanged.
+    nonisolated static func newFileName(_ proposedName: String) -> String {
+        let name = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !name.hasPrefix("."), !name.contains("/"), !name.contains(":"),
+              (name as NSString).pathExtension.isEmpty
+        else { return proposedName }
+        return name + ".md"
     }
 
     func createFile(named proposedName: String, in directoryURL: URL? = nil) {

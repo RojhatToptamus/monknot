@@ -1,6 +1,7 @@
 import AppKit
 import MonknotCore
 import SwiftUI
+import UniformTypeIdentifiers
 import WebKit
 
 // Preview edits Markdown in place. The page turns every edit into one text patch on the Markdown
@@ -327,6 +328,57 @@ struct MarkdownVisualEditingConfiguration {
     let onFileDropRequest: ((MarkdownFileDropRequest) -> Void)?
     /// The notes `[[` offers, ranked by `WikilinkAutocompleteService` as in Source.
     let wikilinkDocuments: [WorkspaceDocument]
+    /// Creates the Page block's Markdown file from its name and returns its URL.
+    var createPage: ((String) async throws -> URL)? = nil
+}
+
+/// What the Image, Video, Audio and File blocks ask the user to pick.
+enum MarkdownInsertedFileKind: String {
+    case image
+    case video
+    case audio
+    case file
+
+    var contentTypes: [UTType] {
+        switch self {
+        case .image: return [.image]
+        case .video: return [.movie]
+        case .audio: return [.audio]
+        case .file: return []
+        }
+    }
+
+    var panelMessage: String {
+        switch self {
+        case .image: return "Choose an image to insert"
+        case .video: return "Choose a video to insert"
+        case .audio: return "Choose an audio file to insert"
+        case .file: return "Choose a file to link"
+        }
+    }
+
+    var undoLabel: String {
+        switch self {
+        case .image: return "Insert Image"
+        case .video: return "Insert Video"
+        case .audio: return "Insert Audio"
+        case .file: return "Insert File"
+        }
+    }
+
+    /// A dropped media file arrives as a plain link; video and audio become `![…](…)`, which the
+    /// preview renders as a player.
+    func markdown(fromDropMarkdown markdown: String) -> String {
+        switch self {
+        case .video, .audio:
+            return markdown
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .map { $0.hasPrefix("[") ? "!" + $0 : String($0) }
+                .joined(separator: "\n")
+        case .image, .file:
+            return markdown
+        }
+    }
 }
 
 /// The Preview web view. With a visual editing session it hands the Edit menu that session's undo
@@ -342,17 +394,24 @@ final class MarkdownEditorWebView: WKWebView {
 /// SF Symbols for the page's menus and toolbars, drawn once as alpha masks the page tints with the
 /// theme's ink. Sizes follow design.md §8: 15 beside a label, 17 alone in a button, 11 for a check.
 enum MarkdownEditorSymbolAssets {
+    /// Glyphs beside a label in the slash, block, Turn Into, callout and table menus (15 nominal).
     private static let menuSymbols = [
-        "text.alignleft", "list.bullet", "list.number", "checklist", "text.quote",
-        "chevron.left.forwardslash.chevron.right", "tablecells", "minus", "photo", "link",
-        "calendar", "arrow.up.to.line", "arrow.down.to.line", "arrow.left.to.line",
-        "arrow.right.to.line", "trash", "magnifyingglass", "doc.text"
+        "textformat", "list.bullet", "list.number", "checklist", "arrowtriangle.right", "doc",
+        "text.bubble", "text.quote", "tablecells", "minus", "arrow.up.right.square", "photo",
+        "play.rectangle", "speaker.wave.2", "chevron.left.forwardslash.chevron.right", "paperclip",
+        "bookmark", "list.bullet.rectangle", "calendar", "face.smiling", "info.circle", "lightbulb",
+        "exclamationmark.bubble", "exclamationmark.triangle", "exclamationmark.octagon",
+        "arrow.triangle.2.circlepath", "plus.square.on.square", "doc.on.doc", "arrow.up", "arrow.down",
+        "arrow.up.to.line", "arrow.down.to.line", "arrow.left.to.line", "arrow.right.to.line", "trash",
+        "magnifyingglass", "doc.text", "link", "plus"
     ]
+    /// Glyphs alone in a format bar or link card button (17 nominal).
     private static let toolSymbols = [
         "bold", "italic", "strikethrough", "curlybraces", "link", "arrow.up.right.square",
         "pencil", "trash", "link.badge.minus"
     ]
-    private static let smallSymbols = ["checkmark"]
+    /// A menu row's check and submenu chevron, a dropdown's chevron (11 nominal).
+    private static let smallSymbols = ["checkmark", "chevron.right", "chevron.down"]
 
     @MainActor private static var cached: [String: [String: Any]]?
 

@@ -230,7 +230,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
     // MARK: - Wikilinks
 
     private static let wikilinkNotes = ["Prototype.md", "Project Plan.md", "Improve process.md", "Archive/Meeting.md"]
-    private static let wikilinkMenuRows = "[...document.querySelectorAll('.mk-menu.mk-visible[aria-label=\"Link to note\"] .mk-row-label')].map(e => e.textContent)"
+    private static let wikilinkMenuRows = "[...document.querySelectorAll('.mk-menu.mk-visible[aria-label=\"Link to page\"] .mk-row-label')].map(e => e.textContent)"
 
     func testTypingDoubleBracketOpensTheNoteMenu() async throws {
         let fixture = try await makeFixture(markdown: "See\n", notes: Self.wikilinkNotes)
@@ -427,11 +427,246 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
 
     // MARK: - Snapshots for design review
 
+    // MARK: - Spaces
+
+    /// A space is a character like any other: typed at the end of a line (where WebKit draws a
+    /// collapsed space at the caret), between words, twice in a row, and in every kind of block,
+    /// with a pause between keys as a person types, the space must land in the file where it was
+    /// typed and the next word must follow it.
+    func testSpacesTypeWhereTheyAreTypedInEveryBlock() async throws {
+        let cases: [(name: String, source: String, caretAfter: String, typed: String, expected: String)] = [
+            ("paragraph end", "Hello\n", "Hello", " world", "Hello world\n"),
+            ("two words", "Hello\n", "Hello", " big world", "Hello big world\n"),
+            ("double space", "Hello\n", "Hello", "  x", "Hello  x\n"),
+            ("mid word", "Helloworld\n", "Hello", " ", "Hello world\n"),
+            // Typing at the end of bold continues it, spaces included (design.md §10.10).
+            ("after bold", "**Bold**\n", "Bold", " text", "**Bold text**\n"),
+            ("heading", "# Title\n", "Title", " here", "# Title here\n"),
+            ("list item", "- item\n", "item", " two", "- item two\n"),
+            ("task item", "- [ ] task\n", "task", " done", "- [ ] task done\n"),
+            ("numbered item", "1. one\n", "one", " two", "1. one two\n"),
+            ("quote", "> quote\n", "quote", " more", "> quote more\n"),
+            ("callout", "> [!NOTE]\n> note\n", "note", " more", "> [!NOTE]\n> note more\n"),
+            ("table cell", "| a | b |\n| --- | --- |\n| cell | x |\n", "cell", " two", "| a | b |\n| --- | --- |\n| cell two | x |\n"),
+            ("toggle title", "<details open>\n<summary>Title</summary>\n\nBody\n\n</details>\n", "Title", " two", "<details open>\n<summary>Title two</summary>\n\nBody\n\n</details>\n"),
+            ("toggle body", "<details open>\n<summary>Title</summary>\n\nBody\n\n</details>\n", "Body", " text", "<details open>\n<summary>Title</summary>\n\nBody text\n\n</details>\n"),
+            ("code block", "```\nlet x\n```\n", "let x", " = 1", "```\nlet x = 1\n```\n"),
+            ("before link", "see [link](u)\n", "see", " the", "see the [link](u)\n"),
+        ]
+        for testCase in cases {
+            let fixture = try await makeFixture(markdown: testCase.source)
+            let caret = (testCase.source as NSString).range(of: testCase.caretAfter).location + (testCase.caretAfter as NSString).length
+            try await fixture.setSelection(caret)
+            for character in testCase.typed {
+                fixture.type(String(character))
+                try await Task.sleep(nanoseconds: 120_000_000)
+            }
+            let typed = await waitUntil(timeout: 2) { fixture.store.documentText == testCase.expected }
+            XCTAssertTrue(typed, "\(testCase.name): \(fixture.store.documentText.debugDescription)")
+            fixture.close()
+        }
+    }
+
+    /// A space typed at the end of a line is drawn at once: the caret moves past it before the next
+    /// word is typed, in a paragraph, a heading, a list item, a table cell and a toggle title.
+    func testASpaceAtTheEndOfALineMovesTheCaretRightAway() async throws {
+        let source = "Hello\n\n# Title\n\n- item\n\n| a | b |\n| --- | --- |\n| cell | x |\n\n<details open>\n<summary>Toggle</summary>\n\nBody\n\n</details>\n"
+        let fixture = try await makeFixture(markdown: source)
+        let caretLeft = "(() => { const r = window.getSelection().getRangeAt(0).cloneRange(); r.collapse(true); const box = r.getClientRects()[0] || r.getBoundingClientRect(); return box.left; })()"
+        for word in ["Hello", "Title", "item", "cell", "Toggle"] {
+            let text = fixture.store.documentText as NSString
+            let caret = text.range(of: word).location + (word as NSString).length
+            try await fixture.setSelection(caret)
+            let before = try await fixture.evaluate(caretLeft) as? Double ?? 0
+            fixture.type(" ")
+            try await Task.sleep(nanoseconds: 150_000_000)
+            let after = try await fixture.evaluate(caretLeft) as? Double ?? 0
+            XCTAssertGreaterThan(after - before, 2, "\(word): the caret moves past the space it just typed")
+            fixture.type("x")
+            let typed = await waitUntil(timeout: 2) { fixture.store.documentText.contains("\(word) x") }
+            XCTAssertTrue(typed, "\(word): \(fixture.store.documentText.debugDescription)")
+        }
+    }
+
+    /// A new line typed as words with spaces between them, as a person writes a sentence.
+    func testTypingASentenceOnANewLineKeepsEverySpace() async throws {
+        let fixture = try await makeFixture(markdown: "Intro\n")
+        try await fixture.setSelection(5)
+        fixture.press(.return)
+        for character in "The quick brown fox " {
+            fixture.type(String(character))
+            try await Task.sleep(nanoseconds: 60_000_000)
+        }
+        fixture.type("j")
+        let typed = await waitUntil(timeout: 2) { fixture.store.documentText == "Intro\n\nThe quick brown fox j\n" }
+        XCTAssertTrue(typed, fixture.store.documentText.debugDescription)
+        let visible = try await fixture.evaluate("[...document.querySelectorAll('#content > p')].pop().textContent") as? String
+        XCTAssertEqual(visible, "The quick brown fox j")
+    }
+
+    // MARK: - Blocks, menus and handles
+
+    func testSlashOpensTheBlockMenuOnlyAtTheStartOfABlock() async throws {
+        let fixture = try await makeFixture(markdown: "Hello world\n\n| A | B |\n| --- | --- |\n| x | y |\n")
+        try await fixture.setSelection(11)
+        fixture.type("/")
+        try await Task.sleep(nanoseconds: 200_000_000)
+        let midSentence = try await fixture.evaluate(Self.slashMenuShown) as? Bool
+        XCTAssertEqual(midSentence, false, "A / typed after text is just a slash")
+        fixture.press(.backspace)
+
+        let cell = (fixture.store.documentText as NSString).range(of: "x").location + 1
+        try await fixture.setSelection(cell)
+        fixture.type("/")
+        try await Task.sleep(nanoseconds: 200_000_000)
+        let inCell = try await fixture.evaluate(Self.slashMenuShown) as? Bool
+        XCTAssertEqual(inCell, false, "A table cell takes a / as text")
+        fixture.press(.backspace)
+
+        try await fixture.setSelection(11)
+        fixture.press(.return)
+        fixture.type("/")
+        let opened = await waitUntil { ((try? await fixture.evaluate(Self.slashMenuShown)) as? Bool) == true }
+        XCTAssertTrue(opened, "A / on an empty line opens the block menu")
+        let groups = try await fixture.evaluate("[...document.querySelectorAll('.mk-menu.mk-visible .mk-menu-group')].map(e => e.textContent).join(',')") as? String
+        XCTAssertEqual(groups, "Basic blocks,Media,Advanced blocks,Inline", "Notion's sections, in sentence case")
+    }
+
+    func testToggleListTakesItsTitleAndBodyFromTheKeyboard() async throws {
+        let fixture = try await makeFixture(markdown: "Intro\n")
+        try await fixture.setSelection(5)
+        fixture.press(.return)
+        fixture.type("/togg")
+        fixture.press(.return)
+        fixture.type("Details")
+        fixture.press(.return)
+        fixture.type("Hidden")
+        let expected = "Intro\n\n<details>\n<summary>Details</summary>\n\nHidden\n\n</details>\n"
+        let built = await waitUntil { fixture.store.documentText == expected }
+        XCTAssertTrue(built, fixture.store.documentText)
+
+        _ = try await fixture.evaluate("document.querySelector('.mk-toggle-arrow').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); true")
+        let closed = try await fixture.evaluate("document.querySelector('.mk-toggle').dataset.open") as? String
+        XCTAssertEqual(closed, "false", "The arrow closes the toggle on the page")
+        XCTAssertEqual(fixture.store.documentText, expected, "Opening and closing never edits the file")
+        let caret = try await fixture.evaluate("window.MonknotEditor.selection().head") as? Int
+        XCTAssertEqual(caret, (expected as NSString).range(of: "Details").location + 7, "A caret in the hidden body moves to the title")
+    }
+
+    func testCalloutFromTheSlashMenuChangesKindFromItsTitle() async throws {
+        let fixture = try await makeFixture(markdown: "Intro\n")
+        try await fixture.setSelection(5)
+        fixture.press(.return)
+        fixture.type("/callo")
+        fixture.press(.return)
+        fixture.type("Back up first")
+        let made = await waitUntil { fixture.store.documentText == "Intro\n\n> [!NOTE]\n> Back up first\n" }
+        XCTAssertTrue(made, fixture.store.documentText)
+
+        _ = try await fixture.evaluate("document.querySelector('.callout-title').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); true")
+        let rows = try await fixture.evaluate("[...document.querySelectorAll('.mk-menu.mk-visible .mk-row-label')].map(e => e.textContent).join(',')") as? String
+        XCTAssertEqual(rows, "Note,Tip,Important,Warning,Caution")
+        _ = try await fixture.evaluate("[...document.querySelectorAll('.mk-menu.mk-visible .mk-menu-row')].find(r => r.textContent.includes('Warning')).click(); true")
+        let changed = await waitUntil { fixture.store.documentText == "Intro\n\n> [!WARNING]\n> Back up first\n" }
+        XCTAssertTrue(changed, fixture.store.documentText)
+    }
+
+    func testPlusAddsABlockBelowWithTheSlashMenuOpenAndEscapeLeavesAnEmptyLine() async throws {
+        let fixture = try await makeFixture(markdown: "First\n\nSecond\n")
+        try await fixture.hoverBlock(containing: "First")
+        _ = try await fixture.evaluate("document.querySelector('.mk-handle-add').click(); true")
+        let opened = await waitUntil { ((try? await fixture.evaluate(Self.slashMenuShown)) as? Bool) == true }
+        XCTAssertTrue(opened, "+ opens the block menu on a new line")
+        XCTAssertEqual(fixture.store.documentText, "First\n\n/\n\nSecond\n")
+        fixture.press(.escape)
+        let cleared = await waitUntil { fixture.store.documentText == "First\n\n\nSecond\n" }
+        XCTAssertTrue(cleared, "Esc takes the / back out: \(fixture.store.documentText.debugDescription)")
+    }
+
+    func testDraggingAGripMovesTheBlockAsOneUndoableStep() async throws {
+        let source = "Alpha\n\nBeta\n\nGamma\n"
+        let fixture = try await makeFixture(markdown: source)
+        try await fixture.hoverBlock(containing: "Alpha")
+        _ = try await fixture.evaluate("""
+        (() => {
+          const grip = document.querySelector('.mk-handle-drag').getBoundingClientRect();
+          const target = [...document.querySelectorAll('#content > p')].find(p => p.textContent === 'Gamma').getBoundingClientRect();
+          const at = (type, x, y, element) => (element || document).dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }));
+          at('mousedown', grip.left + 4, grip.top + 4, document.querySelector('.mk-handle-drag'));
+          at('mousemove', grip.left + 20, grip.top + 30);
+          at('mousemove', grip.left + 40, target.bottom + 6);
+          return Boolean(document.querySelector('.mk-drop-line.mk-visible'));
+        })()
+        """)
+        let lineShown = try await fixture.evaluate("Boolean(document.querySelector('.mk-drop-line.mk-visible'))") as? Bool
+        XCTAssertEqual(lineShown, true, "A line shows where the block will land")
+        _ = try await fixture.evaluate("document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0 })); true")
+        let moved = await waitUntil { fixture.store.documentText == "Beta\n\nGamma\n\nAlpha\n" }
+        XCTAssertTrue(moved, fixture.store.documentText)
+
+        let undoManager = try XCTUnwrap(fixture.webView.undoManager)
+        XCTAssertEqual(undoManager.undoActionName, "Move")
+        undoManager.undo()
+        let restored = await waitUntil { fixture.store.documentText == source }
+        XCTAssertTrue(restored, fixture.store.documentText)
+    }
+
+    func testBlockMenuAndShortcutsDuplicateMoveTurnIntoAndDelete() async throws {
+        let fixture = try await makeFixture(markdown: "One\n\nTwo\n")
+        try await fixture.setSelection(1)
+        fixture.press(.character("d"), modifiers: .command)
+        let duplicated = await waitUntil { fixture.store.documentText == "One\n\nOne\n\nTwo\n" }
+        XCTAssertTrue(duplicated, fixture.store.documentText)
+
+        fixture.press(.down, modifiers: [.command, .shift])
+        let movedDown = await waitUntil { fixture.store.documentText == "One\n\nTwo\n\nOne\n" }
+        XCTAssertTrue(movedDown, fixture.store.documentText)
+
+        try await fixture.hoverBlock(containing: "Two")
+        _ = try await fixture.evaluate("""
+        (() => {
+          const grip = document.querySelector('.mk-handle-drag');
+          const box = grip.getBoundingClientRect();
+          grip.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: box.left + 4, clientY: box.top + 4, button: 0 }));
+          document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: box.left + 4, clientY: box.top + 4, button: 0 }));
+          return true;
+        })()
+        """)
+        let labels = try await fixture.evaluate("[...document.querySelectorAll('.mk-menu.mk-visible .mk-row-label')].map(e => e.textContent).join(',')") as? String
+        XCTAssertEqual(labels, "Turn into,Duplicate,Copy,Move up,Move down,Delete")
+        let picked = try await fixture.evaluate("document.querySelector('.mk-block-picked')?.textContent ?? ''") as? String
+        XCTAssertEqual(picked, "Two", "The block the menu acts on stays tinted")
+
+        _ = try await fixture.evaluate("[...document.querySelectorAll('.mk-menu.mk-visible .mk-menu-row')].find(r => r.textContent.includes('Turn into')).click(); true")
+        let submenu = await waitUntil { ((try? await fixture.evaluate("[...document.querySelectorAll('.mk-menu.mk-visible')].length")) as? Int) == 2 }
+        XCTAssertTrue(submenu, "Turn into opens beside the menu")
+        _ = try await fixture.evaluate("[...document.querySelectorAll('.mk-menu.mk-visible .mk-menu-row')].find(r => r.textContent.trim().startsWith('H1')).click(); true")
+        let heading = await waitUntil { fixture.store.documentText == "One\n\n# Two\n\nOne\n" }
+        XCTAssertTrue(heading, fixture.store.documentText)
+
+        try await fixture.hoverBlock(containing: "Two")
+        _ = try await fixture.evaluate("""
+        (() => {
+          const grip = document.querySelector('.mk-handle-drag');
+          grip.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }));
+          document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0 }));
+          [...document.querySelectorAll('.mk-menu.mk-visible .mk-menu-row')].find(r => r.textContent.includes('Delete')).click();
+          return true;
+        })()
+        """)
+        let deleted = await waitUntil { fixture.store.documentText == "One\n\nOne\n" }
+        XCTAssertTrue(deleted, fixture.store.documentText)
+    }
+
+    private static let slashMenuShown = "Boolean(document.querySelector('.mk-menu.mk-visible[aria-label=\"Insert block\"]'))"
+
     /// Writes snapshots of the editor in both themes and at a narrow width when
     /// `MONKNOT_EDITOR_SNAPSHOT_DIR` is set; otherwise only checks that the page renders.
     func testSnapshotsInBothThemesAndANarrowWindow() async throws {
         let markdown = """
         # Product brief
+
+        [TOC]
 
         Monknot keeps **notes** as plain *Markdown* files, with `inline code`, [links](https://monki.work) and
         a [[Wiki Page|wiki link]].
@@ -439,10 +674,24 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         ## Tasks
 
         - [ ] Draft the outline
-        - [x] Collect feedback
+        - [x] Collect feedback from the design review and fold it into the spec before Friday
+          - [ ] Nested follow-up
+
+        - Bullet
+          - Nested bullet
 
         1. First step
         2. Second step
+
+        > [!TIP]
+        > Callouts keep **any** Markdown.
+
+        <details open>
+        <summary>A toggle</summary>
+
+        Its body, shown while open.
+
+        </details>
 
         > Quotes keep their ~~struck~~ text.
 
@@ -463,7 +712,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         for (name, theme, width) in [("light", AppTheme.defaultLight, 900.0), ("dark", AppTheme.defaultDark, 900.0), ("narrow", AppTheme.defaultLight, 420.0)] {
             let fixture = try await makeFixture(markdown: markdown, theme: theme, width: width, notes: Self.wikilinkNotes)
             // A test window behind other apps pauses WebKit's transitions; show the end state.
-            _ = try await fixture.evaluate("(() => { const s = document.createElement('style'); s.textContent = '.mk-floating { transition: none !important; }'; document.head.appendChild(s); return true; })()")
+            _ = try await fixture.evaluate("(() => { const s = document.createElement('style'); s.textContent = '.mk-floating, .mk-handles, .mk-tooltip { transition: none !important; }'; document.head.appendChild(s); return true; })()")
             let height = try await fixture.evaluate("document.getElementById('content').getBoundingClientRect().height") as? Double
             XCTAssertGreaterThan(height ?? 0, 200, name)
             if let directory {
@@ -506,6 +755,26 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
             if let directory {
                 try await fixture.snapshot(to: directory.appendingPathComponent("editor-\(name)-wikilink-menu.png"))
             }
+            fixture.press(.escape)
+
+            try await fixture.hoverBlock(containing: "Text after the divider.")
+            if let directory {
+                try await fixture.snapshot(to: directory.appendingPathComponent("editor-\(name)-handles.png"))
+            }
+            _ = try await fixture.evaluate("""
+            (() => {
+              const grip = document.querySelector('.mk-handle-drag');
+              grip.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }));
+              document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0 }));
+              return true;
+            })()
+            """)
+            _ = try await fixture.evaluate("[...document.querySelectorAll('.mk-menu.mk-visible .mk-menu-row')].find(r => r.textContent.includes('Turn into'))?.click(); true")
+            try await Task.sleep(nanoseconds: 300_000_000)
+            if let directory {
+                try await fixture.snapshot(to: directory.appendingPathComponent("editor-\(name)-block-menu.png"))
+            }
+            fixture.press(.escape)
             fixture.press(.escape)
 
             if name != "narrow" {
@@ -643,6 +912,23 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
 
+        /// Moves the pointer over the block holding `text`, as a hover would, until its handles show.
+        func hoverBlock(containing text: String) async throws {
+            let literal = String(data: try JSONSerialization.data(withJSONObject: text, options: .fragmentsAllowed), encoding: .utf8)!
+            _ = try await evaluate("""
+            (() => {
+              const block = [...document.querySelectorAll('#content > *')].find(e => e.textContent.trim() === \(literal));
+              const box = block.getBoundingClientRect();
+              document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: box.left + 10, clientY: box.top + box.height / 2 }));
+              return true;
+            })()
+            """)
+            let shown = await test.waitUntil {
+                ((try? await self.evaluate("Boolean(document.querySelector('.mk-handles.mk-visible'))")) as? Bool) == true
+            }
+            XCTAssertTrue(shown, "Hovering \(text) shows its handles")
+        }
+
         /// The wikilink menu's rows once they satisfy `condition` (the app answers each query
         /// asynchronously), or whatever it shows when the wait runs out.
         func wikilinkRows(matching condition: @escaping ([String]) -> Bool) async -> [String] {
@@ -680,7 +966,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
                 case .escape: return 53
                 case .tab: return 48
                 case .down: return 125
-                case .character(let value): return value == "k" ? 40 : 0
+                case .character(let value): return value == "k" ? 40 : value == "d" ? 2 : 0
                 }
             }
         }

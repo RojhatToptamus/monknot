@@ -22,6 +22,17 @@
   const RE_LIST_LINE = /^(\s*)([-+*]|\d+[.)])\s+/;
   const RE_ITEM = /^(\s*)([-+*]|\d+[.)])(\s+)(\[[ xX]\]\s+)?(.*)$/;
   const RE_FOOTNOTE_DEF = /^\[\^([^\]]+)\]:\s*(.*)$/;
+  // Notion-style blocks that have a Markdown form: GitHub's alert callouts, HTML toggles and a
+  // `[TOC]` line, as GitHub, Typora and Obsidian write them.
+  const RE_CALLOUT = /^\[!(note|tip|important|warning|caution)\]\s*$/i;
+  const RE_DETAILS_OPEN = /^ {0,3}<details(\s+open)?\s*>\s*$/i;
+  const RE_DETAILS_CLOSE = /^ {0,3}<\/details>\s*$/i;
+  const RE_SUMMARY = /^(\s*<summary>)(.*?)<\/summary>\s*$/i;
+  const RE_TOC = /^ {0,3}\[toc\]\s*$/i;
+  const RE_FENCE_MARKER = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+  const RE_VIDEO = /\.(mp4|m4v|mov|webm)(?:[?#].*)?$/i;
+  const RE_AUDIO = /\.(mp3|m4a|aac|wav|aiff?|caf|flac|ogg|oga)(?:[?#].*)?$/i;
+  const CALLOUT_TITLES = { note: "Note", tip: "Tip", important: "Important", warning: "Warning", caution: "Caution" };
   const RE_REFERENCE_DEF = /^ {0,3}\[([^\]\r\n]+)\]:[ \t]*(<[^>\r\n]+>|[^\s\r\n]+)(?:[ \t]+(?:"([^"\r\n]*)"|'([^'\r\n]*)'|\(([^)\r\n]*)\)))?[ \t]*$/;
 
   // ---------------------------------------------------------------------
@@ -141,6 +152,8 @@
       || RE_QUOTE.test(text)
       || isListLine(text)
       || isTableStart(reader, index)
+      || RE_DETAILS_OPEN.test(text)
+      || RE_TOC.test(text)
       || (context.definitions && definitionOf(text) !== null);
   }
 
@@ -186,9 +199,26 @@
       };
     }
 
+    if (RE_TOC.test(text)) {
+      return {
+        block: { type: "toc", view: line, start: line.start, end: line.end, line: line.line },
+        next: index + 1
+      };
+    }
+
+    const details = RE_DETAILS_OPEN.exec(text);
+    if (details) {
+      const toggle = parseToggle(reader, index, context, Boolean(details[1]));
+      if (toggle) return toggle;
+    }
+
     const heading = RE_HEADING.exec(text);
     if (heading) {
       const contentStart = line.start + heading[1].length;
+      // While editing, spaces typed at the end of a heading are its text (Markdown drops them when it
+      // renders, so the caret would not move past a space just typed); a closing `#` run still ends it.
+      const rest = text.slice(heading[1].length);
+      const contentLength = context.editing && !/[ \t]#+[ \t]*$/.test(rest) && rest !== "#" ? rest.length : heading[3].length;
       return {
         block: {
           type: "heading",
@@ -196,7 +226,7 @@
           view: line,
           prefixEnd: contentStart,
           contentStart,
-          contentEnd: contentStart + heading[3].length,
+          contentEnd: contentStart + contentLength,
           start: line.start,
           end: line.end,
           line: line.line
@@ -218,7 +248,11 @@
       const lines = [];
       let cursor = index;
       while (reader.at(cursor) && (RE_QUOTE.test(reader.at(cursor).text) || isBlank(reader.at(cursor).text))) {
-        lines.push(reader.at(cursor));
+        const view = reader.at(cursor);
+        // A blank line before another `> [!KIND]` line ends this quote: two callouts stay two.
+        if (lines.length && isBlank(lines[lines.length - 1].text) && RE_QUOTE.test(view.text)
+          && RE_CALLOUT.test(view.text.slice(RE_QUOTE.exec(view.text)[0].length))) break;
+        lines.push(view);
         cursor += 1;
       }
       // Blank lines after the last quoted line separate the quote from what
@@ -239,11 +273,28 @@
           prefixStart: view.start
         };
       });
-      const childContext = { ...context, definitions: false, top: false };
-      const children = parseBlockList(arrayReader(inner), childContext, false).blocks;
+      // `> [!NOTE]` on the first line makes the quote a callout; the marker line is not text.
+      const calloutMatch = RE_CALLOUT.exec(inner[0].text);
+      let callout = null;
+      let childLines = inner;
+      if (calloutMatch) {
+        const prefix = lines[0].text.slice(0, lines[0].text.length - inner[0].text.length);
+        callout = { kind: calloutMatch[1].toLowerCase(), marker: inner[0], prefix };
+        childLines = inner.slice(1);
+      }
+      const childContext = {
+        ...context,
+        definitions: false,
+        top: false,
+        separators: false,
+        virtual: callout && childLines.length === 0
+          ? { anchor: inner[0].end, before: "\n" + (/[ \t]$/.test(callout.prefix) ? callout.prefix : callout.prefix + " "), after: "" }
+          : null
+      };
+      const children = parseBlockList(arrayReader(childLines), childContext, false).blocks;
       const last = lines[lines.length - 1];
       return {
-        block: { type: "quote", lines, inner, children, start: line.start, end: last.end, line: line.line },
+        block: { type: "quote", lines, inner, children, callout, start: line.start, end: last.end, line: line.line },
         next: cursor
       };
     }
@@ -264,6 +315,70 @@
     const last = lines[lines.length - 1];
     return {
       block: { type: "paragraph", lines, start: line.start, end: last.end, line: line.line },
+      next: cursor
+    };
+  }
+
+  /// `<details>`, a one-line `<summary>`, a body and `</details>`: a toggle. Anything else
+  /// is left to the other rules, so unusual HTML stays text.
+  function parseToggle(reader, index, context, isOpen) {
+    const open = reader.at(index);
+    const summaryView = reader.at(index + 1);
+    if (!summaryView) return null;
+    const summary = RE_SUMMARY.exec(summaryView.text);
+    if (!summary) return null;
+    let depth = 1;
+    let cursor = index + 2;
+    const body = [];
+    let close = null;
+    let fence = null;
+    while (reader.at(cursor)) {
+      const view = reader.at(cursor);
+      const marker = RE_FENCE_MARKER.exec(view.text);
+      if (fence) {
+        if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
+      } else if (marker) {
+        fence = marker[1];
+      } else if (RE_DETAILS_OPEN.test(view.text)) {
+        depth += 1;
+      } else if (RE_DETAILS_CLOSE.test(view.text)) {
+        depth -= 1;
+        if (depth === 0) {
+          close = view;
+          cursor += 1;
+          break;
+        }
+      }
+      body.push(view);
+      cursor += 1;
+    }
+    // Without `</details>` the toggle runs to the end, as HTML closes it there. That also keeps an
+    // edit's effect local: typing the closing line never changes how lines far above it parse.
+    const summaryStart = summaryView.start + summary[1].length;
+    const childContext = {
+      ...context,
+      definitions: false,
+      top: false,
+      // GitHub reads Markdown in a toggle only with blank lines around it.
+      separators: true,
+      virtual: body.length === 0 ? { anchor: summaryView.end, before: "\n\n", after: "\n" } : null
+    };
+    const children = parseBlockList(arrayReader(body), childContext, false).blocks;
+    return {
+      block: {
+        type: "toggle",
+        open: isOpen,
+        openView: open,
+        summaryView,
+        summaryStart,
+        summaryEnd: summaryStart + summary[2].length,
+        body,
+        children,
+        close,
+        start: open.start,
+        end: close ? close.end : (body.length ? body[body.length - 1].end : summaryView.end),
+        line: open.line
+      },
       next: cursor
     };
   }
@@ -455,7 +570,17 @@
     pushEmpties(blocks, blanks, topLevel ? (hasBlock ? "trailing" : "only") : "between", topLevel, context, false);
     if (context.editing && blocks.length === 0) {
       // Nothing to type into yet: one empty line, where text would go.
-      blocks.push(emptyBlock(reader.at(0) || null, "only", 0, 0, context));
+      const block = emptyBlock(reader.at(0) || null, "only", 0, 0, context);
+      if (block.view && context.separators) {
+        block.needsSeparatorBefore = true;
+        block.needsSeparatorAfter = true;
+      }
+      if (!block.view && context.virtual) {
+        block.anchor = context.virtual.anchor;
+        block.start = block.end = context.virtual.anchor;
+        block.virtual = context.virtual;
+      }
+      blocks.push(block);
     }
     return { blocks, stoppedAt: index, stopView: null };
   }
@@ -906,6 +1031,12 @@
         if (!node.src) return "";
         recordAtom(collector, node);
         const titleAttr = node.title ? ` title="${escapeAttr(node.title)}"` : "";
+        // Image syntax pointing at a video or audio file plays it, as GitHub does.
+        if (RE_VIDEO.test(node.src) || RE_AUDIO.test(node.src)) {
+          const tag = RE_VIDEO.test(node.src) ? "video" : "audio";
+          const extra = editing ? ` contenteditable="false" data-mk-atom` : "";
+          return `<${tag} src="${escapeAttr(node.src)}" controls preload="metadata" aria-label="${escapeAttr(node.alt || node.title || node.src)}"${extra}></${tag}>`;
+        }
         const extra = editing ? ` data-mk-atom draggable="false"` : "";
         return `<img src="${escapeAttr(node.src)}" alt="${escapeAttr(node.alt)}"${titleAttr}${extra}>`;
       }
@@ -952,7 +1083,8 @@
 
   function makeUnit(render, kind, props) {
     if (!render.editing) return null;
-    const unit = { id: ++render.unitSequence, kind, ...props };
+    // `scope`: the toggle whose body holds the unit; edits never join text across its edge.
+    const unit = { id: ++render.unitSequence, kind, scope: render.scope || null, ...props };
     render.units.push(unit);
     return unit;
   }
@@ -1035,7 +1167,8 @@
       refNumbers: options.refNumbers || new Map(),
       unitSequence: options.unitSequence || 0,
       units: [],
-      source: doc.source
+      source: doc.source,
+      blocks: doc.blocks
     };
   }
 
@@ -1093,8 +1226,20 @@
       }
       case "quote": {
         const inner = block.children.map((child) => renderBlock(child, render, block)).filter(Boolean).join("\n");
+        if (block.callout) {
+          const kind = block.callout.kind;
+          const title = CALLOUT_TITLES[kind];
+          const titleAttributes = render.editing
+            ? ` contenteditable="false" data-mk-skip data-mk-action="callout-kind" role="button" aria-label="Callout type: ${title}"`
+            : "";
+          return `${openTag("div", block.line, ` class="callout callout-${kind}" role="note"`)}<p class="callout-title"${titleAttributes}>${title}</p>${inner}</div>`;
+        }
         return `${openTag("blockquote", block.line)}${inner}</blockquote>`;
       }
+      case "toggle":
+        return renderToggle(block, render, container);
+      case "toc":
+        return renderTableOfContents(block, render);
       case "list":
         return renderList(block, render, container);
       case "table":
@@ -1127,14 +1272,63 @@
         className = ` class="task-list-item"`;
         const checked = item.task.checked ? " checked" : "";
         const extra = render.editing ? ` contenteditable="false" data-mk-skip tabindex="-1"` : "";
-        const separator = render.editing ? "" : " ";
         const wrapped = render.editing ? content : `<span>${content}</span>`;
-        content = `<input type="checkbox" data-monknot-task data-source-line="${line + 1}" data-task-checked="${item.task.checked}" aria-label="Toggle task"${checked}${extra}>${separator}${wrapped}`;
+        content = `<input type="checkbox" data-monknot-task data-source-line="${line + 1}" data-task-checked="${item.task.checked}" aria-label="Toggle task"${checked}${extra}>${wrapped}`;
       }
       const nested = item.children.map((child) => renderList(child, render, container)).join("");
       return `<li data-source-line="${line + 1}"${className}>${content}${nested}</li>`;
     }).join("");
     return `${openTag(tag, list.line, `${listClass}${startAttr}`)}${items}</${tag}>`;
+  }
+
+  function renderToggle(block, render, container) {
+    const region = sliceRegion(render.source, block.summaryStart, block.summaryEnd);
+    const outer = render.scope || null;
+    block.scopeParent = outer;
+    // The summary's unit comes before the body's, in document order.
+    const unit = makeUnit(render, "inline", { block, container, region, role: "summary" });
+    render.scope = block;
+    const children = block.children.map((child) => renderBlock(child, render, block)).filter(Boolean).join("\n");
+    render.scope = outer;
+    if (!render.editing) {
+      const open = block.open ? " open" : "";
+      return `${openTag("details", block.line, open)}<summary>${renderInline(region.j, render)}</summary>${children}</details>`;
+    }
+    const empty = region.j.length === 0;
+    // Opening a toggle while editing is a view state: the file keeps its `open` attribute.
+    const open = block.viewOpen ?? block.open;
+    const summaryAttributes = `${unitAttributes(unit)} class="mk-toggle-summary"${empty ? ` data-mk-empty data-placeholder="Toggle"` : ""}`;
+    const summary = empty ? "<br data-mk-filler>" : renderInline(region.j, render);
+    return `${openTag("div", block.line, ` class="mk-toggle" data-open="${open}"`)}`
+      + `<div class="mk-toggle-head"><button type="button" class="mk-toggle-arrow" contenteditable="false" data-mk-skip data-mk-action="toggle" tabindex="-1" aria-label="${open ? "Collapse" : "Expand"}" aria-expanded="${open}"></button>`
+      + `<div${summaryAttributes}>${summary}</div></div>`
+      + `<div class="mk-toggle-body">${children}</div></div>`;
+  }
+
+  /// A `[TOC]` line lists the document's headings, linked to them.
+  function renderTableOfContents(block, render) {
+    const headings = [];
+    // Entries are numbered by their place among the document's top-level h1–h3, which is how a
+    // click finds the heading on the page; empty headings keep their number but get no entry.
+    let position = 0;
+    for (const candidate of render.blocks || []) {
+      if (candidate.type !== "heading" || candidate.level > 3) continue;
+      const shift = candidate.shift || 0;
+      const text = render.source.slice(candidate.contentStart + shift, candidate.contentEnd + shift);
+      if (text.trim()) headings.push({ level: candidate.level, text, index: position });
+      position += 1;
+    }
+    const extra = render.editing ? ` contenteditable="false" data-mk-skip` : "";
+    if (headings.length === 0) {
+      if (!render.editing) return "";
+      return `${openTag("nav", block.line, ` class="toc toc-empty"${extra} aria-label="Table of contents"`)}<p>Headings you add appear here.</p></nav>`;
+    }
+    const minimum = Math.min(...headings.map((heading) => heading.level));
+    const items = headings.map((heading) => {
+      const label = stripInline(heading.text);
+      return `<li class="toc-level-${heading.level - minimum + 1}"><a href="#${escapeAttr(slug(label))}" data-mk-toc="${heading.index}">${escapeHTML(label)}</a></li>`;
+    }).join("");
+    return `${openTag("nav", block.line, ` class="toc"${extra} aria-label="Table of contents"`)}<ul>${items}</ul></nav>`;
   }
 
   function renderTable(table, render, container) {
@@ -1150,7 +1344,15 @@
     const alignAttr = (index) => (table.alignment[index] ? ` align="${table.alignment[index]}"` : "");
     const cell = (tag, row, rowIndex, index) => {
       const source = row.cells[index];
-      const region = source ? cellRegion(render.source, source.start, source.end) : fixedRegion("", [row.pipeEnd]);
+      // GFM trims a cell's text; a space typed at its end is kept on the page past the one space of
+      // padding before the pipe, so the caret moves as the space is typed.
+      let end = source ? source.end : 0;
+      if (source) {
+        let spaces = 0;
+        while (end + spaces < source.slotEnd && (render.source[end + spaces] === " " || render.source[end + spaces] === "\t")) spaces += 1;
+        if (spaces >= 2) end += spaces - 1;
+      }
+      const region = source ? cellRegion(render.source, source.start, end) : fixedRegion("", [row.pipeEnd]);
       const unit = makeUnit(render, "inline", {
         block: table,
         container,
@@ -1428,7 +1630,24 @@
     });
   }
 
+  /// A table of contents entry scrolls to its heading, in Preview and while editing alike.
+  function scrollToHeading(anchor) {
+    const index = Number(anchor.dataset.mkToc);
+    const headings = Array.from(target.querySelectorAll(":scope > h1, :scope > h2, :scope > h3"));
+    const heading = Number.isInteger(index) ? headings[index] : null;
+    heading?.scrollIntoView({ block: "start", behavior: "smooth" });
+    return heading || null;
+  }
+  window.monknotScrollToHeading = scrollToHeading;
+
   function handleInteraction(event) {
+    const tocAnchor = event.target instanceof Element ? event.target.closest("a[data-mk-toc]") : null;
+    if (tocAnchor) {
+      event.preventDefault();
+      event.stopPropagation();
+      scrollToHeading(tocAnchor);
+      return;
+    }
     if (editor()) return;
     const targetElement = event.target instanceof Element ? event.target : event.target?.parentElement;
     if (!targetElement) return;

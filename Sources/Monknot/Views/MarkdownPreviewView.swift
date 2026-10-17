@@ -200,7 +200,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
                             markdown: "",
                             appTheme: appearanceRequest.theme,
                             zoomScale: appearanceRequest.zoomScale,
-                            baseFontSize: appearanceRequest.codeFontSize,
+                            baseFontSize: appearanceRequest.proseFontSize,
                             contentWidthPercent: appearanceRequest.contentWidthPercent,
                             usePointerCursors: appearanceRequest.usePointerCursors,
                             fontSmoothing: appearanceRequest.fontSmoothing,
@@ -652,9 +652,21 @@ struct MarkdownPreviewView: NSViewRepresentable {
                     in: webView
                 )
             case "requestImage":
-                requestImageFile(at: MarkdownVisualEditorSelection(body["selection"]), in: webView)
+                requestFile(.image, at: MarkdownVisualEditorSelection(body["selection"]), in: webView)
+            case "requestFile":
+                let kind = (body["kind"] as? String).flatMap(MarkdownInsertedFileKind.init(rawValue:)) ?? .file
+                requestFile(kind, at: MarkdownVisualEditorSelection(body["selection"]), in: webView)
             case "pasteImage":
                 pasteImage(at: MarkdownVisualEditorSelection(body["selection"]), in: webView)
+            case "createPage":
+                createPage(named: (body["name"] as? String) ?? "", at: MarkdownVisualEditorSelection(body["selection"]))
+            case "showEmoji":
+                webView.window?.makeFirstResponder(webView)
+                NSApp.orderFrontCharacterPalette(nil)
+            case "copyText":
+                guard let text = body["text"] as? String, !text.isEmpty else { return }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
             default:
                 break
             }
@@ -704,25 +716,35 @@ struct MarkdownPreviewView: NSViewRepresentable {
             }
         }
 
-        private func requestImageFile(at selection: MarkdownVisualEditorSelection?, in webView: WKWebView) {
+        /// The Image, Video, Audio and File blocks: a sheet to pick the file, which goes through the
+        /// same import as a drop (copied into the workspace when it lives outside). A video or audio
+        /// file is linked as `![…](…)`, which Preview plays.
+        private func requestFile(
+            _ kind: MarkdownInsertedFileKind,
+            at selection: MarkdownVisualEditorSelection?,
+            in webView: WKWebView
+        ) {
             guard let editor, let selection, let handler = editor.configuration.onFileDropRequest else { return }
             let panel = NSOpenPanel()
             panel.allowsMultipleSelection = false
             panel.canChooseDirectories = false
-            panel.allowedContentTypes = [.image]
+            if !kind.contentTypes.isEmpty {
+                panel.allowedContentTypes = kind.contentTypes
+            }
             panel.prompt = "Insert"
-            panel.message = "Choose an image to insert"
+            panel.message = kind.panelMessage
             let documentID = editor.documentID
             let sourceText = editor.configuration.currentText()
             let complete: (NSApplication.ModalResponse) -> Void = { [weak self] response in
                 guard response == .OK, let url = panel.url, let self else { return }
+                let insert = self.insertion(at: selection, expectedLength: (sourceText as NSString).length, label: kind.undoLabel)
                 let request = MarkdownFileDropRequest(
                     documentID: documentID,
                     revision: 0,
                     sourceText: sourceText,
                     insertionRange: selection.range,
                     urls: [url],
-                    insertion: self.insertion(at: selection, expectedLength: (sourceText as NSString).length, label: "Insert Image")
+                    insertion: { markdown in insert(kind.markdown(fromDropMarkdown: markdown)) }
                 )
                 handler(request)
             }
@@ -730,6 +752,29 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 panel.beginSheetModal(for: window, completionHandler: complete)
             } else {
                 panel.begin(completionHandler: complete)
+            }
+        }
+
+        /// The Page block: a Markdown file named by the user, created beside this one and linked
+        /// where the block was typed.
+        private func createPage(named name: String, at selection: MarkdownVisualEditorSelection?) {
+            guard let editor, let selection, let create = editor.configuration.createPage else { return }
+            let sourceText = editor.configuration.currentText()
+            let insert = insertion(at: selection, expectedLength: (sourceText as NSString).length, label: "New Page")
+            Task { @MainActor in
+                do {
+                    let url = try await create(name)
+                    let title = url.deletingPathExtension().lastPathComponent
+                    let label = MarkdownImageAssetService.escapeMarkdownLabel(title)
+                    let destination = MarkdownImageAssetService.percentEncodedMarkdownPath(url.lastPathComponent)
+                    _ = insert("[\(label)](\(destination))")
+                } catch {
+                    NSSound.beep()
+                    let alert = NSAlert()
+                    alert.messageText = "Could not create the page"
+                    alert.informativeText = error.localizedDescription
+                    alert.runModal()
+                }
             }
         }
 
@@ -887,7 +932,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
             let variables = Dictionary(uniqueKeysWithValues: service.themeVariableValues(
                 for: request.theme,
                 zoomScale: request.zoomScale,
-                baseFontSize: request.codeFontSize,
+                baseFontSize: request.proseFontSize,
                 contentWidthPercent: request.contentWidthPercent,
                 usePointerCursors: request.usePointerCursors,
                 fontSmoothing: request.fontSmoothing
@@ -1329,6 +1374,12 @@ fileprivate struct PreviewAppearanceRequest: Equatable {
 
     var themeName: String {
         theme.isDark ? "dark" : "light"
+    }
+
+    /// Preview sets prose a step above the source editor's 13pt (14pt at the default size): it is
+    /// the reading and writing surface, and its headings scale from this size.
+    var proseFontSize: Double {
+        codeFontSize * 14 / 13
     }
 }
 

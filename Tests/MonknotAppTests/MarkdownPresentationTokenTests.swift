@@ -7,73 +7,36 @@ import XCTest
 
 @MainActor
 final class MarkdownPresentationTokenTests: XCTestCase {
-    func testWideMarkdownToolbarPreservesCompleteFormattingActionOrder() {
-        XCTAssertEqual(
-            MarkdownSourceToolbar.regularActionGroups.map { $0.map(\.label) },
-            [
-                ["Bold", "Italic", "Quote", "Inline Code", "Link"],
-                ["Bullet List", "Numbered List", "Task List"],
-                ["Image", "Divider"],
-            ]
+    /// Every SF Symbol the Preview editor's menus, bars and handles ask for is drawn for the page, in
+    /// the size context it is asked in, and exists on this system (a missing name would render as a
+    /// question mark).
+    func testEveryGlyphThePreviewEditorRequestsIsDrawn() throws {
+        let script = try String(
+            contentsOf: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appendingPathComponent("Sources/MonknotCore/Resources/editor.js"),
+            encoding: .utf8
         )
-    }
-
-    func testMarkdownToolbarUsesMeasuredOpticalSymbolSizes() {
-        let expectedPointSizes: [String: CGFloat] = [
-            "bold": 17,
-            "italic": 17,
-            "text.quote": 14,
-            "curlybraces": 13,
-            "link": 13,
-            "list.bullet": 17,
-            "list.number": 17,
-            "checklist": 14,
-            "photo": 12,
-            "minus": 17,
-        ]
-
-        XCTAssertEqual(MonknotIconButton.IconButtonSize.editorToolbar.iconPointSizeBase, 17)
-        XCTAssertEqual(
-            Set(MarkdownSourceToolbar.regularActionGroups.flatMap { $0.map(\.systemImage) }),
-            Set(expectedPointSizes.keys)
-        )
-
-        for (systemImage, expectedPointSize) in expectedPointSizes {
-            XCTAssertEqual(
-                MonknotSymbolOptics.pointSizeBase(
-                    for: systemImage,
-                    nominal: MonknotIconButton.IconButtonSize.editorToolbar.iconPointSizeBase
-                ),
-                expectedPointSize,
-                "\(systemImage) escaped the measured Markdown-toolbar profile"
-            )
+        var requested = Set<String>()
+        let itemIcon = try NSRegularExpression(pattern: #"icon: "([^"]+)""#)
+        let callIcon = try NSRegularExpression(pattern: #"icon\("([^"]+)"(?:, "(\w+)")?\)"#)
+        let range = NSRange(script.startIndex..., in: script)
+        for match in itemIcon.matches(in: script, range: range) {
+            requested.insert("menu:" + String(script[Range(match.range(at: 1), in: script)!]))
         }
-    }
+        for match in callIcon.matches(in: script, range: range) {
+            let name = String(script[Range(match.range(at: 1), in: script)!])
+            let context = Range(match.range(at: 2), in: script).map { String(script[$0]) } ?? "menu"
+            requested.insert("\(context):\(name)")
+        }
+        XCTAssertGreaterThan(requested.count, 40, "The scan found the page's glyph requests")
 
-    func testMarkdownHeadingMenuSharesTheFormattingControlGeometry() {
-        let size = MarkdownSourceToolbar.controlSize
-
-        XCTAssertEqual(size.iconPointSizeBase, 17)
-        // Wide enough for the longest block name Preview reports, "Numbered List" (121 pt at 13 pt).
-        XCTAssertEqual(MarkdownSourceToolbar.expandedHeadingWidthBase, 124)
-        XCTAssertEqual(MarkdownSourceToolbar.compactHeadingWidthBase, 124)
-        XCTAssertEqual(MarkdownSourceToolbar.headingFontSizeBase, 13)
-        XCTAssertEqual(MarkdownSourceToolbar.headingChevronFontSizeBase, 10)
-        XCTAssertEqual(MarkdownSourceToolbar.headingChevronBaselineOffsetBase, 3.2)
-
-        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
-            for zoomScale in WorkspaceZoomPolicy.supportedLevels {
-                XCTAssertEqual(
-                    size.dimension(theme: theme, zoomScale: zoomScale),
-                    size.height(theme: theme, zoomScale: zoomScale),
-                    "Paragraph and formatting controls must share one height"
-                )
-                XCTAssertEqual(
-                    size.cornerRadius(theme: theme, zoomScale: zoomScale),
-                    theme.chromeRadius(8, zoomScale: zoomScale),
-                    "Paragraph and formatting controls must share one corner radius"
-                )
-            }
+        let drawn = MarkdownEditorSymbolAssets.icons()
+        for key in requested.sorted() {
+            XCTAssertNotNil(drawn[key], "\(key) is requested by the page but not drawn")
+            let name = String(key.split(separator: ":", maxSplits: 1)[1])
+            // Remove Link draws `xmark` where the system has no `link.badge.minus`.
+            guard name != "link.badge.minus" else { continue }
+            XCTAssertNotNil(NSImage(systemSymbolName: name, accessibilityDescription: nil), "\(name) is not an SF Symbol here")
         }
     }
 

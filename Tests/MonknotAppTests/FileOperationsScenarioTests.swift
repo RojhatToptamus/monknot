@@ -451,11 +451,13 @@ final class FileOperationsScenarioTests: FileOperationsTestCase {
         let store = try await openStore(root)
         let before = names("", in: root)
 
-        for name in ["", "   ", ".", "..", "a/b.md", "a:b.md", ".hidden.md", "notes.md", "NOTES.MD", "folder"] {
+        for name in ["", "   ", ".", "..", "a/b.md", "a:b.md", ".hidden.md", "notes.md", "NOTES.MD", "notes"] {
             XCTAssertNotNil(store.validationMessage(forNewItemNamed: name, in: nil, isDirectory: false), "File \(name)")
-            XCTAssertNotNil(store.validationMessage(forNewItemNamed: name, in: nil, isDirectory: true), "Folder \(name)")
             store.createFile(named: name)
             await idle(store)
+        }
+        for name in ["", "   ", ".", "..", "a/b.md", "a:b.md", ".hidden.md", "notes.md", "NOTES.MD", "folder"] {
+            XCTAssertNotNil(store.validationMessage(forNewItemNamed: name, in: nil, isDirectory: true), "Folder \(name)")
             store.createFolder(named: name)
             await idle(store)
         }

@@ -45,7 +45,6 @@ struct MonknotIconButton: View {
     let theme: AppTheme
     let zoomScale: Double
     var isActive: Bool = false
-    var activeTreatment: ActiveTreatment = .panelOpen
     var isDisabled: Bool = false
     var size: IconButtonSize = .chrome
     var drawsBorder = false
@@ -59,14 +58,6 @@ struct MonknotIconButton: View {
     enum FocusRingPlacement {
         case outside
         case contained
-    }
-
-    /// How `isActive` draws. A toggle whose panel is open takes `accsoft` and an `accent` glyph; a
-    /// format that is on takes the selected segment's `sel` fill and an `ink` glyph, so formatting
-    /// never spends the accent (design.md §1.3, §5.1, §5.5).
-    enum ActiveTreatment {
-        case panelOpen
-        case formatOn
     }
 
     enum IconButtonSize {
@@ -142,21 +133,18 @@ struct MonknotIconButton: View {
         case hover
         case pressed
         case accentSoft
-        case selected
 
         func color(_ theme: AppTheme) -> Color {
             switch self {
             case .hover: return theme.hoverFillColor
             case .pressed: return theme.pressedFillColor
             case .accentSoft: return theme.accentSoftFillColor
-            case .selected: return theme.selectedRowColor
             }
         }
     }
 
     static func fill(
         isActive: Bool,
-        activeTreatment: ActiveTreatment = .panelOpen,
         drawsActiveBackground: Bool,
         isHovered: Bool,
         isPressed: Bool,
@@ -164,7 +152,7 @@ struct MonknotIconButton: View {
     ) -> Fill? {
         guard !isDisabled else { return nil }
         if isPressed { return .pressed }
-        if isActive, drawsActiveBackground { return activeTreatment == .formatOn ? .selected : .accentSoft }
+        if isActive, drawsActiveBackground { return .accentSoft }
         return isHovered ? .hover : nil
     }
 
@@ -199,7 +187,6 @@ struct MonknotIconButton: View {
             theme: theme,
             cornerRadius: cornerRadius,
             isActive: isActive,
-            activeTreatment: activeTreatment,
             drawsActiveBackground: drawsActiveBackground,
             isHovered: isHovered,
             isDisabled: isDisabled
@@ -224,7 +211,6 @@ struct MonknotIconButton: View {
         .animation(MonknotMotion.hoverAnimation, value: isActive)
         .help(label)
         .accessibilityLabel(label)
-        .accessibilityAddTraits(isActive && activeTreatment == .formatOn ? .isSelected : [])
         .monknotPointerCursor(enabled: !isDisabled)
     }
 
@@ -233,7 +219,7 @@ struct MonknotIconButton: View {
             return theme.disabledForegroundColor
         }
         if isActive {
-            return activeTreatment == .formatOn ? theme.foregroundColor : theme.accentColor
+            return theme.accentColor
         }
         if isHovered {
             return theme.foregroundColor
@@ -264,7 +250,6 @@ private struct MonknotIconButtonStyle: ButtonStyle {
     let theme: AppTheme
     let cornerRadius: CGFloat
     let isActive: Bool
-    let activeTreatment: MonknotIconButton.ActiveTreatment
     let drawsActiveBackground: Bool
     let isHovered: Bool
     let isDisabled: Bool
@@ -274,7 +259,6 @@ private struct MonknotIconButtonStyle: ButtonStyle {
             .background {
                 if let fill = MonknotIconButton.fill(
                     isActive: isActive,
-                    activeTreatment: activeTreatment,
                     drawsActiveBackground: drawsActiveBackground,
                     isHovered: isHovered,
                     isPressed: configuration.isPressed,

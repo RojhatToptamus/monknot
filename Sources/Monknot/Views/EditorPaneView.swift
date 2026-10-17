@@ -29,12 +29,8 @@ struct EditorPaneView: View {
     private var inlinePredictions = EditorTextCheckingOptions.defaultInlinePredictions
     @AppStorage(EditorTextCheckingOptions.onDeviceProseCompletionsPreferenceKey)
     private var onDeviceProseCompletions = EditorTextCheckingOptions.defaultOnDeviceProseCompletions
-    @State private var markdownCommandSerial = 0
-    @State private var markdownCommandRequest: MarkdownTextEditorCommandRequest?
     /// Preview's undo history; it outlives the page, so switching to Source and back keeps it.
     @State private var visualEditingSession = MarkdownVisualEditingSession()
-    @State private var visualCommandRequest: MarkdownVisualEditorCommandRequest?
-    @State private var visualFormattingState: MarkdownVisualFormattingState?
     @State private var splitScrollSyncLock = false
     @State private var splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
     @State private var previewSyncLine: Int?
@@ -125,11 +121,6 @@ struct EditorPaneView: View {
                     splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
                 }
             }
-            .onChange(of: store.activeWritingToolsDocumentID) { _, documentID in
-                if documentID != nil {
-                    markdownCommandRequest = nil
-                }
-            }
             .sheet(item: Binding(
                 get: { store.externalDocumentReview },
                 set: { value in
@@ -147,16 +138,12 @@ struct EditorPaneView: View {
             }
     }
 
-    /// An editable Markdown document keeps its toolbar row in every view mode, so switching between
-    /// Source and Preview never moves the document.
-    private var showsMarkdownToolbar: Bool {
+    /// An editable Markdown document shows its word count in every view mode. Formatting has no
+    /// docked toolbar: Preview formats from the floating bar over a selection, its block menus and
+    /// slash commands; Source from the keyboard (design.md §10.10).
+    private var showsWordCount: Bool {
         guard let document = store.selectedDocument else { return false }
         return document.kind == .markdown && document.capabilities.canEditText
-    }
-
-    /// The toolbar edits the source in Source and beside a preview, and the page in Preview.
-    private var isMarkdownToolbarEnabled: Bool {
-        (editorMode == .source || isSplitViewEnabled || isPreviewEditable) && store.activeWritingToolsDocumentID == nil
     }
 
     /// Preview edits an editable Markdown document in place. Beside Source it stays a preview, so
@@ -175,44 +162,22 @@ struct EditorPaneView: View {
     }
 
     private var editorColumn: some View {
-        VStack(spacing: 0) {
-            if showsMarkdownToolbar {
-                MonknotChromePanel(theme: theme) {
-                    MarkdownSourceToolbar(
-                        theme: theme,
-                        zoomScale: zoomScale,
-                        statistics: textStatistics,
-                        formattingState: isPreviewEditable ? visualFormattingState : nil,
-                        sendCommand: sendMarkdownCommand
-                    )
-                    .equatable()
-                    .disabled(!isMarkdownToolbarEnabled)
+        editorContent
+            .frame(
+                minWidth: 0,
+                maxWidth: .infinity,
+                minHeight: 0,
+                maxHeight: .infinity,
+                alignment: .top
+            )
+            .clipped()
+            .overlay(alignment: .bottomTrailing) {
+                if showsWordCount {
+                    MarkdownWordCountLabel(theme: theme, zoomScale: zoomScale, statistics: textStatistics)
+                        .padding(.trailing, MonknotMetrics.interfaceDensity(14, theme: theme, zoomScale: zoomScale))
+                        .padding(.bottom, MonknotMetrics.interfaceDensity(10, theme: theme, zoomScale: zoomScale))
                 }
             }
-
-            editorContent
-                .frame(
-                    minWidth: 0,
-                    maxWidth: .infinity,
-                    minHeight: 0,
-                    maxHeight: .infinity,
-                    alignment: .top
-                )
-                .clipped()
-        }
-    }
-
-    private func sendMarkdownCommand(_ command: MarkdownTextEditorCommand) {
-        guard isMarkdownToolbarEnabled else { return }
-        markdownCommandSerial += 1
-        if isPreviewEditable {
-            visualCommandRequest = MarkdownVisualEditorCommandRequest(serial: markdownCommandSerial, command: command)
-            return
-        }
-        markdownCommandRequest = MarkdownTextEditorCommandRequest(
-            serial: markdownCommandSerial,
-            command: command
-        )
     }
 
     @ViewBuilder
@@ -548,7 +513,7 @@ struct EditorPaneView: View {
             sourceLocation: $sourceLocation,
             searchState: $documentSearch,
             searchOptions: searchOptions,
-            commandRequest: markdownCommandRequest,
+            commandRequest: nil,
             wikilinkDocuments: store.markdownDocuments,
             onSelectionChange: onMarkdownSelectionChange,
             onOpenLink: onMarkdownLinkRequest,
@@ -609,7 +574,7 @@ struct EditorPaneView: View {
         return MarkdownVisualEditingConfiguration(
             session: visualEditingSession,
             initialSelection: activeViewportState?.textSelection,
-            commandRequest: visualCommandRequest,
+            commandRequest: nil,
             currentText: { store.documentText },
             applyChange: { change in
                 store.applyTextMutation(
@@ -627,13 +592,13 @@ struct EditorPaneView: View {
                     selectedMarkdown: selectedMarkdown
                 ))
             },
-            onFormattingChange: { state in
-                guard visualFormattingState != state else { return }
-                visualFormattingState = state
-            },
+            onFormattingChange: { _ in },
             onImagePasteRequest: onMarkdownImagePasteRequest,
             onFileDropRequest: onMarkdownFileDropRequest,
-            wikilinkDocuments: store.markdownDocuments
+            wikilinkDocuments: store.markdownDocuments,
+            createPage: { [store] name in
+                try await store.createPage(named: name, besideDocumentAt: URL(fileURLWithPath: documentID))
+            }
         )
     }
 

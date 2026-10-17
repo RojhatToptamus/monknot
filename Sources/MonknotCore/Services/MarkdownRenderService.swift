@@ -183,7 +183,7 @@ public struct MarkdownRenderService: Sendable {
             ("--border", border),
             ("--soft", soft),
             ("--soft-strong", softStrong),
-            ("--code-bg", "color-mix(in srgb, \(theme.background) 88%, \(theme.foreground) 12%)"),
+            ("--code-bg", "color-mix(in srgb, \(theme.background) \(theme.isDark ? "93" : "95.5")%, \(theme.foreground))"),
             ("--code-fg", theme.foreground),
             ("--blockquote-bg", blockquoteBackground),
             ("--blockquote-border", theme.accent),
@@ -208,6 +208,12 @@ public struct MarkdownRenderService: Sendable {
             ("--code-font", codeFontStack),
             ("--caret", theme.cursor),
             ("--danger", theme.semanticColors.diffRemoved),
+            ("--ok", theme.semanticColors.diffAdded),
+            ("--skill", theme.semanticColors.skill),
+            ("--onaccent", theme.onAccentForegroundHex),
+            ("--task-check", taskCheckImage(color: theme.onAccentForegroundHex)),
+            // The neutral fill under a highlighted menu row or a hovered control: the ink, faintly.
+            ("--highlight", "color-mix(in srgb, \(theme.foreground) \(theme.isDark ? "9" : "6.5")%, transparent)"),
             // The editor's menus and toolbars scale with workspace zoom; text also with the
             // theme's interface font size, as the native chrome does.
             ("--mk-z", String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"), max(0.5, min(3, zoomScale)))),
@@ -217,6 +223,17 @@ public struct MarkdownRenderService: Sendable {
                 max(0.5, min(3, zoomScale)) * min(1.25, max(0.875, theme.uiFontSize / 16))
             ))
         ]
+    }
+
+    /// The tick drawn inside a checked task box, in the colour that reads on the accent. The SVG
+    /// namespace is a name, not an address; its colon is percent-encoded so the page holds no
+    /// `http:` at all (the preview loads nothing from the network).
+    private func taskCheckImage(color: String) -> String {
+        let stroke = color.replacingOccurrences(of: "#", with: "%23")
+        let svg = "<svg xmlns='http%3A//www.w3.org/2000/svg' viewBox='0 0 12 12'>"
+            + "<path d='M2.6 6.3l2.3 2.3 4.6-5' fill='none' stroke='\(stroke)' stroke-width='1.8' "
+            + "stroke-linecap='round' stroke-linejoin='round'/></svg>"
+        return "url(\"data:image/svg+xml;charset=utf-8,\(svg)\")"
     }
 
     private func fontStack(preferred: String?, fallback: String) -> String {

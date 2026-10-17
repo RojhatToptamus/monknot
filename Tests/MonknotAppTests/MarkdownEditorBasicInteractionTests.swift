@@ -150,9 +150,9 @@ final class MarkdownEditorBasicInteractionTests: FlowEditorTestCase {
         XCTAssertEqual(MarkdownTextStatistics(text: "a\r\nb\r\nc").lineCount, 3, "CRLF lines are counted")
         XCTAssertEqual(MarkdownTextStatistics(text: "a\rb\rc").lineCount, 3, "CR-only lines are counted")
         XCTAssertEqual(MarkdownTextStatistics(text: "a\r\n\rb\n").lineCount, 4)
-        XCTAssertEqual(MarkdownSourceToolbar.wordCountLabel(1), "1 word")
+        XCTAssertEqual(MarkdownWordCountLabel.wordCountLabel(1), "1 word")
         XCTAssertEqual(
-            MarkdownSourceToolbar.statisticsDescription(MarkdownTextStatistics(lineCount: 1, wordCount: 0)),
+            MarkdownWordCountLabel.statisticsDescription(MarkdownTextStatistics(lineCount: 1, wordCount: 0)),
             "1 line, 0 words"
         )
     }

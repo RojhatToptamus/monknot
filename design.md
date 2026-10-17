@@ -65,6 +65,7 @@ frame     = ink @ (dark ? 14% : 9%)     window rim
 
 hover     = ink @ (dark ? 6%  : 5.5%)
 press     = ink @ (dark ? 11% : 10%)
+highlight = ink @ (dark ? 9%  : 6.5%)   menu row and format "on" inside a document (§10.10)
 
 accent    = accent
 onaccent  = contrast(#ffffff, accent) >= contrast(#101010, accent) ? #ffffff : #101010
@@ -96,6 +97,10 @@ backwards makes light chrome look seamless and dark chrome look over-ruled.
 
 Nothing else in the chrome is coloured. If a sixth use appears, one of these five gives it up.
 Glyphs are **never** tinted by file type, folder colour or language.
+
+The document is not chrome. In Preview, links and a checked task box take the accent, callouts tint
+their panel with `accent` (note), `ok` (tip), `skill` (important) or `danger` (warning, caution) at
+7 %, exactly as PDF export prints them; the editing surfaces floating over the document stay neutral.
 
 ### 1.4 Ink ladder
 
@@ -219,13 +224,15 @@ takes a fill plus one step up the ink ladder — fill is a far louder signal tha
 
 | Role | Size / line-height |
 |---|---|
-| Document h1 | 22 / 1.2, tracking −0.02em, weight 600 |
+| Preview prose | 14 / 1.6 at the default 13 pt code size (prose is code size × 14⁄13) |
+| Document h1 / h2 / h3 | 1.875 / 1.45 / 1.2 em of prose, line 1.2 / 1.25 / 1.3, tracking −0.021 / −0.016 / −0.01 em, weight 600; h4–h6 1 em |
 | Row + tab + button label | 13 / 1 |
 | Field text, overlay queries included | 13 / 1 |
 | Panel, sheet, overlay and empty-state title | 13 / 1, weight 600 |
 | Body prose | 13.5 / 1.6 |
 | Secondary + caption | 12 / 1.4 |
 | Eyebrow / group header | 10 / 1, tracking 0.09em, uppercase, weight 600 |
+| Section header in a menu over the document | 12 / 1.2, `ink3`, sentence case ("Basic blocks"), no tracking |
 | Code, session numbers | 13 / 1.65 SF Mono (12 in pills) |
 
 ### 4.4 Shortcut labels
@@ -258,7 +265,7 @@ The 28 is the **outer** dimension including the 1px border; a 28 content box plu
 | Hover | `hover` fill, `ink` glyph, border unchanged |
 | Pressed | `press` fill |
 | On (panel open) | `accsoft` fill, `accent` glyph, **still only the `line` border** |
-| On (format applied) | `sel` fill, `ink` glyph — the selected segment of §5.5. Bold, italic, code, link and the list and quote toggles of the Markdown toolbar and the format bar use it, so formatting never spends the accent |
+| On (format applied) | `highlight` fill, `ink` glyph. Preview's format bar uses it for bold, italic, strikethrough, code and link, so formatting never spends the accent, and a format that is on never looks like the text selection under it |
 | Disabled | `ink4` glyph, border at 40 %, no fill. No extra opacity on top. |
 
 **Search option exception.** Match Case and Match Whole Word use the same standard `28 × 28` box
@@ -456,7 +463,7 @@ against `ink3` at rest it reads as a rendering bug.
 
 ### 8.9 When SF Symbols will not do
 
-Only three cases:
+Only four cases:
 
 1. **Outline rail dashes** — not glyphs at all. Draw as 2pt rounded `Capsule()` shapes; no symbol
    encodes heading depth.
@@ -466,6 +473,11 @@ Only three cases:
    to the menu's leading icon position and discards non-text trailing content. Use SF Pro's `⌄`
    down-arrowhead as a separate 10pt regular text run so it remains trailing. Its ink center is
    3.2pt below the 13pt title's ink center, so apply a scalable +3.2pt baseline offset.
+
+4. **Block grip** — six dots in two columns of three, the drag affordance of every block editor;
+   SF Symbols has no 2×3 grid. Draw 2.5pt dots on a 4 × 4.67pt pitch in an 8 × 14 box, `ink3` at rest.
+   The toggle's triangle is a filled CSS triangle in the document's marker column, a marker like a
+   list bullet rather than a chrome glyph.
 
 Everywhere else a custom glyph will look imported. SF Symbols carry the system's stroke contrast and
 terminal shapes; a hand-drawn 15pt icon beside them always reads as foreign. If a custom glyph is
@@ -580,11 +592,13 @@ cells switch how one pane renders.
 
 **Disabled, not hidden.** For PDFs, images, video, audio and plain text the view-mode control takes
 the disabled treatment of §5.1: `ink4` glyphs, its border at 40 %, and no selected cell. Controls
-never appear or disappear between file kinds — the toolbar must not reflow. The same holds for the
-Markdown toolbar row under the titlebar: an editable Markdown document keeps it in Source, beside its
-preview and in Preview, so switching view mode never moves the document. In Preview the toolbar edits
-the page (§10.10); its block selector names the block under the caret and its toggles show the
-formats that are on. Beside Source it edits the source.
+never appear or disappear between file kinds — the toolbar must not reflow.
+
+**No Markdown toolbar row.** Nothing docks between the titlebar and the document in any view mode, so
+switching view mode never moves the document. Preview formats from surfaces that float over the text
+it acts on (§10.10); Source formats from the keyboard (⌘B ⌘I ⌘E ⌘K ⇧⌘7 ⇧⌘8). The word count sits in
+the editor's bottom-trailing corner: 12 `ink3`, tabular digits, on a `surface` capsule, inset 14 × 10;
+its help text gives lines and words.
 
 ### 10.3 Tab strip — hug, cap, scroll
 
@@ -734,13 +748,11 @@ fill its box.** If an icon looks small, that is correct — macOS chrome glyphs 
 | Titlebar | bar 44 · traffic light 12 · chrome button 28 box / 17 glyph · segmented 28 outer (22 cell + 2 padding + 1 border) / 16 glyph · divider 1×16 · strip inset 3 · 3 between chips |
 | File tab | chip 30 · padding-x 10 · kind glyph 14 optical in 18 column · gap 8 · label 13 · trailing slot 16 · close 11 · dirty dot 6 · pin 11 · max width 220 · no minimum |
 | Sidebar | header 40 · row 30 · padding-x 10 · disclosure chevron 10 or file glyph 14 optical in the 18 column · gap 8 · label 13 · indent 16 · gutter 6 · 2 between rows · header action 22/16 (search 14 optical) · Recents header: chevron, eyebrow, count 12 · footer 30/15 |
-| Markdown toolbar | heading selector 124×30 (fits "Numbered List"), radius 8, label 13 regular, trailing `⌄` 10 regular / +3.2 baseline, `ink2`/`ink3` at rest and the icon-button hover · icon button 30 box / 17 nominal glyph · inline code and link 13 optical · quote (`text.quote`) and task list 14 optical · image 12 optical · dividers 1×20 · gaps 6. Every glyph carries 6–9 % ink in its 30 box except the inherently thin italic and rule; a glyph far outside that band reads as a different icon set. |
-| Preview editing | format bar: 28 buttons / 17 glyph, 2 between, 4 padding, dividers 1×16, block selector label 13 with `⌄` 10 / +3.2 baseline · menus: width 264, list padding 6, row 30 / 15 glyph (or a 12 `H1` tag) in the 18 column, gap 8, label 13, hint 11.5 SF Mono (a shortcut 12 rounded), group eyebrow 10, at most 356 tall · link editor: field 28, width 340 · code language label 22 tall / 12 · all on radius 12 surfaces, rows radius 8 |
+| Preview editing | format bar: 28 buttons / 17 glyph, 2 between, 4 padding, dividers 1×16, block selector label 13 with an 11 `chevron.down` · menus: width 272 (232 for Turn Into, callout kinds, table actions and languages), list padding 6, row 30 / 15 glyph (or a 12/600 `H1` tag) in the 18 column, gap 10, label 13 on a 1.35 line, hint 12 rounded `ink3`, section header 12 `ink3` sentence case, footer 32 with 12 `ink3` actions and 12 rounded `ink2` keys, submenu chevron 11, at most 380 tall · handles: + 22×24 and grip 18×24, radius 6, 1 apart, `ink3` at rest and `hover` fill with `ink2` on hover, 6 left of the block (left of the marker for a list item), centred on its first line · drop line 3 tall, radius 2, caret colour at 70 % · tooltip 12 on 1.45, inverted surface, padding 8 × 5, radius 6 · link editor: field 28, width 340 · code language label 22 tall / 12, top-left · all on radius 12 surfaces, rows radius 8 |
 | Terminal | header 36 · pill 80×24 · glyph 14 · gap 6 · number 12 mono, two-digit slot · close 11 in 16 · new/close buttons 26/16 · fullscreen 26/14 optical · divider 1×13 |
 | Elsewhere | field 28 · push button 28 bars / 30 sheets · toggle 34×20, knob 16 · stepper 26 · slider track 4 / knob 16 · overlay row 34 · settings row 28/15 · outline dash 22/14/9 × 2 |
 
-**Hard ceilings.** No chrome glyph over 17. No square button over 28, except the Markdown toolbar's 30:
-it sits in its own sub-row under the titlebar, never beside a 28 control. No row over 34. The only glyphs
+**Hard ceilings.** No chrome glyph over 17. No square button over 28. No row over 34. The only glyphs
 above 17 anywhere are empty-state illustrations at 34, which are not controls.
 
 ### 10.8 Images
@@ -782,8 +794,8 @@ rendering PDF export uses. Source stays the place for raw Markdown, Writing Tool
 autocomplete; beside Source the preview is read-only, so one document never takes typing in two places.
 
 **The Markdown file is the document.** The page is a rendering of it, and every edit on the page —
-typing, Return, Delete, a toolbar or slash command, paste, a checkbox — becomes one text patch on the
-source. Nothing is converted back from HTML, so Markdown the editor does not render (HTML, comments,
+typing, Return, Delete, a menu, slash command or drag, paste, a checkbox — becomes one text patch on
+the source. Nothing is converted back from HTML, so Markdown the editor does not render (HTML, comments,
 front matter, unusual syntax) is kept byte for byte, and text outside the patch never changes. A
 format applied to a selection rewrites only the markers of the words it touches.
 
@@ -794,33 +806,78 @@ quiet code-face block. Markers (`**`, `#`, `>`, `- [ ]`) are never shown; typing
 `- `, `1. `, `[] `, `> `, three backticks and three hyphens turn the line into that block.
 
 **Selection and caret.** Typing at the end of bold or italic text continues it, as in every text editor;
-typing at the edge of a link does not extend the link. Undo restores the selection a change started
+typing at the edge of a link does not extend the link. Editable text shows its spaces as typed: a space
+at the end of a line draws at once and the caret moves past it, and runs of spaces keep their width
+(Markdown would collapse both, so the space key would seem to do nothing). While editing, a heading
+keeps spaces typed at its end, and a table cell shows a typed space beyond the one space of padding
+before its pipe. Undo restores the selection a change started
 from. Switching between Source and Preview keeps the selection, and Preview's undo history survives
 the switch; an undo that no longer fits the text (it changed in Source) beeps instead of applying.
+
+**Blocks.** Preview offers Notion's block set, less what a Markdown file cannot hold (databases,
+columns, synced blocks, embeds). Every block is plain Markdown another editor or GitHub reads:
+
+| Block | Markdown | On the page |
+|---|---|---|
+| Text, Heading 1–3 | paragraph, `#`–`###` | the type scale of §4.3 |
+| Bulleted, Numbered, To-do list | `-`, `1.`, `- [ ]` | markers per level as in Notion (• ◦ ▪, 1. a. i.); every item's text on one edge, a to-do's box (1 em, radius 0.25 em, 1.5 pt ring of `ink` at 42 %; checked: `accent` fill with an `onaccent` tick, text `ink` at 45 %, struck) in the marker's place |
+| Toggle list | `<details>` · `<summary>title</summary>` · blank line · body · `</details>` | a triangle in the marker column that turns 90° when open; title and body on the list text edge. Opening is a view state: the file keeps its `open` attribute. A new toggle opens. Without `</details>` it runs to the end, as HTML closes it |
+| Callout | `> [!NOTE]` (TIP, IMPORTANT, WARNING, CAUTION) | a 7 % tinted panel, radius 8, its kind as a 0.875 em / 600 title; clicking the title changes the kind |
+| Quote | `>` | a 2 pt bar of `ink` at 28 %, no fill |
+| Table | pipe table | hairline grid, a `soft-strong` header, no zebra rows |
+| Divider | `---` | a `line` hairline |
+| Code | fenced block | `code-bg` panel, radius 8, no border; language label top-left |
+| Page | a new `Name.md` beside this note, linked here as `[Name](Name.md)` | a link |
+| Link to page | `[[Title]]` | the wikilink menu |
+| Image, Video, Audio, File | `![…](…)` for media, `[…](…)` for a file, through the drop import | an image, a player, a link |
+| Web bookmark | `[host/path](url)` | a link |
+| Table of contents | `[TOC]` | the top-level h1–h3, indented by level, each scrolling to its heading; redrawn as headings change |
+| Date, Emoji | today's date as text; the system character palette | text |
 
 **Surfaces.** All are floating (§2), radius 12 with `e2`, rows radius 8, and never move the text:
 
 | Surface | Appears | Contents |
 |---|---|---|
-| Format bar | text selected with the pointer or keyboard, above the selection (below when there is no room) | block selector · bold, italic, strikethrough, inline code · link |
-| Slash menu | `/` at the start of a block or after a space | blocks, then inserts, filtered by what follows the `/`; Markdown to type instead as a trailing hint |
-| Wikilink menu | `[[` in text, not in code | the workspace's Markdown notes by title, each with `doc.text`, filtered and ordered as Source's ⇥ completion (up to 12); "No matching notes" when none do, closing once the query passes three characters; ↩ or ⇥ replaces `[[` and the query with `[[Title]]` in one patch, caret after it, its own undo step "Insert Link"; `]`, `\|` or moving the caret out closes it |
+| Format bar | text selected with the pointer or keyboard, centred above the selection (below when there is no room) | Turn Into selector (the block's name and `chevron.down`) · bold, italic, strikethrough, inline code · link |
+| Slash menu | `/` at the start of a text block — an empty line, heading or list item. Never after text, in code, a table cell or a toggle title, so a `/` in a sentence stays a slash | the blocks above in Notion's sections (Basic blocks, Media, Advanced blocks, Inline), filtered by what follows the `/`; the Markdown to type instead as a trailing hint; a footer: `↑↓` Choose `↩` Insert `Esc` Close |
+| Block handles | the pointer over a block, in its left gutter; gone while typing | + (a new line below with the slash menu open on it; ⌥ above; Esc takes the line back) and the grip (drag to move; click for the block menu). A tooltip after 450 ms names both gestures |
+| Block menu | a click on the grip, or ⌘/ at the caret | a search field, Turn into ›, Duplicate ⌘D, Copy, Move up ⇧⌘↑, Move down ⇧⌘↓, Delete; the block it acts on is tinted with the selection colour while it is open. Typing in the field lists the Turn Into targets too |
+| Turn Into | the block menu's row (hover, → or ↩) or the format bar's selector | Text, Heading 1–3, the three lists, Toggle list, Code, Quote, Callout, the current one checked; beside the menu, aligned to its row |
+| Callout kind | a click on a callout's title | Note, Tip, Important, Warning, Caution |
+| Wikilink menu | `[[` in text, not in code | the workspace's Markdown notes by title, each with `doc.text`, filtered and ordered as Source's ⇥ completion (up to 12); "No matching pages" when none do, closing once the query passes three characters; ↩ or ⇥ replaces `[[` and the query with `[[Title]]` in one patch, caret after it, its own undo step "Insert Link"; `]`, `\|` or moving the caret out closes it |
 | Link card | caret inside a link | the address in 12 `ink2`, Open, Edit, Remove |
-| Link editor | ⌘K, or Link in the format bar or card | one field; ↩ applies, Esc cancels and restores the selection |
+| Link editor | ⌘K, Link in the format bar or card, Web bookmark, Page | one field (an address, or the new page's name); ↩ applies, Esc cancels and restores the selection |
 | Table bar | caret in a table, above it, left-aligned | Row and Column menus, Delete Table |
-| Code language | always, top-right of a code block, 12 `ink3` | a searchable language list |
+| Code language | a code block's top-left label, 12 `ink3` | a searchable language list |
 
-Menus follow the row primitive: the keyboard and the pointer move one selection (`sel` fill, `ink`
-label), ↑/↓ or ⌃P/⌃N move it, ↩ or ⇥ chooses, Esc closes and keeps the typed text. Buttons in the
-bars never take focus, so the text selection survives every click. The caret's cell in a table carries
-an inset `ink3` ring; placeholders are `ink` at 32 %: "Type / to insert a block" on the empty line
-holding the caret, the heading level on an empty heading.
+Menus follow the row primitive: the keyboard and the pointer move one highlight, a `highlight` fill
+with `ink` label and glyph — neutral, so a menu over selected text never reads as a second selection.
+↑/↓ or ⌃P/⌃N move it, ↩ or ⇥ chooses, → opens a submenu and ← or Esc closes it, Esc closes and keeps
+the typed text. Section headers are sentence-case captions, not eyebrows. A menu above its anchor
+stays attached by its bottom edge while filtering shrinks it; only the list scrolls, never the page.
+Buttons and handles never take focus, so the text selection survives every click. The caret's cell
+in a table carries an inset `ink3` ring; placeholders are `ink` at 32 %: "Type / to insert a block"
+on the empty line holding the caret, the heading level on an empty heading, "List", "To-do" and
+"Toggle" on empty items and titles, "Empty toggle" in an open toggle with nothing in it.
 
-**Keys.** ↩ splits a block or starts the next list item; on an empty item or an empty last quote line it
-leaves the list or quote. ⇧↩ breaks the line inside a paragraph. ⌫ at the start of a heading, item or
-quote removes that formatting first, then joins with the block above. ⇥/⇧⇥ indent and outdent list
-items, move between table cells (adding a row after the last) and indent code. ⌘↩ leaves a code block.
-⌘B ⌘I ⌘E ⇧⌘X ⌘K and ⌥⌘0–6 format. ⌘-click opens a link.
+**Moving blocks.** A handle belongs to a top-level block (a quote, callout, toggle or table moves
+whole) or to a list item with the items nested under it. Dragging fades the block to 35 %, carries a
+60 % ghost under the pointer, draws a 3 pt line in the caret's colour at the nearest gap (between
+top-level blocks, or between the items of the item's own list) and scrolls the page near the window
+edge; Esc cancels. A drop where the block already is does nothing. The move is one patch and one undo
+step ("Move"); blocks keep their own lines, a blank line goes on each side, ordered markers stay in
+their places, and the moved block flashes the selection tint for 900 ms.
+
+**Keys.** ↩ splits a block or starts the next list item; on an empty item or an empty last quote,
+callout or toggle line it leaves the list, quote or toggle. ↩ in a toggle's title goes into its body
+when open (onto its empty first line, or a new one) and past the toggle when closed. ⇧↩ breaks the
+line inside a paragraph. ⌫ at the start of a heading, item or quote removes that formatting first,
+then joins with the block above; at the start of a callout's text it makes the callout a quote; at the
+start of a toggle's title it unwraps the toggle into a paragraph followed by its body. Text never joins
+across a toggle's edge, so its markup cannot break; ⌫ or ⌦ there moves the caret instead. ⌫ after a
+divider or table of contents deletes it. ⇥/⇧⇥ indent and outdent list items, move between table cells
+(adding a row after the last) and indent code. ⌘↩ leaves a code block. ⌘/ opens the block menu, ⌘D
+duplicates the block, ⇧⌘↑/⇧⌘↓ move it. ⌘B ⌘I ⌘E ⇧⌘X ⌘K and ⌥⌘0–6 format. ⌘-click opens a link.
 
 **Clipboard.** Copy puts the selection's Markdown on the pasteboard as plain text (markers balanced at
 cut emphasis) and its rendering as HTML, so a paste into Mail stays formatted and a paste into Source
@@ -837,8 +894,14 @@ into the workspace and linked.
 | Render of a 1 MB document | within 10 % of the read-only preview | ~100 ms in JavaScriptCore |
 | Opening a 1 MB document editable | ≤ 1 s | 0.6–0.9 s |
 
-**Motion.** Floating surfaces fade up over 120 ms (opacity, 4 pt translate); with Reduce Motion they
-fade in 90 ms with no movement. Hover colours take 120 ms. Nothing animates while typing.
+**Motion.** A surface the pointer opens (the block menu and Turn Into, the callout and language menus,
+the table menus, the format bar after a mouse selection) grows in from its trigger: scale 0.97 → 1
+with opacity over 150 ms, `cubic-bezier(0.23, 1, 0.32, 1)`, origin at the side that faces the anchor.
+A surface the keyboard opens (the slash and wikilink menus, ⌘/, ⌘K) appears at once — typing is
+never made to wait for an animation. Everything leaves in 90 ms. Handles fade 120 ms; the toggle
+triangle turns in 180 ms ease-out; a pressed button or handle scales to 0.96. Only transform and
+opacity animate. With Reduce Motion nothing scales, entrances are a 120 ms fade, and the moved-block
+flash is off. Nothing animates while typing.
 
 ---
 
@@ -850,8 +913,9 @@ fade in 90 ms with no movement. Hover colours take 120 ms. Nothing animates whil
   menu or the keyboard alike: AppKit's own split-view transition, opening and closing alike. The
   pane's content keeps its open width and slides under the window edge, so rows never squeeze and the
   terminal is not resized frame by frame.
-- **fadeUp** for overlays, toasts, the outline peek card and Preview's floating editing surfaces
-  (120ms, 4pt).
+- **fadeUp** for overlays, toasts and the outline peek card (120ms, 4pt). Preview's editing surfaces
+  have their own rule (§10.10): grown from the trigger when the pointer opens them, instant from the
+  keyboard.
 - Never animate size, position, elevation, border or weight except for the explicit terminal
   fullscreen width transition and the side-pane transition above.
 - Honour Reduce Motion: entrances become instant opacity changes and side panes show and hide
@@ -978,7 +1042,7 @@ Before calling any UI work done:
 - [ ] Push buttons are 28 (bars) or 30 (sheets). No third height.
 - [ ] Rows that hold the same kind of thing use identical numbers.
 - [ ] Symbols sit in the 18pt column, `.regular`, `.monochrome`, cap-height centred.
-- [ ] No chrome glyph over 17. No square button over 28, except the Markdown toolbar's 30 (§10.7).
+- [ ] No chrome glyph over 17. No square button over 28 (§10.7).
 - [ ] Every metric derives from `workspaceZoom`. No `.scaleEffect`. Nothing clamped.
 - [ ] Hairlines, shadows and focus rings do not scale.
 - [ ] Tabs hug to 220 and scroll; fades appear only where content actually overflows.

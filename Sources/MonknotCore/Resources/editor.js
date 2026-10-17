@@ -198,6 +198,7 @@
     for (const block of removed) {
       for (const unit of block.units || []) model.units.delete(unit.id);
     }
+    carryToggleState(model, removed, inserted, from, to, delta);
     renderBlocks(model, inserted);
     const index = replaceFrom + keepFront;
     blocks.splice(index, removed.length, ...inserted);
@@ -206,6 +207,32 @@
       blocks[position].lineShift += lineDelta;
     }
     return { full: false, index, removed, inserted };
+  }
+
+  /// A toggle opened or closed on the page stays so when an edit inside it re-parses it: the
+  /// state moves to the new toggle that starts where the old one did.
+  function carryToggleState(model, removed, inserted, from, to, delta) {
+    const states = new Map();
+    const collect = (block, shift) => {
+      if (block.type === "toggle" && block.viewOpen !== undefined) {
+        const start = block.start + shift;
+        if (start < from) states.set(start, block.viewOpen);
+        else if (start >= to) states.set(start + delta, block.viewOpen);
+      }
+      for (const child of block.children || []) if (child.type === "toggle" || child.type === "quote") collect(child, shift);
+    };
+    for (const block of removed) collect(block, block.shift);
+    // A toggle just inserted from a menu opens, so its body is there to type into.
+    if (model.pendingToggleOpen !== undefined && model.pendingToggleOpen !== null) {
+      states.set(model.pendingToggleOpen, true);
+      model.pendingToggleOpen = null;
+    }
+    if (states.size === 0) return;
+    const assign = (block) => {
+      if (block.type === "toggle" && states.has(block.start)) block.viewOpen = states.get(block.start);
+      for (const child of block.children || []) if (child.type === "toggle" || child.type === "quote") assign(child);
+    };
+    inserted.forEach(assign);
   }
 
   // ---------------------------------------------------------------------
@@ -647,7 +674,7 @@
     if (!first || !last) return [{ s: from, e: to, keep: "" }];
     if (first === last) return markupAwareParts(model, first, from, to, replacing);
 
-    if (isTextLike(first) && isTextLike(last)) {
+    if (isTextLike(first) && isTextLike(last) && canJoin(first, last)) {
       const head = markupAwareParts(model, first, from, Math.max(from, unitEnd(first)), replacing)[0];
       const tail = markupAwareParts(model, last, Math.min(to, unitStart(last)), to, replacing)[0];
       return [{ s: head.s, e: tail.e, keep: head.keep + tail.keep }];
@@ -685,6 +712,21 @@
       }
     }
     return mergeParts(parts);
+  }
+
+  /// Whether text in `first` and `last` may run together when what lies between them goes: not
+  /// across a toggle's edge, and never into a toggle's title, whose markup holds the toggle.
+  function canJoin(first, last) {
+    return first.scope === last.scope && first.role !== "summary" && last.role !== "summary";
+  }
+
+  /// Blocks the page draws whole, with no text to type in: a divider and a table of contents.
+  function isAtomBlock(block) {
+    return Boolean(block) && (block.type === "hr" || block.type === "toc");
+  }
+
+  function atomBlockLabel(block) {
+    return block.type === "toc" ? "Delete Table of Contents" : "Delete Divider";
   }
 
   function mergeParts(parts) {
@@ -746,6 +788,14 @@
     const eol = model.eol;
     if (!block.view) {
       const anchor = unitStart(unit);
+      if (block.virtual) {
+        // An empty callout or toggle body: the text goes on a line of its own inside it.
+        const before = normalizeLineEndings(block.virtual.before, eol);
+        const after = normalizeLineEndings(block.virtual.after, eol);
+        const linePrefix = before.slice(before.lastIndexOf(eol) + eol.length);
+        const body = prefixFollowingLines(text, linePrefix, eol);
+        return { from: anchor, to: anchor, insert: before + body + after, select: caretAt(anchor + before.length + body.length) };
+      }
       return { from: anchor, to: anchor, insert: text, select: caretAt(anchor + text.length) };
     }
     const start = S(unit, block.view.start);
@@ -881,10 +931,21 @@
 
   /// A new empty line right after the block holding `unit`.
   function insertEmptyAfter(model, unit) {
+    const at = unit.role === "item" ? S(unit, unit.item.end)
+      : unit.role === "summary" ? S(unit, unit.block.end)
+      : lineEndOfUnit(model, unit);
+    return insertEmptyAt(model, at, quotePrefixOfLine(model.source, at));
+  }
+
+  /// A new empty line at the top level after a whole top-level block (a quote, toggle or table
+  /// included), as a click below the last block makes.
+  function insertEmptyAfterBlock(model, block) {
+    return insertEmptyAt(model, bEnd(block), "");
+  }
+
+  function insertEmptyAt(model, at, prefix) {
     const source = model.source;
     const eol = model.eol;
-    const at = unit.role === "item" ? S(unit, unit.item.end) : lineEndOfUnit(model, unit);
-    const prefix = quotePrefixOfLine(source, at);
     const blank = prefix.replace(/[ \t]+$/, "");
     const gap = blankLinesAfter(source, at, prefix);
     let count;
@@ -953,6 +1014,7 @@
     const after = visible.slice(v);
 
     if (unit.role === "item") return enterInItem(model, unit, position, before, after, prefix, blank);
+    if (unit.role === "summary") return enterInSummary(model, unit);
 
     if (unit.role === "paragraph" && /^```[\w.+-]*$/.test(unit.region.j) && after === "" && unit.region.lines.length === 1) {
       const start = unitStart(unit);
@@ -969,6 +1031,10 @@
     const source = model.source;
     const eol = model.eol;
     const block = unit.block;
+    const next = nextUnit(model, unit);
+    if (unit.scope && unit.scope.type === "toggle" && (!next || next.scope !== unit.scope)) {
+      return leaveToggle(model, unit);
+    }
     if (!block.view) {
       const anchor = unitStart(unit);
       return { from: anchor, to: anchor, insert: eol, select: (next) => caretOnFirstEmptyAfter(next, anchor + 1), kind: "enter" };
@@ -1005,6 +1071,63 @@
     const at = S(unit, block.view.end);
     const blank = prefix.replace(/[ \t]+$/, "");
     return { from: at, to: at, insert: eol + blank, select: (next) => caretOnFirstEmptyAfter(next, at + 1), kind: "enter" };
+  }
+
+  /// Return in a toggle's title: into its body when it is open (onto its empty first line, or a new
+  /// one), past the whole toggle when it is closed. The title never splits.
+  function enterInSummary(model, unit) {
+    const toggle = unit.block;
+    const source = model.source;
+    const eol = model.eol;
+    if (!isOpenToggle(toggle)) return { ...insertEmptyAfter(model, unit), kind: "enter" };
+    const first = nextUnit(model, unit);
+    if (first && first.scope === toggle && first.kind === "empty") return { move: true, select: caretAt(unitStart(first)) };
+    const at = S(unit, toggle.summaryView.end);
+    const prefix = quotePrefixOfLine(source, at);
+    const blank = prefix.replace(/[ \t]+$/, "");
+    // The body starts after one separating blank line; the empty line goes after it.
+    const existing = Math.min(2, blankLinesAfter(source, at, prefix).count);
+    const insert = (eol + blank).repeat(Math.max(1, 2 - existing));
+    return { from: at, to: at, insert, select: (next) => caretOnFirstEmptyAfter(next, at + 1), kind: "enter" };
+  }
+
+  /// Return on the empty last line of a toggle's body leaves the toggle, as on a quote's.
+  function leaveToggle(model, unit) {
+    const toggle = unit.scope;
+    const source = model.source;
+    const eol = model.eol;
+    const end = S(unit, toggle.end);
+    const parts = [];
+    const previous = previousUnit(model, unit);
+    const onlyLine = !previous || previous.role === "summary";
+    let removed = 0;
+    if (unit.block.view && !onlyLine) {
+      const lineStart = lineStartOf(source, S(unit, unit.block.view.start));
+      const from = previousLineEnd(source, lineStart);
+      const to = lineEndOf(source, lineStart);
+      if (from >= 0) {
+        parts.push({ s: from, e: to, keep: "" });
+        removed = to - from;
+      }
+    }
+    const after = insertEmptyAt(model, end, quotePrefixOfLine(source, end));
+    parts.push({ s: end, e: end, keep: after.insert });
+    const op = compose(source, parts);
+    op.select = (next) => caretOnFirstEmptyAfter(next, end - removed + 1);
+    op.kind = "enter";
+    return op;
+  }
+
+  function isOpenToggle(toggle) {
+    return Boolean(toggle.viewOpen ?? toggle.open);
+  }
+
+  /// Whether a unit sits in the body of a closed toggle, so the page does not show it.
+  function isHiddenUnit(unit) {
+    for (let scope = unit && unit.scope; scope; scope = scope.scopeParent) {
+      if (scope.type === "toggle" && !isOpenToggle(scope)) return true;
+    }
+    return false;
   }
 
   function enterInItem(model, unit, position, before, after, prefix, blank) {
@@ -1067,9 +1190,15 @@
   function planBackspaceAtStart(model, unit) {
     const source = model.source;
     const position = unitStart(unit);
+    if (unit.role === "summary") return unwrapToggle(model, unit);
+    const callout = calloutOf(unit);
+    if (callout && isFirstInContainer(model, unit)) return calloutToQuote(model, unit, callout);
     if (unit.kind === "empty") {
       const block = unit.block;
-      if (!block.view) return null;
+      if (!block.view) {
+        const previous = visiblePrevious(model, unit);
+        return previous ? { move: true, select: caretAt(unitEnd(previous)) } : null;
+      }
       const lineStart = lineStartOf(source, S(unit, block.view.start));
       const lineEnd = lineEndOf(source, lineStart);
       const previousEnd = previousLineEnd(source, lineStart);
@@ -1131,11 +1260,15 @@
     }
 
     const previous = previousUnit(model, unit);
-    if (!previous) return null;
     const topIndex = blockIndex(model, unit.top);
     const previousTop = topIndex > 0 ? model.blocks[topIndex - 1] : null;
-    if (previous.top !== unit.top && previousTop && previousTop.type === "hr") {
-      return { from: bStart(previousTop), to: bStart(unit.top), insert: "", select: caretAt(bStart(previousTop)), kind: "delete", label: "Delete Divider" };
+    if ((!previous || previous.top !== unit.top) && unitsOf(unit.top)[0] === unit && isAtomBlock(previousTop)) {
+      return { from: bStart(previousTop), to: bStart(unit.top), insert: "", select: caretAt(bStart(previousTop)), kind: "delete", label: atomBlockLabel(previousTop) };
+    }
+    if (!previous) return null;
+    if (!canJoin(previous, unit) || isHiddenUnit(previous)) {
+      const target = visiblePrevious(model, unit);
+      return target ? { move: true, select: caretAt(unitEnd(target)) } : null;
     }
     if (previous.kind === "empty") {
       const block = previous.block;
@@ -1165,10 +1298,11 @@
     if (!next) return null;
     const topIndex = blockIndex(model, unit.top);
     const nextTop = model.blocks[topIndex + 1];
-    if (next.top !== unit.top && nextTop && nextTop.type === "hr") {
+    if (next.top !== unit.top && isAtomBlock(nextTop)) {
       const after = model.blocks[topIndex + 2];
-      return { from: bStart(nextTop), to: after ? bStart(after) : bEnd(nextTop), insert: "", select: caretAt(position), kind: "delete", label: "Delete Divider" };
+      return { from: bStart(nextTop), to: after ? bStart(after) : bEnd(nextTop), insert: "", select: caretAt(position), kind: "delete", label: atomBlockLabel(nextTop) };
     }
+    if (!canJoin(unit, next) || isHiddenUnit(next)) return null;
     if (next.kind === "empty") {
       const block = next.block;
       if (!block.view) return null;
@@ -1177,6 +1311,54 @@
     }
     if (isStructural(next) || isStructural(unit)) return null;
     return { from: position, to: unitStart(next), insert: "", select: caretAt(position), kind: "delete" };
+  }
+
+  /// The nearest unit before `unit` that the page shows (a closed toggle hides its body).
+  function visiblePrevious(model, unit) {
+    let previous = previousUnit(model, unit);
+    while (previous && isHiddenUnit(previous)) previous = previousUnit(model, previous);
+    return previous;
+  }
+
+  function calloutOf(unit) {
+    return unit.container && unit.container.type === "quote" && unit.container.callout ? unit.container : null;
+  }
+
+  function isFirstInContainer(model, unit) {
+    const previous = previousUnit(model, unit);
+    return !previous || previous.container !== unit.container;
+  }
+
+  /// ⌫ at the start of a callout's text makes it a plain quote: its `[!KIND]` line goes.
+  function calloutToQuote(model, unit, callout) {
+    const source = model.source;
+    const marker = callout.callout.marker;
+    const lineStart = lineStartOf(source, S(unit, marker.start));
+    const hasChildren = callout.inner.length > 1;
+    if (!hasChildren) {
+      const from = S(unit, marker.start);
+      return { from, to: S(unit, marker.end), insert: "", select: (next) => caretAt(closestUnitPosition(next, from)), kind: "format", label: "Quote" };
+    }
+    const to = nextLineStart(source, lineStart);
+    return { from: lineStart, to, insert: "", select: caretAt(unitStart(unit) - (to - lineStart)), kind: "format", label: "Quote" };
+  }
+
+  /// ⌫ at the start of a toggle's title turns it into a paragraph, its body following as blocks.
+  function unwrapToggle(model, unit) {
+    const toggle = unit.block;
+    const source = model.source;
+    const eol = model.eol;
+    const from = S(unit, toggle.start);
+    const to = S(unit, toggle.end);
+    const title = source.slice(S(unit, toggle.summaryStart), S(unit, toggle.summaryEnd));
+    const lines = toggle.body.filter((view) => !MD.isBlank(view.text));
+    let insert = title;
+    if (lines.length) {
+      const bodyStart = S(unit, lines[0].prefixStart ?? lines[0].start);
+      const bodyEnd = S(unit, lines[lines.length - 1].end);
+      insert += eol + eol + source.slice(bodyStart, bodyEnd);
+    }
+    return { from, to, insert, select: caretAt(from), kind: "format", label: "Paragraph" };
   }
 
   function closestUnitPosition(model, raw) {
@@ -1528,7 +1710,8 @@
       return unit.list.ordered ? "numbered" : "bullet";
     }
     if (unit.role === "cell") return "table";
-    if (unit.container && unit.container.type === "quote") return "quote";
+    if (unit.role === "summary") return "toggle";
+    if (unit.container && unit.container.type === "quote") return unit.container.callout ? "callout" : "quote";
     return "paragraph";
   }
 
@@ -1994,9 +2177,16 @@
         caretIn = 3;
         label = "Divider";
         break;
+      case "toc":
+        block = "[TOC]";
+        caretIn = 5;
+        label = "Table of Contents";
+        break;
       default:
         return null;
     }
+    // A divider or table of contents holds no text: the caret goes to a line after it.
+    const atomic = command === "divider" || command === "toc";
 
     if (isEmpty && unit.role === "paragraph") {
       const [start, end] = unitLineRange(model, unit);
@@ -2005,8 +2195,8 @@
       const blank = prefix.replace(/[ \t]+$/, "");
       const body = prefixFollowingLines(block, prefix, eol);
       let trailing = "";
-      if (command === "divider") {
-        const count = gapAfter.trailing ? 1 : gapAfter.count >= 1 ? 1 : 2;
+      if (atomic) {
+        const count = gapAfter.trailing ? (gapAfter.hasTerminator ? 1 : 2) : gapAfter.count >= 1 ? 1 : 2;
         trailing = (eol + blank).repeat(count);
       } else if (!gapAfter.trailing && gapAfter.count === 0) {
         trailing = eol + blank;
@@ -2018,7 +2208,7 @@
         from: start,
         to: end,
         insert,
-        select: command === "divider" ? (next) => caretOnFirstEmptyAfter(next, start + leading.length + prefix.length + 3) : caretAt(caret),
+        select: atomic ? (next) => caretOnFirstEmptyAfter(next, start + leading.length + prefix.length + block.length) : caretAt(caret),
         kind: "format",
         label
       };
@@ -2030,7 +2220,7 @@
     const removed = slashTo - slashFrom;
     const caret = typeof inserted.select === "function" ? null : inserted.select.head - removed;
     op.select = caret === null ? inserted.select : caretAt(caret);
-    if (command === "divider") op.select = (next) => caretOnFirstEmptyAfter(next, inserted.from - removed + 1);
+    if (atomic) op.select = (next) => caretOnFirstEmptyAfter(next, inserted.from - removed + 1);
     op.kind = "format";
     op.label = label;
     return op;
@@ -2080,6 +2270,356 @@
     }
     text = prefix.join("") + text + suffix.join("");
     return text;
+  }
+
+  // ---------------------------------------------------------------------
+  // Whole blocks: what the handles move, duplicate, delete and turn into
+  //
+  // A handle belongs to a top-level block (a quote, callout, toggle or table
+  // whole) or to a list item together with the items nested under it. Both
+  // move as their source lines, so nothing inside them is re-written.
+  // ---------------------------------------------------------------------
+
+  function handleTargetOf(model, unit) {
+    if (!unit) return null;
+    if (unit.role === "item") return { kind: "item", top: unit.top, list: unit.list, item: unit.item };
+    const index = blockIndex(model, unit.top);
+    return index >= 0 ? { kind: "block", index, block: unit.top } : null;
+  }
+
+  function isLineBlank(source, position) {
+    if (position < 0 || position > source.length) return true;
+    const start = lineStartOf(source, position);
+    return /^[ \t]*$/.test(source.slice(start, lineEndOf(source, start)));
+  }
+
+  /// The source a top-level block takes away when it leaves: its lines and the separator after
+  /// them, or before them when it is the last block.
+  function topRemovalRange(model, index) {
+    const blocks = model.blocks;
+    const source = model.source;
+    const block = blocks[index];
+    const start = lineStartOf(source, bStart(block));
+    // Right under the block before it (a heading, a paragraph a list interrupts): its line break
+    // goes and the gap after it stays, so the blocks on either side do not run together.
+    if (index > 0 && !isLineBlank(source, previousLineEnd(source, start))) return { s: previousLineEnd(source, start), e: bEnd(block) };
+    if (index < blocks.length - 1) return { s: start, e: lineStartOf(source, bStart(blocks[index + 1])) };
+    if (index > 0) return { s: bEnd(blocks[index - 1]), e: bEnd(block) };
+    return { s: 0, e: source.length };
+  }
+
+  function topChunk(model, index) {
+    const block = model.blocks[index];
+    return model.source.slice(lineStartOf(model.source, bStart(block)), bEnd(block));
+  }
+
+  /// Text that puts `chunk` in the gap before block `index` (after the last block when `index` is
+  /// the block count), with one blank line on each side.
+  function topInsertion(model, gap, chunk) {
+    const blocks = model.blocks;
+    const source = model.source;
+    const eol = model.eol;
+    if (blocks.length === 0) return { at: 0, before: "", after: "" };
+    if (gap < blocks.length) {
+      const at = lineStartOf(source, bStart(blocks[gap]));
+      const before = at > 0 && !isLineBlank(source, previousLineEnd(source, at)) ? eol : "";
+      return { at, before, after: eol + eol };
+    }
+    const at = bEnd(blocks[blocks.length - 1]);
+    const next = nextLineStart(source, at);
+    const after = next > at && next < source.length && !isLineBlank(source, next) ? eol : "";
+    return { at, before: eol + eol, after };
+  }
+
+  function itemRange(model, target) {
+    const shift = target.top.shift;
+    return [lineStartOf(model.source, target.item.view.start + shift), itemSubtreeEnd(target.list, target.item) + shift];
+  }
+
+  /// Rewrites a list with its items in `order` (indexes into its items). Markers keep their
+  /// places, so an ordered list still counts from its first number.
+  function rebuildList(model, top, list, order, selection, label, moved) {
+    const source = model.source;
+    const shift = top.shift;
+    const items = list.items;
+    const ranges = items.map((item) => [lineStartOf(source, item.view.start + shift), itemSubtreeEnd(list, item) + shift]);
+    const gaps = ranges.slice(1).map((range, index) => source.slice(ranges[index][1], range[0]));
+    const from = ranges[0][0];
+    const to = ranges[ranges.length - 1][1];
+    const starts = new Map();
+    let insert = "";
+    order.forEach((original, position) => {
+      if (position > 0) insert += gaps[position - 1];
+      let chunk = source.slice(ranges[original][0], ranges[original][1]);
+      let markerDelta = 0;
+      const markerOffset = items[original].markerStart + shift - ranges[original][0];
+      if (list.ordered && items[position].marker !== items[original].marker) {
+        chunk = chunk.slice(0, markerOffset) + items[position].marker + chunk.slice(markerOffset + items[original].marker.length);
+        markerDelta = items[position].marker.length - items[original].marker.length;
+      }
+      starts.set(original, { start: from + insert.length, markerOffset, markerDelta });
+      insert += chunk;
+    });
+    const map = (position) => {
+      if (position < from) return position;
+      if (position > to) return position + insert.length - (to - from);
+      for (let index = 0; index < ranges.length; index += 1) {
+        const [start, end] = ranges[index];
+        if (position >= start && position <= end) {
+          const placed = starts.get(index);
+          const offset = position - start;
+          return placed.start + offset + (offset > placed.markerOffset ? placed.markerDelta : 0);
+        }
+      }
+      return position;
+    };
+    return {
+      from,
+      to,
+      insert,
+      select: selection ? { anchor: map(selection.anchor), head: map(selection.head) } : null,
+      kind: "format",
+      label,
+      movedStart: moved !== undefined && starts.has(moved) ? starts.get(moved).start : undefined
+    };
+  }
+
+  /// Moves a handle's block into a gap: before block `gap` at the top level (the block count for
+  /// the end), or before item `gap` of the same list. Returns null for a drop where it already is.
+  function planMoveBlock(model, target, gap, selection) {
+    if (!target) return null;
+    if (target.kind === "item") {
+      const items = target.list.items;
+      const from = items.indexOf(target.item);
+      if (from < 0 || gap === from || gap === from + 1 || gap < 0 || gap > items.length) return null;
+      const order = items.map((_, index) => index);
+      order.splice(from, 1);
+      order.splice(gap > from ? gap - 1 : gap, 0, from);
+      return rebuildList(model, target.top, target.list, order, selection, "Move", from);
+    }
+    const blocks = model.blocks;
+    const index = target.index;
+    if (index < 0 || index >= blocks.length || gap === index || gap === index + 1 || gap < 0 || gap > blocks.length) return null;
+    const removal = topRemovalRange(model, index);
+    const chunk = topChunk(model, index);
+    const chunkStart = lineStartOf(model.source, bStart(blocks[index]));
+    const place = topInsertion(model, gap, chunk);
+    const text = place.before + chunk + place.after;
+    const op = compose(model.source, [{ s: removal.s, e: removal.e, keep: "" }, { s: place.at, e: place.at, keep: text }]);
+    if (!op) return null;
+    const newChunkStart = (place.at <= removal.s ? place.at : place.at - (removal.e - removal.s)) + place.before.length;
+    const map = (position) => {
+      if (position >= chunkStart && position <= chunkStart + chunk.length) return newChunkStart + (position - chunkStart);
+      return mapSelectionThrough({ anchor: position, head: position }, { from: removal.s, to: removal.e, insert: "" }).head;
+    };
+    op.select = selection ? { anchor: map(selection.anchor), head: map(selection.head) } : caretAt(newChunkStart);
+    op.kind = "format";
+    op.label = "Move";
+    op.movedStart = newChunkStart;
+    return op;
+  }
+
+  /// ⌘⇧↑ / ⌘⇧↓: the block holding the caret swaps with its neighbour.
+  function planMoveByStep(model, selection, direction) {
+    const unit = unitAt(model, selection.head, "left");
+    const target = handleTargetOf(model, unit);
+    if (!target) return null;
+    if (target.kind === "item") {
+      const from = target.list.items.indexOf(target.item);
+      return planMoveBlock(model, target, direction < 0 ? from - 1 : from + 2, selection);
+    }
+    return planMoveBlock(model, target, direction < 0 ? target.index - 1 : target.index + 2, selection);
+  }
+
+  function planDuplicateBlock(model, target) {
+    if (!target) return null;
+    const source = model.source;
+    const eol = model.eol;
+    if (target.kind === "item") {
+      const [start, end] = itemRange(model, target);
+      const chunk = source.slice(start, end);
+      return { from: end, to: end, insert: eol + chunk, select: caretAt(end + eol.length + (lineEndOf(source, start) - start)), kind: "format", label: "Duplicate" };
+    }
+    const block = model.blocks[target.index];
+    const chunk = topChunk(model, target.index);
+    const at = bEnd(block);
+    const next = nextLineStart(source, at);
+    const after = next > at && next < source.length && !isLineBlank(source, next) ? eol : "";
+    const insert = eol + eol + chunk + after;
+    const copyStart = at + eol.length * 2;
+    return { from: at, to: at, insert, select: caretAt(copyStart + Math.min(chunk.length, lineEndOf(chunk, 0))), kind: "format", label: "Duplicate", movedStart: copyStart };
+  }
+
+  function planDeleteBlock(model, target) {
+    if (!target) return null;
+    const source = model.source;
+    if (target.kind === "item") {
+      const [start, end] = itemRange(model, target);
+      const next = nextLineStart(source, end);
+      const from = next > end ? start : Math.max(0, previousLineEnd(source, start));
+      const to = next > end ? next : end;
+      return { from, to, insert: "", select: (nextModel) => caretAt(positionBefore(nextModel, from)), kind: "delete", label: "Delete" };
+    }
+    const range = topRemovalRange(model, target.index);
+    return { from: range.s, to: range.e, insert: "", select: (nextModel) => caretAt(positionBefore(nextModel, range.s)), kind: "delete", label: "Delete" };
+  }
+
+  /// Where the caret goes once a block is gone: the end of the text before it, as after ⌫.
+  function positionBefore(model, raw) {
+    const unit = unitAt(model, Math.max(0, raw - 1), "left");
+    if (!unit) return closestUnitPosition(model, raw);
+    return Math.max(unitStart(unit), Math.min(unitEnd(unit), raw));
+  }
+
+  /// The handle block's Markdown, for Copy in its menu.
+  function blockMarkdown(model, target) {
+    if (!target) return "";
+    if (target.kind === "item") {
+      const [start, end] = itemRange(model, target);
+      return model.source.slice(start, end);
+    }
+    return topChunk(model, target.index);
+  }
+
+  /// The selection Turn Into works on for a handle's block: all of its text.
+  function targetSelection(model, target) {
+    if (!target) return null;
+    const units = target.kind === "item"
+      ? unitsOf(target.top).filter((unit) => unit.role === "item" && unit.item === target.item)
+      : unitsOf(target.block);
+    if (units.length === 0) return null;
+    return withOrderCore(unitStart(units[0]), unitEnd(units[units.length - 1]));
+  }
+
+  function withOrderCore(anchor, head) {
+    return { anchor, head, from: Math.min(anchor, head), to: Math.max(anchor, head) };
+  }
+
+  /// Lines `[start, end)` replaced by `text`, with a blank line kept on each side.
+  function replaceIsolated(model, start, end, text, prefix) {
+    const source = model.source;
+    const eol = model.eol;
+    const blank = prefix.replace(/[ \t]+$/, "");
+    const before = start > 0 && !isBlankLineIn(source, lineStartOf(source, previousLineEnd(source, start)), prefix) ? eol + blank : "";
+    const next = nextLineStart(source, end);
+    const after = next > end && next < source.length && !isBlankLineIn(source, next, prefix) ? eol + blank : "";
+    return { from: start, to: end, insert: before + text + after, offset: before.length };
+  }
+
+  /// Turns the text block holding the caret into a toggle titled with its text, opened.
+  function planWrapToggle(model, selection) {
+    const unit = unitAt(model, selection.head, "left");
+    if (!unit || !(isTextLike(unit) || unit.role === "summary") || unit.kind === "raw" || unit.role === "cell") return null;
+    if (unit.role === "summary") return null;
+    const source = model.source;
+    const eol = model.eol;
+    const [start, end] = unitLineRange(model, unit);
+    const prefix = quotePrefixOfLine(source, start);
+    const title = unitContent(model, unit).split(eol).join(" ").replace(/^\s+/, "");
+    const blank = prefix.replace(/[ \t]+$/, "");
+    const text = `${prefix}<details>${eol}${prefix}<summary>${title}</summary>${eol}${blank}${eol}${prefix}</details>`;
+    const op = replaceIsolated(model, start, end, text, prefix);
+    const openAt = op.from + op.offset;
+    const caret = openAt + prefix.length + "<details>".length + eol.length + prefix.length + "<summary>".length + title.length;
+    return { from: op.from, to: op.to, insert: op.insert, select: caretAt(caret), kind: "format", label: "Toggle List", openToggle: openAt };
+  }
+
+  /// Turns the text block holding the caret into a callout (`> [!NOTE]`); a quote's text makes the
+  /// whole quote one.
+  function planWrapCallout(model, selection, kind = "NOTE") {
+    const unit = unitAt(model, selection.head, "left");
+    if (!unit || !isTextLike(unit) || unit.kind === "raw") return null;
+    const source = model.source;
+    const eol = model.eol;
+    const marker = `[!${kind}]`;
+    if (calloutOf(unit)) return null;
+    if (unit.container && unit.container.type === "quote" && !unit.container.callout) {
+      const quote = unit.container;
+      const lineStart = lineStartOf(source, S(unit, quote.lines[0].start));
+      const prefix = (QUOTE_PREFIX.exec(source.slice(lineStart, lineEndOf(source, lineStart))) || ["> "])[0];
+      const insert = prefix + marker + eol;
+      return { from: lineStart, to: lineStart, insert, select: caretAt(selection.head + insert.length), kind: "format", label: "Callout" };
+    }
+    const [start, end] = unitLineRange(model, unit);
+    const outer = quotePrefixOfLine(source, start);
+    const prefix = `${outer}> `;
+    const content = unitContent(model, unit);
+    const body = content ? eol + prefixFollowingLines(prefix + content.replace(/^\s+/, ""), prefix, eol) : "";
+    const text = `${prefix}${marker}${body}`;
+    const op = replaceIsolated(model, start, end, text, outer);
+    const textStart = op.from + op.offset;
+    const caret = content ? textStart + text.length : textStart + prefix.length + marker.length;
+    return { from: op.from, to: op.to, insert: op.insert, select: caretAt(caret), kind: "format", label: "Callout" };
+  }
+
+  /// A quote's or callout's text without its `>` (and the callout's `[!KIND]` line).
+  function planUnwrapQuote(model, unit, selection) {
+    const quote = unit && unit.container;
+    if (!quote || quote.type !== "quote") return null;
+    const source = model.source;
+    const eol = model.eol;
+    const from = S(unit, quote.lines[0].start);
+    const to = S(unit, quote.lines[quote.lines.length - 1].end);
+    const first = quote.callout ? 1 : 0;
+    const lines = [];
+    for (let index = first; index < quote.inner.length; index += 1) {
+      const view = quote.inner[index];
+      let text = source.slice(S(unit, view.start), S(unit, view.end));
+      if (lines.length > 0) {
+        const lineStart = S(unit, quote.lines[index].start);
+        text = source.slice(lineStartOf(source, lineStart), lineStart) + text;
+      }
+      lines.push(text);
+    }
+    const units = unitsOf(unit.top).filter((candidate) => candidate.container === quote);
+    const described = describeSelection(model, selection || caretAt(unitStart(unit)), units);
+    return {
+      from,
+      to,
+      insert: lines.join(eol),
+      select: (next) => restoreDescribedSelection(next, described, from),
+      kind: "format",
+      label: "Paragraph"
+    };
+  }
+
+  /// A new empty line above top-level block `index`.
+  function insertEmptyBeforeBlock(model, index) {
+    const source = model.source;
+    const eol = model.eol;
+    const at = lineStartOf(source, bStart(model.blocks[index]));
+    const count = at === 0 || isLineBlank(source, previousLineEnd(source, at)) ? 1 : 2;
+    return { from: at, to: at, insert: eol.repeat(count), select: (next) => caretOnFirstEmptyAfter(next, at) };
+  }
+
+  /// A new list item beside a handle's item: after it and the items nested under it, or before it.
+  function insertItemNear(model, target, above) {
+    const source = model.source;
+    const eol = model.eol;
+    const item = target.item;
+    const shift = target.top.shift;
+    const contentLineStart = item.view.start + shift;
+    const prefix = quotePrefixOfLine(source, contentLineStart);
+    const indent = source.slice(contentLineStart, item.markerStart + shift);
+    if (above) {
+      const at = lineStartOf(source, contentLineStart);
+      const insert = prefix + indent + item.marker + " " + (item.task ? "[ ] " : "") + eol;
+      return { from: at, to: at, insert, select: caretAt(at + insert.length - eol.length) };
+    }
+    const at = itemSubtreeEnd(target.list, item) + shift;
+    const insert = eol + prefix + indent + nextMarker(item);
+    return { from: at, to: at, insert, select: caretAt(at + insert.length) };
+  }
+
+  /// Sets a callout's kind: `[!NOTE]` becomes `[!TIP]` and so on.
+  function planCalloutKind(model, unit, kind) {
+    const callout = unit && calloutOf(unit);
+    if (!callout) return null;
+    const marker = callout.callout.marker;
+    const from = S(unit, marker.start);
+    const to = S(unit, marker.end);
+    const insert = `[!${kind.toUpperCase()}]`;
+    return { from, to, insert, select: null, kind: "format", label: "Callout" };
   }
 
   // ---------------------------------------------------------------------
@@ -2267,7 +2807,20 @@
     bEnd,
     bLine,
     lineStartOf,
-    lineEndOf
+    lineEndOf,
+    handleTargetOf,
+    planMoveBlock,
+    planMoveByStep,
+    planDuplicateBlock,
+    planDeleteBlock,
+    blockMarkdown,
+    targetSelection,
+    planWrapToggle,
+    planWrapCallout,
+    planCalloutKind,
+    planUnwrapQuote,
+    insertEmptyBeforeBlock,
+    insertItemNear
   };
   window.MonknotEditorCore = Core;
 
@@ -2350,7 +2903,12 @@
     listen(document, "keydown", onDocumentKeyDown, true);
     listen(document, "keyup", onDocumentKeyUp, true);
     listen(window, "resize", () => UI.reposition());
-    listen(window, "scroll", () => UI.reposition(), { passive: true });
+    listen(window, "scroll", () => {
+      UI.reposition();
+      Handles.update();
+    }, { passive: true });
+    listen(document, "mousemove", Handles.onPointerMove, { passive: true });
+    listen(document.documentElement, "mouseleave", () => Handles.hide());
     listen(window, "blur", () => setCommandKey(false));
     // The web view became first responder (a click on its edge, the window regaining focus):
     // put the caret back where it was.
@@ -2366,6 +2924,8 @@
 
   function deactivate() {
     if (!active) return;
+    Handles.cancelDrag();
+    Handles.hide();
     UI.closeAll();
     while (listeners.length) listeners.pop()();
     if (root) {
@@ -2435,8 +2995,31 @@
       root.insertBefore(template.content, next?.el || footnotesElement || null);
       inserted.forEach(bindUnits);
     }
+    if (removed.some(changesContents) || inserted.some(changesContents)) refreshTablesOfContents();
+    Handles.hide();
     refreshFootnotes();
     markEmptyDocument();
+  }
+
+  function changesContents(block) {
+    return block.type === "heading" || block.type === "toc";
+  }
+
+  /// A table of contents lists the headings as they are now; after a heading changes it is drawn
+  /// again (a document seldom has more than one).
+  function refreshTablesOfContents() {
+    for (const block of model.blocks) {
+      if (block.type !== "toc" || !block.el) continue;
+      const html = MD.renderBlock(block, MD.newRender(model.doc, { editing: true, unitSequence: model.unitSequence }), null);
+      if (html === block.html) continue;
+      const template = document.createElement("template");
+      template.innerHTML = html;
+      const element = template.content.firstElementChild;
+      if (!element) continue;
+      block.el.replaceWith(element);
+      block.el = element;
+      block.html = html;
+    }
   }
 
   /// Footnote numbers follow the order the references appear in, as in
@@ -2816,6 +3399,7 @@
     }
     const profile = window.MonknotEditor && window.MonknotEditor.profile;
     const t0 = profile ? performance.now() : 0;
+    model.pendingToggleOpen = op.openToggle ?? null;
     const update = applyPatch(model, op.from, op.to, op.insert);
     const t1 = profile ? performance.now() : 0;
     applyUpdate(update);
@@ -3134,11 +3718,29 @@
 
   function onKeyDown(event) {
     if (!active) return;
+    if (!["Meta", "Shift", "Alt", "Control", "CapsLock"].includes(event.key)) Handles.suppress();
     if (UI.handleKeyDown(event)) return;
     const mod = event.metaKey && !event.ctrlKey;
     const key = event.key;
+    if (mod && event.shiftKey && !event.altKey && (key === "ArrowUp" || key === "ArrowDown")) {
+      event.preventDefault();
+      runBlockMenuShortcut(key === "ArrowUp" ? "up" : "down");
+      return;
+    }
     if (mod && !event.altKey) {
       const lower = key.toLowerCase();
+      if (lower === "d" && !event.shiftKey) {
+        event.preventDefault();
+        runBlockMenuShortcut("duplicate");
+        return;
+      }
+      if (key === "/" && !event.shiftKey) {
+        event.preventDefault();
+        const selection = readSelection();
+        const target = selection && handleTargetOf(model, unitAt(model, selection.head, "left"));
+        if (target) UI.openBlockMenu(target, caretRect() || ZERO_RECT, false);
+        return;
+      }
       if (lower === "z") {
         event.preventDefault();
         post({ type: event.shiftKey ? "redo" : "undo" });
@@ -3231,13 +3833,18 @@
     if (target) setSelection(unitStart(target), unitEnd(target) > unitStart(target) && direction !== "down" ? unitEnd(target) : unitStart(target));
   }
 
+  /// ↓ or → at the very end of a document that ends in a block the caret cannot leave by typing (a
+  /// code block, table, quote, callout, toggle, divider or table of contents) opens a line after it.
   function createLineAfterLastStructuralBlock(key) {
     const selection = readSelection();
     if (!selection || selection.from !== selection.to) return false;
     const unit = unitAt(model, selection.head, "left");
-    if (!unit || !isStructural(unit)) return false;
-    const last = lastUnitUpTo(model, model.blocks.length - 1);
-    if (unit.top !== last.top) return false;
+    const lastBlock = model.blocks[model.blocks.length - 1];
+    if (!unit || !lastBlock || lastBlock.type === "empty") return false;
+    let last = lastUnitUpTo(model, model.blocks.length - 1);
+    while (last && isHiddenUnit(last)) last = previousUnit(model, last);
+    if (unit !== last) return false;
+    if (!isStructural(unit) && !unit.container && unit.role !== "summary" && !isAtomBlock(lastBlock)) return false;
     if (key === "ArrowRight" && selection.head !== unitEnd(unit)) return false;
     if (key === "ArrowDown") {
       if (unit.role === "cell") {
@@ -3245,14 +3852,14 @@
       } else {
         const after = model.source.slice(selection.head, unitEnd(unit));
         if (/[\r\n]/.test(after)) return false;
+        // A wrapped paragraph: ↓ first walks its visual lines.
+        const caret = caretRect();
+        const box = unit.el && unit.el.getBoundingClientRect();
+        if (caret && box && caret.bottom < box.bottom - caret.height / 2) return false;
       }
     }
-    apply({ ...insertEmptyAfter(model, unit.role === "cell" ? lastCellUnit(unit) : unit), kind: "enter" });
+    apply({ ...insertEmptyAfterBlock(model, lastBlock), kind: "enter" });
     return true;
-  }
-
-  function lastCellUnit(unit) {
-    return tableCells(model, unit.table).slice(-1)[0] || unit;
   }
 
   let commandKeyDown = false;
@@ -3339,7 +3946,7 @@
         return apply(op);
       }
       case "image":
-        post({ type: "requestImage", selection: { anchor: selection.anchor, head: selection.head } });
+        post({ type: "requestFile", kind: "image", selection: { anchor: selection.anchor, head: selection.head } });
         return true;
       case "indent":
         return apply(planIndent(model, selection, 1));
@@ -3453,6 +4060,22 @@
       UI.openLanguageMenu(languageButton);
       return;
     }
+    const arrow = target.closest("[data-mk-action='toggle']");
+    if (arrow) {
+      event.preventDefault();
+      flipToggle(arrow.closest(".mk-toggle"));
+      return;
+    }
+    const calloutTitle = target.closest("[data-mk-action='callout-kind']");
+    if (calloutTitle) {
+      event.preventDefault();
+      UI.openCalloutMenu(calloutTitle);
+      return;
+    }
+    if (target.closest("a[data-mk-toc]")) {
+      event.preventDefault();
+      return;
+    }
     const image = target.closest("img[data-mk-atom]");
     if (image) {
       event.preventDefault();
@@ -3475,16 +4098,39 @@
       const last = model.blocks[model.blocks.length - 1];
       if (last && last.el) {
         const rect = last.el.getBoundingClientRect();
-        if (event.clientY > rect.bottom) {
-          const unit = lastUnitUpTo(model, model.blocks.length - 1);
-          if (unit && unit.kind !== "empty" && (isStructural(unit) || unit.top.type === "hr" || visibleText(model, unit).length > 0)) {
-            event.preventDefault();
-            root.focus({ preventScroll: true });
-            apply({ ...insertEmptyAfter(model, unit), kind: "enter" });
-          }
+        if (event.clientY > rect.bottom && last.type !== "empty") {
+          event.preventDefault();
+          root.focus({ preventScroll: true });
+          apply({ ...insertEmptyAfterBlock(model, last), kind: "enter" });
         }
       }
     }
+  }
+
+  /// Opens or closes a toggle on the page. The file does not change; a caret in the body it hides
+  /// moves to the title.
+  function flipToggle(element) {
+    const summaryElement = element && element.querySelector(":scope > .mk-toggle-head > [data-mk-u]");
+    const summary = unitForElement(summaryElement);
+    if (!summary) return;
+    const toggle = summary.block;
+    const open = !isOpenToggle(toggle);
+    toggle.viewOpen = open;
+    element.dataset.open = String(open);
+    const arrowButton = element.querySelector(":scope > .mk-toggle-head > .mk-toggle-arrow");
+    if (arrowButton) {
+      arrowButton.setAttribute("aria-expanded", String(open));
+      arrowButton.setAttribute("aria-label", open ? "Collapse" : "Expand");
+    }
+    const selection = readSelection();
+    if (!open && selection) {
+      const unit = unitAt(model, selection.head, "left");
+      if (unit && isHiddenUnit(unit)) {
+        root.focus({ preventScroll: true });
+        setSelection(unitEnd(summary), unitEnd(summary), { reveal: false });
+      }
+    }
+    UI.reposition();
   }
 
   function onMouseUp() {
@@ -3747,9 +4393,12 @@
     return { left, right, top: first.top, bottom: first.bottom, width: right - left, height: first.height };
   }
 
-  /// Places a floating element above or below an anchor rect (viewport
-  /// coordinates), inside the content column, never covering the anchor.
-  function place(element, rect, preference, align) {
+  /// Places a floating element beside an anchor rect (viewport coordinates): below or above it,
+  /// flipping when there is no room, or to its right for a submenu; never over the anchor. `align`
+  /// sets the horizontal edge: "caret" (just left of the anchor, so row text lines up with typed
+  /// text), "start" (the anchor's left edge) or "center". The element grows from the side that
+  /// faces its anchor.
+  function place(element, rect, preference = "below", align = "caret") {
     element.style.visibility = "hidden";
     element.style.left = "0px";
     element.style.top = "0px";
@@ -3759,24 +4408,46 @@
     const margin = 8;
     const viewportWidth = document.documentElement.clientWidth;
     const viewportHeight = window.innerHeight;
-    let top;
-    const above = rect.top - height - gap;
-    const below = rect.bottom + gap;
-    if (preference === "above") top = above >= margin ? above : below;
-    else top = below + height <= viewportHeight - margin || above < margin ? below : above;
     let left;
-    if (align === "start") left = rect.left;
-    else left = preference === "above" ? rect.left + (rect.width || 0) / 2 - width / 2 : rect.left - 10;
-    left = Math.max(margin, Math.min(left, viewportWidth - width - margin));
+    let top;
+    let origin;
+    if (preference === "right") {
+      left = rect.right + 4;
+      if (left + width > viewportWidth - margin) left = rect.left - width - 4;
+      left = Math.max(margin, left);
+      top = Math.max(margin, Math.min(rect.top - 6, viewportHeight - height - margin));
+      origin = `${left < rect.left ? "100%" : "0"} ${Math.round(Math.max(0, Math.min(height, rect.top - top + rect.height / 2)))}px`;
+    } else {
+      const above = rect.top - height - gap;
+      const below = rect.bottom + gap;
+      if (preference === "above") top = above >= margin ? above : below;
+      else top = below + height <= viewportHeight - margin || above < margin ? below : above;
+      if (align === "start") left = rect.left;
+      else if (align === "center") left = rect.left + (rect.width || 0) / 2 - width / 2;
+      else left = rect.left - 10;
+      left = Math.max(margin, Math.min(left, viewportWidth - width - margin));
+      const anchorX = Math.round(Math.max(0, Math.min(width, rect.left + (rect.width || 0) / 2 - left)));
+      origin = `${anchorX}px ${top < rect.top ? "100%" : "0"}`;
+    }
     element.style.left = `${Math.round(left + window.scrollX)}px`;
     element.style.top = `${Math.round(top + window.scrollY)}px`;
+    element.style.transformOrigin = origin;
     element.style.visibility = "";
-    element.dataset.placement = top < rect.top ? "above" : "below";
+    element.dataset.placement = preference === "right" ? "right" : top < rect.top ? "above" : "below";
   }
 
-  function show(element) {
+  /// Shows a floating surface. `animate` (a surface opened by the pointer) grows it in from its
+  /// trigger; without it (opened from the keyboard) it appears at once.
+  function show(element, animate = false) {
+    const wasVisible = element.classList.contains("mk-visible");
     element.classList.remove("mk-hidden");
-    void element.offsetWidth;
+    if (!wasVisible) {
+      element.classList.remove("mk-animate");
+      if (animate) {
+        void element.offsetWidth;
+        element.classList.add("mk-animate");
+      }
+    }
     element.classList.add("mk-visible");
   }
 
@@ -3786,14 +4457,17 @@
     element.classList.add("mk-hidden");
   }
 
+  const ZERO_RECT = { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 };
+
   // Menu ----------------------------------------------------------------
 
-  /// A list of choices with keyboard and pointer selection. The slash menu,
-  /// wikilinks, Turn Into, table actions and code languages all use it. With
-  /// `ranked`, items arrive already ranked for the query and are shown as given.
+  /// A list of choices with keyboard and pointer selection: the slash menu, the block menu and its
+  /// Turn Into submenu, wikilinks, callout kinds, table actions and code languages. An item is
+  /// { id, label, icon | tag, hint, checked, destructive, keywords, group, submenu } or
+  /// { separator: true }. With `ranked`, items arrive already ranked for the query.
   function createMenu(options) {
     const element = document.createElement("div");
-    element.className = "mk-floating mk-menu mk-hidden";
+    element.className = `mk-floating mk-menu mk-hidden${options.narrow ? " mk-menu-narrow" : ""}`;
     element.setAttribute("role", "listbox");
     element.setAttribute("aria-label", options.label || "Menu");
     element.id = `mk-menu-${Math.random().toString(36).slice(2)}`;
@@ -3814,14 +4488,32 @@
     const list = document.createElement("div");
     list.className = "mk-menu-list";
     element.appendChild(list);
+    if (options.footer) {
+      const footer = document.createElement("div");
+      footer.className = "mk-menu-footer";
+      footer.setAttribute("aria-hidden", "true");
+      for (const [keys, action] of options.footer) {
+        const pair = document.createElement("span");
+        const key = document.createElement("kbd");
+        key.textContent = keys;
+        pair.append(key, document.createTextNode(action));
+        footer.appendChild(pair);
+      }
+      element.appendChild(footer);
+    }
     layer.appendChild(element);
-    const state = { items: [], visible: [], index: 0, open: false, query: "" };
+    const state = { items: [], visible: [], index: 0, open: false, query: "", preference: "below", align: "caret" };
+    let hoverTimer = 0;
+
+    const selectable = (item) => Boolean(item) && !item.separator;
+    const rows = () => list.querySelectorAll(".mk-menu-row");
 
     const render = () => {
       list.textContent = "";
       const query = state.query.trim().toLowerCase();
-      state.visible = query && !options.ranked ? rankItems(state.items, query) : state.items.slice();
-      if (state.visible.length === 0) {
+      const pool = query && options.searchItems ? options.searchItems(state.items) : state.items;
+      state.visible = query && !options.ranked ? rankItems(pool.filter(selectable), query) : pool.slice();
+      if (!state.visible.some(selectable)) {
         const empty = document.createElement("div");
         empty.className = "mk-menu-empty";
         empty.textContent = options.emptyText || "No matches";
@@ -3830,6 +4522,14 @@
       }
       let group = null;
       state.visible.forEach((item, index) => {
+        if (item.separator) {
+          if (query || index === 0 || index === state.visible.length - 1) return;
+          const rule = document.createElement("div");
+          rule.className = "mk-menu-separator";
+          rule.setAttribute("role", "separator");
+          list.appendChild(rule);
+          return;
+        }
         if (!query && item.group && item.group !== group) {
           group = item.group;
           const heading = document.createElement("div");
@@ -3859,7 +4559,7 @@
         row.appendChild(label);
         if (item.hint) {
           const hint = document.createElement("span");
-          hint.className = /[⌘⇧⌥⌃]/.test(item.hint) ? "mk-row-hint mk-key" : "mk-row-hint";
+          hint.className = "mk-row-hint";
           hint.textContent = item.hint;
           row.appendChild(hint);
         }
@@ -3869,9 +4569,22 @@
           check.appendChild(icon("checkmark", "small"));
           row.appendChild(check);
         }
+        if (item.submenu) {
+          row.setAttribute("aria-haspopup", "listbox");
+          const more = document.createElement("span");
+          more.className = "mk-row-more";
+          more.appendChild(icon("chevron.right", "small"));
+          row.appendChild(more);
+        }
         row.addEventListener("mousedown", (event) => event.preventDefault());
         row.addEventListener("mousemove", () => {
           if (state.index !== index) setIndex(index, false);
+          window.clearTimeout(hoverTimer);
+          if (item.submenu) {
+            if (!row.classList.contains("mk-open-submenu")) hoverTimer = window.setTimeout(() => choose(index), 120);
+          } else {
+            options.onHoverRow?.();
+          }
         });
         row.addEventListener("click", (event) => {
           event.preventDefault();
@@ -3879,83 +4592,116 @@
         });
         list.appendChild(row);
       });
-      setIndex(Math.min(state.index, state.visible.length - 1), true);
+      setIndex(nearestSelectable(Math.min(state.index, state.visible.length - 1), 1), true);
+    };
+
+    const nearestSelectable = (index, direction) => {
+      const count = state.visible.length;
+      for (let step = 0; step < count; step += 1) {
+        const candidate = ((index + step * direction) % count + count) % count;
+        if (selectable(state.visible[candidate])) return candidate;
+      }
+      return 0;
     };
 
     const setIndex = (index, scroll) => {
       state.index = Math.max(0, index);
-      list.querySelectorAll(".mk-menu-row").forEach((row) => {
+      rows().forEach((row) => {
         const selected = Number(row.dataset.index) === state.index;
         row.classList.toggle("mk-selected", selected);
         row.setAttribute("aria-selected", selected ? "true" : "false");
         if (selected) {
           element.setAttribute("aria-activedescendant", row.id);
           field?.setAttribute("aria-activedescendant", row.id);
-          if (scroll) row.scrollIntoView({ block: "nearest" });
+          if (scroll) revealRow(row);
         }
       });
     };
 
+    /// Scrolls the list, and only the list, so the highlighted row is in view.
+    const revealRow = (row) => {
+      const padding = 6;
+      const top = row.offsetTop - padding;
+      const bottom = row.offsetTop + row.offsetHeight + padding;
+      if (top < list.scrollTop) list.scrollTop = Math.max(0, top);
+      else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
+    };
+
+    const rowRect = (index) => {
+      const row = list.querySelector(`.mk-menu-row[data-index="${index}"]`);
+      return row ? row.getBoundingClientRect() : element.getBoundingClientRect();
+    };
+
     const choose = (index) => {
-      const item = state.visible[index ?? state.index];
-      if (!item) return;
+      const at = index ?? state.index;
+      const item = state.visible[at];
+      if (!selectable(item)) return;
+      if (item.submenu) {
+        rows().forEach((row) => row.classList.toggle("mk-open-submenu", Number(row.dataset.index) === at));
+        options.onSubmenu?.(item, rowRect(at));
+        return;
+      }
       close("choose");
       options.onChoose(item);
     };
 
-    const open = (items, rect, preference = "below", initialQuery = "") => {
+    const open = (items, rect, settings = {}) => {
       state.items = items;
-      state.query = initialQuery;
-      state.index = Math.max(0, items.findIndex((item) => item.checked));
-      if (field) field.value = initialQuery;
+      state.query = settings.query || "";
+      const checked = items.findIndex((item) => item.checked);
+      state.index = checked >= 0 ? checked : 0;
+      state.preference = settings.preference || "below";
+      state.align = settings.align || "caret";
+      state.anchor = rect ? { rect, scrollX: window.scrollX, scrollY: window.scrollY } : null;
+      if (field) field.value = state.query;
       render();
       state.open = true;
       element.classList.add("mk-measuring");
-      place(element, rect, preference);
+      place(element, rect || ZERO_RECT, state.preference, state.align);
       element.classList.remove("mk-measuring");
-      show(element);
-      if (field) window.setTimeout(() => field.focus(), 0);
+      show(element, settings.animate);
+      if (field) window.setTimeout(() => field.focus({ preventScroll: true }), 0);
+    };
+
+    /// A menu above its anchor stays attached by its bottom edge while filtering changes its height.
+    const keepAttached = () => {
+      if (!state.open || !state.anchor || element.dataset.placement !== "above") return;
+      const { rect, scrollX, scrollY } = state.anchor;
+      const dx = window.scrollX - scrollX;
+      const dy = window.scrollY - scrollY;
+      const moved = { left: rect.left - dx, right: rect.right - dx, top: rect.top - dy, bottom: rect.bottom - dy, width: rect.width, height: rect.height };
+      place(element, moved, "above", state.align);
     };
 
     const close = (reason) => {
       if (!state.open) return;
       state.open = false;
+      window.clearTimeout(hoverTimer);
+      rows().forEach((row) => row.classList.remove("mk-open-submenu"));
       hide(element);
       options.onClose?.(reason);
     };
 
-    if (field) {
-      field.addEventListener("input", () => {
-        state.query = field.value;
-        state.index = 0;
-        render();
-      });
-      field.addEventListener("keydown", (event) => {
-        if (handleNavigation(event)) return;
-        if (event.key === "Escape") {
-          event.preventDefault();
-          close("escape");
-        }
-      });
-      field.addEventListener("blur", () => window.setTimeout(() => {
-        if (state.open && !element.contains(document.activeElement)) close("blur");
-      }, 0));
-    }
-
     const handleNavigation = (event) => {
       if (!state.open) return false;
+      const count = Math.max(1, state.visible.length);
       if (event.key === "ArrowDown" || (event.key === "n" && event.ctrlKey)) {
         event.preventDefault();
-        setIndex((state.index + 1) % Math.max(1, state.visible.length), true);
+        setIndex(nearestSelectable((state.index + 1) % count, 1), true);
         return true;
       }
       if (event.key === "ArrowUp" || (event.key === "p" && event.ctrlKey)) {
         event.preventDefault();
-        setIndex((state.index - 1 + state.visible.length) % Math.max(1, state.visible.length), true);
+        setIndex(nearestSelectable((state.index - 1 + count) % count, -1), true);
+        return true;
+      }
+      if (event.key === "ArrowRight" && state.visible[state.index]?.submenu) {
+        event.preventDefault();
+        choose();
         return true;
       }
       if (event.key === "Enter" || event.key === "Tab") {
-        if (state.visible.length === 0) return false;
+        if (!state.visible.some(selectable)) return false;
         event.preventDefault();
         choose();
         return true;
@@ -3963,26 +4709,57 @@
       return false;
     };
 
+    if (field) {
+      field.addEventListener("input", () => {
+        state.query = field.value;
+        state.index = 0;
+        options.onQuery?.();
+        render();
+        keepAttached();
+      });
+      field.addEventListener("keydown", (event) => {
+        if (options.onFieldKey && options.onFieldKey(event)) return;
+        if (handleNavigation(event)) return;
+        if (event.key === "Escape") {
+          event.preventDefault();
+          close("escape");
+        }
+      });
+      field.addEventListener("blur", () => window.setTimeout(() => {
+        if (state.open && !element.contains(document.activeElement) && !options.keepsFocus?.()) close("blur");
+      }, 0));
+    }
+
     return {
       element,
       open,
       close,
       handleNavigation,
-      setQuery(query, rect) {
+      setQuery(query) {
         state.query = query;
         state.index = 0;
         render();
-        if (rect) place(element, rect, element.dataset.placement === "above" ? "above" : "below");
+        keepAttached();
       },
       setItems(items) {
         state.items = items;
         state.index = 0;
         render();
+        keepAttached();
+      },
+      closeSubmenuMark() {
+        rows().forEach((row) => row.classList.remove("mk-open-submenu"));
+      },
+      focusField() {
+        field?.focus({ preventScroll: true });
       },
       get isOpen() { return state.open; },
-      get matchCount() { return state.visible.length; },
+      get matchCount() { return state.visible.filter(selectable).length; },
+      get query() { return state.query; },
       reposition(rect) {
-        if (state.open && rect) place(element, rect, element.dataset.placement === "above" ? "above" : "below");
+        if (!state.open || !rect) return;
+        state.anchor = { rect, scrollX: window.scrollX, scrollY: window.scrollY };
+        place(element, rect, state.preference === "right" ? "right" : element.dataset.placement === "above" ? "above" : "below", state.align);
       }
     };
   }
@@ -4016,35 +4793,56 @@
     return position === needle.length;
   }
 
-  // Slash commands --------------------------------------------------------
+  // Blocks the menus offer ------------------------------------------------
 
+  /// The slash menu: Notion's block menu, less what a Markdown file cannot hold (databases,
+  /// columns, synced blocks, embeds). Each row's hint is the Markdown to type instead.
   const SLASH_COMMANDS = [
-    { id: "text", label: "Paragraph", icon: "text.alignleft", group: "Blocks", keywords: ["text", "plain", "body"] },
-    { id: "h1", label: "Heading 1", tag: "H1", hint: "#", group: "Blocks", keywords: ["title", "h1", "large"] },
-    { id: "h2", label: "Heading 2", tag: "H2", hint: "##", group: "Blocks", keywords: ["subtitle", "h2", "medium"] },
-    { id: "h3", label: "Heading 3", tag: "H3", hint: "###", group: "Blocks", keywords: ["h3", "small"] },
-    { id: "bullet", label: "Bullet List", icon: "list.bullet", hint: "-", group: "Blocks", keywords: ["unordered", "ul", "bulleted", "points"] },
-    { id: "numbered", label: "Numbered List", icon: "list.number", hint: "1.", group: "Blocks", keywords: ["ordered", "ol", "numbers", "steps"] },
-    { id: "todo", label: "Task List", icon: "checklist", hint: "[]", group: "Blocks", keywords: ["todo", "to-do", "checkbox", "check"] },
-    { id: "quote", label: "Quote", icon: "text.quote", hint: ">", group: "Blocks", keywords: ["blockquote", "citation", "callout"] },
-    { id: "code", label: "Code Block", icon: "chevron.left.forwardslash.chevron.right", hint: "```", group: "Blocks", keywords: ["snippet", "pre", "program", "fence"] },
-    { id: "table", label: "Table", icon: "tablecells", group: "Blocks", keywords: ["grid", "columns", "rows", "spreadsheet"] },
-    { id: "divider", label: "Divider", icon: "minus", hint: "---", group: "Blocks", keywords: ["line", "separator", "hr", "horizontal rule"] },
-    { id: "image", label: "Image…", icon: "photo", group: "Insert", keywords: ["picture", "photo", "media", "file", "png", "jpg"] },
-    { id: "link", label: "Link", icon: "link", hint: "⌘K", group: "Insert", keywords: ["url", "web", "href", "address"] },
-    { id: "date", label: "Today’s Date", icon: "calendar", group: "Insert", keywords: ["date", "today", "now", "time"] }
+    { id: "text", label: "Text", icon: "textformat", group: "Basic blocks", keywords: ["paragraph", "plain", "body"] },
+    { id: "h1", label: "Heading 1", tag: "H1", hint: "#", group: "Basic blocks", keywords: ["title", "h1", "large", "big"] },
+    { id: "h2", label: "Heading 2", tag: "H2", hint: "##", group: "Basic blocks", keywords: ["subtitle", "h2", "medium"] },
+    { id: "h3", label: "Heading 3", tag: "H3", hint: "###", group: "Basic blocks", keywords: ["h3", "small"] },
+    { id: "bullet", label: "Bulleted list", icon: "list.bullet", hint: "-", group: "Basic blocks", keywords: ["unordered", "ul", "bullet", "points"] },
+    { id: "numbered", label: "Numbered list", icon: "list.number", hint: "1.", group: "Basic blocks", keywords: ["ordered", "ol", "numbers", "steps"] },
+    { id: "todo", label: "To-do list", icon: "checklist", hint: "[]", group: "Basic blocks", keywords: ["task", "todo", "checkbox", "check"] },
+    { id: "toggle", label: "Toggle list", icon: "arrowtriangle.right", group: "Basic blocks", keywords: ["details", "collapse", "expand", "disclosure", "summary"] },
+    { id: "page", label: "Page", icon: "doc", group: "Basic blocks", keywords: ["new", "note", "file", "subpage", "document"] },
+    { id: "callout", label: "Callout", icon: "text.bubble", group: "Basic blocks", keywords: ["note", "tip", "warning", "important", "caution", "alert", "admonition"] },
+    { id: "quote", label: "Quote", icon: "text.quote", hint: ">", group: "Basic blocks", keywords: ["blockquote", "citation"] },
+    { id: "table", label: "Table", icon: "tablecells", group: "Basic blocks", keywords: ["grid", "columns", "rows", "spreadsheet"] },
+    { id: "divider", label: "Divider", icon: "minus", hint: "---", group: "Basic blocks", keywords: ["line", "separator", "hr", "horizontal rule"] },
+    { id: "pageLink", label: "Link to page", icon: "arrow.up.right.square", hint: "[[", group: "Basic blocks", keywords: ["wikilink", "note", "reference", "mention"] },
+    { id: "image", label: "Image", icon: "photo", group: "Media", keywords: ["picture", "photo", "png", "jpg", "screenshot"] },
+    { id: "video", label: "Video", icon: "play.rectangle", group: "Media", keywords: ["movie", "mp4", "mov", "clip"] },
+    { id: "audio", label: "Audio", icon: "speaker.wave.2", group: "Media", keywords: ["sound", "music", "mp3", "recording", "podcast"] },
+    { id: "code", label: "Code", icon: "chevron.left.forwardslash.chevron.right", hint: "```", group: "Media", keywords: ["code block", "snippet", "pre", "program", "fence"] },
+    { id: "file", label: "File", icon: "paperclip", group: "Media", keywords: ["attachment", "upload", "document", "pdf"] },
+    { id: "bookmark", label: "Web bookmark", icon: "bookmark", group: "Media", keywords: ["link", "url", "website", "web"] },
+    { id: "toc", label: "Table of contents", icon: "list.bullet.rectangle", hint: "[TOC]", group: "Advanced blocks", keywords: ["toc", "outline", "headings", "contents"] },
+    { id: "date", label: "Date", icon: "calendar", group: "Inline", keywords: ["today", "now", "time", "day"] },
+    { id: "emoji", label: "Emoji", icon: "face.smiling", group: "Inline", keywords: ["emoticon", "smiley", "symbol"] }
   ];
 
   const TURN_INTO = [
-    { id: "paragraph", label: "Paragraph", icon: "text.alignleft" },
+    { id: "paragraph", label: "Text", icon: "textformat" },
     { id: "heading1", label: "Heading 1", tag: "H1" },
     { id: "heading2", label: "Heading 2", tag: "H2" },
     { id: "heading3", label: "Heading 3", tag: "H3" },
-    { id: "bullet", label: "Bullet List", icon: "list.bullet" },
-    { id: "numbered", label: "Numbered List", icon: "list.number" },
-    { id: "todo", label: "Task List", icon: "checklist" },
+    { id: "bullet", label: "Bulleted list", icon: "list.bullet" },
+    { id: "numbered", label: "Numbered list", icon: "list.number" },
+    { id: "todo", label: "To-do list", icon: "checklist" },
+    { id: "toggle", label: "Toggle list", icon: "arrowtriangle.right" },
+    { id: "code", label: "Code", icon: "chevron.left.forwardslash.chevron.right" },
     { id: "quote", label: "Quote", icon: "text.quote" },
-    { id: "code", label: "Code Block", icon: "chevron.left.forwardslash.chevron.right" }
+    { id: "callout", label: "Callout", icon: "text.bubble" }
+  ];
+
+  const CALLOUT_KINDS = [
+    { id: "note", label: "Note", icon: "info.circle" },
+    { id: "tip", label: "Tip", icon: "lightbulb" },
+    { id: "important", label: "Important", icon: "exclamationmark.bubble" },
+    { id: "warning", label: "Warning", icon: "exclamationmark.triangle" },
+    { id: "caution", label: "Caution", icon: "exclamationmark.octagon" }
   ];
 
   const LANGUAGES = [
@@ -4056,19 +4854,546 @@
   ];
 
   const BLOCK_NAMES = {
-    paragraph: "Paragraph", heading1: "Heading 1", heading2: "Heading 2", heading3: "Heading 3",
-    heading4: "Heading 4", heading5: "Heading 5", heading6: "Heading 6", bullet: "Bullet List",
-    numbered: "Numbered List", todo: "Task List", quote: "Quote", code: "Code Block", table: "Table"
+    paragraph: "Text", heading1: "Heading 1", heading2: "Heading 2", heading3: "Heading 3",
+    heading4: "Heading 4", heading5: "Heading 5", heading6: "Heading 6", bullet: "Bulleted list",
+    numbered: "Numbered list", todo: "To-do list", toggle: "Toggle list", quote: "Quote",
+    callout: "Callout", code: "Code", table: "Table"
   };
+
+  const SLASH_ROLES = new Set(["paragraph", "heading", "item"]);
+
+  // Block actions shared by the menus, the handles and the keyboard ------------
+
+  /// Turns the block at `selection` into `id`, the way Notion's Turn Into does: a quote or callout
+  /// turned into another kind gives up its container, a toggle its markup.
+  function turnInto(id, selection) {
+    if (!selection) return false;
+    const unit = unitAt(model, selection.head, "left");
+    if (!unit) return false;
+    const current = blockTypeOf(unit);
+    if (current === id) return false;
+    const group = newGroup();
+    const meta = { group, coalesce: false };
+    if (id === "toggle") return apply(planWrapToggle(model, selection), meta);
+    if (id === "callout") return apply(planWrapCallout(model, selection), meta);
+    if (current === "callout" && id === "quote") return apply(calloutToQuote(model, unit, calloutOf(unit)), meta);
+    if (current === "toggle" && unit.role === "summary") {
+      apply(unwrapToggle(model, unit), meta);
+    } else if ((current === "quote" || current === "callout") && unit.container) {
+      apply(planUnwrapQuote(model, unit, selection), meta);
+    }
+    if (id === "paragraph" && (current === "toggle" || current === "quote" || current === "callout")) return true;
+    const next = readSelection() || selection;
+    return apply(planBlockType(model, next, id), meta);
+  }
+
+  function blockTarget(target) {
+    if (!target || !model) return null;
+    if (target.kind === "item") return target.item && unitsOf(target.top).some((unit) => unit.role === "item" && unit.item === target.item) ? target : null;
+    return model.blocks[target.index] === target.block ? target : null;
+  }
+
+  function targetElement(target) {
+    if (!target) return null;
+    if (target.kind === "item") {
+      const unit = unitsOf(target.top).find((candidate) => candidate.role === "item" && candidate.item === target.item);
+      return unit && unit.el ? unit.el.closest("li") : null;
+    }
+    return target.block.el || null;
+  }
+
+  function targetCaret(target) {
+    const selection = targetSelection(model, target);
+    return selection ? caretAt(selection.from) : null;
+  }
+
+  /// A short highlight on a block that just moved or was duplicated, so the eye finds it.
+  function flashBlockAt(position) {
+    const unit = unitAt(model, position, "right");
+    if (!unit) return;
+    const element = unit.role === "item" && unit.el ? unit.el.closest("li") : unit.top.el;
+    if (!element) return;
+    element.classList.remove("mk-block-moved");
+    void element.offsetWidth;
+    element.classList.add("mk-block-moved");
+    window.setTimeout(() => element.classList.remove("mk-block-moved"), 950);
+  }
+
+  function moveTarget(target, direction) {
+    const selection = readSelection();
+    const gap = target.kind === "item"
+      ? target.list.items.indexOf(target.item) + (direction < 0 ? -1 : 2)
+      : target.index + (direction < 0 ? -1 : 2);
+    const keep = selection && handleTargetMatches(target, selection) ? selection : null;
+    const op = planMoveBlock(model, target, gap, keep);
+    if (!op) return false;
+    if (!keep && op.movedStart !== undefined) op.select = (next) => caretAt(closestUnitPosition(next, op.movedStart));
+    const applied = apply(op, { coalesce: false });
+    if (applied) flashBlockAt(op.movedStart ?? (readSelection() || {}).head ?? op.from);
+    return applied;
+  }
+
+  function handleTargetMatches(target, selection) {
+    const current = handleTargetOf(model, unitAt(model, selection.head, "left"));
+    if (!current || current.kind !== target.kind) return false;
+    return target.kind === "item" ? current.item === target.item : current.index === target.index;
+  }
+
+  function duplicateTarget(target) {
+    const op = planDuplicateBlock(model, target);
+    if (!op) return false;
+    const applied = apply(op, { coalesce: false });
+    if (applied && op.movedStart !== undefined) flashBlockAt(op.movedStart);
+    else if (applied) flashBlockAt((readSelection() || {}).head ?? op.from);
+    return applied;
+  }
+
+  /// + beside a block: a new line below it (above with ⌥), with the slash menu open on it.
+  function addBlockNear(target, above) {
+    if (!target || !model) return;
+    root.focus({ preventScroll: true });
+    const group = newGroup();
+    if (target.kind === "block") {
+      const block = model.blocks[target.index];
+      const units = unitsOf(block);
+      if (block.type === "empty" && units[0]) {
+        setSelection(unitStart(units[0]), unitStart(units[0]), { reveal: false });
+      } else {
+        apply({ ...(above ? insertEmptyBeforeBlock(model, target.index) : insertEmptyAfterBlock(model, block)), kind: "enter", label: "New Block" }, { group, coalesce: false });
+      }
+    } else {
+      apply({ ...insertItemNear(model, target, above), kind: "enter", label: "New Block" }, { group, coalesce: false });
+    }
+    const selection = readSelection();
+    if (!selection) return;
+    const op = planInsertText(model, selection, "/", { typing: true });
+    if (!op) return;
+    // Esc on the menu this opens puts the line back exactly as + left it.
+    const inverse = { from: op.from, to: op.from + op.insert.length, insert: model.source.slice(op.from, op.to), text: op.insert };
+    if (!apply(op, { group: newGroup(), coalesce: false })) return;
+    UI.expectSlashFromPlus(inverse);
+    UI.afterTyping("/");
+  }
+
+  function runBlockMenuShortcut(name) {
+    const selection = readSelection();
+    if (!selection) return false;
+    const target = handleTargetOf(model, unitAt(model, selection.head, "left"));
+    if (!target) return false;
+    if (name === "duplicate") return duplicateTarget(target);
+    if (name === "up") return moveTarget(target, -1);
+    if (name === "down") return moveTarget(target, 1);
+    return false;
+  }
+
+  // Block handles ------------------------------------------------------------
+
+  /// + and the six-dot grip in the left gutter of the block under the pointer. They follow the
+  /// pointer, hide while typing, and never take focus.
+  const Handles = (() => {
+    let element = null;
+    let addButton = null;
+    let grip = null;
+    let tooltip = null;
+    let dropLine = null;
+    let tooltipTimer = 0;
+    let current = null;
+    let pointer = null;
+    let frame = 0;
+    let suppressed = false;
+    let drag = null;
+    let pinned = false;
+
+    function build() {
+      if (element) return;
+      ensureLayer();
+      element = document.createElement("div");
+      element.className = "mk-handles";
+      addButton = document.createElement("button");
+      addButton.type = "button";
+      addButton.className = "mk-handle mk-handle-add";
+      addButton.tabIndex = -1;
+      addButton.setAttribute("aria-label", "Add a block below");
+      addButton.appendChild(icon("plus"));
+      grip = document.createElement("button");
+      grip.type = "button";
+      grip.className = "mk-handle mk-handle-drag";
+      grip.tabIndex = -1;
+      grip.setAttribute("aria-label", "Drag to move, or click for the block menu");
+      const dots = document.createElement("span");
+      dots.className = "mk-grip";
+      grip.appendChild(dots);
+      element.append(addButton, grip);
+      tooltip = document.createElement("div");
+      tooltip.className = "mk-tooltip";
+      tooltip.setAttribute("role", "tooltip");
+      dropLine = document.createElement("div");
+      dropLine.className = "mk-drop-line";
+      layer.append(element, tooltip, dropLine);
+
+      addButton.addEventListener("mousedown", (event) => event.preventDefault());
+      addButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        hideTooltip();
+        const target = current && blockTarget(current.target);
+        if (target) addBlockNear(target, event.altKey);
+      });
+      grip.addEventListener("mousedown", startPress);
+      const tip = (button, html) => {
+        button.addEventListener("mouseenter", () => scheduleTooltip(button, html));
+        button.addEventListener("mouseleave", hideTooltip);
+      };
+      tip(addButton, "<strong>Click</strong> to add below<br><strong>⌥-click</strong> to add above");
+      tip(grip, "<strong>Drag</strong> to move<br><strong>Click</strong> to open menu");
+    }
+
+    function scheduleTooltip(button, html) {
+      window.clearTimeout(tooltipTimer);
+      tooltipTimer = window.setTimeout(() => {
+        if (drag || !element.classList.contains("mk-visible")) return;
+        tooltip.innerHTML = html;
+        const rect = button.getBoundingClientRect();
+        tooltip.style.left = "0px";
+        tooltip.style.top = "0px";
+        const width = tooltip.offsetWidth;
+        const left = Math.max(8, rect.left + rect.width / 2 - width / 2);
+        tooltip.style.left = `${Math.round(left + window.scrollX)}px`;
+        tooltip.style.top = `${Math.round(rect.bottom + 6 + window.scrollY)}px`;
+        tooltip.classList.add("mk-visible");
+      }, 450);
+    }
+
+    function hideTooltip() {
+      window.clearTimeout(tooltipTimer);
+      tooltip?.classList.remove("mk-visible");
+    }
+
+    function onPointerMove(event) {
+      if (!active || drag) return;
+      if (suppressed && pointer && Math.abs(event.clientX - pointer.x) + Math.abs(event.clientY - pointer.y) < 3) return;
+      suppressed = false;
+      pointer = { x: event.clientX, y: event.clientY };
+      if (frame) return;
+      // A timer, unlike an animation frame, also runs while the window is in the background.
+      frame = window.setTimeout(() => {
+        frame = 0;
+        update();
+      }, 16);
+    }
+
+    function update() {
+      build();
+      if (!active || !model || !pointer || suppressed || drag) return;
+      if (pinned) return;
+      const bounds = root.getBoundingClientRect();
+      if (pointer.x < bounds.left - 64 || pointer.x > bounds.right + 8 || pointer.y < bounds.top || pointer.y > bounds.bottom) {
+        hideHandles();
+        return;
+      }
+      const found = hitTest(pointer.y);
+      if (!found) {
+        hideHandles();
+        return;
+      }
+      current = found;
+      position(found);
+      grip.style.display = found.empty ? "none" : "";
+      element.classList.add("mk-visible");
+    }
+
+    /// The handle block at a height on the page: a top-level block, or the innermost list item
+    /// whose own line holds `y`.
+    function hitTest(y) {
+      const blocks = model.blocks;
+      if (blocks.length === 0) return null;
+      let low = 0;
+      let high = blocks.length - 1;
+      while (low < high) {
+        const middle = (low + high + 1) >> 1;
+        const el = blocks[middle].el;
+        if (el && el.getBoundingClientRect().top <= y) low = middle;
+        else high = middle - 1;
+      }
+      let index = low;
+      const rect = blocks[index].el && blocks[index].el.getBoundingClientRect();
+      if (!rect) return null;
+      // Between two blocks the nearer one wins.
+      if (y > rect.bottom && index + 1 < blocks.length && blocks[index + 1].el) {
+        const next = blocks[index + 1].el.getBoundingClientRect();
+        if (next.top - y < y - rect.bottom) index += 1;
+      }
+      const block = blocks[index];
+      if (!block.el) return null;
+      if (block.type === "list") {
+        let best = null;
+        for (const li of block.el.querySelectorAll("li")) {
+          const box = li.getBoundingClientRect();
+          if (y < box.top - 2 || y > box.bottom + 2) continue;
+          const nested = li.querySelector(":scope > ul, :scope > ol");
+          const headBottom = nested ? nested.getBoundingClientRect().top : box.bottom;
+          if (y <= headBottom + 2) best = li;
+        }
+        if (!best) best = block.el.querySelector("li");
+        const text = best && best.querySelector(":scope > [data-mk-u]");
+        const unit = unitForElement(text);
+        const target = handleTargetOf(model, unit);
+        if (!target) return null;
+        return { target, el: best, line: text, item: true, empty: false };
+      }
+      const unit = unitsOf(block)[0];
+      const target = { kind: "block", index, block };
+      return { target, el: block.el, line: lineElementOf(block, unit), item: false, empty: block.type === "empty" };
+    }
+
+    function lineElementOf(block, unit) {
+      if (block.type === "quote" && block.callout) return block.el.querySelector(".callout-title") || block.el;
+      if (block.type === "toggle") return block.el.querySelector(".mk-toggle-summary") || block.el;
+      if (block.type === "toc") return block.el.querySelector("a, p") || block.el;
+      if (block.type === "table") return block.el.querySelector("th, td") || block.el;
+      if (block.type === "hr") return null;
+      return (unit && unit.el) || block.el;
+    }
+
+    function position(found) {
+      const width = element.offsetWidth || 42;
+      const height = element.offsetHeight || 24;
+      let top;
+      if (found.line) {
+        const box = found.line.getBoundingClientRect();
+        const style = window.getComputedStyle(found.line);
+        const lineHeight = parseFloat(style.lineHeight) || box.height;
+        top = box.top + (parseFloat(style.paddingTop) || 0) + (lineHeight - height) / 2;
+      } else {
+        const box = found.el.getBoundingClientRect();
+        top = box.top + box.height / 2 - height / 2;
+      }
+      let right;
+      if (found.item) {
+        const list = found.el.parentElement;
+        const marker = list ? parseFloat(window.getComputedStyle(list).paddingLeft) || 24 : 24;
+        right = found.el.getBoundingClientRect().left - marker - 2;
+      } else {
+        right = found.el.getBoundingClientRect().left - 6;
+      }
+      element.style.left = `${Math.round(right - width + window.scrollX)}px`;
+      element.style.top = `${Math.round(top + window.scrollY)}px`;
+    }
+
+    function hideHandles() {
+      current = null;
+      hideTooltip();
+      element?.classList.remove("mk-visible");
+    }
+
+    // Press, drag and drop ---------------------------------------------------
+
+    function startPress(event) {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      hideTooltip();
+      const found = current;
+      const target = found && blockTarget(found.target);
+      if (!target) return;
+      const start = { x: event.clientX, y: event.clientY };
+      let moved = false;
+      const onMove = (moveEvent) => {
+        if (!moved && Math.hypot(moveEvent.clientX - start.x, moveEvent.clientY - start.y) < 4) return;
+        if (!moved) {
+          moved = true;
+          beginDrag(found, target, start);
+        }
+        updateDrag(moveEvent.clientX, moveEvent.clientY);
+      };
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove, true);
+        document.removeEventListener("mouseup", onUp, true);
+        if (moved) finishDrag(true);
+        else UI.openBlockMenu(target, grip.getBoundingClientRect(), true);
+      };
+      document.addEventListener("mousemove", onMove, true);
+      document.addEventListener("mouseup", onUp, true);
+    }
+
+    function beginDrag(found, target, start) {
+      const box = found.el.getBoundingClientRect();
+      const ghost = document.createElement("div");
+      ghost.className = "mk-drag-ghost";
+      ghost.style.width = `${Math.round(box.width)}px`;
+      let clone = found.el.cloneNode(true);
+      if (found.item) {
+        const list = found.el.parentElement.cloneNode(false);
+        list.appendChild(clone);
+        clone = list;
+      }
+      clone.querySelectorAll("[contenteditable], [data-mk-u]").forEach((node) => {
+        node.removeAttribute("contenteditable");
+        node.removeAttribute("data-mk-u");
+      });
+      ghost.appendChild(clone);
+      document.body.appendChild(ghost);
+      found.el.classList.add("mk-block-dragging");
+      document.documentElement.classList.add("mk-dragging");
+      hideHandles();
+      UI.closeTransient();
+      drag = {
+        target,
+        el: found.el,
+        ghost,
+        source: model.source,
+        offset: { x: start.x - box.left, y: start.y - box.top },
+        gaps: dropGaps(target),
+        gap: null,
+        pointer: { ...start },
+        scrollFrame: 0
+      };
+      document.addEventListener("keydown", onDragKey, true);
+    }
+
+    /// Where the block can land, in page coordinates: between top-level blocks for a block, between
+    /// the items of its own list for an item.
+    function dropGaps(target) {
+      const gaps = [];
+      const scrollY = window.scrollY;
+      const content = root.getBoundingClientRect();
+      const style = window.getComputedStyle(root);
+      const contentLeft = content.left + (parseFloat(style.paddingLeft) || 0);
+      const contentRight = content.right - (parseFloat(style.paddingRight) || 0);
+      if (target.kind === "item") {
+        const elements = target.list.items.map((item) => {
+          const unit = unitsOf(target.top).find((candidate) => candidate.role === "item" && candidate.item === item);
+          return unit && unit.el ? unit.el.closest("li") : null;
+        });
+        if (elements.some((li) => !li)) return gaps;
+        const rects = elements.map((li) => li.getBoundingClientRect());
+        const list = elements[0].parentElement;
+        const marker = parseFloat(window.getComputedStyle(list).paddingLeft) || 24;
+        const left = rects[0].left - marker;
+        for (let index = 0; index <= rects.length; index += 1) {
+          const y = index === 0 ? rects[0].top - 2
+            : index === rects.length ? rects[rects.length - 1].bottom + 2
+            : (rects[index - 1].bottom + rects[index].top) / 2;
+          gaps.push({ gap: index, y: y + scrollY, left, right: contentRight });
+        }
+        return gaps;
+      }
+      const blocks = model.blocks;
+      const rects = blocks.map((block) => (block.el ? block.el.getBoundingClientRect() : null));
+      for (let index = 0; index <= blocks.length; index += 1) {
+        const before = rects[index - 1];
+        const after = rects[index];
+        let y;
+        if (before && after) y = (before.bottom + after.top) / 2;
+        else if (after) y = after.top - 3;
+        else if (before) y = before.bottom + 3;
+        else continue;
+        gaps.push({ gap: index, y: y + scrollY, left: contentLeft, right: contentRight });
+      }
+      return gaps;
+    }
+
+    function isNoOp(target, gap) {
+      const index = target.kind === "item" ? target.list.items.indexOf(target.item) : target.index;
+      return gap === index || gap === index + 1;
+    }
+
+    function updateDrag(x, y) {
+      if (!drag) return;
+      drag.pointer = { x, y };
+      drag.ghost.style.transform = `translate(${Math.round(x - drag.offset.x)}px, ${Math.round(y - drag.offset.y)}px)`;
+      const pageY = y + window.scrollY;
+      let best = null;
+      for (const gap of drag.gaps) {
+        if (!best || Math.abs(gap.y - pageY) < Math.abs(best.y - pageY)) best = gap;
+      }
+      drag.gap = best && !isNoOp(drag.target, best.gap) ? best : null;
+      if (drag.gap) {
+        dropLine.style.left = `${Math.round(drag.gap.left + window.scrollX)}px`;
+        dropLine.style.width = `${Math.round(Math.max(24, drag.gap.right - drag.gap.left))}px`;
+        dropLine.style.top = `${Math.round(drag.gap.y - 1.5)}px`;
+        dropLine.classList.add("mk-visible");
+      } else {
+        dropLine.classList.remove("mk-visible");
+      }
+      autoScroll();
+    }
+
+    /// Near the top or bottom edge of the window the page scrolls under the dragged block.
+    function autoScroll() {
+      if (!drag || drag.scrollFrame) return;
+      const edge = 56;
+      const y = drag.pointer.y;
+      const speed = y < edge ? -(edge - y) / 3 : y > window.innerHeight - edge ? (y - (window.innerHeight - edge)) / 3 : 0;
+      if (!speed) return;
+      drag.scrollFrame = window.requestAnimationFrame(() => {
+        if (!drag) return;
+        drag.scrollFrame = 0;
+        window.scrollBy(0, Math.round(speed));
+        updateDrag(drag.pointer.x, drag.pointer.y);
+      });
+    }
+
+    function onDragKey(event) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        finishDrag(false);
+      }
+    }
+
+    function finishDrag(commit) {
+      if (!drag) return;
+      const state = drag;
+      drag = null;
+      if (state.scrollFrame) window.cancelAnimationFrame(state.scrollFrame);
+      document.removeEventListener("keydown", onDragKey, true);
+      state.ghost.remove();
+      state.el.classList.remove("mk-block-dragging");
+      document.documentElement.classList.remove("mk-dragging");
+      dropLine.classList.remove("mk-visible");
+      if (!commit || !state.gap || model.source !== state.source) return;
+      root.focus({ preventScroll: true });
+      const selection = readSelection();
+      const keep = selection && handleTargetMatches(state.target, selection) ? selection : null;
+      const op = planMoveBlock(model, state.target, state.gap.gap, keep);
+      if (!op) return;
+      if (!keep) op.select = (next) => caretAt(closestUnitPosition(next, op.movedStart ?? op.from));
+      if (apply(op, { coalesce: false })) flashBlockAt(op.movedStart ?? (readSelection() || {}).head ?? op.from);
+    }
+
+    return {
+      build,
+      onPointerMove,
+      update,
+      hide: hideHandles,
+      suppress() {
+        suppressed = true;
+        hideHandles();
+      },
+      pin(on) {
+        pinned = on;
+        if (current) grip?.classList.toggle("mk-on", on);
+        if (!on) grip?.classList.remove("mk-on");
+      },
+      get dragging() { return Boolean(drag); },
+      cancelDrag() { finishDrag(false); }
+    };
+  })();
 
   const UI = (() => {
     let slashMenu = null;
     let slash = null;
+    let slashFromPlus = false;
     let wikilinkMenu = null;
     // `[[` being typed: where it starts, the query the app last ranked, and that request's serial.
     let wikilink = null;
     let wikilinkSerial = 0;
+    let blockMenu = null;
+    let blockMenuTarget = null;
+    let pickedElement = null;
     let turnIntoMenu = null;
+    let turnContext = null;
+    let calloutMenu = null;
+    let calloutUnit = null;
     let languageMenu = null;
     let languageTarget = null;
     let tableMenu = null;
@@ -4078,6 +5403,7 @@
     let linkCard = null;
     let linkEditor = null;
     let linkField = null;
+    let linkGlyph = null;
     let linkEditing = null;
     let tableBar = null;
     let tableUnit = null;
@@ -4091,28 +5417,107 @@
       slashMenu = createMenu({
         label: "Insert block",
         emptyText: "No matching blocks",
+        footer: [["↑↓", "Choose"], ["↩", "Insert"], ["Esc", "Close"]],
         onChoose: (item) => runSlash(item.id),
         onClose: (reason) => {
-          if (reason !== "choose") slash = null;
+          if (reason === "choose") return;
+          const info = slash;
+          slash = null;
+          // Opened from +: dismissing it takes the `/` back out, leaving the empty line.
+          const inverse = info && info.fromPlus && info.fromPlus.text !== undefined ? info.fromPlus : null;
+          if (inverse && (reason === "escape" || reason === "blur") && model && model.source.slice(inverse.from, inverse.to) === inverse.text) {
+            apply({ from: inverse.from, to: inverse.to, insert: inverse.insert, select: caretAt(inverse.from), kind: "typing" }, { coalesce: false, selection: reason === "escape" });
+          }
         }
       });
       wikilinkMenu = createMenu({
-        label: "Link to note",
-        emptyText: "No matching notes",
+        label: "Link to page",
+        emptyText: "No matching pages",
         ranked: true,
+        footer: [["↑↓", "Choose"], ["↩", "Link"], ["Esc", "Close"]],
         onChoose: (item) => runWikilink(item.label),
         onClose: (reason) => {
           if (reason !== "choose") wikilink = null;
         }
       });
+      blockMenu = createMenu({
+        label: "Block",
+        searchField: true,
+        searchPlaceholder: "Search actions",
+        emptyText: "No matching actions",
+        searchItems: (items) => [
+          ...items.filter((item) => !item.separator && !item.submenu),
+          ...(items.some((item) => item.submenu) ? TURN_INTO.map((item) => ({ ...item, id: `turn:${item.id}`, label: `Turn into ${item.label}`, keywords: [item.label] })) : [])
+        ],
+        onSubmenu: (item, rect) => openTurnIntoForBlock(rect),
+        onHoverRow: () => {
+          if (turnIntoMenu.isOpen) turnIntoMenu.close("back");
+        },
+        onQuery: () => {
+          if (turnIntoMenu.isOpen) turnIntoMenu.close("back");
+        },
+        onFieldKey: (event) => {
+          if (!turnIntoMenu.isOpen) return false;
+          if (turnIntoMenu.handleNavigation(event)) return true;
+          if (event.key === "ArrowLeft" || event.key === "Escape") {
+            event.preventDefault();
+            turnIntoMenu.close("back");
+            return true;
+          }
+          return false;
+        },
+        keepsFocus: () => turnIntoMenu.isOpen,
+        onChoose: (item) => runBlockAction(item.id),
+        onClose: (reason) => {
+          if (turnIntoMenu.isOpen && reason !== "choose") turnIntoMenu.close("parent");
+          endBlockMenu(reason);
+        }
+      });
       turnIntoMenu = createMenu({
         label: "Turn into",
+        narrow: true,
         onChoose: (item) => {
+          const context = turnContext;
+          turnContext = null;
+          if (blockMenu.isOpen) blockMenu.close("choose");
+          if (!context) return;
           root.focus({ preventScroll: true });
-          const selection = lastSelection;
-          if (selection) setSelection(selection.anchor, selection.head, { reveal: false });
-          const readBack = readSelection() || selection;
-          if (readBack) apply(planBlockType(model, readBack, item.id), { coalesce: false });
+          if (context.kind === "block") {
+            const target = blockTarget(context.target);
+            if (!target) return;
+            const caret = targetCaret(target);
+            if (caret) setSelection(caret.anchor, caret.head, { reveal: false });
+            turnInto(item.id, readSelection() || caret);
+          } else {
+            const selection = context.selection;
+            setSelection(selection.anchor, selection.head, { reveal: false });
+            turnInto(item.id, readSelection() || selection);
+          }
+        },
+        onClose: (reason) => {
+          blockMenu?.closeSubmenuMark();
+          if (reason === "back" || reason === "parent") return;
+          if (reason !== "choose") turnContext = null;
+        }
+      });
+      calloutMenu = createMenu({
+        label: "Callout type",
+        narrow: true,
+        onChoose: (item) => {
+          const unit = calloutUnit;
+          calloutUnit = null;
+          root.focus({ preventScroll: true });
+          if (unit && model.units.has(unit.id)) {
+            const selection = readSelection();
+            const op = planCalloutKind(model, unit, item.id);
+            if (op) {
+              op.select = selection ? { anchor: selection.anchor, head: selection.head } : null;
+              apply(op, { coalesce: false, selection: Boolean(selection) });
+            }
+          }
+        },
+        onClose: (reason) => {
+          if (reason !== "choose") calloutUnit = null;
         }
       });
       languageMenu = createMenu({
@@ -4120,6 +5525,7 @@
         searchField: true,
         searchPlaceholder: "Search languages",
         emptyText: "No matching languages",
+        narrow: true,
         onChoose: (item) => setCodeLanguage(item.id),
         onClose: () => {
           root.focus({ preventScroll: true });
@@ -4127,6 +5533,7 @@
       });
       tableMenu = createMenu({
         label: "Table",
+        narrow: true,
         onChoose: (item) => {
           root.focus({ preventScroll: true });
           if (tableUnit) apply(planTable(model, tableUnit, item.id), { coalesce: false });
@@ -4154,6 +5561,27 @@
       return element;
     }
 
+    function menuButton(text, onPress) {
+      const element = document.createElement("button");
+      element.type = "button";
+      element.className = "mk-tool mk-tool-menu";
+      element.tabIndex = -1;
+      element.setAttribute("aria-haspopup", "listbox");
+      const label = document.createElement("span");
+      label.className = "mk-tool-label";
+      label.textContent = text;
+      const chevron = document.createElement("span");
+      chevron.className = "mk-tool-chevron";
+      chevron.appendChild(icon("chevron.down", "small"));
+      element.append(label, chevron);
+      element.addEventListener("mousedown", (event) => event.preventDefault());
+      element.addEventListener("click", (event) => {
+        event.preventDefault();
+        onPress(element);
+      });
+      return element;
+    }
+
     function divider() {
       const element = document.createElement("span");
       element.className = "mk-tool-divider";
@@ -4166,32 +5594,20 @@
       formatBar.className = "mk-floating mk-toolbar mk-hidden";
       formatBar.setAttribute("role", "toolbar");
       formatBar.setAttribute("aria-label", "Format");
-      turnIntoButton = document.createElement("button");
-      turnIntoButton.type = "button";
-      turnIntoButton.className = "mk-tool mk-tool-menu";
-      turnIntoButton.tabIndex = -1;
-      turnIntoButton.title = "Turn into";
-      turnIntoButton.setAttribute("aria-haspopup", "listbox");
-      const label = document.createElement("span");
-      label.className = "mk-tool-label";
-      label.textContent = "Paragraph";
-      const chevron = document.createElement("span");
-      chevron.className = "mk-tool-chevron";
-      chevron.textContent = "⌄";
-      turnIntoButton.append(label, chevron);
-      turnIntoButton.addEventListener("mousedown", (event) => event.preventDefault());
-      turnIntoButton.addEventListener("click", (event) => {
-        event.preventDefault();
-        const rect = turnIntoButton.getBoundingClientRect();
+      turnIntoButton = menuButton("Text", (element) => {
+        const selection = lastSelection;
+        if (!selection) return;
+        turnContext = { kind: "selection", selection: { anchor: selection.anchor, head: selection.head } };
         const current = lastState ? lastState.block : "paragraph";
-        turnIntoMenu.open(TURN_INTO.map((item) => ({ ...item, checked: item.id === current })), rect, "below");
+        turnIntoMenu.open(TURN_INTO.map((item) => ({ ...item, checked: item.id === current })), element.getBoundingClientRect(), { preference: "below", align: "start", animate: true });
       });
+      turnIntoButton.title = "Turn into";
       formatBar.appendChild(turnIntoButton);
       formatBar.appendChild(divider());
       formatButtons.strong = button("bold", "Bold", "⌘B", () => command("bold"));
       formatButtons.em = button("italic", "Italic", "⌘I", () => command("italic"));
       formatButtons.del = button("strikethrough", "Strikethrough", "⇧⌘X", () => command("strikethrough"));
-      formatButtons.code = button("curlybraces", "Inline Code", "⌘E", () => command("code"));
+      formatButtons.code = button("curlybraces", "Inline code", "⌘E", () => command("code"));
       formatBar.append(formatButtons.strong, formatButtons.em, formatButtons.del, formatButtons.code, divider());
       formatButtons.link = button("link", "Link", "⌘K", () => command("link"));
       formatBar.appendChild(formatButtons.link);
@@ -4208,16 +5624,16 @@
       const text = document.createElement("span");
       text.className = "mk-link-url";
       linkCard.append(glyph, text, divider());
-      linkCard.appendChild(button("arrow.up.right.square", "Open Link", "⌘-click", () => {
+      linkCard.appendChild(button("arrow.up.right.square", "Open link", "⌘-click", () => {
         if (!lastState || !lastState.link) return;
         const kind = lastState.link.kind === "wikilink" ? "wikilink" : "markdown";
         window.monknotPostLinkInteraction?.(kind, lastState.link.href);
       }));
-      linkCard.appendChild(button("pencil", "Edit Link", "⌘K", () => {
+      linkCard.appendChild(button("pencil", "Edit link", "⌘K", () => {
         const selection = lastSelection;
         if (selection) openLinkEditor(selection);
       }));
-      linkCard.appendChild(button("link.badge.minus", "Remove Link", "", () => command("removeLink")));
+      linkCard.appendChild(button("link.badge.minus", "Remove link", "", () => command("removeLink")));
       layer.appendChild(linkCard);
     }
 
@@ -4226,20 +5642,18 @@
       linkEditor.className = "mk-floating mk-link-editor mk-hidden";
       linkEditor.setAttribute("role", "dialog");
       linkEditor.setAttribute("aria-label", "Edit link");
-      const glyph = icon("link");
-      glyph.classList.add("mk-link-glyph");
+      linkGlyph = document.createElement("span");
+      linkGlyph.className = "mk-link-glyph";
       linkField = document.createElement("input");
-      linkField.type = "url";
+      linkField.type = "text";
       linkField.className = "mk-field";
-      linkField.placeholder = "Paste or type a link";
-      linkField.setAttribute("aria-label", "Link address");
       linkField.spellcheck = false;
       linkField.autocapitalize = "off";
-      const apply = document.createElement("button");
-      apply.type = "submit";
-      apply.className = "mk-push mk-primary";
-      apply.textContent = "Apply";
-      linkEditor.append(glyph, linkField, apply);
+      const submit = document.createElement("button");
+      submit.type = "submit";
+      submit.className = "mk-push mk-primary";
+      submit.textContent = "Apply";
+      linkEditor.append(linkGlyph, linkField, submit);
       linkEditor.addEventListener("submit", (event) => {
         event.preventDefault();
         commitLink();
@@ -4261,44 +5675,31 @@
       tableBar.className = "mk-floating mk-toolbar mk-table-bar mk-hidden";
       tableBar.setAttribute("role", "toolbar");
       tableBar.setAttribute("aria-label", "Table");
-      const menuButton = (label, items) => {
-        const element = document.createElement("button");
-        element.type = "button";
-        element.className = "mk-tool mk-tool-menu";
-        element.tabIndex = -1;
-        element.setAttribute("aria-haspopup", "listbox");
-        const text = document.createElement("span");
-        text.className = "mk-tool-label";
-        text.textContent = label;
-        const chevron = document.createElement("span");
-        chevron.className = "mk-tool-chevron";
-        chevron.textContent = "⌄";
-        element.append(text, chevron);
-        element.addEventListener("mousedown", (event) => event.preventDefault());
-        element.addEventListener("click", (event) => {
-          event.preventDefault();
-          tableMenu.open(items(), element.getBoundingClientRect(), "below");
-        });
-        return element;
-      };
-      tableBar.appendChild(menuButton("Row", () => [
-        { id: "rowAbove", label: "Insert Row Above", icon: "arrow.up.to.line" },
-        { id: "rowBelow", label: "Insert Row Below", icon: "arrow.down.to.line" },
-        { id: "deleteRow", label: "Delete Row", icon: "trash", destructive: true }
-      ]));
-      tableBar.appendChild(menuButton("Column", () => [
-        { id: "columnLeft", label: "Insert Column Left", icon: "arrow.left.to.line" },
-        { id: "columnRight", label: "Insert Column Right", icon: "arrow.right.to.line" },
-        { id: "deleteColumn", label: "Delete Column", icon: "trash", destructive: true }
-      ]));
+      const open = (items) => (element) => tableMenu.open(items(), element.getBoundingClientRect(), { preference: "below", align: "start", animate: true });
+      tableBar.appendChild(menuButton("Row", open(() => [
+        { id: "rowAbove", label: "Insert row above", icon: "arrow.up.to.line" },
+        { id: "rowBelow", label: "Insert row below", icon: "arrow.down.to.line" },
+        { separator: true },
+        { id: "deleteRow", label: "Delete row", icon: "trash", destructive: true }
+      ])));
+      tableBar.appendChild(menuButton("Column", open(() => [
+        { id: "columnLeft", label: "Insert column left", icon: "arrow.left.to.line" },
+        { id: "columnRight", label: "Insert column right", icon: "arrow.right.to.line" },
+        { separator: true },
+        { id: "deleteColumn", label: "Delete column", icon: "trash", destructive: true }
+      ])));
       tableBar.appendChild(divider());
-      tableBar.appendChild(button("trash", "Delete Table", "", () => {
+      tableBar.appendChild(button("trash", "Delete table", "", () => {
         if (tableUnit) apply(planTable(model, tableUnit, "deleteTable"), { coalesce: false });
       }));
       layer.appendChild(tableBar);
     }
 
     // Slash menu ----------------------------------------------------------
+
+    function expectSlashFromPlus(inverse) {
+      slashFromPlus = inverse || true;
+    }
 
     function afterTyping(text) {
       build();
@@ -4308,18 +5709,19 @@
       typingTimer = window.setTimeout(() => {
         formatBarSuppressed = false;
       }, 400);
+      const fromPlus = slashFromPlus;
+      slashFromPlus = false;
       const selection = readSelection();
       if (!selection) return;
       if (text === "[" && !wikilink && !slash && startWikilink(selection)) return;
       if (text === "/" && !slash && !wikilink) {
+        // Only at the start of a text block, as in Notion: never mid-sentence, in code or a cell.
         const unit = unitAt(model, selection.head, "left");
-        if (!unit || unit.kind !== "inline") return;
+        if (!unit || unit.kind !== "inline" || !SLASH_ROLES.has(unit.role)) return;
         const v = rawToVisible(model, unit, selection.head, "left");
-        const visible = visibleText(model, unit);
-        const before = visible.slice(0, v - 1);
-        if (before.length && !/\s$/.test(before)) return;
-        slash = { unit: unit.id, from: selection.head - 1, to: selection.head };
-        slashMenu.open(SLASH_COMMANDS, caretRect() || { left: 0, top: 0, bottom: 0, right: 0 }, "below");
+        if (visibleText(model, unit).slice(0, Math.max(0, v - 1)).trim() !== "") return;
+        slash = { unit: unit.id, from: selection.head - 1, to: selection.head, fromPlus };
+        slashMenu.open(SLASH_COMMANDS, caretRect() || ZERO_RECT, { preference: "below" });
         return;
       }
       updateSlash();
@@ -4356,20 +5758,54 @@
       slash = null;
       const unit = model.units.get(info.unit) || unitAt(model, info.from, "right");
       const end = Math.max(info.to, info.from + 1);
-      if (id === "image" || id === "link" || id === "date") {
-        const removal = { from: info.from, to: end, insert: "", select: caretAt(info.from), kind: "typing" };
-        apply(removal, { coalesce: true });
-        if (id === "image") command("image");
-        else if (id === "link") command("link");
-        else {
+      const group = newGroup();
+      const removeQuery = () => apply({ from: info.from, to: end, insert: "", select: caretAt(info.from), kind: "typing" }, { group, coalesce: false });
+      switch (id) {
+        case "image":
+        case "video":
+        case "audio":
+        case "file": {
+          removeQuery();
+          const selection = readSelection();
+          if (selection) post({ type: "requestFile", kind: id, selection: { anchor: selection.anchor, head: selection.head } });
+          return;
+        }
+        case "date": {
+          removeQuery();
           const date = new Date().toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
           const selection = readSelection();
-          if (selection) apply(planInsertText(model, selection, date, {}), { coalesce: true });
+          if (selection) apply({ ...planInsertText(model, selection, date, {}), label: "Insert Date" }, { group, coalesce: false });
+          return;
         }
-        return;
+        case "emoji":
+          removeQuery();
+          post({ type: "showEmoji" });
+          return;
+        case "bookmark":
+        case "page": {
+          removeQuery();
+          const selection = readSelection();
+          if (selection) openLinkEditor(selection, id);
+          return;
+        }
+        case "pageLink": {
+          apply({ from: info.from, to: end, insert: "[[", select: caretAt(info.from + 2), kind: "typing" }, { group, coalesce: false });
+          const selection = readSelection();
+          if (selection) startWikilink(selection);
+          return;
+        }
+        case "toggle":
+        case "callout": {
+          removeQuery();
+          const selection = readSelection();
+          if (selection) apply(id === "toggle" ? planWrapToggle(model, selection) : planWrapCallout(model, selection), { group, coalesce: false });
+          return;
+        }
+        default: {
+          const op = planSlashCommand(model, unit, info.from, end, id);
+          if (op) apply(op, { group, coalesce: false });
+        }
       }
-      const op = planSlashCommand(model, unit, info.from, end, id);
-      if (op) apply(op, { coalesce: true });
     }
 
     // Wikilinks -------------------------------------------------------------
@@ -4407,7 +5843,7 @@
       const items = titles.map((title) => ({ id: title, label: title, icon: "doc.text" }));
       // Like the slash menu, it stays where it opened while the query grows.
       if (wikilinkMenu.isOpen) wikilinkMenu.setItems(items);
-      else wikilinkMenu.open(items, caretRect() || { left: 0, top: 0, bottom: 0, right: 0 }, "below");
+      else wikilinkMenu.open(items, caretRect() || ZERO_RECT, { preference: "below" });
     }
 
     function endWikilink(reason) {
@@ -4451,6 +5887,105 @@
       apply({ from: info.from, to, insert, select: caretAt(info.from + insert.length), kind: "format", label: "Insert Link" }, { coalesce: false });
     }
 
+    // Block menu ------------------------------------------------------------
+
+    /// The grip's menu (or ⌘/): Turn Into, Duplicate, Copy, Move and Delete for one block, which
+    /// stays tinted while the menu is open.
+    function openBlockMenu(target, rect, animate) {
+      build();
+      if (!target) return;
+      hideFormatBar();
+      hide(linkCard);
+      blockMenuTarget = target;
+      pickedElement?.classList.remove("mk-block-picked");
+      pickedElement = targetElement(target);
+      pickedElement?.classList.add("mk-block-picked");
+      Handles.pin(true);
+      const block = target.kind === "block" ? target.block : null;
+      const canTurn = !block || !["table", "hr", "toc", "definition", "empty"].includes(block.type);
+      const first = target.kind === "item" ? target.list.items.indexOf(target.item) === 0 : target.index === 0;
+      const last = target.kind === "item" ? target.list.items.indexOf(target.item) === target.list.items.length - 1 : target.index === model.blocks.length - 1;
+      const items = [];
+      if (canTurn) items.push({ id: "turnInto", label: "Turn into", icon: "arrow.triangle.2.circlepath", submenu: true });
+      items.push({ id: "duplicate", label: "Duplicate", icon: "plus.square.on.square", hint: "⌘D" });
+      items.push({ id: "copy", label: "Copy", icon: "doc.on.doc" });
+      if (!first || !last) items.push({ separator: true });
+      if (!first) items.push({ id: "moveUp", label: "Move up", icon: "arrow.up", hint: "⇧⌘↑" });
+      if (!last) items.push({ id: "moveDown", label: "Move down", icon: "arrow.down", hint: "⇧⌘↓" });
+      items.push({ separator: true });
+      items.push({ id: "delete", label: "Delete", icon: "trash", destructive: true });
+      blockMenu.open(items, rect, { preference: "below", align: "start", animate });
+    }
+
+    function openTurnIntoForBlock(rect) {
+      const target = blockTarget(blockMenuTarget);
+      if (!target) return;
+      turnContext = { kind: "block", target };
+      const caret = targetCaret(target);
+      const unit = caret ? unitAt(model, caret.head, "right") : null;
+      const current = blockTypeOf(unit);
+      turnIntoMenu.open(TURN_INTO.map((item) => ({ ...item, checked: item.id === current })), rect, { preference: "right", animate: true });
+    }
+
+    function endBlockMenu(reason) {
+      pickedElement?.classList.remove("mk-block-picked");
+      pickedElement = null;
+      Handles.pin(false);
+      if (reason !== "choose") {
+        blockMenuTarget = null;
+        if (reason === "escape") {
+          root.focus({ preventScroll: true });
+          const selection = lastSelection;
+          if (selection) setSelection(selection.anchor, selection.head, { reveal: false });
+        }
+      }
+    }
+
+    function runBlockAction(id) {
+      const target = blockTarget(blockMenuTarget);
+      blockMenuTarget = null;
+      if (!target) return;
+      root.focus({ preventScroll: true });
+      if (id.startsWith("turn:")) {
+        const caret = targetCaret(target);
+        if (caret) setSelection(caret.anchor, caret.head, { reveal: false });
+        turnInto(id.slice(5), readSelection() || caret);
+        return;
+      }
+      switch (id) {
+        case "duplicate":
+          duplicateTarget(target);
+          return;
+        case "copy": {
+          post({ type: "copyText", text: blockMarkdown(model, target) });
+          const caret = targetCaret(target);
+          if (caret && !readSelection()) setSelection(caret.anchor, caret.head, { reveal: false });
+          return;
+        }
+        case "moveUp":
+          moveTarget(target, -1);
+          return;
+        case "moveDown":
+          moveTarget(target, 1);
+          return;
+        case "delete":
+          apply(planDeleteBlock(model, target), { coalesce: false });
+          return;
+        default:
+      }
+    }
+
+    function openCalloutMenu(titleElement) {
+      build();
+      const callout = titleElement.closest(".callout");
+      const unitElement = callout && callout.querySelector("[data-mk-u]");
+      const unit = unitForElement(unitElement);
+      if (!unit || !calloutOf(unit)) return;
+      calloutUnit = unit;
+      const current = calloutOf(unit).callout.kind;
+      calloutMenu.open(CALLOUT_KINDS.map((item) => ({ ...item, checked: item.id === current })), titleElement.getBoundingClientRect(), { preference: "below", align: "start", animate: true });
+    }
+
     // Floating format bar --------------------------------------------------
 
     function selectionChanged(selection, unit, state, report) {
@@ -4480,6 +6015,8 @@
       if (layer && layer.contains(event.target)) return;
       mouseSelecting = true;
       hideFormatBar();
+      if (blockMenu && blockMenu.isOpen) blockMenu.close("outside");
+      if (calloutMenu && calloutMenu.isOpen) calloutMenu.close("outside");
     }, true);
     document.addEventListener("mouseup", () => {
       mouseSelecting = false;
@@ -4487,7 +6024,7 @@
 
     function showFormatBarIfNeeded(immediate) {
       build();
-      if (!active || formatBarSuppressed || slash || wikilink) return;
+      if (!active || formatBarSuppressed || slash || wikilink || blockMenu.isOpen || Handles.dragging) return;
       const selection = readSelection();
       if (!selection || selection.from === selection.to) return;
       const first = unitAt(model, selection.from, "right");
@@ -4497,12 +6034,11 @@
       const rect = selectionRect();
       if (!rect) return;
       refreshFormatBar(lastState, first);
-      formatBar.classList.toggle("mk-instant", immediate === true);
-      place(formatBar, rect, "above");
-      show(formatBar);
+      place(formatBar, rect, "above", "center");
+      show(formatBar, immediate === true);
     }
 
-    function refreshFormatBar(report, unit) {
+    function refreshFormatBar(report) {
       if (!report) return;
       const singleUnit = (() => {
         const selection = lastSelection;
@@ -4513,16 +6049,15 @@
         const on = style === "link" ? Boolean(report.link) : Boolean(report[style]);
         element.classList.toggle("mk-on", on);
         element.setAttribute("aria-pressed", on ? "true" : "false");
-        const enabled = report.canFormat && (singleUnit || style === "link" ? singleUnit : false);
-        element.disabled = !enabled;
+        element.disabled = !(report.canFormat && singleUnit);
       }
-      turnIntoButton.querySelector(".mk-tool-label").textContent = BLOCK_NAMES[report.block] || "Paragraph";
+      turnIntoButton.querySelector(".mk-tool-label").textContent = BLOCK_NAMES[report.block] || "Text";
       turnIntoButton.disabled = report.block === "table";
     }
 
     function hideFormatBar() {
       if (formatBar) hide(formatBar);
-      if (turnIntoMenu && turnIntoMenu.isOpen) turnIntoMenu.close("hide");
+      if (turnIntoMenu && turnIntoMenu.isOpen && turnContext && turnContext.kind === "selection") turnIntoMenu.close("hide");
     }
 
     // Link card and editor ------------------------------------------------
@@ -4538,28 +6073,43 @@
       const url = linkCard.querySelector(".mk-link-url");
       url.textContent = state.link.href || "";
       url.title = state.link.href || "";
-      const anchor = linkAnchorElement(element, selection) || element;
+      const anchor = linkAnchorElement() || element;
       place(linkCard, anchor.getBoundingClientRect(), "below");
       show(linkCard);
     }
 
-    function linkAnchorElement(element, selection) {
+    function linkAnchorElement() {
       const dom = window.getSelection();
       const node = dom.anchorNode;
       const parent = node && (node.nodeType === TEXT ? node.parentElement : node);
       return parent ? parent.closest("a") : null;
     }
 
-    function openLinkEditor(selection) {
+    const EDITOR_MODES = {
+      link: { placeholder: "Paste or type a link", label: "Link address", glyph: "link", type: "url" },
+      bookmark: { placeholder: "Paste a link to bookmark", label: "Bookmark address", glyph: "bookmark", type: "url" },
+      page: { placeholder: "Name the new page", label: "Page name", glyph: "doc", type: "text" }
+    };
+
+    /// One field over the text: a link's address (⌘K), a web bookmark's address, or the name of a
+    /// new page, which the app creates as a Markdown file next to this one and links here.
+    function openLinkEditor(selection, mode = "link") {
       build();
+      const settings = EDITOR_MODES[mode] || EDITOR_MODES.link;
       const state = inlineState(model, selection);
-      linkEditing = { selection, state };
-      linkField.value = state.link && state.link.kind === "link" ? state.link.href : "";
+      linkEditing = { selection, state, mode };
+      linkField.value = mode === "link" && state.link && state.link.kind === "link" ? state.link.href : "";
+      linkField.placeholder = settings.placeholder;
+      linkField.type = settings.type;
+      linkField.setAttribute("aria-label", settings.label);
+      linkEditor.setAttribute("aria-label", settings.label);
+      linkGlyph.textContent = "";
+      linkGlyph.appendChild(icon(settings.glyph));
       hideFormatBar();
       hide(linkCard);
       const rect = selection.from === selection.to ? caretRect() : selectionRect();
-      place(linkEditor, rect || { left: 0, right: 0, top: 0, bottom: 0, width: 0 }, "below");
-      show(linkEditor);
+      place(linkEditor, rect || ZERO_RECT, "below");
+      show(linkEditor, mode === "link" && selection.from !== selection.to);
       window.setTimeout(() => {
         linkField.focus();
         linkField.select();
@@ -4568,15 +6118,29 @@
 
     function commitLink() {
       const editing = linkEditing;
-      const url = linkField.value.trim();
+      const value = linkField.value.trim();
       closeLinkEditor(true);
       if (!editing) return;
       setSelection(editing.selection.anchor, editing.selection.head, { reveal: false });
-      if (!url) {
+      if (editing.mode === "page") {
+        if (!value) return;
+        const selection = readSelection() || editing.selection;
+        post({ type: "createPage", name: value, selection: { anchor: selection.anchor, head: selection.head } });
+        return;
+      }
+      if (editing.mode === "bookmark") {
+        if (!value) return;
+        const url = /^[a-z][a-z0-9+.-]*:/i.test(value) ? value : `https://${value}`;
+        const label = url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/$/, "");
+        const selection = readSelection() || editing.selection;
+        apply({ ...planInsertText(model, selection, `[${label.replace(/([[\]])/g, "\\$1")}](${url.replace(/\s/g, "%20")})`, {}), kind: "format", label: "Web Bookmark" }, { coalesce: false });
+        return;
+      }
+      if (!value) {
         if (editing.state.link) command("removeLink");
         return;
       }
-      command("setLink", url);
+      command("setLink", value);
     }
 
     function closeLinkEditor(restoreFocus) {
@@ -4616,7 +6180,7 @@
       const current = unit.block.fence.language;
       const items = LANGUAGES.map(([id, label]) => ({ id, label, checked: id === current, keywords: [id] }));
       if (current && !LANGUAGES.some(([id]) => id === current)) items.unshift({ id: current, label: current, checked: true });
-      languageMenu.open(items, buttonElement.getBoundingClientRect(), "below");
+      languageMenu.open(items, buttonElement.getBoundingClientRect(), { preference: "below", align: "start", animate: true });
     }
 
     function setCodeLanguage(language) {
@@ -4639,37 +6203,20 @@
 
     function handleKeyDown(event) {
       build();
-      if (slashMenu.isOpen) {
-        if (slashMenu.handleNavigation(event)) return true;
-        if (event.key === "Escape") {
+      for (const menu of [turnIntoMenu, calloutMenu, slashMenu, wikilinkMenu, tableMenu]) {
+        if (!menu.isOpen) continue;
+        if (menu.handleNavigation(event)) return true;
+        if (event.key === "Escape" || (menu === turnIntoMenu && event.key === "ArrowLeft" && blockMenu.isOpen)) {
           event.preventDefault();
-          slashMenu.close("escape");
+          menu.close(menu === turnIntoMenu && blockMenu.isOpen ? "back" : "escape");
+          if (menu === turnIntoMenu && blockMenu.isOpen) blockMenu.focusField();
           return true;
         }
-      }
-      if (wikilinkMenu.isOpen) {
-        if (wikilinkMenu.handleNavigation(event)) return true;
-        if (event.key === "Escape") {
-          event.preventDefault();
-          wikilinkMenu.close("escape");
-          return true;
+        if (menu === turnIntoMenu || menu === calloutMenu || menu === tableMenu) {
+          // A pointer-opened menu takes the keys meant for it and lets typing close it.
+          menu.close("typing");
         }
-      }
-      if (turnIntoMenu.isOpen) {
-        if (turnIntoMenu.handleNavigation(event)) return true;
-        if (event.key === "Escape") {
-          event.preventDefault();
-          turnIntoMenu.close("escape");
-          return true;
-        }
-      }
-      if (tableMenu.isOpen) {
-        if (tableMenu.handleNavigation(event)) return true;
-        if (event.key === "Escape") {
-          event.preventDefault();
-          tableMenu.close("escape");
-          return true;
-        }
+        break;
       }
       if (event.key === "Escape" && formatBar.classList.contains("mk-visible")) {
         event.preventDefault();
@@ -4688,7 +6235,9 @@
       slashMenu.close("blur");
       endWikilink("blur");
       turnIntoMenu.close("blur");
+      calloutMenu.close("blur");
       tableMenu.close("blur");
+      if (blockMenu.isOpen && !blockMenu.element.contains(document.activeElement)) blockMenu.close("blur");
       hideFormatBar();
       hide(linkCard);
     }
@@ -4696,6 +6245,7 @@
     function closeAll() {
       if (!slashMenu) return;
       closeTransient();
+      blockMenu.close("blur");
       languageMenu.close("blur");
       closeLinkEditor(false);
       hide(tableBar);
@@ -4707,7 +6257,7 @@
       if (wikilinkMenu.isOpen) wikilinkMenu.reposition(caretRect());
       if (formatBar.classList.contains("mk-visible")) {
         const rect = selectionRect();
-        if (rect) place(formatBar, rect, "above");
+        if (rect) place(formatBar, rect, "above", "center");
       }
       if (tableUnit && tableBar.classList.contains("mk-visible")) updateTableBar(tableUnit);
     }
@@ -4720,10 +6270,14 @@
       handleKeyDown,
       openLinkEditor,
       openLanguageMenu,
+      openCalloutMenu,
+      openBlockMenu,
+      expectSlashFromPlus,
       closeTransient,
       closeAll,
       reposition,
-      showWikilinks
+      showWikilinks,
+      get blockMenuOpen() { return Boolean(blockMenu && blockMenu.isOpen); }
     };
   })();
 

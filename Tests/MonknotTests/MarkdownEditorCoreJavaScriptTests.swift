@@ -13,11 +13,13 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
         let result = try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any]
         let failures = result?["failures"] as? [String] ?? ["no result"]
         XCTAssertEqual(failures, [], failures.joined(separator: "\n"))
-        XCTAssertGreaterThanOrEqual(result?["passed"] as? Int ?? 0, 60)
+        XCTAssertGreaterThanOrEqual(result?["passed"] as? Int ?? 0, 120)
     }
 
     /// Random documents and random patches, including CRLF line endings: after every patch the
     /// incrementally updated document must equal a fresh parse of the new text.
+    /// Toggles, callouts and `[TOC]` lines are among the snippets, so a typed `</details>` far below
+    /// its `<details>` is covered too.
     func testIncrementalParseMatchesAFullParse() throws {
         let context = try editorContext()
         let output = try XCTUnwrap(context.evaluateScript(Self.fuzz)?.toString())
@@ -72,7 +74,7 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
       let seed = 20261017;
       const random = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
       const pick = (list) => list[Math.floor(random() * list.length)];
-      const snippets = ["# Title", "## Sub", "para text", "more *em* and **bold**", "- item", "- [ ] task", "1. one", "  - nested", "> quote", "> > deep", "```js", "```", "code line", "| a | b |", "| --- | --- |", "| 1 | 2 |", "---", "[ref]: http://x", "[^n]: note", "see [^n] and [l][ref]", "", "", "text with [link](u) end", "~~del~~", "`code`", "line  ", "next"];
+      const snippets = ["> [!NOTE]", "> [!TIP]", "<details>", "<details open>", "<summary>Title</summary>", "<summary></summary>", "</details>", "[TOC]", "![v](a.mp4)", "# Title", "## Sub", "para text", "more *em* and **bold**", "- item", "- [ ] task", "1. one", "  - nested", "> quote", "> > deep", "```js", "```", "code line", "| a | b |", "| --- | --- |", "| 1 | 2 |", "---", "[ref]: http://x", "[^n]: note", "see [^n] and [l][ref]", "", "", "text with [link](u) end", "~~del~~", "`code`", "line  ", "next"];
       const describe = (model) => model.blocks.map((b) => [b.type, E.bStart(b), E.bEnd(b), E.bLine(b)].join("|")).join("\n")
         + "\n--\n" + E.allUnits(model).map((u) => [u.kind, u.role, u.region.j, E.unitStart(u), E.unitEnd(u)].join("|")).join("\n");
       for (let run = 0; run < 1500; run += 1) {
@@ -84,7 +86,7 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
         for (let step = 0; step < 6; step += 1) {
           const from = Math.floor(random() * (text.length + 1));
           const to = Math.min(text.length, from + (random() < 0.5 ? 0 : Math.floor(random() * 12)));
-          const insert = random() < 0.3 ? "" : pick(["x", "\n", "\n\n", "# ", "- ", "**", "`", "```", "> ", "|", " ", "[a](b)", pick(snippets) + "\n"]);
+          const insert = random() < 0.3 ? "" : pick(["<details>\n", "<summary>S</summary>\n", "</details>", "> [!NOTE]\n", "[TOC]\n", "x", "\n", "\n\n", "# ", "- ", "**", "`", "```", "> ", "|", " ", "[a](b)", pick(snippets) + "\n"]);
           text = text.slice(0, from) + insert + text.slice(to);
           E.applyPatch(model, from, to, insert);
           if (model.source !== text) return "source differs at run " + run;
@@ -213,6 +215,78 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
     check("table row above first", "| a | b |\n| --- | --- |\n| c‸ | d |", (m, s) => E.planTable(m, E.unitAt(m, s.head, "left"), "rowAbove"), "| a | b |\n| --- | --- |\n| ‸ |  |\n| c | d |");
     check("table row below header", "| a‸ | b |\n| --- | --- |\n| c | d |", (m, s) => E.planTable(m, E.unitAt(m, s.head, "left"), "rowBelow"), "| a | b |\n| --- | --- |\n| ‸ |  |\n| c | d |");
     check("table delete row", "| a | b |\n| --- | --- |\n| c | d |\n| e‸ | f |", (m, s) => E.planTable(m, E.unitAt(m, s.head, "left"), "deleteRow"), "| a | b |\n| --- | --- |\n| c | d |‸");
+    // Toggles, callouts and the table of contents.
+    const delFwd = (m, s) => E.planDeleteForwardAtEnd(m, E.unitAt(m, s.head, "left"));
+    check("toggle enter open", "<details open>\n<summary>Title‸</summary>\n\nBody\n\n</details>", enter, "<details open>\n<summary>Title</summary>\n\n‸\nBody\n\n</details>");
+    check("toggle enter open no blank", "<details open>\n<summary>Title‸</summary>\nBody\n</details>", enter, "<details open>\n<summary>Title</summary>\n\n‸\nBody\n</details>");
+    check("toggle enter closed", "<details>\n<summary>Title‸</summary>\n\nBody\n\n</details>", enter, "<details>\n<summary>Title</summary>\n\nBody\n\n</details>\n‸\n");
+    check("toggle enter into virtual", "<details open>\n<summary>T‸</summary>\n</details>", enter, "<details open>\n<summary>T</summary>‸\n</details>");
+    check("toggle type into virtual", "<details open>\n<summary>T</summary>‸\n</details>", type("x"), "<details open>\n<summary>T</summary>\n\nx‸\n\n</details>");
+    check("toggle type into blank body", "<details open>\n<summary>T</summary>\n‸\n</details>", type("x"), "<details open>\n<summary>T</summary>\n\nx‸\n\n</details>");
+    check("toggle leave", "<details open>\n<summary>T</summary>\n\nBody\n\n‸\n</details>", enter, "<details open>\n<summary>T</summary>\n\nBody\n\n</details>\n‸\n");
+    check("toggle leave before text", "<details open>\n<summary>T</summary>\n\nBody\n\n‸\n</details>\n\nAfter", enter, "<details open>\n<summary>T</summary>\n\nBody\n\n</details>\n\n‸\nAfter");
+    check("toggle enter body end", "<details open>\n<summary>T</summary>\n\nBody‸\n\n</details>", enter, "<details open>\n<summary>T</summary>\n\nBody\n\n‸\n</details>");
+    check("toggle unwrap", "<details>\n<summary>‸Title</summary>\n\nBody\n\n</details>", backspaceAtStart, "‸Title\n\nBody");
+    check("toggle unwrap empty", "<details>\n<summary>‸Title</summary>\n</details>", backspaceAtStart, "‸Title");
+    check("toggle backspace body start", "<details open>\n<summary>Title</summary>\n\n‸Body\n\n</details>", backspaceAtStart, "<details open>\n<summary>Title‸</summary>\n\nBody\n\n</details>");
+    check("toggle delete fwd summary", "<details open>\n<summary>Title‸</summary>\n\nBody\n\n</details>", delFwd, "(no-op)");
+    check("toggle delete fwd last body", "<details open>\n<summary>T</summary>\n\nBody‸\n\n</details>\n\nAfter", delFwd, "(no-op)");
+    check("before toggle delete fwd", "Para‸\n\n<details>\n<summary>T</summary>\n</details>", delFwd, "(no-op)");
+    check("after toggle backspace closed", "<details>\n<summary>T</summary>\n\nBody\n\n</details>\n\n‸After", backspaceAtStart, "<details>\n<summary>T‸</summary>\n\nBody\n\n</details>\n\nAfter");
+    check("toggle select delete", "<details open>\n<summary>Ti«tle</summary>\n\nBo»dy\n\n</details>", del, "<details open>\n<summary>Ti‸</summary>\n\ndy\n\n</details>");
+    check("unclosed toggle", "<details open>\n<summary>T</summary>\n\nBody‸", type("x"), "<details open>\n<summary>T</summary>\n\nBodyx‸");
+    check("callout type virtual", "> [!NOTE]‸", type("x"), "> [!NOTE]\n> x‸");
+    check("callout enter after text", "> [!NOTE]\n> Hi‸", enter, "> [!NOTE]\n> Hi\n>\n>‸");
+    check("callout backspace first", "> [!TIP]\n> ‸Hello", backspaceAtStart, "> ‸Hello");
+    check("callout backspace virtual", "> [!NOTE]‸", backspaceAtStart, "> ‸");
+    check("toc backspace", "[TOC]\n\n‸Text", backspaceAtStart, "‸Text");
+    check("toc delete fwd", "Text‸\n\n[TOC]\n\nMore", delFwd, "Text‸\n\nMore");
+    // What the block handles and menus do.
+    const target = (m, s) => E.handleTargetOf(m, E.unitAt(m, s.head, "left"));
+    const move = (gap) => (m, s) => E.planMoveBlock(m, target(m, s), gap, s);
+    const step = (d) => (m, s) => E.planMoveByStep(m, s, d);
+    const dup = (m, s) => E.planDuplicateBlock(m, target(m, s));
+    const delBlock = (m, s) => E.planDeleteBlock(m, target(m, s));
+    const wrapToggle = (m, s) => E.planWrapToggle(m, s);
+    const wrapCallout = (m, s) => E.planWrapCallout(m, s);
+    const unquote = (m, s) => E.planUnwrapQuote(m, E.unitAt(m, s.head, "left"), s);
+    const slash = (cmd) => (m, s) => { const u = E.unitAt(m, s.head, "left"); return E.planSlashCommand(m, u, s.head - 1, s.head, cmd); };
+    check("move first to end", "A‸\n\nB\n\nC", move(3), "B\n\nC\n\nA‸");
+    check("move last to start", "A\n\nB\n\nC‸", move(0), "C‸\n\nA\n\nB");
+    check("move middle up", "A\n\nB‸\n\nC", move(0), "B‸\n\nA\n\nC");
+    check("move no-op", "A\n\nB‸\n\nC", move(1), "(no-op)");
+    check("move trailing newline", "A\n\nB‸\n", move(0), "B‸\n\nA\n");
+    check("move heading adjacent", "# H\nPara‸\n\nEnd", move(0), "Para‸\n\n# H\n\nEnd");
+    check("move keeps empty", "A‸\n\nB\n\n\nC", move(4), "B\n\n\nC\n\nA‸");
+    check("step up", "A\n\nB‸", step(-1), "B‸\n\nA");
+    check("step down", "A‸\n\nB", step(1), "B\n\nA‸");
+    check("step top no-op", "A‸\n\nB", step(-1), "(no-op)");
+    check("move item down", "- a‸\n- b\n- c", move(2), "- b\n- a‸\n- c");
+    check("move item to end", "- a‸\n- b\n- c", move(3), "- b\n- c\n- a‸");
+    check("move item with child", "- a‸\n  - x\n- b", move(2), "- b\n- a‸\n  - x");
+    check("move ordered keeps numbers", "1. a\n2. b‸\n3. c", move(0), "1. b‸\n2. a\n3. c");
+    check("step item up", "- a\n- b‸", step(-1), "- b‸\n- a");
+    check("remove list under para", "Para\n- x‸\n\nNext", delBlock, "Para‸\n\nNext");
+    check("move toggle", "<details>\n<summary>T‸</summary>\n\nBody\n\n</details>\n\nAfter", move(2), "After\n\n<details>\n<summary>T‸</summary>\n\nBody\n\n</details>");
+    check("dup block", "A‸\n\nB", dup, "A\n\nA‸\n\nB");
+    check("dup item", "- a‸\n- b", dup, "- a\n- a‸\n- b");
+    check("delete middle", "A\n\nB‸\n\nC", delBlock, "A‸\n\nC");
+    check("delete last", "A\n\nB‸", delBlock, "A‸");
+    check("delete item", "- a\n- b‸\n- c", delBlock, "- a‸\n- c");
+    check("delete last item", "- a\n- b‸", delBlock, "- a‸");
+    check("wrap toggle", "Hello‸", wrapToggle, "<details>\n<summary>Hello‸</summary>\n\n</details>");
+    check("wrap toggle between", "A\n\nHello‸\n\nB", wrapToggle, "A\n\n<details>\n<summary>Hello‸</summary>\n\n</details>\n\nB");
+    check("wrap toggle empty", "A\n\n‸", wrapToggle, "A\n\n<details>\n<summary>‸</summary>\n\n</details>\n");
+    check("wrap callout", "Hello‸", wrapCallout, "> [!NOTE]\n> Hello‸");
+    check("wrap callout empty", "A\n\n‸", wrapCallout, "A\n\n> [!NOTE]‸\n");
+    check("wrap callout quote", "> Hel‸lo", wrapCallout, "> [!NOTE]\n> Hel‸lo");
+    check("unwrap quote", "> a‸\n>\n> b", unquote, "a‸\n\nb");
+    check("unwrap callout", "> [!TIP]\n> a‸", unquote, "a‸");
+    check("slash toc", "A\n\n/‸", slash("toc"), "A\n\n[TOC]\n‸\n");
+    check("item near after", "- a‸\n- b", (m, s) => E.insertItemNear(m, target(m, s), false), "- a\n- ‸\n- b");
+    check("item near above", "- a\n- b‸", (m, s) => E.insertItemNear(m, target(m, s), true), "- a\n- ‸\n- b");
+    check("empty before", "A\n\nB‸", (m, s) => E.insertEmptyBeforeBlock(m, 1), "A\n\n‸\nB");
+    check("empty before first", "A‸", (m, s) => E.insertEmptyBeforeBlock(m, 0), "‸\nA");
     return JSON.stringify({ passed, failures });
     })()
     """#
