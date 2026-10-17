@@ -258,6 +258,7 @@ The 28 is the **outer** dimension including the 1px border; a 28 content box plu
 | Hover | `hover` fill, `ink` glyph, border unchanged |
 | Pressed | `press` fill |
 | On (panel open) | `accsoft` fill, `accent` glyph, **still only the `line` border** |
+| On (format applied) | `sel` fill, `ink` glyph — the selected segment of §5.5. Bold, italic, code, link and the list and quote toggles of the Markdown toolbar and the format bar use it, so formatting never spends the accent |
 | Disabled | `ink4` glyph, border at 40 %, no fill. No extra opacity on top. |
 
 **Search option exception.** Match Case and Match Whole Word use the same standard `28 × 28` box
@@ -580,8 +581,10 @@ cells switch how one pane renders.
 **Disabled, not hidden.** For PDFs, images, video, audio and plain text the view-mode control takes
 the disabled treatment of §5.1: `ink4` glyphs, its border at 40 %, and no selected cell. Controls
 never appear or disappear between file kinds — the toolbar must not reflow. The same holds for the
-Markdown toolbar row under the titlebar: an editable Markdown document keeps it in Preview, its
-controls disabled, so switching view mode never moves the document.
+Markdown toolbar row under the titlebar: an editable Markdown document keeps it in Source, beside its
+preview and in Preview, so switching view mode never moves the document. In Preview the toolbar edits
+the page (§10.10); its block selector names the block under the caret and its toggles show the
+formats that are on. Beside Source it edits the source.
 
 ### 10.3 Tab strip — hug, cap, scroll
 
@@ -641,8 +644,8 @@ and its glyph (a file's kind glyph, a folder's chevron) `accent`, on a `sel` fil
 
 **Selection.** The tree has one selection, as in Finder: a folder, or else the open document. Clicking a
 folder selects it, opens or closes it and gives the tree keyboard focus, without closing the open
-document. Clicking a file opens it; a document shown for typing (Markdown or text in Source, or beside
-its preview) takes keyboard focus, ready for typing, while any other file (an image, a PDF, video,
+document. Clicking a file opens it; a document shown for typing (Markdown in Source or Preview, text,
+or a source beside its preview) takes keyboard focus, ready for typing, while any other file (an image, a PDF, video,
 audio, a preview) leaves focus in the tree, so ⌘C, ⌘X and ⌘V act on it. New Markdown, New File, New Folder and Paste put items in the
 selected folder, or the selected document's folder, or the root when nothing is selected; a row's context
 menu acts on that row, and the empty tree's menu and Finder drops on empty space on the root. While the
@@ -731,7 +734,8 @@ fill its box.** If an icon looks small, that is correct — macOS chrome glyphs 
 | Titlebar | bar 44 · traffic light 12 · chrome button 28 box / 17 glyph · segmented 28 outer (22 cell + 2 padding + 1 border) / 16 glyph · divider 1×16 · strip inset 3 · 3 between chips |
 | File tab | chip 30 · padding-x 10 · kind glyph 14 optical in 18 column · gap 8 · label 13 · trailing slot 16 · close 11 · dirty dot 6 · pin 11 · max width 220 · no minimum |
 | Sidebar | header 40 · row 30 · padding-x 10 · disclosure chevron 10 or file glyph 14 optical in the 18 column · gap 8 · label 13 · indent 16 · gutter 6 · 2 between rows · header action 22/16 (search 14 optical) · Recents header: chevron, eyebrow, count 12 · footer 30/15 |
-| Markdown toolbar | heading selector 100×30, radius 8, label 13 regular, trailing `⌄` 10 regular / +3.2 baseline, `ink2`/`ink3` at rest and the icon-button hover · icon button 30 box / 17 nominal glyph · inline code and link 13 optical · quote (`text.quote`) and task list 14 optical · image 12 optical · dividers 1×20 · gaps 6. Every glyph carries 6–9 % ink in its 30 box except the inherently thin italic and rule; a glyph far outside that band reads as a different icon set. |
+| Markdown toolbar | heading selector 124×30 (fits "Numbered List"), radius 8, label 13 regular, trailing `⌄` 10 regular / +3.2 baseline, `ink2`/`ink3` at rest and the icon-button hover · icon button 30 box / 17 nominal glyph · inline code and link 13 optical · quote (`text.quote`) and task list 14 optical · image 12 optical · dividers 1×20 · gaps 6. Every glyph carries 6–9 % ink in its 30 box except the inherently thin italic and rule; a glyph far outside that band reads as a different icon set. |
+| Preview editing | format bar: 28 buttons / 17 glyph, 2 between, 4 padding, dividers 1×16, block selector label 13 with `⌄` 10 / +3.2 baseline · menus: width 264, list padding 6, row 30 / 15 glyph (or a 12 `H1` tag) in the 18 column, gap 8, label 13, hint 11.5 SF Mono (a shortcut 12 rounded), group eyebrow 10, at most 356 tall · link editor: field 28, width 340 · code language label 22 tall / 12 · all on radius 12 surfaces, rows radius 8 |
 | Terminal | header 36 · pill 80×24 · glyph 14 · gap 6 · number 12 mono, two-digit slot · close 11 in 16 · new/close buttons 26/16 · fullscreen 26/14 optical · divider 1×13 |
 | Elsewhere | field 28 · push button 28 bars / 30 sheets · toggle 34×20, knob 16 · stepper 26 · slider track 4 / knob 16 · overlay row 34 · settings row 28/15 · outline dash 22/14/9 × 2 |
 
@@ -771,6 +775,70 @@ the file. A file that is missing or cannot be played shows the empty-state layou
 warning glyph, the way a damaged PDF or image does. AVI and other containers AVFoundation does not
 reliably play are not listed.
 
+### 10.10 Editing in Preview
+
+Preview is where most writing happens: an editable Markdown document is edited in place, in the same
+rendering PDF export uses. Source stays the place for raw Markdown, Writing Tools and the on-device
+autocomplete; beside Source the preview is read-only, so one document never takes typing in two places.
+
+**The Markdown file is the document.** The page is a rendering of it, and every edit on the page —
+typing, Return, Delete, a toolbar or slash command, paste, a checkbox — becomes one text patch on the
+source. Nothing is converted back from HTML, so Markdown the editor does not render (HTML, comments,
+front matter, unusual syntax) is kept byte for byte, and text outside the patch never changes. A
+format applied to a selection rewrites only the markers of the words it touches.
+
+**What the page shows.** Everything in the file is visible and reachable: blank lines beyond the one
+that separates blocks are empty lines the caret can sit on; a divider draws as a `line` hairline;
+reference and footnote definitions, and tables with more cells than their header, show as written in a
+quiet code-face block. Markers (`**`, `#`, `>`, `- [ ]`) are never shown; typing them still works — `# `,
+`- `, `1. `, `[] `, `> `, three backticks and three hyphens turn the line into that block.
+
+**Selection and caret.** Typing at the end of bold or italic text continues it, as in every text editor;
+typing at the edge of a link does not extend the link. Undo restores the selection a change started
+from. Switching between Source and Preview keeps the selection, and Preview's undo history survives
+the switch; an undo that no longer fits the text (it changed in Source) beeps instead of applying.
+
+**Surfaces.** All are floating (§2), radius 12 with `e2`, rows radius 8, and never move the text:
+
+| Surface | Appears | Contents |
+|---|---|---|
+| Format bar | text selected with the pointer or keyboard, above the selection (below when there is no room) | block selector · bold, italic, strikethrough, inline code · link |
+| Slash menu | `/` at the start of a block or after a space | blocks, then inserts, filtered by what follows the `/`; Markdown to type instead as a trailing hint |
+| Link card | caret inside a link | the address in 12 `ink2`, Open, Edit, Remove |
+| Link editor | ⌘K, or Link in the format bar or card | one field; ↩ applies, Esc cancels and restores the selection |
+| Table bar | caret in a table, above it, left-aligned | Row and Column menus, Delete Table |
+| Code language | always, top-right of a code block, 12 `ink3` | a searchable language list |
+
+Menus follow the row primitive: the keyboard and the pointer move one selection (`sel` fill, `ink`
+label), ↑/↓ or ⌃P/⌃N move it, ↩ or ⇥ chooses, Esc closes and keeps the typed text. Buttons in the
+bars never take focus, so the text selection survives every click. The caret's cell in a table carries
+an inset `ink3` ring; placeholders are `ink` at 32 %: "Type / to insert a block" on the empty line
+holding the caret, the heading level on an empty heading.
+
+**Keys.** ↩ splits a block or starts the next list item; on an empty item or an empty last quote line it
+leaves the list or quote. ⇧↩ breaks the line inside a paragraph. ⌫ at the start of a heading, item or
+quote removes that formatting first, then joins with the block above. ⇥/⇧⇥ indent and outdent list
+items, move between table cells (adding a row after the last) and indent code. ⌘↩ leaves a code block.
+⌘B ⌘I ⌘E ⇧⌘X ⌘K and ⌥⌘0–6 format. ⌘-click opens a link.
+
+**Clipboard.** Copy puts the selection's Markdown on the pasteboard as plain text (markers balanced at
+cut emphasis) and its rendering as HTML, so a paste into Mail stays formatted and a paste into Source
+stays Markdown. Pasted HTML becomes Markdown; pasted code goes in as text; a pasted image is saved
+into the workspace and linked.
+
+**Performance targets**, measured in WebKit by `MarkdownVisualEditorTests`:
+
+| Measure | Target | Measured |
+|---|---|---|
+| Keystroke, 50 KB note, handler | p95 ≤ 4 ms | ≤ 1 ms |
+| Keystroke, 1 MB document, including layout | p95 ≤ 16 ms (one frame) | median 5–8 ms, p95 8–9 ms (most of it WebKit laying out the caret) |
+| Source re-parsed per keystroke | the edited blocks only | resynchronises at the next unchanged block |
+| Render of a 1 MB document | within 10 % of the read-only preview | ~100 ms in JavaScriptCore |
+| Opening a 1 MB document editable | ≤ 1 s | 0.6–0.9 s |
+
+**Motion.** Floating surfaces fade up over 120 ms (opacity, 4 pt translate); with Reduce Motion they
+fade in 90 ms with no movement. Hover colours take 120 ms. Nothing animates while typing.
+
 ---
 
 ## 11. Motion
@@ -781,7 +849,8 @@ reliably play are not listed.
   menu or the keyboard alike: AppKit's own split-view transition, opening and closing alike. The
   pane's content keeps its open width and slides under the window edge, so rows never squeeze and the
   terminal is not resized frame by frame.
-- **fadeUp** for overlays, toasts and the outline peek card entrance.
+- **fadeUp** for overlays, toasts, the outline peek card and Preview's floating editing surfaces
+  (120ms, 4pt).
 - Never animate size, position, elevation, border or weight except for the explicit terminal
   fullscreen width transition and the side-pane transition above.
 - Honour Reduce Motion: entrances become instant opacity changes and side panes show and hide

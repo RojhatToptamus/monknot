@@ -7,15 +7,32 @@ public struct MarkdownRenderService: Sendable {
 
     private let stylesheet: String
     private let rendererJavaScript: String
+    private let editorStylesheet: String?
+    private let editorJavaScript: String?
 
     public init(bundle: Bundle = .main) throws {
         self.stylesheet = try Self.loadResource("preview", extension: "css", bundle: bundle)
         self.rendererJavaScript = try Self.loadResource("renderer", extension: "js", bundle: bundle)
+        // The visual editor is optional: without its resources Preview stays read-only.
+        self.editorStylesheet = try? Self.loadResource("editor", extension: "css", bundle: bundle)
+        self.editorJavaScript = try? Self.loadResource("editor", extension: "js", bundle: bundle)
     }
 
-    public init(stylesheet: String, rendererJavaScript: String) {
+    public init(
+        stylesheet: String,
+        rendererJavaScript: String,
+        editorStylesheet: String? = nil,
+        editorJavaScript: String? = nil
+    ) {
         self.stylesheet = stylesheet
         self.rendererJavaScript = rendererJavaScript
+        self.editorStylesheet = editorStylesheet
+        self.editorJavaScript = editorJavaScript
+    }
+
+    /// Whether Preview can be edited in place: the editor's script and stylesheet loaded.
+    public var supportsVisualEditing: Bool {
+        editorStylesheet != nil && editorJavaScript != nil
     }
 
     public func htmlDocument(markdown: String, theme: RenderTheme, baseURL: URL?) throws -> String {
@@ -42,8 +59,14 @@ public struct MarkdownRenderService: Sendable {
         contentWidthPercent: Double = 88,
         usePointerCursors: Bool = false,
         fontSmoothing: Bool = true,
+        editable: Bool = false,
         baseURL: URL?
     ) throws -> String {
+        let includesEditor = editable && supportsVisualEditing
+        let editorStyle = includesEditor ? (editorStylesheet ?? "") : ""
+        let editorScript = includesEditor
+            ? "<script>\n\(editorJavaScript ?? "")\n  </script>"
+            : ""
         let markdownLiteral = try javaScriptLiteral(markdown)
         let themeLiteral = try javaScriptLiteral(appTheme.isDark ? "dark" : "light")
         let baseTag = baseURL.map { #"<base href="\#(htmlAttributeEscaped(directoryURLString(for: $0)))">"# } ?? ""
@@ -66,6 +89,7 @@ public struct MarkdownRenderService: Sendable {
           \(baseTag)
           <style>
         \(stylesheet)
+        \(editorStyle)
         \(cssVariables)
           </style>
         </head>
@@ -80,6 +104,7 @@ public struct MarkdownRenderService: Sendable {
           <script>
         \(rendererJavaScript)
           </script>
+          \(editorScript)
         </body>
         </html>
         """
@@ -180,7 +205,17 @@ public struct MarkdownRenderService: Sendable {
             ("--font-smoothing", fontSmoothing ? "antialiased" : "auto"),
             ("--interactive-cursor", usePointerCursors ? "pointer" : "default"),
             ("--ui-font", uiFontStack),
-            ("--code-font", codeFontStack)
+            ("--code-font", codeFontStack),
+            ("--caret", theme.cursor),
+            ("--danger", theme.semanticColors.diffRemoved),
+            // The editor's menus and toolbars scale with workspace zoom; text also with the
+            // theme's interface font size, as the native chrome does.
+            ("--mk-z", String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"), max(0.5, min(3, zoomScale)))),
+            ("--mk-tz", String(
+                format: "%.3f",
+                locale: Locale(identifier: "en_US_POSIX"),
+                max(0.5, min(3, zoomScale)) * min(1.25, max(0.875, theme.uiFontSize / 16))
+            ))
         ]
     }
 

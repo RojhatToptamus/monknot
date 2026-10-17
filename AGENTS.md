@@ -4,7 +4,7 @@ This file orients AI agents and contributors working in this repository. Keep it
 
 ## Project Overview
 
-Monknot is a SwiftPM macOS app for browsing a workspace, opening multiple files in lightweight tabs, editing Markdown and text-like files, previewing Markdown, viewing and marking up PDFs and images, playing video and audio, skipping archives, Office documents and other unsupported binary files, searching text/PDF documents, exporting Markdown to PDF, and running an embedded terminal.
+Monknot is a SwiftPM macOS app for browsing a workspace, opening multiple files in lightweight tabs, editing Markdown and text-like files, editing Markdown visually in Preview, viewing and marking up PDFs and images, playing video and audio, skipping archives, Office documents and other unsupported binary files, searching text/PDF documents, exporting Markdown to PDF, and running an embedded terminal.
 
 Direct releases use Sparkle 2 for standard in-app updates. The custom bundle
 builder embeds and signs Sparkle.framework; GitHub Releases host immutable
@@ -145,7 +145,7 @@ Shorter and more specific is preferable to polished but meaningless copy.
 - `Package.swift`: SwiftPM manifest. Add new compile targets or resources here if they should be part of SwiftPM builds/tests.
 - `Sources/MonknotCore/Models`: value types and enums shared by the app and tests.
 - `Sources/MonknotCore/Services`: core services for scanning workspaces, rendering Markdown HTML, parsing outlines, and searching workspaces.
-- `Sources/MonknotCore/Resources`: Markdown preview CSS and JavaScript renderer used by WebKit preview and PDF export.
+- `Sources/MonknotCore/Resources`: `renderer.js` (the one Markdown parser and renderer, used by the preview, PDF export and the editor; every block and inline node records its source range) and `preview.css`; `editor.js` and `editor.css`, the visual editor loaded only into an editable Preview.
 - `Sources/Monknot/App`: app entry point and application delegate.
 - `Sources/Monknot/Stores`: `@MainActor` observable state containers for workspace, themes, terminal state, and Markdown outline state.
 - `Sources/Monknot/Models`: app-layer UI state models such as save state and document search state.
@@ -175,7 +175,7 @@ Shorter and more specific is preferable to polished but meaningless copy.
    - The `DocumentTabBar` above the editor renders open tab metadata only; inactive tabs do not instantiate hidden editors/previews.
    - Sidebar/recent/search/quick-open navigation opens regular lightweight tabs. Inactive tabs keep metadata only and do not instantiate hidden editors/previews.
    - Markdown source: `MarkdownTextEditor`.
-   - Markdown preview: `MarkdownPreviewView`.
+   - Markdown preview: `MarkdownPreviewView`. In Preview (not beside Source) an editable Markdown document gets a `MarkdownVisualEditingConfiguration` and is edited in place; see "Visual editing in Preview" below.
    - Text/source/data text files: `MarkdownTextEditor` as a generic plain text editor.
    - PDF: `PDFPreviewView`.
    - Image (raster formats in `WorkspaceDocumentSupport.imageExtensions`): `PDFPreviewView` on an `ImageMarkupPage`. SVG stays a text document.
@@ -183,6 +183,27 @@ Shorter and more specific is preferable to polished but meaningless copy.
    - Native preview/unsupported files: skipped by the scanner when possible. Generic Quick Look preview is intentionally disabled for performance.
 6. `WorkspaceStore` is the main app state owner for workspace selection, document loading, dirty text, save state, file operations, security-scoped bookmarks, external file refresh, selected document state, and the sidebar's folder selection (`selectedFolderID`; `sidebarTargetFolderURL` is where New and Paste put items).
 7. `WorkspaceDocumentScanner` builds the sidebar tree and document list from the selected workspace.
+
+## Visual Editing In Preview
+
+- The Markdown source is the only document. `editor.js` renders it with `renderer.js` and turns every
+  edit on the page into one patch `{from, to, inserted}` on the source; it never converts HTML back to
+  Markdown. Unrendered Markdown therefore survives byte for byte.
+- Each top-level block and each editable unit (paragraph, heading, item text, table cell, code block,
+  raw block, empty line) maps visible text offsets to source offsets. After a patch only the affected
+  blocks are re-parsed (resynchronising at the next unchanged block) and replaced in the page.
+- The page is the single writer while Preview is editable. It posts each patch with a version number
+  to `MarkdownPreviewView.Coordinator` (`monknotEditor` message), which mirrors the page's text,
+  applies the patch through `WorkspaceStore.applyTextMutation` and records undo in
+  `MarkdownVisualEditingSession`. Store changes the page did not make (file changed on disk) and undo
+  or redo go back to the page as patches; a mismatch resets the page to the store's text.
+- `MarkdownVisualEditingSession` is owned by `EditorPaneView`, so Preview's undo history survives a
+  switch to Source and back; steps verify the text they change. `MarkdownEditorWebView` hands the Edit
+  menu that undo manager and drops WebKit's own undo registrations.
+- Menus, the format bar, link card and editor, table bar and code language menu live in the page
+  (`editor.js` `UI`), styled by `editor.css` from theme tokens; SF Symbols come from
+  `MarkdownEditorSymbolAssets` as mask images. design.md §10.10 is the interaction spec.
+- Writing Tools and the on-device autocomplete stay in Source; beside Source the preview is read-only.
 
 ## Core Domain And Service Boundaries
 
@@ -326,6 +347,8 @@ The script also manually copies these runtime resources into the app bundle:
 
 - `Sources/MonknotCore/Resources/preview.css`
 - `Sources/MonknotCore/Resources/renderer.js`
+- `Sources/MonknotCore/Resources/editor.css`
+- `Sources/MonknotCore/Resources/editor.js`
 - `Sources/Monknot/Resources/xterm.css`
 - `Sources/Monknot/Resources/xterm.js`
 - `Sources/Monknot/Resources/xterm-addon-fit.js`
@@ -385,6 +408,8 @@ Current XCTest coverage focuses on `MonknotCore`:
 - `RepositoryContractTests`: manual build, workflow, release, security, license, governance, Sparkle, and CLI process contracts.
 - `WorkspaceTabStateTests`: open, order, pin, close, remap, prune, and closed-tab history behavior.
 - `UnsavedChangesIntegrityTests` (app target): hosted editor and PDF viewer sweeps showing that opening, viewing, switching, saving, renaming and reviewing documents never marks unedited files as unsaved, and that a file only counts as changed on disk when its contents changed.
+- `MarkdownRendererJavaScriptTests`: renderer output in JavaScriptCore.
+- `MarkdownVisualEditorTests` (app target): Preview editing in real WebKit: typing, Return and Delete, Markdown shortcuts, Edit-menu undo and redo (also across a switch to Source), formatting, tasks, links, paste and copy, composition, tables, external changes, 50 KB and 1 MB keystroke timing, and theme and narrow-window snapshots (written to `MONKNOT_EDITOR_SNAPSHOT_DIR` when set).
 - `DocumentViewerRoutingTests` (app target): generated fixtures of every listed file type (text, extensionless, uppercase, binary and oversized text, PDF, raster images, video and audio) are scanned and opened in a hosted `EditorPaneView`; also image fit, media playback lifecycle, Open With and Recents.
 
 Manual Core smoke verification used in this repo when SwiftPM is blocked:
@@ -453,6 +478,7 @@ script/build_and_run.sh --debug
 - Read `WorkspaceStore` before changing workspace, document, save, dirty-state, bookmark, or external-refresh behavior.
 - Read `WorkspaceTabState`, `DocumentTabBar`, `ContentView`, and `WorkspaceStore` before changing tab behavior. Tabs are metadata around the active `WorkspaceStore` document, not independent document runtimes.
 - Read `MarkdownRenderService`, `MarkdownPreviewView`, `renderer.js`, and `preview.css` together before changing Markdown preview or export behavior.
+- Read `editor.js`, `MarkdownVisualEditing.swift`, the editing parts of `MarkdownPreviewView`, and design.md §10.10 before changing Preview editing. Keep every edit a source patch; never serialize the page back to Markdown.
 - Read `PDFPreviewView`, `WorkspaceSearchService`, and `MarkdownPDFExportService` before changing PDF behavior.
 - Read `PDFPreviewView`, `MediaPlayerView`, and `WorkspaceDocumentSupport` before changing PDF, image or media viewing or file-format support.
 - Read `ThemeSettingsStore`, `AppTheme`, and `Color+Theme.swift` before changing theming.

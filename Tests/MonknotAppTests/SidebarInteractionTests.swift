@@ -304,7 +304,7 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
 
         XCTAssertTrue(takesFocus("note.md", .source))
         XCTAssertTrue(takesFocus("note.md", .preview, split: true), "Its source shows beside the preview")
-        XCTAssertFalse(takesFocus("note.md", .preview))
+        XCTAssertTrue(takesFocus("note.md", .preview), "Preview edits Markdown in place")
         XCTAssertTrue(takesFocus("notes.txt", .preview), "Text has no preview")
         XCTAssertTrue(takesFocus("page.html", .source))
         XCTAssertFalse(takesFocus("page.html", .preview))

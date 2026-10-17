@@ -13,7 +13,7 @@ final class MarkdownPresentationTokenTests: XCTestCase {
             [
                 ["Bold", "Italic", "Quote", "Inline Code", "Link"],
                 ["Bullet List", "Numbered List", "Task List"],
-                ["Image", "Horizontal Rule"],
+                ["Image", "Divider"],
             ]
         )
     }
@@ -54,8 +54,9 @@ final class MarkdownPresentationTokenTests: XCTestCase {
         let size = MarkdownSourceToolbar.controlSize
 
         XCTAssertEqual(size.iconPointSizeBase, 17)
-        XCTAssertEqual(MarkdownSourceToolbar.expandedHeadingWidthBase, 100)
-        XCTAssertEqual(MarkdownSourceToolbar.compactHeadingWidthBase, 104)
+        // Wide enough for the longest block name Preview reports, "Numbered List" (121 pt at 13 pt).
+        XCTAssertEqual(MarkdownSourceToolbar.expandedHeadingWidthBase, 124)
+        XCTAssertEqual(MarkdownSourceToolbar.compactHeadingWidthBase, 124)
         XCTAssertEqual(MarkdownSourceToolbar.headingFontSizeBase, 13)
         XCTAssertEqual(MarkdownSourceToolbar.headingChevronFontSizeBase, 10)
         XCTAssertEqual(MarkdownSourceToolbar.headingChevronBaselineOffsetBase, 3.2)

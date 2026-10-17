@@ -31,6 +31,10 @@ struct EditorPaneView: View {
     private var onDeviceProseCompletions = EditorTextCheckingOptions.defaultOnDeviceProseCompletions
     @State private var markdownCommandSerial = 0
     @State private var markdownCommandRequest: MarkdownTextEditorCommandRequest?
+    /// Preview's undo history; it outlives the page, so switching to Source and back keeps it.
+    @State private var visualEditingSession = MarkdownVisualEditingSession()
+    @State private var visualCommandRequest: MarkdownVisualEditorCommandRequest?
+    @State private var visualFormattingState: MarkdownVisualFormattingState?
     @State private var splitScrollSyncLock = false
     @State private var splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
     @State private var previewSyncLine: Int?
@@ -150,9 +154,19 @@ struct EditorPaneView: View {
         return document.kind == .markdown && document.capabilities.canEditText
     }
 
-    /// The toolbar edits the source, so it acts only while the source is on screen.
+    /// The toolbar edits the source in Source and beside a preview, and the page in Preview.
     private var isMarkdownToolbarEnabled: Bool {
-        (editorMode == .source || isSplitViewEnabled) && store.activeWritingToolsDocumentID == nil
+        (editorMode == .source || isSplitViewEnabled || isPreviewEditable) && store.activeWritingToolsDocumentID == nil
+    }
+
+    /// Preview edits an editable Markdown document in place. Beside Source it stays a preview, so
+    /// one document never has two places taking typing at once.
+    private var isPreviewEditable: Bool {
+        guard let document = store.selectedDocument,
+              document.kind == .markdown,
+              document.capabilities.canEditText
+        else { return false }
+        return editorMode == .preview && !isSplitViewEnabled && store.activeWritingToolsDocumentID == nil
     }
 
     private func supportsSplitViewRatioPersistence(forDocumentID documentID: String) -> Bool {
@@ -168,6 +182,7 @@ struct EditorPaneView: View {
                         theme: theme,
                         zoomScale: zoomScale,
                         statistics: textStatistics,
+                        formattingState: isPreviewEditable ? visualFormattingState : nil,
                         sendCommand: sendMarkdownCommand
                     )
                     .equatable()
@@ -190,6 +205,10 @@ struct EditorPaneView: View {
     private func sendMarkdownCommand(_ command: MarkdownTextEditorCommand) {
         guard isMarkdownToolbarEnabled else { return }
         markdownCommandSerial += 1
+        if isPreviewEditable {
+            visualCommandRequest = MarkdownVisualEditorCommandRequest(serial: markdownCommandSerial, command: command)
+            return
+        }
         markdownCommandRequest = MarkdownTextEditorCommandRequest(
             serial: markdownCommandSerial,
             command: command
@@ -580,7 +599,40 @@ struct EditorPaneView: View {
             onVisibleSourceLineChange: { line in
                 outlinePosition.update(line, documentID: selectedDocument.id)
                 syncSourceScroll(to: line)
-            }
+            },
+            editing: isPreviewEditable ? visualEditingConfiguration(for: selectedDocument) : nil
+        )
+    }
+
+    private func visualEditingConfiguration(for document: WorkspaceDocument) -> MarkdownVisualEditingConfiguration {
+        let documentID = document.id
+        return MarkdownVisualEditingConfiguration(
+            session: visualEditingSession,
+            initialSelection: activeViewportState?.textSelection,
+            commandRequest: visualCommandRequest,
+            currentText: { store.documentText },
+            applyChange: { change in
+                store.applyTextMutation(
+                    documentID: documentID,
+                    range: change.range,
+                    expectedText: change.removed,
+                    replacement: change.inserted
+                ) != nil
+            },
+            onSelectionChange: { selection, selectedMarkdown in
+                onMarkdownSelectionChange(MarkdownEditorSelectionSnapshot(
+                    documentID: documentID,
+                    revision: 0,
+                    selectedRange: selection.range,
+                    selectedMarkdown: selectedMarkdown
+                ))
+            },
+            onFormattingChange: { state in
+                guard visualFormattingState != state else { return }
+                visualFormattingState = state
+            },
+            onImagePasteRequest: onMarkdownImagePasteRequest,
+            onFileDropRequest: onMarkdownFileDropRequest
         )
     }
 

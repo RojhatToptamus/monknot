@@ -1,0 +1,602 @@
+/* Visual editor in Preview. Colours derive from the theme as design.md §1.2 prescribes;
+   every chrome metric scales with workspace zoom (--mk-z) and its text scale (--mk-tz). */
+
+:root {
+  --mk-z: 1;
+  --mk-tz: 1;
+  --mk-ink: var(--fg);
+  --mk-ink2: color-mix(in srgb, var(--fg) 62%, transparent);
+  --mk-ink3: color-mix(in srgb, var(--fg) 40%, transparent);
+  --mk-ink4: color-mix(in srgb, var(--fg) 24%, transparent);
+  --mk-placeholder: color-mix(in srgb, var(--fg) 32%, transparent);
+  --mk-line: color-mix(in srgb, var(--fg) 12%, transparent);
+  --mk-line2: color-mix(in srgb, var(--fg) 8%, transparent);
+  --mk-hover: color-mix(in srgb, var(--fg) 5.5%, transparent);
+  --mk-press: color-mix(in srgb, var(--fg) 10%, transparent);
+  --mk-sel: var(--selection-bg);
+  --mk-floating: color-mix(in srgb, var(--bg) 95%, var(--fg));
+  --mk-shadow-hue: color-mix(in srgb, var(--fg) 90%, var(--accent));
+  --mk-ring: color-mix(in srgb, var(--mk-shadow-hue) 8%, transparent);
+  --mk-shadow:
+    0 4px 12px color-mix(in srgb, var(--mk-shadow-hue) 8%, transparent),
+    0 1px 3px color-mix(in srgb, var(--mk-shadow-hue) 5%, transparent);
+  --mk-focus: color-mix(in srgb, var(--accent) 35%, transparent);
+  --mk-caret: var(--caret, var(--fg));
+}
+
+:root[data-theme="dark"] {
+  --mk-line: color-mix(in srgb, var(--fg) 9%, transparent);
+  --mk-line2: color-mix(in srgb, var(--fg) 6%, transparent);
+  --mk-hover: color-mix(in srgb, var(--fg) 6%, transparent);
+  --mk-press: color-mix(in srgb, var(--fg) 11%, transparent);
+  --mk-floating: color-mix(in srgb, var(--bg) 89%, var(--fg));
+  --mk-ring: rgba(255, 255, 255, 0.14);
+  --mk-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.34);
+}
+
+/* ---------------------------------------------------------------------
+   The writing surface
+   --------------------------------------------------------------------- */
+
+.mk-editing .markdown-body {
+  outline: none;
+  caret-color: var(--mk-caret);
+  min-height: calc(100vh - 34px);
+  padding-bottom: 40vh;
+}
+
+.mk-editing .markdown-body [data-source-line] {
+  cursor: text;
+}
+
+.mk-editing .markdown-body a,
+.mk-editing .markdown-body a:hover {
+  cursor: text;
+  text-decoration: none;
+}
+
+.mk-editing.mk-command-key .markdown-body a {
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* A line the source keeps empty: a paragraph-sized line the caret can sit on. */
+.mk-editing .mk-empty {
+  min-height: 1.55em;
+}
+
+.mk-editing [data-mk-empty] {
+  position: relative;
+}
+
+.mk-editing [data-mk-empty]::before {
+  position: absolute;
+  top: 0;
+  left: 0;
+  color: var(--mk-placeholder);
+  pointer-events: none;
+  white-space: nowrap;
+  font-weight: inherit;
+}
+
+.mk-editing h1[data-mk-empty]::before,
+.mk-editing h2[data-mk-empty]::before,
+.mk-editing h3[data-mk-empty]::before,
+.mk-editing h4[data-mk-empty]::before,
+.mk-editing h5[data-mk-empty]::before,
+.mk-editing h6[data-mk-empty]::before,
+.mk-editing .mk-item-text[data-mk-empty].mk-current::before {
+  content: attr(data-placeholder);
+}
+
+.mk-editing .mk-empty.mk-current::before,
+.mk-editing .mk-empty.mk-only::before {
+  content: "Type / to insert a block";
+}
+
+.mk-editing .task-list-item {
+  flex-wrap: wrap;
+}
+
+.mk-editing .task-list-item > .mk-item-text {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.mk-editing .task-list-item > ul,
+.mk-editing .task-list-item > ol {
+  flex-basis: 100%;
+  margin: 0.28rem 0 0;
+  padding-left: calc(12px + 0.55rem);
+}
+
+.mk-editing .task-list-item input {
+  cursor: default;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.mk-editing .task-list-item input:hover {
+  border-color: color-mix(in srgb, var(--fg) 48%, transparent);
+}
+
+.mk-editing .task-list-item input:checked:hover {
+  border-color: var(--accent);
+}
+
+.mk-editing li > ul,
+.mk-editing li > ol {
+  margin: 0.28rem 0 0;
+}
+
+/* Divider: drawn in the editor so it can be seen, selected and deleted. */
+.mk-editing .mk-hr {
+  margin: 0 0 1.08rem;
+  padding: 0.5em 0;
+  user-select: none;
+}
+
+.mk-editing .mk-hr hr {
+  display: block;
+  height: 1px;
+  margin: 0;
+  border: 0;
+  background: var(--mk-line);
+}
+
+/* Markdown the editor shows as written: reference and footnote definitions,
+   and tables whose rows have more cells than the header. */
+.mk-editing .mk-raw {
+  margin: 0 0 1.08rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  background: var(--soft);
+  color: var(--mk-ink2);
+  font-family: var(--code-font);
+  font-size: 0.88em;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Code blocks */
+.mk-editing .mk-code-block {
+  position: relative;
+  margin: 0 0 1.08rem;
+}
+
+.mk-editing .mk-code-block > pre {
+  margin: 0;
+  padding-top: calc(1rem + 6px);
+}
+
+.mk-editing .mk-code-block > pre code {
+  min-height: 1.55em;
+  outline: none;
+}
+
+.mk-editing .mk-code-language {
+  position: absolute;
+  z-index: 1;
+  top: 6px;
+  right: 6px;
+  height: calc(22px * var(--mk-z));
+  padding: 0 calc(7px * var(--mk-z));
+  border: 0;
+  border-radius: calc(6px * var(--mk-z));
+  background: transparent;
+  color: var(--mk-ink3);
+  font: 400 calc(12px * var(--mk-tz)) / 1 var(--ui-font);
+  cursor: default;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.mk-editing .mk-code-language:hover {
+  background: var(--mk-hover);
+  color: var(--mk-ink);
+}
+
+.mk-editing .mk-code-language:active {
+  background: var(--mk-press);
+}
+
+/* Tables: the cell holding the caret carries a quiet inset ring. */
+.mk-editing .table-wrapper th,
+.mk-editing .table-wrapper td {
+  min-width: 4em;
+  outline: none;
+}
+
+.mk-editing .table-wrapper th.mk-current,
+.mk-editing .table-wrapper td.mk-current {
+  box-shadow: inset 0 0 0 1px var(--mk-ink3);
+}
+
+.mk-editing img[data-mk-atom] {
+  cursor: default;
+}
+
+.mk-editing .footnotes {
+  user-select: text;
+}
+
+::highlight(monknot-search) {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+::highlight(monknot-search-current) {
+  background: color-mix(in srgb, var(--accent) 54%, transparent);
+}
+
+/* ---------------------------------------------------------------------
+   Floating surfaces: menus, the format bar, the link card and editor, the
+   table bar. Radius 12, e2, fadeUp entrance (design.md §2, §7, §11).
+   --------------------------------------------------------------------- */
+
+.mk-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  z-index: 20;
+  font: 400 calc(13px * var(--mk-tz)) / 1 var(--ui-font);
+  color: var(--mk-ink);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.mk-floating {
+  position: absolute;
+  box-sizing: border-box;
+  border-radius: calc(12px * var(--mk-z));
+  background: var(--mk-floating);
+  box-shadow: inset 0 0 0 1px var(--mk-ring), var(--mk-shadow);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity 120ms ease-out, transform 120ms ease-out, visibility 0s linear 120ms;
+}
+
+.mk-floating.mk-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition: opacity 120ms ease-out, transform 120ms ease-out, visibility 0s;
+}
+
+.mk-floating.mk-measuring {
+  transition: none;
+}
+
+.mk-floating.mk-hidden {
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mk-floating,
+  .mk-floating.mk-visible {
+    transform: none;
+    transition: opacity 90ms linear, visibility 0s linear 90ms;
+  }
+
+  .mk-floating.mk-visible {
+    transition: opacity 90ms linear, visibility 0s;
+  }
+}
+
+.mk-icon {
+  display: inline-block;
+  flex: none;
+  width: calc(var(--mk-icon-width, 17px) * var(--mk-z));
+  height: calc(var(--mk-icon-height, 17px) * var(--mk-z));
+  background-color: currentColor;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
+/* Menus ----------------------------------------------------------------- */
+
+.mk-menu {
+  width: calc(264px * var(--mk-z));
+  max-height: calc(356px * var(--mk-z));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.mk-menu-list {
+  padding: calc(6px * var(--mk-z));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.mk-menu-list::-webkit-scrollbar {
+  width: calc(10px * var(--mk-z));
+}
+
+/* The chrome lists' overlay thumb (design.md §5.7): no track, shown while the pointer is over
+   the list. */
+.mk-menu-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mk-menu-list::-webkit-scrollbar-thumb {
+  border: calc(3px * var(--mk-z)) solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  background-clip: padding-box;
+}
+
+.mk-menu-list:hover::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--fg) 35%, transparent);
+}
+
+.mk-menu-group {
+  padding: calc(10px * var(--mk-z)) calc(10px * var(--mk-z)) calc(6px * var(--mk-z));
+  color: var(--mk-ink3);
+  font-size: calc(10px * var(--mk-tz));
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.mk-menu-group:first-child {
+  padding-top: calc(4px * var(--mk-z));
+}
+
+.mk-menu-row {
+  display: flex;
+  align-items: center;
+  gap: calc(8px * var(--mk-z));
+  height: calc(30px * var(--mk-z));
+  padding: 0 calc(10px * var(--mk-z));
+  border-radius: calc(8px * var(--mk-z));
+  color: var(--mk-ink2);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.mk-menu-row + .mk-menu-row {
+  margin-top: 2px;
+}
+
+.mk-menu-row.mk-selected {
+  background: var(--mk-sel);
+  color: var(--mk-ink);
+}
+
+.mk-menu-row:active {
+  background: var(--mk-press);
+}
+
+.mk-menu-row.mk-destructive .mk-row-label {
+  color: var(--danger, inherit);
+}
+
+.mk-row-glyph {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: calc(18px * var(--mk-z));
+  color: var(--mk-ink3);
+}
+
+.mk-menu-row.mk-selected .mk-row-glyph {
+  color: var(--mk-ink);
+}
+
+.mk-row-tag {
+  font-size: calc(12px * var(--mk-tz));
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+.mk-row-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: calc(13px * var(--mk-tz));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* What to type for the block instead, set as Markdown in the code face; a keyboard shortcut uses
+   the shared rounded shortcut label (design.md §4.4). */
+.mk-row-hint {
+  flex: none;
+  color: var(--mk-ink3);
+  font: 400 calc(11.5px * var(--mk-tz)) / 1 var(--code-font);
+}
+
+.mk-row-hint.mk-key {
+  font: 400 calc(12px * var(--mk-tz)) / 1 ui-rounded, var(--ui-font);
+}
+
+.mk-row-check {
+  display: flex;
+  flex: none;
+  color: var(--mk-ink2);
+}
+
+.mk-menu-empty {
+  padding: calc(9px * var(--mk-z)) calc(10px * var(--mk-z));
+  color: var(--mk-ink3);
+  font-size: calc(12px * var(--mk-tz));
+  line-height: 1.4;
+}
+
+.mk-menu-search {
+  display: flex;
+  align-items: center;
+  gap: calc(8px * var(--mk-z));
+  height: calc(40px * var(--mk-z));
+  padding: 0 calc(16px * var(--mk-z));
+  border-bottom: 1px solid var(--mk-line2);
+  color: var(--mk-ink2);
+}
+
+.mk-menu-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--mk-ink);
+  font: 400 calc(13px * var(--mk-tz)) / 1 var(--ui-font);
+}
+
+.mk-menu-search input::placeholder,
+.mk-field::placeholder {
+  color: var(--mk-ink3);
+}
+
+/* Format bar, link card, table bar ------------------------------------------ */
+
+.mk-toolbar,
+.mk-link-card {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: calc(4px * var(--mk-z));
+  white-space: nowrap;
+}
+
+.mk-tool {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: calc(28px * var(--mk-z));
+  height: calc(28px * var(--mk-z));
+  padding: 0;
+  border: 0;
+  border-radius: calc(8px * var(--mk-z));
+  background: transparent;
+  color: var(--mk-ink2);
+  font: inherit;
+  cursor: default;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.mk-tool:hover {
+  background: var(--mk-hover);
+  color: var(--mk-ink);
+}
+
+.mk-tool:active {
+  background: var(--mk-press);
+}
+
+/* A format that is on: the segmented control's selected cell (§5.5). */
+.mk-tool.mk-on {
+  background: var(--mk-sel);
+  color: var(--mk-ink);
+}
+
+.mk-tool:disabled {
+  background: transparent;
+  color: var(--mk-ink4);
+}
+
+.mk-tool:focus-visible,
+.mk-code-language:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--mk-focus);
+}
+
+.mk-tool-menu {
+  gap: calc(6px * var(--mk-z));
+  padding: 0 calc(8px * var(--mk-z)) 0 calc(10px * var(--mk-z));
+}
+
+.mk-tool-label {
+  font-size: calc(13px * var(--mk-tz));
+}
+
+.mk-tool-chevron {
+  position: relative;
+  top: calc(-3.2px * var(--mk-tz));
+  color: var(--mk-ink3);
+  font-size: calc(10px * var(--mk-tz));
+}
+
+.mk-tool-divider {
+  flex: none;
+  width: 1px;
+  height: calc(16px * var(--mk-z));
+  margin: 0 calc(3px * var(--mk-z));
+  background: var(--mk-line);
+}
+
+.mk-link-card {
+  max-width: calc(420px * var(--mk-z));
+  padding-left: calc(10px * var(--mk-z));
+}
+
+.mk-link-glyph {
+  color: var(--mk-ink3);
+}
+
+.mk-link-url {
+  min-width: 0;
+  max-width: calc(260px * var(--mk-z));
+  margin: 0 calc(6px * var(--mk-z)) 0 calc(8px * var(--mk-z));
+  overflow: hidden;
+  color: var(--mk-ink2);
+  font-size: calc(12px * var(--mk-tz));
+  text-overflow: ellipsis;
+}
+
+/* Link editor: one field, applied with Return, cancelled with Esc. */
+.mk-link-editor {
+  display: flex;
+  align-items: center;
+  gap: calc(8px * var(--mk-z));
+  width: calc(340px * var(--mk-z));
+  padding: calc(6px * var(--mk-z)) calc(6px * var(--mk-z)) calc(6px * var(--mk-z)) calc(12px * var(--mk-z));
+  margin: 0;
+}
+
+.mk-field {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  height: calc(28px * var(--mk-z));
+  padding: 0 calc(10px * var(--mk-z));
+  border: 1px solid var(--mk-line);
+  border-radius: calc(8px * var(--mk-z));
+  outline: none;
+  background: var(--bg);
+  color: var(--mk-ink);
+  font: 400 calc(13px * var(--mk-tz)) / 1 var(--ui-font);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.mk-field:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--mk-focus);
+}
+
+.mk-link-editor .mk-push {
+  display: none;
+}
+
+.mk-link-editor::after {
+  content: "↩";
+  flex: none;
+  padding-right: calc(4px * var(--mk-z));
+  color: var(--mk-ink3);
+  font: 400 calc(12px * var(--mk-tz)) / 1 ui-rounded, var(--ui-font);
+}
+
+@media print {
+  .mk-layer {
+    display: none;
+  }
+}

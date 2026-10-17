@@ -161,6 +161,15 @@ struct NativeMarkdownEditorView: View {
     }
 }
 
+private extension MarkdownTextEditorCommand {
+    var isInlineFormat: Bool {
+        switch self {
+        case .bold, .italic, .code, .link: return true
+        default: return false
+        }
+    }
+}
+
 struct MarkdownToolbarActionDescriptor: Identifiable {
     let systemImage: String
     let label: String
@@ -176,6 +185,7 @@ extension MarkdownSourceToolbar: Equatable {
         MainActor.assumeIsolated {
             lhs.zoomScale == rhs.zoomScale &&
                 lhs.statistics == rhs.statistics &&
+                lhs.formattingState == rhs.formattingState &&
                 lhs.theme == rhs.theme
         }
     }
@@ -230,11 +240,13 @@ struct MarkdownSourceToolbar: View {
     let theme: AppTheme
     let zoomScale: Double
     let statistics: MarkdownTextStatistics?
+    /// The formatting at Preview's selection; nil in Source, where the toolbar shows no state.
+    var formattingState: MarkdownVisualFormattingState? = nil
     let sendCommand: (MarkdownTextEditorCommand) -> Void
 
     static let controlSize = MonknotIconButton.IconButtonSize.editorToolbar
-    static let expandedHeadingWidthBase: CGFloat = 100
-    static let compactHeadingWidthBase: CGFloat = 104
+    static let expandedHeadingWidthBase: CGFloat = 124
+    static let compactHeadingWidthBase: CGFloat = 124
     static let headingFontSizeBase: CGFloat = 13
     static let headingChevronFontSizeBase: CGFloat = 10
     static let headingChevronBaselineOffsetBase: CGFloat = 3.2
@@ -254,7 +266,7 @@ struct MarkdownSourceToolbar: View {
         ],
         [
             MarkdownToolbarActionDescriptor(systemImage: "photo", label: "Image", command: .image),
-            MarkdownToolbarActionDescriptor(systemImage: "minus", label: "Horizontal Rule", command: .horizontalRule),
+            MarkdownToolbarActionDescriptor(systemImage: "minus", label: "Divider", command: .horizontalRule),
         ],
     ]
 
@@ -354,7 +366,7 @@ struct MarkdownSourceToolbar: View {
     private func headingMenuLabel(isHovered: Bool) -> Text {
         // One composed Text keeps the title and indicator on one baseline. The arrowhead's SF Pro ink
         // sits 3.2pt below the title's optical center.
-        Text("Paragraph")
+        Text(formattingState?.block.title ?? "Paragraph")
             .font(.system(size: textScaled(Self.headingFontSizeBase), weight: .regular))
             .foregroundColor(isHovered ? theme.foregroundColor : theme.mutedForegroundColor)
         + Text(verbatim: "\u{2002}")
@@ -408,7 +420,7 @@ struct MarkdownSourceToolbar: View {
 
             Menu("Insert", systemImage: "plus") {
                 Button("Image", systemImage: "photo") { sendCommand(.image) }
-                Button("Horizontal Rule", systemImage: "minus") { sendCommand(.horizontalRule) }
+                Button("Divider", systemImage: "minus") { sendCommand(.horizontalRule) }
             }
         }
         .help("More formatting actions")
@@ -457,6 +469,9 @@ struct MarkdownSourceToolbar: View {
             label: label,
             theme: theme,
             zoomScale: zoomScale,
+            isActive: formattingState?.isActive(command) ?? false,
+            activeTreatment: .formatOn,
+            isDisabled: formattingState.map { !$0.canFormat && command.isInlineFormat } ?? false,
             size: Self.controlSize,
             action: { sendCommand(command) }
         )

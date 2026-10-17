@@ -6,15 +6,16 @@ import UniformTypeIdentifiers
 /// Where keyboard focus goes when a file is chosen in the sidebar.
 enum SidebarDocumentOpenFocus {
     /// Whether the document takes keyboard focus: one shown for typing does, ready for it. Any
-    /// other file, such as an image, a PDF, a video or a preview, leaves focus in the tree, where
-    /// the Edit menu's Copy, Cut and Paste act on the selected file.
+    /// other file, such as an image, a PDF, a video or an HTML preview, leaves focus in the tree,
+    /// where the Edit menu's Copy, Cut and Paste act on the selected file. Markdown Preview is
+    /// edited in place, so it is shown for typing too.
     static func movesFocusToDocument(
         _ document: WorkspaceDocument,
         editorMode: EditorMode,
         isSplitViewEnabled: Bool
     ) -> Bool {
         guard document.capabilities.canEditText else { return false }
-        return !document.hasPreviewMode || editorMode == .source || isSplitViewEnabled
+        return !document.hasPreviewMode || document.kind == .markdown || editorMode == .source || isSplitViewEnabled
     }
 }
 
