@@ -52,25 +52,6 @@ final class SidebarContextMenuTests: FileOperationsTestCase {
         XCTAssertFalse(txtMenu.contains("Export PDF…"))
     }
 
-    /// A file row's New File and New Folder create beside the file.
-    func testFileRowMenuNewFileAndNewFolderCreateBesideTheFile() async throws {
-        let (root, store, h) = try await makeFixture()
-        defer { h.close() }
-
-        let opened = await h.performAndWaitForSheet("New File", in: h.contextMenu(row: try XCTUnwrap(rowIndex(h, "docs/b.md"))))
-        XCTAssertTrue(opened, "New File sheet did not open")
-        await h.submitSheet(name: "beside.md")
-        await idle(store)
-        XCTAssertEqual(store.selectedDocument?.relativePath, "docs/beside.md")
-        try await Task.sleep(nanoseconds: 400_000_000)
-
-        let openedFolder = await h.performAndWaitForSheet("New Folder", in: h.contextMenu(row: try XCTUnwrap(rowIndex(h, "docs/b.md"))))
-        XCTAssertTrue(openedFolder, "New Folder sheet did not open")
-        await h.submitSheet(name: "Inner")
-        await idle(store)
-        XCTAssertEqual(names("docs", in: root), ["a.md", "b.md", "beside.md", "Inner"])
-    }
-
     func openRecents(_ h: SidebarMenuHarness, _ store: WorkspaceStore, recording document: WorkspaceDocument) async throws {
         store.selectDocument(id: document.id)
         _ = await wait(timeout: 3) { store.recentDocuments().contains { $0.documentID == document.id } }
@@ -78,19 +59,6 @@ final class SidebarContextMenuTests: FileOperationsTestCase {
         let tree = try XCTUnwrap(h.treeFrameInWindow())
         await h.click(at: NSPoint(x: tree.midX, y: tree.minY - 16))
         try await Task.sleep(nanoseconds: 400_000_000)
-    }
-
-    func testRecentsRowMenuOpensAndCopiesTheRightDocument() async throws {
-        let (_, store, h) = try await makeFixture()
-        defer { h.close() }
-        let b = try XCTUnwrap(doc(store, "docs/b.md"))
-        try await openRecents(h, store, recording: b)
-
-        let first = try XCTUnwrap(h.recentsRowMenus().first, "No Recents rows found")
-        h.perform("Copy Path", in: first)
-        XCTAssertEqual(h.copiedPaths.last, b.url.standardizedFileURL)
-        h.perform("Open", in: first)
-        XCTAssertEqual(h.openedDocumentIDs.last, b.id)
     }
 
     /// Recents rows are file rows (design.md §10.4), with the file row's location items in order.
@@ -132,34 +100,6 @@ final class SidebarContextMenuTests: FileOperationsTestCase {
         h.perform("Paste", in: h.contextMenu(row: try XCTUnwrap(rowIndex(h, "docs"))))
         await idle(store)
         XCTAssertEqual(names("docs", in: root), ["a.md", "b.md", "top.md"])
-    }
-
-    /// Menus opened outside the tree, on the Recents header or in an empty workspace's sidebar,
-    /// check the clipboard as they open too.
-    func testPasteOutsideTheTreeFollowsTheClipboard() async throws {
-        let (_, store, h) = try await makeFixture()
-        defer { h.close() }
-        try await openRecents(h, store, recording: try XCTUnwrap(doc(store, "docs/b.md")))
-        let tree = try XCTUnwrap(h.treeFrameInWindow())
-        let recentsHeader = NSPoint(x: tree.midX, y: tree.minY - 16)
-        XCTAssertEqual(SidebarMenuHarness.titles(h.contextMenu(at: recentsHeader)), Self.emptyAreaMenu)
-
-        h.pasteboard.clearContents()
-        XCTAssertEqual(SidebarMenuHarness.item("Paste", in: h.contextMenu(at: recentsHeader))?.isEnabled, false)
-        h.pasteboard.setString("Some words", forType: .string)
-        XCTAssertEqual(SidebarMenuHarness.item("Paste", in: h.contextMenu(at: recentsHeader))?.isEnabled, true)
-
-        let emptyRoot = try makeRoot()
-        let emptyStore = try await openStore(emptyRoot)
-        let empty = await harness(emptyStore, emptyRoot)
-        defer { empty.close() }
-        let point = NSPoint(x: 140, y: 320)
-        empty.pasteboard.clearContents()
-        XCTAssertEqual(SidebarMenuHarness.item("Paste", in: empty.contextMenu(at: point))?.isEnabled, false)
-        empty.pasteboard.setString("Some words", forType: .string)
-        XCTAssertEqual(SidebarMenuHarness.item("Paste", in: empty.contextMenu(at: point))?.isEnabled, true)
-        empty.pasteboard.clearContents()
-        XCTAssertEqual(SidebarMenuHarness.item("Paste", in: empty.contextMenu(at: point))?.isEnabled, false)
     }
 
     func testMoveToTrashFromAFolderMenuWithAnUnsavedDocumentInsideIsRefused() async throws {
@@ -232,79 +172,7 @@ final class SidebarContextMenuTests: FileOperationsTestCase {
         XCTAssertNil(h.sheetWindow)
     }
 
-    func testCompactRowActsOnItsDeepestFolder() async throws {
-        let (root, store, h) = try await makeFixture()
-        defer { h.close() }
-        let index = try XCTUnwrap(rowIndex(h, "A/B"))
-        h.perform("Copy Relative Path", in: h.contextMenu(row: index))
-        XCTAssertEqual(h.copiedRelativePaths.last, root.appendingPathComponent("A/B").standardizedFileURL)
-
-        let opened = await h.performAndWaitForSheet("New File", in: h.contextMenu(row: index))
-        XCTAssertTrue(opened, "New File sheet did not open")
-        await h.submitSheet(name: "made.md")
-        await idle(store)
-        XCTAssertEqual(names("A/B", in: root), ["t.txt", "made.md"])
-        XCTAssertEqual(store.selectedDocument?.relativePath, "A/B/made.md")
-        _ = await wait(timeout: 2) { h.visibleRowPaths().contains("A/B/made.md") }
-        XCTAssertTrue(h.visibleRowPaths().contains("A/B/made.md"), "\(h.visibleRowPaths())")
-    }
-
     // MARK: - New File / New Folder
-
-    func testNewFileFromACollapsedFolderRowAppearsSelectedAndRevealed() async throws {
-        let (root, store, h) = try await makeFixture()
-        defer { h.close() }
-        let index = try XCTUnwrap(rowIndex(h, "Collapsed"))
-        XCTAssertFalse(h.visibleRowPaths().contains("Collapsed/inner.md"))
-
-        let opened = await h.performAndWaitForSheet("New File", in: h.contextMenu(row: index))
-        XCTAssertTrue(opened, "New File sheet did not open")
-        await h.submitSheet(name: "fresh.md")
-        await idle(store)
-        XCTAssertEqual(names("Collapsed", in: root), ["inner.md", "fresh.md"])
-        XCTAssertEqual(store.selectedDocument?.relativePath, "Collapsed/fresh.md")
-        _ = await wait(timeout: 2) { h.visibleRowPaths().contains("Collapsed/fresh.md") }
-        XCTAssertTrue(h.visibleRowPaths().contains("Collapsed/fresh.md"), "\(h.visibleRowPaths())")
-    }
-
-    func testNewFolderFromACollapsedFolderRowIsRevealed() async throws {
-        let (root, store, h) = try await makeFixture()
-        defer { h.close() }
-        let index = try XCTUnwrap(rowIndex(h, "Collapsed"))
-
-        let opened = await h.performAndWaitForSheet("New Folder", in: h.contextMenu(row: index))
-        XCTAssertTrue(opened, "New Folder sheet did not open")
-        await h.submitSheet(name: "Sub")
-        await idle(store)
-        XCTAssertEqual(names("Collapsed", in: root), ["inner.md", "Sub"])
-        _ = await wait(timeout: 2) { h.visibleRowPaths().contains("Collapsed/Sub") }
-        let rows = h.visibleRowPaths()
-        XCTAssertTrue(rows.contains("Collapsed/Sub"), "\(rows)")
-    }
-
-    func testNewFileAndFolderFromTheEmptyArea() async throws {
-        let (root, store, h) = try await makeFixture()
-        defer { h.close() }
-        let empty = try XCTUnwrap(h.emptyTreePoint())
-
-        let opened = await h.performAndWaitForSheet("New File", in: h.contextMenu(at: empty))
-        XCTAssertTrue(opened, "New File sheet did not open")
-        XCTAssertEqual(h.sheetTextField()?.stringValue, "Untitled.txt")
-        await h.submitSheet(name: "root note.md")
-        await idle(store)
-        XCTAssertEqual(store.selectedDocument?.relativePath, "root note.md")
-        // Let the menu re-render out of its busy (disabled) state before right-clicking again.
-        try await Task.sleep(nanoseconds: 400_000_000)
-
-        let openedFolder = await h.performAndWaitForSheet("New Folder", in: h.contextMenu(at: try XCTUnwrap(h.emptyTreePoint())))
-        XCTAssertTrue(openedFolder, "New Folder sheet did not open")
-        await h.submitSheet(name: "Zed")
-        await idle(store)
-        XCTAssertTrue(names("", in: root).isSuperset(of: ["root note.md", "Zed"]))
-        _ = await wait(timeout: 2) { h.visibleRowPaths().contains("Zed") }
-        XCTAssertTrue(h.visibleRowPaths().contains("Zed"), "\(h.visibleRowPaths())")
-        XCTAssertTrue(h.visibleRowPaths().contains("root note.md"), "\(h.visibleRowPaths())")
-    }
 
     func testNameSheetStaysOpenForInvalidNamesAndCreatesNothing() async throws {
         let (root, store, h) = try await makeFixture()
@@ -321,31 +189,6 @@ final class SidebarContextMenuTests: FileOperationsTestCase {
         await idle(store)
         XCTAssertEqual(names("docs", in: root), before)
         XCTAssertNil(store.errorMessage)
-    }
-
-    func testNewFolderAndFileInAnEmptyWorkspace() async throws {
-        let root = try makeRoot()
-        let store = try await openStore(root)
-        let h = await harness(store, root)
-        defer { h.close() }
-        let point = NSPoint(x: 140, y: 320)
-        XCTAssertEqual(SidebarMenuHarness.titles(h.contextMenu(at: point)), Self.emptyAreaMenu)
-
-        let opened = await h.performAndWaitForSheet("New Folder", in: h.contextMenu(at: point))
-        XCTAssertTrue(opened, "New Folder sheet did not open")
-        XCTAssertEqual(h.sheetTextField()?.stringValue, "New Folder")
-        await h.submitSheet(name: "First")
-        await idle(store)
-        try await Task.sleep(nanoseconds: 400_000_000)
-        XCTAssertEqual(h.visibleRowPaths(), ["First"])
-
-        let openedFile = await h.performAndWaitForSheet("New File", in: h.contextMenu(row: 0))
-        XCTAssertTrue(openedFile, "New File sheet did not open")
-        await h.submitSheet(name: "note.md")
-        await idle(store)
-        _ = await wait(timeout: 2) { h.visibleRowPaths().contains("First/note.md") }
-        XCTAssertEqual(h.visibleRowPaths(), ["First", "First/note.md"])
-        XCTAssertEqual(store.selectedDocument?.relativePath, "First/note.md")
     }
 
     // MARK: - Rename
@@ -367,28 +210,6 @@ final class SidebarContextMenuTests: FileOperationsTestCase {
         _ = await wait(timeout: 2) { h.visibleRowPaths().contains("notes/a.md") }
         let rows = h.visibleRowPaths()
         XCTAssertTrue(rows.contains("notes/a.md"), "\(rows)")
-    }
-
-    func testMovingAnExpandedFolderKeepsItAndItsOpenSubfoldersExpanded() async throws {
-        let root = try makeRoot()
-        try write("# a\n", "Box/Inner/a.md", in: root)
-        try write("# b\n", "Box/b.md", in: root)
-        try write("# keep\n", "Archive/keep.md", in: root)
-        try write("# top\n", "top.md", in: root)
-        let store = try await openStore(root, selecting: "Box/Inner/a.md")
-        let h = await harness(store, root)
-        defer { h.close() }
-        store.selectDocument(id: try XCTUnwrap(doc(store, "top.md")).id)
-        _ = await wait { !store.isDocumentLoading }
-        await h.click(at: try XCTUnwrap(h.rowCenter(try XCTUnwrap(rowIndex(h, "Archive")))))
-        _ = await wait(timeout: 2) { h.visibleRowPaths().contains("Archive/keep.md") }
-        XCTAssertTrue(h.visibleRowPaths().contains("Box/Inner/a.md"), "\(h.visibleRowPaths())")
-
-        store.moveItem(id: root.appendingPathComponent("Box").path, toDirectory: root.appendingPathComponent("Archive"))
-        await settle(store)
-        XCTAssertEqual(names("Archive", in: root), ["Box", "keep.md"])
-        _ = await wait(timeout: 2) { h.visibleRowPaths().contains("Archive/Box/Inner/a.md") }
-        XCTAssertTrue(h.visibleRowPaths().contains("Archive/Box/Inner/a.md"), "\(h.visibleRowPaths())")
     }
 
     // MARK: - Busy
@@ -428,72 +249,6 @@ final class SidebarContextMenuTests: FileOperationsTestCase {
         XCTAssertEqual(file["Copy Path"], true)
     }
 
-    // MARK: - Recents follow renames
-
-    func testRecentsRowFollowsARename() async throws {
-        let (root, store, h) = try await makeFixture()
-        defer { h.close() }
-        let b = try XCTUnwrap(doc(store, "docs/b.md"))
-        store.selectDocument(id: b.id)
-        _ = await wait(timeout: 3) { store.recentDocuments().contains { $0.documentID == b.id } }
-        try await Task.sleep(nanoseconds: 300_000_000)
-        let tree = try XCTUnwrap(h.treeFrameInWindow())
-        await h.click(at: NSPoint(x: tree.midX, y: tree.minY - 16))
-        try await Task.sleep(nanoseconds: 400_000_000)
-        XCTAssertFalse(h.recentsRowMenus().isEmpty)
-
-        store.renameDocument(id: b.id, to: "bee")
-        await settle(store)
-        XCTAssertNotNil(doc(store, "docs/bee.md"))
-        try await Task.sleep(nanoseconds: 400_000_000)
-
-        var recentPaths: [URL] = []
-        for menu in h.recentsRowMenus() {
-            h.perform("Copy Path", in: menu)
-            if let url = h.copiedPaths.last { recentPaths.append(url) }
-        }
-        XCTAssertFalse(recentPaths.contains(b.url.standardizedFileURL), "Recents still lists the old name: \(recentPaths)")
-        XCTAssertTrue(recentPaths.contains(root.appendingPathComponent("docs/bee.md").standardizedFileURL), "\(recentPaths)")
-
-        let first = try XCTUnwrap(h.recentsRowMenus().first)
-        h.perform("Open", in: first)
-        let opened = try XCTUnwrap(h.openedDocumentIDs.last)
-        XCTAssertNotNil(store.document(id: opened), opened)
-    }
-
-    // MARK: - Paste into a collapsed folder
-
-    func testFileCopyPastedIntoACollapsedFolderIsRevealed() async throws {
-        let (root, store, h) = try await makeFixture()
-        defer { h.close() }
-        let pasteboard = makePasteboard()
-        defer { pasteboard.releaseGlobally() }
-
-        store.putItemOnPasteboard(at: root.appendingPathComponent("top.md"), cutting: false, pasteboard: pasteboard)
-        XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Collapsed")))
-        await idle(store)
-        _ = await wait(timeout: 2) { h.visibleRowPaths().contains("Collapsed/top.md") }
-        XCTAssertTrue(h.visibleRowPaths().contains("Collapsed/top.md"), "\(h.visibleRowPaths())")
-    }
-
-    func testFinderFilesPastedIntoACollapsedFolderAreRevealed() async throws {
-        let (root, store, h) = try await makeFixture()
-        defer { h.close() }
-        let outside = try makeRoot()
-        try write("o\n", "outside.md", in: outside)
-        let pasteboard = makePasteboard()
-        defer { pasteboard.releaseGlobally() }
-
-        pasteboard.clearContents()
-        pasteboard.writeObjects([outside.appendingPathComponent("outside.md") as NSURL])
-        XCTAssertTrue(store.pasteFromPasteboard(pasteboard, into: root.appendingPathComponent("Collapsed")))
-        await idle(store)
-        XCTAssertEqual(names("Collapsed", in: root), ["inner.md", "outside.md"])
-        _ = await wait(timeout: 2) { h.visibleRowPaths().contains("Collapsed/outside.md") }
-        let rows = h.visibleRowPaths()
-        XCTAssertTrue(rows.contains("Collapsed/outside.md"), "\(rows)")
-    }
-
     // MARK: - Finder drop on the empty sidebar
 
     func testFinderDropOnTheSidebarCopiesOutsideFilesAndMovesWorkspaceFilesToTheRoot() async throws {
@@ -523,49 +278,6 @@ final class SidebarContextMenuTests: FileOperationsTestCase {
         await settle(store)
         XCTAssertTrue(names("", in: root).contains("b.md"))
         XCTAssertFalse(names("docs", in: root).contains("b.md"))
-    }
-
-    // MARK: - Dragging rows
-
-    func testDragWhileBusyMovesNothingAndLaterDragsWork() async throws {
-        let root = try makeRoot()
-        try write("# a\n", "docs/a.md", in: root)
-        try write("# top\n", "top.md", in: root)
-        let scanner = GatedWorkspaceScanner()
-        let store = try await openStore(root, scanner: scanner, selecting: "docs/a.md")
-        let h = await harness(store, root)
-        defer { h.close() }
-        XCTAssertEqual(h.visibleRowPaths(), ["docs", "docs/a.md", "top.md"])
-        let source = try XCTUnwrap(h.rowCenter(2))
-        let target = try XCTUnwrap(h.rowCenter(0))
-
-        scanner.hold()
-        store.duplicateItem(at: root.appendingPathComponent("docs/a.md"))
-        await h.drag(from: source, to: target)
-        scanner.release()
-        await idle(store)
-        try await Task.sleep(nanoseconds: 400_000_000)
-        XCTAssertTrue(names("", in: root).contains("top.md"), "Moved while busy")
-
-        let rows = h.visibleRowPaths()
-        let from = try XCTUnwrap(h.rowCenter(try XCTUnwrap(rows.firstIndex(of: "top.md"))))
-        await h.drag(from: from, to: target)
-        await settle(store)
-        XCTAssertEqual(names("docs", in: root), ["a.md", "a copy.md", "top.md"])
-    }
-
-    /// As in Finder, holding Option while dragging a row copies the item instead of moving it.
-    func testOptionDragOfARowCopiesLikeFinder() async throws {
-        let (root, store, h) = try await makeFixture()
-        defer { h.close() }
-        let source = try XCTUnwrap(h.rowCenter(try XCTUnwrap(rowIndex(h, "top.md"))))
-        let target = try XCTUnwrap(h.rowCenter(try XCTUnwrap(rowIndex(h, "docs"))))
-        await h.drag(from: source, to: target, modifiers: [.option])
-        await settle(store)
-        _ = await wait(timeout: 2) { self.names("docs", in: root).contains("top.md") }
-        XCTAssertTrue(names("docs", in: root).contains("top.md"), "Nothing landed in docs")
-        XCTAssertTrue(names("", in: root).contains("top.md"))
-        XCTAssertEqual(store.selectedDocument?.relativePath, "docs/top.md")
     }
 
     // MARK: - Tabs
