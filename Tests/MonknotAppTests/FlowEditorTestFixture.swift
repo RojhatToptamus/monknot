@@ -514,6 +514,7 @@ class FlowEditorTestCase: XCTestCase {
         let box = EditorTextBox("")
         let diagnostics = FlowDiagnosticEventBox()
         let validation = FlowCorrectionEditsBox()
+        let trigger = FrozenCorpusTrigger()
         let candidate = testCase.conservativeCandidateFixture ?? testCase.referenceText
         let sentenceRepair = FlowSentenceRepairService(
             isAvailable: { _ in true },
@@ -522,6 +523,12 @@ class FlowEditorTestCase: XCTestCase {
         let coordinator = makeCoordinator(
             box,
             flowCheckingClient: EditorFlowCheckingClient { checkedText, _, _, _, completion in
+                // The frozen candidate answers the finished sentence. Before the trigger key, a check
+                // sees the sentence still being typed and finds nothing, as with continuous typing.
+                guard trigger.isTyped else {
+                    completion([], self.englishOrthography())
+                    return
+                }
                 if checkedText == candidate {
                     completion([], self.englishOrthography())
                     return
@@ -592,7 +599,8 @@ class FlowEditorTestCase: XCTestCase {
             inputPath: inputPath,
             textView: textView,
             window: window,
-            diagnostics: diagnostics
+            diagnostics: diagnostics,
+            trigger: trigger
         )
         let classified = await waitUntil(timeout: 3) { validation.wasCaptured }
         XCTAssertTrue(classified, "AI fixture was not classified: \(testCase.id)")
@@ -890,7 +898,8 @@ class FlowEditorTestCase: XCTestCase {
         inputPath: FrozenCorpusInputPath,
         textView: MarkdownNSTextView,
         window: NSWindow,
-        diagnostics: FlowDiagnosticEventBox
+        diagnostics: FlowDiagnosticEventBox,
+        trigger: FrozenCorpusTrigger = FrozenCorpusTrigger()
     ) async throws -> String {
         switch testCase.trigger {
         case let .punctuation(punctuation, trailingDelimiterCount):
@@ -914,6 +923,7 @@ class FlowEditorTestCase: XCTestCase {
             XCTAssertEqual(textView.string, prefix, "Prefix mismatch for \(testCase.id)")
             await nextMainRunLoopTurn()
             diagnostics.removeAll()
+            trigger.markTyped()
             textView.keyDown(with: try XCTUnwrap(corpusKeyEvent(
                 for: punctuation,
                 windowNumber: window.windowNumber
@@ -950,6 +960,7 @@ class FlowEditorTestCase: XCTestCase {
             XCTAssertEqual(textView.string, testCase.input, "Input mismatch for \(testCase.id)")
             await nextMainRunLoopTurn()
             diagnostics.removeAll()
+            trigger.markTyped()
             textView.keyDown(with: try XCTUnwrap(keyEvent(
                 characters: "\r",
                 modifiers: [],
@@ -1928,6 +1939,16 @@ enum FrozenCorpusShard: CustomStringConvertible {
 
 final class EditorIntBox {
     var value = 0
+}
+
+/// Whether a frozen corpus case has reached its trigger key: the punctuation or Return that ends
+/// the sentence and asks for a check.
+final class FrozenCorpusTrigger {
+    private(set) var isTyped = false
+
+    func markTyped() {
+        isTyped = true
+    }
 }
 
 final class FlowDiagnosticEventBox {
