@@ -325,6 +325,8 @@ struct MarkdownVisualEditingConfiguration {
     let onFormattingChange: (MarkdownVisualFormattingState) -> Void
     let onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)?
     let onFileDropRequest: ((MarkdownFileDropRequest) -> Void)?
+    /// The notes `[[` offers, ranked by `WikilinkAutocompleteService` as in Source.
+    let wikilinkDocuments: [WorkspaceDocument]
 }
 
 /// The Preview web view. With a visual editing session it hands the Edit menu that session's undo
@@ -344,7 +346,7 @@ enum MarkdownEditorSymbolAssets {
         "text.alignleft", "list.bullet", "list.number", "checklist", "text.quote",
         "chevron.left.forwardslash.chevron.right", "tablecells", "minus", "photo", "link",
         "calendar", "arrow.up.to.line", "arrow.down.to.line", "arrow.left.to.line",
-        "arrow.right.to.line", "trash", "magnifyingglass"
+        "arrow.right.to.line", "trash", "magnifyingglass", "doc.text"
     ]
     private static let toolSymbols = [
         "bold", "italic", "strikethrough", "curlybraces", "link", "arrow.up.right.square",

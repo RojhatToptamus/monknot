@@ -203,6 +203,9 @@ Shorter and more specific is preferable to polished but meaningless copy.
 - Menus, the format bar, link card and editor, table bar and code language menu live in the page
   (`editor.js` `UI`), styled by `editor.css` from theme tokens; SF Symbols come from
   `MarkdownEditorSymbolAssets` as mask images. design.md §10.10 is the interaction spec.
+- Typing `[[` posts `wikilinkQuery` messages; the coordinator ranks `wikilinkDocuments` with
+  `WikilinkAutocompleteService` off the main actor and answers `MonknotEditor.wikilinkSuggestions`
+  with the query's serial, so Preview lists the same notes, in the same order, as Source completes.
 - Writing Tools and the on-device autocomplete stay in Source; beside Source the preview is read-only.
 
 ## Core Domain And Service Boundaries
@@ -229,7 +232,7 @@ Prefer putting logic in `MonknotCore` when it can be tested without SwiftUI/AppK
   - `WorkspaceQuickOpenMatcher`: fuzzy path ranking for Quick Open (⌘P).
   - `DailyNotePlanner`: dated `inbox/YYYY-MM-DD.md` paths for Daily Note (⇧⌘N).
   - `MarkdownSymbolQuickOpenMatcher`: heading ranking for Go to Symbol (⇧⌘O).
-  - `WikilinkAutocompleteService`: `[[` prefix detection and markdown title suggestions (Tab completes in editor).
+  - `WikilinkAutocompleteService`: `[[` prefix detection and markdown title suggestions (Tab completes in Source; Preview's `[[` menu uses the same ranking).
   - `WorkspaceContextAssembler`: builds local excerpt chunks for agent-friendly export and terminal workflows, optionally prioritizing Related Notes paths from the active document.
   - `DocumentSplitViewPersistence`: per-document split-view toggle and source-pane ratio persistence keyed by standardized document path hash; remaps stored preferences when documents are renamed or moved on disk.
   - `DocumentSplitViewRatioAccessor`: AppKit bridge that applies persisted split ratios to SwiftUI `HSplitView` and writes divider drags back to `DocumentSplitViewPersistence`.

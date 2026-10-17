@@ -632,7 +632,8 @@ struct EditorPaneView: View {
                 visualFormattingState = state
             },
             onImagePasteRequest: onMarkdownImagePasteRequest,
-            onFileDropRequest: onMarkdownFileDropRequest
+            onFileDropRequest: onMarkdownFileDropRequest,
+            wikilinkDocuments: store.markdownDocuments
         )
     }
 

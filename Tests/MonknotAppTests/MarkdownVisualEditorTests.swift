@@ -227,6 +227,111 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         XCTAssertEqual(barShown, true, "The table bar shows while the caret is in a table")
     }
 
+    // MARK: - Wikilinks
+
+    private static let wikilinkNotes = ["Prototype.md", "Project Plan.md", "Improve process.md", "Archive/Meeting.md"]
+    private static let wikilinkMenuRows = "[...document.querySelectorAll('.mk-menu.mk-visible[aria-label=\"Link to note\"] .mk-row-label')].map(e => e.textContent)"
+
+    func testTypingDoubleBracketOpensTheNoteMenu() async throws {
+        let fixture = try await makeFixture(markdown: "See\n", notes: Self.wikilinkNotes)
+        try await fixture.setSelection(3)
+        fixture.type(" [[")
+
+        let rows = await fixture.wikilinkRows(matching: { !$0.isEmpty })
+        XCTAssertEqual(
+            rows,
+            WikilinkAutocompleteService.suggestions(partial: "", documents: fixture.store.markdownDocuments),
+            "The menu lists the notes Source would complete, in Source's order"
+        )
+        XCTAssertEqual(rows, ["Improve process", "Meeting", "Note", "Project Plan", "Prototype"])
+        XCTAssertEqual(fixture.store.documentText, "See [[\n", "The brackets stay typed while the menu is open")
+        let selected = try await fixture.evaluate("document.querySelector('.mk-menu.mk-visible .mk-menu-row.mk-selected .mk-row-label')?.textContent ?? ''") as? String
+        XCTAssertEqual(selected, "Improve process", "The first note is selected")
+        let slashShown = try await fixture.evaluate("Boolean(document.querySelector('.mk-menu.mk-visible[aria-label=\"Insert block\"]'))") as? Bool
+        XCTAssertEqual(slashShown, false)
+    }
+
+    func testWikilinkQueryFiltersAndTabInsertsTheTopNote() async throws {
+        let fixture = try await makeFixture(markdown: "See\n", notes: Self.wikilinkNotes)
+        try await fixture.setSelection(3)
+        fixture.type(" [[pro")
+
+        let filtered = await fixture.wikilinkRows(matching: { $0.first == "Prototype" })
+        XCTAssertEqual(filtered, ["Prototype", "Project Plan", "Improve process"], "Prefix matches first, shorter titles first, then titles containing the text")
+        XCTAssertEqual(filtered, WikilinkAutocompleteService.suggestions(partial: "pro", documents: fixture.store.markdownDocuments))
+
+        fixture.type("j")
+        let narrowed = await fixture.wikilinkRows(matching: { $0 == ["Project Plan"] })
+        XCTAssertEqual(narrowed, ["Project Plan"])
+
+        fixture.press(.tab)
+        let inserted = await waitUntil { fixture.store.documentText == "See [[Project Plan]]\n" }
+        XCTAssertTrue(inserted, fixture.store.documentText)
+        let menuShown = try await fixture.evaluate("Boolean(document.querySelector('.mk-menu.mk-visible'))") as? Bool
+        XCTAssertEqual(menuShown, false, "Choosing a note closes the menu")
+    }
+
+    func testChoosingANoteInsertsTheLinkAsOneUndoableStepWithTheCaretAfterIt() async throws {
+        let fixture = try await makeFixture(markdown: "See\n", notes: Self.wikilinkNotes)
+        try await fixture.setSelection(3)
+        fixture.type(" [[pro")
+        _ = await fixture.wikilinkRows(matching: { $0.first == "Prototype" })
+
+        fixture.press(.down)
+        let moved = try await fixture.evaluate("document.querySelector('.mk-menu.mk-visible .mk-menu-row.mk-selected .mk-row-label')?.textContent ?? ''") as? String
+        XCTAssertEqual(moved, "Project Plan", "↓ moves the selection")
+        fixture.press(.return)
+        let inserted = await waitUntil { fixture.store.documentText == "See [[Project Plan]]\n" }
+        XCTAssertTrue(inserted, "↩ replaces the brackets and query, and nothing else: \(fixture.store.documentText)")
+        let link = try await fixture.evaluate("document.querySelector('#content a.wikilink')?.textContent ?? ''") as? String
+        XCTAssertEqual(link, "Project Plan", "The inserted text renders as a wikilink")
+        let undoManager = try XCTUnwrap(fixture.webView.undoManager)
+        XCTAssertEqual(undoManager.undoActionName, "Insert Link")
+
+        fixture.type(" next")
+        let typed = await waitUntil { fixture.store.documentText == "See [[Project Plan]] next\n" }
+        XCTAssertTrue(typed, "The caret sits after the link, outside it: \(fixture.store.documentText)")
+
+        undoManager.undo()
+        let typingUndone = await waitUntil { fixture.store.documentText == "See [[Project Plan]]\n" }
+        XCTAssertTrue(typingUndone, fixture.store.documentText)
+        undoManager.undo()
+        let linkUndone = await waitUntil { fixture.store.documentText == "See [[pro\n" }
+        XCTAssertTrue(linkUndone, "One undo takes back the inserted link and restores the typed query: \(fixture.store.documentText)")
+    }
+
+    func testEscapeClosesTheNoteMenuAndKeepsTheTypedText() async throws {
+        let fixture = try await makeFixture(markdown: "See\n", notes: Self.wikilinkNotes)
+        try await fixture.setSelection(3)
+        fixture.type(" [[Pro")
+        _ = await fixture.wikilinkRows(matching: { !$0.isEmpty })
+
+        fixture.press(.escape)
+        let closed = await waitUntil {
+            ((try? await fixture.evaluate("Boolean(document.querySelector('.mk-menu.mk-visible'))")) as? Bool) == false
+        }
+        XCTAssertTrue(closed, "Esc closes the menu")
+        XCTAssertEqual(fixture.store.documentText, "See [[Pro\n", "Esc keeps the typed text")
+
+        fixture.type("x")
+        let typed = await waitUntil { fixture.store.documentText == "See [[Prox\n" }
+        XCTAssertTrue(typed, fixture.store.documentText)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        let reopened = try await fixture.evaluate("Boolean(document.querySelector('.mk-menu.mk-visible'))") as? Bool
+        XCTAssertEqual(reopened, false, "Typing on after Esc does not bring the menu back")
+    }
+
+    func testDoubleBracketInsideInlineCodeStaysText() async throws {
+        let fixture = try await makeFixture(markdown: "Use `code` here\n", notes: Self.wikilinkNotes)
+        try await fixture.setSelection(7)
+        fixture.type("[[")
+        let typed = await waitUntil { fixture.store.documentText == "Use `co[[de` here\n" }
+        XCTAssertTrue(typed, fixture.store.documentText)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        let menuShown = try await fixture.evaluate("Boolean(document.querySelector('.mk-menu.mk-visible'))") as? Bool
+        XCTAssertEqual(menuShown, false, "Code keeps `[[` as typed")
+    }
+
     // MARK: - Changes from outside the editor
 
     func testChangeFromOutsideReachesThePageWithoutReloadingIt() async throws {
@@ -356,7 +461,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         """
         let directory = ProcessInfo.processInfo.environment["MONKNOT_EDITOR_SNAPSHOT_DIR"].map(URL.init(fileURLWithPath:))
         for (name, theme, width) in [("light", AppTheme.defaultLight, 900.0), ("dark", AppTheme.defaultDark, 900.0), ("narrow", AppTheme.defaultLight, 420.0)] {
-            let fixture = try await makeFixture(markdown: markdown, theme: theme, width: width)
+            let fixture = try await makeFixture(markdown: markdown, theme: theme, width: width, notes: Self.wikilinkNotes)
             // A test window behind other apps pauses WebKit's transitions; show the end state.
             _ = try await fixture.evaluate("(() => { const s = document.createElement('style'); s.textContent = '.mk-floating { transition: none !important; }'; document.head.appendChild(s); return true; })()")
             let height = try await fixture.evaluate("document.getElementById('content').getBoundingClientRect().height") as? Double
@@ -395,6 +500,14 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
             }
             fixture.press(.escape)
 
+            fixture.type(" [[pro")
+            let notes = await fixture.wikilinkRows(matching: { !$0.isEmpty })
+            XCTAssertEqual(notes.first, "Prototype", "\(name): typing [[ lists matching notes")
+            if let directory {
+                try await fixture.snapshot(to: directory.appendingPathComponent("editor-\(name)-wikilink-menu.png"))
+            }
+            fixture.press(.escape)
+
             if name != "narrow" {
                 let word = (markdown as NSString).range(of: "notes").location
                 try await fixture.setSelection(word, word + 5)
@@ -421,15 +534,22 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         markdown: String,
         theme: AppTheme = .defaultLight,
         width: CGFloat = 800,
-        timeout: TimeInterval = 10
+        timeout: TimeInterval = 10,
+        notes: [String] = []
     ) async throws -> Fixture {
         let root = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotVisualEditor")
         let file = root.appendingPathComponent("Note.md")
         try markdown.write(to: file, atomically: true, encoding: .utf8)
+        for note in notes {
+            let url = root.appendingPathComponent(note)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "# \(url.deletingPathExtension().lastPathComponent)\n".write(to: url, atomically: true, encoding: .utf8)
+        }
         let store = makeWorkspaceStore()
         store.openWorkspace(root, selecting: file)
         let loaded = await waitUntil(timeout: timeout) {
             !store.isBusy && store.selectedDocument?.displayName == "Note.md" && !store.isDocumentLoading
+                && store.markdownDocuments.count == notes.count + 1
         }
         XCTAssertTrue(loaded, "Workspace did not load")
         store.testing_stopFileWatcher()
@@ -523,11 +643,23 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
 
+        /// The wikilink menu's rows once they satisfy `condition` (the app answers each query
+        /// asynchronously), or whatever it shows when the wait runs out.
+        func wikilinkRows(matching condition: @escaping ([String]) -> Bool) async -> [String] {
+            var rows: [String] = []
+            _ = await test.waitUntil {
+                rows = ((try? await self.evaluate(MarkdownVisualEditorTests.wikilinkMenuRows)) as? [String]) ?? []
+                return condition(rows)
+            }
+            return rows
+        }
+
         enum Key {
             case `return`
             case backspace
             case escape
             case tab
+            case down
             case character(String)
 
             var characters: String {
@@ -536,6 +668,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
                 case .backspace: return "\u{7F}"
                 case .escape: return "\u{1B}"
                 case .tab: return "\t"
+                case .down: return String(UnicodeScalar(NSDownArrowFunctionKey)!)
                 case .character(let value): return value
                 }
             }
@@ -546,6 +679,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
                 case .backspace: return 51
                 case .escape: return 53
                 case .tab: return 48
+                case .down: return 125
                 case .character(let value): return value == "k" ? 40 : 0
                 }
             }

@@ -48,9 +48,9 @@ short completions.
   Open, heading navigation, daily notes, and wikilinks.
 - **Editing in Preview:** Edit Markdown as rendered text in the full-width
   preview. Selected text gets a formatting bar, `/` inserts headings, lists,
-  to-dos, quotes, code blocks, tables and dividers, and tables are edited cell
-  by cell. Each edit is written to the file as Markdown text, so syntax Monknot
-  does not render is kept as written.
+  to-dos, quotes, code blocks, tables and dividers, `[[` lists workspace notes
+  to link, and tables are edited cell by cell. Each edit is written to the
+  file as Markdown text, so syntax Monknot does not render is kept as written.
 - **Preview and export:** Render Markdown beside the source with synchronized
   scrolling. Export Markdown to PDF with page and layout controls.
 - **Search and replace:** Search text files and selectable PDF text across a

@@ -3789,7 +3789,8 @@
   // Menu ----------------------------------------------------------------
 
   /// A list of choices with keyboard and pointer selection. The slash menu,
-  /// Turn Into, table actions and code languages all use it.
+  /// wikilinks, Turn Into, table actions and code languages all use it. With
+  /// `ranked`, items arrive already ranked for the query and are shown as given.
   function createMenu(options) {
     const element = document.createElement("div");
     element.className = "mk-floating mk-menu mk-hidden";
@@ -3819,7 +3820,7 @@
     const render = () => {
       list.textContent = "";
       const query = state.query.trim().toLowerCase();
-      state.visible = query ? rankItems(state.items, query) : state.items.slice();
+      state.visible = query && !options.ranked ? rankItems(state.items, query) : state.items.slice();
       if (state.visible.length === 0) {
         const empty = document.createElement("div");
         empty.className = "mk-menu-empty";
@@ -3973,6 +3974,11 @@
         render();
         if (rect) place(element, rect, element.dataset.placement === "above" ? "above" : "below");
       },
+      setItems(items) {
+        state.items = items;
+        state.index = 0;
+        render();
+      },
       get isOpen() { return state.open; },
       get matchCount() { return state.visible.length; },
       reposition(rect) {
@@ -4058,6 +4064,10 @@
   const UI = (() => {
     let slashMenu = null;
     let slash = null;
+    let wikilinkMenu = null;
+    // `[[` being typed: where it starts, the query the app last ranked, and that request's serial.
+    let wikilink = null;
+    let wikilinkSerial = 0;
     let turnIntoMenu = null;
     let languageMenu = null;
     let languageTarget = null;
@@ -4084,6 +4094,15 @@
         onChoose: (item) => runSlash(item.id),
         onClose: (reason) => {
           if (reason !== "choose") slash = null;
+        }
+      });
+      wikilinkMenu = createMenu({
+        label: "Link to note",
+        emptyText: "No matching notes",
+        ranked: true,
+        onChoose: (item) => runWikilink(item.label),
+        onClose: (reason) => {
+          if (reason !== "choose") wikilink = null;
         }
       });
       turnIntoMenu = createMenu({
@@ -4291,7 +4310,8 @@
       }, 400);
       const selection = readSelection();
       if (!selection) return;
-      if (text === "/" && !slash) {
+      if (text === "[" && !wikilink && !slash && startWikilink(selection)) return;
+      if (text === "/" && !slash && !wikilink) {
         const unit = unitAt(model, selection.head, "left");
         if (!unit || unit.kind !== "inline") return;
         const v = rawToVisible(model, unit, selection.head, "left");
@@ -4303,6 +4323,7 @@
         return;
       }
       updateSlash();
+      updateWikilink();
     }
 
     function updateSlash() {
@@ -4351,6 +4372,85 @@
       if (op) apply(op, { coalesce: true });
     }
 
+    // Wikilinks -------------------------------------------------------------
+
+    /// `[[` just typed in text: the app ranks the workspace's notes for what
+    /// follows, as Source's wikilink completion does, and the menu lists them.
+    function startWikilink(selection) {
+      if (selection.from !== selection.to) return false;
+      const head = selection.head;
+      const source = model.source;
+      if (source.slice(head - 2, head) !== "[[" || source[head - 3] === "[" || source[head - 3] === "\\") return false;
+      const unit = unitAt(model, head, "left");
+      if (!unit || unit.kind !== "inline" || unitStart(unit) > head - 2 || insideCode(head - 1)) return false;
+      wikilink = { unit: unit.id, from: head - 2, query: null, serial: 0 };
+      requestWikilinks("");
+      return true;
+    }
+
+    function requestWikilinks(query) {
+      if (!wikilink || wikilink.query === query) return;
+      wikilink.query = query;
+      wikilink.serial = ++wikilinkSerial;
+      post({ type: "wikilinkQuery", query, serial: wikilink.serial });
+    }
+
+    /// The app's ranked titles for a query; an answer to an older query is dropped.
+    function showWikilinks(payload) {
+      if (!active || !wikilink || !payload || payload.serial !== wikilink.serial) return;
+      build();
+      const titles = Array.isArray(payload.titles) ? payload.titles.filter((title) => typeof title === "string" && title) : [];
+      if (titles.length === 0 && wikilink.query.length > 3) {
+        endWikilink("empty");
+        return;
+      }
+      const items = titles.map((title) => ({ id: title, label: title, icon: "doc.text" }));
+      // Like the slash menu, it stays where it opened while the query grows.
+      if (wikilinkMenu.isOpen) wikilinkMenu.setItems(items);
+      else wikilinkMenu.open(items, caretRect() || { left: 0, top: 0, bottom: 0, right: 0 }, "below");
+    }
+
+    function endWikilink(reason) {
+      if (wikilinkMenu && wikilinkMenu.isOpen) wikilinkMenu.close(reason);
+      else wikilink = null;
+    }
+
+    function updateWikilink() {
+      if (!wikilink) return;
+      const selection = readSelection();
+      if (!selection || selection.from !== selection.to) {
+        endWikilink("selection");
+        return;
+      }
+      const from = wikilink.from;
+      const unit = unitAt(model, selection.head, "left");
+      if (!unit || model.source.slice(from, from + 2) !== "[[" || selection.head < from + 2 || unitStart(unit) > from || unitEnd(unit) < selection.head) {
+        endWikilink("moved");
+        return;
+      }
+      const query = model.source.slice(from + 2, selection.head);
+      if (/[[\]|\r\n]/.test(query) || query.length > 64) {
+        endWikilink("query");
+        return;
+      }
+      wikilink.unit = unit.id;
+      requestWikilinks(query);
+    }
+
+    /// Replaces `[[` and the query with `[[Title]]` in one patch, caret after it.
+    function runWikilink(title) {
+      const info = wikilink;
+      wikilink = null;
+      if (!info || !model || model.source.slice(info.from, info.from + 2) !== "[[") return;
+      const selection = readSelection();
+      let to = Math.max(selection ? selection.head : info.from + 2, info.from + 2);
+      if (model.source.startsWith("]]", to)) to += 2;
+      const unit = model.units.get(info.unit) || unitAt(model, info.from + 2, "left");
+      const link = `[[${title}]]`;
+      const insert = unit && unit.role === "cell" ? escapeCell(link) : link;
+      apply({ from: info.from, to, insert, select: caretAt(info.from + insert.length), kind: "format", label: "Insert Link" }, { coalesce: false });
+    }
+
     // Floating format bar --------------------------------------------------
 
     function selectionChanged(selection, unit, state, report) {
@@ -4363,6 +4463,7 @@
         return;
       }
       updateSlash();
+      updateWikilink();
       updateTableBar(unit);
       if (selection.from === selection.to) {
         hideFormatBar();
@@ -4386,7 +4487,7 @@
 
     function showFormatBarIfNeeded(immediate) {
       build();
-      if (!active || formatBarSuppressed || slash) return;
+      if (!active || formatBarSuppressed || slash || wikilink) return;
       const selection = readSelection();
       if (!selection || selection.from === selection.to) return;
       const first = unitAt(model, selection.from, "right");
@@ -4546,6 +4647,14 @@
           return true;
         }
       }
+      if (wikilinkMenu.isOpen) {
+        if (wikilinkMenu.handleNavigation(event)) return true;
+        if (event.key === "Escape") {
+          event.preventDefault();
+          wikilinkMenu.close("escape");
+          return true;
+        }
+      }
       if (turnIntoMenu.isOpen) {
         if (turnIntoMenu.handleNavigation(event)) return true;
         if (event.key === "Escape") {
@@ -4577,6 +4686,7 @@
     function closeTransient() {
       if (!slashMenu) return;
       slashMenu.close("blur");
+      endWikilink("blur");
       turnIntoMenu.close("blur");
       tableMenu.close("blur");
       hideFormatBar();
@@ -4594,6 +4704,7 @@
     function reposition() {
       if (!slashMenu) return;
       if (slashMenu.isOpen) slashMenu.reposition(caretRect());
+      if (wikilinkMenu.isOpen) wikilinkMenu.reposition(caretRect());
       if (formatBar.classList.contains("mk-visible")) {
         const rect = selectionRect();
         if (rect) place(formatBar, rect, "above");
@@ -4611,7 +4722,8 @@
       openLanguageMenu,
       closeTransient,
       closeAll,
-      reposition
+      reposition,
+      showWikilinks
     };
   })();
 
@@ -4624,6 +4736,7 @@
     applyRemote,
     reset,
     insertMarkdown: insertMarkdownAt,
+    wikilinkSuggestions: (payload) => UI.showWikilinks(payload),
     setIcons,
     sourceLineElements,
     selection: currentSelectionForApp,

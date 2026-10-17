@@ -440,6 +440,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
 
         private var editor: EditorState?
         private weak var editorWebView: WKWebView?
+        private var wikilinkTask: Task<Void, Never>?
 
         var isEditing: Bool { editor != nil }
 
@@ -643,12 +644,42 @@ struct MarkdownPreviewView: NSViewRepresentable {
             case "redo":
                 let manager = editor.configuration.session.undoManager
                 if manager.canRedo { manager.redo() } else { NSSound.beep() }
+            case "wikilinkQuery":
+                suggestWikilinks(
+                    for: (body["query"] as? String) ?? "",
+                    serial: WebViewBridge.integer(body["serial"]) ?? 0,
+                    documents: editor.configuration.wikilinkDocuments,
+                    in: webView
+                )
             case "requestImage":
                 requestImageFile(at: MarkdownVisualEditorSelection(body["selection"]), in: webView)
             case "pasteImage":
                 pasteImage(at: MarkdownVisualEditorSelection(body["selection"]), in: webView)
             default:
                 break
+            }
+        }
+
+        /// Ranks the workspace's notes for the text after `[[` off the main actor, with Source's
+        /// ranking, and answers with that query's serial; the page drops answers it no longer needs.
+        private func suggestWikilinks(
+            for query: String,
+            serial: Int,
+            documents: [WorkspaceDocument],
+            in webView: WKWebView
+        ) {
+            wikilinkTask?.cancel()
+            wikilinkTask = Task { [weak self, weak webView] in
+                let titles = await Task.detached(priority: .userInitiated) {
+                    WikilinkAutocompleteService.suggestions(partial: query, documents: documents)
+                }.value
+                await MainActor.run {
+                    guard !Task.isCancelled, let self, self.editor != nil, let webView,
+                          let json = try? WebViewBridge.literal(["serial": serial, "titles": titles])
+                    else { return }
+                    self.wikilinkTask = nil
+                    webView.evaluateJavaScript("window.MonknotEditor && window.MonknotEditor.wikilinkSuggestions(\(json));")
+                }
             }
         }
 
@@ -825,6 +856,8 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 editor?.configuration.session.channel = nil
             }
             editor = nil
+            wikilinkTask?.cancel()
+            wikilinkTask = nil
         }
 
         func markShellNeedsReload() {

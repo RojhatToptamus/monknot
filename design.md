@@ -804,6 +804,7 @@ the switch; an undo that no longer fits the text (it changed in Source) beeps in
 |---|---|---|
 | Format bar | text selected with the pointer or keyboard, above the selection (below when there is no room) | block selector · bold, italic, strikethrough, inline code · link |
 | Slash menu | `/` at the start of a block or after a space | blocks, then inserts, filtered by what follows the `/`; Markdown to type instead as a trailing hint |
+| Wikilink menu | `[[` in text, not in code | the workspace's Markdown notes by title, each with `doc.text`, filtered and ordered as Source's ⇥ completion (up to 12); "No matching notes" when none do, closing once the query passes three characters; ↩ or ⇥ replaces `[[` and the query with `[[Title]]` in one patch, caret after it, its own undo step "Insert Link"; `]`, `\|` or moving the caret out closes it |
 | Link card | caret inside a link | the address in 12 `ink2`, Open, Edit, Remove |
 | Link editor | ⌘K, or Link in the format bar or card | one field; ↩ applies, Esc cancels and restores the selection |
 | Table bar | caret in a table, above it, left-aligned | Row and Column menus, Delete Table |
