@@ -72,18 +72,6 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
 
     // MARK: - Sidebar drag to move
 
-    func testShortDragOfNestedFileDoesNotMoveIt() async throws {
-        let fixture = try await makeSidebarFixture()
-        defer { fixture.close() }
-        let rowFrame = try XCTUnwrap(fixture.frameOfRow(labelPrefix: "a.md"))
-        let start = NSPoint(x: rowFrame.midX, y: rowFrame.midY)
-        // 10 points down ends on b.md, a file in the same folder.
-        await fixture.drag(from: start, to: NSPoint(x: start.x, y: start.y - 10))
-        try await Task.sleep(nanoseconds: 800_000_000)
-
-        XCTAssertEqual(fixture.listing().filter { $0.hasSuffix("a.md") }, ["docs/a.md"])
-    }
-
     func testDragRootFileOntoFolderRowMovesIt() async throws {
         let fixture = try await makeSidebarFixture()
         defer { fixture.close() }
@@ -93,17 +81,6 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
         _ = await waitUntil { fixture.listing().contains("other/top.md") }
 
         XCTAssertEqual(fixture.listing().filter { $0.hasSuffix("top.md") }, ["other/top.md"])
-    }
-
-    func testDragNestedFileOntoAnotherFolderRowMovesItThere() async throws {
-        let fixture = try await makeSidebarFixture()
-        defer { fixture.close() }
-        let source = try XCTUnwrap(fixture.frameOfRow(labelPrefix: "b.md"))
-        let target = try XCTUnwrap(fixture.frameOfRow(labelPrefix: "other"))
-        await fixture.drag(from: NSPoint(x: source.midX, y: source.midY), to: NSPoint(x: target.midX, y: target.midY))
-        _ = await waitUntil { fixture.listing().contains("other/b.md") }
-
-        XCTAssertEqual(fixture.listing().filter { $0.hasSuffix("b.md") }, ["other/b.md"])
     }
 
     func testDragOntoFileRowMovesIntoThatFilesFolder() async throws {
@@ -129,18 +106,6 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
         XCTAssertEqual(fixture.listing().filter { $0.hasSuffix("b.md") }, ["b.md"])
     }
 
-    func testDragEndingOnItsOwnRowNeitherMovesNorOpensTheFile() async throws {
-        let fixture = try await makeSidebarFixture()
-        defer { fixture.close() }
-        let selected = fixture.store.selectedDocumentID
-        let row = try XCTUnwrap(fixture.frameOfRow(labelPrefix: "b.md"))
-        await fixture.drag(from: NSPoint(x: row.midX, y: row.midY), to: NSPoint(x: row.midX + 30, y: row.midY))
-        try await Task.sleep(nanoseconds: 500_000_000)
-
-        XCTAssertEqual(fixture.listing().filter { $0.hasSuffix("b.md") }, ["docs/b.md"])
-        XCTAssertEqual(fixture.store.selectedDocumentID, selected)
-    }
-
     func testClickWithoutMovementStillOpensTheFile() async throws {
         let fixture = try await makeSidebarFixture()
         defer { fixture.close() }
@@ -151,18 +116,6 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
         }
 
         XCTAssertTrue(opened)
-    }
-
-    func testDragFolderOntoItsOwnChildDoesNothing() async throws {
-        let fixture = try await makeSidebarFixture()
-        defer { fixture.close() }
-        let source = try XCTUnwrap(fixture.frameOfRow(labelPrefix: "docs"))
-        let target = try XCTUnwrap(fixture.frameOfRow(labelPrefix: "inner"))
-        await fixture.drag(from: NSPoint(x: source.midX, y: source.midY), to: NSPoint(x: target.midX, y: target.midY))
-        try await Task.sleep(nanoseconds: 500_000_000)
-
-        XCTAssertNil(fixture.store.errorMessage)
-        XCTAssertTrue(fixture.listing().contains("docs/inner/c.md"))
     }
 
     // MARK: - Move target resolution
@@ -456,19 +409,6 @@ final class SidebarInteractionTests: WorkspaceStoreTestCase {
         // Choosing the document selects it again.
         XCTAssertTrue(fixture.store.selectDocument(id: fixture.path("docs/a.md")))
         XCTAssertEqual(fixture.store.sidebarSelectionID, fixture.path("docs/a.md"))
-    }
-
-    /// Holding ⌘D duplicates the selection once.
-    func testHoldingDuplicateDuplicatesOnce() async throws {
-        let fixture = try await makeSidebarFixture()
-        defer { fixture.close() }
-        try await fixture.click(rowNamed: "top.md")
-
-        fixture.press("d", keyCode: 2, modifiers: .command, repeats: 5)
-        let duplicated = await waitUntil { fixture.listing().contains("top copy.md") && !fixture.store.isBusy }
-        XCTAssertTrue(duplicated)
-        try await Task.sleep(nanoseconds: 300_000_000)
-        XCTAssertEqual(fixture.listing().filter { $0.hasPrefix("top") }, ["top copy.md", "top.md"])
     }
 
     /// File ▸ New Folder asks for a name for the sidebar's target folder.

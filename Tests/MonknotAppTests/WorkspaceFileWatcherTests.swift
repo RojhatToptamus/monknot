@@ -37,4 +37,11 @@ final class WorkspaceFileWatcherTests: XCTestCase {
             "/Users/a/w/Note.md"
         )
     }
+
+    func testATemporaryFolderResolvesToItsPrivatePath() throws {
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory()).standardizedFileURL.path
+        XCTAssertTrue(folder.hasPrefix("/var/"), folder)
+        XCTAssertEqual(WorkspaceFileWatcher.resolvedPath(of: folder), "/private" + folder)
+        XCTAssertEqual(WorkspaceFileWatcher.resolvedPath(of: "/no/such/folder"), "/no/such/folder")
+    }
 }
