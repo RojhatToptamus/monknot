@@ -3496,12 +3496,21 @@
       kind: meta.reason || kind,
       group: meta.group || currentGroup,
       coalesce: Boolean(coalesce),
-      label: op.label || meta.label || ""
+      label: op.label || meta.label || "",
+      cell: caretInTableCell(after)
     });
     Flow.afterEdit(op);
     UI.afterEdit(op);
     scheduleSelectionReport();
     return true;
+  }
+
+  /// Whether the caret is in a table cell, where the app's writing assistance does not run: a
+  /// sentence there starts in another cell, so a reviewed fix could not be drawn.
+  function caretInTableCell(selection) {
+    if (!selection || !model) return false;
+    const unit = unitAt(model, selection.head, "left");
+    return Boolean(unit && unit.role === "cell");
   }
 
   function mapSelectionThrough(selection, op) {
@@ -4087,6 +4096,7 @@
       canFormat: Boolean(unit && unit.kind === "inline"),
       v: version,
       focused: document.activeElement === root,
+      cell: Boolean(unit && unit.role === "cell"),
       selectedMarkdown: selection.from === selection.to ? "" : model.source.slice(selection.from, Math.min(selection.to, selection.from + 4000))
     };
     UI.selectionChanged(selection, unit, state, report);

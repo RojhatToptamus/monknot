@@ -79,9 +79,10 @@ Apple Writing Tools are available on macOS 15.2 or later when macOS reports
 that they are ready.
 
 Typo fixes, reviewed repairs and on-device completions work the same way when
-you edit Markdown in Preview as in the source. System inline predictions appear
-only in the source, and Show Writing Tools in Preview switches to the source
-and opens Writing Tools there.
+you edit Markdown in Preview as in the source, except inside table cells, where
+Preview does not check or complete text. System inline predictions appear only
+in the source, and Show Writing Tools in Preview switches to the source and
+opens Writing Tools there.
 
 <p align="center">
   <picture>

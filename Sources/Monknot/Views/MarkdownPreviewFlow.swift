@@ -163,6 +163,10 @@ final class MarkdownPreviewFlowCoordinator {
     private(set) var revision = 0
     private var selection: NSRange?
     private var pageFocused = false
+    /// The caret is in a table cell. Source checks the words in cells (only a table's pipes are
+    /// protected), but a sentence there starts in another cell, so Preview could never draw its
+    /// review: it checks, fixes and completes nothing in a cell.
+    private var caretInTableCell = false
     private var isPageReady = false
     private var isTornDown = false
     private let spellDocumentTag = NSSpellChecker.uniqueSpellDocumentTag()
@@ -288,11 +292,19 @@ final class MarkdownPreviewFlowCoordinator {
         }
     }
 
-    func pageDidChangeSelection(_ newSelection: MarkdownVisualEditorSelection, version: Int?, focused: Bool?) {
+    func pageDidChangeSelection(
+        _ newSelection: MarkdownVisualEditorSelection,
+        version: Int?,
+        focused: Bool?,
+        inTableCell: Bool? = nil
+    ) {
         if let focused, focused != pageFocused {
             pageDidChangeFocus(focused)
         }
         guard version == nil || version == revision else { return }
+        if let inTableCell {
+            adoptCaretContext(inTableCell: inTableCell)
+        }
         let range = newSelection.range
         guard range != selection else { return }
         selection = range
@@ -306,7 +318,12 @@ final class MarkdownPreviewFlowCoordinator {
 
     /// One patch the page applied, and the text it leaves: every edit, the page's own and the ones
     /// the app asked for (undo, redo, a change on disk, a fix).
-    func pageDidChange(_ change: MarkdownVisualEditorChange, text newText: String, version: Int) {
+    func pageDidChange(
+        _ change: MarkdownVisualEditorChange,
+        text newText: String,
+        version: Int,
+        inTableCell: Bool? = nil
+    ) {
         let previousRevision = revision
         let previousLength = textLength
         let previousSelection = selection
@@ -316,6 +333,9 @@ final class MarkdownPreviewFlowCoordinator {
         adopt(text: newText, version: version)
         if let after = change.selectionAfter {
             selection = after.range
+        }
+        if let inTableCell {
+            adoptCaretContext(inTableCell: inTableCell)
         }
         guard isActive else { return }
 
@@ -477,7 +497,7 @@ final class MarkdownPreviewFlowCoordinator {
     // MARK: - Commands
 
     var canCheckDocumentNow: Bool {
-        isActive && hasFocus && (options.checksSpelling || options.checksGrammar)
+        isActive && hasFocus && assistsAtCaret && (options.checksSpelling || options.checksGrammar)
             && selection.map { NSMaxRange($0) > 0 } == true
     }
 
@@ -505,6 +525,21 @@ final class MarkdownPreviewFlowCoordinator {
     private var hasFocus: Bool {
         guard pageFocused, let view = host?.flowFocusView else { return false }
         return dependencies.windowFocusValidator(view)
+    }
+
+    /// Whether writing assistance runs where the caret is: not in a table cell.
+    private var assistsAtCaret: Bool {
+        !caretInTableCell
+    }
+
+    /// Where the page says the caret is. Moving into a table cell ends what was running or shown.
+    private func adoptCaretContext(inTableCell: Bool) {
+        let assisted = assistsAtCaret
+        caretInTableCell = inTableCell
+        if assisted, !assistsAtCaret, isActive {
+            gate = .blocked
+            cancelFlowSuggestion()
+        }
     }
 
     private var currentProtectedRanges: [NSRange]? {
@@ -540,6 +575,7 @@ final class MarkdownPreviewFlowCoordinator {
         gate = .blocked
         isPageReady = false
         selection = nil
+        caretInTableCell = false
     }
 
     private func sendConfiguration() {
@@ -875,7 +911,8 @@ extension MarkdownPreviewFlowCoordinator {
               snapshot.checkedRange.location >= 0,
               NSMaxRange(snapshot.checkedRange) <= textLength,
               (text as NSString).substring(with: snapshot.checkedRange) == snapshot.checkedText,
-              hasFocus
+              hasFocus,
+              assistsAtCaret
         else { return false }
         return true
     }
@@ -886,6 +923,11 @@ extension MarkdownPreviewFlowCoordinator {
         immediate: Bool = false
     ) {
         guard isActive else { return }
+        guard assistsAtCaret else {
+            gate = .blocked
+            _ = cancelProseCompletion()
+            return
+        }
         guard options.checksSpelling || options.checksGrammar else {
             finishSentenceRepairClear(requestsAutocomplete: requestsAutocompleteAfterClear)
             return
@@ -1682,6 +1724,7 @@ extension MarkdownPreviewFlowCoordinator {
               presentedRepair == nil,
               pendingApply == nil,
               hasFocus,
+              assistsAtCaret,
               let selection,
               EditorFlowProseContextPlanner.context(in: text, selectedRange: selection, protectedRanges: []) != nil
         else { return }
@@ -1775,6 +1818,7 @@ extension MarkdownPreviewFlowCoordinator {
               gate.allowsAutocomplete,
               let documentID,
               hasFocus,
+              assistsAtCaret,
               presentedRepair == nil,
               pendingApply == nil,
               let protectedRanges = currentProtectedRanges,
@@ -1850,6 +1894,7 @@ extension MarkdownPreviewFlowCoordinator {
               presentedRepair == nil,
               pendingApply == nil,
               hasFocus,
+              assistsAtCaret,
               let protectedRanges = currentProtectedRanges,
               EditorFlowProseContextPlanner.context(
                 in: text,
@@ -1871,6 +1916,7 @@ extension MarkdownPreviewFlowCoordinator {
               textLength == pending.sourceUTF16Length,
               selection == pending.selectedRange,
               hasFocus,
+              assistsAtCaret,
               let protectedRanges = currentProtectedRanges,
               caretIsOutsideProtectedRanges(protectedRanges),
               EditorFlowRepairPolicy.insertionRemainsOutsideProtectedSyntax(

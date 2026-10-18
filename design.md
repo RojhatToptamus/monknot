@@ -994,8 +994,10 @@ sentence planner, macOS checker, Apple Intelligence models and repair decisions
 (`EditorFlowRepairPolicy`), under the same four settings. The app decides; the page draws what it is
 sent, inside the text as non-editable spans the caret never enters, and anything taken reaches the file
 as one source patch and one undo step, after the app has checked that the text it changes is still the
-text it checked. Nothing is inserted that was not on screen, and nothing is checked, repaired or
-completed inside code, link addresses, URLs, HTML, front matter or tables (a link's text is prose).
+text it checked. Nothing is inserted that was not on screen. As in Source, nothing is checked, repaired
+or completed inside code, link addresses, URLs, HTML, front matter or a table's pipes (a link's text is
+prose). Preview also leaves table cells alone: a sentence in a cell starts in another cell, so its
+review could not be drawn.
 
 | Case | When | On the page | Keys |
 |---|---|---|---|

@@ -673,8 +673,9 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 editor.mirror = updated
                 editor.acknowledged = change.version
                 lastRenderedContent = PreviewContentRequest(documentID: editor.documentID, markdown: updated)
+                let inTableCell = WebViewBridge.boolean(body["cell"])
                 if change.kind == .external {
-                    flow?.pageDidChange(change, text: updated, version: change.version)
+                    flow?.pageDidChange(change, text: updated, version: change.version, inTableCell: inTableCell)
                     return
                 }
                 guard editor.configuration.applyChange(change) else {
@@ -682,7 +683,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
                     return
                 }
                 editor.configuration.session.record(change)
-                flow?.pageDidChange(change, text: updated, version: change.version)
+                flow?.pageDidChange(change, text: updated, version: change.version, inTableCell: inTableCell)
             case "reset":
                 guard let text = editor.awaitingReset else { return }
                 editor.awaitingReset = nil
@@ -706,7 +707,8 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 flow?.pageDidChangeSelection(
                     selection,
                     version: WebViewBridge.integer(body["v"]),
-                    focused: WebViewBridge.boolean(body["focused"])
+                    focused: WebViewBridge.boolean(body["focused"]),
+                    inTableCell: WebViewBridge.boolean(body["cell"])
                 )
             case "focus":
                 flow?.pageDidChangeFocus(WebViewBridge.boolean(body["focused"]) ?? false)

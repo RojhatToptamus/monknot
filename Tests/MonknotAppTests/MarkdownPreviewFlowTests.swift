@@ -596,6 +596,45 @@ final class MarkdownPreviewFlowTests: WorkspaceStoreTestCase {
         XCTAssertNil(state?.ghost)
     }
 
+    /// A sentence in a table cell starts in another cell, so a reviewed fix could never be drawn
+    /// there: Preview checks, fixes and completes nothing while the caret is in a cell. (Source
+    /// checks the words in cells; only a table's pipes are protected.)
+    func testNothingIsCheckedFixedOrCompletedInATableCell() async throws {
+        let checker = PreviewFlowChecker { text in
+            PreviewFlowChecker.corrections(in: text, ["teh": "the"])
+        }
+        let prose = FlowProseCompletionSpy(result: "for the whole team.")
+        let source = "| Task | Notes |\n| --- | --- |\n| Plan | We read teh plan |\n| Next | We can write |\n\nWe read teh notes\n"
+        let fixture = try await makeFixture(markdown: source, checker: checker, prose: prose, options: Self.onDevice)
+
+        let planEnd = NSMaxRange((source as NSString).range(of: "We read teh plan"))
+        try await fixture.setSelection(planEnd)
+        fixture.type(".")
+        let typed = await waitUntil { fixture.store.documentText.contains("| We read teh plan. |") }
+        XCTAssertTrue(typed, fixture.store.documentText)
+        let commands = try XCTUnwrap((fixture.webView as? MarkdownEditorWebView)?.previewCommands)
+        XCTAssertFalse(commands.canCheckDocumentNow, "Check Document Now has nothing to check in a cell")
+
+        let writeEnd = NSMaxRange((fixture.store.documentText as NSString).range(of: "We can write"))
+        try await fixture.setSelection(writeEnd)
+        fixture.type(" ")
+        try await Task.sleep(nanoseconds: 400_000_000)
+        XCTAssertTrue(fixture.store.documentText.contains("| We read teh plan. |"), "Nothing in a cell is fixed")
+        XCTAssertEqual(checker.requests, [], "Nothing in a cell is checked")
+        XCTAssertEqual(prose.requestCount, 0, "Nothing in a cell is completed")
+        let state = await fixture.flowState()
+        XCTAssertNil(state?.review)
+        XCTAssertNil(state?.ghost)
+        XCTAssertNil(state?.settle)
+
+        // Below the table, it all runs again.
+        let notesEnd = NSMaxRange((fixture.store.documentText as NSString).range(of: "We read teh notes"))
+        try await fixture.setSelection(notesEnd)
+        fixture.type(".")
+        let fixed = await waitUntil { fixture.store.documentText.hasSuffix("\nWe read the notes.\n") }
+        XCTAssertTrue(fixed, fixture.store.documentText)
+    }
+
     // MARK: - Tab keeps its meanings
 
     func testTabStillIndentsListItemsAndMovesBetweenCellsWithoutASuggestion() async throws {
