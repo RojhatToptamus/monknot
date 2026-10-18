@@ -87,9 +87,7 @@ struct MonknotActionButton: View {
                     shape.fill(stateFill)
                 }
             }
-            .overlay {
-                shape.strokeBorder(borderColor, lineWidth: borderWidth)
-            }
+            // Push buttons are fills, never outlines (design.md §5.3).
             .monknotFocusRing(isVisible: isFocused && !isDisabled, cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale), theme: theme)
             .contentShape(shape)
         }
@@ -112,17 +110,13 @@ struct MonknotActionButton: View {
         switch role {
         case .primary, .destructive:
             return theme.onAccentForegroundColor
+        // design.md §1.4: a push button's word is `ink`; a quiet one rests at `ink2`.
         case .secondary:
-            return theme.foregroundColor.opacity(0.88)
+            return theme.foregroundColor
         case .quiet:
-            return theme.foregroundColor.opacity(0.72)
+            return isHovered ? theme.foregroundColor : theme.mutedForegroundColor
         }
     }
-
-    // Push buttons are fills, never outlines (design.md §5.3).
-    private var borderColor: Color { .clear }
-
-    private var borderWidth: CGFloat { 0 }
 
     private var backgroundColor: Color {
         if isDisabled {

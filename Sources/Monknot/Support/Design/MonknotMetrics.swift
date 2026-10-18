@@ -17,14 +17,31 @@ extension EnvironmentValues {
 /// points while box metrics snap to whole points.
 enum MonknotMetrics {
     static let chromeHeightBase: CGFloat = 44
-    static let chromeSecondaryHeightBase: CGFloat = 34
     static let chromeHorizontalPaddingBase: CGFloat = 8
     static let iconButtonSizeBase: CGFloat = 28
     static let iconPointSizeBase: CGFloat = 17
+    /// The small icon button, inside a row or a field (design.md §5.1).
+    static let smallIconButtonSizeBase: CGFloat = 22
+    static let smallIconPointSizeBase: CGFloat = 13
+    /// The close and clear target of a tab or a field, and its xmark.
+    static let closeTargetSizeBase: CGFloat = 16
+    static let closeGlyphPointSizeBase: CGFloat = 9
+    /// Disclosure, pop-up and submenu chevrons, everywhere (design.md §8.2).
+    static let chevronPointSizeBase: CGFloat = 10
+    /// A bar inside a card or a panel (the terminal header, the PDF toolbar, panel headers): 40 tall,
+    /// 6 padding, items 2 apart, groups 8 apart, never a rule (design.md §10.6).
+    static let barHeightBase: CGFloat = 40
+    static let barPaddingBase: CGFloat = 6
+    static let barItemGapBase: CGFloat = 2
+    static let barGroupGapBase: CGFloat = 8
+    /// Activity indicators: inline beside a status line, and alone in a loading state.
+    static let inlineSpinnerSizeBase: CGFloat = 12
+    static let loadingSpinnerSizeBase: CGFloat = 16
     static let sidebarIconPointSizeBase: CGFloat = 15
     static let rowIconColumnWidthBase: CGFloat = 18
     /// The chrome row primitive (design.md §0): 28 tall, 8 padding, a 15 glyph in the 18 column, 8 gap,
-    /// a 13 / 500 label, no gap between rows and 14 per depth, inside a 10 list inset.
+    /// a 13 / 400 label, no gap between rows and 14 per depth, inside a 10 list inset. A tab is this row
+    /// with 10 padding (`MonknotTab`).
     static let rowHeightBase: CGFloat = 28
     static let rowGapBase: CGFloat = 0
     static let rowPaddingBase: CGFloat = 8
@@ -38,9 +55,8 @@ enum MonknotMetrics {
     static let menuRowPaddingBase: CGFloat = 8
     static let menuRowGlyphGapBase: CGFloat = 10
     static let menuListInsetBase: CGFloat = 6
-    /// A file tab's kind glyph: a step smaller than a row's, in its own 16 column (design.md §10.3).
-    static let tabGlyphPointSizeBase: CGFloat = 14
-    static let tabGlyphColumnBase: CGFloat = 16
+    /// An overlay's result row (Quick Open, Go to Symbol): the menu row at 34.
+    static let overlayRowHeightBase: CGFloat = 34
     static let iconCornerRadiusBase: CGFloat = 8
     /// The document and terminal cards (design.md §7, §10.0).
     static let cardCornerRadius: CGFloat = 12
@@ -60,8 +76,6 @@ enum MonknotMetrics {
         static let s: CGFloat = 6
         static let m: CGFloat = 8
         static let l: CGFloat = 12
-        static let settingsRowHorizontal: CGFloat = 14
-        static let settingsRowVertical: CGFloat = 11
     }
 
     static func scale(
@@ -92,16 +106,12 @@ enum MonknotMetrics {
         (chromeHeightBase * theme.interfaceRowScale(zoomScale: zoomScale)).rounded()
     }
 
-    static func chromeSecondaryHeight(theme: AppTheme, zoomScale: Double) -> CGFloat {
-        (chromeSecondaryHeightBase * theme.interfaceRowScale(zoomScale: zoomScale)).rounded()
-    }
-
     static func chromeHorizontalPadding(theme: AppTheme, zoomScale: Double) -> CGFloat {
         interfaceDensity(chromeHorizontalPaddingBase, theme: theme, zoomScale: zoomScale)
     }
 
-    static func chromeButtonDimension(theme: AppTheme, zoomScale: Double) -> CGFloat {
-        interfaceControl(iconButtonSizeBase, theme: theme, zoomScale: zoomScale)
+    static func barHeight(theme: AppTheme, zoomScale: Double) -> CGFloat {
+        interfaceControl(barHeightBase, theme: theme, zoomScale: zoomScale)
     }
 }
 
@@ -124,6 +134,9 @@ enum MonknotSymbolOptics {
             return 12
         case "textformat", "speaker.wave.2", "list.bullet.rectangle":
             return 13
+        // Filled warnings carry more ink than the outlined kind glyphs beside them.
+        case "exclamationmark.triangle.fill":
+            return 13
         case "tablecells", "text.bubble", "face.smiling", "calendar", "arrow.triangle.2.circlepath",
              "arrow.up.right.square", "exclamationmark.bubble", "exclamationmark.triangle",
              "exclamationmark.octagon", "plus.square.on.square", "doc.on.doc",
@@ -144,6 +157,14 @@ enum MonknotSymbolOptics {
         case "photo":
             return 12
         case "sidebar.left", "sidebar.right":
+            return 15
+        // Open strokes span their whole box, so at the nominal size they read largest in a bar.
+        case "xmark":
+            return 14
+        case "plus", "chevron.left", "chevron.right", "square.and.pencil",
+             "arrow.uturn.backward", "arrow.uturn.forward", "arrow.clockwise",
+             "cursorarrow", "pencil.tip", "eraser", "highlighter", "underline", "strikethrough",
+             "character.textbox", "externaldrive.badge.checkmark", "sidebar.squares.left":
             return 15
         default:
             return nil

@@ -33,7 +33,6 @@ struct PreferencesView: View {
     @AppStorage("Monknot.settingsSection") private var selectedSectionRawValue = Section.general.rawValue
     @AppStorage("Monknot.zoomScale") private var persistedZoomScale = WorkspaceZoomPolicy.defaultValue
     @ObservedObject private var systemAppearance = SystemAppearanceMonitor.shared
-    @State private var hoveredSection: Section?
     @FocusState private var focusedSection: Section?
 
     private var selectedSection: Section {
@@ -78,14 +77,6 @@ struct PreferencesView: View {
         )
     }
 
-    private func textScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceText(base, theme: panelTheme, zoomScale: settingsZoomScale)
-    }
-
-    private func glyphScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceGlyph(base, theme: panelTheme, zoomScale: settingsZoomScale)
-    }
-
     var body: some View {
         HStack(spacing: 0) {
             settingsSidebar
@@ -117,76 +108,43 @@ struct PreferencesView: View {
         .environment(\.monknotSettingsZoomScale, settingsZoomScale)
     }
 
+    /// Settings' pages as the main window's sidebar rows (design.md §10.4, §12), inside the 10 list inset.
     private var settingsSidebar: some View {
         VStack(alignment: .leading, spacing: scaled(MonknotMetrics.rowGapBase)) {
             ForEach(Section.allCases) { section in
                 Button {
                     selectedSection = section
                 } label: {
-                    HStack(spacing: scaled(MonknotMetrics.rowGlyphGapBase)) {
-                        Image(systemName: section.systemImage)
-                            .font(.system(size: glyphScaled(MonknotMetrics.sidebarIconPointSizeBase), weight: .regular))
-                            .foregroundStyle(
-                                selectedSection == section
-                                    ? panelTheme.accentColor
-                                    : panelTheme.foregroundColor.opacity(
-                                        hoveredSection == section
-                                            ? AppTheme.sidebarLabelInkOpacity
-                                            : AppTheme.sidebarGlyphInkOpacity
-                                    )
-                            )
-                            .frame(width: glyphScaled(MonknotMetrics.rowIconColumnWidthBase))
-
-                        // The main window's sidebar row (design.md §10.4, §12).
-                        Text(section.rawValue)
-                            .font(MonknotTypography.sidebarLabel(theme: panelTheme, zoomScale: settingsZoomScale))
-                            .foregroundStyle(
-                                selectedSection == section || hoveredSection == section
-                                    ? panelTheme.foregroundColor
-                                    : panelTheme.foregroundColor.opacity(AppTheme.sidebarLabelInkOpacity)
-                            )
-                    }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, scaled(MonknotMetrics.rowPaddingBase))
-                        .frame(height: scaled(MonknotMetrics.rowHeightBase))
-                        .background(
-                            sidebarRowBackground(for: section),
-                            in: RoundedRectangle(cornerRadius: panelTheme.chromeRadius(8, zoomScale: settingsZoomScale))
-                        )
-                        .monknotFocusRing(
-                            isVisible: focusedSection == section,
-                            cornerRadius: panelTheme.chromeRadius(8, zoomScale: settingsZoomScale),
-                            theme: panelTheme
-                        )
+                    MonknotListRowLabel(
+                        leading: .kind(systemImage: section.systemImage),
+                        title: section.rawValue,
+                        isSelected: selectedSection == section,
+                        theme: panelTheme,
+                        zoomScale: settingsZoomScale
+                    )
+                    .monknotFocusRing(
+                        isVisible: focusedSection == section,
+                        cornerRadius: panelTheme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: settingsZoomScale),
+                        theme: panelTheme
+                    )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(MonknotListRowButtonStyle(
+                    theme: panelTheme,
+                    zoomScale: settingsZoomScale,
+                    isSelected: selectedSection == section
+                ))
                 .focusable(NSApp.isFullKeyboardAccessEnabled)
                 .focused($focusedSection, equals: section)
                 .focusEffectDisabled()
-                .onHover { isHovered in
-                    hoveredSection = isHovered ? section : nil
-                }
-                .monknotPointerCursor()
                 .accessibilityAddTraits(selectedSection == section ? .isSelected : [])
             }
 
             Spacer()
         }
-        .padding(.horizontal, scaled(8))
-        .padding(.top, scaled(18))
+        .padding(.horizontal, scaled(MonknotMetrics.listGutterBase))
+        .padding(.top, scaled(12))
         .frame(width: scaled(MonknotMetrics.settingsSidebarWidth))
         .background(panelTheme.sidebarSurfaceColor)
-    }
-
-    private func sidebarRowBackground(for section: Section) -> Color {
-        if selectedSection == section {
-            return panelTheme.chromeSelectedFillColor
-        }
-        // design.md §1.2: the one hover fill; keyboard focus shows the ring instead (§3).
-        if hoveredSection == section {
-            return panelTheme.hoverFillColor
-        }
-        return .clear
     }
 
     @ViewBuilder
@@ -221,12 +179,13 @@ private struct WorkspacesSettingsView: View {
 
     var body: some View {
         SettingsPage(theme: uiTheme) {
-            HStack(alignment: .center) {
-                SettingsSectionHeader(theme: uiTheme, title: "Workspaces")
-                Spacer()
-                SettingsOutlineButton(
+            SettingsSectionHeader(theme: uiTheme, title: "Workspaces", isFirst: true) {
+                MonknotActionButton(
                     title: "Revert",
+                    role: .secondary,
                     theme: uiTheme,
+                    zoomScale: settingsZoomScale,
+                    size: .bar,
                     isDisabled: originalEntries == nil || originalEntries == workspaceLibrary.entries
                 ) {
                     if let originalEntries {
@@ -234,7 +193,6 @@ private struct WorkspacesSettingsView: View {
                         revertSerial &+= 1
                     }
                 }
-                .padding(.bottom, scaled(7))
             }
 
             SettingsGroupCard(theme: uiTheme) {
@@ -291,69 +249,53 @@ private struct WorkspaceSettingsRow: View {
     }
 
     var body: some View {
-        HStack(spacing: scaled(12)) {
-            MonknotSystemGlyph(
-                systemImage: "folder",
-                nominalPointSizeBase: 15,
-                theme: theme,
-                zoomScale: settingsZoomScale
-            )
-            .foregroundStyle(theme.tertiaryForegroundColor)
-            .frame(width: scaled(18))
+        HStack(spacing: scaled(MonknotMetrics.rowGlyphGapBase)) {
+            MonknotFileKindGlyph(systemImage: "folder", theme: theme, zoomScale: settingsZoomScale)
+                .foregroundStyle(theme.tertiaryForegroundColor)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: scaled(3)) {
                 TextField("Display name", text: $draftName)
                     .textFieldStyle(.plain)
                     .focused($isNameFocused)
-                    .font(MonknotTypography.settingsRowTitle(theme: theme, zoomScale: settingsZoomScale))
+                    .font(MonknotTypography.rowTitle(theme: theme, zoomScale: settingsZoomScale))
                     .foregroundStyle(theme.foregroundColor)
-                    .padding(.horizontal, scaled(9))
-                    .frame(height: scaled(28), alignment: .leading)
-                    .background(theme.surfaceColor, in: RoundedRectangle(cornerRadius: scaled(8)))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: scaled(8))
-                            .strokeBorder(
-                                isNameFocused ? theme.accentColor : theme.borderColor,
-                                lineWidth: 1
-                            )
-                    }
+                    .monknotField(isFocused: isNameFocused, theme: theme, zoomScale: settingsZoomScale)
 
                 Text(((entry?.path ?? "") as NSString).abbreviatingWithTildeInPath)
-                    .font(.system(
-                        size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: settingsZoomScale),
-                        weight: .regular,
-                        design: .monospaced
-                    ))
+                    .font(MonknotTypography.rowDetail(theme: theme, zoomScale: settingsZoomScale))
                     .foregroundStyle(theme.tertiaryForegroundColor)
                     .lineLimit(1)
                     .truncationMode(.head)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            workspaceMoveButton(
-                systemImage: "chevron.up",
-                label: "Move workspace up",
-                isDisabled: index == 0
-            ) {
-                workspaceLibrary.move(id: entryID, to: index - 1)
-            }
+            HStack(spacing: scaled(MonknotMetrics.barItemGapBase)) {
+                workspaceMoveButton(
+                    systemImage: "chevron.up",
+                    label: "Move workspace up",
+                    isDisabled: index == 0
+                ) {
+                    workspaceLibrary.move(id: entryID, to: index - 1)
+                }
 
-            workspaceMoveButton(
-                systemImage: "chevron.down",
-                label: "Move workspace down",
-                isDisabled: index >= count - 1
-            ) {
-                workspaceLibrary.move(id: entryID, to: index + 1)
+                workspaceMoveButton(
+                    systemImage: "chevron.down",
+                    label: "Move workspace down",
+                    isDisabled: index >= count - 1
+                ) {
+                    workspaceLibrary.move(id: entryID, to: index + 1)
+                }
             }
         }
-        .padding(.horizontal, scaled(14))
-        .padding(.vertical, scaled(10))
+        .padding(.horizontal, scaled(SettingsRow<EmptyView>.horizontalPaddingBase))
+        .padding(.vertical, scaled(SettingsRow<EmptyView>.verticalPaddingBase))
         .overlay(alignment: .bottom) {
             if showsDivider {
                 Rectangle()
                     .fill(theme.separatorColor)
                     .frame(height: 1)
-                    .padding(.leading, scaled(14))
+                    .padding(.leading, scaled(SettingsRow<EmptyView>.horizontalPaddingBase))
             }
         }
         .onAppear {
@@ -391,7 +333,7 @@ private struct WorkspaceSettingsRow: View {
             theme: theme,
             zoomScale: settingsZoomScale,
             isDisabled: isDisabled,
-            size: .settings,
+            size: .small,
             action: action
         )
     }
@@ -412,7 +354,7 @@ private struct EditorSettingsView: View {
 
     var body: some View {
         SettingsPage(theme: uiTheme) {
-            SettingsSectionHeader(theme: uiTheme, title: "Editor")
+            SettingsSectionHeader(theme: uiTheme, title: "Editor", isFirst: true)
             SettingsGroupCard(theme: uiTheme) {
                 SettingsToggleRow(
                     theme: uiTheme,
@@ -474,7 +416,7 @@ private struct ExportSettingsView: View {
 
     var body: some View {
         SettingsPage(theme: uiTheme) {
-            SettingsSectionHeader(theme: uiTheme, title: "PDF defaults")
+            SettingsSectionHeader(theme: uiTheme, title: "PDF defaults", isFirst: true)
             SettingsGroupCard(theme: uiTheme) {
                 menuRow(
                     title: "Page size",
@@ -509,7 +451,6 @@ private struct ExportSettingsView: View {
             }
 
             SettingsSectionHeader(theme: uiTheme, title: "Layout")
-                .padding(.top, scaled(6))
             SettingsGroupCard(theme: uiTheme) {
                 SettingsSliderRow(
                     theme: uiTheme,
@@ -559,7 +500,6 @@ private struct ExportSettingsView: View {
                 options: options,
                 theme: uiTheme
             )
-            .frame(minWidth: scaled(132))
         }
     }
 }
@@ -574,8 +514,8 @@ private struct ShortcutSettingsView: View {
 
     var body: some View {
         SettingsPage(theme: uiTheme) {
-            ForEach(MonknotKeyboardShortcutCatalog.sections, id: \.title) { section in
-                SettingsSectionHeader(theme: uiTheme, title: section.title)
+            ForEach(Array(MonknotKeyboardShortcutCatalog.sections.enumerated()), id: \.element.title) { index, section in
+                SettingsSectionHeader(theme: uiTheme, title: section.title, isFirst: index == 0)
                 SettingsGroupCard(theme: uiTheme) {
                     ForEach(Array(section.entries.enumerated()), id: \.element.title) { index, entry in
                         SettingsRow(
@@ -612,8 +552,8 @@ struct SettingsPage<Content: View>: View {
                 content()
             }
             .padding(.horizontal, scaled(20))
-            .padding(.vertical, scaled(18))
-            .padding(.bottom, scaled(10))
+            .padding(.top, scaled(16))
+            .padding(.bottom, scaled(24))
             .frame(maxWidth: scaled(680))
             .frame(maxWidth: .infinity)
         }
@@ -622,6 +562,7 @@ struct SettingsPage<Content: View>: View {
     }
 }
 
+/// Workspace zoom in Settings: the shared stepper through the supported zoom levels.
 private struct SettingsWorkspaceZoomRow: View {
     let theme: AppTheme
     let title: String
@@ -630,10 +571,6 @@ private struct SettingsWorkspaceZoomRow: View {
     @Binding var value: Double
     @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
 
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
-    }
-
     var body: some View {
         SettingsRow(
             theme: theme,
@@ -641,74 +578,29 @@ private struct SettingsWorkspaceZoomRow: View {
             detail: detail,
             showsDivider: showsDivider
         ) {
-            HStack(spacing: scaled(8)) {
-                SettingsZoomStepButton(systemImage: "minus", label: "Zoom out", theme: theme) {
-                    value = WorkspaceZoomPolicy.stepped(value, by: -1)
-                }
-
-                Text("\(Int((WorkspaceZoomPolicy.clamp(value) * 100).rounded()))%")
-                    .font(.system(
-                        size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: settingsZoomScale),
-                        weight: .regular,
-                        design: .monospaced
-                    ))
-                    .foregroundStyle(theme.foregroundColor)
-                    .frame(width: scaled(48))
-
-                SettingsZoomStepButton(systemImage: "plus", label: "Zoom in", theme: theme) {
-                    value = WorkspaceZoomPolicy.stepped(value, by: 1)
-                }
-            }
-        }
-    }
-}
-
-/// A Settings zoom step: inset fill and border at rest, with the shared hover and press fills, the glyph
-/// one step up the ink ladder while hovered or held, and the standard focus ring (design.md §1.4, §5.1).
-private struct SettingsZoomStepButton: View {
-    let systemImage: String
-    let label: String
-    let theme: AppTheme
-    let action: () -> Void
-
-    @State private var isHovered = false
-    @State private var isPressed = false
-    @FocusState private var isFocused: Bool
-    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
-
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
-    }
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: scaled(8))
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(
-                    size: MonknotMetrics.interfaceGlyph(13, theme: theme, zoomScale: settingsZoomScale),
-                    weight: .regular
-                ))
-                .foregroundStyle(isHovered || isPressed ? theme.foregroundColor : theme.mutedForegroundColor)
-                .frame(width: scaled(26), height: scaled(26))
-                // Borderless, like every icon button (design.md §5.1).
-                .background {
-                    if isPressed {
-                        shape.fill(theme.pressedFillColor)
-                    } else if isHovered {
-                        shape.fill(theme.hoverFillColor)
+            // The stepper counts in zoom levels; each step moves to the next supported level, as ⌘+
+            // and ⌘− do.
+            MonknotStepper(
+                title: title,
+                value: Binding(
+                    get: { levelIndex },
+                    set: { index in
+                        value = WorkspaceZoomPolicy.stepped(value, by: index > levelIndex ? 1 : -1)
                     }
-                }
-                .monknotFocusRing(isVisible: isFocused, cornerRadius: scaled(8), theme: theme)
-                .contentShape(shape)
+                ),
+                range: 0...Double(WorkspaceZoomPolicy.supportedLevels.count - 1),
+                displayValue: "\(Int((WorkspaceZoomPolicy.clamp(value) * 100).rounded()))%",
+                theme: theme,
+                zoomScale: settingsZoomScale
+            )
+            .accessibilityHint(detail)
         }
-        .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
-        .focusable(NSApp.isFullKeyboardAccessEnabled)
-        .focused($isFocused)
-        .focusEffectDisabled()
-        .onHover { isHovered = $0 }
-        .animation(MonknotMotion.hoverAnimation, value: isHovered)
-        .help(label)
-        .accessibilityLabel(label)
-        .monknotPointerCursor()
+    }
+
+    /// The current zoom's place among the supported levels; a zoom between levels counts as the next.
+    private var levelIndex: Double {
+        let current = WorkspaceZoomPolicy.clamp(value)
+        let levels = WorkspaceZoomPolicy.supportedLevels
+        return Double(levels.firstIndex { $0 >= current - 0.000_001 } ?? levels.count - 1)
     }
 }

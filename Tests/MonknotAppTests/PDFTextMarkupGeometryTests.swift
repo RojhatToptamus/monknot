@@ -12,7 +12,7 @@ final class PDFTextMarkupGeometryTests: PDFTextMarkupTestCase {
                 zoomScale: zoom
             )
             XCTAssertEqual(
-                metrics.fontMenuWidth + metrics.itemSpacing + metrics.colorWellDimension,
+                metrics.fontMenuWidth + metrics.itemSpacing + metrics.colorWellWidth,
                 metrics.contentWidth,
                 accuracy: 0.01,
                 "zoom \(zoom)"

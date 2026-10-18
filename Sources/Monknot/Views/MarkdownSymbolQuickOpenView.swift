@@ -42,7 +42,7 @@ struct MarkdownSymbolQuickOpenView: View {
                     close: close
                 )
 
-                Rectangle().fill(theme.separatorColor).frame(height: 1)
+                MonknotCommandOverlaySeparator(theme: theme)
 
                 resultBody
 

@@ -5,16 +5,17 @@
   --mk-z: 1;
   --mk-tz: 1;
   --mk-ink: var(--fg);
-  --mk-ink2: color-mix(in srgb, var(--fg) 62%, transparent);
-  --mk-ink3: color-mix(in srgb, var(--fg) 40%, transparent);
-  --mk-ink4: color-mix(in srgb, var(--fg) 24%, transparent);
-  --mk-placeholder: color-mix(in srgb, var(--fg) 32%, transparent);
+  /* The chrome's ink ladder; the app sends the per-theme values (design.md §1.2). */
+  --mk-ink2: color-mix(in srgb, var(--fg) 72%, transparent);
+  --mk-ink3: color-mix(in srgb, var(--fg) 50%, transparent);
+  --mk-ink4: color-mix(in srgb, var(--fg) 30%, transparent);
+  --mk-placeholder: var(--mk-ink4);
   --mk-line: color-mix(in srgb, var(--fg) 12%, transparent);
   --mk-line2: color-mix(in srgb, var(--fg) 8%, transparent);
   --mk-hover: color-mix(in srgb, var(--fg) 5.5%, transparent);
   --mk-press: color-mix(in srgb, var(--fg) 10%, transparent);
   /* A highlighted menu row: neutral, so it never reads as a second text selection. */
-  --mk-highlight: var(--highlight, color-mix(in srgb, var(--fg) 6.5%, transparent));
+  --mk-highlight: var(--highlight, var(--mk-hover));
   /* A format that is on, in the format bar: a fill that reads at a glance on a 28 pt button. */
   --mk-on: color-mix(in srgb, var(--fg) 12%, transparent);
   --mk-floating: color-mix(in srgb, var(--bg) 97%, var(--fg));
@@ -795,9 +796,10 @@
   gap: calc(5px * var(--mk-z));
 }
 
+/* A quiet hint, as the window's overlays draw it (design.md §4.4). */
 .mk-menu-footer kbd {
   font: 400 calc(12px * var(--mk-tz)) / 1 ui-rounded, var(--ui-font);
-  color: var(--mk-ink2);
+  color: var(--mk-ink3);
 }
 
 .mk-menu-search {

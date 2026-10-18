@@ -51,10 +51,10 @@ struct AppearanceSettingsView: View {
             }
 
             themeEditorHeader
-                .padding(.top, scaled(24))
 
             selectedThemeEditor
 
+            SettingsSectionHeader(theme: uiTheme, title: "Live preview")
             ThemeLivePreview(
                 theme: draft(for: activeSlot)
                     .applied(to: themeStore.presetTheme(for: activeSlot))
@@ -65,10 +65,8 @@ struct AppearanceSettingsView: View {
                     ),
                 chromeTheme: uiTheme
             )
-            .padding(.top, scaled(22))
 
             SettingsSectionHeader(theme: uiTheme, title: "Typography")
-                .padding(.top, scaled(24))
             typographyControls
         }
         .onAppear(perform: reloadDraftsAndBaselines)
@@ -80,23 +78,23 @@ struct AppearanceSettingsView: View {
         }
     }
 
+    /// The slot's group header; Revert appears on it while the slot has edits, without moving it.
     private var themeEditorHeader: some View {
         let isEdited = hasEdits(for: activeSlot)
 
-        return HStack(alignment: .center, spacing: scaled(10)) {
-            Text(activeSlot.title)
-                .font(MonknotTypography.eyebrow(theme: uiTheme, zoomScale: settingsZoomScale))
-                .tracking(MonknotTypography.eyebrowTracking(theme: uiTheme, zoomScale: settingsZoomScale))
-                .foregroundStyle(uiTheme.mutedForegroundColor)
-
-            Spacer()
-
-            HStack(alignment: .center, spacing: scaled(10)) {
+        return SettingsSectionHeader(theme: uiTheme, title: activeSlot.title) {
+            HStack(spacing: scaled(10)) {
                 Text("Edited")
-                    .font(.system(size: MonknotMetrics.interfaceText(12, theme: uiTheme, zoomScale: settingsZoomScale)))
-                    .foregroundStyle(uiTheme.mutedForegroundColor)
+                    .font(MonknotTypography.rowDetail(theme: uiTheme, zoomScale: settingsZoomScale))
+                    .foregroundStyle(uiTheme.tertiaryForegroundColor)
 
-                SettingsOutlineButton(title: "Revert", theme: uiTheme) {
+                MonknotActionButton(
+                    title: "Revert",
+                    role: .secondary,
+                    theme: uiTheme,
+                    zoomScale: settingsZoomScale,
+                    size: .bar
+                ) {
                     revert(activeSlot)
                 }
             }
@@ -104,8 +102,6 @@ struct AppearanceSettingsView: View {
             .allowsHitTesting(isEdited)
             .accessibilityHidden(!isEdited)
         }
-        .padding(.horizontal, scaled(2))
-        .padding(.bottom, scaled(9))
     }
 
     @ViewBuilder
@@ -226,7 +222,6 @@ private struct ThemeEditorSection: View {
                         draft = themeStore.configuration(for: slot)
                     }
                 )
-                .frame(minWidth: MonknotMetrics.interfaceDensity(160, theme: uiTheme, zoomScale: settingsZoomScale))
             }
 
             EditableThemeColorRow(theme: uiTheme, label: "Accent", hex: $draft.accent)
@@ -292,6 +287,8 @@ private struct ThemeTypographySettings: View {
     }
 }
 
+/// A miniature of the window in the draft theme (design.md §12): the sidebar's rows, one selected,
+/// beside a note, at their real sizes, in a group's rounded box.
 private struct ThemeLivePreview: View {
     let theme: AppTheme
     let chromeTheme: AppTheme
@@ -302,69 +299,49 @@ private struct ThemeLivePreview: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Live preview")
-                .font(MonknotTypography.eyebrow(theme: chromeTheme, zoomScale: settingsZoomScale))
-                .tracking(MonknotTypography.eyebrowTracking(theme: chromeTheme, zoomScale: settingsZoomScale))
-                .foregroundStyle(chromeTheme.tertiaryForegroundColor)
-                .padding(.horizontal, scaled(14))
-                .frame(height: scaled(28))
-
-            // A miniature of the window in the draft theme: sidebar rows (one selected) beside a note.
-            HStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: scaled(2)) {
-                    previewRow("Weekly review.md", isSelected: true)
-                    previewRow("Ideas.md", isSelected: false)
-                }
-                .padding(scaled(6))
-                .frame(width: scaled(150), alignment: .topLeading)
-                .frame(maxHeight: .infinity, alignment: .top)
-                .background(theme.sidebarSurfaceColor)
-
-                VStack(alignment: .leading, spacing: scaled(5)) {
-                    Text("Weekly review")
-                        .font(.system(
-                            size: MonknotMetrics.interfaceText(15, theme: chromeTheme, zoomScale: settingsZoomScale),
-                            weight: .semibold
-                        ))
-                        .foregroundStyle(theme.foregroundColor)
-                    Text("Draft the outline, then link the project brief.")
-                        .font(.system(size: MonknotMetrics.interfaceText(12, theme: chromeTheme, zoomScale: settingsZoomScale)))
-                        .foregroundStyle(theme.mutedForegroundColor)
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, scaled(14))
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                .background(theme.contentSurfaceColor)
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: scaled(MonknotMetrics.rowGapBase)) {
+                previewRow("Weekly review.md", isSelected: true)
+                previewRow("Ideas.md", isSelected: false)
             }
-            .frame(height: scaled(70))
-            .overlay(alignment: .top) {
-                Rectangle().fill(chromeTheme.separatorColor).frame(height: 1)
+            .padding(scaled(MonknotMetrics.menuListInsetBase + 2))
+            .frame(width: scaled(184), alignment: .topLeading)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(theme.sidebarSurfaceColor)
+
+            VStack(alignment: .leading, spacing: scaled(6)) {
+                Text("Weekly review")
+                    .font(.system(
+                        size: MonknotMetrics.interfaceText(15, theme: chromeTheme, zoomScale: settingsZoomScale),
+                        weight: .semibold
+                    ))
+                    .foregroundStyle(theme.foregroundColor)
+                Text("Draft the outline, then link the project.")
+                    .font(MonknotTypography.rowDetail(theme: chromeTheme, zoomScale: settingsZoomScale))
+                    .foregroundStyle(theme.tertiaryForegroundColor)
+                    .lineLimit(1)
             }
+            .padding(.horizontal, scaled(16))
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .background(theme.contentSurfaceColor)
         }
-        .background(chromeTheme.elevatedSurfaceColor)
-        .clipShape(RoundedRectangle(cornerRadius: chromeTheme.chromeRadius(chromeTheme.settingsCardCornerRadius, zoomScale: settingsZoomScale)))
-        .overlay {
-            RoundedRectangle(cornerRadius: chromeTheme.chromeRadius(chromeTheme.settingsCardCornerRadius, zoomScale: settingsZoomScale))
-                .strokeBorder(chromeTheme.borderColor, lineWidth: 1)
-        }
+        .frame(height: scaled(76))
+        .clipShape(RoundedRectangle(cornerRadius: chromeTheme.chromeRadius(MonknotMetrics.cardCornerRadius, zoomScale: settingsZoomScale)))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Live preview of the theme")
     }
 
     private func previewRow(_ title: String, isSelected: Bool) -> some View {
-        HStack(spacing: scaled(6)) {
-            Image(systemName: "doc.text")
-                .font(.system(size: MonknotMetrics.interfaceGlyph(11, theme: chromeTheme, zoomScale: settingsZoomScale)))
-                .foregroundStyle(isSelected ? theme.accentColor : theme.tertiaryForegroundColor)
-            Text(title)
-                .font(.system(size: MonknotMetrics.interfaceText(11, theme: chromeTheme, zoomScale: settingsZoomScale)))
-                .foregroundStyle(isSelected ? theme.foregroundColor : theme.mutedForegroundColor)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, scaled(8))
-        .frame(maxWidth: .infinity, minHeight: scaled(22), alignment: .leading)
+        MonknotListRowLabel(
+            leading: .kind(systemImage: "doc.text"),
+            title: title,
+            isSelected: isSelected,
+            theme: theme,
+            zoomScale: settingsZoomScale
+        )
         .background {
             if isSelected {
-                RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: settingsZoomScale))
+                RoundedRectangle(cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: settingsZoomScale))
                     .fill(theme.chromeSelectedFillColor)
             }
         }

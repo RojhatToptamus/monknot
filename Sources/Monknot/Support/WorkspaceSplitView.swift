@@ -13,7 +13,7 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
     let isTerminalFullscreen: Bool
     let layoutScale: CGFloat
     let separatorColor: NSColor
-    let accentColor: NSColor
+    let handleInkColor: NSColor
     /// The document and terminal sit on cards inset from the chrome (design.md §10.0).
     let cardStyle: WorkspaceCardStyle
     /// Called with the document card's leading edge in window coordinates whenever it moves, so the
@@ -35,7 +35,7 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
         isTerminalFullscreen: Bool = false,
         layoutScale: CGFloat,
         separatorColor: NSColor,
-        accentColor: NSColor,
+        handleInkColor: NSColor,
         onDocumentLeadingEdgeChange: ((CGFloat) -> Void)? = nil,
         cardStyle: WorkspaceCardStyle = .none,
         sidebarRevealRequest: UInt = 0,
@@ -51,7 +51,7 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
         self.isTerminalFullscreen = isTerminalFullscreen
         self.layoutScale = layoutScale
         self.separatorColor = separatorColor
-        self.accentColor = accentColor
+        self.handleInkColor = handleInkColor
         self.onDocumentLeadingEdgeChange = onDocumentLeadingEdgeChange
         self.cardStyle = cardStyle
         self.sidebarRevealRequest = sidebarRevealRequest
@@ -75,7 +75,7 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
             isTerminalFullscreen: isTerminalFullscreen,
             layoutScale: layoutScale,
             separatorColor: separatorColor,
-            accentColor: accentColor,
+            handleInkColor: handleInkColor,
             sidebarRevealRequest: sidebarRevealRequest,
             terminalRevealRequest: terminalRevealRequest,
             onSidebarPresentationChange: onSidebarPresentationChange,
@@ -99,7 +99,7 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
             isTerminalFullscreen: isTerminalFullscreen,
             layoutScale: layoutScale,
             separatorColor: separatorColor,
-            accentColor: accentColor,
+            handleInkColor: handleInkColor,
             sidebarRevealRequest: sidebarRevealRequest,
             terminalRevealRequest: terminalRevealRequest,
             onSidebarPresentationChange: onSidebarPresentationChange,
@@ -176,7 +176,7 @@ final class WorkspaceNativeSplitView: NSSplitView {
     var separatorColor: NSColor = .separatorColor {
         didSet { needsDisplay = true }
     }
-    var accentColor: NSColor = .controlAccentColor {
+    var handleInkColor: NSColor = .labelColor {
         didSet { needsDisplay = true }
     }
     var dividerHitWidth: CGFloat = WorkspaceSplitMetrics.dividerHitWidth {
@@ -242,7 +242,8 @@ final class WorkspaceNativeSplitView: NSSplitView {
             width: lineWidth,
             height: rect.height
         )
-        let color = isActive ? accentColor : accentColor.withAlphaComponent(0.72)
+        // The theme's ink, faintly: a resize handle is structure, never the accent (design.md §5.7).
+        let color = handleInkColor.withAlphaComponent(isActive ? 0.30 : 0.18)
         color.setFill()
         lineRect.fill()
     }
@@ -875,7 +876,7 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         isTerminalFullscreen: Bool = false,
         layoutScale: CGFloat,
         separatorColor: NSColor,
-        accentColor: NSColor,
+        handleInkColor: NSColor,
         sidebarRevealRequest: UInt = 0,
         terminalRevealRequest: UInt = 0,
         onSidebarPresentationChange: @escaping (Bool, Bool) -> Void,
@@ -927,7 +928,7 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         workspaceSplitView.isVertical = true
         workspaceSplitView.dividerStyle = .thin
         workspaceSplitView.separatorColor = separatorColor
-        workspaceSplitView.accentColor = accentColor
+        workspaceSplitView.handleInkColor = handleInkColor
         splitView = workspaceSplitView
 
         configureItems()
@@ -1208,7 +1209,7 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         isTerminalFullscreen: Bool = false,
         layoutScale: CGFloat,
         separatorColor: NSColor,
-        accentColor: NSColor,
+        handleInkColor: NSColor,
         sidebarRevealRequest: UInt = 0,
         terminalRevealRequest: UInt = 0,
         onSidebarPresentationChange: @escaping (Bool, Bool) -> Void,
@@ -1234,7 +1235,7 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         panes.terminal.onPresentationChange = onTerminalPresentationChange
         self.isTerminalFullscreen = isTerminalFullscreen && isTerminalPresented
         workspaceSplitView.separatorColor = separatorColor
-        workspaceSplitView.accentColor = accentColor
+        workspaceSplitView.handleInkColor = handleInkColor
 
         let normalizedScale = WorkspaceSplitMetrics.normalizedScale(layoutScale)
         if self.layoutScale != normalizedScale {

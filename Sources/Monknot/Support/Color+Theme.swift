@@ -24,10 +24,6 @@ extension NSColor {
 }
 
 extension AppTheme {
-    private var normalizedContrast: Double {
-        min(100, max(0, contrast)) / 100
-    }
-
     /// The primary reading/editing canvas (editor, preview, top bar, tabs).
     var surfaceColor: Color {
         Color(hex: background)
@@ -121,24 +117,35 @@ extension AppTheme {
         Color(hex: recessedSurfaceHex(amount: isDark ? 0.17 : 0.09))
     }
 
-    /// design.md §1.2 `ink2` and `ink3` as opacities of the theme foreground.
-    static let mutedInkOpacity = 0.62
-    static let tertiaryInkOpacity = 0.40
-    /// A sidebar row's label and glyph at rest (design.md §10.4): quieter than full ink so a long tree
-    /// stays calm, clearer than `ink2` so it never looks washed out.
-    static let sidebarLabelInkOpacity = 0.75
-    static let sidebarGlyphInkOpacity = 0.55
-
+    /// design.md §1.2 `ink2`: every label at rest, in the sidebar, tabs, menus and Settings alike. The
+    /// opacity is derived per theme so it always reads 4.5:1 (`AppTheme.labelInkOpacity`).
     var mutedForegroundColor: Color {
-        foregroundColor.opacity(Self.mutedInkOpacity)
+        foregroundColor.opacity(labelInkOpacity)
     }
 
+    /// design.md §1.2 `ink3`: every glyph at rest and all secondary text, at 3:1 or better.
     var tertiaryForegroundColor: Color {
-        foregroundColor.opacity(Self.tertiaryInkOpacity)
+        foregroundColor.opacity(glyphInkOpacity)
     }
 
+    /// design.md §1.2 `ink4`: disabled controls and placeholders.
     var disabledForegroundColor: Color {
-        foregroundColor.opacity(0.24)
+        foregroundColor.opacity(AppTheme.disabledInkOpacity)
+    }
+
+    /// design.md §1.2 `on`: a toggle that is on, such as a format in the format bar. Neutral, so an
+    /// active control never spends the accent.
+    var onFillColor: Color {
+        foregroundColor.opacity(isDark ? 0.17 : 0.12)
+    }
+
+    /// The line a split divider shows while hovered, and while dragged (design.md §5.7).
+    var dividerHandleColor: Color {
+        foregroundColor.opacity(0.18)
+    }
+
+    var dividerHandleDragColor: Color {
+        foregroundColor.opacity(0.30)
     }
 
     /// Shadow hue for floating surfaces. Light themes carry 10% of the accent
@@ -148,21 +155,6 @@ extension AppTheme {
         let ink = NSColor(hex: foreground)
         let accent = NSColor(hex: accent)
         return Color(nsColor: ink.blended(withFraction: 0.10, of: accent) ?? ink)
-    }
-
-    /// Secondary sidebar ink is derived directly from the theme foreground.
-    /// This avoids applying sidebar quieting to an already translucent color,
-    /// which made small labels and icons illegible in light themes.
-    func sidebarMutedColor(prominence: Double = 1) -> Color {
-        foregroundColor.opacity(sidebarMutedOpacity(prominence: prominence))
-    }
-
-    func sidebarMutedOpacity(prominence: Double = 1) -> Double {
-        let clampedProminence = min(1, max(0, prominence))
-        let base = (isDark ? 0.58 : 0.60) + normalizedContrast * 0.12
-        let tertiaryReduction = (1 - clampedProminence) * 0.18
-        let quietReduction = quietSidebar ? 0.08 : 0
-        return max(sidebarLegibleInkFloor, min(0.76, base - tertiaryReduction - quietReduction))
     }
 
     /// Below this opacity small sidebar labels and icons stop being legible in light themes.
@@ -184,7 +176,7 @@ extension AppTheme {
         foregroundColor.opacity(isDark ? 0.11 : 0.10)
     }
 
-    /// design.md §1.2 `accsoft`: the fill of an icon button whose panel is open.
+    /// design.md §1.2 `accsoft`: the 3 pt ring around a focused field (`View.monknotField`).
     var accentSoftFillColor: Color {
         accentColor.opacity(isDark ? 0.18 : 0.14)
     }
@@ -249,14 +241,5 @@ extension AppTheme {
 
     func chromeRadius(_ basePoints: CGFloat, zoomScale: Double) -> CGFloat {
         (basePoints * interfaceDensityScale(zoomScale: zoomScale)).rounded()
-    }
-
-    /// Settings / static panels (zoom = 1).
-    var settingsControlCornerRadius: CGFloat {
-        8
-    }
-
-    var settingsCardCornerRadius: CGFloat {
-        12
     }
 }

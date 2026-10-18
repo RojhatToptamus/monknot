@@ -63,13 +63,9 @@ struct GeneralSettingsView: View {
         )
     }
 
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: uiTheme, zoomScale: settingsZoomScale)
-    }
-
     var body: some View {
         SettingsPage(theme: uiTheme) {
-            SettingsSectionHeader(theme: uiTheme, title: "Behavior")
+            SettingsSectionHeader(theme: uiTheme, title: "Behavior", isFirst: true)
             SettingsGroupCard(theme: uiTheme) {
                 SettingsToggleRow(
                     theme: uiTheme,
@@ -101,7 +97,6 @@ struct GeneralSettingsView: View {
             }
 
             SettingsSectionHeader(theme: uiTheme, title: "Updates")
-                .padding(.top, scaled(22))
             SettingsGroupCard(theme: uiTheme) {
                 SettingsToggleRow(
                     theme: uiTheme,
@@ -125,7 +120,6 @@ struct GeneralSettingsView: View {
             }
 
             SettingsSectionHeader(theme: uiTheme, title: "Reading")
-                .padding(.top, scaled(22))
             SettingsGroupCard(theme: uiTheme) {
                 SettingsSliderRow(
                     theme: uiTheme,
@@ -150,7 +144,6 @@ struct GeneralSettingsView: View {
                         },
                         theme: uiTheme
                     )
-                    .frame(minWidth: scaled(172))
                 }
             }
         }

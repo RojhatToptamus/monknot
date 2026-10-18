@@ -1,36 +1,21 @@
-import AppKit
 import MonknotCore
 import SwiftUI
 
-/// Theme-aware segmented control for Settings (avoids system `.segmented` tint/contrast bugs on light themes).
+/// Settings' segmented control: the app's one segmented control with text cells, at the Settings
+/// window's zoom (design.md §5.5, §12).
 struct MonknotSettingsSegmentedControl: View {
     let options: [MonknotSettingsSegment]
     @Binding var selection: String
     let theme: AppTheme
     @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
 
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
-    }
-
-    private var cornerRadius: CGFloat {
-        theme.chromeRadius(theme.settingsControlCornerRadius, zoomScale: settingsZoomScale)
-    }
-
     var body: some View {
-        HStack(spacing: scaled(2)) {
-            ForEach(options) { option in
-                MonknotSettingsSegmentButton(
-                    title: option.title,
-                    isSelected: selection == option.id,
-                    theme: theme,
-                    action: { selection = option.id }
-                )
-            }
-        }
-        .padding(scaled(2))
-        // The window's segmented control: a `hover`-tinted track the selected segment lifts out of.
-        .background(theme.controlTrackFillColor, in: RoundedRectangle(cornerRadius: cornerRadius))
+        MonknotSegmentedControl(
+            options: options.map { MonknotSegmentOption(id: $0.id, title: $0.title) },
+            selection: $selection,
+            theme: theme,
+            zoomScale: settingsZoomScale
+        )
     }
 }
 
@@ -39,306 +24,27 @@ struct MonknotSettingsSegment: Identifiable {
     let title: String
 }
 
-private struct MonknotSettingsSegmentButton: View {
-    let title: String
-    let isSelected: Bool
-    let theme: AppTheme
-    let action: () -> Void
-
-    @State private var isHovered = false
-    @State private var isPressed = false
-    @FocusState private var isFocused: Bool
-    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
-
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
-    }
-
-    private var cornerRadius: CGFloat {
-        theme.chromeRadius(theme.settingsControlCornerRadius, zoomScale: settingsZoomScale)
-    }
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(MonknotTypography.settingsButton(theme: theme, zoomScale: settingsZoomScale))
-                .foregroundStyle(labelColor)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-                .padding(.horizontal, scaled(12))
-                .padding(.vertical, scaled(6))
-                .frame(minHeight: scaled(28))
-                .background {
-                    let shape = RoundedRectangle(cornerRadius: max(0, cornerRadius - 2))
-                    // The selected segment is a chip lifted out of the track (design.md §5.5).
-                    if isSelected {
-                        shape
-                            .fill(background)
-                            .shadow(color: theme.chipShadowColor, radius: 0.75, y: 1)
-                            .overlay { shape.strokeBorder(theme.chipRingColor, lineWidth: 0.5) }
-                    } else {
-                        shape.fill(background)
-                    }
-                }
-                .contentShape(RoundedRectangle(cornerRadius: max(0, cornerRadius - 1)))
-                .monknotFocusRing(isVisible: isFocused, cornerRadius: max(0, cornerRadius - 1), theme: theme)
-        }
-        .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
-        .focusable(NSApp.isFullKeyboardAccessEnabled)
-        .focused($isFocused)
-        .focusEffectDisabled()
-        .onHover { isHovered = $0 }
-        .animation(MonknotMotion.hoverAnimation, value: isHovered)
-        .animation(MonknotMotion.hoverAnimation, value: isSelected)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .monknotPointerCursor()
-    }
-
-    private var labelColor: Color {
-        // design.md §1.4: `ink2` at rest, `ink` hovered or selected.
-        isSelected || isHovered ? theme.foregroundColor : theme.mutedForegroundColor
-    }
-
-    private var background: Color {
-        if isSelected {
-            return theme.segmentSelectedFillColor
-        }
-        if isPressed {
-            return theme.pressedFillColor
-        }
-        if isHovered {
-            return theme.hoverFillColor
-        }
-        return .clear
-    }
-}
-
-/// Theme preset menu styled for readable labels on any background.
+/// Settings' pop-up: the app's one pop-up button at the Settings window's zoom (design.md §5.3, §12).
 struct MonknotSettingsMenuPicker: View {
     let title: String
     @Binding var selection: String
     let options: [(id: String, title: String)]
     let theme: AppTheme
-    let previewsSelection: Bool
-    let onPreviewSelection: ((String) -> Void)?
-    let onCancelPreview: (() -> Void)?
-    @State private var isMenuPresented = false
-    @State private var previewedSelection: String?
-    @State private var isHovered = false
-    @FocusState private var isFocused: Bool
+    var previewsSelection = false
+    var onPreviewSelection: ((String) -> Void)?
+    var onCancelPreview: (() -> Void)?
     @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
 
-    init(
-        title: String,
-        selection: Binding<String>,
-        options: [(id: String, title: String)],
-        theme: AppTheme,
-        previewsSelection: Bool = false,
-        onPreviewSelection: ((String) -> Void)? = nil,
-        onCancelPreview: (() -> Void)? = nil
-    ) {
-        self.title = title
-        self._selection = selection
-        self.options = options
-        self.theme = theme
-        self.previewsSelection = previewsSelection
-        self.onPreviewSelection = onPreviewSelection
-        self.onCancelPreview = onCancelPreview
-    }
-
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
-    }
-
-    private var cornerRadius: CGFloat {
-        theme.chromeRadius(theme.settingsControlCornerRadius, zoomScale: settingsZoomScale)
-    }
-
     var body: some View {
-        Button {
-            isMenuPresented = true
-        } label: {
-            HStack(spacing: scaled(6)) {
-                // As wide as the longest option, so previewing options while the menu tracks never
-                // resizes the button or moves the row.
-                Text(selectedTitle)
-                    .monknotReservingWidth(of: options.map(\.title), alignment: .leading)
-                    .font(MonknotTypography.settingsButton(theme: theme, zoomScale: settingsZoomScale))
-                    .foregroundStyle(theme.foregroundColor)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
-                Image(systemName: "chevron.down")
-                    .font(.system(
-                        size: MonknotMetrics.interfaceGlyph(10, theme: theme, zoomScale: settingsZoomScale),
-                        weight: .regular
-                    ))
-                    .foregroundStyle(theme.mutedForegroundColor)
-            }
-            .padding(.horizontal, scaled(12))
-            .padding(.vertical, scaled(6))
-            .frame(minHeight: scaled(28))
-            // A pop-up is a filled button, like the editor's block selector: no border, the fill
-            // deepens under the pointer and while the menu is open.
-            .background {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(isHovered || isMenuPresented ? theme.pressedFillColor : theme.controlTrackFillColor)
-            }
-            .monknotFocusRing(isVisible: isFocused, cornerRadius: cornerRadius, theme: theme)
-        }
-        .buttonStyle(.plain)
-        .focusable(NSApp.isFullKeyboardAccessEnabled)
-        .focused($isFocused)
-        .focusEffectDisabled()
-        .fixedSize(horizontal: false, vertical: true)
-        .background(
-            SettingsMenuPresenter(
-                isPresented: $isMenuPresented,
-                selection: $selection,
-                previewedSelection: $previewedSelection,
-                options: options,
-                previewsSelection: previewsSelection,
-                onPreviewSelection: onPreviewSelection,
-                onCancelPreview: onCancelPreview
-            )
-            .allowsHitTesting(false)
+        MonknotPopUpButton(
+            label: title,
+            selection: $selection,
+            items: options.map { MonknotPopUpItem(id: $0.id, title: $0.title) },
+            theme: theme,
+            zoomScale: settingsZoomScale,
+            previewsSelection: previewsSelection,
+            onPreviewSelection: onPreviewSelection,
+            onCancelPreview: onCancelPreview
         )
-        .onHover { isHovered = $0 }
-        .help(title)
-        .accessibilityLabel(title)
-        .monknotPointerCursor()
-    }
-
-    private var selectedTitle: String {
-        options.first(where: { $0.id == previewedSelection ?? selection })?.title ?? "Theme"
-    }
-}
-
-struct SettingsMenuSelectionTransaction: Equatable {
-    let initialSelection: String
-    private(set) var previewedSelection: String
-    private(set) var committedSelection: String?
-
-    init(initialSelection: String) {
-        self.initialSelection = initialSelection
-        self.previewedSelection = initialSelection
-    }
-
-    mutating func preview(_ selection: String) {
-        previewedSelection = selection
-    }
-
-    mutating func commit(_ selection: String) {
-        previewedSelection = selection
-        committedSelection = selection
-    }
-
-    var selectionAfterClose: String {
-        committedSelection ?? initialSelection
-    }
-}
-
-private struct SettingsMenuPresenter: NSViewRepresentable {
-    @Binding var isPresented: Bool
-    @Binding var selection: String
-    @Binding var previewedSelection: String?
-    let options: [(id: String, title: String)]
-    let previewsSelection: Bool
-    let onPreviewSelection: ((String) -> Void)?
-    let onCancelPreview: (() -> Void)?
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(parent: self)
-    }
-
-    func makeNSView(context: Context) -> NSView {
-        NSView(frame: .zero)
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        context.coordinator.parent = self
-        guard isPresented,
-              !context.coordinator.isTracking,
-              !context.coordinator.isPresentationScheduled else {
-            return
-        }
-
-        context.coordinator.isPresentationScheduled = true
-        DispatchQueue.main.async { [weak nsView, weak coordinator = context.coordinator] in
-            guard let nsView, let coordinator else { return }
-            coordinator.isPresentationScheduled = false
-            guard coordinator.parent.isPresented else { return }
-            coordinator.presentMenu(from: nsView)
-        }
-    }
-
-    @MainActor
-    final class Coordinator: NSObject, NSMenuDelegate {
-        var parent: SettingsMenuPresenter
-        var isTracking = false
-        var isPresentationScheduled = false
-        private var transaction: SettingsMenuSelectionTransaction?
-
-        init(parent: SettingsMenuPresenter) {
-            self.parent = parent
-        }
-
-        func presentMenu(from anchor: NSView) {
-            guard !isTracking else { return }
-
-            let initialSelection = parent.selection
-            transaction = SettingsMenuSelectionTransaction(initialSelection: initialSelection)
-
-            let menu = NSMenu(title: parent.selection)
-            menu.autoenablesItems = false
-            menu.delegate = self
-            menu.minimumWidth = max(anchor.bounds.width, 160)
-
-            for option in parent.options {
-                let item = NSMenuItem(
-                    title: option.title,
-                    action: #selector(commitSelection(_:)),
-                    keyEquivalent: ""
-                )
-                item.target = self
-                item.representedObject = option.id
-                item.state = option.id == initialSelection ? .on : .off
-                menu.addItem(item)
-            }
-
-            let positioningItem = menu.items.first { ($0.representedObject as? String) == initialSelection }
-            isTracking = true
-            _ = menu.popUp(
-                positioning: positioningItem,
-                at: NSPoint(x: 0, y: anchor.bounds.maxY),
-                in: anchor
-            )
-            isTracking = false
-
-            if parent.previewsSelection,
-               transaction?.committedSelection == nil {
-                parent.onCancelPreview?()
-            }
-            parent.previewedSelection = nil
-            transaction = nil
-            parent.isPresented = false
-        }
-
-        func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
-            guard parent.previewsSelection,
-                  let selection = item?.representedObject as? String else {
-                return
-            }
-            transaction?.preview(selection)
-            parent.previewedSelection = selection
-            parent.onPreviewSelection?(selection)
-        }
-
-        @objc private func commitSelection(_ sender: NSMenuItem) {
-            guard let selection = sender.representedObject as? String else { return }
-            transaction?.commit(selection)
-            parent.selection = selection
-            parent.previewedSelection = nil
-        }
     }
 }

@@ -279,7 +279,7 @@ final class PDFTextMarkupUndoTests: PDFTextMarkupTestCase {
 
         let originalColor = try XCTUnwrap(annotation.fontColor)
         let committedColor = NSColor(calibratedRed: 0.12, green: 0.56, blue: 0.34, alpha: 1)
-        let colorWell = PDFFreeTextCommittedColorWell(frame: .zero)
+        let colorWell = MonknotCommittedColorWell(frame: .zero)
         colorWell.update(color: originalColor) { color in
             callbackCount += 1
             var formatting = PDFFreeTextFormatting(annotation: annotation)

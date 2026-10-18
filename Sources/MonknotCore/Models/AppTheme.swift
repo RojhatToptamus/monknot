@@ -362,3 +362,86 @@ public extension AppTheme {
         background
     }
 }
+
+// MARK: - The ink ladder (design.md §1.2)
+
+public extension AppTheme {
+    /// `ink2`, every label at rest: the theme ink at the lowest opacity, from 72 %, that still reads
+    /// 4.5:1 on both the chrome and the canvas. Catppuccin Latte's soft ink needs 84 %; a dark ink on
+    /// white keeps 72 %. One value for the sidebar, tabs, menus and Settings alike.
+    var labelInkOpacity: Double {
+        inkLadder.label
+    }
+
+    /// `ink3`, every glyph at rest and all secondary text: from 50 %, until it reads 3:1.
+    var glyphInkOpacity: Double {
+        inkLadder.glyph
+    }
+
+    /// The theme's `contrast` (0–100, 40 by default) scales the ladder's floors (design.md §14): at 40
+    /// they are 72 % and 50 %, at 100 a fifth higher, at 0 a sixth lower, and the contrast rule still
+    /// raises them wherever the ink would not read.
+    var inkLadderContrastFactor: Double {
+        0.85 + min(100, max(0, contrast)) / 100 * 0.375
+    }
+
+    /// `ink4`, disabled controls and placeholders.
+    static let disabledInkOpacity = 0.30
+
+    /// The smallest opacity at or above `base`, in hundredths, at which `ink` blended over each of
+    /// `surfaces` reaches `ratio`:1 against it; 1 when even the full ink cannot.
+    static func inkOpacity(ink: String, over surfaces: [String], ratio: Double, base: Double) -> Double {
+        guard RGBHex(ink) != nil else { return 1 }
+        let parsedSurfaces = surfaces.compactMap { hex in RGBHex(hex).map { (hex, $0) } }
+        var step = Int((base * 100).rounded())
+        while step < 100 {
+            let opacity = Double(step) / 100
+            let reads = parsedSurfaces.allSatisfy { hex, surface in
+                guard let blended = RGBHex(blendHex(hex, toward: ink, amount: opacity)) else { return false }
+                return blended.contrastRatio(with: surface) >= ratio
+            }
+            if reads { return opacity }
+            step += 1
+        }
+        return 1
+    }
+
+    private var inkLadder: InkLadder {
+        let factor = inkLadderContrastFactor
+        let key = "\(foreground)|\(background)|\(isDark)|\(factor)"
+        if let cached = InkLadder.cache.value(for: key) { return cached }
+        let surfaces = [sidebarSurfaceHex, background]
+        let ladder = InkLadder(
+            label: Self.inkOpacity(ink: foreground, over: surfaces, ratio: 4.5, base: min(0.95, 0.72 * factor)),
+            glyph: Self.inkOpacity(ink: foreground, over: surfaces, ratio: 3.0, base: min(0.80, 0.50 * factor))
+        )
+        InkLadder.cache.store(ladder, for: key)
+        return ladder
+    }
+}
+
+private struct InkLadder: Sendable {
+    let label: Double
+    let glyph: Double
+
+    /// Themes are few and their ladders tiny; views ask for them on every render.
+    static let cache = InkLadderCache()
+}
+
+private final class InkLadderCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ladders: [String: InkLadder] = [:]
+
+    func value(for key: String) -> InkLadder? {
+        lock.lock()
+        defer { lock.unlock() }
+        return ladders[key]
+    }
+
+    func store(_ ladder: InkLadder, for key: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        if ladders.count > 64 { ladders.removeAll() }
+        ladders[key] = ladder
+    }
+}

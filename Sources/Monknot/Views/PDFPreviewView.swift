@@ -55,33 +55,31 @@ struct PDFPreviewView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MonknotChromePanel(theme: theme) {
-                PDFAnnotationToolbar(
-                    isImage: isImage,
-                    isMarkupSupported: loadState.isMarkupSupported,
-                    interactionMode: $interactionMode,
-                    selectedColor: $selectedColor,
-                    strokeWidth: $strokeWidth,
-                    saveState: saveState,
-                    canUndo: canUndo,
-                    canRedo: canRedo,
-                    isDocumentAvailable: loadState.isLoaded,
-                    theme: theme,
-                    zoomScale: zoomScale,
-                    runMarkup: runMarkup(_:),
-                    undo: runUndo,
-                    redo: runRedo,
-                    pageStatus: pageStatus,
-                    zoomStatus: zoomStatus,
-                    runZoom: runZoom(_:),
-                    saveDocument: saveDocument,
-                    isNavigatorPresented: isNavigatorPresented,
-                    toggleNavigator: toggleNavigator,
-                    selectedFreeTextFormatting: selectedFreeTextFormatting,
-                    addFreeText: addFreeTextBox,
-                    updateFreeTextFormatting: updateFreeTextFormatting(_:)
-                )
-            }
+            PDFAnnotationToolbar(
+                isImage: isImage,
+                isMarkupSupported: loadState.isMarkupSupported,
+                interactionMode: $interactionMode,
+                selectedColor: $selectedColor,
+                strokeWidth: $strokeWidth,
+                saveState: saveState,
+                canUndo: canUndo,
+                canRedo: canRedo,
+                isDocumentAvailable: loadState.isLoaded,
+                theme: theme,
+                zoomScale: zoomScale,
+                runMarkup: runMarkup(_:),
+                undo: runUndo,
+                redo: runRedo,
+                pageStatus: pageStatus,
+                zoomStatus: zoomStatus,
+                runZoom: runZoom(_:),
+                saveDocument: saveDocument,
+                isNavigatorPresented: isNavigatorPresented,
+                toggleNavigator: toggleNavigator,
+                selectedFreeTextFormatting: selectedFreeTextFormatting,
+                addFreeText: addFreeTextBox,
+                updateFreeTextFormatting: updateFreeTextFormatting(_:)
+            )
 
             ZStack {
                 PDFKitPreviewRepresentable(
@@ -166,32 +164,24 @@ struct PDFPreviewView: View {
         }
     }
 
+    /// The document banner's look (design.md §13): a glyph in the rows' column and one line on the
+    /// elevated surface, a `line2` rule under it. It overlays the page, so the page never moves.
     private func markupHintBanner(_ hint: String) -> some View {
-        HStack(spacing: scaled(8)) {
-            Image(systemName: "text.cursor")
-                .font(.system(
-                    size: MonknotMetrics.interfaceGlyph(15, theme: theme, zoomScale: zoomScale),
-                    weight: .regular
-                ))
-                .foregroundStyle(theme.accentColor)
+        HStack(spacing: scaled(MonknotMetrics.rowGlyphGapBase)) {
+            MonknotFileKindGlyph(systemImage: "text.cursor", theme: theme, zoomScale: zoomScale)
+                .foregroundStyle(theme.tertiaryForegroundColor)
+                .accessibilityHidden(true)
 
             Text(hint)
-                .font(.system(
-                    size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale),
-                    weight: .regular
-                ))
+                .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
                 .foregroundStyle(theme.foregroundColor)
+                .lineLimit(1)
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, scaled(12))
-        .frame(height: scaled(32))
-        .background {
-            ZStack {
-                theme.surfaceColor
-                theme.accentColor.opacity(theme.isDark ? 0.18 : 0.14)
-            }
-        }
+        .padding(.horizontal, scaled(SettingsRow<EmptyView>.horizontalPaddingBase))
+        .frame(height: MonknotMetrics.barHeight(theme: theme, zoomScale: zoomScale))
+        .background(theme.elevatedSurfaceColor)
         .overlay(alignment: .bottom) {
             Rectangle().fill(theme.separatorColor).frame(height: 1)
         }
@@ -338,16 +328,11 @@ private enum PDFLoadState: Equatable {
     }
 }
 
-private enum PDFStrokeWidthPopoverAnchor: Equatable {
-    case annotation
+/// The PDF bar's three widths, widest first.
+private enum PDFToolbarLayout: Equatable {
+    case regular
     case compact
     case minimal
-}
-
-private enum PDFToolbarMenuHoverTarget: Equatable {
-    case tool
-    case style
-    case more
 }
 
 enum PDFAnnotationStyleDisclosure: Equatable {
@@ -551,6 +536,8 @@ struct PDFFreeTextFormatting: Equatable {
     }
 }
 
+/// The text box style popover: 248 wide, 12 padding, rows 10 apart, the app's 28 controls 8 apart. The
+/// font pop-up takes what the colour well leaves of the first row.
 struct PDFFreeTextPopoverMetrics: Equatable {
     static let baseWidth: CGFloat = 248
 
@@ -559,31 +546,25 @@ struct PDFFreeTextPopoverMetrics: Equatable {
     let rowSpacing: CGFloat
     let itemSpacing: CGFloat
     let controlHeight: CGFloat
-    let fontMenuWidth: CGFloat
-    let colorWellDimension: CGFloat
-    let sizeControlWidth: CGFloat
-    let segmentPadding: CGFloat
-    let segmentSpacing: CGFloat
-    let labelFontSize: CGFloat
-    let secondaryGlyphFontSize: CGFloat
+    let colorWellWidth: CGFloat
+    let colorWellHeight: CGFloat
 
     init(theme: AppTheme, zoomScale: Double) {
         width = MonknotMetrics.interfaceDensity(Self.baseWidth, theme: theme, zoomScale: zoomScale)
         padding = MonknotMetrics.interfaceDensity(12, theme: theme, zoomScale: zoomScale)
         rowSpacing = MonknotMetrics.interfaceDensity(10, theme: theme, zoomScale: zoomScale)
         itemSpacing = MonknotMetrics.interfaceDensity(8, theme: theme, zoomScale: zoomScale)
-        controlHeight = MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)
-        fontMenuWidth = MonknotMetrics.interfaceDensity(188, theme: theme, zoomScale: zoomScale)
-        colorWellDimension = MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)
-        sizeControlWidth = MonknotMetrics.interfaceDensity(84, theme: theme, zoomScale: zoomScale)
-        segmentPadding = MonknotMetrics.interfaceDensity(2, theme: theme, zoomScale: zoomScale)
-        segmentSpacing = MonknotMetrics.interfaceDensity(2, theme: theme, zoomScale: zoomScale)
-        labelFontSize = MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale)
-        secondaryGlyphFontSize = MonknotMetrics.interfaceGlyph(9, theme: theme, zoomScale: zoomScale)
+        controlHeight = MonknotMetrics.interfaceControl(MonknotMetrics.iconButtonSizeBase, theme: theme, zoomScale: zoomScale)
+        colorWellWidth = MonknotMetrics.interfaceDensity(44, theme: theme, zoomScale: zoomScale)
+        colorWellHeight = MonknotMetrics.interfaceDensity(22, theme: theme, zoomScale: zoomScale)
     }
 
     var contentWidth: CGFloat {
         width - padding * 2
+    }
+
+    var fontMenuWidth: CGFloat {
+        contentWidth - itemSpacing - colorWellWidth
     }
 }
 
@@ -608,70 +589,8 @@ private struct PDFFreeTextFormattingCommand {
     let formatting: PDFFreeTextFormatting
 }
 
-final class PDFFreeTextCommittedColorWell: NSColorWell {
-    private var onCommit: ((NSColor) -> Void)?
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        configureControl()
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        configureControl()
-    }
-
-    func update(color: NSColor, onCommit: @escaping (NSColor) -> Void) {
-        self.onCommit = onCommit
-        if !self.color.isEqual(color) {
-            self.color = color
-        }
-    }
-
-    func tearDown() {
-        deactivate()
-        target = nil
-        action = nil
-        onCommit = nil
-    }
-
-    private func configureControl() {
-        isContinuous = false
-        colorWellStyle = .minimal
-        target = self
-        action = #selector(commitColorChange(_:))
-    }
-
-    @objc private func commitColorChange(_ sender: NSColorWell) {
-        onCommit?(sender.color)
-    }
-}
-
-private struct PDFFreeTextColorWell: NSViewRepresentable {
-    let color: NSColor
-    let onCommit: (NSColor) -> Void
-
-    func makeNSView(context: Context) -> PDFFreeTextCommittedColorWell {
-        let colorWell = PDFFreeTextCommittedColorWell(frame: .zero)
-        colorWell.update(color: color, onCommit: onCommit)
-        return colorWell
-    }
-
-    func updateNSView(_ colorWell: PDFFreeTextCommittedColorWell, context: Context) {
-        colorWell.update(color: color, onCommit: onCommit)
-    }
-
-    static func dismantleNSView(_ colorWell: PDFFreeTextCommittedColorWell, coordinator: ()) {
-        colorWell.tearDown()
-    }
-}
-
-private enum PDFFreeTextPopoverFocus: Hashable {
-    case fontFamily
-    case decreaseSize
-    case increaseSize
-}
-
+/// A text box's style (design.md §10.6): font and colour, size and emphasis, alignment, each the
+/// app's shared control.
 private struct PDFFreeTextFormattingPopover: View {
     let formatting: PDFFreeTextFormatting
     let fontFamilies: [String]
@@ -679,45 +598,64 @@ private struct PDFFreeTextFormattingPopover: View {
     let zoomScale: Double
     let update: (PDFFreeTextFormatting) -> Void
 
-    @State private var isFontMenuHovered = false
-    @State private var hoveredSizeStep: Int?
-    @State private var pressedSizeStep: Int?
-    @FocusState private var focusedControl: PDFFreeTextPopoverFocus?
-
     private var metrics: PDFFreeTextPopoverMetrics {
         PDFFreeTextPopoverMetrics(theme: theme, zoomScale: zoomScale)
-    }
-
-    private var controlShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: metrics.rowSpacing) {
             HStack(spacing: metrics.itemSpacing) {
-                fontFamilyControl
+                MonknotPopUpButton(
+                    label: "Font Family",
+                    selection: Binding(
+                        get: { formatting.fontFamily },
+                        set: { family in
+                            var next = formatting
+                            next.fontFamily = family
+                            update(next)
+                        }
+                    ),
+                    items: fontFamilies.map { MonknotPopUpItem(id: $0, title: $0) },
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    width: metrics.fontMenuWidth
+                ) { shown in
+                    MonknotPopUpTitle(title: shown, reservedTitles: [], theme: theme, zoomScale: zoomScale)
+                }
 
-                PDFFreeTextColorWell(color: formatting.fontColor) { color in
+                MonknotColorWell(color: formatting.fontColor) { color in
                     var next = formatting
                     next.fontColor = color
                     update(next)
                 }
-                .frame(
-                    width: metrics.colorWellDimension,
-                    height: metrics.colorWellDimension
-                )
+                .frame(width: metrics.colorWellWidth, height: metrics.colorWellHeight)
                 .accessibilityLabel("Text Color")
             }
 
             HStack(spacing: metrics.itemSpacing) {
-                fontSizeControl
+                MonknotStepper(
+                    title: "Font Size",
+                    value: Binding(
+                        get: { Double(formatting.fontSize.rounded()) },
+                        set: { size in
+                            var next = formatting
+                            next.fontSize = CGFloat(size)
+                            update(next)
+                        }
+                    ),
+                    range: 6...144,
+                    displayValue: "\(Int(formatting.fontSize.rounded()))",
+                    suffix: "pt",
+                    theme: theme,
+                    zoomScale: zoomScale
+                )
                 Spacer(minLength: 0)
                 emphasisControls
             }
 
             HStack(spacing: metrics.itemSpacing) {
                 Text("Alignment")
-                    .font(.system(size: metrics.labelFontSize, weight: .regular))
+                    .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
                     .foregroundStyle(theme.mutedForegroundColor)
                 Spacer(minLength: 0)
                 alignmentControls
@@ -728,171 +666,9 @@ private struct PDFFreeTextFormattingPopover: View {
         .background(theme.elevatedSurfaceColor)
     }
 
-    private var fontFamilyControl: some View {
-        Menu {
-            ForEach(fontFamilies, id: \.self) { family in
-                Button {
-                    var next = formatting
-                    next.fontFamily = family
-                    update(next)
-                } label: {
-                    HStack {
-                        Text(family)
-                        if family == formatting.fontFamily {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
-        } label: {
-            fontFamilyMenuLabel
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .buttonStyle(.plain)
-        .focusable(NSApp.isFullKeyboardAccessEnabled)
-        .focused($focusedControl, equals: .fontFamily)
-        .focusEffectDisabled()
-        .onHover { isFontMenuHovered = $0 }
-        .animation(MonknotMotion.hoverAnimation, value: isFontMenuHovered)
-        .help("Font Family")
-        .accessibilityLabel("Font Family")
-        .accessibilityValue(formatting.fontFamily)
-    }
-
-    private var fontFamilyMenuLabel: some View {
-        HStack(spacing: metrics.itemSpacing) {
-            Text(formatting.fontFamily)
-                .font(.system(size: metrics.labelFontSize, weight: .regular))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            Image(systemName: "chevron.down")
-                .font(.system(size: metrics.secondaryGlyphFontSize, weight: .regular))
-                .foregroundStyle(theme.tertiaryForegroundColor)
-        }
-        .foregroundStyle(theme.foregroundColor)
-        .padding(.horizontal, metrics.itemSpacing)
-        .frame(width: metrics.fontMenuWidth, height: metrics.controlHeight)
-        // A pop-up: a fill, no border (design.md §5.3).
-        .background {
-            controlShape.fill(isFontMenuHovered ? theme.pressedFillColor : theme.controlTrackFillColor)
-        }
-        .monknotFocusRing(
-            isVisible: focusedControl == .fontFamily,
-            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale),
-            theme: theme
-        )
-        .contentShape(controlShape)
-    }
-
-    private var fontSizeControl: some View {
-        HStack(spacing: 0) {
-            Text("\(Int(formatting.fontSize.rounded())) pt")
-                .font(.system(size: metrics.labelFontSize, weight: .regular, design: .monospaced))
-                .foregroundStyle(theme.foregroundColor)
-                .monospacedDigit()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityHidden(true)
-
-            Rectangle()
-                .fill(theme.borderColor)
-                .frame(width: 1)
-                .accessibilityHidden(true)
-
-            VStack(spacing: 0) {
-                fontSizeStepButton(
-                    systemImage: "chevron.up",
-                    label: "Increase Font Size",
-                    delta: 1,
-                    isDisabled: formatting.fontSize >= 144,
-                    focus: .increaseSize
-                )
-
-                Rectangle()
-                    .fill(theme.borderColor)
-                    .frame(height: 1)
-                    .accessibilityHidden(true)
-
-                fontSizeStepButton(
-                    systemImage: "chevron.down",
-                    label: "Decrease Font Size",
-                    delta: -1,
-                    isDisabled: formatting.fontSize <= 6,
-                    focus: .decreaseSize
-                )
-            }
-            .frame(width: metrics.controlHeight)
-        }
-        .frame(width: metrics.sizeControlWidth, height: metrics.controlHeight)
-        .background(theme.controlTrackFillColor, in: controlShape)
-        .clipShape(controlShape)
-        .monknotFocusRing(
-            isVisible: focusedControl == .increaseSize || focusedControl == .decreaseSize,
-            cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale),
-            theme: theme
-        )
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Font Size")
-        .accessibilityValue("\(Int(formatting.fontSize.rounded())) points")
-    }
-
-    private func fontSizeStepButton(
-        systemImage: String,
-        label: String,
-        delta: CGFloat,
-        isDisabled: Bool,
-        focus: PDFFreeTextPopoverFocus
-    ) -> some View {
-        Button {
-            var next = formatting
-            next.fontSize = min(max(formatting.fontSize + delta, 6), 144)
-            update(next)
-        } label: {
-            Image(systemName: systemImage)
-                .font(.system(size: metrics.secondaryGlyphFontSize, weight: .regular))
-                .foregroundStyle(isDisabled ? theme.disabledForegroundColor : theme.mutedForegroundColor)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background {
-                    if !isDisabled {
-                        if pressedSizeStep == Int(delta) {
-                            theme.pressedFillColor
-                        } else if hoveredSizeStep == Int(delta) {
-                            theme.hoverFillColor
-                        }
-                    }
-                }
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: Binding(
-            get: { pressedSizeStep == Int(delta) },
-            set: { isPressed in
-                if isPressed {
-                    pressedSizeStep = Int(delta)
-                } else if pressedSizeStep == Int(delta) {
-                    pressedSizeStep = nil
-                }
-            }
-        )))
-        .disabled(isDisabled)
-        .focusable(!isDisabled && NSApp.isFullKeyboardAccessEnabled)
-        .focused($focusedControl, equals: focus)
-        .focusEffectDisabled()
-        .onHover { isHovered in
-            if isHovered {
-                hoveredSizeStep = Int(delta)
-            } else if hoveredSizeStep == Int(delta) {
-                hoveredSizeStep = nil
-            }
-        }
-        .animation(MonknotMotion.hoverAnimation, value: hoveredSizeStep)
-        .help(label)
-        .accessibilityLabel(label)
-    }
-
+    /// Bold and Italic: two independent toggles drawn as segments on one track.
     private var emphasisControls: some View {
-        HStack(spacing: metrics.segmentSpacing) {
+        HStack(spacing: MonknotMetrics.interfaceDensity(MonknotSegmentButton.cellGapBase, theme: theme, zoomScale: zoomScale)) {
             MonknotSegmentButton(
                 systemImage: "bold",
                 accessibilityLabel: "Bold",
@@ -917,8 +693,11 @@ private struct PDFFreeTextFormattingPopover: View {
                 update(next)
             }
         }
-        .padding(metrics.segmentPadding)
-        .background(theme.controlTrackFillColor, in: controlShape)
+        .padding(MonknotMetrics.interfaceDensity(MonknotSegmentButton.trackPaddingBase, theme: theme, zoomScale: zoomScale))
+        .background(
+            theme.controlTrackFillColor,
+            in: RoundedRectangle(cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale))
+        )
     }
 
     private var alignmentControls: some View {
@@ -953,6 +732,9 @@ private struct PDFFreeTextFormattingPopover: View {
     }
 }
 
+/// The PDF and image card's bar (design.md §10.6): pages, history, the tool modes as one segmented
+/// control, markup actions, the style pop-up, then zoom and Save. Every control is the shared 28 pt
+/// control, groups are set apart by space alone, and nothing in it spends the accent.
 private struct PDFAnnotationToolbar: View {
     /// An image: one page, no text, and markup that can be saved only into some formats.
     let isImage: Bool
@@ -979,14 +761,9 @@ private struct PDFAnnotationToolbar: View {
     let addFreeText: () -> Void
     let updateFreeTextFormatting: (PDFFreeTextFormatting) -> Void
 
-    @State private var strokeWidthPopoverAnchor: PDFStrokeWidthPopoverAnchor?
-    @State private var hoveredMenu: PDFToolbarMenuHoverTarget?
+    @State private var strokeWidthPopoverLayout: PDFToolbarLayout?
     @State private var isFreeTextFormattingPresented = false
     @State private var freeTextFontFamilies: [String] = []
-
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
-    }
 
     private var styleDisclosure: PDFAnnotationStyleDisclosure {
         PDFAnnotationStyleDisclosure(
@@ -996,28 +773,34 @@ private struct PDFAnnotationToolbar: View {
     }
 
     var body: some View {
-        // The zoom group and Save sit outside the variants, so changing tools, selecting text or
-        // dirtying the document never moves them.
-        HStack(spacing: scaled(5)) {
+        // Zoom and Save sit outside the layouts, so changing tools, selecting text or dirtying the
+        // document never moves them.
+        MonknotBar(theme: theme, zoomScale: zoomScale) {
             ViewThatFits(in: .horizontal) {
-                regularToolbar
-                annotationToolbar
-                compactToolbar
-                minimalToolbar
+                toolbar(.regular)
+                toolbar(.compact)
+                toolbar(.minimal)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            toolbarDivider
-            zoomToolbar
+
+            MonknotBarGroupGap(theme: theme, zoomScale: zoomScale)
+
+            PDFZoomToolbarGroup(
+                status: zoomStatus,
+                theme: theme,
+                zoomScale: zoomScale,
+                runZoom: runZoom
+            )
+
+            MonknotBarGroupGap(theme: theme, zoomScale: zoomScale)
+
             saveButton
         }
-        .padding(.horizontal, scaled(10))
-        .frame(height: MonknotMetrics.interfaceControl(36, theme: theme, zoomScale: zoomScale))
-        .frame(maxWidth: .infinity)
+        // Disabled while loading: every control draws itself at `ink4`, nothing is dimmed on top.
         .disabled(!isDocumentAvailable)
-        .opacity(isDocumentAvailable ? 1 : 0.42)
         .onChange(of: interactionMode) { _, mode in
             if mode != .pen {
-                strokeWidthPopoverAnchor = nil
+                strokeWidthPopoverLayout = nil
             }
             if mode != .select {
                 isFreeTextFormattingPresented = false
@@ -1030,201 +813,73 @@ private struct PDFAnnotationToolbar: View {
         }
     }
 
-    private var regularToolbar: some View {
-        HStack(spacing: scaled(5)) {
+    /// The widest layout that fits wins. Compact moves Undo and Redo into More; minimal also folds
+    /// the modes and markup actions into the tool pop-up and More.
+    private func toolbar(_ layout: PDFToolbarLayout) -> some View {
+        HStack(spacing: MonknotMetrics.interfaceDensity(MonknotMetrics.barItemGapBase, theme: theme, zoomScale: zoomScale)) {
             if !isImage {
-                pageIndicator
-                toolbarDivider
                 navigatorButton
-                toolbarDivider
+                pageIndicator
+                groupGap
             }
-            toolbarContent
-            regularStyleControls
-                .disabled(!isMarkupSupported)
-        }
-        .fixedSize(horizontal: true, vertical: false)
-    }
 
-    private var compactToolbar: some View {
-        HStack(spacing: scaled(5)) {
-            documentNavigation
+            if layout == .regular {
+                undoButton
+                redoButton
+                groupGap
+            }
+
             Group {
-                toolMenu
-                markupButtons
-                responsiveStyleControls(anchor: .compact)
+                if layout == .minimal {
+                    toolPopUp
+                } else {
+                    modeControl
+                    groupGap
+                    markupButtons
+                }
+                styleControls(layout)
             }
             .disabled(!isMarkupSupported)
-            moreMenu
-        }
-        .fixedSize(horizontal: true, vertical: false)
-    }
 
-    /// Keeps the high-frequency markup actions visible at ordinary editor
-    /// widths while collapsing the palette, stroke, and history controls.
-    /// `ViewThatFits` selects this only when the complete toolbar cannot fit.
-    private var annotationToolbar: some View {
-        HStack(spacing: scaled(5)) {
-            documentNavigation
-            Group {
-                selectButton
-                markupButtons
-                penButton
-                freeTextButton
-                eraserButton
-                responsiveStyleControls(anchor: .annotation)
+            if layout != .regular {
+                groupGap
+                moreMenu(layout)
             }
-            .disabled(!isMarkupSupported)
-            moreMenu
         }
         .fixedSize(horizontal: true, vertical: false)
     }
 
-    private var minimalToolbar: some View {
-        HStack(spacing: scaled(5)) {
-            documentNavigation
-            Group {
-                toolMenu
-                responsiveStyleControls(anchor: .minimal)
-            }
-            .disabled(!isMarkupSupported)
-            moreMenu
-        }
-        .fixedSize(horizontal: true, vertical: false)
+    private var groupGap: some View {
+        MonknotBarGroupGap(theme: theme, zoomScale: zoomScale)
     }
 
-    private var zoomToolbar: some View {
-        PDFZoomToolbarGroup(
-            status: zoomStatus,
+    private var navigatorButton: some View {
+        // A panel toggle: the open navigator shows its own state, so the button never lights up.
+        MonknotIconButton(
+            systemImage: "sidebar.left",
+            label: isNavigatorPresented ? "Hide PDF Navigator" : "Show PDF Navigator",
             theme: theme,
             zoomScale: zoomScale,
-            runZoom: runZoom
+            action: toggleNavigator
         )
+        .accessibilityValue(isNavigatorPresented ? "Open" : "Closed")
     }
 
-    private var toolbarContent: some View {
-        HStack(spacing: scaled(5)) {
-            undoButton
-            redoButton
-
-            toolbarDivider
-
-            selectButton
-            markupButtons
-            penButton
-            freeTextButton
-            eraserButton
-        }
-        .disabled(!isMarkupSupported)
-        .fixedSize(horizontal: true, vertical: false)
-    }
-
-    /// Pages and the navigator belong to PDFs; an image is one page.
-    @ViewBuilder
-    private var documentNavigation: some View {
-        if !isImage {
-            pageIndicator
-            toolbarDivider
-            navigatorButton
-        }
-    }
-
-    /// PDFs mark up selected text; images have none, so their highlighter drags out an area.
-    @ViewBuilder
-    private var markupButtons: some View {
-        if isImage {
-            MonknotIconButton(
-                systemImage: "highlighter",
-                label: "Highlight",
-                theme: theme,
-                zoomScale: zoomScale,
-                isActive: interactionMode == .highlighter,
-                size: .compact
-            ) {
-                interactionMode = .highlighter
-            }
-            .accessibilityAddTraits(interactionMode == .highlighter ? .isSelected : [])
-        } else {
-            MonknotIconButton(
-                systemImage: "highlighter",
-                label: "Highlight Selection",
-                theme: theme,
-                zoomScale: zoomScale,
-                size: .compact
-            ) {
-                runMarkup(.highlight)
-            }
-            MonknotIconButton(
-                systemImage: "underline",
-                label: "Underline Selection",
-                theme: theme,
-                zoomScale: zoomScale,
-                size: .compact
-            ) {
-                runMarkup(.underline)
-            }
-            MonknotIconButton(
-                systemImage: "strikethrough",
-                label: "Strike Through Selection",
-                theme: theme,
-                zoomScale: zoomScale,
-                size: .compact
-            ) {
-                runMarkup(.strikeOut)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var regularStyleControls: some View {
-        switch styleDisclosure {
-        case .markupColor:
-            toolbarDivider
-            colorPalette
-        case .drawing:
-            toolbarDivider
-            colorPalette
-            toolbarDivider
-            strokeWidthControl
-        case .text:
-            toolbarDivider
-            freeTextStyleButtonIfAvailable
-        case .none:
-            EmptyView()
-        }
-    }
-
-    @ViewBuilder
-    private func responsiveStyleControls(anchor: PDFStrokeWidthPopoverAnchor) -> some View {
-        switch styleDisclosure {
-        case .markupColor:
-            if anchor == .annotation {
-                colorPalette
-            } else {
-                colorMenu
-            }
-        case .drawing:
-            styleMenu(anchor: anchor)
-        case .text:
-            freeTextStyleButtonIfAvailable
-        case .none:
-            EmptyView()
-        }
-    }
-
-    private var colorPalette: some View {
-        HStack(spacing: scaled(3)) {
-            ForEach(PDFAnnotationPaletteColor.all) { color in
-                PDFColorSwatchButton(
-                    color: color,
-                    isSelected: color == selectedColor,
-                    theme: theme,
-                    zoomScale: zoomScale
-                ) {
-                    selectedColor = color
-                }
-            }
-        }
-        .fixedSize(horizontal: true, vertical: false)
+    /// A bar's count: 12 `ink3` in tabular figures, as wide as any page of this document.
+    private var pageIndicator: some View {
+        Text(pageStatus.displayLabel)
+            .monknotReservingWidth(of: pageStatus.widthTemplate, alignment: .leading)
+            .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
+            .monospacedDigit()
+            .foregroundStyle(pageStatus.isAvailable ? theme.tertiaryForegroundColor : theme.disabledForegroundColor)
+            .lineLimit(1)
+            .padding(.horizontal, MonknotMetrics.interfaceDensity(6, theme: theme, zoomScale: zoomScale))
+            .fixedSize()
+            .accessibilityLabel(
+                pageStatus.isAvailable
+                    ? "Page \(pageStatus.currentPage) of \(pageStatus.pageCount)"
+                    : "Page unavailable"
+            )
     }
 
     private var undoButton: some View {
@@ -1234,7 +889,6 @@ private struct PDFAnnotationToolbar: View {
             theme: theme,
             zoomScale: zoomScale,
             isDisabled: !canUndo,
-            size: .compact,
             action: undo
         )
     }
@@ -1246,73 +900,221 @@ private struct PDFAnnotationToolbar: View {
             theme: theme,
             zoomScale: zoomScale,
             isDisabled: !canRedo,
-            size: .compact,
             action: redo
         )
     }
 
-    private var selectButton: some View {
-        MonknotIconButton(
-            systemImage: "cursorarrow",
-            label: "Select",
-            theme: theme,
-            zoomScale: zoomScale,
-            isActive: interactionMode == .select,
-            size: .compact
-        ) {
-            interactionMode = .select
-        }
-        .accessibilityAddTraits(interactionMode == .select ? .isSelected : [])
+    /// Select, (Highlight for images,) Draw and Erase: the tools that stay on until another is chosen.
+    private var modes: [PDFAnnotationInteractionMode] {
+        isImage ? [.select, .highlighter, .pen, .eraser] : [.select, .pen, .eraser]
     }
 
-    private var penButton: some View {
-        MonknotIconButton(
-            systemImage: "pencil.tip",
-            label: "Draw",
-            theme: theme,
-            zoomScale: zoomScale,
-            isActive: interactionMode == .pen,
-            size: .compact
-        ) {
-            interactionMode = .pen
-        }
-        .accessibilityAddTraits(interactionMode == .pen ? .isSelected : [])
+    private var modeSelection: Binding<String> {
+        Binding(
+            get: { interactionMode.toolbarID },
+            set: { id in
+                if let mode = PDFAnnotationInteractionMode(toolbarID: id) {
+                    interactionMode = mode
+                }
+            }
+        )
     }
 
-    private var freeTextButton: some View {
+    private var modeControl: some View {
+        MonknotSegmentedControl(
+            options: modes.map {
+                MonknotSegmentOption(id: $0.toolbarID, systemImage: $0.systemImage, accessibilityLabel: $0.title)
+            },
+            selection: modeSelection,
+            theme: theme,
+            zoomScale: zoomScale
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Annotation Tool")
+    }
+
+    /// The modes as one pop-up, with Add Text Box below them, for the narrowest bar.
+    private var toolPopUp: some View {
+        MonknotPopUpButton(
+            label: "Annotation Tool",
+            selection: modeSelection,
+            items: modes.map {
+                MonknotPopUpItem(
+                    id: $0.toolbarID,
+                    title: $0.title,
+                    image: NSImage(systemSymbolName: $0.systemImage, accessibilityDescription: nil)
+                )
+            },
+            actions: [MonknotPopUpAction(title: "Add Text Box", action: addFreeText)],
+            theme: theme,
+            zoomScale: zoomScale,
+            leadingPaddingBase: 8
+        ) { shown in
+            MonknotPopUpGlyph(
+                systemImage: PDFAnnotationInteractionMode(toolbarID: shown)?.systemImage ?? interactionMode.systemImage,
+                theme: theme,
+                zoomScale: zoomScale
+            )
+        }
+    }
+
+    /// PDFs mark up selected text; images have no text, so their highlighter is a mode. Both add text
+    /// boxes.
+    @ViewBuilder
+    private var markupButtons: some View {
+        if !isImage {
+            MonknotIconButton(
+                systemImage: "highlighter",
+                label: "Highlight Selection",
+                theme: theme,
+                zoomScale: zoomScale
+            ) {
+                runMarkup(.highlight)
+            }
+            MonknotIconButton(
+                systemImage: "underline",
+                label: "Underline Selection",
+                theme: theme,
+                zoomScale: zoomScale
+            ) {
+                runMarkup(.underline)
+            }
+            MonknotIconButton(
+                systemImage: "strikethrough",
+                label: "Strike Through Selection",
+                theme: theme,
+                zoomScale: zoomScale
+            ) {
+                runMarkup(.strikeOut)
+            }
+        }
         MonknotIconButton(
             systemImage: "character.textbox",
             label: "Add Text Box",
             theme: theme,
-            zoomScale: zoomScale,
-            size: .compact
-        ) { addFreeText() }
+            zoomScale: zoomScale
+        ) {
+            addFreeText()
+        }
     }
 
+    /// The current tool's style: its colour (and stroke width while drawing), or the selected text
+    /// box's text style.
     @ViewBuilder
-    private var freeTextStyleButtonIfAvailable: some View {
-        if selectedFreeTextFormatting != nil {
-            MonknotIconButton(
-                systemImage: "textformat",
-                label: "Text Style",
-                theme: theme,
-                zoomScale: zoomScale,
-                isActive: isFreeTextFormattingPresented,
-                size: .compact
-            ) {
-                toggleFreeTextFormatting()
+    private func styleControls(_ layout: PDFToolbarLayout) -> some View {
+        switch styleDisclosure {
+        case .markupColor:
+            groupGap
+            colorPopUp(layout, offersStrokeWidth: false)
+        case .drawing:
+            groupGap
+            colorPopUp(layout, offersStrokeWidth: true)
+        case .text:
+            if selectedFreeTextFormatting != nil {
+                groupGap
+                freeTextStyleButton
             }
-            .accessibilityAddTraits(isFreeTextFormattingPresented ? .isSelected : [])
-            .popover(isPresented: $isFreeTextFormattingPresented, arrowEdge: .top) {
-                if let selectedFreeTextFormatting {
-                    PDFFreeTextFormattingPopover(
-                        formatting: selectedFreeTextFormatting,
-                        fontFamilies: freeTextFontFamilies,
-                        theme: theme,
-                        zoomScale: zoomScale,
-                        update: updateFreeTextFormatting
-                    )
+        case .none:
+            EmptyView()
+        }
+    }
+
+    private func colorPopUp(_ layout: PDFToolbarLayout, offersStrokeWidth: Bool) -> some View {
+        MonknotPopUpButton(
+            label: offersStrokeWidth ? "Annotation Style" : "Markup Color",
+            selection: Binding(
+                get: { selectedColor.id },
+                set: { id in
+                    if let color = PDFAnnotationPaletteColor.all.first(where: { $0.id == id }) {
+                        selectedColor = color
+                    }
                 }
+            ),
+            items: PDFAnnotationPaletteColor.all.map {
+                MonknotPopUpItem(id: $0.id, title: $0.name, image: $0.menuSwatch)
+            },
+            actions: offersStrokeWidth
+                ? [MonknotPopUpAction(title: "Stroke Width…") { strokeWidthPopoverLayout = layout }]
+                : [],
+            theme: theme,
+            zoomScale: zoomScale,
+            leadingPaddingBase: 8
+        ) { shown in
+            PDFColorSwatch(
+                color: PDFAnnotationPaletteColor.all.first { $0.id == shown } ?? selectedColor,
+                theme: theme,
+                zoomScale: zoomScale
+            )
+        }
+        .accessibilityValue(
+            offersStrokeWidth ? "\(selectedColor.name), \(Int(strokeWidth)) point stroke" : selectedColor.name
+        )
+        .popover(isPresented: strokeWidthPopoverBinding(for: layout), arrowEdge: .top) {
+            strokeWidthPopoverContent
+        }
+    }
+
+    private func strokeWidthPopoverBinding(for layout: PDFToolbarLayout) -> Binding<Bool> {
+        Binding(
+            get: { strokeWidthPopoverLayout == layout },
+            set: { isPresented in
+                if !isPresented, strokeWidthPopoverLayout == layout {
+                    strokeWidthPopoverLayout = nil
+                }
+            }
+        )
+    }
+
+    private var strokeWidthPopoverContent: some View {
+        VStack(alignment: .leading, spacing: MonknotMetrics.interfaceDensity(10, theme: theme, zoomScale: zoomScale)) {
+            HStack {
+                Text("Stroke Width")
+                    .font(MonknotTypography.panelTitle(theme: theme, zoomScale: zoomScale))
+                    .foregroundStyle(theme.foregroundColor)
+
+                Spacer(minLength: MonknotMetrics.interfaceDensity(12, theme: theme, zoomScale: zoomScale))
+
+                Text("\(Int(strokeWidth)) pt")
+                    .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
+                    .monospacedDigit()
+                    .foregroundStyle(theme.tertiaryForegroundColor)
+            }
+
+            MonknotSlider(
+                title: "Stroke Width",
+                value: $strokeWidth,
+                range: 1...10,
+                step: 1,
+                valueDescription: "\(Int(strokeWidth)) points",
+                theme: theme,
+                zoomScale: zoomScale
+            )
+        }
+        .padding(MonknotMetrics.interfaceDensity(12, theme: theme, zoomScale: zoomScale))
+        .frame(width: MonknotMetrics.interfaceDensity(210, theme: theme, zoomScale: zoomScale))
+        .background(theme.elevatedSurfaceColor)
+    }
+
+    private var freeTextStyleButton: some View {
+        MonknotIconButton(
+            systemImage: "textformat",
+            label: "Text Style",
+            theme: theme,
+            zoomScale: zoomScale,
+            isActive: isFreeTextFormattingPresented
+        ) {
+            toggleFreeTextFormatting()
+        }
+        .accessibilityAddTraits(isFreeTextFormattingPresented ? .isSelected : [])
+        .popover(isPresented: $isFreeTextFormattingPresented, arrowEdge: .top) {
+            if let selectedFreeTextFormatting {
+                PDFFreeTextFormattingPopover(
+                    formatting: selectedFreeTextFormatting,
+                    fontFamilies: freeTextFontFamilies,
+                    theme: theme,
+                    zoomScale: zoomScale,
+                    update: updateFreeTextFormatting
+                )
             }
         }
     }
@@ -1334,544 +1136,145 @@ private struct PDFAnnotationToolbar: View {
         isFreeTextFormattingPresented = true
     }
 
-    private var eraserButton: some View {
-        MonknotIconButton(
-            systemImage: "eraser",
-            label: "Erase Annotation",
+    /// What a narrower layout took out of the bar.
+    private func moreMenu(_ layout: PDFToolbarLayout) -> some View {
+        MonknotMenuButton(
+            systemImage: "ellipsis",
+            label: isImage ? "More Image Actions" : "More PDF Actions",
             theme: theme,
-            zoomScale: zoomScale,
-            isActive: interactionMode == .eraser,
-            size: .compact
+            zoomScale: zoomScale
         ) {
-            interactionMode = .eraser
-        }
-        .accessibilityAddTraits(interactionMode == .eraser ? .isSelected : [])
-    }
-
-    private var toolMenu: some View {
-        Menu {
-            Button("Select", systemImage: "cursorarrow") {
-                interactionMode = .select
-            }
-            if isImage {
-                Button("Highlight", systemImage: "highlighter") {
-                    interactionMode = .highlighter
-                }
-            }
-            Button("Draw", systemImage: "pencil.tip") {
-                interactionMode = .pen
-            }
-            Button("Add Text Box", systemImage: "character.textbox") {
-                addFreeText()
-            }
-            Button("Erase Annotation", systemImage: "eraser") {
-                interactionMode = .eraser
-            }
-
-            if interactionMode == .select, selectedFreeTextFormatting != nil {
-                Divider()
-                Button("Text Style…", systemImage: "textformat") {
-                    presentFreeTextFormatting()
-                }
-            }
-        } label: {
-            toolbarMenuLabel(
-                systemImage: interactionModeSystemImage,
-                isActive: true,
-                isHovered: hoveredMenu == .tool
-            )
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .onHover { updateMenuHover(.tool, isHovered: $0) }
-        .help("Annotation Tool")
-        .accessibilityLabel("Annotation Tool")
-        .accessibilityValue(interactionModeAccessibilityValue)
-        .accessibilityAddTraits(.isSelected)
-    }
-
-    private func styleMenu(anchor: PDFStrokeWidthPopoverAnchor) -> some View {
-        Menu {
-            annotationColorCommands
-
-            Divider()
-
-            Button("Stroke Width…", systemImage: "lineweight") {
-                strokeWidthPopoverAnchor = anchor
-            }
-        } label: {
-            styleMenuLabel(isHovered: hoveredMenu == .style)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .onHover { updateMenuHover(.style, isHovered: $0) }
-        .help("Annotation Style")
-        .accessibilityLabel("Annotation Style")
-        .accessibilityValue("\(selectedColor.name), \(Int(strokeWidth)) point stroke")
-        .popover(isPresented: popoverBinding(for: anchor), arrowEdge: .top) {
-            strokeWidthPopoverContent
-        }
-    }
-
-    private var colorMenu: some View {
-        Menu {
-            annotationColorCommands
-        } label: {
-            styleMenuLabel(isHovered: hoveredMenu == .style)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .onHover { updateMenuHover(.style, isHovered: $0) }
-        .help("Markup Color")
-        .accessibilityLabel("Markup Color")
-        .accessibilityValue(selectedColor.name)
-    }
-
-    @ViewBuilder
-    private var annotationColorCommands: some View {
-        ForEach(PDFAnnotationPaletteColor.all) { color in
-            Button {
-                selectedColor = color
-            } label: {
-                HStack {
-                    Text(color.name)
-                    if color == selectedColor {
-                        Image(systemName: "checkmark")
-                    }
-                }
-            }
-        }
-    }
-
-    private func popoverBinding(for anchor: PDFStrokeWidthPopoverAnchor) -> Binding<Bool> {
-        Binding(
-            get: { strokeWidthPopoverAnchor == anchor },
-            set: { isPresented in
-                if !isPresented, strokeWidthPopoverAnchor == anchor {
-                    strokeWidthPopoverAnchor = nil
-                }
-            }
-        )
-    }
-
-    private var moreMenu: some View {
-        Menu {
-            if !saveState.isClean {
-                Button(
-                    isImage ? "Save Image" : "Save PDF",
-                    systemImage: "externaldrive.badge.checkmark",
-                    action: saveDocument
-                )
-                .disabled(saveState == .saving)
-
-                Divider()
-            }
-
             Button("Undo", systemImage: "arrow.uturn.backward", action: undo)
                 .disabled(!canUndo)
             Button("Redo", systemImage: "arrow.uturn.forward", action: redo)
                 .disabled(!canRedo)
 
-            if !isImage {
+            if layout == .minimal, !isImage {
                 Divider()
 
-                markupCommands
-            }
-        } label: {
-            toolbarMenuLabel(
-                systemImage: "ellipsis",
-                isActive: false,
-                isHovered: hoveredMenu == .more
-            )
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .onHover { updateMenuHover(.more, isHovered: $0) }
-        .help(isImage ? "More image actions" : "More PDF actions")
-        .accessibilityLabel(isImage ? "More image actions" : "More PDF actions")
-    }
-
-    private var navigatorButton: some View {
-        MonknotIconButton(
-            systemImage: "sidebar.left",
-            label: isNavigatorPresented ? "Hide PDF Navigator" : "Show PDF Navigator",
-            theme: theme,
-            zoomScale: zoomScale,
-            isActive: isNavigatorPresented,
-            size: .compact,
-            action: toggleNavigator
-        )
-        .accessibilityAddTraits(isNavigatorPresented ? .isSelected : [])
-    }
-
-    @ViewBuilder
-    private var markupCommands: some View {
-        Button("Highlight Selection", systemImage: "highlighter") {
-            runMarkup(.highlight)
-        }
-        Button("Underline Selection", systemImage: "underline") {
-            runMarkup(.underline)
-        }
-        Button("Strike Through Selection", systemImage: "strikethrough") {
-            runMarkup(.strikeOut)
-        }
-    }
-
-    private func toolbarMenuLabel(
-        systemImage: String,
-        isActive: Bool,
-        isHovered: Bool
-    ) -> some View {
-        let buttonSize = MonknotIconButton.IconButtonSize.compact
-        let dimension = buttonSize.dimension(theme: theme, zoomScale: zoomScale)
-        let shape = RoundedRectangle(
-            cornerRadius: buttonSize.cornerRadius(theme: theme, zoomScale: zoomScale)
-        )
-
-        return Image(systemName: systemImage)
-            .font(.system(
-                size: buttonSize.iconSize(theme: theme, zoomScale: zoomScale),
-                weight: .regular
-            ))
-            .foregroundStyle(
-                isActive
-                    ? theme.accentColor
-                    : (isHovered ? theme.foregroundColor : theme.mutedForegroundColor)
-            )
-            .frame(width: dimension, height: dimension)
-            .background {
-                if isActive {
-                    shape.fill(theme.accentSoftFillColor)
-                } else if isHovered {
-                    shape.fill(theme.hoverFillColor)
+                Group {
+                    Button("Highlight Selection", systemImage: "highlighter") {
+                        runMarkup(.highlight)
+                    }
+                    Button("Underline Selection", systemImage: "underline") {
+                        runMarkup(.underline)
+                    }
+                    Button("Strike Through Selection", systemImage: "strikethrough") {
+                        runMarkup(.strikeOut)
+                    }
                 }
+                .disabled(!isMarkupSupported)
             }
-            .contentShape(shape)
-    }
-
-    private func styleMenuLabel(isHovered: Bool) -> some View {
-        let buttonSize = MonknotIconButton.IconButtonSize.compact
-        let dimension = buttonSize.dimension(theme: theme, zoomScale: zoomScale)
-        let colorSize = MonknotMetrics.interfaceControl(16, theme: theme, zoomScale: zoomScale)
-        let shape = RoundedRectangle(cornerRadius: buttonSize.cornerRadius(theme: theme, zoomScale: zoomScale))
-
-        return HStack(spacing: scaled(4)) {
-            Image(systemName: "circle.fill")
-                .symbolRenderingMode(.palette)
-                .foregroundStyle(selectedColor.color)
-                .font(.system(size: colorSize, weight: .regular))
-                .overlay {
-                    Circle()
-                        .strokeBorder(theme.surfaceColor.opacity(0.85), lineWidth: 1)
-                }
-
-            Image(systemName: "chevron.down")
-                .font(.system(
-                    size: MonknotMetrics.interfaceGlyph(8, theme: theme, zoomScale: zoomScale),
-                    weight: .regular
-                ))
-                .foregroundStyle(theme.mutedForegroundColor)
-        }
-        .frame(width: scaled(42), height: dimension)
-        .background(isHovered ? theme.pressedFillColor : theme.controlTrackFillColor, in: shape)
-        .contentShape(shape)
-    }
-
-    private func updateMenuHover(_ target: PDFToolbarMenuHoverTarget, isHovered: Bool) {
-        if isHovered {
-            hoveredMenu = target
-        } else if hoveredMenu == target {
-            hoveredMenu = nil
         }
     }
 
-    private var interactionModeSystemImage: String {
-        switch interactionMode {
-        case .select:
-            return "cursorarrow"
-        case .highlighter:
-            return "highlighter"
-        case .pen:
-            return "pencil.tip"
-        case .eraser:
-            return "eraser"
-        }
-    }
-
-    private var interactionModeAccessibilityValue: String {
-        switch interactionMode {
-        case .select:
-            return "Select"
-        case .highlighter:
-            return "Highlight"
-        case .pen:
-            return "Draw"
-        case .eraser:
-            return "Erase"
-        }
-    }
-
-    private var strokeWidthPopoverContent: some View {
-        VStack(alignment: .leading, spacing: scaled(10)) {
-            HStack {
-                Text("Stroke Width")
-                    .font(.system(
-                        size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale),
-                        weight: .semibold
-                    ))
-
-                Spacer(minLength: scaled(12))
-
-                Text("\(Int(strokeWidth)) pt")
-                    .font(.system(
-                        size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale),
-                        weight: .regular,
-                        design: .monospaced
-                    ))
-                    .foregroundStyle(theme.mutedForegroundColor)
-            }
-
-            Slider(value: $strokeWidth, in: 1...10, step: 1)
-                .tint(selectedColor.color)
-        }
-        .padding(scaled(12))
-        .frame(width: scaled(210))
-        .background(theme.elevatedSurfaceColor)
-    }
-
-    private var strokeWidthControl: some View {
-        HStack(spacing: scaled(8)) {
-            Text("Thickness")
-                .font(.system(
-                    size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale),
-                    weight: .regular
-                ))
-                .foregroundStyle(theme.mutedForegroundColor)
-
-            Slider(value: $strokeWidth, in: 1...10, step: 1)
-                .tint(selectedColor.color)
-                .frame(width: scaled(90))
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Stroke Thickness")
-        .accessibilityValue("\(Int(strokeWidth)) points")
-    }
-
-    /// Always laid out; disabled while there is nothing to save (design.md §10.2).
+    /// Always laid out; disabled while there is nothing to save, and carrying the unsaved dot when there
+    /// is (design.md §1.3, §10.2).
     private var saveButton: some View {
         MonknotIconButton(
             systemImage: "externaldrive.badge.checkmark",
             label: isImage ? "Save Image" : "Save PDF",
             theme: theme,
             zoomScale: zoomScale,
-            isActive: !saveState.isClean,
             isDisabled: saveState.isClean || saveState == .saving,
-            size: .compact
+            showsDirtyDot: !saveState.isClean
         ) {
             saveDocument()
         }
     }
-
-    private var pageIndicator: some View {
-        Text(pageStatus.displayLabel)
-            .monknotReservingWidth(of: pageStatus.widthTemplate)
-            .font(.system(
-                size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale),
-                weight: .regular,
-                design: .monospaced
-            ))
-            .foregroundStyle(pageStatus.isAvailable ? theme.mutedForegroundColor : theme.disabledForegroundColor)
-            .monospacedDigit()
-            .lineLimit(1)
-            .frame(minWidth: scaled(34), alignment: .trailing)
-            .fixedSize(horizontal: true, vertical: false)
-            .accessibilityLabel(
-                pageStatus.isAvailable
-                    ? "Page \(pageStatus.currentPage) of \(pageStatus.pageCount)"
-                    : "Page unavailable"
-            )
-    }
-
-    private var toolbarDivider: some View {
-        Rectangle()
-            .fill(theme.borderColor)
-            .frame(width: 1, height: scaled(20))
-            .accessibilityHidden(true)
-    }
 }
 
+/// The page zoom: the shared pop-up with the zoom presets, its value as wide as any percentage.
 struct PDFZoomToolbarGroup: View {
     let status: PDFZoomStatus
     let theme: AppTheme
     let zoomScale: Double
     let runZoom: (PDFZoomCommand) -> Void
 
-    @State private var isMenuHovered = false
-    @FocusState private var isMenuFocused: Bool
-
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    private func textScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    private func glyphScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
-    }
-
     var body: some View {
-        Menu {
-            ForEach(PDFZoomStatus.presetPercentages, id: \.self) { percentage in
-                Button {
-                    runZoom(.preset(scaleFactor: Double(percentage) / 100))
-                } label: {
-                    HStack {
-                        Text("\(percentage)%")
-                        if status.matchesPreset(percentage) {
-                            Image(systemName: "checkmark")
-                        }
+        MonknotPopUpButton(
+            label: "Page Zoom",
+            selection: Binding(
+                get: {
+                    PDFZoomStatus.presetPercentages.first(where: status.matchesPreset).map(String.init) ?? ""
+                },
+                set: { id in
+                    if let percentage = Int(id) {
+                        runZoom(.preset(scaleFactor: Double(percentage) / 100))
                     }
                 }
-            }
-        } label: {
-            HStack(spacing: scaled(6)) {
-                Text(status.displayLabel)
-                    .monknotReservingWidth(of: PDFZoomStatus.widthTemplate)
-                    .font(.system(size: textScaled(13), weight: .regular))
-                    .monospacedDigit()
-                    .lineLimit(1)
-
-                PDFZoomChevron()
-                    .stroke(
-                        style: StrokeStyle(
-                            lineWidth: scaled(1.4),
-                            lineCap: .round,
-                            lineJoin: .round
-                        )
-                    )
-                    .frame(width: glyphScaled(9), height: glyphScaled(5))
-            }
-            .foregroundStyle(zoomControlForegroundColor)
-            .padding(.leading, scaled(10))
-            .padding(.trailing, scaled(9))
-            .frame(height: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale))
-            .background {
-                zoomControlShape.fill(theme.controlTrackFillColor)
-                if isMenuHovered, status.isAvailable {
-                    zoomControlShape.fill(theme.hoverFillColor)
-                }
-            }
-
-            .monknotFocusRing(
-                isVisible: isMenuFocused && status.isAvailable,
-                cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale),
-                theme: theme
+            ),
+            items: PDFZoomStatus.presetPercentages.map { MonknotPopUpItem(id: String($0), title: "\($0)%") },
+            theme: theme,
+            zoomScale: zoomScale
+        ) { _ in
+            MonknotPopUpTitle(
+                title: status.displayLabel,
+                reservedTitles: [PDFZoomStatus.widthTemplate],
+                theme: theme,
+                zoomScale: zoomScale
             )
-            .contentShape(zoomControlShape)
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
         .disabled(!status.isAvailable)
-        .focusable(status.isAvailable && NSApp.isFullKeyboardAccessEnabled)
-        .focused($isMenuFocused)
-        .focusEffectDisabled()
-        .onHover { isMenuHovered = $0 }
-        .help("Page Zoom")
-        .accessibilityLabel("Page Zoom")
         .accessibilityValue(status.displayLabel)
-        .fixedSize(horizontal: true, vertical: false)
-        .animation(.easeOut(duration: 0.12), value: isMenuHovered)
-    }
-
-    private var zoomControlShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-    }
-
-    private var zoomControlForegroundColor: Color {
-        guard status.isAvailable else { return theme.disabledForegroundColor }
-        return isMenuHovered ? theme.foregroundColor : theme.mutedForegroundColor
     }
 }
 
-private struct PDFZoomChevron: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-        return path
-    }
-}
-
-private struct PDFColorSwatchButton: View {
+/// The markup colour as a pop-up's value: a 14 pt swatch inside a `line` hairline.
+private struct PDFColorSwatch: View {
     let color: PDFAnnotationPaletteColor
-    let isSelected: Bool
     let theme: AppTheme
     let zoomScale: Double
-    let action: () -> Void
 
-    @State private var isHovered = false
-    @State private var isPressed = false
-    @FocusState private var isFocused: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.scale(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    private var backgroundFill: Color {
-        if isPressed {
-            return theme.pressedFillColor
-        }
-        return isSelected || isHovered ? theme.hoverFillColor : .clear
-    }
+    @Environment(\.monknotPopUpDisabled) private var isDisabled
 
     var body: some View {
-        let dimension = MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale)
-        Button(action: action) {
-            ZStack {
-                Circle()
-                    .fill(backgroundFill)
+        let diameter = MonknotMetrics.interfaceGlyph(14, theme: theme, zoomScale: zoomScale)
+        Circle()
+            .fill(color.color)
+            .overlay { Circle().strokeBorder(theme.borderColor, lineWidth: 1) }
+            .frame(width: diameter, height: diameter)
+            .opacity(isDisabled ? 0.35 : 1)
+            .accessibilityHidden(true)
+    }
+}
 
-                Circle()
-                    .fill(color.color)
-                    .frame(
-                        width: MonknotMetrics.interfaceControl(15, theme: theme, zoomScale: zoomScale),
-                        height: MonknotMetrics.interfaceControl(15, theme: theme, zoomScale: zoomScale)
-                    )
-                    .overlay {
-                        Circle()
-                            .strokeBorder(theme.surfaceColor.opacity(0.85), lineWidth: 1)
-                    }
-            }
-            .frame(width: dimension, height: dimension)
-            .overlay {
-                if isSelected {
-                    Circle()
-                        .strokeBorder(theme.borderColor, lineWidth: 1)
-                }
-            }
-            .monknotFocusRing(isVisible: isFocused, cornerRadius: dimension / 2, theme: theme)
-            .contentShape(Circle())
+private extension PDFAnnotationInteractionMode {
+    var toolbarID: String {
+        switch self {
+        case .select: return "select"
+        case .highlighter: return "highlighter"
+        case .pen: return "pen"
+        case .eraser: return "eraser"
         }
-        .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
-        .focusable(NSApp.isFullKeyboardAccessEnabled)
-        .focused($isFocused)
-        .focusEffectDisabled()
-        .onHover { isHovered = $0 }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: isHovered)
-        .animation(.easeOut(duration: 0.12), value: isSelected)
-        .help(color.name)
-        .accessibilityLabel(color.name)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .monknotPointerCursor()
+    }
+
+    init?(toolbarID: String) {
+        switch toolbarID {
+        case "select": self = .select
+        case "highlighter": self = .highlighter
+        case "pen": self = .pen
+        case "eraser": self = .eraser
+        default: return nil
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .select: return "cursorarrow"
+        case .highlighter: return "highlighter"
+        case .pen: return "pencil.tip"
+        case .eraser: return "eraser"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .select: return "Select"
+        case .highlighter: return "Highlight"
+        case .pen: return "Draw"
+        case .eraser: return "Erase Annotation"
+        }
     }
 }
 
@@ -1920,20 +1323,26 @@ struct PDFNavigatorMetrics: Equatable {
             theme: theme,
             zoomScale: workspaceZoomScale
         )
-        headerHeight = (40 * theme.interfaceRowScale(zoomScale: workspaceZoomScale)).rounded()
-        headerInset = MonknotMetrics.interfaceDensity(8, theme: theme, zoomScale: workspaceZoomScale)
-        segmentedHeight = MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: workspaceZoomScale)
-        contentInset = MonknotMetrics.interfaceDensity(8, theme: theme, zoomScale: workspaceZoomScale)
+        // The bar (40) over a list of chrome rows (28, 14 per level), the selection a row's neutral fill
+        // inside the menu inset, with the text 8 inside it (design.md §0, §10.6).
+        headerHeight = MonknotMetrics.barHeight(theme: theme, zoomScale: workspaceZoomScale)
+        headerInset = MonknotMetrics.interfaceDensity(MonknotMetrics.listGutterBase, theme: theme, zoomScale: workspaceZoomScale)
+        segmentedHeight = MonknotMetrics.interfaceControl(MonknotMetrics.iconButtonSizeBase, theme: theme, zoomScale: workspaceZoomScale)
+        contentInset = MonknotMetrics.interfaceDensity(MonknotMetrics.listGutterBase, theme: theme, zoomScale: workspaceZoomScale)
         thumbnailLabelFontSize = MonknotMetrics.interfaceText(12, theme: theme, zoomScale: workspaceZoomScale)
-        outlineRowHeight = (30 * theme.interfaceRowScale(zoomScale: workspaceZoomScale)).rounded()
-        outlineIndentation = MonknotMetrics.interfaceDensity(16, theme: theme, zoomScale: workspaceZoomScale)
+        outlineRowHeight = (MonknotMetrics.rowHeightBase * theme.interfaceRowScale(zoomScale: workspaceZoomScale)).rounded()
+        outlineIndentation = MonknotMetrics.interfaceDensity(MonknotMetrics.rowIndentBase, theme: theme, zoomScale: workspaceZoomScale)
         outlineFontSize = MonknotMetrics.interfaceText(13, theme: theme, zoomScale: workspaceZoomScale)
-        annotationRowHeight = (30 * theme.interfaceRowScale(zoomScale: workspaceZoomScale)).rounded()
+        annotationRowHeight = (MonknotMetrics.rowHeightBase * theme.interfaceRowScale(zoomScale: workspaceZoomScale)).rounded()
         annotationFontSize = MonknotMetrics.interfaceText(13, theme: theme, zoomScale: workspaceZoomScale)
-        cellInset = MonknotMetrics.interfaceDensity(10, theme: theme, zoomScale: workspaceZoomScale)
-        selectionHorizontalInset = MonknotMetrics.interfaceDensity(4, theme: theme, zoomScale: workspaceZoomScale)
-        selectionVerticalInset = MonknotMetrics.interfaceDensity(2, theme: theme, zoomScale: workspaceZoomScale)
-        selectionCornerRadius = MonknotMetrics.interfaceDensity(8, theme: theme, zoomScale: workspaceZoomScale)
+        selectionHorizontalInset = MonknotMetrics.interfaceDensity(MonknotMetrics.menuListInsetBase, theme: theme, zoomScale: workspaceZoomScale)
+        selectionVerticalInset = 0
+        cellInset = MonknotMetrics.interfaceDensity(
+            MonknotMetrics.menuListInsetBase + MonknotMetrics.rowPaddingBase,
+            theme: theme,
+            zoomScale: workspaceZoomScale
+        )
+        selectionCornerRadius = MonknotMetrics.interfaceDensity(MonknotMetrics.iconCornerRadiusBase, theme: theme, zoomScale: workspaceZoomScale)
         emptyFontSize = MonknotMetrics.interfaceText(12, theme: theme, zoomScale: workspaceZoomScale)
         emptyInset = MonknotMetrics.interfaceDensity(16, theme: theme, zoomScale: workspaceZoomScale)
     }
@@ -2033,8 +1442,9 @@ final class PDFPreviewContainerView: NSView, NSSplitViewDelegate {
             workspaceZoomScale: workspaceZoomScale
         )
         navigatorMetrics = nextMetrics
+        // An in-card divider is `line2` (design.md §3).
         splitView.themedDividerColor = NSColor(hex: theme.foreground)
-            .withAlphaComponent(theme.isDark ? 0.09 : 0.12)
+            .withAlphaComponent(theme.isDark ? 0.06 : 0.08)
         splitView.needsDisplay = true
         navigatorView.applyMetrics(
             nextMetrics,
@@ -2302,11 +1712,10 @@ final class PDFNavigatorTableRowView: NSTableRowView {
         bounds.insetBy(dx: selectionHorizontalInset, dy: selectionVerticalInset)
     }
 
+    /// The neutral selected fill in every state: a sidebar row keeps its selection when the window
+    /// is in the background, and so does the navigator's.
     func resolvedSelectionColor(isKeyWindow: Bool) -> NSColor {
-        guard isEmphasized, isKeyWindow else {
-            return .unemphasizedSelectedContentBackgroundColor
-        }
-        return themedSelectionColor
+        themedSelectionColor
     }
 }
 
@@ -2325,7 +1734,6 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
             onSelect: nil
         )
     )
-    private let headerSeparatorView = NSView()
     private let contentView = NSView()
     private let outlineScrollView = NSScrollView()
     private let annotationScrollView = NSScrollView()
@@ -2421,13 +1829,12 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
         thumbnailScrollerBehavior.thumbColor = thumbColor
         outlineScrollerBehavior.thumbColor = thumbColor
         annotationScrollerBehavior.thumbColor = thumbColor
-        mutedForegroundColor = foreground.withAlphaComponent(theme.isDark ? 0.62 : 0.64)
-        selectionColor = NSColor(hex: theme.selectionBackground)
+        // Secondary text at `ink3`; the selected row is the neutral `selected` fill, as in the sidebar;
+        // the panel sits on the card's own surface (design.md §1.4, §10.6).
+        mutedForegroundColor = foreground.withAlphaComponent(theme.glyphInkOpacity)
+        selectionColor = foreground.withAlphaComponent(theme.isDark ? 0.10 : 0.09)
         wantsLayer = true
-        layer?.backgroundColor = NSColor(hex: theme.sidebarSurfaceHex).cgColor
-        headerSeparatorView.layer?.backgroundColor = foreground
-            .withAlphaComponent(theme.isDark ? 0.09 : 0.12)
-            .cgColor
+        layer?.backgroundColor = NSColor(hex: theme.background).cgColor
         headerHeightConstraint.constant = metrics.headerHeight
         sectionControlHeightConstraint.constant = metrics.segmentedHeight
         sectionControlLeadingConstraint.constant = metrics.headerInset
@@ -2483,11 +1890,8 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
     private func configureViews() {
         wantsLayer = true
         headerView.translatesAutoresizingMaskIntoConstraints = false
-        headerSeparatorView.translatesAutoresizingMaskIntoConstraints = false
-        headerSeparatorView.wantsLayer = true
         contentView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(headerView)
-        addSubview(headerSeparatorView)
         addSubview(contentView)
 
         sectionControlHostingView.translatesAutoresizingMaskIntoConstraints = false
@@ -2521,13 +1925,10 @@ final class PDFNavigatorView: NSView, NSOutlineViewDataSource, NSOutlineViewDele
             sectionControlHeightConstraint,
             sectionControlHostingView.centerXAnchor.constraint(equalTo: headerView.centerXAnchor),
             sectionControlHostingView.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            headerSeparatorView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            headerSeparatorView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            headerSeparatorView.topAnchor.constraint(equalTo: headerView.bottomAnchor),
-            headerSeparatorView.heightAnchor.constraint(equalToConstant: 1),
             contentView.leadingAnchor.constraint(equalTo: leadingAnchor),
             contentView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            contentView.topAnchor.constraint(equalTo: headerSeparatorView.bottomAnchor),
+            // The header is a bar: no rule under it.
+            contentView.topAnchor.constraint(equalTo: headerView.bottomAnchor),
             contentView.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
 
@@ -3436,7 +2837,13 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             else { return }
             lastAppliedTheme = theme
             lastAppliedWorkspaceZoomScale = clampedZoomScale
-            pdfView.backgroundColor = NSColor(hex: theme.background)
+            // The pages sit on the card's surface tinted by the control `track`, so a white page
+            // stands off it in every theme.
+            pdfView.backgroundColor = NSColor(hex: AppTheme.blendHex(
+                theme.background,
+                toward: theme.foreground,
+                amount: theme.isDark ? 0.07 : 0.06
+            ))
             pdfView.scrollThumbColor = MonknotScrollbarStyle.thumbColor(for: theme)
             pdfView.freeTextOverlayAppearance = PDFFreeTextOverlayAppearance(theme: theme)
             pdfView.freeTextOverlayMetrics = PDFFreeTextOverlayMetrics(
@@ -6860,6 +6267,24 @@ private struct PDFAnnotationPaletteColor: Identifiable, Equatable {
     static let graphite = PDFAnnotationPaletteColor(id: "graphite", name: "Graphite", hex: "#d8dee9")
 
     static let all: [PDFAnnotationPaletteColor] = [.yellow, .green, .blue, .pink, .red, .graphite]
+
+    /// The colour's swatch beside its name in the style menu.
+    var menuSwatch: NSImage {
+        Self.menuSwatches[id] ?? NSImage()
+    }
+
+    private static let menuSwatches: [String: NSImage] = Dictionary(uniqueKeysWithValues: all.map { color in
+        let image = NSImage(size: NSSize(width: 12, height: 12), flipped: false) { rect in
+            let circle = NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5))
+            color.nsColor.setFill()
+            circle.fill()
+            NSColor.black.withAlphaComponent(0.15).setStroke()
+            circle.lineWidth = 1
+            circle.stroke()
+            return true
+        }
+        return (color.id, image)
+    })
 }
 
 private enum PDFAnnotationOperationError: LocalizedError {

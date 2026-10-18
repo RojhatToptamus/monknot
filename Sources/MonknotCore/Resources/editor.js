@@ -2992,6 +2992,8 @@
       if (document.activeElement === document.body || !document.activeElement) focus();
     });
     if (payload.selection) {
+      // The selection the document was left with is restored, not made: no format bar for it.
+      UI.hostWillSelect();
       setSelection(payload.selection.anchor, payload.selection.head, { reveal: false });
     }
     if (payload.focus) focus();

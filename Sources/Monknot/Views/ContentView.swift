@@ -296,6 +296,8 @@ struct ContentView: View {
     @State private var pendingPDFPageNavigationRequest: PDFPageNavigationRequest?
     @State private var pdfPageNavigationSerial = 0
     @State private var pdfNavigatorToggleCommandSerial = 0
+    /// Each change opens the sidebar's workspace switcher.
+    @State private var workspaceSwitcherRequest = 0
     @State private var pdfSelectionSnapshot: PDFSelectionSnapshot?
     @State private var pdfExcerptCopyTask: Task<Void, Never>?
     /// Observable only when the editor selection goes between empty and non-empty, which is all the
@@ -352,6 +354,8 @@ struct ContentView: View {
             case documentSearch(String)
             case workspaceSearch(String)
             case keyboardShortcuts
+            case workspaceSwitcher
+            case pdfNavigator
         }
 
         static let standard = InitialLayout()
@@ -397,6 +401,16 @@ struct ContentView: View {
             )
         case .keyboardShortcuts:
             isKeyboardShortcutsHelpPresented = true
+        case .workspaceSwitcher:
+            // After the window's first layout, as a click would come, so the popover finds its anchor.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                workspaceSwitcherRequest &+= 1
+            }
+        case .pdfNavigator:
+            // Once the PDF viewer is on screen; it ignores toggles sent before it appeared.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                pdfNavigatorToggleCommandSerial &+= 1
+            }
         }
     }
 
@@ -670,6 +684,7 @@ struct ContentView: View {
                 MarkdownPDFExportOptionsSheet(
                     document: document,
                     theme: activeTheme,
+                    zoomScale: zoomScale,
                     options: $pdfExportOptions,
                     isExporting: isExportingPDF,
                     cancel: {
@@ -701,9 +716,8 @@ struct ContentView: View {
         ZStack {
             VStack(spacing: 0) {
                 // The titlebar is part of the frame around the cards: no rule under it.
-                MonknotChromePanel(theme: activeTheme, showsBottomBorder: false, surface: activeTheme.chromeSurfaceColor) {
-                    primaryTitlebar
-                }
+                primaryTitlebar
+                    .background(activeTheme.chromeSurfaceColor)
 
                 WorkspaceSplitView(
                     isSidebarPresented: sidebarPreferredVisible,
@@ -711,7 +725,7 @@ struct ContentView: View {
                     isTerminalFullscreen: isTerminalFullscreen,
                     layoutScale: activeTheme.layoutScale(zoomScale: zoomScale),
                     separatorColor: NSColor(activeTheme.separatorColor),
-                    accentColor: NSColor(activeTheme.accentColor),
+                    handleInkColor: NSColor(hex: activeTheme.foreground),
                     onDocumentLeadingEdgeChange: { edge in
                         if chromeAlignment.documentLeadingEdge != edge {
                             chromeAlignment.documentLeadingEdge = edge
@@ -915,7 +929,8 @@ struct ContentView: View {
             workspaceSearchFocusChanged: searchFieldFocusChanged,
             copyPath: copyPath(_:),
             copyRelativePath: copyRelativePath(_:),
-            newItemRequest: $sidebarNewItemRequest
+            newItemRequest: $sidebarNewItemRequest,
+            workspaceSwitcherRequest: workspaceSwitcherRequest
         )
         .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
     }
@@ -3110,14 +3125,15 @@ struct WindowNavigationControls: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
+        // Two bar buttons, 2 apart (design.md §5.1).
+        HStack(spacing: scaled(MonknotMetrics.barItemGapBase)) {
             MonknotIconButton(
                 systemImage: "chevron.left",
                 label: "Back",
                 theme: theme,
                 zoomScale: zoomScale,
                 isDisabled: !canNavigateBack,
-                size: .windowNavigation,
+                size: .regular,
                 action: navigateBack
             )
 
@@ -3127,7 +3143,7 @@ struct WindowNavigationControls: View {
                 theme: theme,
                 zoomScale: zoomScale,
                 isDisabled: !canNavigateForward,
-                size: .windowNavigation,
+                size: .regular,
                 action: navigateForward
             )
         }
@@ -3207,21 +3223,13 @@ private struct SuccessToast: View {
     }
 
     var body: some View {
-        HStack(spacing: scaled(8)) {
-            MonknotSystemGlyph(
-                systemImage: "checkmark",
-                nominalPointSizeBase: 15,
-                theme: theme,
-                zoomScale: zoomScale
-            )
-            .foregroundStyle(Color(hex: theme.semanticColors.diffAdded))
-            .accessibilityHidden(true)
+        HStack(spacing: scaled(MonknotMetrics.rowGlyphGapBase)) {
+            MonknotFileKindGlyph(systemImage: "checkmark", theme: theme, zoomScale: zoomScale)
+                .foregroundStyle(Color(hex: theme.semanticColors.diffAdded))
+                .accessibilityHidden(true)
 
             Text(notice.message)
-                .font(.system(
-                    size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale),
-                    weight: .regular
-                ))
+                .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
                 .foregroundStyle(theme.foregroundColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -3255,7 +3263,7 @@ private struct SuccessToast: View {
                 label: "Dismiss notification",
                 theme: theme,
                 zoomScale: zoomScale,
-                size: .smallAction,
+                size: .small,
                 focusRingPlacement: .contained,
                 action: dismiss
             )
@@ -3265,7 +3273,7 @@ private struct SuccessToast: View {
         .padding(.vertical, scaled(8))
         .monknotFloatingSurface(
             .e2,
-            cornerRadius: theme.chromeRadius(12, zoomScale: zoomScale),
+            cornerRadius: theme.chromeRadius(MonknotMetrics.cardCornerRadius, zoomScale: zoomScale),
             fill: theme.elevatedSurfaceColor,
             theme: theme
         )

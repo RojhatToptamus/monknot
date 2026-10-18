@@ -134,9 +134,40 @@ final class WindowChromeInteractionTests: XCTestCase {
         )
     }
 
-    func testDisabledControlsDimTheirBorderNotTheirGlyphAgain() {
-        // design.md §5.1: the glyph is `ink4` and the border 40 %; nothing multiplies on top.
-        XCTAssertEqual(MonknotIconButton.disabledBorderOpacity, 0.4, accuracy: 0.001)
+    func testDisabledIconButtonsDrawInk4WithNoFill() {
+        // design.md §5.1: a disabled button is an `ink4` glyph and nothing else, whatever its state.
+        for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
+            for active in [false, true] {
+                XCTAssertEqual(
+                    MonknotIconButton.iconColor(theme: theme, isActive: active, isHovered: true, isDisabled: true),
+                    theme.disabledForegroundColor
+                )
+                XCTAssertNil(MonknotIconButton.fill(
+                    isActive: active,
+                    drawsActiveBackground: true,
+                    isHovered: true,
+                    isPressed: true,
+                    isDisabled: true
+                ))
+            }
+            XCTAssertEqual(
+                MonknotIconButton.iconColor(theme: theme, isActive: false, isHovered: false, isDisabled: false),
+                theme.tertiaryForegroundColor,
+                "A glyph rests at ink3"
+            )
+        }
+    }
+
+    /// An enclosing `.disabled` (a PDF bar while its document loads) reaches every button in it.
+    func testIconButtonsTakeTheirDisabledLookFromAnEnclosingDisabledContainer() {
+        let theme = AppTheme.defaultLight
+        let enabled = NSHostingView(rootView: MonknotIconButton(
+            systemImage: "plus", label: "Add", theme: theme, zoomScale: 1, action: {}
+        ))
+        let disabled = NSHostingView(rootView: MonknotIconButton(
+            systemImage: "plus", label: "Add", theme: theme, zoomScale: 1, action: {}
+        ).disabled(true))
+        XCTAssertEqual(enabled.fittingSize, disabled.fittingSize, "Disabling never changes the box")
     }
 
     func testChromeListsKeepTheSlimOverlayThumbWhenTheSystemSwitchesToLegacyScrollBars() async {
@@ -298,35 +329,21 @@ final class WindowChromeInteractionTests: XCTestCase {
         }
     }
 
-    /// Back and forward are two ordinary chrome buttons side by side, with no shell (design.md §5.1).
-    func testWindowNavigationUsesChromeButtonGeometryAcrossSupportedZooms() {
+    /// Back and forward are two ordinary bar buttons side by side, 2 apart, with no shell (design.md §5.1).
+    func testWindowNavigationIsTwoRegularButtonsTwoApartAtEveryZoom() {
         let theme = AppTheme.defaultDark
-        let navigationSize = MonknotIconButton.IconButtonSize.windowNavigation
-        let chromeSize = MonknotIconButton.IconButtonSize.chrome
-
         for zoomScale in WorkspaceZoomPolicy.supportedLevels {
-
-            XCTAssertEqual(
-                navigationSize.dimension(theme: theme, zoomScale: zoomScale),
-                chromeSize.dimension(theme: theme, zoomScale: zoomScale),
-                accuracy: 0.001
-            )
-            XCTAssertEqual(
-                navigationSize.height(theme: theme, zoomScale: zoomScale),
-                chromeSize.height(theme: theme, zoomScale: zoomScale),
-                accuracy: 0.001
-            )
-            XCTAssertEqual(
-                navigationSize.cornerRadius(theme: theme, zoomScale: zoomScale),
-                chromeSize.cornerRadius(theme: theme, zoomScale: zoomScale),
-                accuracy: 0.001
-            )
-            XCTAssertEqual(
-                navigationSize.iconSize(theme: theme, zoomScale: zoomScale),
-                MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale),
-                accuracy: 0.001,
-                "Navigation chevrons use their specified optical size"
-            )
+            let host = NSHostingView(rootView: WindowNavigationControls(
+                navigateBack: {},
+                navigateForward: {},
+                canNavigateBack: true,
+                canNavigateForward: false,
+                theme: theme,
+                zoomScale: zoomScale
+            ))
+            let button = MonknotIconButton.IconButtonSize.regular.dimension(theme: theme, zoomScale: zoomScale)
+            let gap = MonknotMetrics.interfaceDensity(MonknotMetrics.barItemGapBase, theme: theme, zoomScale: zoomScale)
+            XCTAssertEqual(host.fittingSize.width, button * 2 + gap, accuracy: 0.01, "zoom \(zoomScale)")
         }
     }
 

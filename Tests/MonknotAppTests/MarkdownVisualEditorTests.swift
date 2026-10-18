@@ -479,6 +479,24 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         XCTAssertEqual(shownForPerson, true, "Selecting with the mouse shows it")
     }
 
+    /// A document reopens with the selection it was left with, and restoring it is no gesture either:
+    /// the format bar stays hidden until the person selects something.
+    func testARestoredSelectionComesBackWithoutTheFormatBar() async throws {
+        let markdown = "A paragraph with plain words to select.\n"
+        let plain = (markdown as NSString).range(of: "plain")
+        let fixture = try await makeFixture(
+            markdown: markdown,
+            viewportState: DocumentViewportState(textSelection: DocumentTextSelection(location: plain.location, length: plain.length))
+        )
+        _ = try await fixture.evaluate("(() => { const s = document.createElement('style'); s.textContent = '.mk-floating { transition: none !important; }'; document.head.appendChild(s); return true; })()")
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        let selection = try await fixture.evaluate("JSON.stringify(window.MonknotEditor.selection())") as? String
+        XCTAssertTrue(selection?.contains("\(plain.location)") == true, "The selection comes back: \(selection ?? "none")")
+        let shown = try await fixture.evaluate("Boolean(document.querySelector('.mk-toolbar.mk-visible'))") as? Bool
+        XCTAssertEqual(shown, false, "A restored selection shows no format bar")
+    }
+
     /// The format bar's and link card's buttons are built once; when the page builds them before
     /// the app's glyphs arrive they must fill in then, not stay solid squares.
     func testGlyphsThatArriveAfterTheBarsAreBuiltStillDraw() async throws {
@@ -1032,7 +1050,8 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         theme: AppTheme = .defaultLight,
         width: CGFloat = 800,
         timeout: TimeInterval = 10,
-        notes: [String] = []
+        notes: [String] = [],
+        viewportState: DocumentViewportState? = nil
     ) async throws -> Fixture {
         let root = try makeWorkspaceStoreTemporaryDirectory(prefix: "MonknotVisualEditor")
         let file = root.appendingPathComponent("Note.md")
@@ -1052,6 +1071,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         store.testing_stopFileWatcher()
 
         let harness = VisualEditorHarnessModel(store: store, theme: theme)
+        harness.viewportState = viewportState
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: width, height: 700),
             styleMask: [.titled, .closable, .resizable],
@@ -1254,6 +1274,8 @@ private final class VisualEditorHarnessModel: ObservableObject {
     let store: WorkspaceStore
     let theme: AppTheme
     @Published var editorMode = EditorMode.preview
+    /// What the document was left with: its scroll position and selection.
+    var viewportState: DocumentViewportState?
 
     init(store: WorkspaceStore, theme: AppTheme) {
         self.store = store
@@ -1283,7 +1305,7 @@ private struct VisualEditorHarness: View {
             showsDocumentOutline: false,
             usePointerCursors: false,
             fontSmoothing: true,
-            activeViewportState: nil,
+            activeViewportState: model.viewportState,
             pdfViewportCaptureBridge: pdfViewportCaptureBridge,
             updateViewportState: { _, _ in },
             pdfUndoCommandSerial: 0,

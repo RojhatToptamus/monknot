@@ -34,7 +34,8 @@ final class TerminalChromeLayoutTests: XCTestCase {
         XCTAssertEqual(window.zoomCallCount, 0)
     }
 
-    func testTerminalPanelRowUsesItsSubordinateThirtySixPointHeader() {
+    /// The terminal's header is the card's bar (design.md §10.6): 40 at every zoom.
+    func testTerminalPanelRowIsTheFortyPointCardBar() {
         for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             let sessions = TerminalSessionCollectionStore()
 
@@ -47,7 +48,7 @@ final class TerminalChromeLayoutTests: XCTestCase {
                     close: {}
                 )
                 let terminalHost = NSHostingView(rootView: terminalRow.frame(width: 420))
-                let expectedHeight = MonknotMetrics.interfaceControl(36, theme: theme, zoomScale: zoomScale)
+                let expectedHeight = MonknotMetrics.barHeight(theme: theme, zoomScale: zoomScale)
 
                 XCTAssertEqual(terminalHost.fittingSize.height, expectedHeight, accuracy: 0.01)
             }

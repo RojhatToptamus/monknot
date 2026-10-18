@@ -53,13 +53,13 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
         }
     }
 
-    func testSettingsMenuSelectionTransactionPreviewsThenCancelsOrCommits() {
-        var cancelled = SettingsMenuSelectionTransaction(initialSelection: "harbor-light")
+    func testMonknotPopUpSelectionTransactionPreviewsThenCancelsOrCommits() {
+        var cancelled = MonknotPopUpSelectionTransaction(initialSelection: "harbor-light")
         cancelled.preview("forge-light")
         XCTAssertEqual(cancelled.previewedSelection, "forge-light")
         XCTAssertEqual(cancelled.selectionAfterClose, "harbor-light")
 
-        var committed = SettingsMenuSelectionTransaction(initialSelection: "harbor-light")
+        var committed = MonknotPopUpSelectionTransaction(initialSelection: "harbor-light")
         committed.preview("forge-light")
         committed.commit("monolith-light")
         XCTAssertEqual(committed.previewedSelection, "monolith-light")
@@ -148,7 +148,8 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
             accuracy: 0.001
         )
         XCTAssertGreaterThanOrEqual(
-            MonknotMetrics.chromeButtonDimension(
+            MonknotMetrics.interfaceControl(
+                MonknotMetrics.iconButtonSizeBase,
                 theme: smallestTheme,
                 zoomScale: WorkspaceZoomPolicy.minimum
             ),
@@ -183,11 +184,11 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
 
     func testHighDocumentZoomKeepsChromeIconsProportionalToAdjacentText() {
         let theme = AppTheme.defaultDark
-        let normalIconSize = MonknotIconButton.IconButtonSize.chrome.iconSize(
+        let normalIconSize = MonknotIconButton.IconButtonSize.regular.iconSize(
             theme: theme,
             zoomScale: 1
         )
-        let maximumIconSize = MonknotIconButton.IconButtonSize.chrome.iconSize(
+        let maximumIconSize = MonknotIconButton.IconButtonSize.regular.iconSize(
             theme: theme,
             zoomScale: WorkspaceZoomPolicy.maximum
         )
@@ -303,8 +304,10 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
                 "\(systemImage) escaped the shared optical-size policy"
             )
         }
-        XCTAssertEqual(MonknotSymbolOptics.pointSizeBase(for: "plus", nominal: 16), 16)
-        XCTAssertEqual(MonknotSymbolOptics.pointSizeBase(for: "xmark", nominal: 16), 16)
+        // Open strokes span their whole box, so they are capped too (design.md §8.6).
+        XCTAssertEqual(MonknotSymbolOptics.pointSizeBase(for: "plus", nominal: 17), 15)
+        XCTAssertEqual(MonknotSymbolOptics.pointSizeBase(for: "xmark", nominal: 17), 14)
+        XCTAssertEqual(MonknotSymbolOptics.pointSizeBase(for: "plus", nominal: 13), 13)
         XCTAssertEqual(MonknotSymbolOptics.pointSizeBase(for: "doc.text", nominal: 12), 12)
     }
 
@@ -324,6 +327,9 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
             "arrow.down.right.and.arrow.up.left": 14,
             "sidebar.left": 15,
             "sidebar.right": 15,
+            "plus": 15,
+            "xmark": 14,
+            "exclamationmark.triangle.fill": 13,
         ]
 
         for (systemImage, expectedCeiling) in measuredCeilings {
@@ -334,7 +340,7 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
             )
         }
 
-        for systemImage in ["bold", "italic", "list.bullet", "plus", "xmark"] {
+        for systemImage in ["bold", "italic", "list.bullet", "folder", "terminal"] {
             XCTAssertNil(
                 MonknotSymbolOptics.maximumPointSizeBase(for: systemImage),
                 "\(systemImage) should retain its nominal point size"
@@ -346,8 +352,8 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
         XCTAssertEqual(MonknotSymbolOptics.horizontalOffsetBase(for: "magnifyingglass"), -0.5)
         XCTAssertEqual(MonknotSymbolOptics.horizontalOffsetBase(for: "plus"), 0)
 
-        let size = MonknotIconButton.IconButtonSize.sidebarHeader
-        XCTAssertEqual(size.iconPointSizeBase, 16)
+        let size = MonknotIconButton.IconButtonSize.regular
+        XCTAssertEqual(size.iconPointSizeBase, 17)
         XCTAssertEqual(
             MonknotSymbolOptics.pointSizeBase(
                 for: MonknotWorkspaceIcons.searchWorkspace,
@@ -357,26 +363,34 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
         )
         XCTAssertEqual(
             size.dimension(theme: .defaultDark, zoomScale: 1),
-            22,
+            28,
             "Optical symbol sizing must not shrink the action target"
         )
     }
 
-    func testSidebarHeaderActionsShareRowSymbolStyleWithoutShrinkingHitTargets() {
-        let size = MonknotIconButton.IconButtonSize.sidebarHeader
-
+    /// design.md §5.1: every bar uses the 28 / 17 button and every row or field the 22 / 13 one, at
+    /// every zoom. There is no third size.
+    func testIconButtonsComeInTwoSizesAtEveryZoom() {
+        let expectations: [(MonknotIconButton.IconButtonSize, box: CGFloat, glyph: CGFloat, radius: CGFloat)] = [
+            (.regular, 28, 17, 8),
+            (.small, 22, 13, 6),
+        ]
         for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
-                XCTAssertEqual(
-                    size.iconSize(theme: theme, zoomScale: zoomScale),
-                    MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale),
-                    accuracy: 0.001
-                )
-                XCTAssertEqual(
-                    size.dimension(theme: theme, zoomScale: zoomScale),
-                    MonknotMetrics.interfaceControl(22, theme: theme, zoomScale: zoomScale),
-                    accuracy: 0.001
-                )
+                for (size, box, glyph, radius) in expectations {
+                    XCTAssertEqual(
+                        size.dimension(theme: theme, zoomScale: zoomScale),
+                        MonknotMetrics.interfaceControl(box, theme: theme, zoomScale: zoomScale)
+                    )
+                    XCTAssertEqual(
+                        size.iconSize(theme: theme, zoomScale: zoomScale),
+                        MonknotMetrics.interfaceGlyph(glyph, theme: theme, zoomScale: zoomScale)
+                    )
+                    XCTAssertEqual(
+                        size.cornerRadius(theme: theme, zoomScale: zoomScale),
+                        theme.chromeRadius(radius, zoomScale: zoomScale)
+                    )
+                }
             }
         }
     }
@@ -396,35 +410,29 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
         XCTAssertNotNil(MonknotMotion.paneTransition(reduceMotion: false))
     }
 
-    func testPrimaryAndSecondaryChromePreserveTheirDistinctReferenceBands() {
+    /// design.md §6: the 44 titlebar, the 40 bar inside a card and the 28 control nest at every zoom,
+    /// so a tab, a button and a pop-up share one height wherever they sit.
+    func testTitlebarBarAndControlHeightsNestAtEveryZoom() {
         for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
-                let primaryHeight = MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
-                let secondaryHeight = MonknotMetrics.chromeSecondaryHeight(
+                let titlebar = MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
+                let bar = MonknotMetrics.barHeight(theme: theme, zoomScale: zoomScale)
+                let control = MonknotMetrics.interfaceControl(
+                    MonknotMetrics.iconButtonSizeBase,
                     theme: theme,
                     zoomScale: zoomScale
                 )
-                let tabChipHeight = MonknotMetrics.interfaceControl(
-                    30,
-                    theme: theme,
-                    zoomScale: zoomScale
-                )
+                let tab = MonknotMetrics.interfaceControl(MonknotTab.heightBase, theme: theme, zoomScale: zoomScale)
 
-                XCTAssertGreaterThan(
-                    primaryHeight,
-                    secondaryHeight,
-                    "The 44pt titlebar and 34pt formatting row must remain distinct"
-                )
-                XCTAssertGreaterThanOrEqual(
-                    primaryHeight,
-                    tabChipHeight,
-                    "The active 30pt file chip must fit inside the titlebar"
-                )
+                XCTAssertGreaterThan(titlebar, bar)
+                XCTAssertGreaterThan(bar, control)
+                XCTAssertEqual(tab, control, "A tab is a control's height")
             }
         }
 
         XCTAssertEqual(MonknotMetrics.chromeHeight(theme: .defaultDark, zoomScale: 1), 44)
-        XCTAssertEqual(MonknotMetrics.chromeSecondaryHeight(theme: .defaultDark, zoomScale: 1), 34)
+        XCTAssertEqual(MonknotMetrics.barHeight(theme: .defaultDark, zoomScale: 1), 40)
+        XCTAssertEqual(MonknotTab.heightBase, 28)
     }
 
     func testSegmentButtonsUseReferenceWidthAndShorterReferenceHeight() {
@@ -479,7 +487,7 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
         XCTAssertEqual(fill(hovered: true), .hover)
         // design.md §5.1: pressed is its own fill, replacing hover rather than stacking on it.
         XCTAssertEqual(fill(hovered: true, pressed: true), .pressed)
-        XCTAssertEqual(fill(active: true), .accentSoft, "An open panel's toggle uses accsoft")
+        XCTAssertEqual(fill(active: true), .on, "A control that is on takes the neutral on fill, never accent")
         XCTAssertEqual(fill(active: true, pressed: true), .pressed)
     }
 
@@ -499,21 +507,22 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
         for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             XCTAssertEqual(MonknotIconButton.Fill.hover.color(theme), theme.hoverFillColor)
             XCTAssertEqual(MonknotIconButton.Fill.pressed.color(theme), theme.pressedFillColor)
-            XCTAssertEqual(MonknotIconButton.Fill.accentSoft.color(theme), theme.accentSoftFillColor)
-            // design.md §1.2: hover ink 6 / 5.5 %, press ink 11 / 10 %, accsoft accent 18 / 14 %.
+            XCTAssertEqual(MonknotIconButton.Fill.on.color(theme), theme.onFillColor)
+            // design.md §1.2: hover ink 6 / 5.5 %, press ink 11 / 10 %, on ink 17 / 12 %.
             XCTAssertEqual(theme.hoverFillColor, theme.foregroundColor.opacity(theme.isDark ? 0.06 : 0.055))
             XCTAssertEqual(theme.pressedFillColor, theme.foregroundColor.opacity(theme.isDark ? 0.11 : 0.10))
-            XCTAssertEqual(theme.accentSoftFillColor, theme.accentColor.opacity(theme.isDark ? 0.18 : 0.14))
+            XCTAssertEqual(theme.onFillColor, theme.foregroundColor.opacity(theme.isDark ? 0.17 : 0.12))
         }
     }
 
-    func testSearchOptionButtonsUseTheStandardSharedMetrics() {
-        let size = MonknotIconButton.IconButtonSize.findBar
+    /// Match options and arrows sit inside a field, so they are the small button (design.md §5.1).
+    func testSearchOptionButtonsUseTheSmallSharedMetrics() {
+        let size = MonknotIconButton.IconButtonSize.small
 
         for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
-            XCTAssertEqual(size.dimension(theme: theme, zoomScale: 1), 28)
-            XCTAssertEqual(size.height(theme: theme, zoomScale: 1), 28)
-            XCTAssertEqual(size.iconSize(theme: theme, zoomScale: 1), 17)
+            XCTAssertEqual(size.dimension(theme: theme, zoomScale: 1), 22)
+            XCTAssertEqual(size.height(theme: theme, zoomScale: 1), 22)
+            XCTAssertEqual(size.iconSize(theme: theme, zoomScale: 1), 13)
         }
     }
 
@@ -576,7 +585,9 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
         }
     }
 
-    func testCommandOverlayCloseIsTheStandardCompactCloseButton() {
+    /// Close in an overlay's header is the small icon button (design.md §5.1), 11 from the top and
+    /// trailing edges of the 44 header.
+    func testCommandOverlayCloseIsTheSmallIconButton() {
         for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             let size = NSHostingView(rootView: MonknotCommandOverlayCloseButton(
                 theme: theme,
@@ -584,23 +595,23 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
                 close: {}
             )).fittingSize
 
-            XCTAssertEqual(size.width, 26, accuracy: 0.01)
-            XCTAssertEqual(size.height, 26, accuracy: 0.01)
+            XCTAssertEqual(size.width, 22, accuracy: 0.01)
+            XCTAssertEqual(size.height, 22, accuracy: 0.01)
         }
     }
 
     func testCommandOverlayPanelFitsItsRowsHeaderAndFooter() {
         let theme = AppTheme.defaultDark
-        // 44 header + 1 rule + three 34 rows with 2 between + 12 list padding + 30 footer (its rule
-        // is drawn inside it).
-        let threeRows: CGFloat = 44 + 1 + 118 + 30
+        // 44 header + 1 rule + three 34 menu rows 1 apart + the menu's 6 inset above and below + the
+        // menu's 32 footer (its rule is drawn inside it).
+        let threeRows: CGFloat = 44 + 1 + (3 * 34 + 2 + 12) + 32
         XCTAssertEqual(
             MonknotCommandOverlayMetrics.panelHeight(rows: 3, hasFooter: true, theme: theme, zoomScale: 1),
             threeRows,
             accuracy: 0.01
         )
-        // At most eight rows show (8 × 34 + 7 × 2 + 12); the rest scroll.
-        let eightRows: CGFloat = 44 + 1 + 298
+        // At most eight rows show (8 × 34 + 7 × 1 + 12); the rest scroll.
+        let eightRows: CGFloat = 44 + 1 + (8 * 34 + 7 + 12)
         XCTAssertEqual(
             MonknotCommandOverlayMetrics.panelHeight(rows: 20, hasFooter: false, theme: theme, zoomScale: 1),
             eightRows,

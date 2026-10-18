@@ -18,15 +18,15 @@ geometry, radii and ink.
 ## 0. Five principles
 
 1. **One row primitive.** `28 tall · 8 padding-x · 15 glyph in an 18 column · 8 gap · 13 label`, no
-   gap between rows, inside a 10 list inset. Sidebar rows, Recents, Settings' sections and Find in
-   Workspace's results are this row; a file tab is its denser sibling in the 44 titlebar (a 14 glyph
-   in a 16 column). Menus and popovers take the editor's menu row: 30 tall, the same glyph and
-   column, a 10 gap, inside a 6 inset. Overlay results keep 34.
+   gap between rows, inside a 10 list inset (`MonknotListRowLabel`). Sidebar rows, Recents,
+   Settings' sections, Find in Workspace's results and the PDF navigator's lists are this row; a tab
+   is the same row with 10 padding, for files and terminal sessions alike (`MonknotTab`). Menus and
+   popovers take the editor's menu row: 30 tall, the same glyph and column, a 10 gap, inside a 6
+   inset (`MonknotMenuRowLabel`). Overlay results are the menu row at 34.
 2. **Depth is a property of the surface class, not the colour mode.** Docked never casts. Resting
    never casts. Only floating casts — in both modes.
-3. **Three weights, one job each.** 400 for content, 500 for the names of places in the sidebar
-   (files, folders, Settings' pages), 600 for headings and the workspace name. Nothing is ever bolder
-   for being hovered, selected or focused.
+3. **Two weights, one job each.** 400 for every label, sidebar names included; 600 for headings,
+   titles and the workspace name. Nothing is ever bolder for being hovered, selected or focused.
 4. **Five radii and a capsule.** 2 · 6 · 8 · 12 · 16. A sixth value is a mistake, not a case.
 5. **One zoom factor drives the entire workspace.** Chrome and document scale together.
 
@@ -61,9 +61,9 @@ surf2     = mix(surface → ink, dark ? 0.11  : 0.05)
 surf3     = mix(surface → ink, dark ? 0.17  : 0.09)
 
 ink       = ink
-ink2      = ink @ 62%     label at rest
-ink3      = ink @ 40%     glyph at rest, secondary text
-ink4      = ink @ 24%     disabled
+ink2      = ink @ max(72%, the least that reads 4.5:1 on chrome and surface)   label at rest
+ink3      = ink @ max(50%, the least that reads 3:1 on chrome and surface)     glyph at rest, secondary text
+ink4      = ink @ 30%     disabled, placeholders
 
 line      = ink @ (dark ? 9%  : 12%)    structural seams + control borders
 line2     = ink @ (dark ? 6%  : 8%)     in-container dividers only
@@ -84,8 +84,7 @@ button2   = ink @ (dark ? 10% : 8%)     secondary push button
 chrome    = dark ? mix(surface → #000000, 0.28) : mix(surface → ink, 0.055)
                                         titlebar, sidebar and every gap between cards (§10.0)
 cardring  = ink @ (dark ? 9% : 11%)     the document, terminal and settings cards' ring
-sidelabel = ink @ 75%                   a sidebar row's label at rest (§10.4)
-sideglyph = ink @ 55%                   a sidebar row's glyph at rest
+handle    = ink @ 18%, 30% while dragged  a split divider under the pointer (§10.0)
 
 accent    = accent
 onaccent  = contrast(#ffffff, accent) >= contrast(#101010, accent) ? #ffffff : #101010
@@ -101,6 +100,12 @@ white to any accent below it, and a mid-luminance accent — a 0.40 green, a 0.4
 a white label at 2.2:1, which is an unreadable primary button. Compare both candidates and take the
 winner. Every accent must clear **4.5:1** against its `onaccent`; if it cannot, darken the accent
 rather than accepting the label.
+
+**The ink ladder is measured, not fixed.** `ink2` and `ink3` start at 72 % and 50 % and rise, a
+hundredth at a time, until they read 4.5:1 and 3:1 on both the chrome and the canvas
+(`AppTheme.labelInkOpacity`, `glyphInkOpacity`). A dark ink on white keeps the floors; Catppuccin
+Latte's soft ink needs 84 % and 66 %. One ladder serves the sidebar, tabs, menus, Settings and the
+Preview editor (`--mk-ink2`, `--mk-ink3`), so no surface reads fainter than another.
 
 **Note the inversion on `line`.** Dark runs *lighter* (9%) than light (12%). Dark already has a
 large luminance step between canvas and sidebar doing the separation, so the line only hints. Light
@@ -130,9 +135,9 @@ completion in `ink` mixed toward `accent`, in Source and Preview alike (§10.10)
 ### 1.4 Ink ladder
 
 `ink4` disabled → `ink3` glyph at rest and secondary text → `ink2` label at rest → `ink` label or
-glyph when its row is hovered or active.
+glyph when its row or control is hovered or active.
 
-Hover moves one step up this ladder **and** adds a `hover` fill. Selection moves one step up **and**
+Hover raises the label and the glyph to `ink` **and** adds a `hover` fill. Selection moves one step up **and**
 adds the neutral `selected` fill — never an accent tint, so a selected row never reads as a text
 selection and the accent glyph (§1.3) stays the only colour in it. Search match options are the one exception: their selected state uses an `accent` glyph
 with no resting fill, so the option stays visually subordinate to the query field.
@@ -234,16 +239,15 @@ needs a tone step or a shadow — not a thicker line.
 
 ### 4.1 Two weights, total
 
-- **400 (regular)** — everything the user reads as content: menu and palette rows, search matches,
-  tabs, pills, fields, button labels, body and help text. Selected or not, hovered or not, focused
-  or not.
-- **500 (medium)** — the name of a place in a sidebar row: a file, a folder, a Settings page, a file
-  in Find in Workspace's results and its Replace row (`MonknotTypography.sidebarLabel`). A list you
-  navigate reads firmer than the content it opens, as in Linear; every row in it has the weight, so
-  selection still changes only fill and ink.
-- **600 (semibold)** — headings, panel and window titles, the workspace name.
+- **400 (regular)** — every label: sidebar and menu rows, tabs, search matches, fields, button
+  labels, Settings' rows, body and help text. Selected or not, hovered or not, focused or not
+  (`MonknotTypography.rowTitle`).
+- **600 (semibold)** — headings, panel, sheet, overlay and window titles, the workspace name
+  (`MonknotTypography.panelTitle`).
 
-No other weight in the chrome. No bold/700 anywhere at all.
+No other weight in the chrome. No bold/700 anywhere at all. Three type styles cover the chrome:
+label 13/400, title 13/600, and secondary 12/400 for paths, counts, captions, details and group
+headers (`rowDetail`, `groupHeader`).
 
 ### 4.2 Never bolder on
 
@@ -260,13 +264,13 @@ takes a fill plus one step up the ink ladder — fill is a far louder signal tha
 |---|---|
 | Preview prose | 14 / 1.6 at the default 13 pt code size (prose is code size × 14⁄13) |
 | Document h1 / h2 / h3 | 1.875 / 1.45 / 1.2 em of prose, line 1.2 / 1.25 / 1.3, tracking −0.021 / −0.016 / −0.01 em, weight 600; h4–h6 1 em |
-| Row + tab + button label | 13 / 1 (500 on sidebar rows, §4.1) |
+| Row + tab + button label | 13 / 1 |
 | Field text, overlay queries included | 13 / 1 |
 | Panel, sheet, overlay and empty-state title | 13 / 1, weight 600 |
 | Body prose | 13.5 / 1.6 |
 | Secondary + caption | 12 / 1.4 |
 | Group header (sidebar Recents, Settings sections, menus over the document) | 12 / 1.2, weight 400, `ink3`, sentence case ("Recents", "Basic blocks"), no tracking. Nothing in Monknot is uppercased. |
-| Code, session numbers | 13 / 1.65 SF Mono (12 in pills) |
+| Code | 13 / 1.65 SF Mono |
 
 ### 4.4 Shortcut labels
 
@@ -288,21 +292,26 @@ native text treatment.
 
 ### 5.1 Icon-only button
 
-`28 × 28` box, radius 8, **17pt symbol** centred, no border — the same button as the Preview format
-bar's. No padding value — the box and the centring do it. Back and forward are two of these side by
-side, with no shell around them. A button that shows or hides a panel has no on state (§1.3).
+**Two sizes, no third** (`MonknotIconButton`). Every bar uses the `28 × 28` box, radius 8, a **17pt
+symbol** centred (optically capped, §8.2) — the same button as the Preview format bar's. A button
+inside a row or a field (match options, a row's Remove, a stepper's − and +) is the small `22 × 22`
+box, radius 6, a 13pt symbol. No padding value — the box and the centring do it. Back and forward are
+two regular buttons 2 apart, with no shell around them. A button that shows or hides a panel has no
+on state (§1.3). A button that opens a menu of commands (More) is the same box (`MonknotMenuButton`).
+A disabled container (a PDF bar while its document loads) disables its buttons, and they draw
+themselves at `ink4`; nothing dims the bar.
 
 | State | Treatment |
 |---|---|
-| Rest | no fill, no border, `ink2` glyph |
+| Rest | no fill, no border, `ink3` glyph |
 | Hover | `hover` fill, `ink` glyph |
 | Pressed | `press` fill |
 | On (format applied) | `on` fill (`fg` at 12 % light, 17 % dark), `ink` glyph. Preview's format bar uses it for bold, italic, strikethrough, code and link, so formatting never spends the accent, a format that is on never looks like the text selection under it, and the fill still reads on a 28 pt button where the 6.5 % `highlight` of a menu row disappears |
 | Open (its menu is showing) | `press` fill and `ink` glyph until the menu closes: the format bar's block selector, the table bar's Row and Column, the code language label. A callout's kind keeps its own tint at 12 % |
 | Disabled | `ink4` glyph, no fill. No extra opacity on top. |
 
-**Search option exception.** Match Case and Match Whole Word use the same standard `28 × 28` box
-and 17pt symbol in both search surfaces, but stay transparent at rest whether off or on. On uses an
+**Search option exception.** Match Case and Match Whole Word are small buttons inside the search
+field in both search surfaces, and stay transparent at rest whether off or on. On uses an
 `accent` glyph. Hover alone adds the standard full-box `hover` fill; pressed uses `press`. Keyboard
 focus uses the standard ring, never the hover fill. As with every icon button nested in a
 fixed-height search shell, contain that ring inside its 28-point box so focus cannot enlarge the
@@ -327,26 +336,30 @@ Two heights, no third: **28 in bars and banners, 30 in sheets.** Padding-x 12, r
 Hover adds the `hover` tint over the fill and press the `press` tint (§1.4), in both themes. It never
 changes padding, size, weight or elevation.
 
-A **pop-up** (Settings' theme preset, any value chosen from a menu) is a push button with its value
-and an 11 `chevron.down` in `ink3`: `track` fill, `press` under the pointer and while its menu is
-open — the editor's block selector at button size.
+A **pop-up** (`MonknotPopUpButton`: Settings' pickers, the PDF zoom, tool, markup colour and font,
+Find in Workspace's replace scope) is 28 tall: its value (13 `ink`, tabular, as wide as its longest
+option, or a swatch or glyph) and a 10 `chevron.down` in `ink3`, 10 leading (8 before a swatch or
+glyph) and 8 trailing, on the `track` fill; `hover` tint under the pointer, `press` while its menu is
+open. Its menu is native, with the current value checked and placed over the button, as
+`NSPopUpButton` places it; commands that are not values (Stroke Width…) follow a separator.
 
 ### 5.4 Button with glyph and label
 
 Padding **10 leading / 12 trailing** — asymmetric on purpose, because the glyph's own side bearing
-adds optical space on the left. Glyph 14 in a 16 column, gap 7, label 13: a file tab's numbers, the
-other control that pairs a glyph with a label in a 28 box.
+adds optical space on the left. Glyph 14 in a 16 column, gap 7, label 13.
 
 ### 5.5 Segmented control
 
-Cell `28 × 22`, radius 6, 16pt symbol, 2 between cells, 2 padding, on a `track` fill with radius 8
-and **no border**. The outer box lands on 28 tall, matching every other control in the bar.
+Cells 24 tall (icon cells 28 wide, text cells 12 padding), radius 6, 16pt symbol, 2 between cells, 2
+padding, on a `track` fill with radius 8 and **no border** (`MonknotSegmentedControl`). The outer box
+lands on 28 tall, matching every other control in the bar. The titlebar's view mode, the PDF tools and
+navigator, the text style popover and Settings use it.
 
 - Selected: a **chip** lifted out of the track, the same chip as the active tab (§10.3): `chip`
   fill (the canvas colour in light, the canvas blended 12 % toward `ink` in dark), a 0.5 `chipring`
   hairline, and in light themes a one-point seat (`ink` 9 %, radius 0.75, y 1); `ink` glyph. Settings'
   text segments are the same chip.
-- Idle `ink2`; hover `hover` + `ink`.
+- Idle: a glyph `ink3`, a word `ink2`; hover `hover` + `ink`.
 - Momentary variants (back/forward) never take a selected fill; each segment disables independently
   and the control never resizes.
 
@@ -358,8 +371,18 @@ target look smaller than it is.
 
 ### 5.7 Other controls
 
-Field 28 · toggle 34×20 with a 16 knob, capsule track · stepper 26 · slider track 4 / knob 16 ·
-overlay row 34 · badge 22.
+One implementation each (`MonknotFormControls.swift`, `SettingsComponents.swift`):
+
+- **Field** 28 (`View.monknotField`): the canvas inside a `line` hairline, radius 8, 8 leading and 8
+  trailing (3 when small buttons end it); focused, an `accent` hairline and a 3 pt `accsoft` ring
+  outside; invalid, a `danger` hairline. Find, Find in Workspace, Replace, the rename sheets,
+  workspace names and hex values.
+- **Toggle** 32 × 18 capsule, 14 white knob, `accent` when on, the `track` inside a `line` hairline
+  when off.
+- **Stepper** 28: small − and + around a 13 tabular value on the `track` (`MonknotStepper`).
+- **Slider** track 4 in the `on` fill, `accent` up to a 16 white knob (`MonknotSlider`).
+- **Colour well** the system's minimal well, 44 × 22, which draws its own edge (`MonknotColorWell`).
+- **Menu row** 30, **overlay row** 34 (§0).
 
 **Empty states.** One layout everywhere: a 34 glyph in `ink3`, a 13/600 title, one 12 `ink3`
 line, and at most two actions. A primary action shows its shortcut as a quiet hint beside it. No
@@ -374,8 +397,9 @@ container's edge (3 clear of it), its ends 6 clear of the lane's ends so it neve
 rounded corner. It takes its colour from the theme's `ink`.
 
 - **Chrome lists** (sidebar, search results, palettes, panels, PDF navigator, diff panes, Settings)
-  always overlay, whatever "Show scroll bars" says: the thumb appears while the list scrolls and
-  while the pointer is over it, and fades. A chrome list takes the thumb before its first layout, so
+  always overlay, whatever "Show scroll bars" says: the thumb appears only while the list scrolls,
+  and fades. It never shows merely because the pointer is over a list: beside a divider a resting
+  thumb reads as a resize handle. A chrome list takes the thumb before its first layout, so
   no legacy bar flashes and nothing shifts sideways.
 - **Documents** follow the system setting, so side-by-side panes always behave alike. Overlay: the
   thumb fades as the system's does. "Always": the same thumb stays in an 11 lane with no track —
@@ -391,15 +415,15 @@ rounded corner. It takes its colour from the theme's `ink`.
 
 | Relationship | Rule |
 |---|---|
-| Glyph beside a label | **label + 2** (13 → 15) on sidebar and menu rows alike; a file tab, the titlebar's denser row, takes **label + 1** (13 → 14). At 1.0 the icon sits below cap height and reads as an afterthought; past 1.3 it leads and the name becomes its caption. |
+| Glyph beside a label | **label + 2** (13 → 15) on sidebar rows, menu rows and tabs alike. At 1.0 the icon sits below cap height and reads as an afterthought; past 1.3 it leads and the name becomes its caption. |
 | Gap, glyph to label | **label × 0.6**, rounded even. 13 → 8, 12 → 7, 11 → 6. Always smaller than the glyph it follows, or the two stop grouping as one object. |
 | Icon-only button | **glyph fills 60% of the box.** 17/28, 16/26, 15/24. Below 55% the button looks empty; above 70% the glyph crowds the radius. |
 | Row height | **28** in the chrome, the same as a tab chip, so the sidebar's rows and the titlebar's tabs share one rhythm. Menus and popovers take 30, overlays 34. |
 | Row padding-x | **8** on every row, leading and trailing equal. A row's glyph therefore sits 18 from the list's edge (10 inset + 8), and its label 44. |
-| Secondary glyph (close, chevron) | **primary − 4** (15 → 11); hit target **glyph + 5** (11 → 16). Deliberately off the label ratio — these are not content, and sizing them like content gives a row three things all claiming to be the subject. |
+| Secondary glyph (close, chevron) | chevrons **10**, semibold; the close and clear `xmark` **9** semibold in a **16** round target. Deliberately off the label ratio — these are not content, and sizing them like content gives a row three things all claiming to be the subject. |
 | Dot indicator | **glyph ÷ 2.5** → 6. |
-| Bar divider | Only in the Preview format bar, which floats: **bar height × 0.36** (1×16 between its groups). Docked bars — the titlebar, the terminal header — group by space alone. Never full height — a full-height rule turns a bar into a table. |
-| Bar height | **tab height + 16.** A 28 tab in a 44 titlebar leaves 8 of air each side. |
+| Bar divider | Only in the Preview format bar, which floats: **bar height × 0.36** (1×16 between its groups). Docked bars — the titlebar, the terminal's bar, the PDF bar — group by space alone: items 2 apart, groups 8 apart. Never full height — a full-height rule turns a bar into a table. |
+| Bar height | **tab height + 16** for the titlebar (44: 8 of air each side of a 28 control); **40** for every bar below it (`MonknotBar`: the terminal's and the PDF's, the sidebar and panel headers), 6 padding. |
 
 **Where the ratios stop.** Editor body text, PDF page content, image pixels and empty-state illustrations are not
 chrome and follow none of this. Everything from the window rim inward to the document does.
@@ -442,13 +466,14 @@ size.
 
 ### 8.2 The two sizes
 
-- **Beside a label:** 15pt next to a 13pt label in the 18pt column, on sidebar and menu rows alike, so
-  a file reads the same in the sidebar as in a menu. A file tab's glyph is 14pt in a 16pt column, a
-  step denser in the 44 titlebar.
+- **Beside a label:** 15pt next to a 13pt label in the 18pt column, on sidebar rows, menu rows and
+  tabs alike, so a file reads the same in a tab, the sidebar and a menu.
 - **Alone in a button:** nominally 17pt in a 28pt button. Optical ceilings are measured from the
   rendered symbol bounds: whole-word search is 12.5pt; `curlybraces`, `link` and `play.rectangle`
   are 13pt; `magnifyingglass`, `checklist`, `text.quote`, document glyphs, and the diagonal
-  terminal arrows are 14pt; the two sidebar glyphs are 15pt. Preview's editor glyphs follow the same
+  terminal arrows are 14pt; the two sidebar glyphs are 15pt; the open strokes `plus` and the bar's
+markup and history glyphs 15pt and `xmark` 14pt, which otherwise read largest in a bar; a filled
+warning triangle 13pt. Preview's editor glyphs follow the same
   rule: `chevron.left.forwardslash.chevron.right` is 12pt; `textformat`, `speaker.wave.2` and
   `list.bullet.rectangle` 13pt; `tablecells`, `text.bubble`, `face.smiling`, `calendar`, the
   callout glyphs, `arrow.triangle.2.circlepath`, `arrow.up.right.square`, `plus.square.on.square`,
@@ -461,8 +486,8 @@ reads as a different icon set two rows down.
 
 ### 8.3 Fixed glyph column
 
-Every symbol beside a label in the chrome sits in `.frame(width: 18 * z, alignment: .center)` (16 in a
-tab).
+Every symbol beside a label in the chrome sits in `.frame(width: 18 * z, alignment: .center)`, in a
+tab too.
 
 SF Symbols have different intrinsic widths — `folder` is wide, `doc.text` narrow, `doc.richtext`
 narrower still — so without a fixed column the label's left edge moves from row to row. **This is
@@ -619,8 +644,8 @@ around the terminal, because the cards' edges are the seams.
 Every gap is **6**: between the sidebar and the document card, between the cards, and between a card
 and the window's trailing and bottom edges. The gaps are the split view's dividers, so a collapsed
 pane leaves its divider at the window edge as that margin, and the document card never moves when a
-pane opens or closes. A divider draws nothing at rest; under the pointer and while dragging, a 2 pt
-`accent` line in the gap (72 % on hover) shows what will move. The card's top edge meets the
+pane opens or closes. A divider draws nothing at rest; under the pointer, a 2 pt
+`handle` line in the gap (`ink` 18 %, 30 % while dragging) shows what will move. Never `accent`. The card's top edge meets the
 titlebar, 7 below the tab chips.
 
 Settings uses the same frame: its sections on `chrome`, the page on a card inset 6 from the trailing
@@ -631,7 +656,8 @@ and bottom edges.
 Left to right: traffic lights + sidebar toggle + back/forward │ **tab strip** │ flexible gap │ view
 mode │ terminal toggle. While the sidebar is open the tab strip starts on the document card's leading
 edge, so the first tab sits over the card it shows, and it follows the edge as the sidebar slides;
-with the sidebar closed it follows the navigation buttons. No divider separates the groups.
+with the sidebar closed it follows the navigation buttons. No divider separates the groups: items
+sit 2 apart (back and forward) and groups 8 apart.
 
 The coloured leading edge of the close traffic light and the trailing edge of the terminal toggle
 use the same titlebar horizontal padding. Move the native traffic-light trio as one group so its
@@ -648,15 +674,16 @@ print are menu items with shortcuts (⇧⌘E, ⌘P).
 **Ceiling:** never more than two icon affordances right of the tab strip. Hitting the ceiling means
 the next command goes to the menu bar, not into the window.
 
-The in-document ⌘F surface is find-only: query, Match Case, Match Whole Word, result count,
-previous/next and close. Replacement belongs only to Find in Workspace in the sidebar.
+The in-document ⌘F surface is find-only and one field (§5.7): the search glyph, the query, Match
+Case and Match Whole Word, the result count in 12 `ink3` tabular figures, previous/next and close,
+all small buttons inside it, with no rule. Replacement belongs only to Find in Workspace in the sidebar.
 Inspect Links remains an ⌥⌘L menu command and appears in the Markdown source editor's native
 context menu; it is never a titlebar affordance.
 
 ### 10.2 Markdown mode cluster
 
 The trailing controls read as one set because they share every number: 28 tall, radius 8, no
-border, 6 between them, no divider. Left is the two-cell view-mode segmented (`line.3.horizontal` /
+border, 8 between them (a group gap), no divider. Left is the two-cell view-mode segmented (`line.3.horizontal` /
 `eye`) on its track; right is the terminal toggle. Nothing in the cluster has a fill except the
 track and the selected segment's chip. **If one of them needs a different height or a border, it does
 not belong in the cluster.**
@@ -677,16 +704,21 @@ its help text gives lines and words.
 
 ### 10.3 Tab strip — hug, cap, scroll
 
-Geometry: 28 tall, radius 8, 3 between chips, strip inset 3 inside the titlebar, no dividers. The
-active tab is a **chip** lifted out of the chrome — `chip` fill, a 1 `chipring` hairline and in light
-themes the one-point `chipseat` (§5.5) — and its glyph is `accent`. Other tabs have no fill at rest
-and no border.
-Content: `10 padding · 14 kind glyph (16 column) · 7 gap · 13 label · 7 gap · 16 trailing slot · 10
-padding`.
+One tab for files and terminal sessions (`MonknotTab`). Geometry: 28 tall, radius 8, 3 between
+tabs, strip inset 3 inside the titlebar, no dividers. On the chrome the active tab is a **chip**
+lifted out of it — `chip` fill, a 1 `chipring` hairline and in light themes the one-point `chipseat`
+(§5.5) — and its glyph is `accent`; inside a card (the terminal) it takes the neutral `selected`
+fill, as a selected row does. Other tabs have no fill at rest and no border; the label rests at
+`ink2` and the glyph at `ink3`, both `ink` under the pointer.
+Content: `10 padding · 15 kind glyph (18 column) · 8 gap · 13 label · 10 padding`, then an 8 gap and
+a 10 badge for a pinned tab (`pin.fill`, `ink3`) or a file missing on disk (`danger` triangle).
 
 - **Width:** hug the label, cap at **220 outer**. No minimum, no floor, no shrinking. A tab is the
-  same width with thirty open as with two, so the strip the user learned stays put. The 16 trailing
-  slot is reserved at every width so nothing shifts when the pointer enters.
+  same width with thirty open as with two, so the strip the user learned stays put. No slot is
+  reserved: close appears in the glyph's own column, so nothing shifts when the pointer enters.
+- **State in the glyph column:** an unsaved file carries a 6 pt `accent` dot on its glyph's corner,
+  knocked out of the glyph's strokes; while saving the glyph is a 12 spinner, and a failed save a
+  `danger` triangle. A sidebar row draws the same mark (`MonknotDocumentGlyph`).
 - **Scroll:** horizontal scroller. Two-finger horizontal, ⇧-wheel **and a plain mouse wheel**
   scroll it: each vertical wheel notch over the strip moves it sideways. A trackpad's vertical
   swipe over the titlebar does nothing, and nothing over the strip is **ever** forwarded to the
@@ -707,9 +739,10 @@ padding`.
   **The app computes the elided string.** Never leave the label to the framework's default tail
   truncation — that can only clip the tail and would append a second ellipsis to an already
   middle-elided string, taking the extension with it.
-- **Close:** 11pt glyph in a 16 round target, `ink3` → `ink` on hover. Visible on the active tab and
-  on hover; the reserved slot means it never changes layout. ⌘W closes the active tab; middle-click
-  closes any tab.
+- **Close:** a 9pt semibold `xmark` in a 16 round target, `ink2` → `ink` with the `hover` fill under
+  the pointer. It takes the glyph's place while the pointer is over the tab, as Safari's does, active
+  or not, and VoiceOver reaches it as the tab's named action. A pinned tab has none. ⌘W closes the
+  active tab.
 - **Pinned:** sits left of the unpinned run and scrolls with everything else. Pinning is about order
   and session persistence, not about staying on screen.
 
@@ -722,10 +755,8 @@ something unrelated.
 
 Width 240 on a first window, 196 at least. Header 40: the workspace **monogram** (the name's initial,
 10.5/600 `onaccent`, on an 18 `accent` tile of radius 6) in the rows' glyph column, the name 13/600 on
-their text edge and a 9 `chevron.down` beside it, which open the workspace switcher; then Search
-Workspace, a 28 icon button, and **New Markdown**, the header's one prominent action, a 26 round chip
-(`chip`, `chipring`, the seat in light). Disabled, New Markdown is a bare `ink4` glyph like any
-disabled control. · row 28 · list inset 10, 4 above the first row · no gap between rows · 14 indent
+their text edge and a 10 `chevron.down` beside it, which open the workspace switcher; then Search
+Workspace and New Markdown, two regular icon buttons 2 apart. · row 28 · list inset 10, 4 above the first row · no gap between rows · 14 indent
 per depth · disclosure chevron 10 · Recents group · footer row 28, Settings only, with no rule above
 it. The sidebar is part of the frame: `chrome`, no edge line.
 
@@ -736,22 +767,25 @@ hover duration, instantly with Reduce Motion) sits in the 18pt glyph column, and
 folder glyph. Files use `doc.text` / `doc.richtext` / `photo` / `play.rectangle` in the same column.
 Names at one depth therefore share a left edge, and a child steps right by exactly the 14 indent.
 
-Label 13/500 at `sidelabel` (`ink` 75 %) and glyph at `sideglyph` (`ink` 55 %) at rest — firmer than
-the menus' `ink2`/`ink3`, as Linear's navigation is — both `ink` on hover or press; the selected row's
-label is `ink` and its glyph (a file's kind glyph, a folder's chevron) `accent`, on the `selected`
-fill (§1.3, §1.4). Quiet Sidebar takes a fifth off each opacity, once, never below 52% light / 48%
-dark.
+Label 13/400 at `ink2` and glyph at `ink3` at rest — the same ladder as tabs, menus and Settings —
+both `ink` on hover or press; the selected row's label is `ink` and its glyph (a file's kind glyph,
+a folder's chevron) `accent`, on the `selected` fill (§1.3, §1.4). An unsaved file carries the tab's
+dot on its glyph (§10.3). Quiet Sidebar takes a fifth off each opacity, once, never below 52% light /
+48% dark.
 
 **Find in Workspace** replaces the tree in the same column and keeps its geometry: the title where the
 header's name sits (18 from the edge), its close button where the header's last action sits, the
 query field in the 10 inset, then rows of the primitive — Replace, each file (its kind glyph and name
-at 13/500, its folder in 12 `ink3`, its count) and each match (its line number right-aligned in at
+at 13/400, its folder in 12 `ink3`, its count) and each match (its line number right-aligned in at
 least the glyph column, so short numbers put the match on the file's text edge). The status line puts
 its spinner in the glyph column and its text on the text edge. A hairline inside the inset separates
 the controls from the results.
 
-**The workspace switcher** is a popover of menu rows (§0): workspaces with their path and ⌃⌘ number,
-Add Workspace… and Manage Workspaces…, every glyph on one column.
+**The workspace switcher** is a popover menu, 340 wide (§0): a group header, then menu rows — each
+workspace with its path in 12 `ink3` and its ⌃⌘ number (Remove, a small button, replaces the number
+under the pointer), the open one the current row with the `accent` `folder.fill` — a separator, Add
+Workspace… and Manage Workspaces…. Labels are `ink`, glyphs `ink2`, as in the editor's menus. Find in
+Workspace's Replace scope is a pop-up (§5.3).
 
 **Selection.** The tree has one selection, as in Finder: a folder, or else the open document. Clicking a
 folder selects it, opens or closes it and gives the tree keyboard focus, without closing the open
@@ -804,22 +838,21 @@ Hover reveals a soft hit target plus a floating peek card (radius 12, `e2`, fade
 
 ### 10.6 Terminal panel
 
-The terminal sits on its own card (§10.0), on the document's `surface`. Header 36, no divider.
-New-session and close-panel buttons 26 box / 16 glyph, outside the scroller so adding a session never
-moves them.
+The terminal sits on its own card (§10.0), on the document's `surface`. Its header is the card's bar
+(`MonknotBar`): 40 tall, 6 padding, no divider. Expand, New Terminal and Hide Terminal Panel are
+regular icon buttons 2 apart, set 8 from the session scroller and outside it, so adding a session
+never moves them.
 
-**Session pill: fixed 80 × 24, radius 8**, the active one on the `selected` fill, none bordered. 8 padding · `terminal` glyph at 14 · gap 6 · session
-number in 12pt SF Mono in a two-digit slot · gap 6 · 16 close slot · 8 padding. Every pill from 1 to
-99 is the same width whether it is active, hovered or idle. **No session name** — four pills all reading "zsh" identify nothing, and each costs a third of
-the strip. The number is what tells them apart. No hug, no cap, no condensed form, no separate dot.
+**Sessions are tabs** (§10.3, inside a card): 28 tall, hugging a `terminal` glyph and the session's
+number in 13/400, the active one on the `selected` fill. **No session name** — four tabs all reading
+"zsh" identify nothing. The number is what tells them apart.
 
 Run state tints the glyph, the only coloured element in the header:
 `ok` running · `accent` awaiting input · `ink3` idle or exited 0 · `danger` exited non-zero.
 
-Close: the tab close button, 11pt `xmark` in its 16 round target, visible on the active pill and on
-hover. Its slot is reserved on every pill, like the tab chip's trailing slot. The strip scrolls like
-the tab strip, mouse wheel included, with the same 24pt trailing fade; being clipped by the panel edge is
-correct.
+Close kills the session: the tab close button takes the glyph's place under the pointer, as on a
+file tab. The strip scrolls like the tab strip, mouse wheel included, with the same 24pt trailing
+fade; being clipped by the panel edge is correct.
 
 **The screen belongs to the session.** Hiding the panel or switching sessions keeps the scrollback,
 the alternate screen, mouse modes and the scroll position exactly as the program left them. A program
@@ -827,9 +860,8 @@ that reports the mouse (Claude Code, vim, less) scrolls as far per wheel flick a
 The scroll bar is the shared thumb (§5.7) at its resting strength.
 
 The header order is session scroller → fullscreen → new session → close panel, set apart by space.
-Fullscreen is one 26/14 optical control: diagonal arrows point out when docked and in when expanded.
-The smaller symbol size compensates for the diagonal-arrow symbol's larger visible bounds and
-balances it with the adjacent 16pt `plus` and `xmark` glyphs. The control temporarily covers the
+Fullscreen is the regular button with the diagonal arrows (14 optical): they point out when docked
+and in when expanded. The control temporarily covers the
 document area while leaving the titlebar and left sidebar in place. The
 document stays mounted, the terminal divider is disabled, and the button shows its state by its
 arrows alone (§1.3). Restoring returns to the exact pre-expand terminal width. Closing the
@@ -844,15 +876,34 @@ fill its box.** If an icon looks small, that is correct — macOS chrome glyphs 
 | Region | Metrics |
 |---|---|
 | Frame | gaps 6 · cards radius 12, `cardring` 1 · card top 7 below the tab chips |
-| Titlebar | bar 44 · traffic light 12 · chrome button 28 box / 17 glyph, no border · segmented 28 outer (22 cell + 2 padding on a track) / 16 glyph · strip inset 3 · 3 between chips |
-| File tab | chip 28 · padding-x 10 · kind glyph 14 in the 16 column · gap 7 · label 13 · trailing slot 16 · close 11 · dirty dot 6 · pin 11 · max width 220 · no minimum |
-| Sidebar | width 240 (196 minimum) · header 40: monogram 18 (radius 6, initial 10.5/600), name 13/600, chevron 9, search 28/17 (14 optical), New Markdown chip 26 round / 13.5 glyph · row 28 · padding-x 8 · disclosure chevron 10 or file glyph 15 in the 18 column · gap 8 · label 13/500 · indent 14 · list inset 10, top 4 · no gap between rows · Recents header: chevron, group header, count 12 · footer 28 |
-| Preview editing | format bar: 28 buttons / 17 glyph, 2 between, 4 padding, dividers 1×16, block selector label 13 with an 11 `chevron.down` · menus: width 272 (232 for Turn Into, callout kinds, table actions and languages), list padding 6, row 30 / 15 glyph (or a 12/600 `H1` tag) in the 18 column, gap 10, label 13 on a 1.35 line, hint 12 rounded `ink3`, section header 12 `ink3` sentence case, footer 32 with 12 `ink3` actions and 12 rounded `ink2` keys, submenu chevron 11, at most 380 tall; a menu of plain names (languages) has no glyph column · handles: + 22×24 and grip 18×24, radius 6, 1 apart, `ink3` at rest and `hover` fill with `ink2` on hover, 6 left of the block (left of the marker for a list item), centred on its first line · drop line 3 tall, radius 2, caret colour at 70 % · tooltip 12 on 1.45, inverted surface, padding 8 × 5, radius 6 · link editor: field 28, width 340 · code language label 22 tall / 12, top-left · all on radius 12 surfaces, rows radius 8 |
-| Terminal | header 36 · pill 80×24 · glyph 14 · gap 6 · number 12 mono, two-digit slot · close 11 in 16 · new/close buttons 26/16 · fullscreen 26/14 optical · no divider |
-| Elsewhere | field 28 · push button 28 bars / 30 sheets · toggle 34×20, knob 16 · stepper 26 · slider track 4 / knob 16 · overlay row 34 · settings row 28/15 · outline dash 22/14/9 × 2 |
+| Titlebar | bar 44 · traffic light 12 · icon button 28 box / 17 glyph, no border · segmented 28 outer (24 cells + 2 padding on a track) / 16 glyph · items 2 apart, groups 8 · strip inset 3 · 3 between tabs |
+| Tab | 28 · padding-x 10 · kind glyph 15 in the 18 column · gap 8 · label 13/400 · close 9 in 16, in the glyph column on hover · unsaved dot 6 on the glyph · pin or warning badge 10 · max width 220 · no minimum |
+| Bar | 40 · padding 6 · 28 controls 2 apart, groups 8 apart · no rule (terminal, PDF, panel headers) |
+| Sidebar | width 240 (196 minimum) · header 40: monogram 18 (radius 6, initial 10.5/600), name 13/600, chevron 10, search and New Markdown 28/17 · row 28 · padding-x 8 · disclosure chevron 10 or file glyph 15 in the 18 column · gap 8 · label 13/400 · indent 14 · list inset 10, top 4 · no gap between rows · Recents header: chevron, group header, count 12 · footer 28 |
+| Menus | popover 340 (switcher) · list inset 6 · row 30 (34 in an overlay) · glyph 15 in 18 · gap 10 · label 13 `ink` · detail 12 `ink3` · group header 12 `ink3` · separator `line2` 4 inside the inset · overlay header 44, footer 32 |
+| Preview editing | format bar: 28 buttons / 17 glyph, 2 between, 4 padding, dividers 1×16, block selector label 13 with an 11 `chevron.down` · menus: width 272 (232 for Turn Into, callout kinds, table actions and languages), list padding 6, row 30 / 15 glyph (or a 12/600 `H1` tag) in the 18 column, gap 10, label 13 on a 1.35 line, hint 12 rounded `ink3`, section header 12 `ink3` sentence case, footer 32 with 12 `ink3` actions and 12 rounded `ink3` keys, submenu chevron 11, at most 380 tall; a menu of plain names (languages) has no glyph column · handles: + 22×24 and grip 18×24, radius 6, 1 apart, `ink3` at rest and `hover` fill with `ink2` on hover, 6 left of the block (left of the marker for a list item), centred on its first line · drop line 3 tall, radius 2, caret colour at 70 % · tooltip 12 on 1.45, inverted surface, padding 8 × 5, radius 6 · link editor: field 28, width 340 · code language label 22 tall / 12, top-left · all on radius 12 surfaces, rows radius 8 |
+| Terminal | the bar (40) · session tabs 28, hugging glyph + number · Expand, New, Hide 28/17 |
+| PDF | the bar (40): navigator 28/17, page count 12 tabular · undo, redo · modes segmented · markup actions · style pop-up · zoom pop-up · save with the unsaved dot · navigator: header 40, segmented 28, rows 28, 14 per level |
+| Elsewhere | field 28 · push button 28 bars / 30 sheets · small icon button 22/13 · toggle 32×18, knob 14 · stepper 28 · slider track 4 / knob 16 · colour well 44×22 · overlay row 34 · Settings row ≥ 40, padding 12 × 8 · outline dash 22/14/9 × 2 |
 
 **Hard ceilings.** No chrome glyph over 17. No square button over 28. No row over 34. The only glyphs
 above 17 anywhere are empty-state illustrations at 34, which are not controls.
+
+### 10.7a PDF and image bar
+
+The PDF's card opens with its bar (`MonknotBar`, 40, no rule): the navigator toggle and the page
+count (12 `ink3`, tabular, as wide as any page of the document); Undo and Redo; the tools that stay on
+— Select, Draw, Erase, and for an image the area Highlight — as one segmented control; the markup
+actions (Highlight, Underline, Strike Through Selection, Add Text Box) as icon buttons; the current
+tool's style, a pop-up showing its colour swatch (with Stroke Width… while drawing) or, for a
+selected text box, Text Style; then, outside the layouts so they never move, the zoom pop-up and Save,
+disabled while clean and carrying the unsaved dot (§1.3) when not. Groups sit 8 apart, nothing is
+`accent`, and nothing is ruled.
+
+Narrower, the bar folds rather than wraps: first Undo and Redo move into More (`ellipsis`, a menu
+button), then the modes and markup actions become one tool pop-up. The pages sit on the card's
+surface tinted by the `track`, so a white page stands off it; the navigator sits on the surface, its
+divider `line2`, its lists chrome rows with the neutral selection.
 
 ### 10.8 Images
 
@@ -1100,10 +1151,17 @@ Instant apply plus **Revert**. No Save button — a Save button in a preferences
 change has not happened yet, which is false in every macOS app since 10.7.
 
 The window uses the main window's frame (§10.0): categories on `chrome`, the page on a card inset 6
-from the trailing and bottom edges. Category rows are sidebar rows (§10.4): 28, a 15 glyph in the 18
-column, a 13/500 label at `sidelabel`, the selected one on the `selected` fill with an `accent` glyph.
-Segmented controls take the chip (§5.5), pop-ups and buttons the window's own fills (§5.3); fields
-keep their hairline. Section headers are group headers (§4.3).
+from the trailing and bottom edges. Category rows are the sidebar's rows (§10.4) in the 10 list inset,
+12 below the titlebar: 28, a 15 glyph in the 18 column, a 13/400 label at `ink2`, the selected one on
+the `selected` fill with an `accent` glyph.
+
+A page pads 20 at the sides, 16 above and 24 below. Groups are the control `track`, radius 12, no
+border; a row is at least 40 tall with 12 × 8 padding, its label 13 `ink` with an optional 12 `ink3`
+line under it, the control trailing, and a `line2` separator inset 12. Group headers (§4.3) sit 18
+above their group (none at the top of a page) and 8 above it; an accessory such as Revert sits on the
+header's line without moving it. The controls are the app's own: segmented control (§5.5), pop-up
+(§5.3), toggle, stepper, slider, field and colour well (§5.7), push buttons 28. File › Export PDF uses
+the same rows and controls as Settings › Export, at the workspace zoom.
 
 The window is 600 × 560 at 100% and scales with workspace zoom, never past the screen's visible area;
 its pages scroll vertically inside it. A menu button is as wide as its longest option, so previewing
@@ -1155,10 +1213,11 @@ codex-theme-v1:{"codeThemeId":"absolutely","theme":{
 **`variant` is advisory.** Always compute `dark = relativeLuminance(surface) < 0.45` and use that.
 Here luminance is 0.946 → light, agreeing with the string. When they disagree, the measurement wins.
 
-**`contrast`** (0–100, default 40) scales the ink ladder's mid stops only:
-`ink2 = 62% × (0.85 + contrast/100 × 0.375)`, same factor on `ink3` and `ink4`. `ink` and `surface`
-never move — contrast adjusts legibility of secondary text, it does not push the extremes. At the
-default 40 the factor is 1.0 and the ladder is exactly §1.2.
+**`contrast`** (0–100, default 40) scales the ink ladder's floors only: `ink2` starts at
+`72% × (0.85 + contrast/100 × 0.375)` and `ink3` at `50% ×` the same factor, and both still rise until
+they read (§1.2). `ink`, `ink4` and `surface` never move — contrast adjusts the legibility of secondary
+text, it does not push the extremes. At the default 40 the factor is 1.0 and the ladder is exactly
+§1.2; Settings › Appearance › Contrast sets it (`AppTheme.inkLadderContrastFactor`).
 
 **Fonts.** `Geist, Inter` is a *substitution*, not a redesign. Every size, weight, ratio and metric in
 this document is unchanged — Geist's cap height is close enough to SF Pro Text that the
@@ -1203,32 +1262,36 @@ because it is a **light** theme, `bezel` is live and `e1` is a ring with no shad
 Before calling any UI work done:
 
 - [ ] Every colour traces to the §1.2 derivation. No hand-picked values.
-- [ ] Accent clears 4.5:1 against `onaccent`, and `ink2` clears 4.5:1 against `surface`.
+- [ ] Accent clears 4.5:1 against `onaccent`; `ink2` clears 4.5:1 and `ink3` 3:1 on `chrome` and
+      `surface` (the derived ladder, §1.2).
 - [ ] Accent appears in at most the six allowed places; no panel toggle lights up.
 - [ ] No shadow on anything docked or at rest. Floating things cast in both modes.
 - [ ] The frame is one `chrome` tone with no lines; the document, terminal and Settings pages sit on
       radius-12 cards with a `cardring` hairline, 6 from every edge and from each other.
 - [ ] No button, segmented control, pop-up or tab has a border; fields keep their `line`; the one
-      chip (active tab, selected segment, New Markdown) has its `chipring`.
+      chip (active tab on the chrome, selected segment) has its `chipring`.
 - [ ] Selection is the neutral `selected` fill, never an accent tint.
 - [ ] `line2` only inside containers.
 - [ ] One ring per boundary. No separate border on top of an elevation token.
 - [ ] Active buttons have fill + glyph colour only, no accent ring; search options use the documented
       accent-glyph-only exception.
-- [ ] Only weights 400, 500 (sidebar place names) and 600. Nothing bolder when hovered, selected or
-      focused.
+- [ ] Only weights 400 and 600. Nothing bolder when hovered, selected or focused.
 - [ ] Radii are only 2/6/8/12/16/capsule. Child = parent − 4.
 - [ ] Declared box sizes are outer sizes: a 28 button measures 28.
 - [ ] Push buttons are 28 (bars) or 30 (sheets). No third height.
 - [ ] Rows that hold the same kind of thing use identical numbers.
-- [ ] Symbols sit in the 18pt column (16 in a tab), `.regular`, `.monochrome`, cap-height centred.
+- [ ] Symbols sit in the 18pt column, tabs included, `.regular`, `.monochrome`, cap-height centred.
+- [ ] Icon buttons are 28/17 in bars and 22/13 in rows and fields; no third size.
+- [ ] Every bar below the titlebar is 40 with items 2 apart and groups 8 apart, and no rule.
 - [ ] One scroll thumb (§5.7) on every surface: check documents with "Show scroll bars: Always",
       where WebKit would otherwise draw its own 17pt bar.
 - [ ] No chrome glyph over 17. No square button over 28 (§10.7).
 - [ ] Every metric derives from `workspaceZoom`. No `.scaleEffect`. Nothing clamped.
 - [ ] Hairlines, shadows and focus rings do not scale.
 - [ ] Tabs hug to 220 and scroll; fades appear only where content actually overflows.
-- [ ] Terminal pills show glyph + number, never a session name.
+- [ ] Terminal sessions are tabs showing glyph + number, never a session name.
+- [ ] A divider's handle is `ink` 18 % / 30 %, never accent; chrome lists show a thumb only while they
+      scroll.
 - [ ] Hover animates colour only, 120ms.
 
 ---
@@ -1248,8 +1311,8 @@ symptom, so they are worth checking deliberately rather than hoping to notice.
    advertises overflow that is not happening. Whenever you change an item's size, re-check content
    width against container width.
 5. **Framework tail truncation over app-computed middle elision** — two ellipses, extension lost.
-6. **Weight 500 surviving somewhere** — most often in a state style rather than the base style, so
-   it only appears on hover or selection.
+6. **A weight other than 400 or 600 surviving somewhere** — most often in a state style rather than
+   the base style, so it only appears on hover or selection.
 7. **Documentation describing a mechanism that no longer exists** — when you change a component,
    sweep for the *vocabulary* of the old model (its numbers, its part names), not just the phrase
    you remember writing.

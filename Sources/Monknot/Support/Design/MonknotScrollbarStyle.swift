@@ -250,11 +250,12 @@ final class MonknotScroller: NSScroller {
 
 /// Keeps a chrome scroll view on the overlay thumb and shows the thumb while the pointer is over the
 /// list, so a mouse user can see there is more and grab it. It fades again like any overlay scroller.
+/// Keeps a chrome list on the overlay thumb whatever "Show scroll bars" says (design.md §5.7). The thumb
+/// appears only while the list scrolls, as the system's overlay scroller does: a thumb that also
+/// appeared whenever the pointer crossed the list sat beside the divider and read as a resize handle.
 final class MonknotChromeScrollerBehavior: NSResponder {
     private weak var scrollView: NSScrollView?
-    private var trackingArea: NSTrackingArea?
     private var styleObserver: NSObjectProtocol?
-    private var lastReveal: TimeInterval = 0
 
     var thumbColor: NSColor = .labelColor {
         didSet {
@@ -268,14 +269,6 @@ final class MonknotChromeScrollerBehavior: NSResponder {
         guard self.scrollView !== scrollView else { return }
         detach()
         self.scrollView = scrollView
-        let trackingArea = NSTrackingArea(
-            rect: .zero,
-            options: [.activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved],
-            owner: self,
-            userInfo: nil
-        )
-        scrollView.addTrackingArea(trackingArea)
-        self.trackingArea = trackingArea
         // AppKit puts every scroll view back on the system style after posting this.
         styleObserver = NotificationCenter.default.addObserver(
             forName: NSScroller.preferredScrollerStyleDidChangeNotification,
@@ -291,10 +284,6 @@ final class MonknotChromeScrollerBehavior: NSResponder {
     }
 
     func detach() {
-        if let trackingArea, let scrollView {
-            scrollView.removeTrackingArea(trackingArea)
-        }
-        trackingArea = nil
         if let styleObserver {
             NotificationCenter.default.removeObserver(styleObserver)
         }
@@ -306,37 +295,6 @@ final class MonknotChromeScrollerBehavior: NSResponder {
         if let styleObserver {
             NotificationCenter.default.removeObserver(styleObserver)
         }
-        // A tracking area does not retain its owner; it must not outlive this object.
-        if let trackingArea, let scrollView {
-            MainActor.assumeIsolated {
-                scrollView.removeTrackingArea(trackingArea)
-            }
-        }
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        revealThumb()
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        revealThumb()
-    }
-
-    private func revealThumb() {
-        guard let scrollView,
-              scrollView.scrollerStyle == .overlay,
-              let documentView = scrollView.documentView
-        else { return }
-        let visibleSize = scrollView.contentView.bounds.size
-        guard documentView.frame.height > visibleSize.height + 1
-            || documentView.frame.width > visibleSize.width + 1
-        else { return }
-        // Flashing restarts the overlay fade; once every 0.4s is enough to keep it up while the
-        // pointer moves.
-        let now = ProcessInfo.processInfo.systemUptime
-        guard now - lastReveal > 0.4 else { return }
-        lastReveal = now
-        scrollView.flashScrollers()
     }
 }
 

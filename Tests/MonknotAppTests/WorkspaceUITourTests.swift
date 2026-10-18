@@ -24,6 +24,8 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         var opensWorkspace = true
         /// A catalog theme for the stop's appearance; nil keeps the default (Harbor).
         var themeID: String?
+        /// Leaves the shown document edited and unsaved, so its tab shows the unsaved dot.
+        var edits = false
     }
 
     func testCaptureTheWorkspaceInEveryLayoutState() async throws {
@@ -62,10 +64,23 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             Stop(name: "23-workspace-search-light", layout: .init(overlay: .workspaceSearch("step"))),
             Stop(name: "24-workspace-search-dark", theme: .dark, layout: .init(overlay: .workspaceSearch("step"))),
             Stop(name: "25-shortcuts-light", mode: .source, layout: .init(overlay: .keyboardShortcuts)),
+            Stop(name: "26-pdf-latte", layout: .init(overlay: .pdfNavigator), document: "Pitch deck.pdf", tabs: ["Product brief.md"], themeID: "catppuccin-latte"),
+            Stop(name: "27-pdf-mocha", theme: .dark, layout: .init(overlay: .pdfNavigator), document: "Pitch deck.pdf", tabs: ["Product brief.md"], themeID: "catppuccin-mocha"),
+            Stop(name: "28-pdf-narrow", layout: .init(showsSidebar: true, showsTerminal: true), size: NSSize(width: 1_000, height: 720), document: "Pitch deck.pdf"),
+            Stop(name: "29-image-light", document: "Photo.png"),
+            Stop(name: "30-switcher-latte", layout: .init(overlay: .workspaceSwitcher), themeID: "catppuccin-latte"),
+            Stop(name: "31-switcher-mocha", theme: .dark, layout: .init(overlay: .workspaceSwitcher), themeID: "catppuccin-mocha"),
+            Stop(name: "32-dirty-tab-latte", tabs: ["Roadmap.md", "todo.txt"], themeID: "catppuccin-latte", edits: true),
         ]
         let filters = only?.split(separator: "|").map(String.init)
-        for theme in [ThemePreference.light, .dark] where filters == nil || filters!.contains(where: { "15-settings-\(theme.rawValue)".contains($0) }) {
-            try await captureSettings(theme: theme, into: directory)
+        let settingsStops: [(section: String, theme: ThemePreference)] = [
+            ("General", .light), ("General", .dark), ("Appearance", .light), ("Appearance", .dark),
+            ("Editor", .light), ("Export", .light), ("Shortcuts", .dark), ("Workspaces", .light),
+        ]
+        for (section, theme) in settingsStops {
+            let name = "15-settings-\(section.lowercased())-\(theme.rawValue)"
+            guard filters == nil || filters!.contains(where: { name.contains($0) }) else { continue }
+            try await captureSettings(section: section, theme: theme, name: name, into: directory)
         }
         for stop in stops where filters == nil || filters!.contains(where: { stop.name.contains($0) }) {
             try await capture(stop, root: root, into: directory)
@@ -134,6 +149,9 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
                 !store.isBusy && store.selectedDocument?.url.lastPathComponent == (stop.document as NSString).lastPathComponent && !store.isDocumentLoading
             }
             XCTAssertTrue(loaded, stop.name)
+            if stop.edits {
+                store.setDocumentText(store.documentText + "\nA line not yet saved.\n")
+            }
         }
         try await Task.sleep(nanoseconds: 1_800_000_000)
 
@@ -146,6 +164,8 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             XCTFail("Could not capture \(stop.name)")
             return
         }
+        // A popover (the workspace switcher) is a window of its own: draw it over the window's image.
+        let popovers = NSApp.windows.filter { $0 !== window && $0.isVisible && String(describing: type(of: $0)).contains("Popover") }
         // `MONKNOT_UI_TOUR_RAW` keeps the window server's own image too, before any snapshot is drawn.
         if ProcessInfo.processInfo.environment["MONKNOT_UI_TOUR_RAW"] != nil {
             try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
@@ -181,17 +201,42 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
                 path.stroke()
             }
         }
+        for popover in popovers {
+            guard let popoverImage = CGWindowListCreateImage(
+                .null,
+                .optionIncludingWindow,
+                CGWindowID(popover.windowNumber),
+                [.boundsIgnoreFraming, .bestResolution]
+            ) else { continue }
+            // An off-screen test window can leave the popover at the screen's corner, so draw it where
+            // it opens on screen: under the sidebar header, its list on the rows' inset.
+            let frame = popover.frame
+            let sidebarHeaderBottom = MonknotMetrics.chromeHeight(theme: .defaultLight, zoomScale: 1) + 34
+            let origin = CGPoint(
+                x: (MonknotMetrics.listGutterBase - 13) * scale,
+                y: (window.frame.height - sidebarHeaderBottom - frame.height) * scale
+            )
+            NSGraphicsContext.current?.cgContext.draw(
+                popoverImage,
+                in: CGRect(origin: origin, size: CGSize(width: popoverImage.width, height: popoverImage.height))
+            )
+        }
         composite.unlockFocus()
         guard let tiff = composite.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff) else { return }
         try bitmap.representation(using: NSBitmapImageRep.FileType.png, properties: [:])?
             .write(to: directory.appendingPathComponent("\(stop.name).png"))
     }
 
-    private func captureSettings(theme: ThemePreference, into directory: URL) async throws {
+    private func captureSettings(section: String, theme: ThemePreference, name: String, into directory: URL) async throws {
         let defaults = UserDefaults.standard
         let savedTheme = defaults.object(forKey: "Monknot.themePreference")
-        defer { defaults.set(savedTheme, forKey: "Monknot.themePreference") }
+        let savedSection = defaults.object(forKey: "Monknot.settingsSection")
+        defer {
+            defaults.set(savedTheme, forKey: "Monknot.themePreference")
+            defaults.set(savedSection, forKey: "Monknot.settingsSection")
+        }
         defaults.set(theme.rawValue, forKey: "Monknot.themePreference")
+        defaults.set(section, forKey: "Monknot.settingsSection")
         let updater = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: nil)
         defer { withExtendedLifetime(updater) {} }
         let host = NSHostingView(rootView: PreferencesView(
@@ -216,7 +261,7 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         try await Task.sleep(nanoseconds: 1_200_000_000)
         guard let image = CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(window.windowNumber), [.boundsIgnoreFraming, .bestResolution]) else { return }
         try NSBitmapImageRep(cgImage: image).representation(using: NSBitmapImageRep.FileType.png, properties: [:])?
-            .write(to: directory.appendingPathComponent("15-settings-\(theme.rawValue).png"))
+            .write(to: directory.appendingPathComponent("\(name).png"))
     }
 
     private func makeFixtureWorkspace() throws -> URL {
@@ -235,7 +280,51 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try text.write(to: url, atomically: true, encoding: .utf8)
         }
+        try Self.writeSamplePDF(to: root.appendingPathComponent("Pitch deck.pdf"))
+        try Self.writeSampleImage(to: root.appendingPathComponent("Photo.png"))
         return root
+    }
+
+    /// Three letter pages of headed text, so the PDF stops show pages, thumbnails and an outline-free
+    /// navigator.
+    private static func writeSamplePDF(to url: URL) throws {
+        var box = CGRect(x: 0, y: 0, width: 612, height: 792)
+        guard let context = CGContext(url as CFURL, mediaBox: &box, nil) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        let body = String(repeating: "Monknot keeps notes as plain Markdown files beside their PDFs. ", count: 12)
+        for page in 1...3 {
+            context.beginPDFPage(nil)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+            ("Pitch deck — part \(page)" as NSString).draw(
+                at: NSPoint(x: 72, y: 690),
+                withAttributes: [.font: NSFont.systemFont(ofSize: 28, weight: .semibold), .foregroundColor: NSColor.black]
+            )
+            (body as NSString).draw(
+                in: NSRect(x: 72, y: 300, width: 468, height: 360),
+                withAttributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.darkGray]
+            )
+            NSGraphicsContext.restoreGraphicsState()
+            context.endPDFPage()
+        }
+        context.closePDF()
+    }
+
+    private static func writeSampleImage(to url: URL) throws {
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 900, pixelsHigh: 600, bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ) else { throw CocoaError(.fileWriteUnknown) }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        NSGradient(starting: NSColor(calibratedRed: 0.36, green: 0.55, blue: 0.82, alpha: 1), ending: NSColor(calibratedRed: 0.95, green: 0.72, blue: 0.45, alpha: 1))?
+            .draw(in: NSRect(x: 0, y: 0, width: 900, height: 600), angle: 35)
+        NSColor.white.withAlphaComponent(0.85).setFill()
+        NSBezierPath(ovalIn: NSRect(x: 560, y: 330, width: 170, height: 170)).fill()
+        NSGraphicsContext.restoreGraphicsState()
+        guard let data = bitmap.representation(using: .png, properties: [:]) else { throw CocoaError(.fileWriteUnknown) }
+        try data.write(to: url)
     }
 
     private static func ancestor<T: NSView>(of type: T.Type, from view: NSView) -> T? {

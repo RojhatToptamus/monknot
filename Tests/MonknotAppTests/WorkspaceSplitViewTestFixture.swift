@@ -26,7 +26,7 @@ class WorkspaceSplitViewTestCase: XCTestCase {
             isTerminalFullscreen: isTerminalFullscreen,
             layoutScale: layoutScale,
             separatorColor: .separatorColor,
-            accentColor: .controlAccentColor,
+            handleInkColor: .labelColor,
             onSidebarPresentationChange: { isPresented, userInitiated in
                 recorder.sidebarEvents.append(PresentationEvent(
                     isPresented: isPresented,
@@ -75,7 +75,7 @@ class WorkspaceSplitViewTestCase: XCTestCase {
             isTerminalFullscreen: isTerminalFullscreen,
             layoutScale: layoutScale ?? controller.layoutScale,
             separatorColor: .separatorColor,
-            accentColor: .controlAccentColor,
+            handleInkColor: .labelColor,
             sidebarRevealRequest: sidebarRevealRequest,
             terminalRevealRequest: terminalRevealRequest,
             onSidebarPresentationChange: { isPresented, userInitiated in
@@ -1027,7 +1027,7 @@ struct MountedSplitZoomFixture: View {
                 isTerminalPresented: false,
                 layoutScale: model.layoutScale,
                 separatorColor: .separatorColor,
-                accentColor: .controlAccentColor,
+                handleInkColor: .labelColor,
                 onSidebarPresentationChange: { _, _ in },
                 onTerminalPresentationChange: { _, _ in },
                 sidebar: {
@@ -1095,7 +1095,7 @@ struct MountedConstrainedScaleFixture: View {
                 isTerminalPresented: model.terminalPreferred,
                 layoutScale: model.layoutScale,
                 separatorColor: .separatorColor,
-                accentColor: .controlAccentColor,
+                handleInkColor: .labelColor,
                 onSidebarPresentationChange: model.handleSidebar(_:userInitiated:),
                 onTerminalPresentationChange: model.handleTerminal(_:userInitiated:),
                 sidebar: {
@@ -1200,7 +1200,7 @@ struct LiveSplitFeedbackFixture: View {
             isTerminalPresented: model.terminalPreferred,
             layoutScale: 1,
             separatorColor: .separatorColor,
-            accentColor: .controlAccentColor,
+            handleInkColor: .labelColor,
             onSidebarPresentationChange: model.handleSidebar,
             onTerminalPresentationChange: model.handleTerminal,
             sidebar: { Color.red },
@@ -1310,7 +1310,7 @@ struct ChromeToggleFixture: View {
             isTerminalPresented: model.terminalPreferred,
             layoutScale: model.layoutScale,
             separatorColor: .separatorColor,
-            accentColor: .controlAccentColor,
+            handleInkColor: .labelColor,
             sidebarRevealRequest: model.sidebarRevealRequest,
             terminalRevealRequest: model.terminalRevealRequest,
             onSidebarPresentationChange: model.handleSidebar,

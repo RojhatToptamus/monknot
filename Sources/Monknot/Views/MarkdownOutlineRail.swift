@@ -256,14 +256,16 @@ private struct MarkdownOutlineRailContent: View {
         }
     }
 
+    /// design.md §10.5: the current section's dash is `accent`, the others `ink3`; under the pointer or
+    /// focus a dash goes to `ink`.
     private func markerColor(isActive: Bool, isHighlighted: Bool) -> Color {
         if isActive {
-            return theme.accentColor.opacity(0.92)
+            return theme.accentColor
         }
         if isHighlighted {
-            return theme.foregroundColor.opacity(0.62)
+            return theme.foregroundColor
         }
-        return theme.mutedForegroundColor.opacity(theme.isDark ? 0.42 : 0.50)
+        return theme.tertiaryForegroundColor
     }
 }
 
@@ -283,79 +285,65 @@ private struct MarkdownOutlineHoverPanel: View {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
-    private func textScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
-    }
-
+    /// The group header, up to eight menu rows 1 apart, and the menu's inset above and below.
     private var preferredHeight: CGFloat {
         let visibleRows = CGFloat(min(items.count, 8))
-        return scaled(44 + visibleRows * 28)
+        return scaled(
+            28 + visibleRows * MonknotMetrics.menuRowHeightBase + max(0, visibleRows - 1)
+                + 2 * MonknotMetrics.menuListInsetBase
+        )
     }
 
     private var panelHeight: CGFloat {
         min(maximumHeight, preferredHeight)
     }
 
+    /// The peek card is one of the editor's menus (design.md §10.5): a group header with the heading
+    /// count, then a menu row per heading, indented by level, with its line number; the heading at the
+    /// reading position is the selected row.
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
+        ScrollViewReader { scrollProxy in
+            let lineNumberWidthTemplate = lineNumberWidthTemplate
+            MonknotScrollView(theme: theme) {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 0) {
+                        MonknotMenuGroupHeader(title: "Outline", theme: theme, zoomScale: zoomScale)
+                        Text("\(items.count)")
+                            .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
+                            .monospacedDigit()
+                            .foregroundStyle(theme.tertiaryForegroundColor)
+                            .padding(.trailing, scaled(MonknotMetrics.menuRowPaddingBase))
+                            .padding(.top, scaled(4))
+                            .padding(.bottom, scaled(6))
+                            .accessibilityLabel("\(items.count) headings")
+                    }
 
-            Rectangle()
-                .fill(theme.borderColor)
-                .frame(height: 1)
-
-            ScrollViewReader { scrollProxy in
-                let lineNumberWidthTemplate = lineNumberWidthTemplate
-                MonknotScrollView(theme: theme) {
-                    LazyVStack(alignment: .leading, spacing: scaled(2)) {
+                    LazyVStack(alignment: .leading, spacing: 1) {
                         ForEach(items) { item in
                             outlineRow(for: item, lineNumberWidthTemplate: lineNumberWidthTemplate)
                                 .id(item.id)
                         }
                     }
-                    .padding(scaled(6))
                 }
-                .onAppear {
-                    scrollToRevealedItem(using: scrollProxy, animated: false)
-                }
-                .onChange(of: revealedItemID) { _, _ in
-                    scrollToRevealedItem(using: scrollProxy, animated: true)
-                }
+                .padding(scaled(MonknotMetrics.menuListInsetBase))
+            }
+            .onAppear {
+                scrollToRevealedItem(using: scrollProxy, animated: false)
+            }
+            .onChange(of: revealedItemID) { _, _ in
+                scrollToRevealedItem(using: scrollProxy, animated: true)
             }
         }
         .frame(width: width, height: panelHeight, alignment: .top)
         // The same floating surface as the editor's menus: radius 12 at `e2` (design.md §2.1, §7).
         .monknotFloatingSurface(
             .e2,
-            cornerRadius: scaled(12),
+            cornerRadius: theme.chromeRadius(MonknotMetrics.cardCornerRadius, zoomScale: zoomScale),
             fill: theme.elevatedSurfaceColor,
             theme: theme
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Outline, \(items.count) headings")
-    }
-
-    private var header: some View {
-        HStack(spacing: scaled(7)) {
-            Image(systemName: MonknotWorkspaceIcons.outline)
-                .font(.system(size: textScaled(11.5), weight: .regular))
-                .foregroundStyle(theme.accentColor)
-                .accessibilityHidden(true)
-
-            Text("Outline")
-                .font(.system(size: textScaled(12), weight: .semibold))
-                .foregroundStyle(theme.foregroundColor)
-
-            Spacer(minLength: 0)
-
-            Text("\(items.count)")
-                .font(.system(size: textScaled(10), weight: .regular, design: .monospaced))
-                .foregroundStyle(theme.mutedForegroundColor)
-                .monospacedDigit()
-                .accessibilityLabel("\(items.count) headings")
-        }
-        .padding(.horizontal, scaled(12))
-        .frame(height: scaled(38))
     }
 
     /// One line-number column for the whole list, as wide as its largest line number.
@@ -369,34 +357,25 @@ private struct MarkdownOutlineHoverPanel: View {
         return Button {
             select(item)
         } label: {
-            HStack(spacing: scaled(7)) {
-                Text(item.title)
-                    // Never bolder for being current (design.md §4.2); the row's fill and ink carry it.
-                    .font(.system(size: textScaled(11), weight: .regular))
-                    .foregroundStyle(isRevealed ? theme.accentColor : theme.foregroundColor)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-
-                Spacer(minLength: scaled(6))
-
+            MonknotMenuRowLabel(
+                leading: .none,
+                title: item.title,
+                indentBase: MarkdownOutlineRailLayout.leadingIndent(forHeadingLevel: item.level),
+                isHighlighted: isRevealed,
+                theme: theme,
+                zoomScale: zoomScale
+            ) {
                 Text("\(item.location.line)")
                     .monknotReservingWidth(of: lineNumberWidthTemplate)
-                    .font(.system(size: textScaled(9.5), weight: .regular, design: .monospaced))
-                    .foregroundStyle(theme.mutedForegroundColor)
+                    .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
+                    .foregroundStyle(theme.tertiaryForegroundColor)
                     .monospacedDigit()
             }
-            .padding(.leading, scaled(
-                8 + MarkdownOutlineRailLayout.leadingIndent(forHeadingLevel: item.level)
-            ))
-            .padding(.trailing, scaled(8))
-            .padding(.vertical, scaled(5))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(MarkdownOutlineRowButtonStyle(
+        .buttonStyle(MonknotMenuRowButtonStyle(
             theme: theme,
-            cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale),
-            isActive: isRevealed
+            isSelected: isRevealed,
+            cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
         ))
         .help("\(item.title), line \(item.location.line)")
         .accessibilityLabel("Go to heading: \(item.title)")
@@ -421,52 +400,6 @@ private struct MarkdownOutlineHoverPanel: View {
                     anchor: MarkdownOutlineRailLayout.revealAnchor
                 )
             }
-        }
-    }
-}
-
-private struct MarkdownOutlineRowButtonStyle: ButtonStyle {
-    let theme: AppTheme
-    let cornerRadius: CGFloat
-    let isActive: Bool
-
-    func makeBody(configuration: Configuration) -> Body {
-        Body(
-            configuration: configuration,
-            theme: theme,
-            cornerRadius: cornerRadius,
-            isActive: isActive
-        )
-    }
-
-    fileprivate struct Body: View {
-        let configuration: Configuration
-        let theme: AppTheme
-        let cornerRadius: CGFloat
-        let isActive: Bool
-        @State private var isHovered = false
-
-        var body: some View {
-            configuration.label
-                .background {
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(backgroundColor)
-                }
-                .onHover { isHovered = $0 }
-                .monknotPointerCursor()
-        }
-
-        private var backgroundColor: Color {
-            if configuration.isPressed {
-                return theme.pressedFillColor
-            }
-            if isHovered {
-                return theme.hoverFillColor
-            }
-            if isActive {
-                return theme.accentColor.opacity(theme.isDark ? 0.10 : 0.075)
-            }
-            return .clear
         }
     }
 }

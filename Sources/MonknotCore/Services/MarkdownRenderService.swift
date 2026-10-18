@@ -217,8 +217,13 @@ public struct MarkdownRenderService: Sendable {
             ("--skill", theme.semanticColors.skill),
             ("--onaccent", theme.onAccentForegroundHex),
             ("--task-check", taskCheckImage(color: theme.onAccentForegroundHex)),
-            // The neutral fill under a highlighted menu row or a hovered control: the ink, faintly.
-            ("--highlight", "color-mix(in srgb, \(theme.foreground) \(theme.isDark ? "9" : "6.5")%, transparent)"),
+            // The neutral fill under a highlighted menu row or a hovered control: the chrome's hover fill.
+            ("--highlight", "color-mix(in srgb, \(theme.foreground) \(theme.isDark ? "6" : "5.5")%, transparent)"),
+            // The chrome's ink ladder, derived per theme (design.md §1.2), so the page's menus, format
+            // bar and hints read exactly like the native sidebar, tabs and Settings.
+            ("--mk-ink2", inkMix(theme.foreground, theme.labelInkOpacity)),
+            ("--mk-ink3", inkMix(theme.foreground, theme.glyphInkOpacity)),
+            ("--mk-ink4", inkMix(theme.foreground, AppTheme.disabledInkOpacity)),
             // The editor's menus and toolbars scale with workspace zoom; text also with the
             // theme's interface font size, as the native chrome does.
             ("--mk-z", String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"), max(0.5, min(3, zoomScale)))),
@@ -228,6 +233,11 @@ public struct MarkdownRenderService: Sendable {
                 max(0.5, min(3, zoomScale)) * min(1.25, max(0.875, theme.uiFontSize / 16))
             ))
         ]
+    }
+
+    private func inkMix(_ ink: String, _ opacity: Double) -> String {
+        let percent = String(format: "%.0f", locale: Locale(identifier: "en_US_POSIX"), opacity * 100)
+        return "color-mix(in srgb, \(ink) \(percent)%, transparent)"
     }
 
     /// The tick drawn inside a checked task box, in the colour that reads on the accent. The SVG

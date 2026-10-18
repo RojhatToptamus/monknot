@@ -30,7 +30,7 @@ extension View {
     }
 }
 
-/// Shared chrome/toolbar icon button used across sidebar, top bar, PDF, and find UI.
+/// The one icon button (design.md §5.1), in two sizes, for every bar and every field in the app.
 struct MonknotIconButton: View {
     static let focusRingLineWidth: CGFloat = 3
     static let focusRingOutset: CGFloat = 2
@@ -46,43 +46,62 @@ struct MonknotIconButton: View {
     let zoomScale: Double
     var isActive: Bool = false
     var isDisabled: Bool = false
-    var size: IconButtonSize = .chrome
-    var drawsBorder = false
+    var size: IconButtonSize = .regular
+    /// Off only for the search match options, whose "on" is an `accent` glyph with no fill
+    /// (design.md §1.3, §5.1).
     var drawsActiveBackground = true
     var focusRingPlacement: FocusRingPlacement = .outside
+    /// The unsaved dot on the glyph's corner (a Save button with changes to save).
+    var showsDirtyDot = false
     let action: () -> Void
 
     @State private var isHovered = false
     @FocusState private var isFocused: Bool
+    @Environment(\.isEnabled) private var isEnabled
+
+    /// Disabled by its own flag or by an enclosing `.disabled`, so a disabled bar draws its buttons
+    /// at `ink4` rather than dimming the whole bar (design.md §5.1: no extra opacity).
+    private var disabled: Bool {
+        isDisabled || !isEnabled
+    }
 
     enum FocusRingPlacement {
         case outside
         case contained
     }
 
+    /// The two icon buttons (design.md §5.1). Every bar uses `regular`; a button inside a row or a
+    /// field uses `small`. There is no third size.
     enum IconButtonSize {
-        case chrome
-        case windowNavigation
-        case sidebarHeader
-        case compact
-        case settings
-        case smallAction
-        case editorToolbar
-        case findBar
+        /// 28 box, 17 pt nominal glyph (optically capped): the titlebar, sidebar and panel headers,
+        /// card bars such as the terminal header and the PDF toolbar.
+        case regular
+        /// 22 box, 13 pt glyph: match options and actions inside a field or a row.
+        case small
+
+        var dimensionBase: CGFloat {
+            switch self {
+            case .regular: return MonknotMetrics.iconButtonSizeBase
+            case .small: return MonknotMetrics.smallIconButtonSizeBase
+            }
+        }
+
+        var iconPointSizeBase: CGFloat {
+            switch self {
+            case .regular: return MonknotMetrics.iconPointSizeBase
+            case .small: return MonknotMetrics.smallIconPointSizeBase
+            }
+        }
+
+        var cornerRadiusBase: CGFloat {
+            switch self {
+            case .regular: return MonknotMetrics.iconCornerRadiusBase
+            case .small: return 6
+            }
+        }
 
         func dimension(theme: AppTheme, zoomScale: Double) -> CGFloat {
-            switch self {
-            case .chrome:
-                return MonknotMetrics.chromeButtonDimension(theme: theme, zoomScale: zoomScale)
-            case .windowNavigation, .settings, .findBar:
-                return MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale)
-            case .compact:
-                return MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale)
-            case .sidebarHeader, .smallAction:
-                return MonknotMetrics.interfaceControl(22, theme: theme, zoomScale: zoomScale)
-            case .editorToolbar:
-                return MonknotMetrics.interfaceControl(30, theme: theme, zoomScale: zoomScale)
-            }
+            MonknotMetrics.interfaceControl(dimensionBase, theme: theme, zoomScale: zoomScale)
         }
 
         func height(theme: AppTheme, zoomScale: Double) -> CGFloat {
@@ -90,50 +109,26 @@ struct MonknotIconButton: View {
         }
 
         func iconSize(theme: AppTheme, zoomScale: Double) -> CGFloat {
-            MonknotMetrics.interfaceGlyph(
-                iconPointSizeBase,
-                theme: theme,
-                zoomScale: zoomScale
-            )
-        }
-
-        var iconPointSizeBase: CGFloat {
-            switch self {
-            case .chrome:
-                return MonknotMetrics.iconPointSizeBase
-            case .windowNavigation, .sidebarHeader, .compact:
-                return 16
-            case .settings:
-                return 15
-            case .smallAction:
-                return 11
-            case .findBar, .editorToolbar:
-                return 17
-            }
+            MonknotMetrics.interfaceGlyph(iconPointSizeBase, theme: theme, zoomScale: zoomScale)
         }
 
         func cornerRadius(theme: AppTheme, zoomScale: Double) -> CGFloat {
-            switch self {
-            case .sidebarHeader, .smallAction:
-                return theme.chromeRadius(6, zoomScale: zoomScale)
-            case .chrome, .windowNavigation, .compact, .settings, .editorToolbar, .findBar:
-                return theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
-            }
+            theme.chromeRadius(cornerRadiusBase, zoomScale: zoomScale)
         }
     }
 
     /// The fill behind an icon button (design.md §5.1). Pressed replaces hover rather than stacking
-    /// on it; an open panel's toggle is `accsoft`; a disabled button never fills.
+    /// on it; a button that is on takes the neutral `on` fill; a disabled button never fills.
     enum Fill: Equatable {
         case hover
         case pressed
-        case accentSoft
+        case on
 
         func color(_ theme: AppTheme) -> Color {
             switch self {
             case .hover: return theme.hoverFillColor
             case .pressed: return theme.pressedFillColor
-            case .accentSoft: return theme.accentSoftFillColor
+            case .on: return theme.onFillColor
             }
         }
     }
@@ -147,12 +142,9 @@ struct MonknotIconButton: View {
     ) -> Fill? {
         guard !isDisabled else { return nil }
         if isPressed { return .pressed }
-        if isActive, drawsActiveBackground { return .accentSoft }
+        if isActive, drawsActiveBackground { return .on }
         return isHovered ? .hover : nil
     }
-
-    /// A disabled button keeps its border at this opacity; its glyph is `ink4` (design.md §5.1).
-    static let disabledBorderOpacity = 0.4
 
     private var cornerRadius: CGFloat {
         size.cornerRadius(theme: theme, zoomScale: zoomScale)
@@ -166,13 +158,20 @@ struct MonknotIconButton: View {
                 theme: theme,
                 zoomScale: zoomScale
             )
-                .foregroundStyle(iconColor)
+                .foregroundStyle(Self.iconColor(
+                    theme: theme,
+                    isActive: isActive,
+                    drawsActiveBackground: drawsActiveBackground,
+                    isHovered: isHovered,
+                    isDisabled: disabled
+                ))
+                .monknotDirtyDot(isVisible: showsDirtyDot && !disabled, theme: theme, zoomScale: zoomScale)
                 .frame(
                     width: size.dimension(theme: theme, zoomScale: zoomScale),
                     height: size.height(theme: theme, zoomScale: zoomScale)
                 )
                 .overlay {
-                    if Self.showsFocusRing(isFocused: isFocused, isDisabled: isDisabled) {
+                    if Self.showsFocusRing(isFocused: isFocused, isDisabled: disabled) {
                         focusRing
                     }
                 }
@@ -184,42 +183,39 @@ struct MonknotIconButton: View {
             isActive: isActive,
             drawsActiveBackground: drawsActiveBackground,
             isHovered: isHovered,
-            isDisabled: isDisabled
+            isDisabled: disabled
         ))
-        .focusable(!isDisabled && NSApp.isFullKeyboardAccessEnabled)
+        .focusable(!disabled && NSApp.isFullKeyboardAccessEnabled)
         .focused($isFocused)
         .focusEffectDisabled()
         .disabled(isDisabled)
-        .overlay {
-            // The border is structure: it never turns accent with state (design.md §5.2).
-            if drawsBorder {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .strokeBorder(
-                        theme.borderColor.opacity(isDisabled ? Self.disabledBorderOpacity : 1),
-                        lineWidth: 1
-                    )
-                    .allowsHitTesting(false)
-            }
-        }
         .onHover { isHovered = $0 }
         .animation(MonknotMotion.hoverAnimation, value: isHovered)
         .animation(MonknotMotion.hoverAnimation, value: isActive)
         .help(label)
         .accessibilityLabel(label)
-        .monknotPointerCursor(enabled: !isDisabled)
+        .monknotPointerCursor(enabled: !disabled)
     }
 
-    private var iconColor: Color {
+    /// design.md §1.4: `ink3` at rest, `ink` when hovered or on, `ink4` disabled; only a search
+    /// match option that is on turns its glyph `accent` (§1.3).
+    static func iconColor(
+        theme: AppTheme,
+        isActive: Bool,
+        drawsActiveBackground: Bool = true,
+        isHovered: Bool,
+        isDisabled: Bool
+    ) -> Color {
         if isDisabled {
             return theme.disabledForegroundColor
         }
         if isActive {
-            return theme.accentColor
+            return drawsActiveBackground ? theme.foregroundColor : theme.accentColor
         }
         if isHovered {
             return theme.foregroundColor
         }
-        return theme.mutedForegroundColor
+        return theme.tertiaryForegroundColor
     }
 
     @ViewBuilder
@@ -267,6 +263,93 @@ private struct MonknotIconButtonStyle: ButtonStyle {
     }
 }
 
+/// An icon button that opens a menu of commands ("More"): `MonknotIconButton`'s box, glyph and fills,
+/// so a bar never shows two kinds of button.
+struct MonknotMenuButton<Content: View>: View {
+    let systemImage: String
+    let label: String
+    let theme: AppTheme
+    let zoomScale: Double
+    @ViewBuilder let content: () -> Content
+
+    @State private var isHovered = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        let size = MonknotIconButton.IconButtonSize.regular
+        let shape = RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
+        Menu {
+            content()
+        } label: {
+            MonknotSystemGlyph(
+                systemImage: systemImage,
+                nominalPointSizeBase: size.iconPointSizeBase,
+                theme: theme,
+                zoomScale: zoomScale
+            )
+            .foregroundStyle(MonknotIconButton.iconColor(
+                theme: theme,
+                isActive: false,
+                isHovered: isHovered,
+                isDisabled: !isEnabled
+            ))
+            .frame(
+                width: size.dimension(theme: theme, zoomScale: zoomScale),
+                height: size.dimension(theme: theme, zoomScale: zoomScale)
+            )
+            .background {
+                if isHovered, isEnabled {
+                    shape.fill(theme.hoverFillColor)
+                }
+            }
+            .contentShape(shape)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { isHovered = $0 }
+        .animation(MonknotMotion.hoverAnimation, value: isHovered)
+        .help(label)
+        .accessibilityLabel(label)
+        .monknotPointerCursor(enabled: isEnabled)
+    }
+}
+
+extension View {
+    /// The unsaved dot (design.md §1.3, place 3): 6 pt `accent` on the glyph's bottom-trailing corner,
+    /// knocking a 1.5 pt ring out of the glyph's strokes so it reads on any fill.
+    func monknotDirtyDot(isVisible: Bool, theme: AppTheme, zoomScale: Double) -> some View {
+        modifier(MonknotDirtyDot(isVisible: isVisible, theme: theme, zoomScale: zoomScale))
+    }
+}
+
+private struct MonknotDirtyDot: ViewModifier {
+    let isVisible: Bool
+    let theme: AppTheme
+    let zoomScale: Double
+
+    func body(content: Content) -> some View {
+        if isVisible {
+            let dot = MonknotMetrics.interfaceGlyph(6, theme: theme, zoomScale: zoomScale)
+            content
+                .overlay(alignment: .bottomTrailing) {
+                    Circle()
+                        .frame(width: dot + 3, height: dot + 3)
+                        .offset(x: 1.5, y: 1.5)
+                        .blendMode(.destinationOut)
+                }
+                .compositingGroup()
+                .overlay(alignment: .bottomTrailing) {
+                    Circle()
+                        .fill(theme.accentColor)
+                        .frame(width: dot, height: dot)
+                }
+        } else {
+            content
+        }
+    }
+}
+
 /// A plain button style that reports its pressed state, for views that draw their own fill around more
 /// than the button's label (a tab chip, a row with trailing controls).
 struct MonknotPressTrackingButtonStyle: ButtonStyle {
@@ -280,7 +363,7 @@ struct MonknotPressTrackingButtonStyle: ButtonStyle {
     }
 }
 
-/// Shared trailing close affordance for document and terminal tabs.
+/// The close and clear target: tabs, fields and banners (16 target, 9 pt xmark).
 struct MonknotTabCloseButton: View {
     let label: String
     let theme: AppTheme
@@ -293,7 +376,7 @@ struct MonknotTabCloseButton: View {
     @State private var isPressed = false
 
     static func dimension(theme: AppTheme, zoomScale: Double) -> CGFloat {
-        MonknotMetrics.interfaceControl(16, theme: theme, zoomScale: zoomScale)
+        MonknotMetrics.interfaceControl(MonknotMetrics.closeTargetSizeBase, theme: theme, zoomScale: zoomScale)
     }
 
     private var dimension: CGFloat {
@@ -304,15 +387,19 @@ struct MonknotTabCloseButton: View {
         Button(action: action) {
             Image(systemName: "xmark")
                 .font(.system(
-                    size: MonknotMetrics.interfaceGlyph(11, theme: theme, zoomScale: zoomScale),
-                    weight: .regular
+                    size: MonknotMetrics.interfaceGlyph(MonknotMetrics.closeGlyphPointSizeBase, theme: theme, zoomScale: zoomScale),
+                    weight: .semibold
                 ))
-                .foregroundStyle(isHovered ? theme.foregroundColor : theme.tertiaryForegroundColor)
+                .foregroundStyle(
+                    isDisabled
+                        ? theme.disabledForegroundColor
+                        : (isHovered ? theme.foregroundColor : theme.mutedForegroundColor)
+                )
                 .frame(width: dimension, height: dimension)
                 .background {
-                    if isPressed {
+                    if isPressed, !isDisabled {
                         Circle().fill(theme.pressedFillColor)
-                    } else if isHovered {
+                    } else if isHovered, !isDisabled {
                         Circle().fill(theme.hoverFillColor)
                     }
                 }

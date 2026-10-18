@@ -713,12 +713,12 @@ private struct DocumentLoadingPlaceholder: View {
     var body: some View {
         VStack(spacing: scaled(12)) {
             MonknotProgressIndicator(
-                size: MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale),
+                size: MonknotMetrics.interfaceControl(MonknotMetrics.loadingSpinnerSizeBase, theme: theme, zoomScale: zoomScale),
                 theme: theme
             )
 
             Text(documentName)
-                .font(.system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale)))
+                .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
                 .foregroundStyle(theme.tertiaryForegroundColor)
                 .lineLimit(1)
                 .truncationMode(.middle)

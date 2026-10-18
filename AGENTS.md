@@ -371,11 +371,18 @@ Before adding custom parsing, indexing, PDF handling, file watching, or renderin
   `WorkspaceCardStyle`) inside their split panes. The 6pt dividers are the gaps, and a collapsed
   pane keeps its divider as the window margin, so the fit math always counts both dividers
   (design.md §10.0). Controls are fills, never outlines; selection is the neutral
-  `chromeSelectedFillColor`; the active tab, a selected segment and New Markdown are the one chip
-  (`chipFillColor`, `chipRingColor`, `chipShadowColor`). Chrome rows use `MonknotMetrics.rowHeightBase`
-  and its siblings, menus and popovers the `menuRow*` metrics (the editor's menu row), and a sidebar
-  place name `MonknotTypography.sidebarLabel` (13/500). Panel toggles never take an on state. Every
-  scroll bar is `MonknotScrollbarStyle`'s thumb; Preview draws it with `html.mk-legacy-scrollbars`
+  `chromeSelectedFillColor`; the active tab on the chrome and a selected segment are the one chip
+  (`chipFillColor`, `chipRingColor`, `chipShadowColor`). The ink ladder is derived per theme
+  (`AppTheme.labelInkOpacity` / `glyphInkOpacity`, scaled by the theme's contrast) and shared with the
+  Preview editor's `--mk-ink2/3/4`. Build chrome from the shared components in
+  `Sources/Monknot/Support/Design`, never a local copy: `MonknotIconButton` (28/17 in bars, 22/13 in
+  rows and fields) and `MonknotMenuButton`, `MonknotTab` (files and terminal sessions),
+  `MonknotBar` (every 40 pt bar below the titlebar), `MonknotSegmentedControl`, `MonknotPopUpButton`,
+  `View.monknotField`, `MonknotStepper`, `MonknotSlider`, `MonknotColorWell`, `MonknotListRowLabel`
+  with `MonknotListRowButtonStyle` (sidebar, Recents, Settings' sections), `MonknotMenuRowLabel` with
+  `MonknotMenuRowButtonStyle` (popovers and overlays), `MonknotDocumentGlyph` (a file's glyph with its
+  save state), and `MonknotTypography`'s three styles (label 13/400, title 13/600, secondary 12/400).
+  Panel toggles never take an on state. Every scroll bar is `MonknotScrollbarStyle`'s thumb; Preview draws it with `html.mk-legacy-scrollbars`
   (preview.css) when the system shows scroll bars always, a class `MarkdownRenderService` puts on
   the shell's root (`legacyScrollbars`) so WebKit's own bar never paints first. During a
   side-pane transition `WorkspaceDetailPaneController` lays the document out once

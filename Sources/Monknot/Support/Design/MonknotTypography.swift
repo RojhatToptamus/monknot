@@ -1,33 +1,27 @@
 import MonknotCore
 import SwiftUI
 
+/// The chrome's type scale (design.md §4.3): every label is 13 / 400, every title 13 / 600 and every
+/// secondary line, count and group header 12 / 400, at the interface zoom.
 enum MonknotTypography {
-    /// design.md §4.3 group header: 12, weight 400, sentence case, in `ink3` — the section header of
+    /// A group header: 12, weight 400, sentence case, in `ink3` (design.md §4.3), the section header of
     /// the editor's menus, so a sidebar group and a menu section read as one system.
-    static func eyebrow(theme: AppTheme, zoomScale: Double) -> Font {
+    static func groupHeader(theme: AppTheme, zoomScale: Double) -> Font {
         text(12, weight: .regular, theme: theme, zoomScale: zoomScale)
     }
 
-    static func eyebrowTracking(theme: AppTheme, zoomScale: Double) -> CGFloat {
-        0
-    }
-
-    /// Text in a row: a menu item, a search match, a command (design.md §4.3).
+    /// Every label: rows, tabs, menu rows, buttons, fields and Settings' rows (design.md §4.3).
     static func rowTitle(theme: AppTheme, zoomScale: Double) -> Font {
         text(13, weight: .regular, theme: theme, zoomScale: zoomScale)
     }
 
-    /// The name of a place in a sidebar row (a file, a folder, a settings page): 13, weight 500, as
-    /// Linear sets its navigation (design.md §10.4).
-    static func sidebarLabel(theme: AppTheme, zoomScale: Double) -> Font {
-        text(13, weight: .medium, theme: theme, zoomScale: zoomScale)
-    }
-
+    /// Secondary text: paths, counts, captions, status lines and details.
     static func rowDetail(theme: AppTheme, zoomScale: Double) -> Font {
         text(12, theme: theme, zoomScale: zoomScale)
     }
 
-    /// Sheets and panels title like a heading row: 13, weight 600 (design.md §4.1, §4.3).
+    /// Sheets, panels, overlays and the workspace name title like a heading row: 13, weight 600
+    /// (design.md §4.1, §4.3).
     static func panelTitle(theme: AppTheme, zoomScale: Double = 1) -> Font {
         text(13, weight: .semibold, theme: theme, zoomScale: zoomScale)
     }
@@ -39,18 +33,6 @@ enum MonknotTypography {
 
     static func emptyStateDetail(theme: AppTheme, zoomScale: Double) -> Font {
         text(12, theme: theme, zoomScale: zoomScale)
-    }
-
-    static func settingsRowTitle(theme: AppTheme, zoomScale: Double = 1) -> Font {
-        text(13, weight: .regular, theme: theme, zoomScale: zoomScale)
-    }
-
-    static func settingsRowDetail(theme: AppTheme, zoomScale: Double = 1) -> Font {
-        text(12, theme: theme, zoomScale: zoomScale)
-    }
-
-    static func settingsButton(theme: AppTheme, zoomScale: Double = 1) -> Font {
-        text(13, weight: .regular, theme: theme, zoomScale: zoomScale)
     }
 
     /// The system font at `size` under the interface text zoom.

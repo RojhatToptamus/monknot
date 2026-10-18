@@ -2,30 +2,26 @@ import AppKit
 import MonknotCore
 import SwiftUI
 
-/// Tab geometry, design.md §10.3: `10 padding · kind glyph column · 8 gap · label · 8 gap · 16
-/// trailing slot · 10 padding`, capped at 220. The row is laid out from these same values, so the
-/// width a tab takes is exactly what its row needs and a label that fits is never cut.
+/// A file tab's width (design.md §10.3): `MonknotTab`'s `10 padding · 18 glyph column · 8 gap · label ·
+/// 10 padding`, plus `8 gap · 10 badge` for a pin or a missing-file warning, capped at 220. A label is
+/// middle-elided only when the tab would pass the cap, and the tab hugs whatever label it shows.
 struct DocumentTabMetrics {
     let padding: CGFloat
     let gap: CGFloat
     let glyphColumn: CGFloat
-    let pinGlyph: CGFloat
-    let warningGlyph: CGFloat
-    let trailingSlot: CGFloat
+    let badgeGlyph: CGFloat
     let maximumWidth: CGFloat
     let labelFont: NSFont
 
     init(theme: AppTheme, zoomScale: Double) {
-        padding = MonknotMetrics.interfaceDensity(10, theme: theme, zoomScale: zoomScale)
-        gap = MonknotMetrics.interfaceDensity(7, theme: theme, zoomScale: zoomScale)
+        padding = MonknotMetrics.interfaceDensity(MonknotTab.paddingBase, theme: theme, zoomScale: zoomScale)
+        gap = MonknotMetrics.interfaceDensity(MonknotTab.glyphGapBase, theme: theme, zoomScale: zoomScale)
         glyphColumn = MonknotMetrics.interfaceGlyph(
-            MonknotMetrics.tabGlyphColumnBase,
+            MonknotMetrics.rowIconColumnWidthBase,
             theme: theme,
             zoomScale: zoomScale
         )
-        pinGlyph = MonknotMetrics.interfaceGlyph(9, theme: theme, zoomScale: zoomScale)
-        warningGlyph = MonknotMetrics.interfaceGlyph(10, theme: theme, zoomScale: zoomScale)
-        trailingSlot = MonknotTabCloseButton.dimension(theme: theme, zoomScale: zoomScale)
+        badgeGlyph = MonknotMetrics.interfaceGlyph(MonknotTab.badgePointSizeBase, theme: theme, zoomScale: zoomScale)
         maximumWidth = MonknotMetrics.interfaceDensity(
             MonknotMetrics.tabMaxWidthBase,
             theme: theme,
@@ -37,12 +33,14 @@ struct DocumentTabMetrics {
         )
     }
 
-    /// Everything in a tab except its label.
+    /// Everything in a tab except its label. No close slot: close takes the glyph's place on hover.
     func chromeWidth(isPinned: Bool, isMissing: Bool) -> CGFloat {
-        var width = padding + glyphColumn + gap + gap
-        width += isPinned ? pinGlyph + gap : trailingSlot + padding
+        var width = padding + glyphColumn + gap + padding
+        if isPinned {
+            width += gap + badgeGlyph
+        }
         if isMissing {
-            width += gap + warningGlyph
+            width += gap + badgeGlyph
         }
         return width
     }
@@ -192,7 +190,7 @@ private struct DocumentTabStripContent: View {
 
     var body: some View {
         let labels = DocumentTabLabel.labels(for: tabs)
-        HStack(spacing: scaled(3)) {
+        HStack(spacing: scaled(MonknotTab.spacingBase)) {
             ForEach(tabs) { tab in
                 DocumentTabItemView(
                     tab: tab,
@@ -223,7 +221,7 @@ private struct DocumentTabStripContent: View {
                 .frame(minWidth: scaled(28), maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityHidden(true)
         }
-        .padding(.horizontal, scaled(3))
+        .padding(.horizontal, scaled(MonknotTab.spacingBase))
         .frame(minWidth: minimumContentWidth, alignment: .leading)
         .frame(height: chromeRowHeight, alignment: .center)
         .coordinateSpace(name: Self.coordinateSpaceName)
@@ -280,105 +278,26 @@ private struct DocumentTabItemView: View {
     let close: () -> Void
     let togglePin: () -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isHovered = false
-    @State private var isPressed = false
-
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    private func glyphScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    private var chromeRowHeight: CGFloat {
-        MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale)
-    }
-
     var body: some View {
         let metrics = DocumentTabMetrics(theme: theme, zoomScale: zoomScale)
-        let shownLabel = metrics.fittedLabel(label, isPinned: tab.isPinned, isMissing: isMissing)
-        HStack(spacing: 0) {
-            Button(action: select) {
-                HStack(spacing: metrics.gap) {
-                    MonknotFileKindGlyph(
-                        systemImage: documentIconName,
-                        theme: theme,
-                        zoomScale: zoomScale,
-                        pointSizeBase: MonknotMetrics.tabGlyphPointSizeBase,
-                        columnWidthBase: MonknotMetrics.tabGlyphColumnBase
-                    )
-                        .foregroundStyle(iconColor)
-                        .overlay(alignment: .bottomTrailing) {
-                            if tab.isPinned, !saveState.isClean {
-                                Circle()
-                                    .fill(theme.accentColor)
-                                    .frame(width: 6, height: 6)
-                                    .overlay(Circle().stroke(theme.surfaceColor, lineWidth: 2))
-                                    .offset(x: 2, y: 2)
-                            }
-                        }
-                        .accessibilityHidden(true)
-
-                    if tab.isPinned {
-                        Image(systemName: "pin.fill")
-                            .font(.system(size: metrics.pinGlyph, weight: .regular))
-                            .foregroundStyle(isDisabled ? theme.disabledForegroundColor : theme.mutedForegroundColor)
-                            .frame(width: metrics.pinGlyph)
-                            .accessibilityHidden(true)
-                    }
-
-                    // Already fitted to the tab; never truncated again by the framework.
-                    Text(shownLabel)
-                        .font(Font(metrics.labelFont))
-                        .foregroundStyle(textColor)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .accessibilityLabel(label)
-
-                    if isMissing {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: metrics.warningGlyph, weight: .regular))
-                            .foregroundStyle(Color(hex: theme.semanticColors.diffRemoved))
-                            .frame(width: metrics.warningGlyph)
-                            .accessibilityHidden(true)
-                    }
-
-                }
-                .padding(.leading, metrics.padding)
-                .padding(.trailing, metrics.gap)
-                .frame(
-                    maxWidth: .infinity,
-                    minHeight: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale),
-                    maxHeight: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale),
-                    alignment: .leading
-                )
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
-            .disabled(isDisabled)
-            .frame(maxWidth: .infinity)
-
-            if !tab.isPinned {
-                trailingSlot(width: metrics.trailingSlot)
-                    .padding(.trailing, metrics.padding)
-            }
-        }
-        .frame(
-            width: metrics.width(fittedLabel: shownLabel, isPinned: tab.isPinned, isMissing: isMissing),
-            alignment: .leading
+        MonknotTab(
+            title: metrics.fittedLabel(label, isPinned: tab.isPinned, isMissing: isMissing),
+            systemImage: tab.kind.resolvedSystemImage,
+            isSelected: isSelected,
+            placement: .chrome,
+            status: status,
+            glyphTint: isMissing ? Color(hex: theme.semanticColors.diffRemoved) : nil,
+            badges: badges,
+            isDisabled: isDisabled,
+            isDragging: isDragging,
+            // A pinned tab closes from its menu or with ⌘W, never from a stray click on its glyph.
+            closeLabel: tab.isPinned ? nil : "Close \(label)",
+            theme: theme,
+            zoomScale: zoomScale,
+            select: select,
+            close: close
         )
-        .frame(height: chromeRowHeight, alignment: .center)
-        .clipped()
-        .background {
-            tabBackground
-                .padding(.vertical, scaled(8))
-        }
-        .opacity(opacity)
-        .onHover { isHovered = $0 }
-        .animation(reduceMotion ? nil : MonknotMotion.hoverAnimation, value: isHovered)
-        .animation(reduceMotion ? nil : MonknotMotion.hoverAnimation, value: isSelected)
+        .frame(height: MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale))
         .contextMenu {
             Button {
                 togglePin()
@@ -395,80 +314,22 @@ private struct DocumentTabItemView: View {
             .disabled(isDisabled)
         }
         .monknotHelp(isSelected ? nil : helpText)
-        .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    @ViewBuilder
-    private var tabBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-        // The active tab is a chip lifted out of the chrome, like the selected cell of a segmented
-        // control: the card's colour, a hairline, and in light themes a one-point seat (design.md §10.3).
-        if isSelected {
-            shape
-                .fill(theme.chipFillColor)
-                .overlay { shape.strokeBorder(theme.chipRingColor, lineWidth: 1) }
-                .shadow(color: theme.chipShadowColor, radius: 0.75, y: 1)
-        } else if isPressed && !isDisabled {
-            shape.fill(theme.pressedFillColor)
-        } else if isHovered && !isDisabled {
-            shape.fill(theme.hoverFillColor)
+    private var status: MonknotTab.Status {
+        MonknotDocumentStatus(saveState)
+    }
+
+    private var badges: [MonknotTab.Badge] {
+        var badges: [MonknotTab.Badge] = []
+        if tab.isPinned {
+            badges.append(.pinned)
         }
-    }
-
-    @ViewBuilder
-    private func trailingSlot(width: CGFloat) -> some View {
-        if isSelected || isHovered {
-            MonknotTabCloseButton(
-                label: "Close \(label)",
-                theme: theme,
-                zoomScale: zoomScale,
-                isDisabled: isDisabled,
-                action: close
-            )
-        } else {
-            TabSaveStateIndicator(
-                state: saveState,
-                theme: theme,
-                zoomScale: zoomScale,
-                size: glyphScaled(10)
-            )
-            .frame(width: width, height: width)
-        }
-    }
-
-    private var opacity: Double {
-        isDragging ? 0.45 : 1
-    }
-
-    // design.md §1.4, like a sidebar row: label `ink2` and glyph `ink3` at rest, both `ink` while
-    // hovered; disabled is `ink4` with nothing multiplied on top (§5.1).
-    private var textColor: Color {
-        if isSelected {
-            return theme.foregroundColor
-        }
-        if isDisabled {
-            return theme.disabledForegroundColor
-        }
-        return isHovered ? theme.foregroundColor : theme.mutedForegroundColor
-    }
-
-    private var iconColor: Color {
         if isMissing {
-            return Color(hex: theme.semanticColors.diffRemoved)
+            badges.append(.warning)
         }
-        if isSelected {
-            return theme.accentColor
-        }
-        if isDisabled {
-            return theme.disabledForegroundColor
-        }
-        return isHovered ? theme.foregroundColor : theme.tertiaryForegroundColor
-    }
-
-    private var documentIconName: String {
-        tab.kind.resolvedSystemImage
+        return badges
     }
 
     private var helpText: String {
@@ -510,36 +371,5 @@ private struct TabFrameReader: View {
                 documentID: proxy.frame(in: .named(DocumentTabStripContent.coordinateSpaceName))
             ])
         }
-    }
-}
-
-private struct TabSaveStateIndicator: View {
-    let state: DocumentSaveState
-    let theme: AppTheme
-    let zoomScale: Double
-    let size: CGFloat
-
-    var body: some View {
-        Group {
-            switch state {
-            case .clean:
-                Color.clear
-            case .edited:
-                Circle()
-                    .fill(theme.accentColor)
-                    .frame(
-                        width: MonknotMetrics.interfaceGlyph(6, theme: theme, zoomScale: zoomScale),
-                        height: MonknotMetrics.interfaceGlyph(6, theme: theme, zoomScale: zoomScale)
-                    )
-            case .saving:
-                MonknotProgressIndicator(size: size * 0.82, theme: theme)
-            case .failed:
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: max(9, size * 0.9), weight: .regular))
-                    .foregroundStyle(Color(hex: theme.semanticColors.diffRemoved))
-            }
-        }
-        .frame(width: size, height: size)
-        .accessibilityLabel(state.accessibilityDescription)
     }
 }

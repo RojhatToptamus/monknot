@@ -56,27 +56,13 @@ struct TopNavigationBar: View {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
-    private func textScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    private func glyphScaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
-    }
-
-    /// The 1×16 divider between titlebar groups (design.md §10.7).
-    private func verticalRule(_ color: Color) -> some View {
-        Rectangle()
-            .fill(color)
-            .frame(width: 1, height: scaled(16))
-    }
-
     private var isWorking: Bool {
         isBusy || isDocumentLoading || isSaving
     }
 
     var body: some View {
-        HStack(spacing: scaled(MonknotMetrics.Spacing.s)) {
+        // Groups 8 apart, items within a group 2 apart, and never a rule (design.md §10.1).
+        HStack(spacing: scaled(MonknotMetrics.barGroupGapBase)) {
             Color.clear
                 .frame(width: MonknotMetrics.trafficLightReserveBase)
                 .allowsHitTesting(false)
@@ -94,7 +80,6 @@ struct TopNavigationBar: View {
                 zoomScale: zoomScale
             )
             .allowsTopBarWindowActivationEvents()
-            .padding(.trailing, scaled(4))
 
             tabsOrEmptyTitle
                 .modifier(TitlebarCardAlignment(alignment: chromeAlignment, stripInset: scaled(3)))
@@ -102,11 +87,11 @@ struct TopNavigationBar: View {
 
             // The spinner keeps its slot while idle, so starting work never moves the controls after it.
             MonknotProgressIndicator(
-                size: glyphScaled(16),
+                size: MonknotMetrics.interfaceControl(MonknotMetrics.loadingSpinnerSizeBase, theme: theme, zoomScale: zoomScale),
                 theme: theme,
                 isAnimating: isWorking
             )
-                .frame(width: scaled(18), height: scaled(18))
+                .frame(width: scaled(MonknotMetrics.rowIconColumnWidthBase), height: scaled(MonknotMetrics.rowIconColumnWidthBase))
                 .opacity(isWorking ? 1 : 0)
                 .accessibilityLabel("Working")
                 .accessibilityHidden(!isWorking)
@@ -127,7 +112,7 @@ struct TopNavigationBar: View {
             drawerToggleButton
                 .allowsTopBarWindowActivationEvents()
         }
-        .monknotChromeRowLayout(theme: theme, zoomScale: zoomScale)
+        .monknotTitlebarRowLayout(theme: theme, zoomScale: zoomScale)
         .onChange(of: documentSearch.focusSerial) { _, _ in
             focusDocumentSearchField()
         }
@@ -221,16 +206,15 @@ struct TopNavigationBar: View {
         }
     }
 
-    /// The find bar. Short of room it drops, in turn, the option toggles, the match count and the
-    /// match arrows (Return, Shift-Return and Command-G still step through matches); only then does the
-    /// field narrow. The field and Close always stay, and there is only ever one field, so focus and
-    /// typing survive the bar changing shape.
+    /// The find bar: the shared field (design.md §5.7) holding small buttons, with no rule inside it.
+    /// Short of room it drops, in turn, the option toggles, the match count and the match arrows
+    /// (Return, Shift-Return and Command-G still step through matches); only then does the field
+    /// narrow. The field and Close always stay, and there is only ever one field, so focus and typing
+    /// survive the bar changing shape.
     private var documentSearchBar: some View {
-        HStack(spacing: scaled(8)) {
+        HStack(spacing: scaled(6)) {
             MonknotSearchGlyph(theme: theme, zoomScale: zoomScale)
-                .foregroundStyle(theme.mutedForegroundColor)
-
-            verticalRule(theme.borderColor)
+                .foregroundStyle(theme.tertiaryForegroundColor)
 
             TextField(
                 "Find in document",
@@ -241,7 +225,7 @@ struct TopNavigationBar: View {
             )
             .textFieldStyle(.plain)
             .focused($isSearchFocused)
-            .font(.system(size: textScaled(13), weight: .regular))
+            .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
             .foregroundStyle(theme.foregroundColor)
             .frame(minWidth: scaled(60), idealWidth: scaled(150), maxWidth: scaled(150))
             // Sized before the optional controls, which take what is left.
@@ -262,17 +246,7 @@ struct TopNavigationBar: View {
                 dismissDocumentSearch()
             }
         }
-        .padding(.horizontal, scaled(MonknotMetrics.Spacing.l))
-        .frame(height: scaled(28))
-        .background(
-            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                .fill(theme.surfaceColor)
-                .overlay {
-                    // design.md §3: a focused field takes the 1px accent stroke.
-                    RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                        .strokeBorder(isSearchFocused ? theme.accentColor : theme.borderColor, lineWidth: 1)
-                }
-        )
+        .monknotField(isFocused: isSearchFocused, trailingPadding: 3, theme: theme, zoomScale: zoomScale)
         .onAppear {
             focusDocumentSearchField()
         }
@@ -286,51 +260,54 @@ struct TopNavigationBar: View {
     }
 
     private func findBarControls(showsOptions: Bool, showsCount: Bool, showsNavigation: Bool) -> some View {
-        HStack(spacing: scaled(8)) {
+        HStack(spacing: scaled(6)) {
             if showsOptions {
-                searchOptionButton(
-                    systemImage: "textformat",
-                    label: "Match Case",
-                    isActive: searchOptions.isCaseSensitive
-                ) {
-                    searchOptions.isCaseSensitive.toggle()
-                }
+                HStack(spacing: scaled(MonknotMetrics.barItemGapBase)) {
+                    searchOptionButton(
+                        systemImage: "textformat",
+                        label: "Match Case",
+                        isActive: searchOptions.isCaseSensitive
+                    ) {
+                        searchOptions.isCaseSensitive.toggle()
+                    }
 
-                searchOptionButton(
-                    systemImage: "character.cursor.ibeam",
-                    label: "Match Whole Word",
-                    isActive: searchOptions.isWholeWord
-                ) {
-                    searchOptions.isWholeWord.toggle()
+                    searchOptionButton(
+                        systemImage: "character.cursor.ibeam",
+                        label: "Match Whole Word",
+                        isActive: searchOptions.isWholeWord
+                    ) {
+                        searchOptions.isWholeWord.toggle()
+                    }
                 }
             }
 
             if showsCount {
+                // A count: 12 `ink3` in tabular figures, as wide as any count it shows.
                 Text(documentSearch.countText)
                     .monknotReservingWidth(of: DocumentSearchState.countWidthTemplate)
-                    .font(.system(size: textScaled(12), weight: .regular, design: .rounded))
-                    .foregroundStyle(theme.mutedForegroundColor)
+                    .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
+                    .foregroundStyle(theme.tertiaryForegroundColor)
                     .monospacedDigit()
                     .accessibilityLabel("Search result \(documentSearch.countText)")
             }
 
             if showsNavigation {
-                verticalRule(theme.borderColor)
+                HStack(spacing: scaled(MonknotMetrics.barItemGapBase)) {
+                    findBarButton(
+                        systemImage: "chevron.up",
+                        label: "Previous Match",
+                        isDisabled: documentSearch.totalCount == 0
+                    ) {
+                        documentSearch.findPrevious()
+                    }
 
-                findBarButton(
-                    systemImage: "chevron.up",
-                    label: "Previous Match",
-                    isDisabled: documentSearch.totalCount == 0
-                ) {
-                    documentSearch.findPrevious()
-                }
-
-                findBarButton(
-                    systemImage: "chevron.down",
-                    label: "Next Match",
-                    isDisabled: documentSearch.totalCount == 0
-                ) {
-                    documentSearch.findNext()
+                    findBarButton(
+                        systemImage: "chevron.down",
+                        label: "Next Match",
+                        isDisabled: documentSearch.totalCount == 0
+                    ) {
+                        documentSearch.findNext()
+                    }
                 }
             }
         }
@@ -348,7 +325,7 @@ struct TopNavigationBar: View {
             theme: theme,
             zoomScale: zoomScale,
             isDisabled: isDisabled,
-            size: .findBar,
+            size: .small,
             focusRingPlacement: .contained,
             action: action
         )
@@ -366,7 +343,7 @@ struct TopNavigationBar: View {
             theme: theme,
             zoomScale: zoomScale,
             isActive: isActive,
-            size: .findBar,
+            size: .small,
             drawsActiveBackground: false,
             focusRingPlacement: .contained,
             action: action

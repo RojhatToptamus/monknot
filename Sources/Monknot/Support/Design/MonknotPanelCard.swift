@@ -1,7 +1,8 @@
 import MonknotCore
 import SwiftUI
 
-/// Bordered card grouping used in Settings and the PDF export sheet.
+/// A group of Settings rows (design.md §12): the control `track` on the page, radius 12, no border,
+/// as macOS groups a form. The PDF export sheet uses it too.
 struct MonknotPanelCard<Content: View>: View {
     let theme: AppTheme
     @ViewBuilder let content: () -> Content
@@ -9,7 +10,7 @@ struct MonknotPanelCard<Content: View>: View {
     @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
 
     private var cornerRadius: CGFloat {
-        theme.chromeRadius(theme.settingsCardCornerRadius, zoomScale: settingsZoomScale)
+        theme.chromeRadius(12, zoomScale: settingsZoomScale)
     }
 
     var body: some View {
@@ -19,11 +20,7 @@ struct MonknotPanelCard<Content: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: cornerRadius)
-                .fill(theme.elevatedSurfaceColor)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .strokeBorder(theme.borderColor, lineWidth: 1)
+                .fill(theme.controlTrackFillColor)
         )
     }
 }
@@ -31,7 +28,7 @@ struct MonknotPanelCard<Content: View>: View {
 typealias SettingsGroupCard = MonknotPanelCard
 
 /// The layout every sheet uses (design.md §4.3, §5.3): 20 padding; a 13/600 title with an optional 12
-/// `ink2` line under it; the sheet's content; then its push buttons at the sheet height of 30, trailing,
+/// `ink3` line under it; the sheet's content; then its push buttons at the sheet height of 30, trailing,
 /// Cancel before the default action.
 struct MonknotSheetLayout<Content: View, Buttons: View>: View {
     let title: String
@@ -57,8 +54,8 @@ struct MonknotSheetLayout<Content: View, Buttons: View>: View {
 
                 if let message {
                     Text(message)
-                        .font(.system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale)))
-                        .foregroundStyle(theme.mutedForegroundColor)
+                        .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
+                        .foregroundStyle(theme.tertiaryForegroundColor)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

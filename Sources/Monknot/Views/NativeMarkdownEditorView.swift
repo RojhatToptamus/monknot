@@ -143,7 +143,8 @@ struct NativeMarkdownEditorView: View {
                                 weight: .regular
                             )
                         )
-                        .foregroundStyle(theme.mutedForegroundColor.opacity(0.52))
+                        // A placeholder is `ink4`, as Preview's is (design.md §1.2).
+                        .foregroundStyle(theme.disabledForegroundColor)
                         .padding(
                             .leading,
                             ContentWidthPreference.editorPlaceholderLeadingInset(
@@ -186,7 +187,7 @@ struct MarkdownWordCountLabel: View {
 
     var body: some View {
         Text(statistics.map { Self.wordCountLabel($0.wordCount) } ?? "")
-            .font(.system(size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: zoomScale), weight: .regular))
+            .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
             .monospacedDigit()
             .foregroundStyle(theme.tertiaryForegroundColor)
             .lineLimit(1)
