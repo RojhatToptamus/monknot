@@ -220,7 +220,6 @@ struct MarkdownLinkInspectionPanel: View {
         VStack(alignment: .leading, spacing: scaled(5)) {
             HStack {
                 Text(title)
-                    .textCase(.uppercase)
                     .tracking(MonknotTypography.eyebrowTracking(theme: theme, zoomScale: zoomScale))
                 Spacer()
                 Text("\(count)")

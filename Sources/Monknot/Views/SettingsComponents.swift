@@ -83,16 +83,12 @@ struct SettingsOutlineButton: View {
                 .padding(.horizontal, scaled(14))
                 .padding(.vertical, scaled(6))
                 .foregroundStyle(isDisabled ? theme.disabledForegroundColor : theme.foregroundColor.opacity(0.92))
+                // A filled button with no border, like the window's pop-ups (design.md §5.3).
                 .background {
-                    RoundedRectangle(cornerRadius: cornerRadius).fill(theme.insetFillColor)
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(isDisabled ? theme.controlTrackFillColor.opacity(0.5) : theme.controlTrackFillColor)
                     RoundedRectangle(cornerRadius: cornerRadius).fill(stateFill)
                 }
-                .overlay(
-                    RoundedRectangle(cornerRadius: cornerRadius).strokeBorder(
-                        theme.borderColor.opacity(isDisabled ? MonknotIconButton.disabledBorderOpacity : 1),
-                        lineWidth: 1
-                    )
-                )
                 .monknotFocusRing(isVisible: isFocused && !isDisabled, cornerRadius: cornerRadius, theme: theme)
         }
         .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
@@ -168,12 +164,8 @@ struct SettingsStepperRow: View {
                     .padding(.horizontal, scaled(10))
                     .padding(.vertical, scaled(5))
                     .background(
-                        theme.insetFillColor,
+                        theme.controlTrackFillColor,
                         in: RoundedRectangle(cornerRadius: cornerRadius)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: cornerRadius)
-                            .strokeBorder(theme.borderColor, lineWidth: 1)
                     )
                     .accessibilityHidden(true)
                 Text(suffix)
@@ -384,8 +376,9 @@ struct EditableThemeColorRow: View {
                 .padding(.horizontal, scaled(10))
                 .padding(.vertical, scaled(6))
                 .frame(width: scaled(112), alignment: .leading)
+                // A field, as in the editor: the canvas colour inside a hairline.
                 .background(
-                    theme.insetFillColor,
+                    theme.surfaceColor,
                     in: RoundedRectangle(cornerRadius: cornerRadius)
                 )
                 .overlay(
@@ -504,7 +497,6 @@ struct SettingsSectionHeader: View {
             .font(MonknotTypography.eyebrow(theme: theme, zoomScale: settingsZoomScale))
             .tracking(MonknotTypography.eyebrowTracking(theme: theme, zoomScale: settingsZoomScale))
             .foregroundStyle(theme.mutedForegroundColor)
-            .textCase(.uppercase)
             .padding(.horizontal, scaled(2))
             .padding(.bottom, scaled(7))
     }

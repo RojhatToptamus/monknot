@@ -110,9 +110,9 @@ final class SidebarMenuHarness {
     func rowRect(_ index: Int) -> NSRect? {
         guard let documentView = treeDocumentView else { return nil }
         let theme = AppTheme.defaultDark
-        let rowHeight = MonknotMetrics.scale(30, theme: theme, zoomScale: 1)
-        let spacing = MonknotMetrics.scale(2, theme: theme, zoomScale: 1)
-        let top = MonknotMetrics.scale(6, theme: theme, zoomScale: 1)
+        let rowHeight = MonknotMetrics.scale(MonknotMetrics.rowHeightBase, theme: theme, zoomScale: 1)
+        let spacing = MonknotMetrics.scale(MonknotMetrics.rowGapBase, theme: theme, zoomScale: 1)
+        let top = MonknotMetrics.scale(MonknotMetrics.listGutterBase, theme: theme, zoomScale: 1)
         let y = top + CGFloat(index) * (rowHeight + spacing)
         let local = NSRect(x: 20, y: y, width: documentView.bounds.width - 40, height: rowHeight)
         let flipped = documentView.isFlipped

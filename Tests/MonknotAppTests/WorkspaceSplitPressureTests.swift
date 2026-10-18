@@ -93,8 +93,9 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
         layout(window, controller)
 
         XCTAssertTrue(controller.sidebarItem.isCollapsed)
-        XCTAssertTrue(
-            controller.splitView(controller.splitView, shouldHideDividerAt: 0)
+        XCTAssertFalse(
+            controller.splitView(controller.splitView, shouldHideDividerAt: 0),
+            "A collapsed pane keeps its divider as the margin around the document card"
         )
         XCTAssertTrue(paneView(controller.sidebarItem, in: controller).isHidden)
         let splitView = controller.splitView as! WorkspaceNativeSplitView
@@ -104,7 +105,11 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
         XCTAssertTrue(
             splitView.hitTest(NSPoint(x: collapsedHitRect.midX, y: collapsedHitRect.midY)) === splitView
         )
-        XCTAssertEqual(paneFrame(controller.detailItem, in: controller).minX, controller.splitView.bounds.minX, accuracy: 1)
+        XCTAssertEqual(
+            paneFrame(controller.detailItem, in: controller).minX,
+            controller.splitView.bounds.minX + controller.splitView.dividerThickness,
+            accuracy: 1
+        )
         XCTAssertGreaterThan(paneWidth(controller.detailItem, in: controller), detailWidthBeforeCollapse)
 
         normalizeHiddenPaneToMinimum(controller.sidebarItem, in: controller)
@@ -139,8 +144,9 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
         layout(window, controller)
 
         XCTAssertTrue(controller.terminalItem.isCollapsed)
-        XCTAssertTrue(
-            controller.splitView(controller.splitView, shouldHideDividerAt: 1)
+        XCTAssertFalse(
+            controller.splitView(controller.splitView, shouldHideDividerAt: 1),
+            "A collapsed pane keeps its divider as the margin around the document card"
         )
         XCTAssertTrue(paneView(controller.terminalItem, in: controller).isHidden)
         let splitView = controller.splitView as! WorkspaceNativeSplitView
@@ -149,7 +155,7 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
             collapsedHitRect.minX,
             splitView.bounds.maxX - splitView.dividerThickness,
             accuracy: 0.001,
-            "A collapsed terminal's divider keeps only its own width inside the window"
+            "A collapsed terminal's divider is the window's trailing margin"
         )
         XCTAssertEqual(collapsedHitRect.width, splitView.dividerHitWidth, accuracy: 0.001)
         XCTAssertTrue(
@@ -159,7 +165,11 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
             splitView.hitTest(NSPoint(x: splitView.bounds.maxX - 8, y: collapsedHitRect.midY)) === splitView,
             "The document's scroll bar at the window edge must stay reachable while the terminal is hidden"
         )
-        XCTAssertEqual(paneFrame(controller.detailItem, in: controller).maxX, controller.splitView.bounds.maxX, accuracy: 1)
+        XCTAssertEqual(
+            paneFrame(controller.detailItem, in: controller).maxX,
+            controller.splitView.bounds.maxX - controller.splitView.dividerThickness,
+            accuracy: 1
+        )
         XCTAssertGreaterThan(paneWidth(controller.detailItem, in: controller), detailWidthBeforeCollapse)
 
         normalizeHiddenPaneToMinimum(controller.terminalItem, in: controller)
@@ -269,7 +279,7 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
         // Squeeze the terminal out with the window, then grow it to a width where the terminal
         // fits only once the sidebar is narrower.
         window.contentViewController = nil
-        layoutController(controller, width: 900)
+        layoutController(controller, width: 860)
         layoutController(controller, width: 1_100)
         window = mount(controller, width: 1_100)
         XCTAssertTrue(controller.terminalItem.isCollapsed)
@@ -437,7 +447,8 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
         // below-minimum live resize. Drive the controller's real AppKit frames
         // through the same viewDidLayout seam used by window state changes.
         window.contentViewController = nil
-        controller.view.frame = NSRect(x: 0, y: 0, width: 900, height: 620)
+        // Narrower than all three panes at their minimums.
+        controller.view.frame = NSRect(x: 0, y: 0, width: 860, height: 620)
         controller.splitView.frame = controller.view.bounds
         controller.view.layoutSubtreeIfNeeded()
         controller.viewDidLayout()
@@ -497,7 +508,8 @@ final class WorkspaceSplitPressureTests: WorkspaceSplitViewTestCase {
             WorkspaceSplitMetrics.terminalMinimumWidth
         )
         window.contentViewController = nil
-        layoutController(controller, width: 900)
+        // Narrower than all three panes at their minimums.
+        layoutController(controller, width: 860)
 
         XCTAssertFalse(controller.sidebarItem.isCollapsed)
         XCTAssertTrue(controller.terminalItem.isCollapsed)

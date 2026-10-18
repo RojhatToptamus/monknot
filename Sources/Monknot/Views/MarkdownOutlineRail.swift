@@ -324,19 +324,12 @@ private struct MarkdownOutlineHoverPanel: View {
             }
         }
         .frame(width: width, height: panelHeight, alignment: .top)
-        .background {
-            RoundedRectangle(cornerRadius: scaled(11), style: .continuous)
-                .fill(theme.elevatedSurfaceColor)
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: scaled(11), style: .continuous)
-                .strokeBorder(theme.borderColor, lineWidth: 1)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: scaled(11), style: .continuous))
-        .shadow(
-            color: .black.opacity(theme.isDark ? 0.28 : 0.12),
-            radius: scaled(8),
-            y: scaled(3)
+        // The same floating surface as the editor's menus: radius 12 at `e2` (design.md §2.1, §7).
+        .monknotFloatingSurface(
+            .e2,
+            cornerRadius: scaled(12),
+            fill: theme.elevatedSurfaceColor,
+            theme: theme
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Outline, \(items.count) headings")

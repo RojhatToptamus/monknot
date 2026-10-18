@@ -775,14 +775,9 @@ private struct PDFFreeTextFormattingPopover: View {
         .foregroundStyle(theme.foregroundColor)
         .padding(.horizontal, metrics.itemSpacing)
         .frame(width: metrics.fontMenuWidth, height: metrics.controlHeight)
+        // A pop-up: a fill, no border (design.md §5.3).
         .background {
-            controlShape.fill(theme.insetFillColor)
-            if isFontMenuHovered {
-                controlShape.fill(theme.hoverFillColor)
-            }
-        }
-        .overlay {
-            controlShape.strokeBorder(theme.borderColor, lineWidth: 1)
+            controlShape.fill(isFontMenuHovered ? theme.pressedFillColor : theme.controlTrackFillColor)
         }
         .monknotFocusRing(
             isVisible: focusedControl == .fontFamily,
@@ -831,11 +826,8 @@ private struct PDFFreeTextFormattingPopover: View {
             .frame(width: metrics.controlHeight)
         }
         .frame(width: metrics.sizeControlWidth, height: metrics.controlHeight)
-        .background(theme.insetFillColor, in: controlShape)
+        .background(theme.controlTrackFillColor, in: controlShape)
         .clipShape(controlShape)
-        .overlay {
-            controlShape.strokeBorder(theme.borderColor, lineWidth: 1)
-        }
         .monknotFocusRing(
             isVisible: focusedControl == .increaseSize || focusedControl == .decreaseSize,
             cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale),
@@ -926,9 +918,7 @@ private struct PDFFreeTextFormattingPopover: View {
             }
         }
         .padding(metrics.segmentPadding)
-        .overlay {
-            controlShape.strokeBorder(theme.borderColor, lineWidth: 1)
-        }
+        .background(theme.controlTrackFillColor, in: controlShape)
     }
 
     private var alignmentControls: some View {
@@ -1587,16 +1577,7 @@ private struct PDFAnnotationToolbar: View {
                 .foregroundStyle(theme.mutedForegroundColor)
         }
         .frame(width: scaled(42), height: dimension)
-        .background(theme.controlTrackFillColor, in: shape)
-        .overlay {
-            if isHovered {
-                shape.fill(theme.hoverFillColor)
-            }
-        }
-        .overlay {
-            shape
-                .strokeBorder(theme.borderColor, lineWidth: 1)
-        }
+        .background(isHovered ? theme.pressedFillColor : theme.controlTrackFillColor, in: shape)
         .contentShape(shape)
     }
 
@@ -1786,13 +1767,7 @@ struct PDFZoomToolbarGroup: View {
                     zoomControlShape.fill(theme.hoverFillColor)
                 }
             }
-            .overlay {
-                // design.md §5.1: disabled dims the border and uses `ink4`; nothing multiplies on top.
-                zoomControlShape.strokeBorder(
-                    theme.borderColor.opacity(status.isAvailable ? 1 : MonknotIconButton.disabledBorderOpacity),
-                    lineWidth: 1
-                )
-            }
+
             .monknotFocusRing(
                 isVisible: isMenuFocused && status.isAvailable,
                 cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale),

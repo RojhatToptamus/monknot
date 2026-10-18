@@ -355,10 +355,6 @@ private struct TerminalTabChip: View {
         }
         .frame(height: scaled(24), alignment: .leading)
         .background(background, in: RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)))
-        .overlay {
-            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                .strokeBorder(borderColor, lineWidth: 1)
-        }
         .help(tab.title)
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovered)
@@ -381,7 +377,7 @@ private struct TerminalTabChip: View {
 
     private var background: Color {
         if isSelected {
-            return theme.elevatedSurfaceColor
+            return theme.chromeSelectedFillColor
         }
         if isPressed {
             return theme.pressedFillColor
@@ -394,10 +390,6 @@ private struct TerminalTabChip: View {
 
     private var showsCloseButton: Bool {
         isSelected || isHovered
-    }
-
-    private var borderColor: Color {
-        isSelected ? theme.borderColor : .clear
     }
 
     private var statusColor: Color {

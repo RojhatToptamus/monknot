@@ -17,8 +17,9 @@ struct MonknotRowButtonStyle: ButtonStyle {
         isPressed: Bool,
         isEnabled: Bool
     ) -> Color {
+        // A neutral fill, like a highlighted menu row in the editor (design.md §1.4).
         if isSelected {
-            return theme.selectedRowColor
+            return theme.chromeSelectedFillColor
         }
         guard isEnabled else { return .clear }
         if isPressed {

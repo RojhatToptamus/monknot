@@ -260,9 +260,9 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
         }
     }
 
-    func testSidebarRowIconsStayTwoPointsLargerThanAdjacentLabels() {
-        XCTAssertEqual(MonknotMetrics.sidebarIconPointSizeBase, 15)
-        XCTAssertEqual(MonknotMetrics.rowIconColumnWidthBase, 18)
+    func testSidebarRowIconsStayOnePointLargerThanAdjacentLabels() {
+        XCTAssertEqual(MonknotMetrics.sidebarIconPointSizeBase, 14)
+        XCTAssertEqual(MonknotMetrics.rowIconColumnWidthBase, 16)
 
         for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
             for zoomScale in WorkspaceZoomPolicy.supportedLevels {
@@ -279,7 +279,7 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
 
                 XCTAssertEqual(
                     iconSize - labelSize,
-                    MonknotMetrics.interfaceGlyph(2, theme: theme, zoomScale: zoomScale),
+                    MonknotMetrics.interfaceGlyph(1, theme: theme, zoomScale: zoomScale),
                     accuracy: 0.5,
                     "Sidebar symbols outgrew their labels at zoom \(zoomScale)"
                 )

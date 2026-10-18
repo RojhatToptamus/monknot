@@ -188,6 +188,60 @@ final class WorkspaceSplitTransitionTests: WorkspaceSplitViewTestCase {
     /// The document is laid out once per side-pane transition, at its final width, pinned to the
     /// edge that does not move: a web view's text and scroll bar then slide with the divider instead
     /// of being re-laid out, late, on every frame.
+    /// design.md §10.0: the document and terminal sit on rounded cards, 6 from every window edge and
+    /// from each other, and the document card stays put when a pane opens or closes.
+    func testDocumentAndTerminalSitOnCardsSixPointsFromEveryEdge() throws {
+        let recorder = PresentationRecorder()
+        let controller = makeController(terminalPresented: true, recorder: recorder)
+        controller.cardStyle = WorkspaceCardStyle(
+            documentBackground: .white,
+            terminalBackground: .white,
+            border: .gray,
+            cornerRadius: 12,
+            inset: WorkspaceSplitMetrics.dividerThickness
+        )
+        let window = mount(controller, width: 1_400)
+        layout(window, controller)
+        let gap = WorkspaceSplitMetrics.dividerThickness
+        let split = controller.splitView
+        func card(_ index: Int) throws -> WorkspaceCardView {
+            try XCTUnwrap(Self.firstCard(in: split.arrangedSubviews[index]))
+        }
+        func frame(_ view: NSView) -> NSRect { view.convert(view.bounds, to: split) }
+
+        let documentCard = try card(1)
+        let terminalCard = try card(2)
+        XCTAssertEqual(documentCard.cornerRadius, 12)
+        XCTAssertEqual(frame(documentCard).minX - split.arrangedSubviews[0].frame.maxX, gap, accuracy: 0.5, "Sidebar to card")
+        XCTAssertEqual(frame(terminalCard).minX - frame(documentCard).maxX, gap, accuracy: 0.5, "Card to card")
+        XCTAssertEqual(split.bounds.maxX - frame(terminalCard).maxX, gap, accuracy: 0.5, "Card to the trailing edge")
+        func bottomGap(_ view: NSView) -> CGFloat {
+            split.isFlipped ? split.bounds.maxY - frame(view).maxY : frame(view).minY - split.bounds.minY
+        }
+        XCTAssertEqual(bottomGap(documentCard), gap, accuracy: 0.5, "Card to the bottom edge")
+        XCTAssertEqual(bottomGap(terminalCard), gap, accuracy: 0.5)
+        XCTAssertNil(Self.firstCard(in: split.arrangedSubviews[0]).map { $0.ringColor == .gray ? $0 : nil } ?? nil, "The sidebar has no card")
+
+        // Closing the terminal leaves its divider as the trailing margin.
+        update(controller, sidebarPresented: true, terminalPresented: false, recorder: recorder)
+        layout(window, controller)
+        XCTAssertEqual(split.bounds.maxX - frame(documentCard).maxX, gap, accuracy: 0.5)
+
+        // Closing the sidebar leaves its divider as the leading margin.
+        update(controller, sidebarPresented: false, terminalPresented: false, recorder: recorder)
+        layout(window, controller)
+        XCTAssertEqual(frame(documentCard).minX - split.bounds.minX, gap, accuracy: 0.5)
+        XCTAssertEqual(split.bounds.maxX - frame(documentCard).maxX, gap, accuracy: 0.5)
+    }
+
+    private static func firstCard(in view: NSView) -> WorkspaceCardView? {
+        if let card = view as? WorkspaceCardView, card.cornerRadius > 0 { return card }
+        for subview in view.subviews {
+            if let card = firstCard(in: subview) { return card }
+        }
+        return nil
+    }
+
     func testDocumentKeepsItsFinalWidthAndFarEdgeWhileASidePaneMoves() {
         let recorder = PresentationRecorder()
         let controller = makeController(terminalPresented: false, recorder: recorder)
@@ -199,7 +253,8 @@ final class WorkspaceSplitTransitionTests: WorkspaceSplitViewTestCase {
         let documentPane = controller.splitView.arrangedSubviews[1]
         let restingWidth = documentPane.frame.width
         let sidebarWidth = controller.splitView.arrangedSubviews[0].frame.width
-        let finalWidth = restingWidth + sidebarWidth + controller.splitView.dividerThickness
+        // The divider stays at the window edge as the margin around the card (design.md §10.0).
+        let finalWidth = restingWidth + sidebarWidth
 
         update(controller, sidebarPresented: false, terminalPresented: false, recorder: recorder, animated: true)
         var sawMovingDivider = false

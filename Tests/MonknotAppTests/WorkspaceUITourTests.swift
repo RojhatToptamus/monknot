@@ -130,7 +130,24 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             configuration.afterScreenUpdates = true
             guard let snapshot = try? await webView.takeSnapshot(configuration: configuration) else { continue }
             let frame = webView.convert(webView.bounds, to: nil)
+            NSGraphicsContext.saveGraphicsState()
+            // A web view inside a card is clipped by the card's rounded corners, as on screen.
+            if let card = Self.ancestor(of: WorkspaceCardView.self, from: webView) {
+                let cardFrame = card.convert(card.bounds, to: nil)
+                let scaledFrame = CGRect(x: cardFrame.minX * scale, y: cardFrame.minY * scale, width: cardFrame.width * scale, height: cardFrame.height * scale)
+                NSBezierPath(roundedRect: scaledFrame, xRadius: card.cornerRadius * scale, yRadius: card.cornerRadius * scale).addClip()
+            }
             snapshot.draw(in: CGRect(x: frame.minX * scale, y: frame.minY * scale, width: frame.width * scale, height: frame.height * scale))
+            NSGraphicsContext.restoreGraphicsState()
+            // The card's ring draws over its content on screen; draw it again over the snapshot.
+            if let card = Self.ancestor(of: WorkspaceCardView.self, from: webView), let ring = card.layer?.borderColor, let color = NSColor(cgColor: ring) {
+                let cardFrame = card.convert(card.bounds, to: nil)
+                let inset = CGRect(x: cardFrame.minX * scale, y: cardFrame.minY * scale, width: cardFrame.width * scale, height: cardFrame.height * scale).insetBy(dx: scale / 2, dy: scale / 2)
+                let path = NSBezierPath(roundedRect: inset, xRadius: card.cornerRadius * scale, yRadius: card.cornerRadius * scale)
+                path.lineWidth = scale
+                color.setStroke()
+                path.stroke()
+            }
         }
         composite.unlockFocus()
         guard let tiff = composite.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff) else { return }
@@ -187,6 +204,15 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             try text.write(to: url, atomically: true, encoding: .utf8)
         }
         return root
+    }
+
+    private static func ancestor<T: NSView>(of type: T.Type, from view: NSView) -> T? {
+        var current = view.superview
+        while let candidate = current {
+            if let match = candidate as? T { return match }
+            current = candidate.superview
+        }
+        return nil
     }
 
     private static func descendants<T: NSView>(of type: T.Type, in view: NSView) -> [T] {

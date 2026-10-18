@@ -356,8 +356,8 @@ public extension AppTheme {
         recessedSurfaceHex(amount: isDark ? 0.075 : 0.028)
     }
 
-    /// The terminal mirrors the left sidebar as a right-edge tool panel.
+    /// The terminal sits on a card beside the document's, on the same canvas (design.md §10.0).
     var terminalSurfaceHex: String {
-        sidebarSurfaceHex
+        background
     }
 }

@@ -116,7 +116,10 @@
     const next = reader.at(index + 1);
     if (!line || !next) return false;
     if (!/\|/.test(line.text)) return false;
-    return splitTableRow(next.text).every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+    // GitHub's rule: any run of hyphens, with optional colons, and as many cells as the header.
+    const delimiter = splitTableRow(next.text);
+    return delimiter.length === splitTableRow(line.text).length
+      && delimiter.every((cell) => /^:?-+:?$/.test(cell.trim()));
   }
 
   function definitionOf(text) {

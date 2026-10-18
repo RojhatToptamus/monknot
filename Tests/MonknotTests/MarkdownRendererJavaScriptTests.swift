@@ -116,6 +116,16 @@ final class MarkdownRendererJavaScriptTests: XCTestCase {
         XCTAssertFalse(html.contains("| --- | --- | --- |"))
     }
 
+    func testTableAcceptsGitHubDelimiterRowsOfAnyLength() throws {
+        let compact = try renderMarkdown("|a|b|\n|-|:-:|\n|1|2|")
+        XCTAssertTrue(compact.contains("<th>a</th>"), compact)
+        XCTAssertTrue(compact.contains(#"<td align="center">2</td>"#), compact)
+
+        // As on GitHub, a delimiter row with a different number of cells is no table.
+        let mismatched = try renderMarkdown("a | b\n-\nc")
+        XCTAssertFalse(mismatched.contains("<table>"), mismatched)
+    }
+
     func testWorkspaceLinksRenderAsDelegatedActionTargets() throws {
         let html = try renderMarkdown("See [[Daily Note#Plan|today]] and [**guide**](Folder/Guide.md#Setup).")
 

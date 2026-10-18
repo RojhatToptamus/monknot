@@ -29,12 +29,10 @@ struct MonknotSegmentedControl: View {
             }
         }
         .padding(MonknotMetrics.scale(2, theme: theme, zoomScale: zoomScale))
-        .overlay(
-            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                .strokeBorder(
-                    theme.borderColor.opacity(isDisabled ? MonknotIconButton.disabledBorderOpacity : 1),
-                    lineWidth: 1
-                )
+        // A track, not a border: the selected cell lifts out of it (design.md §5.5).
+        .background(
+            theme.controlTrackFillColor.opacity(isDisabled ? 0.5 : 1),
+            in: RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
         )
     }
 }
@@ -123,7 +121,7 @@ struct MonknotSegmentButton: View {
             return .clear
         }
         if isSelected {
-            return theme.selectedRowColor
+            return theme.segmentSelectedFillColor
         }
         if isPressed {
             return theme.pressedFillColor

@@ -190,7 +190,8 @@ public struct MarkdownRenderService: Sendable {
             ("--quote-bg", "var(--blockquote-bg)"),
             ("--quote-border", "var(--blockquote-border)"),
             ("--table-border", border),
-            ("--table-header-bg", softStrong),
+            // A light page needs only a wash to set the header row apart; a dark one needs more.
+            ("--table-header-bg", theme.isDark ? softStrong : soft),
             ("--table-row-alt-bg", soft),
             ("--shadow", "rgba(0, 0, 0, \(theme.isDark ? "0.36" : "0.08"))"),
             ("--selection-bg", theme.selectionBackground),

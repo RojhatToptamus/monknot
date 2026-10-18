@@ -159,7 +159,9 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
     check("enter task", "- [x] a‸", enter, "- [x] a\n- [ ] ‸");
     check("enter list middle", "- on‸e", enter, "- on\n- ‸e");
     check("enter empty item exits", "- one\n- ‸\n- two", enter, "- one\n\n‸\n- two");
-    check("enter empty last item", "- one\n- ‸", enter, "- one\n‸");
+    // A last line with no line break is no line: the empty line gets one, or the next text would join the item.
+    check("enter empty last item", "- one\n- ‸", enter, "- one\n‸\n");
+    check("enter empty last item before a line break", "- one\n- ‸\n", enter, "- one\n‸\n");
     check("enter empty nested outdents", "- one\n  - ‸", enter, "- one\n- ‸");
     check("enter quote middle", "> ab‸cd", enter, "> ab\n>\n> ‸cd");
     check("enter quote end", "> abcd‸", enter, "> abcd\n>\n>‸");
@@ -169,6 +171,20 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
     check("backspace heading", "# ‸Title", backspaceAtStart, "‸Title");
     check("backspace join", "a\n\n‸b", backspaceAtStart, "a‸b");
     check("backspace item", "- ‸a", backspaceAtStart, "‸a");
+    // Text taken out of a list stands apart from it, or Markdown would read it as more of the item above.
+    check("backspace first item", "- ‸a\n- b", backspaceAtStart, "‸a\n\n- b");
+    check("backspace middle item", "- a\n- ‸b\n- c", backspaceAtStart, "- a\n\n‸b\n\n- c");
+    check("backspace last item", "- a\n- ‸b\n", backspaceAtStart, "- a\n\n‸b\n");
+    check("backspace middle task", "- [ ] a\n- [ ] ‸b\n- [x] c\n", backspaceAtStart, "- [ ] a\n\n‸b\n\n- [x] c\n");
+    check("backspace middle ordered", "1. a\n2. ‸b\n3. c", backspaceAtStart, "1. a\n\n‸b\n\n3. c");
+    check("backspace item after paragraph", "Intro\n- ‸a", backspaceAtStart, "Intro\n\n‸a");
+    check("backspace item with children", "- ‸a\n  - b", backspaceAtStart, "‸a\n\n  - b");
+    check("backspace nested item outdents", "- [ ] a\n  - [ ] ‸b\n- [ ] c", backspaceAtStart, "- [ ] a\n- [ ] ‸b\n- [ ] c");
+    check("backspace item in quote", "> - a\n> - ‸b", backspaceAtStart, "> - a\n>\n> ‸b");
+    check("backspace item crlf", "- a\r\n- ‸b\r\n- c", backspaceAtStart, "- a\r\n\r\n‸b\r\n\r\n- c");
+    check("item to text", "- a\n- ‸b\n- c", block("paragraph"), "- a\n\n‸b\n\n- c");
+    check("items to text", "- «a\n- b»\n- c", block("paragraph"), "«a\n\nb»\n\n- c");
+    check("heading to text", "a\n# ‸H\nb", block("paragraph"), "a\n\n‸H\n\nb");
     check("backspace quote", "> ‸a", backspaceAtStart, "‸a");
     check("backspace after hr", "a\n\n---\n\n‸b", backspaceAtStart, "a\n\n‸b");
     check("backspace empty line", "a\n\n\n‸\nb", (m, s) => E.planBackspaceAtStart(m, E.unitAt(m, s.head, "right")), "a\n\n‸\nb");
@@ -205,6 +221,10 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
     check("table column right", "| a | b |\n| --- | --- |\n| c‸ | d |", (m, s) => E.planTable(m, E.unitAt(m, s.head, "left"), "columnRight"), "| a |  | b |\n| --- | --- | --- |\n| c | ‸ | d |");
     check("table delete column", "| a | b |\n| --- | --- |\n| c‸ | d |", (m, s) => E.planTable(m, E.unitAt(m, s.head, "left"), "deleteColumn"), "| ‸b |\n| --- |\n| d |");
     check("indent item", "- a\n- b‸", (m, s) => E.planIndent(m, s, 1), "- a\n  - b‸");
+    check("indent numbered item starts its sub-list at 1", "1. a\n2. ‸b\n3. c", (m, s) => E.planIndent(m, s, 1), "1. a\n   1. ‸b\n3. c");
+    check("indent numbered item into a sub-list", "1. a\n   1. x\n2. ‸b", (m, s) => E.planIndent(m, s, 1), "1. a\n   1. x\n   2. ‸b");
+    check("indent two items keeps the selection on them", "1. a\n2. «b\n3. c»", (m, s) => E.planIndent(m, s, 1), "1. a\n   1. «b\n   3. c»");
+    check("outdent two items keeps the selection on them", "- a\n  - «b\n  - c»", (m, s) => E.planIndent(m, s, -1), "- a\n- «b\n- c»");
     check("outdent item", "- a\n  - b‸", (m, s) => E.planIndent(m, s, -1), "- a\n- b‸");
     check("enter on empty quote line exits", "> a\n>\n>‸", (m, s) => E.planEnter(m, { anchor: s.head, head: s.head, from: s.head, to: s.head }), "> a\n‸\n");
     check("crlf enter", "Hello‸\r\n", enter, "Hello\r\n‸\r\n");

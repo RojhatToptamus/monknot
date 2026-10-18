@@ -18,15 +18,15 @@ final class AppThemeSurfaceHierarchyTests: XCTestCase {
         XCTAssertEqual(AppTheme.blendHex("not-a-color", toward: "#FFFFFF", amount: 0.5), "not-a-color")
     }
 
-    func testTerminalMirrorsSidebarSurfaceInBothModes() {
-        XCTAssertEqual(AppTheme.defaultDark.terminalSurfaceHex, AppTheme.defaultDark.sidebarSurfaceHex)
-        XCTAssertEqual(AppTheme.defaultLight.terminalSurfaceHex, AppTheme.defaultLight.sidebarSurfaceHex)
+    func testTerminalCardSharesTheDocumentCanvasInBothModes() {
+        XCTAssertEqual(AppTheme.defaultDark.terminalSurfaceHex, AppTheme.defaultDark.background)
+        XCTAssertEqual(AppTheme.defaultLight.terminalSurfaceHex, AppTheme.defaultLight.background)
     }
 
-    func testDockedToolPanelsShareTheDistinctSidebarTier() {
+    func testChromeToneIsDistinctFromTheCards() {
         for theme in [AppTheme.defaultDark, AppTheme.defaultLight] {
             XCTAssertNotEqual(theme.sidebarSurfaceHex, theme.background)
-            XCTAssertEqual(theme.sidebarSurfaceHex, theme.terminalSurfaceHex)
+            XCTAssertNotEqual(theme.sidebarSurfaceHex, theme.terminalSurfaceHex)
         }
     }
 

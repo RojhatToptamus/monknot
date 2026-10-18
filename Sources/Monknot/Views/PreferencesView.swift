@@ -90,13 +90,17 @@ struct PreferencesView: View {
         HStack(spacing: 0) {
             settingsSidebar
 
-            Rectangle()
-                .fill(panelTheme.separatorColor)
-                .frame(width: 1)
-
+            // The page sits on a card in the window's chrome, as the document does (design.md §10.0).
             sectionContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(panelTheme.contentSurfaceColor)
+                .clipShape(RoundedRectangle(cornerRadius: MonknotMetrics.cardCornerRadius, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: MonknotMetrics.cardCornerRadius, style: .continuous)
+                        .strokeBorder(panelTheme.cardRingColor, lineWidth: 1)
+                }
+                .padding(.trailing, WorkspaceSplitMetrics.dividerThickness)
+                .padding(.bottom, WorkspaceSplitMetrics.dividerThickness)
         }
         // Settings zooms with the workspace, but the window never grows past the screen; its pages
         // scroll inside it.
@@ -119,9 +123,9 @@ struct PreferencesView: View {
                 Button {
                     selectedSection = section
                 } label: {
-                    HStack(spacing: scaled(8)) {
+                    HStack(spacing: scaled(MonknotMetrics.rowGlyphGapBase)) {
                         Image(systemName: section.systemImage)
-                            .font(.system(size: glyphScaled(15), weight: .regular))
+                            .font(.system(size: glyphScaled(MonknotMetrics.sidebarIconPointSizeBase), weight: .regular))
                             .foregroundStyle(
                                 selectedSection == section
                                     ? panelTheme.accentColor
@@ -140,8 +144,8 @@ struct PreferencesView: View {
                             )
                     }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, scaled(10))
-                        .frame(height: scaled(28))
+                        .padding(.horizontal, scaled(MonknotMetrics.rowPaddingBase))
+                        .frame(height: scaled(MonknotMetrics.rowHeightBase + 2))
                         .background(
                             sidebarRowBackground(for: section),
                             in: RoundedRectangle(cornerRadius: panelTheme.chromeRadius(8, zoomScale: settingsZoomScale))
@@ -173,7 +177,7 @@ struct PreferencesView: View {
 
     private func sidebarRowBackground(for section: Section) -> Color {
         if selectedSection == section {
-            return panelTheme.selectedRowColor
+            return panelTheme.chromeSelectedFillColor
         }
         // design.md §1.2: the one hover fill; keyboard focus shows the ring instead (§3).
         if hoveredSection == section {
@@ -302,7 +306,7 @@ private struct WorkspaceSettingsRow: View {
                     .foregroundStyle(theme.foregroundColor)
                     .padding(.horizontal, scaled(9))
                     .frame(height: scaled(28), alignment: .leading)
-                    .background(theme.insetFillColor, in: RoundedRectangle(cornerRadius: scaled(8)))
+                    .background(theme.surfaceColor, in: RoundedRectangle(cornerRadius: scaled(8)))
                     .overlay {
                         RoundedRectangle(cornerRadius: scaled(8))
                             .strokeBorder(
@@ -385,7 +389,6 @@ private struct WorkspaceSettingsRow: View {
             zoomScale: settingsZoomScale,
             isDisabled: isDisabled,
             size: .settings,
-            drawsBorder: true,
             action: action
         )
     }
@@ -525,7 +528,7 @@ private struct ExportSettingsView: View {
 
                 SettingsSliderRow(
                     theme: uiTheme,
-                    title: "Content Width",
+                    title: "Content width",
                     detail: "Share of the printable page used by content",
                     showsDivider: false,
                     value: $options.contentWidthPercent,
@@ -684,16 +687,13 @@ private struct SettingsZoomStepButton: View {
                 ))
                 .foregroundStyle(isHovered || isPressed ? theme.foregroundColor : theme.mutedForegroundColor)
                 .frame(width: scaled(26), height: scaled(26))
+                // Borderless, like every icon button (design.md §5.1).
                 .background {
-                    shape.fill(theme.insetFillColor)
                     if isPressed {
                         shape.fill(theme.pressedFillColor)
                     } else if isHovered {
                         shape.fill(theme.hoverFillColor)
                     }
-                }
-                .overlay {
-                    shape.strokeBorder(theme.borderColor, lineWidth: 1)
                 }
                 .monknotFocusRing(isVisible: isFocused, cornerRadius: scaled(8), theme: theme)
                 .contentShape(shape)

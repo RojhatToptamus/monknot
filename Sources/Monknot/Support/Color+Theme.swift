@@ -70,6 +70,34 @@ extension AppTheme {
         foregroundColor.opacity(isDark ? 0.06 : 0.08)
     }
 
+    /// The window chrome around the cards: titlebar, sidebar and the gaps between cards (design.md
+    /// §10.0). The sidebar tier, so the sidebar reads as part of the frame rather than a panel.
+    var chromeSurfaceColor: Color {
+        sidebarSurfaceColor
+    }
+
+    /// The hairline ring of the document and terminal cards. Softer than `line`: the tone step between
+    /// chrome and card already draws the edge.
+    var cardRingColor: Color {
+        foregroundColor.opacity(isDark ? 0.07 : 0.085)
+    }
+
+    /// A selected row, tab or terminal session in the chrome: a neutral fill, like a highlighted menu
+    /// row in the editor, so it never reads as a text selection or competes with the accent glyph.
+    var chromeSelectedFillColor: Color {
+        foregroundColor.opacity(isDark ? 0.10 : 0.07)
+    }
+
+    /// A secondary push button: a fill a step deeper than the control track, with no border.
+    var secondaryButtonFillColor: Color {
+        foregroundColor.opacity(isDark ? 0.10 : 0.07)
+    }
+
+    /// The selected cell of a segmented control, lifted out of its `hover`-tinted track.
+    var segmentSelectedFillColor: Color {
+        isDark ? foregroundColor.opacity(0.14) : surfaceColor
+    }
+
     var elevatedSurfaceColor: Color {
         Color(hex: recessedSurfaceHex(amount: isDark ? 0.11 : 0.05))
     }

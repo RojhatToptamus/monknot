@@ -163,7 +163,8 @@ final class TerminalChromeLayoutTests: XCTestCase {
         XCTAssertTrue(html.contains("width: 12px;"))
         XCTAssertTrue(html.contains("--terminal-bg: \(theme.terminalSurfaceHex);"))
         XCTAssertTrue(html.contains("\"background\":\"\(theme.terminalSurfaceHex)\""))
-        XCTAssertFalse(html.contains("\"background\":\"\(theme.background)\""))
+        // The terminal sits on a card on the document's canvas (design.md §10.0).
+        XCTAssertEqual(theme.terminalSurfaceHex, theme.background)
     }
 
     func testTerminalResizeKeepsTheFirstScrollbackAnchorAcrossObserverCallbacks() {

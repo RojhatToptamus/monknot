@@ -344,7 +344,13 @@ Before adding custom parsing, indexing, PDF handling, file watching, or renderin
 - Main layout is owned by `WorkspaceSplitView`, an `NSSplitViewController`
   bridge in `ContentView`. The existing `SidebarView` remains the leading pane;
   AppKit owns divider interaction, accessibility, collapse behavior, window
-  resizing, full-screen transitions, and autosaved divider positions. During a
+  resizing, full-screen transitions, and autosaved divider positions.
+- The window is one chrome tone (`AppTheme.chromeSurfaceColor`): titlebar, sidebar and the gaps.
+  The document and terminal sit on rounded cards (`WorkspaceCardView`, styled by
+  `WorkspaceCardStyle`) inside their split panes. The 6pt dividers are the gaps, and a collapsed
+  pane keeps its divider as the window margin, so the fit math always counts both dividers
+  (design.md §10.0). Controls are fills, never outlines; selection is the neutral
+  `chromeSelectedFillColor`; chrome rows use `MonknotMetrics.rowHeightBase` and its siblings. During a
   side-pane transition `WorkspaceDetailPaneController` lays the document out once
   at its final width, pinned to the edge that does not move, so web views never
   re-lay out on every animation frame; `renderer.js` keeps the reading position

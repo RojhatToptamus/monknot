@@ -28,7 +28,8 @@ final class WorkspaceSplitPersistenceTests: WorkspaceSplitViewTestCase {
             XCTAssertEqual(readLegacySidebarWidth(), legacySidebarWidth, accuracy: 2)
             withIsolatedLegacyMigrationDefaults(terminalWidth: legacyTerminalWidth) { defaults in
                 let controller = makeController(migratesLegacyLayout: true)
-                setControllerSize(controller, width: 920)
+                // Narrower than all three panes at their minimums, so one of them must step aside.
+                setControllerSize(controller, width: 860)
                 controller.viewDidLayout()
                 controller.splitView.layoutSubtreeIfNeeded()
 

@@ -15,6 +15,8 @@
   --mk-press: color-mix(in srgb, var(--fg) 10%, transparent);
   /* A highlighted menu row: neutral, so it never reads as a second text selection. */
   --mk-highlight: var(--highlight, color-mix(in srgb, var(--fg) 6.5%, transparent));
+  /* A format that is on, in the format bar: a fill that reads at a glance on a 28 pt button. */
+  --mk-on: color-mix(in srgb, var(--fg) 12%, transparent);
   --mk-floating: color-mix(in srgb, var(--bg) 97%, var(--fg));
   --mk-shadow-hue: color-mix(in srgb, var(--fg) 90%, var(--accent));
   --mk-ring: color-mix(in srgb, var(--mk-shadow-hue) 9%, transparent);
@@ -33,6 +35,7 @@
   --mk-hover: color-mix(in srgb, var(--fg) 6%, transparent);
   --mk-press: color-mix(in srgb, var(--fg) 11%, transparent);
   --mk-highlight: var(--highlight, color-mix(in srgb, var(--fg) 9%, transparent));
+  --mk-on: color-mix(in srgb, var(--fg) 17%, transparent);
   --mk-floating: color-mix(in srgb, var(--bg) 90%, var(--fg));
   --mk-ring: rgba(255, 255, 255, 0.12);
   --mk-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.34);
@@ -147,7 +150,8 @@
 
 .mk-editing .mk-toggle-arrow {
   position: absolute;
-  top: 0.1em;
+  /* Centred on the summary's lowercase letters rather than its line box. */
+  top: 0.15em;
   left: 0.1em;
   display: flex;
   align-items: center;
@@ -504,9 +508,18 @@
   left: 0;
   max-height: 160px;
   overflow: hidden;
+  /* The padding sits outside the block's own edges, so the copy's text lines up with the pointer. */
+  margin: -4px 0 0 -8px;
+  padding: 4px 8px;
   border-radius: 6px;
-  opacity: 0.6;
+  /* A lifted, translucent copy that stays readable over the text it passes. */
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--mk-ring), 0 6px 16px color-mix(in srgb, var(--mk-shadow-hue) 10%, transparent);
+  opacity: 0.8;
   pointer-events: none;
+}
+
+.mk-drag-ghost.mk-drag-ghost-tall {
   -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
   mask-image: linear-gradient(to bottom, #000 70%, transparent);
 }
@@ -585,6 +598,11 @@
   .mk-editing .mk-block-moved {
     animation: none;
   }
+}
+
+/* A glyph the app has not sent yet holds its place and draws nothing. */
+.mk-icon.mk-icon-pending {
+  background-color: transparent;
 }
 
 .mk-icon {
@@ -842,9 +860,25 @@
 }
 
 /* A format that is on: filled, glyph at full ink (design.md §5.1 "On"). */
-.mk-tool.mk-on {
-  background: var(--mk-highlight);
+.mk-tool.mk-on,
+.mk-tool.mk-on:hover {
+  background: var(--mk-on);
   color: var(--mk-ink);
+}
+
+/* A control whose menu is open keeps its pressed fill until the menu closes. */
+.mk-tool.mk-open,
+.mk-editing .mk-code-language.mk-open {
+  background: var(--mk-press);
+  color: var(--mk-ink);
+}
+
+.mk-editing .callout-title.mk-open {
+  background: color-mix(in srgb, var(--callout-tint) 12%, transparent);
+}
+
+.mk-editing .callout-title.mk-open::after {
+  opacity: 0.8;
 }
 
 .mk-tool:disabled {

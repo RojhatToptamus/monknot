@@ -230,11 +230,13 @@ final class WindowChromeInteractionTests: XCTestCase {
             XCTAssertEqual(fill(hovered: true, pressed: true, enabled: true), theme.pressedFillColor)
             XCTAssertEqual(fill(hovered: true, enabled: false), .clear)
             XCTAssertEqual(fill(hovered: true, pressed: true, enabled: false), .clear)
-            XCTAssertEqual(fill(selected: true, hovered: true, enabled: false), theme.selectedRowColor)
+            // Selection is the neutral fill, never an accent tint (design.md §1.4).
+            XCTAssertEqual(fill(selected: true, hovered: true, enabled: false), theme.chromeSelectedFillColor)
         }
     }
 
-    func testWindowNavigationUsesReferenceSegmentGeometryAcrossSupportedZooms() {
+    /// Back and forward are two ordinary chrome buttons side by side, with no shell (design.md §5.1).
+    func testWindowNavigationUsesChromeButtonGeometryAcrossSupportedZooms() {
         let theme = AppTheme.defaultDark
         let navigationSize = MonknotIconButton.IconButtonSize.windowNavigation
         let chromeSize = MonknotIconButton.IconButtonSize.chrome
@@ -246,9 +248,15 @@ final class WindowChromeInteractionTests: XCTestCase {
                 chromeSize.dimension(theme: theme, zoomScale: zoomScale),
                 accuracy: 0.001
             )
-            XCTAssertLessThan(
+            XCTAssertEqual(
                 navigationSize.height(theme: theme, zoomScale: zoomScale),
-                chromeSize.height(theme: theme, zoomScale: zoomScale)
+                chromeSize.height(theme: theme, zoomScale: zoomScale),
+                accuracy: 0.001
+            )
+            XCTAssertEqual(
+                navigationSize.cornerRadius(theme: theme, zoomScale: zoomScale),
+                chromeSize.cornerRadius(theme: theme, zoomScale: zoomScale),
+                accuracy: 0.001
             )
             XCTAssertEqual(
                 navigationSize.iconSize(theme: theme, zoomScale: zoomScale),

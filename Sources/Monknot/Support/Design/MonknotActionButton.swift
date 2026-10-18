@@ -115,23 +115,14 @@ struct MonknotActionButton: View {
         }
     }
 
-    private var borderColor: Color {
-        if isDisabled {
-            return role == .quiet ? .clear : theme.borderColor.opacity(MonknotIconButton.disabledBorderOpacity)
-        }
-        return role == .secondary ? theme.borderColor : .clear
-    }
+    // Push buttons are fills, never outlines (design.md §5.3).
+    private var borderColor: Color { .clear }
 
-    private var borderWidth: CGFloat {
-        if isDisabled {
-            return role == .quiet ? 0 : 1
-        }
-        return role == .secondary ? 1 : 0
-    }
+    private var borderWidth: CGFloat { 0 }
 
     private var backgroundColor: Color {
         if isDisabled {
-            return role == .quiet ? .clear : theme.insetFillColor
+            return role == .quiet ? .clear : theme.controlTrackFillColor.opacity(0.5)
         }
 
         switch role {
@@ -140,7 +131,7 @@ struct MonknotActionButton: View {
         case .destructive:
             return Color(hex: theme.semanticColors.diffRemoved)
         case .secondary:
-            return theme.insetFillColor
+            return theme.secondaryButtonFillColor
         case .quiet:
             return .clear
         }

@@ -17,7 +17,7 @@ struct DocumentTabMetrics {
 
     init(theme: AppTheme, zoomScale: Double) {
         padding = MonknotMetrics.interfaceDensity(10, theme: theme, zoomScale: zoomScale)
-        gap = MonknotMetrics.interfaceDensity(8, theme: theme, zoomScale: zoomScale)
+        gap = MonknotMetrics.interfaceDensity(7, theme: theme, zoomScale: zoomScale)
         glyphColumn = MonknotMetrics.interfaceGlyph(
             MonknotMetrics.rowIconColumnWidthBase,
             theme: theme,
@@ -348,8 +348,8 @@ private struct DocumentTabItemView: View {
                 .padding(.trailing, metrics.gap)
                 .frame(
                     maxWidth: .infinity,
-                    minHeight: MonknotMetrics.interfaceControl(30, theme: theme, zoomScale: zoomScale),
-                    maxHeight: MonknotMetrics.interfaceControl(30, theme: theme, zoomScale: zoomScale),
+                    minHeight: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale),
+                    maxHeight: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale),
                     alignment: .leading
                 )
                 .contentShape(Rectangle())
@@ -371,7 +371,7 @@ private struct DocumentTabItemView: View {
         .clipped()
         .background {
             tabBackground
-                .padding(.vertical, scaled(7))
+                .padding(.vertical, scaled(8))
         }
         .opacity(opacity)
         .onHover { isHovered = $0 }
@@ -401,12 +401,9 @@ private struct DocumentTabItemView: View {
     @ViewBuilder
     private var tabBackground: some View {
         let shape = RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
+        // A fill, never a border: the active tab is selected the way a sidebar row is.
         if isSelected {
-            shape
-                .fill(theme.elevatedSurfaceColor)
-                .overlay {
-                    shape.strokeBorder(theme.borderColor, lineWidth: 1)
-                }
+            shape.fill(theme.chromeSelectedFillColor)
         } else if isPressed && !isDisabled {
             shape.fill(theme.pressedFillColor)
         } else if isHovered && !isDisabled {

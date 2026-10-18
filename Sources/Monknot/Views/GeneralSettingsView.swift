@@ -86,7 +86,7 @@ struct GeneralSettingsView: View {
 
                 SettingsToggleRow(
                     theme: uiTheme,
-                    title: "Visual External Change Review",
+                    title: "Visual external change review",
                     detail: "Show a readable diff before reconciling text changed on disk",
                     isOn: $visualExternalChangeReviewEnabled
                 )
@@ -129,7 +129,7 @@ struct GeneralSettingsView: View {
             SettingsGroupCard(theme: uiTheme) {
                 SettingsSliderRow(
                     theme: uiTheme,
-                    title: "Content Width",
+                    title: "Content width",
                     detail: "Share of the pane, up to a comfortable line length; 100% fills it",
                     value: $contentWidthPercent,
                     range: ContentWidthPreference.allowedRange,

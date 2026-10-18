@@ -21,9 +21,19 @@ enum MonknotMetrics {
     static let chromeHorizontalPaddingBase: CGFloat = 8
     static let iconButtonSizeBase: CGFloat = 28
     static let iconPointSizeBase: CGFloat = 17
-    static let sidebarIconPointSizeBase: CGFloat = 15
-    static let rowIconColumnWidthBase: CGFloat = 18
+    static let sidebarIconPointSizeBase: CGFloat = 14
+    static let rowIconColumnWidthBase: CGFloat = 16
+    /// The chrome row primitive (design.md §0): 26 tall, 8 padding, a 14 glyph in the 16 column, 7 gap,
+    /// 13 label, 1 between rows and 14 per depth, inside a 6 list gutter.
+    static let rowHeightBase: CGFloat = 26
+    static let rowGapBase: CGFloat = 1
+    static let rowPaddingBase: CGFloat = 8
+    static let rowGlyphGapBase: CGFloat = 7
+    static let rowIndentBase: CGFloat = 14
+    static let listGutterBase: CGFloat = 6
     static let iconCornerRadiusBase: CGFloat = 8
+    /// The document and terminal cards (design.md §7, §10.0).
+    static let cardCornerRadius: CGFloat = 12
     /// The fixed-size native traffic lights and their leading inset.
     static let trafficLightReserveBase: CGFloat = 64
     /// File tabs hug their label up to this width and have no minimum (design.md §10.3).
@@ -99,6 +109,16 @@ enum MonknotSymbolOptics {
         switch systemImage {
         case "character.cursor.ibeam":
             return 12.5
+        // Wide or dense glyphs in the Preview editor's menus, sized to their neighbours' ink.
+        case "chevron.left.forwardslash.chevron.right":
+            return 12
+        case "textformat", "speaker.wave.2", "list.bullet.rectangle":
+            return 13
+        case "tablecells", "text.bubble", "face.smiling", "calendar", "arrow.triangle.2.circlepath",
+             "arrow.up.right.square", "exclamationmark.bubble", "exclamationmark.triangle",
+             "exclamationmark.octagon", "plus.square.on.square", "doc.on.doc",
+             "trash", "pencil", "link.badge.minus":
+            return 14
         case "curlybraces", "link", "play.rectangle":
             return 13
         case "magnifyingglass",

@@ -86,12 +86,7 @@ struct MonknotIconButton: View {
         }
 
         func height(theme: AppTheme, zoomScale: Double) -> CGFloat {
-            switch self {
-            case .windowNavigation:
-                return MonknotMetrics.interfaceControl(22, theme: theme, zoomScale: zoomScale)
-            case .chrome, .sidebarHeader, .compact, .settings, .smallAction, .editorToolbar, .findBar:
-                return dimension(theme: theme, zoomScale: zoomScale)
-            }
+            dimension(theme: theme, zoomScale: zoomScale)
         }
 
         func iconSize(theme: AppTheme, zoomScale: Double) -> CGFloat {
@@ -119,10 +114,10 @@ struct MonknotIconButton: View {
 
         func cornerRadius(theme: AppTheme, zoomScale: Double) -> CGFloat {
             switch self {
-            case .chrome, .sidebarHeader, .compact, .settings, .smallAction, .editorToolbar, .findBar:
-                return theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
-            case .windowNavigation:
+            case .sidebarHeader, .smallAction:
                 return theme.chromeRadius(6, zoomScale: zoomScale)
+            case .chrome, .windowNavigation, .compact, .settings, .editorToolbar, .findBar:
+                return theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
             }
         }
     }

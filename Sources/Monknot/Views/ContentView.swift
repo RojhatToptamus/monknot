@@ -278,6 +278,7 @@ struct ContentView: View {
     @State private var isTerminalVisible = false
     @State private var isTerminalFullscreen = false
     @State private var terminalRevealRequest: UInt = 0
+    @StateObject private var chromeAlignment = ChromeAlignmentModel()
     @StateObject private var terminalFocusRestorer = TerminalFocusRestorer()
     @StateObject private var goToLineFocusRestorer = TerminalFocusRestorer()
     @StateObject private var searchFocusRestorer = TerminalFocusRestorer()
@@ -409,9 +410,9 @@ struct ContentView: View {
     private var chromeContent: AnyView {
         AnyView(rootContent
             .ignoresSafeArea(.container, edges: .top)
-            .background(activeTheme.surfaceColor)
+            .background(activeTheme.chromeSurfaceColor)
             .background(WindowChromeConfigurator(
-                surfaceColor: activeTheme.surfaceColor,
+                surfaceColor: activeTheme.chromeSurfaceColor,
                 isDark: activeTheme.isDark,
                 trafficLightRowHeight: MonknotMetrics.chromeHeight(
                     theme: activeTheme,
@@ -655,7 +656,8 @@ struct ContentView: View {
     private var rootContentStack: some View {
         ZStack {
             VStack(spacing: 0) {
-                MonknotChromePanel(theme: activeTheme, surface: activeTheme.sidebarSurfaceColor) {
+                // The titlebar is part of the frame around the cards: no rule under it.
+                MonknotChromePanel(theme: activeTheme, showsBottomBorder: false, surface: activeTheme.chromeSurfaceColor) {
                     primaryTitlebar
                 }
 
@@ -666,7 +668,18 @@ struct ContentView: View {
                     layoutScale: activeTheme.layoutScale(zoomScale: zoomScale),
                     separatorColor: NSColor(activeTheme.separatorColor),
                     accentColor: NSColor(activeTheme.accentColor),
-                    detailBackgroundColor: NSColor(activeTheme.surfaceColor),
+                    onDocumentLeadingEdgeChange: { edge in
+                        if chromeAlignment.documentLeadingEdge != edge {
+                            chromeAlignment.documentLeadingEdge = edge
+                        }
+                    },
+                    cardStyle: WorkspaceCardStyle(
+                        documentBackground: NSColor(activeTheme.surfaceColor),
+                        terminalBackground: NSColor(activeTheme.terminalSurfaceColor),
+                        border: NSColor(activeTheme.cardRingColor),
+                        cornerRadius: MonknotMetrics.cardCornerRadius,
+                        inset: WorkspaceSplitMetrics.dividerThickness
+                    ),
                     sidebarRevealRequest: sidebarRevealRequest,
                     terminalRevealRequest: terminalRevealRequest,
                     onSidebarPresentationChange: { isPresented, userInitiated in
@@ -829,6 +842,7 @@ struct ContentView: View {
             closeTab: closeTab(id:),
             togglePinTab: togglePinTab(id:),
             reorderTab: reorderTab(draggedID:targetID:),
+            chromeAlignment: chromeAlignment,
             navigateBack: navigateBack,
             navigateForward: navigateForward,
             canNavigateBack: canNavigateBack,
@@ -3052,7 +3066,7 @@ struct WindowNavigationControls: View {
     }
 
     var body: some View {
-        HStack(spacing: scaled(2)) {
+        HStack(spacing: 0) {
             MonknotIconButton(
                 systemImage: "chevron.left",
                 label: "Back",
@@ -3072,11 +3086,6 @@ struct WindowNavigationControls: View {
                 size: .windowNavigation,
                 action: navigateForward
             )
-        }
-        .padding(scaled(2))
-        .overlay {
-            RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                .strokeBorder(theme.borderColor, lineWidth: 1)
         }
         .frame(height: MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale))
         .fixedSize(horizontal: true, vertical: false)

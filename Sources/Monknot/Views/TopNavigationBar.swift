@@ -40,6 +40,8 @@ struct TopNavigationBar: View {
     let closeTab: (String) -> Void
     let togglePinTab: (String) -> Void
     let reorderTab: (String, String?) -> Void
+    /// Where the document card starts; the tab strip starts there while the sidebar is open.
+    var chromeAlignment: ChromeAlignmentModel? = nil
     var navigateBack: () -> Void = {}
     var navigateForward: () -> Void = {}
     var canNavigateBack = false
@@ -92,11 +94,10 @@ struct TopNavigationBar: View {
                 zoomScale: zoomScale
             )
             .allowsTopBarWindowActivationEvents()
-
-            verticalRule(theme.separatorColor)
-                .padding(.horizontal, scaled(2))
+            .padding(.trailing, scaled(4))
 
             tabsOrEmptyTitle
+                .modifier(TitlebarCardAlignment(alignment: chromeAlignment, stripInset: scaled(3)))
                 .layoutPriority(1)
 
             // The spinner keeps its slot while idle, so starting work never moves the controls after it.
@@ -122,9 +123,6 @@ struct TopNavigationBar: View {
 
             viewModeControl
                 .allowsTopBarWindowActivationEvents()
-
-            verticalRule(theme.separatorColor)
-                .padding(.horizontal, scaled(4))
 
             drawerToggleButton
                 .allowsTopBarWindowActivationEvents()
@@ -154,7 +152,6 @@ struct TopNavigationBar: View {
             label: isSidebarVisible ? "Hide Sidebar" : "Show Sidebar",
             theme: theme,
             zoomScale: zoomScale,
-            drawsBorder: true,
             action: toggleSidebar
         )
         .accessibilityValue(isSidebarVisible ? "Open" : "Closed")
@@ -167,7 +164,6 @@ struct TopNavigationBar: View {
             theme: theme,
             zoomScale: zoomScale,
             isActive: isTerminalPresented,
-            drawsBorder: true,
             action: toggleTerminal
         )
         .accessibilityValue(isTerminalPresented ? "Open" : "Closed")
@@ -270,7 +266,7 @@ struct TopNavigationBar: View {
         .frame(height: scaled(28))
         .background(
             RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-                .fill(theme.insetFillColor)
+                .fill(theme.surfaceColor)
                 .overlay {
                     // design.md §3: a focused field takes the 1px accent stroke.
                     RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
@@ -388,6 +384,49 @@ private extension View {
             allowsWindowActivationEvents()
         } else {
             self
+        }
+    }
+}
+
+
+/// The document card's leading edge in window coordinates, published by the split view. Only the
+/// tab strip's alignment observes it, so a sliding sidebar re-lays out the titlebar and nothing else.
+@MainActor
+final class ChromeAlignmentModel: ObservableObject {
+    @Published var documentLeadingEdge: CGFloat = 0
+}
+
+/// Starts the tab strip on the document card's leading edge, as in Linear: the first tab's chip sits
+/// on the card's edge while the sidebar is open, and right after the navigation buttons when it is
+/// closed. Padding rather than a spacer, so the titlebar's own spacing is not added twice.
+private struct TitlebarCardAlignment: ViewModifier {
+    let alignment: ChromeAlignmentModel?
+    let stripInset: CGFloat
+
+    func body(content: Content) -> some View {
+        if let alignment {
+            AlignedContent(alignment: alignment, stripInset: stripInset, content: content)
+        } else {
+            content
+        }
+    }
+
+    private struct AlignedContent: View {
+        @ObservedObject var alignment: ChromeAlignmentModel
+        let stripInset: CGFloat
+        let content: Content
+        @State private var start: CGFloat = 0
+
+        var body: some View {
+            content
+                .padding(.leading, max(0, alignment.documentLeadingEdge - start - stripInset))
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear
+                            .onAppear { start = proxy.frame(in: .global).minX }
+                            .onChange(of: proxy.frame(in: .global).minX) { _, minX in start = minX }
+                    }
+                }
         }
     }
 }

@@ -591,6 +591,20 @@
     return { count, leading: !prefix };
   }
 
+  /// The blank lines a paragraph made from the lines [start, end) needs so that Markdown reads it
+  /// as a block of its own: without them it continues the list item or paragraph above it, and
+  /// a following ordered item or paragraph folds into it. Lines in another container are left alone.
+  function paragraphSeparation(source, start, end, prefix, eol) {
+    const blank = prefix.replace(/[ \t]+$/, "");
+    const sameContainer = (lineStart) => quoteDepth(quotePrefixOfLine(source, lineStart)) === quoteDepth(prefix);
+    const previousEnd = previousLineEnd(source, start);
+    const previousStart = previousEnd >= 0 ? lineStartOf(source, previousEnd) : -1;
+    const before = previousStart >= 0 && sameContainer(previousStart) && !isBlankLineIn(source, previousStart, prefix);
+    const nextStart = nextLineStart(source, end);
+    const after = nextStart > end && nextStart < source.length && sameContainer(nextStart) && !isBlankLineIn(source, nextStart, prefix);
+    return { before: before ? blank + eol : "", after: after ? eol + blank : "" };
+  }
+
   function escapeCell(text) {
     return text.replace(/\r\n|\r|\n/g, " ").replace(/(?<!\\)\|/g, "\\|");
   }
@@ -1147,7 +1161,10 @@
       const lineBefore = blankLinesBefore(source, lineStartOf(source, lineStart), prefix);
       const lineAfter = blankLinesAfter(source, contentEnd, prefix);
       const run = lineBefore.count + 1 + lineAfter.count;
-      const needed = (lineAfter.trailing && !prefix) ? 0 : Math.max(0, 2 - run);
+      // At the end of a file the item's line stays as the empty line, unless nothing ends it:
+      // a last line with no line break is no line at all, and the next text would join the item.
+      const unterminated = nextLineStart(source, contentEnd) === contentEnd;
+      const needed = (lineAfter.trailing && !prefix) ? (unterminated && lineBefore.count === 0 ? 1 : 0) : Math.max(0, 2 - run);
       const insert = (eol + blank).repeat(needed);
       return {
         from: lineStart,
@@ -1229,8 +1246,25 @@
     }
     if (unit.role === "item") {
       const item = unit.item;
+      // A nested item steps out a level first, as ⇧⇥ does: without its marker it would read as
+      // more of its parent's text.
+      if (item.indent >= 2) {
+        const outdent = planIndent(model, { from: position, to: position, anchor: position, head: position }, -1);
+        if (outdent) return outdent;
+      }
       const from = S(unit, item.view.start);
-      return { from, to: S(unit, item.contentStart), insert: "", select: caretAt(from), kind: "format", label: "Paragraph" };
+      const lineStart = lineStartOf(source, from);
+      const lead = source.slice(lineStart, from);
+      const end = lineEndOf(source, S(unit, item.end));
+      const gap = paragraphSeparation(source, lineStart, end, quotePrefixOfLine(source, lineStart), model.eol);
+      const op = compose(source, [
+        { s: lineStart, e: S(unit, item.contentStart), keep: gap.before + lead },
+        gap.after ? { s: end, e: end, keep: gap.after } : null
+      ]);
+      op.select = caretAt(lineStart + gap.before.length + lead.length);
+      op.kind = "format";
+      op.label = "Paragraph";
+      return op;
     }
     if (unit.role === "paragraph" && unit.container && unit.container.type === "quote") {
       const parts = unit.block.lines.map((view) => ({
@@ -1812,11 +1846,18 @@
       replacement += lineText;
       previousEnd = lineEnd;
     });
-    parts.push({ s: rangeStart, e: previousEnd, keep: replacement });
+    // An item or heading made into text gets blank lines around it, so it does not join its neighbours.
+    let gap = { before: "", after: "" };
+    if (target === "paragraph" && rangeStart === lineStartOf(source, rangeStart)
+      && textUnits.some((unit) => unit.role === "item" || unit.role === "heading")) {
+      gap = paragraphSeparation(source, rangeStart, lineEndOf(source, previousEnd), quotePrefixOfLine(source, rangeStart), eol);
+    }
+    parts.push({ s: rangeStart, e: previousEnd, keep: gap.before + replacement + gap.after });
     const op = compose(source, parts);
     op.kind = "format";
     op.label = BLOCK_LABELS[target] || "Format";
-    op.select = (next) => restoreDescribedSelection(next, caret, rangeStart);
+    const restoreFrom = rangeStart + gap.before.length;
+    op.select = (next) => restoreDescribedSelection(next, caret, restoreFrom);
     if (textUnits.length === 1 && textUnits[0].kind === "empty") {
       const unit = textUnits[0];
       const marker = target === "quote" ? "> " : prefixForType(target, 0, unit);
@@ -1929,32 +1970,47 @@
     const prefix = quotePrefixOfLine(source, start);
     const width = Math.max(2, first.item.contentStart - first.item.markerStart - (first.item.task ? 4 : 0));
     const lines = source.slice(start, end).split(/\r\n|\r|\n/);
-    let removedBeforeCaret = 0;
-    let addedBeforeCaret = 0;
+    // How far the anchor and the head each move: by what changes on their line and the lines above.
+    let anchorShift = 0;
+    let headShift = 0;
     let lineOffset = start;
     const changed = lines.map((line) => {
       const body = line.slice(prefix.length);
       let result;
+      let change;
       if (direction > 0) {
         result = prefix + " ".repeat(width) + body;
-        if (lineOffset <= selection.head) addedBeforeCaret += width;
+        change = width;
       } else {
         const leading = (/^[ \t]*/.exec(body) || [""])[0];
         const remove = leading.startsWith("\t") ? 1 : Math.min(leading.length, width);
         result = prefix + body.slice(remove);
-        if (lineOffset <= selection.head) removedBeforeCaret += remove;
+        change = -remove;
       }
+      if (lineOffset <= selection.anchor) anchorShift += change;
+      if (lineOffset <= selection.head) headShift += change;
       lineOffset += line.length + eol.length;
       return result;
     });
+    // A numbered item indented under a sibling with no sub-list starts one, numbered from 1.
+    let renumbered = 0;
+    if (direction > 0 && first.list.ordered) {
+      const siblings = first.list.items;
+      const previous = siblings[siblings.indexOf(first.item) - 1];
+      if (previous && previous.children.length === 0) {
+        changed[0] = changed[0].replace(/^((?:[ \t>]*?)[ \t]*)(\d+)([.)])/, (match, lead, number, delimiter) => {
+          renumbered = number.length - 1;
+          return `${lead}1${delimiter}`;
+        });
+      }
+    }
     const insert = changed.join(eol);
     if (insert === source.slice(start, end)) return null;
-    const shift = addedBeforeCaret - removedBeforeCaret;
     return {
       from: start,
       to: end,
       insert,
-      select: { anchor: selection.anchor + shift, head: selection.head + shift },
+      select: { anchor: selection.anchor + anchorShift - renumbered, head: selection.head + headShift - renumbered },
       kind: "format",
       label: direction > 0 ? "Indent" : "Outdent"
     };
@@ -4344,18 +4400,29 @@
     const span = document.createElement("span");
     span.className = "mk-icon";
     span.setAttribute("aria-hidden", "true");
-    const glyph = icons[`${context}:${name}`];
-    if (glyph) {
-      span.style.webkitMaskImage = `url("${glyph.url}")`;
-      span.style.maskImage = `url("${glyph.url}")`;
-      span.style.setProperty("--mk-icon-width", `${glyph.width}px`);
-      span.style.setProperty("--mk-icon-height", `${glyph.height}px`);
-    }
+    span.dataset.mkIcon = `${context}:${name}`;
+    applyIcon(span);
     return span;
+  }
+
+  /// Draws a glyph once the app has sent it. Bars built before the glyphs arrive keep their spans,
+  /// which `setIcons` fills in; until then a span draws nothing rather than a solid square.
+  function applyIcon(span) {
+    const glyph = icons[span.dataset.mkIcon];
+    if (!glyph) {
+      span.classList.add("mk-icon-pending");
+      return;
+    }
+    span.classList.remove("mk-icon-pending");
+    span.style.webkitMaskImage = `url("${glyph.url}")`;
+    span.style.maskImage = `url("${glyph.url}")`;
+    span.style.setProperty("--mk-icon-width", `${glyph.width}px`);
+    span.style.setProperty("--mk-icon-height", `${glyph.height}px`);
   }
 
   function setIcons(map) {
     icons = map && typeof map === "object" ? map : {};
+    document.querySelectorAll(".mk-icon[data-mk-icon]").forEach(applyIcon);
   }
 
   function caretRect() {
@@ -4502,7 +4569,7 @@
       element.appendChild(footer);
     }
     layer.appendChild(element);
-    const state = { items: [], visible: [], index: 0, open: false, query: "", preference: "below", align: "caret" };
+    const state = { items: [], visible: [], index: 0, open: false, query: "", preference: "below", align: "caret", owner: null };
     let hoverTimer = 0;
 
     const selectable = (item) => Boolean(item) && !item.separator;
@@ -4521,6 +4588,8 @@
         return;
       }
       let group = null;
+      // A menu of plain names (code languages) starts its labels at the row's edge.
+      const glyphs = state.visible.some((item) => item.icon || item.tag);
       state.visible.forEach((item, index) => {
         if (item.separator) {
           if (query || index === 0 || index === state.visible.length - 1) return;
@@ -4552,7 +4621,7 @@
         } else if (item.icon) {
           glyph.appendChild(icon(item.icon));
         }
-        row.appendChild(glyph);
+        if (glyphs) row.appendChild(glyph);
         const label = document.createElement("span");
         label.className = "mk-row-label";
         label.textContent = item.label;
@@ -4653,6 +4722,11 @@
       state.preference = settings.preference || "below";
       state.align = settings.align || "caret";
       state.anchor = rect ? { rect, scrollX: window.scrollX, scrollY: window.scrollY } : null;
+      // The control that opened the menu shows it is open until the menu closes.
+      state.owner?.classList.remove("mk-open");
+      state.owner = settings.owner || null;
+      state.owner?.classList.add("mk-open");
+      state.owner?.setAttribute("aria-expanded", "true");
       if (field) field.value = state.query;
       render();
       state.open = true;
@@ -4678,6 +4752,9 @@
       state.open = false;
       window.clearTimeout(hoverTimer);
       rows().forEach((row) => row.classList.remove("mk-open-submenu"));
+      state.owner?.classList.remove("mk-open");
+      state.owner?.setAttribute("aria-expanded", "false");
+      state.owner = null;
       hide(element);
       options.onClose?.(reason);
     };
@@ -5231,6 +5308,8 @@
       });
       ghost.appendChild(clone);
       document.body.appendChild(ghost);
+      // Only a block taller than the ghost fades out at its cut edge.
+      if (box.height > 160) ghost.classList.add("mk-drag-ghost-tall");
       found.el.classList.add("mk-block-dragging");
       document.documentElement.classList.add("mk-dragging");
       hideHandles();
@@ -5599,7 +5678,7 @@
         if (!selection) return;
         turnContext = { kind: "selection", selection: { anchor: selection.anchor, head: selection.head } };
         const current = lastState ? lastState.block : "paragraph";
-        turnIntoMenu.open(TURN_INTO.map((item) => ({ ...item, checked: item.id === current })), element.getBoundingClientRect(), { preference: "below", align: "start", animate: true });
+        turnIntoMenu.open(TURN_INTO.map((item) => ({ ...item, checked: item.id === current })), element.getBoundingClientRect(), { preference: "below", align: "start", animate: true, owner: element });
       });
       turnIntoButton.title = "Turn into";
       formatBar.appendChild(turnIntoButton);
@@ -5675,7 +5754,7 @@
       tableBar.className = "mk-floating mk-toolbar mk-table-bar mk-hidden";
       tableBar.setAttribute("role", "toolbar");
       tableBar.setAttribute("aria-label", "Table");
-      const open = (items) => (element) => tableMenu.open(items(), element.getBoundingClientRect(), { preference: "below", align: "start", animate: true });
+      const open = (items) => (element) => tableMenu.open(items(), element.getBoundingClientRect(), { preference: "below", align: "start", animate: true, owner: element });
       tableBar.appendChild(menuButton("Row", open(() => [
         { id: "rowAbove", label: "Insert row above", icon: "arrow.up.to.line" },
         { id: "rowBelow", label: "Insert row below", icon: "arrow.down.to.line" },
@@ -5983,7 +6062,7 @@
       if (!unit || !calloutOf(unit)) return;
       calloutUnit = unit;
       const current = calloutOf(unit).callout.kind;
-      calloutMenu.open(CALLOUT_KINDS.map((item) => ({ ...item, checked: item.id === current })), titleElement.getBoundingClientRect(), { preference: "below", align: "start", animate: true });
+      calloutMenu.open(CALLOUT_KINDS.map((item) => ({ ...item, checked: item.id === current })), titleElement.getBoundingClientRect(), { preference: "below", align: "start", animate: true, owner: titleElement });
     }
 
     // Floating format bar --------------------------------------------------
@@ -6180,7 +6259,7 @@
       const current = unit.block.fence.language;
       const items = LANGUAGES.map(([id, label]) => ({ id, label, checked: id === current, keywords: [id] }));
       if (current && !LANGUAGES.some(([id]) => id === current)) items.unshift({ id: current, label: current, checked: true });
-      languageMenu.open(items, buttonElement.getBoundingClientRect(), { preference: "below", align: "start", animate: true });
+      languageMenu.open(items, buttonElement.getBoundingClientRect(), { preference: "below", align: "start", animate: true, owner: buttonElement });
     }
 
     function setCodeLanguage(language) {

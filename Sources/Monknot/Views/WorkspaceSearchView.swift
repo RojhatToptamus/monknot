@@ -248,8 +248,9 @@ struct WorkspaceSearchView: View {
         .padding(.leading, scaled(MonknotMetrics.Spacing.m))
         .padding(.trailing, scaled(3))
         .frame(height: WorkspaceSearchLayoutPolicy.fieldHeight(theme: theme, zoomScale: zoomScale))
+        // A field, as in the editor: the canvas colour inside a hairline, set off from the chrome.
         .background(
-            theme.insetFillColor,
+            theme.surfaceColor,
             in: RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
         )
         .overlay {
@@ -330,8 +331,9 @@ struct WorkspaceSearchView: View {
         }
         .padding(.horizontal, scaled(MonknotMetrics.Spacing.m))
         .frame(height: WorkspaceSearchLayoutPolicy.fieldHeight(theme: theme, zoomScale: zoomScale))
+        // A field, as in the editor: the canvas colour inside a hairline, set off from the chrome.
         .background(
-            theme.insetFillColor,
+            theme.surfaceColor,
             in: RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
         )
         .overlay {

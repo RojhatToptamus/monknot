@@ -54,6 +54,38 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         XCTAssertTrue(joined, fixture.store.documentText)
     }
 
+    func testBackspaceAtTheStartOfAMiddleItemLeavesTextBetweenTwoLists() async throws {
+        let source = "- [ ] Draft\n- [ ] Review\n- [x] Ship\n"
+        let fixture = try await makeFixture(markdown: source)
+        try await fixture.setSelection((source as NSString).range(of: "Review").location)
+        fixture.press(.backspace)
+        let expected = "- [ ] Draft\n\nReview\n\n- [x] Ship\n"
+        let changed = await waitUntil { fixture.store.documentText == expected }
+        XCTAssertTrue(changed, fixture.store.documentText)
+        // Without the blank lines Markdown reads the text as more of "Draft".
+        let page = try await fixture.evaluate("[...document.querySelectorAll('#content > *')].map(e => e.tagName + ':' + e.textContent.trim()).join('|')") as? String
+        XCTAssertEqual(page, "UL:Draft|P:Review|UL:Ship")
+
+        fixture.type("Now ")
+        let typed = await waitUntil { fixture.store.documentText == "- [ ] Draft\n\nNow Review\n\n- [x] Ship\n" }
+        XCTAssertTrue(typed, "The caret stays at the start of the text: \(fixture.store.documentText)")
+    }
+
+    func testLeavingAListAtTheEndOfANewFileStartsAParagraph() async throws {
+        // A new file has no final line break, so the list's last line ends the file.
+        let fixture = try await makeFixture(markdown: "")
+        try await fixture.setSelection(0)
+        fixture.type("- ")
+        fixture.type("Milk")
+        fixture.press(.return)
+        fixture.press(.return)
+        fixture.type("Next")
+        let typed = await waitUntil { fixture.store.documentText == "- Milk\n\nNext\n" }
+        XCTAssertTrue(typed, fixture.store.documentText)
+        let page = try await fixture.evaluate("[...document.querySelectorAll('#content > *')].map(e => e.tagName + ':' + e.textContent.trim()).join('|')") as? String
+        XCTAssertEqual(page, "UL:Milk|P:Next")
+    }
+
     func testMarkdownShortcutsTurnALineIntoABlock() async throws {
         let fixture = try await makeFixture(markdown: "Intro\n")
         let end = ("Intro" as NSString).length
@@ -427,6 +459,38 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
 
     // MARK: - Snapshots for design review
 
+    // MARK: - Icons
+
+    /// The format bar's and link card's buttons are built once; when the page builds them before
+    /// the app's glyphs arrive they must fill in then, not stay solid squares.
+    func testGlyphsThatArriveAfterTheBarsAreBuiltStillDraw() async throws {
+        let fixture = try await makeFixture(markdown: "Make this strong\n")
+        try await fixture.setSelection(10, 16)
+        _ = try await fixture.evaluate("document.dispatchEvent(new MouseEvent('mouseup')); true")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let drawn = try await fixture.evaluate("[...document.querySelectorAll('.mk-layer .mk-icon')].filter(s => !s.style.webkitMaskImage).length") as? Int
+        XCTAssertEqual(drawn, 0, "Every built glyph has its image")
+
+        let result = try await fixture.evaluate("""
+        (() => {
+          const spans = [...document.querySelectorAll('.mk-layer .mk-icon')];
+          const map = {};
+          for (const span of spans) map[span.dataset.mkIcon] = { url: 'data:image/png;base64,iVBORw0KGgo=', width: 10, height: 10 };
+          window.MonknotEditor.setIcons({});
+          spans.forEach(span => { span.style.webkitMaskImage = ''; span.style.maskImage = ''; });
+          window.MonknotEditor.setIcons({});
+          const pending = spans.filter(span => span.classList.contains('mk-icon-pending')).length;
+          window.MonknotEditor.setIcons(map);
+          const filled = spans.filter(span => span.style.webkitMaskImage.includes('data:image/png') && !span.classList.contains('mk-icon-pending')).length;
+          return [spans.length, pending, filled];
+        })()
+        """) as? [Int]
+        let counts = try XCTUnwrap(result)
+        XCTAssertGreaterThan(counts[0], 5, "The format bar's buttons exist")
+        XCTAssertEqual(counts[1], counts[0], "Without glyphs a span draws nothing")
+        XCTAssertEqual(counts[2], counts[0], "Glyphs that arrive later fill every built span")
+    }
+
     // MARK: - Spaces
 
     /// A space is a character like any other: typed at the end of a line (where WebKit draws a
@@ -659,6 +723,152 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
     }
 
     private static let slashMenuShown = "Boolean(document.querySelector('.mk-menu.mk-visible[aria-label=\"Insert block\"]'))"
+
+    /// Every floating surface and block state, captured into `MONKNOT_EDITOR_SNAPSHOT_DIR` for
+    /// review; without it the test only checks each surface appears.
+    func testEditorSurfaceGallery() async throws {
+        let markdown = """
+        # Gallery
+
+        [TOC]
+
+        A paragraph with **bold**, a [link](https://monki.work) and `code`.
+
+        > [!WARNING]
+        > Back up before migrating.
+
+        <details>
+        <summary>Closed toggle</summary>
+
+        Hidden body.
+
+        </details>
+
+        <details open>
+        <summary>Open toggle</summary>
+
+        Visible body.
+
+        </details>
+
+        | Name | Role |
+        | --- | --- |
+        | Ada | Engineer |
+
+        ```swift
+        let answer = 42
+        ```
+
+        Last line.
+
+        """
+        let directory = ProcessInfo.processInfo.environment["MONKNOT_EDITOR_SNAPSHOT_DIR"].map(URL.init(fileURLWithPath:))
+        if let directory { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+        for (name, theme) in [("light", AppTheme.defaultLight), ("dark", AppTheme.defaultDark)] {
+            let fixture = try await makeFixture(markdown: markdown, theme: theme, width: 900)
+            // CSS transitions do not run in a window behind other apps, so the images show end states.
+            _ = try await fixture.evaluate("(() => { const s = document.createElement('style'); s.textContent = '*, *::before, *::after { transition: none !important; } .mk-block-moved { animation: none !important; }'; document.head.appendChild(s); return true; })()")
+            func shot(_ label: String) async throws {
+                try await Task.sleep(nanoseconds: 250_000_000)
+                if let directory { try await fixture.snapshot(to: directory.appendingPathComponent("gallery-\(name)-\(label).png")) }
+            }
+            func visible(_ selector: String) async throws -> Bool {
+                (try await fixture.evaluate("Boolean(document.querySelector('\(selector)'))") as? Bool) == true
+            }
+            let source = markdown as NSString
+            try await shot("page")
+
+            // Format bar over bold text.
+            let bold = source.range(of: "bold").location
+            try await fixture.setSelection(bold, bold + 4)
+            _ = try await fixture.evaluate("document.dispatchEvent(new MouseEvent('mouseup')); true")
+            try await shot("format-bar")
+            let barShown = try await visible(".mk-toolbar.mk-visible")
+            XCTAssertTrue(barShown, "\(name): format bar")
+            _ = try await fixture.evaluate("document.querySelector('.mk-toolbar.mk-visible .mk-tool-menu').click(); true")
+            try await shot("format-bar-turn-into")
+            fixture.press(.escape)
+
+            // Link card, then the link editor.
+            let link = source.range(of: "link]").location + 2
+            try await fixture.setSelection(link)
+            try await shot("link-card")
+            let cardShown = try await visible(".mk-link-card.mk-visible")
+            XCTAssertTrue(cardShown, "\(name): link card")
+            fixture.press(.character("k"), modifiers: .command)
+            try await shot("link-editor")
+            fixture.press(.escape)
+
+            // Table bar and its Row menu.
+            let cell = source.range(of: "Engineer").location + 2
+            try await fixture.setSelection(cell)
+            try await shot("table-bar")
+            _ = try await fixture.evaluate("document.querySelector('.mk-table-bar .mk-tool-menu').click(); true")
+            try await shot("table-row-menu")
+            fixture.press(.escape)
+
+            // Code language menu.
+            _ = try await fixture.evaluate("document.querySelector('.mk-code-language').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); true")
+            try await shot("code-language-menu")
+            _ = try await fixture.evaluate("document.activeElement && document.activeElement.blur(); true")
+            fixture.press(.escape)
+
+            // Callout kind menu.
+            _ = try await fixture.evaluate("document.querySelector('.callout-title').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); true")
+            try await shot("callout-menu")
+            fixture.press(.escape)
+
+            // Handles with the grip's tooltip, then the block menu.
+            try await fixture.hoverBlock(containing: "Last line.")
+            _ = try await fixture.evaluate("document.querySelector('.mk-handle-drag').dispatchEvent(new MouseEvent('mouseenter')); true")
+            try await Task.sleep(nanoseconds: 600_000_000)
+            try await shot("handles-tooltip")
+            _ = try await fixture.evaluate("document.querySelector('.mk-handle-drag').dispatchEvent(new MouseEvent('mouseleave')); true")
+
+            // Drag in progress.
+            _ = try await fixture.evaluate("""
+            (() => {
+              const grip = document.querySelector('.mk-handle-drag').getBoundingClientRect();
+              const target = document.querySelector('.callout').getBoundingClientRect();
+              const at = (type, x, y, element) => (element || document).dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }));
+              at('mousedown', grip.left + 4, grip.top + 4, document.querySelector('.mk-handle-drag'));
+              at('mousemove', grip.left + 30, grip.top - 20);
+              at('mousemove', grip.left + 60, target.top - 4);
+              return true;
+            })()
+            """)
+            try await shot("dragging")
+            fixture.press(.escape)
+            _ = try await fixture.evaluate("document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 })); true")
+
+            try await fixture.hoverBlock(containing: "Last line.")
+            _ = try await fixture.evaluate("""
+            (() => {
+              const grip = document.querySelector('.mk-handle-drag');
+              grip.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }));
+              document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0 }));
+              return true;
+            })()
+            """)
+            try await shot("block-menu")
+            _ = try await fixture.evaluate("[...document.querySelectorAll('.mk-menu.mk-visible .mk-menu-row')].find(r => r.textContent.includes('Turn into'))?.click(); true")
+            try await shot("block-menu-turn-into")
+            _ = try await fixture.evaluate("document.activeElement && document.activeElement.blur(); true")
+            fixture.press(.escape)
+            fixture.press(.escape)
+
+            // Slash menu on a new line, and an empty document's placeholder.
+            let last = source.range(of: "Last line.").location + 10
+            try await fixture.setSelection(last)
+            fixture.press(.return)
+            fixture.type("/")
+            try await shot("slash-menu")
+            fixture.type("med")
+            try await shot("slash-filter-empty-ish")
+            fixture.press(.escape)
+            fixture.close()
+        }
+    }
 
     /// Writes snapshots of the editor in both themes and at a narrow width when
     /// `MONKNOT_EDITOR_SNAPSHOT_DIR` is set; otherwise only checks that the page renders.

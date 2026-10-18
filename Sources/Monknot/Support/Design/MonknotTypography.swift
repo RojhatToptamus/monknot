@@ -2,14 +2,14 @@ import MonknotCore
 import SwiftUI
 
 enum MonknotTypography {
-    /// design.md §4.3 eyebrow / group header: 10, weight 600, uppercase, tracking 0.09 em (apply
-    /// `eyebrowTracking` and `.textCase(.uppercase)` with it).
+    /// design.md §4.3 group header: 12, weight 400, sentence case, in `ink3` — the section header of
+    /// the editor's menus, so a sidebar group and a menu section read as one system.
     static func eyebrow(theme: AppTheme, zoomScale: Double) -> Font {
-        text(10, weight: .semibold, theme: theme, zoomScale: zoomScale)
+        text(12, weight: .regular, theme: theme, zoomScale: zoomScale)
     }
 
     static func eyebrowTracking(theme: AppTheme, zoomScale: Double) -> CGFloat {
-        MonknotMetrics.interfaceText(10, theme: theme, zoomScale: zoomScale) * 0.09
+        0
     }
 
     static func rowTitle(theme: AppTheme, zoomScale: Double) -> Font {

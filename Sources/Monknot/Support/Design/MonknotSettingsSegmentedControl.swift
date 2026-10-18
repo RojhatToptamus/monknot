@@ -29,12 +29,8 @@ struct MonknotSettingsSegmentedControl: View {
             }
         }
         .padding(scaled(2))
-        // Same treatment as the window's segmented controls: no track fill, the selected
-        // segment takes `sel`.
-        .overlay(
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .strokeBorder(theme.borderColor, lineWidth: 1)
-        )
+        // The window's segmented control: a `hover`-tinted track the selected segment lifts out of.
+        .background(theme.controlTrackFillColor, in: RoundedRectangle(cornerRadius: cornerRadius))
     }
 }
 
@@ -94,7 +90,7 @@ private struct MonknotSettingsSegmentButton: View {
 
     private var background: Color {
         if isSelected {
-            return theme.selectedRowColor
+            return theme.segmentSelectedFillColor
         }
         if isPressed {
             return theme.pressedFillColor
@@ -171,18 +167,12 @@ struct MonknotSettingsMenuPicker: View {
             .padding(.horizontal, scaled(12))
             .padding(.vertical, scaled(6))
             .frame(minHeight: scaled(28))
+            // A pop-up is a filled button, like the editor's block selector: no border, the fill
+            // deepens under the pointer and while the menu is open.
             .background {
                 RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(theme.insetFillColor)
-                if isHovered {
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(theme.hoverFillColor)
-                }
+                    .fill(isHovered || isMenuPresented ? theme.pressedFillColor : theme.controlTrackFillColor)
             }
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .strokeBorder(theme.borderColor, lineWidth: 1)
-            )
             .monknotFocusRing(isVisible: isFocused, cornerRadius: cornerRadius, theme: theme)
         }
         .buttonStyle(.plain)

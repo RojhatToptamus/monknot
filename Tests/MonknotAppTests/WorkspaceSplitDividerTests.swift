@@ -139,13 +139,14 @@ final class WorkspaceSplitDividerTests: WorkspaceSplitViewTestCase {
 
         let initialTerminalWidth = paneWidth(controller.terminalItem, in: controller)
         let terminalTarget: CGFloat = initialTerminalWidth > 440 ? 380 : 460
+        // The position is the divider's leading edge; the terminal starts after the divider.
         controller.splitView.setPosition(
-            controller.splitView.bounds.width - terminalTarget,
+            controller.splitView.bounds.width - terminalTarget - controller.splitView.dividerThickness,
             ofDividerAt: 1
         )
         layout(window, controller)
 
-        XCTAssertEqual(paneWidth(controller.terminalItem, in: controller), terminalTarget, accuracy: 4)
+        XCTAssertEqual(paneWidth(controller.terminalItem, in: controller), terminalTarget, accuracy: 1)
         XCTAssertNotEqual(paneWidth(controller.terminalItem, in: controller), initialTerminalWidth, accuracy: 1)
     }
 
@@ -491,7 +492,13 @@ final class WorkspaceSplitDividerTests: WorkspaceSplitViewTestCase {
     func testScaledOutwardTerminalDragCannotRevealAnUnderMinimumThreePaneLayout() throws {
         let recorder = PresentationRecorder()
         let controller = makeController(layoutScale: 1, recorder: recorder)
-        let window = mount(controller, width: 1_800)
+        // Too narrow for all three panes at their 200% minimums, wide enough for two.
+        let splitWidth = 2 * (
+            WorkspaceSplitMetrics.sidebarMinimumWidth
+                + WorkspaceSplitMetrics.detailMinimumWidth
+                + WorkspaceSplitMetrics.terminalMinimumWidth
+        ) - 60
+        let window = mount(controller, width: splitWidth)
 
         update(
             controller,
@@ -502,7 +509,7 @@ final class WorkspaceSplitDividerTests: WorkspaceSplitViewTestCase {
         )
         layout(window, controller)
 
-        XCTAssertEqual(controller.splitView.bounds.width, 1_800, accuracy: 1)
+        XCTAssertEqual(controller.splitView.bounds.width, splitWidth, accuracy: 1)
         XCTAssertFalse(controller.sidebarItem.isCollapsed)
         XCTAssertTrue(controller.terminalItem.isCollapsed)
         let allocatedWidth = controller.splitView.bounds.width
@@ -545,7 +552,7 @@ final class WorkspaceSplitDividerTests: WorkspaceSplitViewTestCase {
         }
         XCTAssertTrue(
             controller.sidebarItem.isCollapsed || controller.terminalItem.isCollapsed,
-            "A 1,800-point split cannot legally show all three panes at their 200% minimums"
+            "The split cannot legally show all three panes at their 200% minimums"
         )
         XCTAssertTrue(
             controller.terminalItem.isCollapsed,

@@ -31,7 +31,6 @@ struct MonknotKeyboardShortcutsHelpView: View {
                             Text(section.title)
                                 .font(MonknotTypography.eyebrow(theme: theme, zoomScale: zoomScale))
                                 .tracking(MonknotTypography.eyebrowTracking(theme: theme, zoomScale: zoomScale))
-                                .textCase(.uppercase)
                                 .foregroundStyle(theme.tertiaryForegroundColor)
                                 .padding(.top, scaled(14))
                                 .padding(.bottom, scaled(4))

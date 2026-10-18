@@ -88,7 +88,6 @@ struct AppearanceSettingsView: View {
                 .font(MonknotTypography.eyebrow(theme: uiTheme, zoomScale: settingsZoomScale))
                 .tracking(MonknotTypography.eyebrowTracking(theme: uiTheme, zoomScale: settingsZoomScale))
                 .foregroundStyle(uiTheme.mutedForegroundColor)
-                .textCase(.uppercase)
 
             Spacer()
 
@@ -304,10 +303,9 @@ private struct ThemeLivePreview: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Live Preview")
+            Text("Live preview")
                 .font(MonknotTypography.eyebrow(theme: chromeTheme, zoomScale: settingsZoomScale))
                 .tracking(MonknotTypography.eyebrowTracking(theme: chromeTheme, zoomScale: settingsZoomScale))
-                .textCase(.uppercase)
                 .foregroundStyle(chromeTheme.tertiaryForegroundColor)
                 .padding(.horizontal, scaled(14))
                 .frame(height: scaled(28))
@@ -367,7 +365,7 @@ private struct ThemeLivePreview: View {
         .background {
             if isSelected {
                 RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: settingsZoomScale))
-                    .fill(theme.selectedRowColor)
+                    .fill(theme.chromeSelectedFillColor)
             }
         }
     }
