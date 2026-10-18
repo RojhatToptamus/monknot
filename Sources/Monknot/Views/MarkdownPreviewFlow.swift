@@ -121,9 +121,6 @@ final class MarkdownPreviewFlowCoordinator {
     private struct PresentedProse {
         let serial: Int
         let suggestion: EditorFlowProseSuggestion
-        /// The rest of a completion whose start the user typed: it continues their word exactly as
-        /// shown, so taking it adds no space before it.
-        var continuesTypedText = false
     }
 
     /// A patch sent to the page, until the page's edit for it comes back.
@@ -692,9 +689,9 @@ final class MarkdownPreviewFlowCoordinator {
                 revision: revision,
                 sourceUTF16Length: textLength,
                 selectedRange: NSRange(location: caret, length: 0),
-                continuation: continuation.substring(from: insertedLength)
-            ),
-            continuesTypedText: true
+                continuation: continuation.substring(from: insertedLength),
+                continuesTypedText: true
+            )
         )
     }
 
@@ -2112,11 +2109,10 @@ extension MarkdownPreviewFlowCoordinator {
         }
         let insertionRange = suggestion.selectedRange
         let source = text as NSString
-        let continuesTypedText = presentedProse?.continuesTypedText == true
         guard insertionRange.location >= 0,
               insertionRange.length == 0,
               insertionRange.location <= source.length,
-              let normalizedContinuation = continuesTypedText
+              let normalizedContinuation = suggestion.continuesTypedText
                 ? suggestion.continuation
                 : FlowProseCompletionSanitizer.insertionReadyContinuation(
                     suggestion.continuation,

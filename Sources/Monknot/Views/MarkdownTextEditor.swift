@@ -724,6 +724,9 @@ struct EditorFlowProseSuggestion: Equatable {
     let sourceUTF16Length: Int
     let selectedRange: NSRange
     let continuation: String
+    /// The rest of a completion whose start the user typed: it continues their word exactly as shown,
+    /// so taking it adds no space before it.
+    var continuesTypedText = false
 
     var caretUTF16Offset: Int {
         selectedRange.location + selectedRange.length
@@ -4960,8 +4963,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
             guard insertionRange.location >= 0,
                   insertionRange.length == 0,
                   insertionRange.location <= source.length,
-                  let normalizedContinuation = FlowProseCompletionSanitizer
-                    .insertionReadyContinuation(
+                  let normalizedContinuation = suggestion.continuesTypedText
+                    ? suggestion.continuation
+                    : FlowProseCompletionSanitizer.insertionReadyContinuation(
                         suggestion.continuation,
                         after: source.substring(to: insertionRange.location)
                     )
@@ -6492,7 +6496,8 @@ class MarkdownNSTextView: NSTextView {
             revision: sourceRevision + 1,
             sourceUTF16Length: currentSource.length,
             selectedRange: resultingSelection,
-            continuation: pending.remainingText
+            continuation: pending.remainingText,
+            continuesTypedText: true
         )
     }
 

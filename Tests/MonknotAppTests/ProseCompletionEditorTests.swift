@@ -359,6 +359,54 @@ final class ProseCompletionEditorTests: FlowEditorTestCase {
         XCTAssertEqual(textView.flowProseSuggestion?.continuation, "learer prose.")
     }
 
+    /// Typing a completion's first letters and then taking the rest continues the word: no space is
+    /// added inside it.
+    func testOnDeviceCompletionRemainderAfterTypedLettersJoinsTheWord() async throws {
+        let source = "We can write"
+        let box = EditorTextBox(source)
+        let prose = FlowProseCompletionSpy(result: "clearer prose.")
+        let coordinator = makeCoordinator(box, proseCompletion: prose.service)
+        let (window, scrollView, textView) = makeHostedTextView(coordinator: coordinator, text: source)
+        defer { dismantleHostedTextView(window, scrollView: scrollView, coordinator: coordinator) }
+        let rangesReady = await prepareProseCompletion(coordinator, textView: textView)
+        XCTAssertTrue(rangesReady)
+
+        textView.insertText(" ", replacementRange: textView.selectedRange())
+        let suggestionReady = await waitUntil { textView.flowProseSuggestion != nil }
+        XCTAssertTrue(suggestionReady)
+        textView.keyDown(with: try XCTUnwrap(keyEvent(
+            characters: "c",
+            modifiers: [],
+            keyCode: 8,
+            windowNumber: window.windowNumber
+        )))
+        let remainder = try XCTUnwrap(textView.flowProseSuggestion)
+        XCTAssertEqual(remainder.continuation, "learer prose.")
+        XCTAssertTrue(remainder.continuesTypedText)
+        textView.flowProseSuggestionAcceptanceHandler = { suggestion, nextWordOnly in
+            coordinator.acceptFlowProseSuggestion(suggestion, nextWordOnly: nextWordOnly)
+        }
+        await renderFlowSuggestion(in: textView, window: window)
+
+        // Held Tab takes the rest.
+        textView.keyDown(with: try XCTUnwrap(keyEvent(
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
+            windowNumber: window.windowNumber
+        )))
+        let accepted = await waitUntil(timeout: 1.5) { textView.string == "We can write clearer prose." }
+        XCTAssertTrue(accepted, "Took the rest as \(textView.string.debugDescription)")
+        textView.keyUp(with: try XCTUnwrap(keyEvent(
+            type: .keyUp,
+            characters: "\t",
+            modifiers: [],
+            keyCode: 48,
+            windowNumber: window.windowNumber
+        )))
+        XCTAssertEqual(box.value, "We can write clearer prose.")
+    }
+
     func testLateOnDeviceCompletionDoesNotReappearAfterFocusLeavesAndReturns() async {
         let source = "We can write"
         let box = EditorTextBox(source)
