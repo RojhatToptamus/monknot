@@ -3021,6 +3021,7 @@
   // Rendering ---------------------------------------------------------
 
   function fullRender() {
+    Flow.forget();
     root.innerHTML = model.blocks.map((block) => block.html).join("");
     const children = Array.from(root.children);
     model.blocks.forEach((block, index) => {
@@ -6810,9 +6811,16 @@
 
     // What the app sends ------------------------------------------------------
 
+    /// A fix or completion the app sends applies only to the text and selection it was made for:
+    /// nothing typed or moved since.
     function applyFromApp(message) {
       const serial = message.serial;
-      if (composing
+      const expected = message.expectedSelection;
+      const selection = readSelection();
+      const unchanged = Number(message.base) === version && selection && expected
+        && selection.from === Math.min(expected.anchor, expected.head)
+        && selection.to === Math.max(expected.anchor, expected.head);
+      if (composing || !unchanged
         || (message.requireVisible && (document.activeElement !== root || UI.anyMenuOpen || !caretInView()))) {
         report("declined", { serial });
         return;

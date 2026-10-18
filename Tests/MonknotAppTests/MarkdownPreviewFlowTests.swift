@@ -204,6 +204,29 @@ final class MarkdownPreviewFlowTests: WorkspaceStoreTestCase {
         XCTAssertNotEqual(fixture.webView.undoManager?.undoActionName, "Accept Flow Correction")
     }
 
+    func testThePageRefusesAPatchForTextOrACaretThatMovedOn() async throws {
+        let fixture = try await makeFixture(markdown: "We read teh plan.\n")
+        let end = ("We read teh plan." as NSString).length
+        try await fixture.setSelection(end)
+        let version = try await fixture.evaluate("window.MonknotEditor.version()") as? Int
+        let apply = { (base: Int, caret: Int) -> String in
+            """
+            window.MonknotEditor.flow({ type: 'apply', serial: 900, base: \(base), from: 8, to: 11,
+              expected: 'teh', insert: 'the', selection: { anchor: \(end), head: \(end) },
+              expectedSelection: { anchor: \(caret), head: \(caret) }, label: 'Accept Flow Correction',
+              requireVisible: true, settle: { marks: [[0, 3]] } }); true
+            """
+        }
+        try await fixture.evaluate(apply((version ?? 0) + 1, end))
+        try await fixture.evaluate(apply(version ?? 0, end - 1))
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(fixture.store.documentText, "We read teh plan.\n", "A patch for an older text or another caret is refused")
+
+        try await fixture.evaluate(apply(version ?? 0, end))
+        let applied = await waitUntil { fixture.store.documentText == "We read the plan.\n" }
+        XCTAssertTrue(applied, "The same patch for the current text and caret applies: \(fixture.store.documentText)")
+    }
+
     func testReturnChecksTheSentenceItEnds() async throws {
         let checker = PreviewFlowChecker { text in
             PreviewFlowChecker.corrections(in: text, ["teh": "the"])

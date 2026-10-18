@@ -449,7 +449,16 @@ final class MarkdownPreviewFlowCoordinator {
         case "declined":
             guard let pending = pendingApply, pending.serial == messageSerial else { return }
             pendingApply = nil
-            finishSentenceRepairUnresolved()
+            if pending.isAutomatic {
+                // As a fix whose sentence is out of view in Source: left for the user.
+                finishSentenceRepairUnresolved()
+            } else {
+                // The text or caret moved before the patch arrived.
+                NSSound.beep()
+                gate = .blocked
+                cancelFlowSuggestion(notifyPage: false)
+                host?.sendFlow(["type": "clear"])
+            }
         case "revert":
             revertSettlement(serial: messageSerial)
         default:
@@ -2077,6 +2086,7 @@ extension MarkdownPreviewFlowCoordinator {
             "expected": original,
             "insert": replacement as String,
             "selection": ["anchor": nextSelection.location, "head": nextSelection.location],
+            "expectedSelection": ["anchor": selection.location, "head": NSMaxRange(selection)],
             "label": actionName,
             "requireVisible": isAutomatic,
             "settle": ["marks": marks]
@@ -2169,6 +2179,7 @@ extension MarkdownPreviewFlowCoordinator {
             "expected": "",
             "insert": acceptedText,
             "selection": ["anchor": nextSelection.location, "head": nextSelection.location],
+            "expectedSelection": ["anchor": selection.location, "head": NSMaxRange(selection)],
             "label": label,
             "flash": [0, insertionLength]
         ])
