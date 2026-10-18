@@ -124,6 +124,8 @@ Glyphs are **never** tinted by file type, folder colour or language.
 The document is not chrome. In Preview, links and a checked task box take the accent, callouts tint
 their panel with `accent` (note), `ok` (tip), `skill` (important) or `danger` (warning, caution) at
 7 %, exactly as PDF export prints them; the editing surfaces floating over the document stay neutral.
+Writing assistance marks the words it changes with `accent` mixed into `surface` and draws a
+completion in `ink` mixed toward `accent`, in Source and Preview alike (§10.10).
 
 ### 1.4 Ink ladder
 
@@ -887,8 +889,9 @@ reliably play are not listed.
 ### 10.10 Editing in Preview
 
 Preview is where most writing happens: an editable Markdown document is edited in place, in the same
-rendering PDF export uses. Source stays the place for raw Markdown, Writing Tools and the on-device
-autocomplete; beside Source the preview is read-only, so one document never takes typing in two places.
+rendering PDF export uses, with the same writing assistance as Source (below). Source stays the place
+for raw Markdown and for Writing Tools; beside Source the preview is read-only, so one document never
+takes typing in two places.
 
 **The Markdown file is the document.** The page is a rendering of it, and every edit on the page —
 typing, Return, Delete, a menu, slash command or drag, paste, a checkbox — becomes one text patch on
@@ -985,6 +988,42 @@ cut emphasis) and its rendering as HTML, so a paste into Mail stays formatted an
 stays Markdown. Pasted HTML becomes Markdown; pasted code goes in as text; a pasted image is saved
 into the workspace and linked.
 
+**Writing assistance.** Typing in Preview gets Source's writing assistance, run by
+`MarkdownPreviewFlowCoordinator` on the Markdown source and the caret's source offset: the same
+sentence planner, macOS checker, Apple Intelligence models and repair decisions
+(`EditorFlowRepairPolicy`), under the same four settings. The app decides; the page draws what it is
+sent, inside the text as non-editable spans the caret never enters, and anything taken reaches the file
+as one source patch and one undo step, after the app has checked that the text it changes is still the
+text it checked. Nothing is inserted that was not on screen, and nothing is checked, repaired or
+completed inside code, link addresses, URLs, HTML, front matter or tables (a link's text is prose).
+
+| Case | When | On the page | Keys |
+|---|---|---|---|
+| Certain fix | a sentence ends (`.` `!` `?` or ↩) and, 0.82 s later, Apple's checker resolves everything it finds in it to exact spelling or punctuation fixes | applied at once; the changed words take the mark, rising to its peak in 220 ms and settling over the rest of a second; `⌫ undo` sits at the caret until the next key, click or caret move | ⌫ right after takes it back ("Accept Flow Correction", or "Fix N Flow Issues") |
+| Reviewed repair | a grammar fix that changes words, a spelling fix that drops letters, a choice between Apple's alternatives, or Apple Intelligence's repair of the sentence (always reviewed, and only after Apple's checker finds the repaired sentence clean) | the corrected words in place of the originals, on the mark, the rest of the sentence keeping its formatting; `⇥ apply · → next · Esc dismiss` after the sentence | ⇥ applies once the review has been drawn; → shows the next alternative; Esc dismisses it for that sentence; one space right after the sentence keeps it; any other key drops it |
+| Completion | On-device writing assistance and Inline predictions on, the model available, two words or more before the caret, the rest of the line empty, and the sentence checked clean | up to eight words after the caret in `ink` mixed 54 % (light) or 42 % (dark) toward `accent` at 68 %, fading in over 180 ms; `⇥ word · hold for all` after them | a tap on ⇥ takes the next word (the rest returns once the sentence checks clean); ⇥ held 350 ms takes it all and its repeats insert nothing; typing what it shows consumes it; Esc or any other key dismisses it ("Accept Flow Word", "Accept Flow Completion") |
+
+The mark is `accent` mixed into `surface` at 18 % (24 % dark; 28 % and 34 % with Increase Contrast),
+peaking at 34 % (44 % dark), a radius-2 mark reaching 2 pt past the glyphs without moving them. Keys in
+a hint are §4.4 key caps on `surf3` in 12 rounded `ink`, with a slimmer 6 × 2 padding inside a text
+line, each followed by its action in 12 `ink2`; groups 11 apart, 10 after the text. VoiceOver hears
+each suggestion and fix as in Source.
+
+A suggestion shows only for the text, caret and focus it was made for: never while a menu, the link
+field or a composition is open, never once the sentence has scrolled out of view (a completion must fit
+on screen whole), and it goes with any edit, click or caret move. Tab keeps its own meanings — indent a
+list item, move between table cells, choose in a menu — whenever nothing is shown, and an open menu
+takes the keys first. Check Spelling While Typing also sets the page's `spellcheck`, so WebKit's own
+spelling marks follow it. Edit › Check Document Now (⌘;) checks the sentence before the caret at once,
+as though it were finished; Edit › Show Writing Tools (⌃⌘R) switches to Source and opens them there,
+because Writing Tools rewrite text in place and the page changes only through source patches.
+
+System inline predictions stay off in Preview (`WKWebViewConfiguration.allowsInlinePredictions` is
+false). The switch is fixed for the web view's life and WebKit then shows and commits predictions
+itself, so the editor could keep them neither out of code, links and the other protected Markdown
+where Source turns them off, nor out of the way of its own completion. With On-device writing
+assistance on, Preview offers its own completion instead; Source never shows the two at once either.
+
 **Performance targets**, measured in WebKit by `MarkdownVisualEditorTests`:
 
 | Measure | Target | Measured |
@@ -1001,8 +1040,10 @@ with opacity over 150 ms, `cubic-bezier(0.23, 1, 0.32, 1)`, origin at the side t
 A surface the keyboard opens (the slash and wikilink menus, ⌘/, ⌘K) appears at once — typing is
 never made to wait for an animation. Everything leaves in 90 ms. Handles fade 120 ms; the toggle
 triangle turns in 180 ms ease-out; a pressed button or handle scales to 0.96. Only transform and
-opacity animate. With Reduce Motion nothing scales, entrances are a 120 ms fade, and the moved-block
-flash is off. Nothing animates while typing.
+opacity animate, with one exception shared with Source: the mark on a fix just applied rises and
+settles over a second, and words a completion inserts fade from a tint over 520 ms. With Reduce Motion
+nothing scales, entrances are a 120 ms fade, the moved-block flash is off, and a fix's mark holds still
+at its settled strength. Nothing animates while typing.
 
 
 ### 10.11 The document column

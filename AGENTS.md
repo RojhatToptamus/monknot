@@ -220,7 +220,21 @@ Shorter and more specific is preferable to polished but meaningless copy.
 - Typing `[[` posts `wikilinkQuery` messages; the coordinator ranks `wikilinkDocuments` with
   `WikilinkAutocompleteService` off the main actor and answers `MonknotEditor.wikilinkSuggestions`
   with the query's serial, so Preview lists the same notes, in the same order, as Source completes.
-- Writing Tools and the on-device autocomplete stay in Source; beside Source the preview is read-only.
+- Writing assistance (Flow) works while Preview edits: `MarkdownPreviewFlowCoordinator`
+  (`MarkdownPreviewFlow.swift`, owned and torn down by `MarkdownPreviewView.Coordinator`) runs Source's
+  pipeline (`EditorFlowCheckPlanner`, the `EditorFlowCheckingClient` checker, `FlowSentenceRepairService`,
+  `FlowProseCompletionService`, cooldowns and suppression) on the coordinator's mirror of the source and
+  the caret's source offset, and every repair decision comes from `EditorFlowRepairPolicy`, which Source
+  uses too. The page reports `focus`, its version and focus with each `selection`, and `flow` messages
+  (accept, dismiss, cancel, unrendered, declined, revert); the coordinator answers with
+  `MonknotEditor.flow` (`configure`, `review`, `ghost`, `clear`, `apply`). editor.js's `Flow` draws a
+  review, a completion or a fix's mark as skipped non-editable spans or wrappers the text model never
+  sees, and anything taken arrives as an `apply` patch (change kind `flow`, one undo step named as in
+  Source) checked against the source first. Tests inject fakes through
+  `EnvironmentValues.markdownPreviewFlowDependencies`. WebKit's own inline predictions stay off.
+- Edit › Check Document Now in Preview checks the sentence before the caret at once; Show Writing Tools
+  switches to Source (`MarkdownTextEditor`'s `writingToolsRequested`) and opens them there. Beside
+  Source the preview is read-only.
 
 ## Core Domain And Service Boundaries
 
@@ -283,6 +297,7 @@ App-layer code should stay in `Sources/Monknot` when it uses SwiftUI state, AppK
 - `TerminalSessionStore`: owns one terminal's transcript, working directory, lifecycle, resize, and PTY interaction.
 - `TerminalPTYSession`: low-level `/bin/zsh` PTY process management using `forkpty`, dispatch read sources, and wait handling.
 - `MarkdownPDFExportService`: uses an offscreen `WKWebView`, `WKPDFConfiguration`, and `PDFKit.PDFDocument` to export paginated PDFs.
+- Writing assistance: `MarkdownTextEditor.Coordinator` runs it for Source, `MarkdownPreviewFlowCoordinator` for Preview; both take their repair decisions from `EditorFlowRepairPolicy` (`Support/EditorFlowRepairPolicy.swift`) and `EditorFlowAIRepairValidator`. Change a decision there, not in one editor.
 
 ## Platform API Usage
 
@@ -445,6 +460,7 @@ Current XCTest coverage focuses on `MonknotCore`:
 - `WorkspaceTabStateTests`: open, order, pin, close, remap, prune, and closed-tab history behavior.
 - `UnsavedChangesIntegrityTests` (app target): hosted editor and PDF viewer sweeps showing that opening, viewing, switching, saving, renaming and reviewing documents never marks unedited files as unsaved, and that a file only counts as changed on disk when its contents changed.
 - `MarkdownRendererJavaScriptTests`: renderer output in JavaScriptCore.
+- `MarkdownPreviewFlowTests` (app target): writing assistance in Preview in real WebKit with fake checker and models: a certain fix as one undo step that ⌫ takes back, reviewed repairs (Tab, →, Esc, a trailing space), Apple Intelligence's reviewed repair, completions (gating by setting and availability, Tab word and hold, typing that consumes, Esc), stale checks, Return, code and link addresses, Tab's list/table/menu meanings, settings off, Check Document Now and Show Writing Tools.
 - `MarkdownVisualEditorTests` (app target): Preview editing in real WebKit: typing, Return and Delete, Markdown shortcuts, Edit-menu undo and redo (also across a switch to Source), formatting, tasks, links, paste and copy, composition, tables, external changes, the slash rule, toggles, callouts, the + handle, drag-and-drop, the block menu and its shortcuts, 50 KB and 1 MB keystroke timing, and theme and narrow-window snapshots of the page, menus and handles (written to `MONKNOT_EDITOR_SNAPSHOT_DIR` when set).
 - `WorkspaceUITourTests` (app target): with `MONKNOT_UI_TOUR_DIR` set, captures the whole workspace window (sidebar open and collapsed, terminal, Source and Preview, light and dark, narrow and wide, tabs, no workspace, Settings) for design reviews; `MONKNOT_UI_TOUR_ONLY` picks stops by name (`a|b`) and `MONKNOT_UI_TOUR_RAW` also keeps the window server's own image (with WebKit's scroll bars). It skips otherwise. `ContentView.InitialLayout` sets the side panes a window starts with and an overlay it opens once its document shows (Quick Open, Find, Find in Workspace, Keyboard Shortcuts).
 - `DocumentViewerRoutingTests` (app target): generated fixtures of every listed file type (text, extensionless, uppercase, binary and oversized text, PDF, raster images, video and audio) are scanned and opened in a hosted `EditorPaneView`; also image fit, media playback lifecycle, Open With and Recents.
