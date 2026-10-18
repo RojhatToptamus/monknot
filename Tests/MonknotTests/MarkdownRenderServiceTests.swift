@@ -21,12 +21,28 @@ final class MarkdownRenderServiceTests: MarkdownRenderServiceTestCase {
         )
 
         XCTAssertTrue(html.contains(
-            "width: min(var(--content-max-width, 88%), calc(100% - 28px));"
+            "width: min(calc(var(--column-text) + 2 * var(--column-gutter)), 100%);"
         ))
+        XCTAssertTrue(html.contains("--content-measure: 100000px;"), "At 100% the column fills the pane")
         XCTAssertFalse(html.contains(
             "width: min(var(--content-max-width, 88%), 700px, calc(100% - 28px));"
         ))
         XCTAssertFalse(html.contains("@media (max-width: 720px) {\n  .markdown-body {\n    width: 100%;"))
+    }
+
+    /// Below 100% a wide pane stops at a comfortable line length that the setting scales: 640 pt of
+    /// 13 pt text at the default 88%, in `em` of Preview's 14 pt prose.
+    func testContentWidthBelowFullStopsAtTheMeasure() throws {
+        let values = Dictionary(uniqueKeysWithValues: MarkdownRenderService(stylesheet: "", rendererJavaScript: "").themeVariableValues(
+            for: .defaultLight,
+            zoomScale: 1,
+            baseFontSize: 14,
+            contentWidthPercent: 88
+        ))
+        XCTAssertEqual(values["--content-measure"], "45.71em")
+        XCTAssertEqual(DocumentMeasure.points(contentWidthPercent: 88), 640, accuracy: 0.01)
+        XCTAssertEqual(DocumentMeasure.points(contentWidthPercent: 66, fontSize: 26), 960, accuracy: 0.01)
+        XCTAssertTrue(DocumentMeasure.points(contentWidthPercent: 100).isInfinite)
     }
 
     func testHTMLDocumentEmbedsThemeBaseAndLocalAssets() throws {

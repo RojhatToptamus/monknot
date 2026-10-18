@@ -87,12 +87,17 @@ html {
   overflow-y: scroll;
 }
 
+/* The text column: the content-width share of the pane up to a comfortable line length
+   (--content-measure, the same width Source uses), centred, with its gutters outside it. Source
+   centres the same width, so text starts at the same edge in both modes. */
 .markdown-body {
+  --column-gutter: clamp(18px, 2.2vw, 38px);
+  --column-text: min(var(--content-max-width, 88%), var(--content-measure, 45.7em));
   box-sizing: border-box;
-  width: min(var(--content-max-width, 88%), calc(100% - 28px));
+  width: min(calc(var(--column-text) + 2 * var(--column-gutter)), 100%);
   max-width: none;
   margin: 0 auto;
-  padding: 34px clamp(18px, 2.2vw, 38px) 56px;
+  padding: 34px var(--column-gutter) 56px;
   color: var(--muted);
   line-height: 1.6;
 }
@@ -530,9 +535,9 @@ html.monknot-pdf-export body {
   -webkit-overflow-scrolling: touch;
 }
 
+/* A table is as wide as its columns need, up to the column, and wraps its cells before it scrolls. */
 table {
-  width: max-content;
-  min-width: 100%;
+  width: auto;
   max-width: none;
   border-spacing: 0;
   border-collapse: collapse;
@@ -540,6 +545,7 @@ table {
 
 th,
 td {
+  min-width: 6em;
   padding: 0.5em 0.75em;
   border: 1px solid var(--table-border);
   vertical-align: top;
@@ -586,7 +592,9 @@ audio {
 
 @media (max-width: 720px) {
   .markdown-body {
-    padding: 22px 22px 48px;
+    --column-gutter: 22px;
+    padding-top: 22px;
+    padding-bottom: 48px;
   }
 }
 

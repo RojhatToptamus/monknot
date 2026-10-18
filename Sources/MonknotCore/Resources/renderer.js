@@ -1554,6 +1554,10 @@
   const target = typeof document !== "undefined" && document.getElementById ? document.getElementById("content") : null;
   if (!target) return;
 
+  let readingAnchor = null;
+  let readingAnchorFrame = 0;
+  let readingWidth = window.innerWidth;
+
   window.monknotRender = render;
   window.monknotApplyAppearance = applyAppearance;
   window.monknotSearch = searchDocument;
@@ -1566,6 +1570,10 @@
   render(window.monknot || {});
   target.addEventListener("dblclick", handleSourceJump);
   target.addEventListener("click", handleInteraction);
+  if (typeof window.addEventListener === "function") {
+    window.addEventListener("scroll", scheduleReadingAnchor, { passive: true });
+    window.addEventListener("resize", keepReadingPosition);
+  }
 
   function editor() {
     const instance = window.MonknotEditor;
@@ -1605,6 +1613,7 @@
       target.innerHTML = renderMarkdown(markdown);
     }
     hasRendered = true;
+    scheduleReadingAnchor();
     if (searchQuery) {
       searchDocument({
         query: searchQuery,
@@ -1689,7 +1698,59 @@
   }
   window.monknotPostLinkInteraction = (kind, destination) => postInteraction("link", { kind, destination });
 
+  // The reading position survives a change of width (the window resized, a side pane opened):
+  // the block at the top of the window stays where it was, rather than the text rewrapping under a
+  // fixed scroll offset and sliding out of view.
+  function scheduleReadingAnchor() {
+    if (readingAnchorFrame || typeof window.setTimeout !== "function") return;
+    readingAnchorFrame = window.setTimeout(() => {
+      readingAnchorFrame = 0;
+      recordReadingAnchor();
+    }, 50);
+  }
+
+  function recordReadingAnchor() {
+    const scroller = document.scrollingElement || document.documentElement;
+    if (scroller.scrollTop <= 1) {
+      readingAnchor = { atTop: true };
+      return;
+    }
+    const blocks = target.children;
+    let low = 0;
+    let high = blocks.length - 1;
+    let found = null;
+    while (low <= high) {
+      const middle = (low + high) >> 1;
+      const rect = blocks[middle].getBoundingClientRect();
+      if (rect.bottom <= 0) {
+        low = middle + 1;
+      } else {
+        found = blocks[middle];
+        high = middle - 1;
+      }
+    }
+    readingAnchor = found ? { element: found, top: found.getBoundingClientRect().top } : null;
+  }
+
+  function keepReadingPosition() {
+    if (window.innerWidth === readingWidth) return;
+    readingWidth = window.innerWidth;
+    const anchor = readingAnchor;
+    if (!anchor) return;
+    const scroller = document.scrollingElement || document.documentElement;
+    if (anchor.atTop) {
+      scroller.scrollTop = 0;
+    } else if (anchor.element && anchor.element.isConnected) {
+      scroller.scrollTop += anchor.element.getBoundingClientRect().top - anchor.top;
+    }
+    recordReadingAnchor();
+  }
+
   function tearDown() {
+    if (typeof window.removeEventListener === "function") {
+      window.removeEventListener("scroll", scheduleReadingAnchor);
+      window.removeEventListener("resize", keepReadingPosition);
+    }
     target.removeEventListener("dblclick", handleSourceJump);
     target.removeEventListener("click", handleInteraction);
     if (window.MonknotEditor) window.MonknotEditor.deactivate();

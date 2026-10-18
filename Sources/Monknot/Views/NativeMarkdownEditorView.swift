@@ -145,7 +145,8 @@ struct NativeMarkdownEditorView: View {
                             ContentWidthPreference.editorPlaceholderLeadingInset(
                                 viewportWidth: proxy.size.width,
                                 contentWidthPercent: contentWidthPercent,
-                                zoomScale: zoomScale
+                                zoomScale: zoomScale,
+                                fontSize: fontSize
                             )
                         )
                         .padding(

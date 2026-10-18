@@ -903,6 +903,27 @@ triangle turns in 180 ms ease-out; a pressed button or handle scales to 0.96. On
 opacity animate. With Reduce Motion nothing scales, entrances are a 120 ms fade, and the moved-block
 flash is off. Nothing animates while typing.
 
+
+### 10.11 The document column
+
+Source and Preview set text in one column, so switching view mode never moves a line sideways.
+
+**Width.** The column is the Content Width setting's share of the pane, up to a comfortable line
+length: 640 pt of 13 pt text at the default 88 % (about 80 characters of the code face, 90 of the
+14 pt prose), growing with the font size and zoom and scaled by the setting, so on a wide window the
+setting chooses the line length and on a narrow one its share of the pane wins. At 100 % there is no
+measure: the column fills the pane. `DocumentMeasure` holds the numbers for both modes.
+
+**Edge.** Both modes centre that width: Source's first glyph and Preview's sit on the same x, to
+the point. Preview's gutters (and the block handles' 44 pt) lie outside the column, never inside it.
+
+**Contents.** Callouts, code blocks and quotes span the column; a table is as wide as its columns
+need (6 em at least each), wraps its cells before it grows past the column, and scrolls sideways only
+for what cannot wrap. PDF export keeps its own page width.
+
+**Word count.** It sits in the bottom-trailing corner only while the margin beside the column holds
+it (112 pt at 1×); a narrower pane hides it rather than letting it cover text.
+
 ---
 
 ## 11. Motion
@@ -912,7 +933,10 @@ flash is off. Nothing animates while typing.
 - **250ms ease-in-ease-out** for showing and hiding the sidebar and terminal, from the toolbar, the
   menu or the keyboard alike: AppKit's own split-view transition, opening and closing alike. The
   pane's content keeps its open width and slides under the window edge, so rows never squeeze and the
-  terminal is not resized frame by frame.
+  terminal is not resized frame by frame. The document beside it takes its final width once, at the
+  start, pinned to the edge that does not move, and the pane clips it as the divider slides: a web
+  view's text and scroll bar move with the divider instead of re-laying out, late, on every frame.
+  Any change of width keeps Preview's reading position: the block at the top of the window stays put.
 - **fadeUp** for overlays, toasts and the outline peek card (120ms, 4pt). Preview's editing surfaces
   have their own rule (§10.10): grown from the trigger when the pointer opens them, instant from the
   keyboard.

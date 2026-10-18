@@ -137,15 +137,22 @@ final class ContentWidthPreferenceTests: XCTestCase {
             ContentWidthPreference.editorHorizontalInset(
                 viewportWidth: textView.bounds.width,
                 contentWidthPercent: 80,
-                zoomScale: 1
+                zoomScale: 1,
+                fontSize: 14
             ),
             accuracy: 0.5
         )
         XCTAssertEqual(
-            textView.bounds.width - 2 * textView.textContainerInset.width,
-            textView.bounds.width * 0.8,
+            textView.bounds.width - 2 * (textView.textContainerInset.width + (textView.textContainer?.lineFragmentPadding ?? 0)),
+            ContentWidthPreference.textColumnWidth(viewportWidth: textView.bounds.width, contentWidthPercent: 80, fontSize: 14),
             accuracy: 0.5,
-            "The setting must describe the editable content column, not its margin"
+            "The setting must describe the editable text column, not its margin"
+        )
+        XCTAssertEqual(
+            ContentWidthPreference.textColumnWidth(viewportWidth: textView.bounds.width, contentWidthPercent: 80, fontSize: 14),
+            640 * 14 / 13 * 80 / 88,
+            accuracy: 0.5,
+            "A wide pane stops at the comfortable measure, which follows the font size and the setting"
         )
         let wideInset = textView.textContainerInset.width
 
@@ -159,7 +166,8 @@ final class ContentWidthPreferenceTests: XCTestCase {
             ContentWidthPreference.editorHorizontalInset(
                 viewportWidth: textView.bounds.width,
                 contentWidthPercent: 80,
-                zoomScale: 1
+                zoomScale: 1,
+                fontSize: 14
             ),
             accuracy: 0.5
         )
@@ -192,7 +200,8 @@ final class ContentWidthPreferenceTests: XCTestCase {
             ContentWidthPreference.editorHorizontalInset(
                 viewportWidth: textView.bounds.width,
                 contentWidthPercent: 60,
-                zoomScale: 1
+                zoomScale: 1,
+                fontSize: 14
             ),
             accuracy: 0.5
         )

@@ -14,6 +14,8 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
     let layoutScale: CGFloat
     let separatorColor: NSColor
     let accentColor: NSColor
+    /// The document canvas, shown beside the document while a side pane opens.
+    let detailBackgroundColor: NSColor
     // Monotonic command tokens distinguish an explicit Show action from a
     // preferred-visible pane that AppKit temporarily hid under pressure.
     let sidebarRevealRequest: UInt
@@ -31,6 +33,7 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
         layoutScale: CGFloat,
         separatorColor: NSColor,
         accentColor: NSColor,
+        detailBackgroundColor: NSColor = .clear,
         sidebarRevealRequest: UInt = 0,
         terminalRevealRequest: UInt = 0,
         onSidebarPresentationChange: @escaping (_ isPresented: Bool, _ userInitiated: Bool) -> Void,
@@ -45,6 +48,7 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
         self.layoutScale = layoutScale
         self.separatorColor = separatorColor
         self.accentColor = accentColor
+        self.detailBackgroundColor = detailBackgroundColor
         self.sidebarRevealRequest = sidebarRevealRequest
         self.terminalRevealRequest = terminalRevealRequest
         self.onSidebarPresentationChange = onSidebarPresentationChange
@@ -57,7 +61,7 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
     func makeNSViewController(
         context: Context
     ) -> WorkspaceSplitViewController<Sidebar, Detail, Terminal> {
-        WorkspaceSplitViewController(
+        let controller = WorkspaceSplitViewController(
             sidebar: sidebar(),
             detail: detail(),
             terminal: terminal(),
@@ -72,6 +76,8 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
             onSidebarPresentationChange: onSidebarPresentationChange,
             onTerminalPresentationChange: onTerminalPresentationChange
         )
+        controller.detailBackgroundColor = detailBackgroundColor
+        return controller
     }
 
     func updateNSViewController(
@@ -94,6 +100,7 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
             onTerminalPresentationChange: onTerminalPresentationChange,
             animated: context.transaction.animation != nil && !context.transaction.disablesAnimations
         )
+        controller.detailBackgroundColor = detailBackgroundColor
     }
 
     func sizeThatFits(
@@ -509,6 +516,112 @@ final class WorkspaceSidePaneController: NSViewController {
     }
 }
 
+/// Holds the document. While a side pane opens or closes, the document takes its final width once,
+/// pinned to the edge that does not move, and the pane clips it as the divider slides. A web view is
+/// then laid out once per transition instead of on every frame, so its text and scroll bar never lag
+/// behind the divider.
+final class WorkspaceDetailPaneController: NSViewController {
+    enum Anchor {
+        case leading
+        case trailing
+    }
+
+    private let content: NSViewController
+    private var transitionGeneration: UInt = 0
+
+    init(content: NSViewController) {
+        self.content = content
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    var backgroundColor: NSColor = .clear {
+        didSet { (view as? PaneView)?.fillColor = backgroundColor }
+    }
+
+    override func loadView() {
+        let paneView = PaneView()
+        addChild(content)
+        paneView.addSubview(content.view)
+        paneView.fillColor = backgroundColor
+        view = paneView
+    }
+
+    /// Lays the document out at `width`, pinned to `anchor`, until the matching `endTransition`.
+    func beginTransition(width: CGFloat, anchor: Anchor) -> UInt {
+        transitionGeneration &+= 1
+        (view as? PaneView)?.beginHold(width: width, anchor: anchor)
+        return transitionGeneration
+    }
+
+    func endTransition(_ generation: UInt) {
+        guard generation == transitionGeneration else { return }
+        (view as? PaneView)?.endHold()
+    }
+
+    private final class PaneView: NSView {
+        private var heldWidth: CGFloat?
+        private var anchor: Anchor = .trailing
+        var fillColor: NSColor = .clear {
+            didSet { layer?.backgroundColor = fillColor.cgColor }
+        }
+
+        init() {
+            super.init(frame: .zero)
+            wantsLayer = true
+            clipsToBounds = true
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func viewDidChangeEffectiveAppearance() {
+            super.viewDidChangeEffectiveAppearance()
+            layer?.backgroundColor = fillColor.cgColor
+        }
+
+        func beginHold(width: CGFloat, anchor: Anchor) {
+            heldWidth = max(1, width.rounded())
+            self.anchor = anchor
+            layoutContent()
+        }
+
+        func endHold() {
+            heldWidth = nil
+            layoutContent()
+        }
+
+        override func resizeSubviews(withOldSize oldSize: NSSize) {
+            layoutContent()
+        }
+
+        override func layout() {
+            super.layout()
+            layoutContent()
+        }
+
+        private func layoutContent() {
+            guard let content = subviews.first else { return }
+            let width = heldWidth ?? bounds.width
+            let frame = NSRect(
+                x: heldWidth != nil && anchor == .trailing ? bounds.width - width : 0,
+                y: 0,
+                width: width,
+                height: bounds.height
+            )
+            if content.frame != frame {
+                content.frame = frame
+            }
+        }
+    }
+}
+
 @MainActor
 final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: View>: NSSplitViewController {
     private enum PressureCollapseCause {
@@ -582,6 +695,13 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
     let terminalHostingController: NSHostingController<Terminal>
     private let sidebarPane: WorkspaceSidePaneController
     private let terminalPane: WorkspaceSidePaneController
+    let detailPane: WorkspaceDetailPaneController
+
+    /// The document canvas, shown beside the document while a side pane opens.
+    var detailBackgroundColor: NSColor {
+        get { detailPane.backgroundColor }
+        set { detailPane.backgroundColor = newValue }
+    }
     let sidebarItem: NSSplitViewItem
     let detailItem: NSSplitViewItem
     let terminalItem: NSSplitViewItem
@@ -637,11 +757,12 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         terminalHostingController = NSHostingController(rootView: terminal)
         sidebarPane = WorkspaceSidePaneController(content: sidebarHostingController, edge: .leading)
         terminalPane = WorkspaceSidePaneController(content: terminalHostingController, edge: .trailing)
+        detailPane = WorkspaceDetailPaneController(content: detailHostingController)
         // Plain items: sidebar and inspector items make the window retile its titlebar on every
         // frame of a pane transition, which moves the traffic lights. configureItems() sets the
         // collapse behavior those items would otherwise provide.
         sidebarItem = NSSplitViewItem(viewController: sidebarPane)
-        detailItem = NSSplitViewItem(viewController: detailHostingController)
+        detailItem = NSSplitViewItem(viewController: detailPane)
         terminalItem = NSSplitViewItem(viewController: terminalPane)
         panes = SidePaneStates(
             sidebar: SidePaneState(
@@ -1525,16 +1646,25 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         // Opening and closing are the same native transition run in opposite directions. The
         // content holds its open width throughout and slides under the window edge.
         let paneController = pane == .sidebar ? sidebarPane : terminalPane
-        let transition = paneController.beginTransition(
-            fallbackWidth: clampedWidth(restorableWidth(for: pane), for: pane)
-        )
+        let paneWidth = clampedWidth(restorableWidth(for: pane), for: pane)
+        let transition = paneController.beginTransition(fallbackWidth: paneWidth)
+        let detailWidth = detailPane.view.bounds.width
+        let finalDetailWidth = collapsed
+            ? detailWidth + paneWidth + splitView.dividerThickness
+            : detailWidth - paneWidth - splitView.dividerThickness
+        let detailTransition: UInt? = detailWidth > 0 && finalDetailWidth > 0 && !detailItem.isCollapsed
+            ? detailPane.beginTransition(width: finalDetailWidth, anchor: pane == .sidebar ? .trailing : .leading)
+            : nil
         NSAnimationContext.runAnimationGroup { context in
             context.duration = MonknotMotion.paneTransitionDuration
             context.timingFunction = MonknotMotion.paneTimingFunction
             item.animator().isCollapsed = collapsed
-        } completionHandler: { [weak paneController] in
+        } completionHandler: { [weak paneController, weak detailPane] in
             MainActor.assumeIsolated {
                 paneController?.endTransition(transition)
+                if let detailTransition {
+                    detailPane?.endTransition(detailTransition)
+                }
             }
         }
     }

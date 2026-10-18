@@ -130,7 +130,7 @@ struct GeneralSettingsView: View {
                 SettingsSliderRow(
                     theme: uiTheme,
                     title: "Content Width",
-                    detail: "Share of the document pane",
+                    detail: "Share of the pane, up to a comfortable line length; 100% fills it",
                     value: $contentWidthPercent,
                     range: ContentWidthPreference.allowedRange,
                     suffix: "%"

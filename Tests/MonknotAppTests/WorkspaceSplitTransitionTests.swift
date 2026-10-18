@@ -185,6 +185,51 @@ final class WorkspaceSplitTransitionTests: WorkspaceSplitViewTestCase {
         XCTAssertTrue(controller.terminalItem.isCollapsed)
     }
 
+    /// The document is laid out once per side-pane transition, at its final width, pinned to the
+    /// edge that does not move: a web view's text and scroll bar then slide with the divider instead
+    /// of being re-laid out, late, on every frame.
+    func testDocumentKeepsItsFinalWidthAndFarEdgeWhileASidePaneMoves() {
+        let recorder = PresentationRecorder()
+        let controller = makeController(terminalPresented: false, recorder: recorder)
+        let window = mount(controller, width: 1_280)
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        layout(window, controller)
+        let document = controller.detailHostingController.view
+        let documentPane = controller.splitView.arrangedSubviews[1]
+        let restingWidth = documentPane.frame.width
+        let sidebarWidth = controller.splitView.arrangedSubviews[0].frame.width
+        let finalWidth = restingWidth + sidebarWidth + controller.splitView.dividerThickness
+
+        update(controller, sidebarPresented: false, terminalPresented: false, recorder: recorder, animated: true)
+        var sawMovingDivider = false
+        let deadline = Date().addingTimeInterval(MonknotMotion.paneTransitionDuration * 2)
+        while Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            let paneWidth = documentPane.frame.width
+            guard paneWidth > restingWidth + 1, paneWidth < finalWidth - 1 else { continue }
+            sawMovingDivider = true
+            XCTAssertEqual(document.frame.width, finalWidth, accuracy: 1, "One width for the whole transition")
+            XCTAssertEqual(document.frame.maxX, documentPane.bounds.width, accuracy: 0.5, "Pinned to the trailing edge")
+        }
+        XCTAssertTrue(sawMovingDivider, "Precondition: the sidebar animates closed")
+        XCTAssertTrue(controller.sidebarItem.isCollapsed)
+        XCTAssertEqual(document.frame.width, documentPane.bounds.width, accuracy: 0.5, "At rest the document fills its pane")
+
+        update(controller, sidebarPresented: false, terminalPresented: true, recorder: recorder, animated: true)
+        let terminalDeadline = Date().addingTimeInterval(MonknotMotion.paneTransitionDuration * 2)
+        var sawTerminalMove = false
+        while Date() < terminalDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            let terminal = controller.splitView.arrangedSubviews[2]
+            guard !terminal.isHidden, terminal.frame.width > 1, terminal.frame.width < controller.terminalHostingController.view.frame.width - 1 else { continue }
+            sawTerminalMove = true
+            XCTAssertEqual(document.frame.minX, 0, accuracy: 0.5, "Pinned to the leading edge while the terminal opens")
+        }
+        XCTAssertTrue(sawTerminalMove, "Precondition: the terminal animates open")
+        XCTAssertEqual(document.frame.width, documentPane.bounds.width, accuracy: 0.5)
+    }
+
     func testTrafficLightsStayPutWhileSidePanesOpenAndClose() async throws {
         let model = ChromeToggleModel(layoutScale: 1)
         let root = VStack(spacing: 0) {

@@ -1785,6 +1785,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.autoresizingMask = [.width]
         textView.zoomScale = zoomScale
         textView.contentWidthPercent = contentWidthPercent
+        textView.columnFontSize = fontSize
         textView.refreshContentWidthLayout()
         let resolvedFont = font(for: theme, size: fontSize)
         textView.font = resolvedFont
@@ -1868,6 +1869,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         }
         textView.zoomScale = zoomScale
         textView.contentWidthPercent = contentWidthPercent
+        textView.columnFontSize = fontSize
         if context.coordinator.shouldApplyFontSmoothing(fontSmoothing) {
             textView.fontSmoothingEnabled = fontSmoothing
         }
@@ -7084,6 +7086,15 @@ class MarkdownNSTextView: NSTextView {
             invalidateFlowPresentationForGeometryChange()
         }
     }
+    /// The text size the column's measure follows (zoom included): a larger font keeps the same
+    /// number of characters per line.
+    var columnFontSize = ContentWidthPreference.measureReferenceFontSize {
+        didSet {
+            guard columnFontSize != oldValue else { return }
+            refreshContentWidthLayout()
+            invalidateFlowPresentationForGeometryChange()
+        }
+    }
     private var wikilinkSuggestionIndex = 0
     private var lastWikilinkPartial = ""
     var fontSmoothingEnabled = true {
@@ -7416,7 +7427,8 @@ class MarkdownNSTextView: NSTextView {
             width: ContentWidthPreference.editorHorizontalInset(
                 viewportWidth: bounds.width,
                 contentWidthPercent: contentWidthPercent,
-                zoomScale: zoomScale
+                zoomScale: zoomScale,
+                fontSize: columnFontSize
             ),
             height: ContentWidthPreference.editorVerticalInset(zoomScale: zoomScale)
         )

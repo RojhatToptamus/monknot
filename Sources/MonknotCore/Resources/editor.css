@@ -44,12 +44,11 @@
 
 /* The side padding leaves room for the block handles in the left gutter. */
 .mk-editing .markdown-body {
+  --column-gutter: max(44px, clamp(18px, 2.2vw, 38px));
   outline: none;
   caret-color: var(--mk-caret);
   min-height: calc(100vh - 34px);
-  padding-right: max(44px, clamp(18px, 2.2vw, 38px));
   padding-bottom: 40vh;
-  padding-left: max(44px, clamp(18px, 2.2vw, 38px));
 }
 
 .mk-editing .markdown-body [data-source-line] {
@@ -333,7 +332,6 @@
 /* Tables: the cell holding the caret carries a quiet inset ring. */
 .mk-editing .table-wrapper th,
 .mk-editing .table-wrapper td {
-  min-width: 4em;
   outline: none;
 }
 

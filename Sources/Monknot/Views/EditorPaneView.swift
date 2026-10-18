@@ -171,13 +171,30 @@ struct EditorPaneView: View {
                 alignment: .top
             )
             .clipped()
-            .overlay(alignment: .bottomTrailing) {
+            .overlay {
                 if showsWordCount {
-                    MarkdownWordCountLabel(theme: theme, zoomScale: zoomScale, statistics: textStatistics)
-                        .padding(.trailing, MonknotMetrics.interfaceDensity(14, theme: theme, zoomScale: zoomScale))
-                        .padding(.bottom, MonknotMetrics.interfaceDensity(10, theme: theme, zoomScale: zoomScale))
+                    GeometryReader { proxy in
+                        if wordCountFits(paneWidth: proxy.size.width) {
+                            MarkdownWordCountLabel(theme: theme, zoomScale: zoomScale, statistics: textStatistics)
+                                .padding(.trailing, MonknotMetrics.interfaceDensity(14, theme: theme, zoomScale: zoomScale))
+                                .padding(.bottom, MonknotMetrics.interfaceDensity(10, theme: theme, zoomScale: zoomScale))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                        }
+                    }
                 }
             }
+    }
+
+    /// The word count sits beside the text column, never over it: it shows only while the margin
+    /// right of the column holds it.
+    private func wordCountFits(paneWidth: CGFloat) -> Bool {
+        let column = ContentWidthPreference.textColumnWidth(
+            viewportWidth: paneWidth,
+            contentWidthPercent: contentWidthPercent,
+            fontSize: codeFontSize * CGFloat(WorkspaceZoomPolicy.documentScale(zoomScale))
+        )
+        let margin = (paneWidth - column) / 2
+        return margin >= MonknotMetrics.interfaceDensity(112, theme: theme, zoomScale: zoomScale)
     }
 
     @ViewBuilder

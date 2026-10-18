@@ -312,6 +312,7 @@ CORE_SOURCES=(
   "Sources/MonknotCore/Models/AppTheme.swift"
   "Sources/MonknotCore/Models/MonknotThemeCatalog.swift"
   "Sources/MonknotCore/Models/EditorMode.swift"
+  "Sources/MonknotCore/Models/DocumentMeasure.swift"
   "Sources/MonknotCore/Models/MarkdownOutlineItem.swift"
   "Sources/MonknotCore/Models/MarkdownPDFExportOptions.swift"
   "Sources/MonknotCore/Models/MarkdownSourceLocation.swift"

@@ -336,6 +336,31 @@ struct ContentView: View {
     private let tabStatePersistence = WorkspaceTabStatePersistence()
     private let viewportStatePersistence = DocumentViewportStatePersistence()
 
+    /// Which side panes a new window shows before its scene has stored a choice of its own (a
+    /// restored window keeps what it had). Previews and the UI tour start in other layouts.
+    struct InitialLayout: Equatable {
+        var showsSidebar = true
+        var showsTerminal = false
+
+        static let standard = InitialLayout()
+    }
+
+    init(
+        store: WorkspaceStore,
+        themeStore: ThemeSettingsStore,
+        workspaceLibrary: WorkspaceLibraryStore,
+        terminationCoordinator: ApplicationTerminationCoordinator,
+        initialLayout: InitialLayout = .standard
+    ) {
+        _store = ObservedObject(wrappedValue: store)
+        _themeStore = ObservedObject(wrappedValue: themeStore)
+        _workspaceLibrary = ObservedObject(wrappedValue: workspaceLibrary)
+        self.terminationCoordinator = terminationCoordinator
+        _sidebarPreferredVisible = SceneStorage(wrappedValue: initialLayout.showsSidebar, "Monknot.sidebarPreferredVisible")
+        _isSidebarVisible = State(initialValue: initialLayout.showsSidebar)
+        _terminalPreferredVisible = SceneStorage(wrappedValue: initialLayout.showsTerminal, "Monknot.isTerminalDrawerOpen")
+    }
+
     private var zoomScale: Double {
         get { WorkspaceZoomPolicy.clamp(persistedZoomScale) }
         nonmutating set { persistedZoomScale = WorkspaceZoomPolicy.clamp(newValue) }
@@ -641,6 +666,7 @@ struct ContentView: View {
                     layoutScale: activeTheme.layoutScale(zoomScale: zoomScale),
                     separatorColor: NSColor(activeTheme.separatorColor),
                     accentColor: NSColor(activeTheme.accentColor),
+                    detailBackgroundColor: NSColor(activeTheme.surfaceColor),
                     sidebarRevealRequest: sidebarRevealRequest,
                     terminalRevealRequest: terminalRevealRequest,
                     onSidebarPresentationChange: { isPresented, userInitiated in

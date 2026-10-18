@@ -202,6 +202,7 @@ public struct MarkdownRenderService: Sendable {
             ("--tok-builtin", theme.codeBuiltin),
             ("--base-font-size", "\(baseFontSize)px"),
             ("--content-max-width", "\(contentWidth)%"),
+            ("--content-measure", DocumentMeasure.previewCSSLength(contentWidthPercent: max(55, min(100, contentWidthPercent)))),
             ("--font-smoothing", fontSmoothing ? "antialiased" : "auto"),
             ("--interactive-cursor", usePointerCursors ? "pointer" : "default"),
             ("--ui-font", uiFontStack),

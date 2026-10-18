@@ -1,4 +1,5 @@
 import Foundation
+import MonknotCore
 
 enum ContentWidthPreference {
     static let key = "Monknot.contentWidthPercent"
@@ -35,16 +36,39 @@ enum ContentWidthPreference {
         min(allowedRange.upperBound, max(allowedRange.lowerBound, value))
     }
 
+    static let measureReferenceFontSize = CGFloat(DocumentMeasure.referenceFontSize)
+
+    /// The text column for a pane `viewportWidth` wide: the setting's share of the pane, up to the
+    /// comfortable line length (`DocumentMeasure`). Source and Preview both centre this width, so
+    /// their text starts at the same edge.
+    static func textColumnWidth(
+        viewportWidth: CGFloat,
+        contentWidthPercent: Double,
+        fontSize: CGFloat = measureReferenceFontSize
+    ) -> CGFloat {
+        let percent = clamped(contentWidthPercent)
+        let share = max(0, viewportWidth) * CGFloat(percent / 100)
+        return min(share, CGFloat(DocumentMeasure.points(contentWidthPercent: percent, fontSize: Double(fontSize))))
+    }
+
     static func editorHorizontalInset(
         viewportWidth: CGFloat,
         contentWidthPercent: Double,
-        zoomScale: Double
+        zoomScale: Double,
+        fontSize: CGFloat? = nil
     ) -> CGFloat {
         let viewportWidth = max(0, viewportWidth)
-        let widthFraction = clamped(contentWidthPercent) / 100
+        let resolvedFontSize = fontSize ?? measureReferenceFontSize * CGFloat(WorkspaceZoomPolicy.documentScale(zoomScale))
+        let column = textColumnWidth(
+            viewportWidth: viewportWidth,
+            contentWidthPercent: contentWidthPercent,
+            fontSize: resolvedFontSize
+        )
+        // The line fragment padding sits inside the inset, so the first glyph lands where Preview's
+        // does: half the leftover width from the pane's edge.
         return max(
             scaledEditorMetric(editorMinimumHorizontalInsetBase, zoomScale: zoomScale),
-            viewportWidth * CGFloat(1 - widthFraction) / 2
+            (viewportWidth - column) / 2 - editorLineFragmentPadding(zoomScale: zoomScale)
         )
     }
 
@@ -59,12 +83,14 @@ enum ContentWidthPreference {
     static func editorPlaceholderLeadingInset(
         viewportWidth: CGFloat,
         contentWidthPercent: Double,
-        zoomScale: Double
+        zoomScale: Double,
+        fontSize: CGFloat? = nil
     ) -> CGFloat {
         editorHorizontalInset(
             viewportWidth: viewportWidth,
             contentWidthPercent: contentWidthPercent,
-            zoomScale: zoomScale
+            zoomScale: zoomScale,
+            fontSize: fontSize
         ) + scaledEditorMetric(editorPlaceholderLeadingGapBase, zoomScale: zoomScale)
     }
 

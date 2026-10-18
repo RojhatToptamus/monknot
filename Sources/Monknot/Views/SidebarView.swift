@@ -1051,11 +1051,15 @@ private struct SidebarProjectHeader: View {
                 .help(workspaceURL?.path ?? "No workspace open")
                 .layoutPriority(1)
             } else {
+                // On the same edge as a workspace's name, which sits inside a row's padding.
                 Text(workspaceName)
                     .font(.system(size: textScaled(13), weight: .semibold))
                     .foregroundStyle(theme.tertiaryForegroundColor)
                     .lineLimit(1)
-                    .padding(.horizontal, scaled(2))
+                    .padding(.horizontal, scaled(10))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(height: scaled(30))
+                    .layoutPriority(1)
             }
 
             Spacer(minLength: scaled(4))
