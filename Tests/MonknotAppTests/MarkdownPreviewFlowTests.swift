@@ -255,6 +255,39 @@ final class MarkdownPreviewFlowTests: WorkspaceStoreTestCase {
         XCTAssertTrue(fixed, "The sentence at the caret is checked at once: \(fixture.store.documentText)")
     }
 
+    /// A certain fix the page declines (its sentence scrolled out of view before the answer came)
+    /// was never made, so the next check offers it again instead of treating it as taken.
+    func testAFixThePageDeclinedIsOfferedAgainOnTheNextCheck() async throws {
+        let checker = PreviewFlowChecker { text in
+            PreviewFlowChecker.corrections(in: text, ["teh": "the"])
+        }
+        let filler = String(repeating: "Another paragraph of notes for the week.\n\n", count: 80)
+        let fixture = try await makeFixture(markdown: "We read teh plan\n\n" + filler, checker: checker)
+        try await fixture.setSelection(("We read teh plan" as NSString).length)
+        checker.holdsAnswers = true
+        fixture.type(".")
+        let asked = await waitUntil { checker.requests.contains("We read teh plan.") && checker.heldCount > 0 }
+        XCTAssertTrue(asked, "The finished sentence is checked")
+
+        try await fixture.evaluate("window.scrollTo(0, document.documentElement.scrollHeight); true")
+        try await Task.sleep(nanoseconds: 100_000_000)
+        checker.holdsAnswers = false
+        checker.releaseHeldAnswers()
+        try await Task.sleep(nanoseconds: 400_000_000)
+        XCTAssertEqual(
+            fixture.store.documentText,
+            "We read teh plan.\n\n" + filler,
+            "A fix whose sentence is out of view is not made"
+        )
+
+        try await fixture.evaluate("window.scrollTo(0, 0); true")
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let commands = try XCTUnwrap((fixture.webView as? MarkdownEditorWebView)?.previewCommands)
+        XCTAssertTrue(commands.checkDocumentNow())
+        let fixed = await waitUntil { fixture.store.documentText == "We read the plan.\n\n" + filler }
+        XCTAssertTrue(fixed, "The declined fix is offered again: \(fixture.store.documentText.prefix(40))")
+    }
+
     // MARK: - On-device writing assistance
 
     func testOnDeviceRepairIsReviewedAfterAppleChecksIt() async throws {

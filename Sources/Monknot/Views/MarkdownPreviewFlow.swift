@@ -626,6 +626,9 @@ final class MarkdownPreviewFlowCoordinator {
     // MARK: - Edits the page reports
 
     private func didApply(_ pending: PendingApply) {
+        if case let .repair(accepted) = pending.kind {
+            suppressedFlowSuggestion = EditorFlowSuggestionSuppression(accepted, accepted: true)
+        }
         gate = .blocked
         cancelFlowSuggestion(notifyPage: false)
         refreshSuppressedFlowSuggestion()
@@ -2059,7 +2062,8 @@ extension MarkdownPreviewFlowCoordinator {
             .filter { $0.range.length > 0 }
             .map { [$0.range.location - replacementRange.location, $0.range.length] }
 
-        suppressedFlowSuggestion = EditorFlowSuggestionSuppression(accepted, accepted: true)
+        // The fix counts as taken (and is not offered again) only once the page has made it; see
+        // `didApply`. A patch the page declines or refuses leaves it to be offered again.
         cancelFlowSuggestion(notifyPage: false)
         let applySerial = nextSerial()
         pendingApply = PendingApply(
