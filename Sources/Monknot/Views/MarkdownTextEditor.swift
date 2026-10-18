@@ -422,7 +422,7 @@ struct EditorFlowSuggestion: Equatable {
         return location
     }
 
-    fileprivate static func lexicalWordRanges(in text: String) -> [NSRange] {
+    static func lexicalWordRanges(in text: String) -> [NSRange] {
         var ranges: [NSRange] = []
         text.enumerateSubstrings(
             in: text.startIndex..<text.endIndex,
@@ -600,6 +600,78 @@ struct EditorFlowSuggestion: Equatable {
     }
 }
 
+extension EditorFlowSuggestion {
+    /// The ranges of the corrected text to highlight, in the document as it reads once the
+    /// correction is applied (`correctedDocumentUTF16Length` long). A deletion highlights the
+    /// nearest word instead, collapsing from the side the removed text was on.
+    func correctionHighlights(
+        correctedDocumentUTF16Length: Int
+    ) -> [EditorFlowCorrectionHighlight] {
+        let sentenceWords = Self.lexicalWordRanges(in: correctedSentence)
+        var highlights: [EditorFlowCorrectionHighlight] = []
+        for change in displayChanges {
+            var localRange = change.correctedRange
+            var deletionEdge: EditorFlowDeletionCollapse.Edge?
+            if localRange.length == 0,
+               !change.originalText.isEmpty,
+               let anchor = Self.deletionAnchor(
+                    at: localRange.location,
+                    wordRanges: sentenceWords
+               ) {
+                localRange = anchor.range
+                deletionEdge = anchor.edge
+            }
+            guard localRange.location >= 0,
+                  sentenceRange.location <= Int.max - localRange.location
+            else { continue }
+            let absolute = NSRange(
+                location: sentenceRange.location + localRange.location,
+                length: localRange.length
+            )
+            guard absolute.location >= 0,
+                  NSMaxRange(absolute) <= correctedDocumentUTF16Length,
+                  !highlights.contains(where: { $0.range == absolute })
+            else { continue }
+            let deletionCollapse = deletionEdge.map { edge in
+                EditorFlowDeletionCollapse(
+                    range: absolute,
+                    edge: edge,
+                    removedUTF16Length: max(1, (change.originalText as NSString).length)
+                )
+            }
+            highlights.append(EditorFlowCorrectionHighlight(
+                range: absolute,
+                deletionCollapse: deletionCollapse
+            ))
+        }
+        return highlights
+    }
+
+    /// The word nearest a deletion at `location` (sentence offsets), and which of its edges faces
+    /// the removed text.
+    static func deletionAnchor(
+        at location: Int,
+        wordRanges: [NSRange]
+    ) -> (range: NSRange, edge: EditorFlowDeletionCollapse.Edge)? {
+        let previous = wordRanges.last { NSMaxRange($0) <= location }
+        let following = wordRanges.first { $0.location >= location }
+        switch (previous, following) {
+        case let (previous?, following?):
+            let previousDistance = location - NSMaxRange(previous)
+            let followingDistance = following.location - location
+            return previousDistance <= followingDistance
+                ? (previous, .trailing)
+                : (following, .leading)
+        case let (previous?, nil):
+            return (previous, .trailing)
+        case let (nil, following?):
+            return (following, .leading)
+        case (nil, nil):
+            return nil
+        }
+    }
+}
+
 struct EditorFlowProseSuggestion: Equatable {
     let documentID: String
     let revision: Int
@@ -652,7 +724,7 @@ private struct EditorFlowSettlement: Equatable {
     }
 }
 
-private struct EditorFlowDeletionCollapse: Equatable {
+struct EditorFlowDeletionCollapse: Equatable {
     enum Edge: Equatable {
         case leading
         case trailing
@@ -665,7 +737,7 @@ private struct EditorFlowDeletionCollapse: Equatable {
     let removedUTF16Length: Int
 }
 
-private struct EditorFlowCorrectionHighlight {
+struct EditorFlowCorrectionHighlight {
     let range: NSRange
     let deletionCollapse: EditorFlowDeletionCollapse?
 }
@@ -2148,77 +2220,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             let revision: Int
             let selectedRange: NSRange
         }
-        private struct SuppressedFlowSuggestion {
-            struct Anchor {
-                let range: NSRange
-                let text: String
-            }
-
-            let documentID: String
-            let originalAnchor: Anchor
-            let edits: [EditorFlowCorrectionEdit]
-            let acceptedAnchors: [Anchor]?
-
-            init(_ suggestion: EditorFlowSuggestion, accepted: Bool) {
-                documentID = suggestion.documentID
-                originalAnchor = Anchor(
-                    range: suggestion.sentenceRange,
-                    text: suggestion.originalSentence
-                )
-                edits = suggestion.edits
-                guard accepted else {
-                    acceptedAnchors = nil
-                    return
-                }
-                var delta = 0
-                acceptedAnchors = suggestion.edits.map { edit in
-                    let replacementLength = (edit.replacementText as NSString).length
-                    let anchor = Anchor(
-                        range: NSRange(
-                            location: edit.range.location + delta,
-                            length: replacementLength
-                        ),
-                        text: edit.replacementText
-                    )
-                    delta += replacementLength - edit.range.length
-                    return anchor
-                }
-            }
-
-            func suppresses(_ candidateEdit: EditorFlowCorrectionEdit) -> Bool {
-                edits.contains {
-                    $0.range == candidateEdit.range
-                        && $0.originalText == candidateEdit.originalText
-                        && $0.replacementText == candidateEdit.replacementText
-                }
-            }
-
-            func targetStillExists(in text: String) -> Bool {
-                let source = text as NSString
-                let originalStillExists = originalAnchor.range.location >= 0
-                    && NSMaxRange(originalAnchor.range) <= source.length
-                    && source.substring(with: originalAnchor.range) == originalAnchor.text
-                if originalStillExists { return true }
-                guard let acceptedAnchors,
-                      acceptedAnchors.allSatisfy({
-                    $0.range.location >= 0
-                        && NSMaxRange($0.range) <= source.length
-                        && source.substring(with: $0.range) == $0.text
-                })
-                else { return false }
-                return true
-            }
-
-            func matchesCheckedSource(
-                documentID: String?,
-                checkedRange: NSRange,
-                checkedText: String
-            ) -> Bool {
-                self.documentID == documentID
-                    && originalAnchor.range == checkedRange
-                    && originalAnchor.text == checkedText
-            }
-        }
+        private typealias SuppressedFlowSuggestion = EditorFlowSuggestionSuppression
         private var protectedRangesSnapshot: ProtectedRangesSnapshot?
         private var protectedRangesTask: Task<Void, Never>?
         private var protectedRangesGeneration = 0
@@ -2806,7 +2808,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
             pendingFlowTrailingSpace = nil
             pendingInlinePredictionEdit = nil
-            pendingFlowAutocompleteIntent = Self.isFlowAutocompleteTrigger(replacementString)
+            pendingFlowAutocompleteIntent = EditorFlowRepairPolicy.isFlowAutocompleteTrigger(replacementString)
             let source = textView.string as NSString
             if replacementString == " ",
                affectedCharRange.length == 0,
@@ -2819,7 +2821,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     text: textView.string,
                     selectedRange: affectedCharRange
                ),
-               Self.editRangeIsOutsideProtectedRanges(
+               EditorFlowRepairPolicy.editRangeIsOutsideProtectedRanges(
                    affectedCharRange,
                    protectedRanges: protectedRanges
                ),
@@ -2844,7 +2846,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                   affectedCharRange.location != NSNotFound,
                   affectedCharRange.length == 0,
                   NSMaxRange(affectedCharRange) <= source.length,
-                  Self.isOrdinaryProseInsertion(
+                  EditorFlowRepairPolicy.isOrdinaryProseInsertion(
                       replacementString,
                       in: source,
                       at: affectedCharRange.location,
@@ -2869,7 +2871,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 location: affectedCharRange.location + replacementLength,
                 length: 0
             )
-            guard Self.insertionRemainsOutsideProtectedSyntax(
+            guard EditorFlowRepairPolicy.insertionRemainsOutsideProtectedSyntax(
                 in: source,
                 insertionLocation: affectedCharRange.location,
                 replacement: replacementString,
@@ -3470,7 +3472,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                       continuation,
                       atUTF16Offset: snapshot.selectedRange.location
                   ),
-                  Self.insertionRemainsOutsideProtectedSyntax(
+                  EditorFlowRepairPolicy.insertionRemainsOutsideProtectedSyntax(
                     in: textView.string as NSString,
                     insertionLocation: snapshot.selectedRange.location,
                     replacement: visibleContinuation,
@@ -3561,24 +3563,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
         }
 
-        private static func editRangeIsOutsideProtectedRanges(
-            _ range: NSRange,
-            protectedRanges: [NSRange]
-        ) -> Bool {
-            if range.length == 0 {
-                // NSRange is half-open. An insertion at either boundary is
-                // outside the protected source; only an insertion strictly
-                // between its bounds would alter protected syntax.
-                return !protectedRanges.contains {
-                    range.location > $0.location
-                        && range.location < NSMaxRange($0)
-                }
-            }
-            return !protectedRanges.contains {
-                NSIntersectionRange($0, range).length > 0
-            }
-        }
-
         private func caretIsOutsideProtectedRanges(
             _ ranges: [NSRange],
             in textView: NSTextView
@@ -3648,110 +3632,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
             )
             return current.substring(with: precedingRange) == candidate.precedingContext
                 && current.substring(with: followingRange) == candidate.followingContext
-        }
-
-        private static func isOrdinaryProseInsertion(
-            _ replacement: String,
-            in source: NSString,
-            at insertionLocation: Int,
-            mode: FlowSourceMode
-        ) -> Bool {
-            guard replacement.count == 1 else { return false }
-            if replacement == " " {
-                guard mode == .markdown else { return true }
-                let precedingRange = NSRange(location: 0, length: insertionLocation)
-                let newlineRange = source.range(
-                    of: "\n",
-                    options: .backwards,
-                    range: precedingRange
-                )
-                let lineStart = newlineRange.location == NSNotFound ? 0 : NSMaxRange(newlineRange)
-                let linePrefix = source.substring(with: NSRange(
-                    location: lineStart,
-                    length: insertionLocation - lineStart
-                ))
-                return linePrefix.unicodeScalars.contains {
-                    !CharacterSet.whitespacesAndNewlines.contains($0)
-                }
-            }
-            let scalars = replacement.unicodeScalars
-            let isProseScalar: (Unicode.Scalar) -> Bool = {
-                CharacterSet.letters.contains($0) || CharacterSet.decimalDigits.contains($0)
-            }
-            return scalars.contains(where: isProseScalar)
-                && scalars.allSatisfy {
-                    isProseScalar($0) || CharacterSet.nonBaseCharacters.contains($0)
-                }
-        }
-
-        private static func insertionRemainsOutsideProtectedSyntax(
-            in source: NSString,
-            insertionLocation: Int,
-            replacement: String,
-            mode: FlowSourceMode
-        ) -> Bool {
-            let maximumExcerptLength = 2_048
-            let replacementLength = (replacement as NSString).length
-            let maximumSourceLength = maximumExcerptLength - replacementLength
-            let tentativeStart = max(0, insertionLocation - maximumSourceLength / 2)
-            let precedingNewline = source.range(
-                of: "\n",
-                options: .backwards,
-                range: NSRange(
-                    location: tentativeStart,
-                    length: insertionLocation - tentativeStart
-                )
-            )
-            let excerptStart = precedingNewline.location == NSNotFound
-                ? tentativeStart
-                : NSMaxRange(precedingNewline)
-            let maximumEnd = min(source.length, excerptStart + maximumSourceLength)
-            let followingNewline = source.range(
-                of: "\n",
-                range: NSRange(
-                    location: insertionLocation,
-                    length: maximumEnd - insertionLocation
-                )
-            )
-            let excerptEnd = followingNewline.location == NSNotFound
-                ? maximumEnd
-                : NSMaxRange(followingNewline)
-            let excerptRange = NSRange(
-                location: excerptStart,
-                length: excerptEnd - excerptStart
-            )
-            guard insertionLocation >= excerptStart,
-                  insertionLocation <= excerptEnd
-            else { return false }
-            let sourceExcerpt = source.substring(with: excerptRange) as NSString
-            let localInsertedRange = NSRange(
-                location: insertionLocation - excerptStart,
-                length: replacementLength
-            )
-            let excerpt = sourceExcerpt.replacingCharacters(
-                in: NSRange(location: localInsertedRange.location, length: 0),
-                with: replacement
-            )
-            let excerptLength = (excerpt as NSString).length
-            let localCaret = NSMaxRange(localInsertedRange)
-            let caretProbe: NSRange?
-            if localCaret < excerptLength {
-                caretProbe = NSRange(location: localCaret, length: 1)
-            } else if localCaret > 0 {
-                caretProbe = NSRange(location: localCaret - 1, length: 1)
-            } else {
-                caretProbe = nil
-            }
-            let ranges = FlowProtectedRangeService().protectedRanges(
-                in: excerpt,
-                mode: mode
-            )
-            return !ranges.contains { protectedRange in
-                NSIntersectionRange(protectedRange, localInsertedRange).length > 0
-                    || caretProbe.map {
-                        NSIntersectionRange(protectedRange, $0).length > 0
-                    } == true
-            }
         }
 
         private func beginDiagnosticAttempt(
@@ -3937,17 +3817,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
         }
 
-        private static func isFlowAutocompleteTrigger(_ replacement: String) -> Bool {
-            guard !replacement.isEmpty,
-                  !replacement.containsNewline,
-                  replacement != "\t",
-                  replacement.count == 1
-            else { return false }
-            return replacement.unicodeScalars.allSatisfy {
-                !CharacterSet.controlCharacters.contains($0)
-            }
-        }
-
         private func scheduleFlowCheck(
             completedSentenceEndingAt endOffset: Int? = nil,
             requestsAutocompleteAfterClear: Bool = false
@@ -4105,28 +3974,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 results: results,
                 options: snapshot.options
             )
-            var hasPartiallyProtectedIssue = false
-            let detectedIssues = allDetectedIssues.compactMap { issue -> EditorFlowDetectedIssue? in
-                let absoluteRange = NSRange(
-                    location: snapshot.checkedRange.location + issue.range.location,
-                    length: issue.range.length
-                )
-                let protectedIntersection = ranges.reduce(0) { length, protectedRange in
-                    length + NSIntersectionRange(protectedRange, absoluteRange).length
-                }
-                if protectedIntersection >= absoluteRange.length {
-                    return nil
-                }
-                if protectedIntersection > 0 {
-                    hasPartiallyProtectedIssue = true
-                    return EditorFlowDetectedIssue(
-                        range: issue.range,
-                        kind: issue.kind,
-                        hasPreciseRange: false
-                    )
-                }
-                return issue
-            }
+            let (detectedIssues, hasPartiallyProtectedIssue) = EditorFlowRepairPolicy.unprotectedIssues(
+                allDetectedIssues,
+                checkedRange: snapshot.checkedRange,
+                protectedRanges: ranges
+            )
             guard !hasPartiallyProtectedIssue else {
                 finishSentenceRepairUnresolved(reason: .protected)
                 return
@@ -4147,7 +3999,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                         snapshot: snapshot,
                         token: token,
                         documentTag: documentTag,
-                        locale: Self.repairLocale(from: orthography)
+                        locale: EditorFlowRepairPolicy.repairLocale(from: orthography)
                     )
                 } else {
                     finishSentenceRepairClear(
@@ -4194,7 +4046,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     snapshot: snapshot,
                     token: token,
                     documentTag: documentTag,
-                    repairLocale: Self.repairLocale(from: orthography),
+                    repairLocale: EditorFlowRepairPolicy.repairLocale(from: orthography),
                     protectedRanges: ranges,
                     in: textView
                 )
@@ -4208,7 +4060,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     snapshot: snapshot,
                     token: token,
                     documentTag: documentTag,
-                    repairLocale: Self.repairLocale(from: orthography),
+                    repairLocale: EditorFlowRepairPolicy.repairLocale(from: orthography),
                     protectedRanges: ranges,
                     in: textView
                 )
@@ -4225,7 +4077,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 snapshot: snapshot,
                 token: token,
                 documentTag: documentTag,
-                repairLocale: Self.repairLocale(from: orthography),
+                repairLocale: EditorFlowRepairPolicy.repairLocale(from: orthography),
                 protectedRanges: ranges
             )
         }
@@ -4392,30 +4244,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             to candidates: [EditorFlowCorrectionCandidate],
             snapshot: EditorFlowCheckSnapshot
         ) -> Bool {
-            guard let suppression = suppressedFlowSuggestion else { return false }
-            if suppression.matchesCheckedSource(
-                documentID: snapshot.documentID,
-                checkedRange: snapshot.checkedRange,
-                checkedText: snapshot.checkedText
-            ) {
-                return true
-            }
-            let checked = snapshot.checkedText as NSString
-            return candidates.contains { candidate in
-                guard candidate.range.location >= 0,
-                      candidate.range.length >= 0,
-                      NSMaxRange(candidate.range) <= checked.length
-                else { return false }
-                return suppression.suppresses(EditorFlowCorrectionEdit(
-                    range: NSRange(
-                        location: snapshot.checkedRange.location + candidate.range.location,
-                        length: candidate.range.length
-                    ),
-                    originalText: checked.substring(with: candidate.range),
-                    replacementText: candidate.replacementText,
-                    kind: candidate.kind
-                ))
-            }
+            suppressedFlowSuggestion?.applies(to: candidates, snapshot: snapshot) == true
         }
 
         @discardableResult
@@ -4427,154 +4256,26 @@ struct MarkdownTextEditor: NSViewRepresentable {
             reviewAlternatives: EditorFlowReviewAlternatives? = nil,
             forcesReview: Bool = false
         ) -> Bool {
-            guard !localCandidates.isEmpty,
-                  !detectedIssues.isEmpty,
-                  detectedIssues.allSatisfy(\.hasPreciseRange),
-                  snapshot.offersSentenceBatch,
-                  isCurrentFlowSnapshot(snapshot, token: token),
+            guard isCurrentFlowSnapshot(snapshot, token: token),
                   let textView,
-                  let ranges = protectedRanges(for: snapshot, in: textView)
+                  let ranges = protectedRanges(for: snapshot, in: textView),
+                  let suggestion = EditorFlowRepairPolicy.deterministicSuggestion(
+                      candidates: localCandidates,
+                      detectedIssues: detectedIssues,
+                      snapshot: snapshot,
+                      protectedRanges: ranges,
+                      sourceUTF16Length: (textView.string as NSString).length,
+                      suppression: suppressedFlowSuggestion,
+                      reviewAlternatives: reviewAlternatives,
+                      forcesReview: forcesReview
+                  ),
+                  suggestion.matches(
+                      documentID: snapshot.documentID,
+                      revision: snapshot.revision,
+                      text: textView.string,
+                      selectedRange: snapshot.selectedRange
+                  )
             else { return false }
-            let sourceLength = (textView.string as NSString).length
-            let caretProbe: NSRange?
-            if snapshot.caretUTF16Offset < sourceLength {
-                caretProbe = NSRange(location: snapshot.caretUTF16Offset, length: 1)
-            } else if snapshot.caretUTF16Offset > 0 {
-                caretProbe = NSRange(location: snapshot.caretUTF16Offset - 1, length: 1)
-            } else {
-                caretProbe = nil
-            }
-            if !snapshot.checksCompletedStructuralSentence {
-                guard caretProbe.map({ probe in
-                    !ranges.contains { NSIntersectionRange($0, probe).length > 0 }
-                }) != false else { return false }
-            }
-
-            let checkedSource = snapshot.checkedText as NSString
-            let eligibleCandidates = localCandidates.compactMap { candidate -> EditorFlowCorrectionEdit? in
-                guard (candidate.kind == .spelling && snapshot.options.checksSpelling) ||
-                        (candidate.kind == .grammar && snapshot.options.checksGrammar)
-                else { return nil }
-                let absoluteRange = NSRange(
-                    location: snapshot.checkedRange.location + candidate.range.location,
-                    length: candidate.range.length
-                )
-                guard NSMaxRange(absoluteRange) <= sourceLength,
-                      Self.editRangeIsOutsideProtectedRanges(
-                          absoluteRange,
-                          protectedRanges: ranges
-                      )
-                else { return nil }
-                let originalText = checkedSource.substring(with: candidate.range)
-                return EditorFlowCorrectionEdit(
-                    range: absoluteRange,
-                    originalText: originalText,
-                    replacementText: candidate.replacementText,
-                    kind: candidate.kind
-                )
-            }
-            let eligibleLocalCandidates = eligibleCandidates.map { edit in
-                (
-                    range: NSRange(
-                        location: edit.range.location - snapshot.checkedRange.location,
-                        length: edit.range.length
-                    ),
-                    kind: edit.kind
-                )
-            }
-            var eligibleEdits: [EditorFlowCorrectionEdit] = []
-            for edit in eligibleCandidates {
-                if let duplicateIndex = eligibleEdits.firstIndex(where: {
-                    $0.range == edit.range && $0.replacementText == edit.replacementText
-                }) {
-                    if eligibleEdits[duplicateIndex].kind == .grammar, edit.kind == .spelling {
-                        eligibleEdits[duplicateIndex] = edit
-                    }
-                } else {
-                    eligibleEdits.append(edit)
-                }
-            }
-            let conflictFreeEdits = eligibleEdits.enumerated().compactMap { index, edit in
-                let overlapsAnother = eligibleEdits.enumerated().contains { otherIndex, other in
-                    guard index != otherIndex else { return false }
-                    return NSIntersectionRange(edit.range, other.range).length > 0
-                }
-                return overlapsAnother ? nil : edit
-            }
-            let unsuppressedEdits = conflictFreeEdits.filter {
-                suppressedFlowSuggestion?.suppresses($0) != true
-            }
-            guard unsuppressedEdits.count == eligibleEdits.count,
-                  conflictFreeEdits.count == eligibleEdits.count,
-                  !unsuppressedEdits.isEmpty
-            else { return false }
-            let selectedLocalEdits = unsuppressedEdits.map { edit in
-                (
-                    range: NSRange(
-                        location: edit.range.location - snapshot.checkedRange.location,
-                        length: edit.range.length
-                    ),
-                    kind: edit.kind
-                )
-            }
-            func overlaps(_ left: NSRange, _ right: NSRange) -> Bool {
-                NSIntersectionRange(left, right).length > 0
-                    || left.length == 0 && left.location >= right.location && left.location <= NSMaxRange(right)
-                    || right.length == 0 && right.location >= left.location && right.location <= NSMaxRange(left)
-            }
-            guard detectedIssues.allSatisfy({ issue in
-                eligibleLocalCandidates.contains {
-                    $0.kind == issue.kind && overlaps($0.range, issue.range)
-                }
-            }), selectedLocalEdits.allSatisfy({ edit in
-                detectedIssues.contains {
-                    $0.kind == edit.kind && overlaps(edit.range, $0.range)
-                }
-            }) else { return false }
-            let selectedEdits = unsuppressedEdits
-            guard isCurrentFlowSnapshot(snapshot, token: token)
-            else { return false }
-            let correctedSentence = Self.applying(
-                selectedEdits,
-                to: snapshot.checkedText,
-                sentenceRange: snapshot.checkedRange
-            )
-            guard let correctedSentence else { return false }
-            let hasLetterDeletingSpellingRepair = selectedEdits.contains { edit in
-                edit.kind == .spelling
-                    && edit.replacementText.filter { $0.isLetter || $0.isNumber }.count
-                        < edit.originalText.filter { $0.isLetter || $0.isNumber }.count
-            }
-            let hasLexicalGrammarRepair = selectedEdits.contains { edit in
-                guard edit.kind == .grammar else { return false }
-                return edit.originalText.contains { $0.isLetter || $0.isNumber }
-                    || edit.replacementText.contains { $0.isLetter || $0.isNumber }
-            }
-            let acceptance: EditorFlowSuggestionAcceptance = forcesReview
-                || reviewAlternatives != nil
-                || hasLetterDeletingSpellingRepair
-                || hasLexicalGrammarRepair
-                ? .reviewOnly
-                : .direct
-            let suggestion = EditorFlowSuggestion(
-                documentID: snapshot.documentID,
-                revision: snapshot.revision,
-                selectedRange: snapshot.selectedRange,
-                caretUTF16Offset: snapshot.caretUTF16Offset,
-                sentenceRange: snapshot.checkedRange,
-                originalSentence: snapshot.checkedText,
-                correctedSentence: correctedSentence,
-                source: .deterministic,
-                acceptance: acceptance,
-                edits: selectedEdits,
-                reviewAlternatives: reviewAlternatives
-            )
-            guard suggestion.matches(
-                documentID: snapshot.documentID,
-                revision: snapshot.revision,
-                text: textView.string,
-                selectedRange: snapshot.selectedRange
-            ) else { return false }
             guard textView.isFlowSuggestionAnchorVisible(suggestion) else {
                 finishSentenceRepairUnresolved()
                 return false
@@ -4716,10 +4417,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 }
                 return
             }
-            guard Self.protectedFragments(
+            guard EditorFlowRepairPolicy.protectedFragments(
                     in: candidateSentence,
                     mode: snapshot.sourceMode
-                  ) == Self.protectedFragments(
+                  ) == EditorFlowRepairPolicy.protectedFragments(
                     in: snapshot.checkedText,
                     mode: snapshot.sourceMode
                   ),
@@ -4785,7 +4486,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             flowCheckTask?.cancel()
             flowCheckTask = nil
             guard orthography != nil,
-                  Self.allCheckingResultsAreClean(results),
+                  EditorFlowRepairPolicy.allCheckingResultsAreClean(results),
                   let textView,
                   let protectedRanges = protectedRanges(for: snapshot, in: textView)
             else {
@@ -4815,7 +4516,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 return
             }
             guard absoluteEdits.allSatisfy({ edit in
-                Self.editRangeIsOutsideProtectedRanges(
+                EditorFlowRepairPolicy.editRangeIsOutsideProtectedRanges(
                     edit.range,
                     protectedRanges: protectedRanges
                 )
@@ -4873,22 +4574,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
         }
 
-        private static func protectedFragments(
-            in text: String,
-            mode: FlowSourceMode
-        ) -> [String] {
-            let source = text as NSString
-            return FlowProtectedRangeService().protectedRanges(in: text, mode: mode)
-                .compactMap { range in
-                    guard range.location != NSNotFound,
-                          range.location >= 0,
-                          range.length > 0,
-                          NSMaxRange(range) <= source.length
-                    else { return nil }
-                    return source.substring(with: range)
-                }
-        }
-
         private func protectedRanges(
             for snapshot: EditorFlowCheckSnapshot,
             in textView: NSTextView
@@ -4911,42 +4596,14 @@ struct MarkdownTextEditor: NSViewRepresentable {
             protectedRanges: [NSRange],
             in textView: NSTextView
         ) -> EditorFlowAlternativeCandidate? {
-            let checksCandidateKind: Bool
-            switch candidate.kind {
-            case .spelling:
-                checksCandidateKind = snapshot.options.checksSpelling
-            case .grammar:
-                checksCandidateKind = snapshot.options.checksGrammar
-            }
-            guard snapshot.offersSentenceBatch,
-                  checksCandidateKind,
-                  !candidate.replacementTexts.isEmpty,
-                  candidate.replacementTexts.count <= EditorFlowCorrectionResolver
-                    .maximumValidatedAlternatives,
-                  detectedIssues.contains(where: {
-                    $0.range == candidate.range && $0.kind == candidate.kind
-                  })
-            else { return nil }
-
-            let checkedSource = snapshot.checkedText as NSString
-            guard candidate.range.location >= 0,
-                  candidate.range.length > 0,
-                  NSMaxRange(candidate.range) <= checkedSource.length,
-                  concreteCandidates.allSatisfy({
-                    NSIntersectionRange($0.range, candidate.range).length == 0
-                  })
-            else { return nil }
-            let absoluteRange = NSRange(
-                location: snapshot.checkedRange.location + candidate.range.location,
-                length: candidate.range.length
+            EditorFlowRepairPolicy.alternativeCandidateForValidation(
+                candidate,
+                concreteCandidates: concreteCandidates,
+                detectedIssues: detectedIssues,
+                snapshot: snapshot,
+                protectedRanges: protectedRanges,
+                sourceUTF16Length: (textView.string as NSString).length
             )
-            guard NSMaxRange(absoluteRange) <= (textView.string as NSString).length,
-                  !protectedRanges.contains(where: {
-                    NSIntersectionRange($0, absoluteRange).length > 0
-                  })
-            else { return nil }
-
-            return candidate
         }
 
         private func validateAlternatives(
@@ -4984,7 +4641,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
 
             let replacement = candidate.replacementTexts[nextIndex]
-            guard let validation = Self.validationSentence(
+            guard let validation = EditorFlowRepairPolicy.validationSentence(
                 snapshot.checkedText,
                 alternativeCandidate: candidate,
                 alternativeReplacement: replacement,
@@ -5024,7 +4681,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     else { return }
                     var nextCleanReplacements = cleanReplacements
                     if orthography != nil,
-                       Self.checkingValidationIsClean(
+                       EditorFlowRepairPolicy.checkingValidationIsClean(
                            results,
                            options: snapshot.options,
                            requiredSpellingRange: validation.replacementRange,
@@ -5070,33 +4727,13 @@ struct MarkdownTextEditor: NSViewRepresentable {
             flowCheckTask?.cancel()
             flowCheckTask = nil
 
-            var resolvedCandidates = concreteCandidates
-            if let replacement = cleanReplacements.first {
-                resolvedCandidates.append(EditorFlowCorrectionCandidate(
-                    range: candidate.range,
-                    replacementText: replacement,
-                    kind: candidate.kind
-                ))
-            }
-            resolvedCandidates.sort { left, right in
-                if left.range.location == right.range.location {
-                    return left.range.length < right.range.length
-                }
-                return left.range.location < right.range.location
-            }
-            let reviewAlternatives: EditorFlowReviewAlternatives?
-            if cleanReplacements.count > 1 {
-                reviewAlternatives = EditorFlowReviewAlternatives(
-                    absoluteRange: NSRange(
-                        location: snapshot.checkedRange.location + candidate.range.location,
-                        length: candidate.range.length
-                    ),
-                    replacementTexts: cleanReplacements,
-                    kind: candidate.kind
+            let (resolvedCandidates, reviewAlternatives) = EditorFlowRepairPolicy
+                .resolvedAlternativeCandidates(
+                    candidate,
+                    cleanReplacements: cleanReplacements,
+                    concreteCandidates: concreteCandidates,
+                    checkedRange: snapshot.checkedRange
                 )
-            } else {
-                reviewAlternatives = nil
-            }
             if presentFlowCandidates(
                 resolvedCandidates,
                 detectedIssues: detectedIssues,
@@ -5113,131 +4750,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
                     repairLocale: repairLocale
                 )
             }
-        }
-
-        private static func checkingValidationIsClean(
-            _ results: [NSTextCheckingResult],
-            options: EditorTextCheckingOptions,
-            requiredSpellingRange: NSRange,
-            checkedUTF16Length: Int
-        ) -> Bool {
-            !results.contains { result in
-                switch result.resultType {
-                case .grammar:
-                    return options.checksGrammar
-                case .spelling, .correction:
-                    guard !options.checksSpelling else { return true }
-                    guard result.range.location != NSNotFound,
-                          result.range.location >= 0,
-                          result.range.length > 0,
-                          NSMaxRange(result.range) <= checkedUTF16Length
-                    else { return true }
-                    return NSIntersectionRange(
-                        result.range,
-                        requiredSpellingRange
-                    ).length > 0
-                default:
-                    return false
-                }
-            }
-        }
-
-        private static func allCheckingResultsAreClean(
-            _ results: [NSTextCheckingResult]
-        ) -> Bool {
-            !results.contains {
-                $0.resultType == .grammar
-                    || $0.resultType == .spelling
-                    || $0.resultType == .correction
-            }
-        }
-
-        private static func repairLocale(from orthography: NSOrthography?) -> Locale {
-            guard let language = orthography?.dominantLanguage,
-                  !language.isEmpty,
-                  Locale(identifier: language).language.languageCode
-                    != Locale.LanguageCode("und")
-            else { return .current }
-            return Locale(identifier: language)
-        }
-
-        private static func validationSentence(
-            _ sentence: String,
-            alternativeCandidate: EditorFlowAlternativeCandidate,
-            alternativeReplacement: String,
-            concreteCandidates: [EditorFlowCorrectionCandidate]
-        ) -> (text: String, replacementRange: NSRange)? {
-            var replacements = concreteCandidates
-            replacements.append(EditorFlowCorrectionCandidate(
-                range: alternativeCandidate.range,
-                replacementText: alternativeReplacement,
-                kind: alternativeCandidate.kind
-            ))
-            replacements.sort { left, right in
-                if left.range.location == right.range.location {
-                    return left.range.length < right.range.length
-                }
-                return left.range.location < right.range.location
-            }
-            var unique: [EditorFlowCorrectionCandidate] = []
-            for replacement in replacements {
-                if let previous = unique.last {
-                    if previous.range == replacement.range,
-                       previous.replacementText == replacement.replacementText {
-                        continue
-                    }
-                    guard NSIntersectionRange(previous.range, replacement.range).length == 0 else {
-                        return nil
-                    }
-                }
-                unique.append(replacement)
-            }
-            let result = NSMutableString(string: sentence)
-            for replacement in unique.reversed() {
-                guard replacement.range.location >= 0,
-                      replacement.range.length > 0,
-                      NSMaxRange(replacement.range) <= result.length
-                else { return nil }
-                result.replaceCharacters(
-                    in: replacement.range,
-                    with: replacement.replacementText
-                )
-            }
-            let precedingDelta = unique.reduce(0) { delta, replacement in
-                guard replacement.range.location < alternativeCandidate.range.location else {
-                    return delta
-                }
-                return delta
-                    + (replacement.replacementText as NSString).length
-                    - replacement.range.length
-            }
-            return (
-                result as String,
-                NSRange(
-                    location: alternativeCandidate.range.location + precedingDelta,
-                    length: (alternativeReplacement as NSString).length
-                )
-            )
-        }
-
-        private static func applying(
-            _ edits: [EditorFlowCorrectionEdit],
-            to sentence: String,
-            sentenceRange: NSRange
-        ) -> String? {
-            let result = NSMutableString(string: sentence)
-            for edit in edits.reversed() {
-                let localRange = NSRange(
-                    location: edit.range.location - sentenceRange.location,
-                    length: edit.range.length
-                )
-                guard localRange.location >= 0,
-                      localRange.length >= 0,
-                      NSMaxRange(localRange) <= result.length
-                else { return nil }
-                result.replaceCharacters(in: localRange, with: edit.replacementText)
-            }
-            return result as String
         }
 
         func isCurrentFlowSnapshot(_ snapshot: EditorFlowCheckSnapshot, token: Int) -> Bool {
@@ -5276,7 +4788,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                   let acceptedSuggestion = presentedSuggestion.approvedReviewVariant(suggestion),
                   let protectedRanges = currentProtectedRanges,
                   acceptedSuggestion.edits.allSatisfy({ edit in
-                      Self.editRangeIsOutsideProtectedRanges(
+                      EditorFlowRepairPolicy.editRangeIsOutsideProtectedRanges(
                           edit.range,
                           protectedRanges: protectedRanges
                       )
@@ -5415,7 +4927,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 acceptedText = normalizedContinuation
                 remainingText = ""
             }
-            guard Self.insertionRemainsOutsideProtectedSyntax(
+            guard EditorFlowRepairPolicy.insertionRemainsOutsideProtectedSyntax(
                 in: textView.string as NSString,
                 insertionLocation: insertionRange.location,
                 replacement: acceptedText,
@@ -5507,7 +5019,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
                   let mode = flowSourceMode,
                   let protectedRanges = currentProtectedRanges,
                   caretIsOutsideProtectedRanges(protectedRanges, in: textView),
-                  Self.insertionRemainsOutsideProtectedSyntax(
+                  EditorFlowRepairPolicy.insertionRemainsOutsideProtectedSyntax(
                     in: textView.string as NSString,
                     insertionLocation: pending.selectedRange.location,
                     replacement: pending.continuation,
@@ -6659,7 +6171,7 @@ private enum MarkdownTextCommandApplier {
     }
 }
 
-private extension String {
+extension String {
     var containsNewline: Bool {
         contains("\n") || contains("\r")
     }
@@ -6795,8 +6307,7 @@ class MarkdownNSTextView: NSTextView {
     }
 
     private func beginFlowSettlement(for suggestion: EditorFlowSuggestion) {
-        let highlights = flowCorrectionHighlights(
-            for: suggestion,
+        let highlights = suggestion.correctionHighlights(
             correctedDocumentUTF16Length: (string as NSString).length
         )
         let ranges = highlights.map(\.range)
@@ -6838,74 +6349,6 @@ class MarkdownNSTextView: NSTextView {
         ensureFlowDisplayTimer()
         refreshFlowAccessibilityPresentation()
         needsDisplay = true
-    }
-
-    private func flowCorrectionHighlights(
-        for suggestion: EditorFlowSuggestion,
-        correctedDocumentUTF16Length: Int
-    ) -> [EditorFlowCorrectionHighlight] {
-        let sentenceWords = EditorFlowSuggestion.lexicalWordRanges(
-            in: suggestion.correctedSentence
-        )
-        var highlights: [EditorFlowCorrectionHighlight] = []
-        for change in suggestion.displayChanges {
-            var localRange = change.correctedRange
-            var deletionEdge: EditorFlowDeletionCollapse.Edge?
-            if localRange.length == 0,
-               !change.originalText.isEmpty,
-               let anchor = flowDeletionAnchor(
-                    at: localRange.location,
-                    wordRanges: sentenceWords
-               ) {
-                localRange = anchor.range
-                deletionEdge = anchor.edge
-            }
-            guard localRange.location >= 0,
-                  suggestion.sentenceRange.location <= Int.max - localRange.location
-            else { continue }
-            let absolute = NSRange(
-                location: suggestion.sentenceRange.location + localRange.location,
-                length: localRange.length
-            )
-            guard absolute.location >= 0,
-                  NSMaxRange(absolute) <= correctedDocumentUTF16Length,
-                  !highlights.contains(where: { $0.range == absolute })
-            else { continue }
-            let deletionCollapse = deletionEdge.map { edge in
-                EditorFlowDeletionCollapse(
-                    range: absolute,
-                    edge: edge,
-                    removedUTF16Length: max(1, (change.originalText as NSString).length)
-                )
-            }
-            highlights.append(EditorFlowCorrectionHighlight(
-                range: absolute,
-                deletionCollapse: deletionCollapse
-            ))
-        }
-        return highlights
-    }
-
-    private func flowDeletionAnchor(
-        at location: Int,
-        wordRanges: [NSRange]
-    ) -> (range: NSRange, edge: EditorFlowDeletionCollapse.Edge)? {
-        let previous = wordRanges.last { NSMaxRange($0) <= location }
-        let following = wordRanges.first { $0.location >= location }
-        switch (previous, following) {
-        case let (previous?, following?):
-            let previousDistance = location - NSMaxRange(previous)
-            let followingDistance = following.location - location
-            return previousDistance <= followingDistance
-                ? (previous, .trailing)
-                : (following, .leading)
-        case let (previous?, nil):
-            return (previous, .trailing)
-        case let (nil, following?):
-            return (following, .leading)
-        case (nil, nil):
-            return nil
-        }
     }
 
     private func clearFlowSettlement() {
@@ -7701,8 +7144,7 @@ class MarkdownNSTextView: NSTextView {
         let sourceLength = (string as NSString).length
         let correctedSentenceLength = (suggestion.correctedSentence as NSString).length
         guard sourceLength >= suggestion.sentenceRange.length else { return nil }
-        return flowCorrectionHighlights(
-            for: suggestion,
+        return suggestion.correctionHighlights(
             correctedDocumentUTF16Length: sourceLength
                 - suggestion.sentenceRange.length
                 + correctedSentenceLength
@@ -8292,8 +7734,7 @@ class MarkdownNSTextView: NSTextView {
             increaseContrast: workspace.accessibilityDisplayShouldIncreaseContrast,
             reduceMotion: workspace.accessibilityDisplayShouldReduceMotion
         )
-        for highlight in flowCorrectionHighlights(
-            for: suggestion,
+        for highlight in suggestion.correctionHighlights(
             correctedDocumentUTF16Length: overlay.storage.length
         ) where highlight.range.length > 0 {
             let highlightGlyphRange = overlay.layoutManager.glyphRange(
