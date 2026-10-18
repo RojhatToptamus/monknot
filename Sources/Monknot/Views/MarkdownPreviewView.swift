@@ -712,6 +712,8 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 )
             case "focus":
                 flow?.pageDidChangeFocus(WebViewBridge.boolean(body["focused"]) ?? false)
+            case "menu":
+                flow?.pageDidChangeMenu(open: WebViewBridge.boolean(body["open"]) ?? false)
             case "flow":
                 flow?.handlePageMessage(body)
             case "undo":

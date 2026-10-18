@@ -167,6 +167,9 @@ final class MarkdownPreviewFlowCoordinator {
     /// protected), but a sentence there starts in another cell, so Preview could never draw its
     /// review: it checks, fixes and completes nothing in a cell.
     private var caretInTableCell = false
+    /// A menu or the link field is open over the text. Nothing could be shown then, so nothing is
+    /// checked and the models are asked nothing.
+    private var pageMenuOpen = false
     private var isPageReady = false
     private var isTornDown = false
     private let spellDocumentTag = NSSpellChecker.uniqueSpellDocumentTag()
@@ -289,6 +292,23 @@ final class MarkdownPreviewFlowCoordinator {
         pageFocused = focused
         if !focused {
             cancelFlowForFocusLoss()
+        }
+    }
+
+    /// A menu or the link field opened over the text, or the last one closed. While one is open
+    /// nothing is checked and the models are asked nothing; once it closes without an edit (Esc),
+    /// the sentence at the caret is checked again, as after a caret move.
+    func pageDidChangeMenu(open: Bool) {
+        guard pageMenuOpen != open else { return }
+        let assisted = assistsAtCaret
+        pageMenuOpen = open
+        guard isActive else { return }
+        if assisted, !assistsAtCaret {
+            gate = .blocked
+            cancelFlowSuggestion()
+        } else if !assisted, assistsAtCaret {
+            cancelFlowSuggestion()
+            scheduleFlowCheck()
         }
     }
 
@@ -527,9 +547,10 @@ final class MarkdownPreviewFlowCoordinator {
         return dependencies.windowFocusValidator(view)
     }
 
-    /// Whether writing assistance runs where the caret is: not in a table cell.
+    /// Whether writing assistance runs where the caret is: not in a table cell, and not under an
+    /// open menu.
     private var assistsAtCaret: Bool {
-        !caretInTableCell
+        !caretInTableCell && !pageMenuOpen
     }
 
     /// Where the page says the caret is. Moving into a table cell ends what was running or shown.
@@ -576,6 +597,7 @@ final class MarkdownPreviewFlowCoordinator {
         isPageReady = false
         selection = nil
         caretInTableCell = false
+        pageMenuOpen = false
     }
 
     private func sendConfiguration() {

@@ -234,7 +234,9 @@ Shorter and more specific is preferable to polished but meaningless copy.
   sees, and anything taken arrives as an `apply` patch (change kind `flow`, one undo step named as in
   Source) checked against the source first. `FlowProtectedRangeService` keeps both editors out of
   code, link addresses, URLs, HTML, front matter and a table's pipes; Preview also runs nothing while
-  the caret is in a table cell (the page reports `cell` with each edit and selection). Tests inject fakes through
+  the caret is in a table cell (the page reports `cell` with each edit and selection), and checks
+  nothing and asks its models nothing while a menu or the link field is open (the page posts `menu`
+  when one opens or the last one closes). Tests inject fakes through
   `EnvironmentValues.markdownPreviewFlowDependencies`. WebKit's own inline predictions stay off.
 - Edit › Check Document Now in Preview checks the sentence before the caret at once; Show Writing Tools
   switches to Source (`MarkdownTextEditor`'s `writingToolsRequested`) and opens them there. Beside

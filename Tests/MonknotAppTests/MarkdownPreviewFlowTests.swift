@@ -664,24 +664,70 @@ final class MarkdownPreviewFlowTests: WorkspaceStoreTestCase {
 
     func testTheNoteMenuKeepsTabWhileACompletionCouldShow() async throws {
         let prose = FlowProseCompletionSpy(result: "of the week.")
+        let checker = PreviewFlowChecker { _ in [] }
         let fixture = try await makeFixture(
-            markdown: "See the notes in\n",
+            markdown: "See the notes in \n",
+            checker: checker,
             prose: prose,
             options: Self.onDevice,
-            notes: ["Project Plan.md"]
+            notes: ["Project Plan Review.md"]
         )
-        try await fixture.setSelection(("See the notes in" as NSString).length)
-        fixture.type(" [[Pro")
+        try await fixture.setSelection(("See the notes in " as NSString).length)
+        fixture.type("[[")
         let menu = await waitUntil {
             ((try? await fixture.evaluate("Boolean(document.querySelector('.mk-menu.mk-visible'))")) as? Bool) == true
         }
         XCTAssertTrue(menu, "The note menu opens")
-        try await Task.sleep(nanoseconds: 300_000_000)
+
+        // Every character typed into the open menu could ask for a completion: "Project Plan " is
+        // two words after the protected brackets, enough for the model.
+        let requestsBeforeMenu = prose.requestCount
+        let checksBeforeMenu = checker.requests.count
+        fixture.type("Project Plan ")
+        try await Task.sleep(nanoseconds: 400_000_000)
+        XCTAssertEqual(prose.requestCount, requestsBeforeMenu, "The model is asked nothing while the note menu is open")
+        XCTAssertEqual(checker.requests.count, checksBeforeMenu, "Nothing is checked while the note menu is open")
         let state = await fixture.flowState()
         XCTAssertNil(state?.ghost, "No completion shows while a menu is over the text")
         fixture.press(.tab)
-        let linked = await waitUntil { fixture.store.documentText == "See the notes in [[Project Plan]]\n" }
+        let linked = await waitUntil { fixture.store.documentText == "See the notes in [[Project Plan Review]]\n" }
         XCTAssertTrue(linked, "Tab chooses the note: \(fixture.store.documentText)")
+    }
+
+    /// A two-word query in the slash menu ("bulleted lis") is context enough for a completion, yet
+    /// while the menu is open nothing is checked and the model is asked nothing. Esc closes it
+    /// without an edit, and checking resumes then, as after a caret move.
+    func testTheSlashMenuAsksNothingWhileOpenAndEscapeResumesChecking() async throws {
+        let prose = FlowProseCompletionSpy(result: "of every task.")
+        let checker = PreviewFlowChecker { _ in [] }
+        let fixture = try await makeFixture(
+            markdown: "Notes for the week.\n\n",
+            checker: checker,
+            prose: prose,
+            options: Self.onDevice
+        )
+        try await fixture.setSelection(("Notes for the week.\n\n" as NSString).length)
+        let menuIsOpen = {
+            ((try? await fixture.evaluate("Boolean(document.querySelector('.mk-menu.mk-visible'))")) as? Bool) == true
+        }
+        fixture.type("/")
+        let opened = await waitUntil { await menuIsOpen() }
+        XCTAssertTrue(opened, "The slash menu opens at the start of a block")
+
+        let requestsBeforeMenu = prose.requestCount
+        let checksBeforeMenu = checker.requests.count
+        fixture.type("bulleted lis")
+        try await Task.sleep(nanoseconds: 400_000_000)
+        let stillOpen = await menuIsOpen()
+        XCTAssertTrue(stillOpen, "The query keeps the menu open")
+        XCTAssertEqual(prose.requestCount, requestsBeforeMenu, "The model is asked nothing while the slash menu is open")
+        XCTAssertEqual(checker.requests.count, checksBeforeMenu, "Nothing is checked while the slash menu is open")
+
+        fixture.press(.escape)
+        let closed = await waitUntil { await !menuIsOpen() }
+        XCTAssertTrue(closed, "Esc closes the slash menu")
+        let checkedAgain = await waitUntil { checker.requests.count > checksBeforeMenu }
+        XCTAssertTrue(checkedAgain, "Checking resumes once the menu is gone: \(checker.requests)")
     }
 
     // MARK: - Settings

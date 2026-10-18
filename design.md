@@ -1013,7 +1013,9 @@ each suggestion and fix as in Source.
 
 A suggestion shows only for the text, caret and focus it was made for: never while a menu, the link
 field or a composition is open, never once the sentence has scrolled out of view (a completion must fit
-on screen whole), and it goes with any edit, click or caret move. Tab keeps its own meanings — indent a
+on screen whole), and it goes with any edit, click or caret move. While a menu or the link field is open
+nothing is checked and the models are asked nothing; when it closes without an edit (Esc), the sentence
+at the caret is checked again. Tab keeps its own meanings — indent a
 list item, move between table cells, choose in a menu — whenever nothing is shown, and an open menu
 takes the keys first. Check Spelling While Typing also sets the page's `spellcheck`, so WebKit's own
 spelling marks follow it. Edit › Check Document Now (⌘;) checks the sentence before the caret at once,

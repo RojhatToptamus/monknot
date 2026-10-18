@@ -2916,6 +2916,17 @@
     window.webkit?.messageHandlers?.monknotEditor?.postMessage({ documentID, renderID, ...message });
   }
 
+  let menuReportedOpen = false;
+  /// Tells the app when a menu or the link field opens over the text, or the last one closes: it
+  /// checks nothing and asks its models nothing meanwhile, since nothing could be shown.
+  function noteMenuChange() {
+    if (!active) return;
+    const open = UI.anyMenuOpen;
+    if (open === menuReportedOpen) return;
+    menuReportedOpen = open;
+    post({ type: "menu", open });
+  }
+
   function listen(target, type, handler, options) {
     target.addEventListener(type, handler, options);
     listeners.push(() => target.removeEventListener(type, handler, options));
@@ -2930,6 +2941,7 @@
     renderID = payload.renderID || 0;
     version = 0;
     unacknowledged = [];
+    menuReportedOpen = false;
     document.documentElement.classList.add("mk-editing");
     root.setAttribute("contenteditable", "true");
     root.setAttribute("spellcheck", Flow.spellcheck ? "true" : "false");
@@ -4772,6 +4784,7 @@
       element.classList.remove("mk-measuring");
       show(element, settings.animate);
       if (field) window.setTimeout(() => field.focus({ preventScroll: true }), 0);
+      noteMenuChange();
     };
 
     /// A menu above its anchor stays attached by its bottom edge while filtering changes its height.
@@ -4794,6 +4807,7 @@
       state.owner = null;
       hide(element);
       options.onClose?.(reason);
+      noteMenuChange();
     };
 
     const handleNavigation = (event) => {
@@ -6239,6 +6253,7 @@
       const rect = selection.from === selection.to ? caretRect() : selectionRect();
       place(linkEditor, rect || ZERO_RECT, "below");
       show(linkEditor, mode === "link" && selection.from !== selection.to);
+      noteMenuChange();
       window.setTimeout(() => {
         linkField.focus();
         linkField.select();
@@ -6275,6 +6290,7 @@
     function closeLinkEditor(restoreFocus) {
       if (!linkEditor || !linkEditor.classList.contains("mk-visible")) return;
       hide(linkEditor);
+      noteMenuChange();
       const editing = linkEditing;
       linkEditing = null;
       if (restoreFocus) {
