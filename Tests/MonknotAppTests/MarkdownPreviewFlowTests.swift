@@ -480,6 +480,60 @@ final class MarkdownPreviewFlowTests: WorkspaceStoreTestCase {
         XCTAssertEqual(prose.requestCount, 1, "Consuming the completion asks the model nothing new")
     }
 
+    /// The tint on a word Tab just took must not touch a composition started right after it: a dead
+    /// key (⌥E then E) or an input method keeps its marked text and caret past the tint's end, and
+    /// commits once, where it was typed.
+    func testACompositionRightAfterTakingAWordSurvivesTheTint() async throws {
+        let prose = FlowProseCompletionSpy(result: "clearly.")
+        let fixture = try await makeFixture(markdown: "We can write\n", prose: prose, options: Self.onDevice)
+        try await fixture.setSelection(("We can write" as NSString).length)
+        fixture.type(" ")
+        let shown = await fixture.waitForFlowState { $0.ghost?.rendered == true }
+        XCTAssertTrue(shown)
+        try await fixture.evaluate("""
+        window.__composition = [];
+        for (const type of ['compositionstart', 'compositionend']) {
+          document.getElementById('content').addEventListener(type, (event) => window.__composition.push(type));
+        }
+        true
+        """)
+
+        fixture.press(.tab)
+        let taken = await waitUntil { fixture.store.documentText == "We can write clearly.\n" }
+        XCTAssertTrue(taken, fixture.store.documentText)
+        let tinted = try await fixture.evaluate("document.querySelectorAll('.mk-flow-flash').length") as? Int
+        XCTAssertEqual(tinted, 1, "The taken word is tinted for a moment")
+
+        // ⌥E: a dead key opens a composition with marked text, inside the tint's 600 ms.
+        let input = try XCTUnwrap(fixture.webView as? NSTextInputClient)
+        let noReplacement = NSRange(location: NSNotFound, length: 0)
+        input.setMarkedText("´", selectedRange: NSRange(location: 1, length: 0), replacementRange: noReplacement)
+        let composing = await waitUntil {
+            ((try? await fixture.evaluate("window.__composition.join(' ')")) as? String) == "compositionstart"
+        }
+        XCTAssertTrue(composing, "The composition started")
+        try await Task.sleep(nanoseconds: 900_000_000)
+        let events = try await fixture.evaluate("window.__composition.join(' ')") as? String
+        XCTAssertEqual(events, "compositionstart", "Nothing ended the composition when the tint went")
+        let beforeCaret = try await fixture.evaluate("""
+        (() => {
+          const selection = getSelection();
+          const range = document.createRange();
+          range.setStart(document.getElementById('content'), 0);
+          range.setEnd(selection.focusNode, selection.focusOffset);
+          return range.toString();
+        })()
+        """) as? String
+        XCTAssertEqual(beforeCaret, "We can write clearly.´", "The marked text and the caret after it survive")
+
+        // E: the dead key's character replaces the marked text, once.
+        input.insertText("é", replacementRange: noReplacement)
+        let committed = await waitUntil { fixture.store.documentText == "We can write clearly.é\n" }
+        XCTAssertTrue(committed, "Committed once, where typed: \(fixture.store.documentText.debugDescription)")
+        let caret = try await fixture.evaluate("window.MonknotEditor.selection().head") as? Int
+        XCTAssertEqual(caret, ("We can write clearly.é" as NSString).length)
+    }
+
     func testEscapeAndOtherKeysDismissTheCompletion() async throws {
         let prose = FlowProseCompletionSpy(result: "clearer prose.")
         let fixture = try await makeFixture(markdown: "We can write\n", prose: prose, options: Self.onDevice)

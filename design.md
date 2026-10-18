@@ -1041,7 +1041,8 @@ A surface the keyboard opens (the slash and wikilink menus, ⌘/, ⌘K) appears 
 never made to wait for an animation. Everything leaves in 90 ms. Handles fade 120 ms; the toggle
 triangle turns in 180 ms ease-out; a pressed button or handle scales to 0.96. Only transform and
 opacity animate, with one exception shared with Source: the mark on a fix just applied rises and
-settles over a second, and words a completion inserts fade from a tint over 520 ms. With Reduce Motion
+settles over a second, and words a completion inserts fade from a tint over 520 ms (a dead key or input
+method used meanwhile takes the tint off at once, and nothing drawn changes while it composes). With Reduce Motion
 nothing scales, entrances are a 120 ms fade, the moved-block flash is off, and a fix's mark holds still
 at its settled strength. Nothing animates while typing.
 

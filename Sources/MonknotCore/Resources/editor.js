@@ -3731,6 +3731,7 @@
       const queued = pendingRemote;
       pendingRemote = [];
       queued.forEach((payload) => applyRemote(payload));
+      Flow.compositionEnded();
     }, 0);
   }
 
@@ -6436,6 +6437,11 @@
     let tab = null;
     // A keystroke that types what the completion shows, or a space after the reviewed sentence.
     let carry = null;
+    // The tint on words a completion just inserted: { wrappers, timer }.
+    let flashing = null;
+    // Decorations to take out once a composition ends: the page changes nothing around the caret
+    // while an input method or a dead key has marked text there.
+    let deferred = [];
     let scrollFrame = 0;
 
     function report(action, fields = {}) {
@@ -6538,9 +6544,15 @@
     }
 
     /// Takes drawn elements out again and unwraps wrapped text, keeping the caret where it was.
+    /// During a composition it waits for the composition to end: unwrapping, merging text nodes or
+    /// placing the caret there would commit, cancel or repeat the marked text.
     function undecorate(decorations) {
       const connected = (decorations || []).filter((element) => element && element.isConnected);
       if (!connected.length) return;
+      if (composing) {
+        deferred.push(...connected);
+        return;
+      }
       const keep = document.activeElement === root ? readSelection() : null;
       const parents = new Set();
       for (const element of connected) {
@@ -6816,8 +6828,10 @@
       undecorate(current.decorations);
     }
 
-    /// The words a completion just inserted fade from a tint.
+    /// The words a completion just inserted fade from a tint. A composition that starts meanwhile
+    /// takes the tint off first (`compositionStarted`).
     function flash(start, length) {
+      clearFlash();
       const end = start + length;
       if (!(length > 0 && start >= 0 && end <= model.source.length)) return;
       const unit = unitAt(model, start, "right");
@@ -6828,7 +6842,19 @@
       const wrappers = wrapVisible(unit.el, v0, v1, "mk-flow-flash");
       if (!wrappers.length) return;
       if (keep) setSelection(keep.anchor, keep.head, { reveal: false });
-      window.setTimeout(() => undecorate(wrappers), 600);
+      const current = { wrappers, timer: 0 };
+      current.timer = window.setTimeout(() => {
+        if (flashing === current) clearFlash();
+      }, 600);
+      flashing = current;
+    }
+
+    function clearFlash() {
+      if (!flashing) return;
+      const current = flashing;
+      flashing = null;
+      window.clearTimeout(current.timer);
+      undecorate(current.wrappers);
     }
 
     // What the app sends ------------------------------------------------------
@@ -7101,9 +7127,20 @@
       cancel("focus");
     }
 
+    /// Called as a composition starts, before its marked text is in: everything drawn around the
+    /// caret comes out now, while that is still safe.
     function compositionStarted() {
+      clearFlash();
       clearSettle();
       cancel("focus");
+    }
+
+    /// Called once a composition has ended and its text is in the model.
+    function compositionEnded() {
+      if (composing || !deferred.length) return;
+      const pending = deferred;
+      deferred = [];
+      undecorate(pending);
     }
 
     function blur() {
@@ -7144,6 +7181,9 @@
     /// The page stops editing: its contents are replaced, so drop everything without drawing.
     function forget() {
       if (tab) window.clearTimeout(tab.timer);
+      if (flashing) window.clearTimeout(flashing.timer);
+      flashing = null;
+      deferred = [];
       tab = null;
       review = null;
       ghost = null;
@@ -7170,6 +7210,7 @@
       selectionChanged,
       pointerDown,
       compositionStarted,
+      compositionEnded,
       blur,
       onScroll,
       onResize,
