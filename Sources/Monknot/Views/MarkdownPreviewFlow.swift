@@ -143,12 +143,14 @@ final class MarkdownPreviewFlowCoordinator {
         let rebasedProtectedRanges: [NSRange]?
     }
 
-    /// A correction just applied, which Delete right after it takes back.
+    /// A correction just applied, which Delete right after it takes back while the page shows its
+    /// ⌫ undo hint.
     private struct Settlement {
         let serial: Int
         let revision: Int
         let selection: NSRange
         let actionName: String
+        let suggestion: EditorFlowSuggestion
     }
 
     weak var host: MarkdownPreviewFlowHost?
@@ -456,6 +458,15 @@ final class MarkdownPreviewFlowCoordinator {
                 cancelFlowSuggestion(notifyPage: false)
                 host?.sendFlow(["type": "clear"])
             }
+        case "settled":
+            guard let current = settlement, current.serial == messageSerial else { return }
+            if WebViewBridge.boolean(body["revertible"]) == true {
+                announce(current.suggestion.settlementAnnouncement, priority: .medium)
+            } else {
+                // No ⌫ undo hint where the caret is (an empty line), so ⌫ keeps deleting.
+                settlement = nil
+                announce(current.suggestion.settlementDescription, priority: .medium)
+            }
         case "revert":
             revertSettlement(serial: messageSerial)
         default:
@@ -475,7 +486,7 @@ final class MarkdownPreviewFlowCoordinator {
     @discardableResult
     func checkDocumentNow() -> Bool {
         guard canCheckDocumentNow, let selection else { return false }
-        settlement = nil
+        clearSettlement()
         cancelFlowSuggestion()
         scheduleFlowCheck(completedSentenceEndingAt: NSMaxRange(selection), immediate: true)
         return true
@@ -635,12 +646,13 @@ final class MarkdownPreviewFlowCoordinator {
         scheduleProtectedRangesRefresh()
         switch pending.kind {
         case let .repair(suggestion):
-            announce(suggestion.settlementAnnouncement, priority: .medium)
+            // VoiceOver hears the fix once the page says whether ⌫ takes it back ("settled").
             settlement = Settlement(
                 serial: pending.serial,
                 revision: revision,
                 selection: pending.selection,
-                actionName: pending.label
+                actionName: pending.label,
+                suggestion: suggestion
             )
             scheduleFlowCheck()
         case let .prose(remainder, wasRendered):
@@ -2186,7 +2198,9 @@ extension MarkdownPreviewFlowCoordinator {
         return true
     }
 
-    /// Delete right after a correction applied: one undo, while nothing has changed since.
+    /// Delete right after a correction applied: one undo, while nothing has changed since. When it
+    /// cannot be taken back, the page deletes as Delete would have, as Source falls through to an
+    /// ordinary Backspace.
     private func revertSettlement(serial: Int) {
         guard let settlement,
               settlement.serial == serial,
@@ -2197,7 +2211,7 @@ extension MarkdownPreviewFlowCoordinator {
               undoManager.undoActionName == settlement.actionName
         else {
             self.settlement = nil
-            NSSound.beep()
+            host?.sendFlow(["type": "revertRefused", "serial": serial])
             return
         }
         self.settlement = nil

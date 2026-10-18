@@ -239,6 +239,75 @@ final class MarkdownPreviewFlowTests: WorkspaceStoreTestCase {
         XCTAssertEqual(checker.requests.first, "We read teh plan")
     }
 
+    /// After ↩ the caret is on an empty line, where no ⌫ undo hint can show, so ⌫ deletes the line
+    /// as usual and the fix stays.
+    func testBackspaceAfterAFixReturnMadeDeletesTheLine() async throws {
+        let checker = PreviewFlowChecker { text in
+            PreviewFlowChecker.corrections(in: text, ["teh": "the"])
+        }
+        let fixture = try await makeFixture(markdown: "We read teh plan\n", checker: checker)
+        try await fixture.setSelection(("We read teh plan" as NSString).length)
+        fixture.press(.return)
+        let fixed = await waitUntil { fixture.store.documentText.hasPrefix("We read the plan\n") }
+        XCTAssertTrue(fixed, fixture.store.documentText)
+        let settled = await fixture.waitForFlowState { $0.settle != nil }
+        XCTAssertTrue(settled, "The corrected word still shimmers")
+        let state = await fixture.flowState()
+        XCTAssertEqual(state?.settleRevertible, false, "⌫ is not taken over where its hint cannot show")
+        let hints = try await fixture.evaluate("document.querySelectorAll('.mk-flow-hint').length") as? Int
+        XCTAssertEqual(hints, 0)
+
+        fixture.press(.backspace)
+        let deleted = await waitUntil { fixture.store.documentText == "We read the plan\n" }
+        XCTAssertTrue(deleted, "⌫ deletes the empty line and keeps the fix: \(fixture.store.documentText.debugDescription)")
+    }
+
+    /// ⌫ asks the app to take the fix back; when it cannot (here its undo step is no longer the last
+    /// one), the page deletes as ⌫ would have, as Source falls through to an ordinary Backspace.
+    func testARefusedRevertStillDeletes() async throws {
+        let checker = PreviewFlowChecker { text in
+            PreviewFlowChecker.corrections(in: text, ["teh": "the"])
+        }
+        let fixture = try await makeFixture(markdown: "We read teh plan\n", checker: checker)
+        try await fixture.setSelection(("We read teh plan" as NSString).length)
+        fixture.type(".")
+        let fixed = await waitUntil { fixture.store.documentText == "We read the plan.\n" }
+        XCTAssertTrue(fixed, fixture.store.documentText)
+        let revertible = await fixture.waitForFlowState { $0.settleRevertible == true }
+        XCTAssertTrue(revertible, "⌫ undo shows beside the caret")
+
+        let undoManager = try XCTUnwrap(fixture.webView.undoManager)
+        let unrelated = NSObject()
+        undoManager.registerUndo(withTarget: unrelated) { _ in }
+        undoManager.setActionName("Unrelated")
+        defer { undoManager.removeAllActions(withTarget: unrelated) }
+
+        fixture.press(.backspace)
+        let deleted = await waitUntil { fixture.store.documentText == "We read the plan\n" }
+        XCTAssertTrue(deleted, "⌫ deletes the period instead: \(fixture.store.documentText.debugDescription)")
+    }
+
+    /// Check Document Now starts over, so the ⌫ undo hint of the last fix goes with it and ⌫
+    /// deletes again.
+    func testCheckDocumentNowTakesTheUndoHintAway() async throws {
+        let checker = PreviewFlowChecker { text in
+            PreviewFlowChecker.corrections(in: text, ["teh": "the"])
+        }
+        let fixture = try await makeFixture(markdown: "We read teh plan\n", checker: checker)
+        try await fixture.setSelection(("We read teh plan" as NSString).length)
+        fixture.type(".")
+        let revertible = await fixture.waitForFlowState { $0.settleRevertible == true }
+        XCTAssertTrue(revertible)
+
+        let commands = try XCTUnwrap((fixture.webView as? MarkdownEditorWebView)?.previewCommands)
+        XCTAssertTrue(commands.checkDocumentNow())
+        let cleared = await fixture.waitForFlowState { $0.settle == nil }
+        XCTAssertTrue(cleared, "The page hears that the fix can no longer be taken back")
+        fixture.press(.backspace)
+        let deleted = await waitUntil { fixture.store.documentText == "We read the plan\n" }
+        XCTAssertTrue(deleted, fixture.store.documentText.debugDescription)
+    }
+
     func testCheckDocumentNowChecksTheSentenceAtTheCaret() async throws {
         let checker = PreviewFlowChecker { text in
             PreviewFlowChecker.corrections(in: text, ["teh": "the"])
@@ -700,7 +769,9 @@ struct PreviewFlowPageState {
     let spellcheck: Bool
     let review: Review?
     let ghost: Ghost?
+    /// The caret a just-applied fix shimmers for, and whether ⌫ there takes it back.
     let settle: Int?
+    let settleRevertible: Bool?
 
     init?(_ value: Any?) {
         guard let body = value as? [String: Any] else { return nil }
@@ -725,7 +796,9 @@ struct PreviewFlowPageState {
         } else {
             ghost = nil
         }
-        settle = (body["settle"] as? [String: Any])?["caret"] as? Int
+        let settled = body["settle"] as? [String: Any]
+        settle = settled?["caret"] as? Int
+        settleRevertible = settled?["revertible"] as? Bool
     }
 }
 

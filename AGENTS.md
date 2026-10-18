@@ -226,8 +226,10 @@ Shorter and more specific is preferable to polished but meaningless copy.
   `FlowProseCompletionService`, cooldowns and suppression) on the coordinator's mirror of the source and
   the caret's source offset, and every repair decision comes from `EditorFlowRepairPolicy`, which Source
   uses too. The page reports `focus`, its version and focus with each `selection`, and `flow` messages
-  (accept, dismiss, cancel, unrendered, declined, revert); the coordinator answers with
-  `MonknotEditor.flow` (`configure`, `review`, `ghost`, `clear`, `apply`). editor.js's `Flow` draws a
+  (accept, dismiss, cancel, unrendered, declined, settled, revert); the coordinator answers with
+  `MonknotEditor.flow` (`configure`, `review`, `ghost`, `clear`, `apply`, `revertRefused`, after which
+  the page deletes as ⌫ would have). ⌫ takes a fix back only while its `⌫ undo` hint shows, which
+  `settled` reports. editor.js's `Flow` draws a
   review, a completion or a fix's mark as skipped non-editable spans or wrappers the text model never
   sees, and anything taken arrives as an `apply` patch (change kind `flow`, one undo step named as in
   Source) checked against the source first. Tests inject fakes through

@@ -678,19 +678,24 @@ extension EditorFlowSuggestion {
 
     /// What VoiceOver says once the correction is in.
     var settlementAnnouncement: String {
+        "\(settlementDescription) Delete to undo."
+    }
+
+    /// The correction in words, for when Delete does not take it back.
+    var settlementDescription: String {
         guard displayChanges.count == 1, let change = displayChanges.first else {
-            return "Applied \(displayChanges.count) corrections. Delete to undo."
+            return "Applied \(displayChanges.count) corrections."
         }
         let original = change.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
         let replacement = change.replacementText.trimmingCharacters(in: .whitespacesAndNewlines)
         if original.isEmpty, replacement.isEmpty {
-            return "Adjusted spacing. Delete to undo."
+            return "Adjusted spacing."
         } else if replacement.isEmpty {
-            return "Removed \(original). Delete to undo."
+            return "Removed \(original)."
         } else if original.isEmpty {
-            return "Inserted \(replacement). Delete to undo."
+            return "Inserted \(replacement)."
         }
-        return "Corrected \(original) to \(replacement). Delete to undo."
+        return "Corrected \(original) to \(replacement)."
     }
 
     /// The word nearest a deletion at `location` (sentence offsets), and which of its edges faces

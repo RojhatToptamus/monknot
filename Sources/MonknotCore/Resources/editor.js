@@ -6426,8 +6426,12 @@
     let review = null;
     // A completion after the caret: { serial, v, at, text, element, rendered }.
     let ghost = null;
-    // A fix just applied, which ⌫ right after it takes back: { serial, v, caret, decorations }.
+    // A fix just applied: { serial, v, caret, decorations, revertible }. ⌫ right after it takes it
+    // back only while `revertible`, which is while its ⌫ undo hint shows.
     let settle = null;
+    // ⌫ sent to the app to take a fix back: { serial, v, anchor, head }. If the app cannot, the page
+    // deletes as ⌫ would have, provided nothing has changed since.
+    let revertRequest = null;
     // A held Tab: { serial, armed, timer }; armed until it is released or held past 350 ms.
     let tab = null;
     // A keystroke that types what the completion shows, or a space after the reviewed sentence.
@@ -6756,16 +6760,22 @@
 
     // A fix just applied -----------------------------------------------------
 
-    /// Highlights the corrected words (a shimmer that settles) and shows ⌫ undo at the caret.
+    /// Highlights the corrected words (a shimmer that settles) and, where the caret is in a line of
+    /// text, shows ⌫ undo beside it. ⌫ takes the fix back only while that hint shows, so on an empty
+    /// line (after ↩) ⌫ keeps deleting. Returns whether ⌫ takes it back.
     function showSettle(serial, from, marks) {
       clearSettle();
       const selection = readSelection();
-      if (!selection || selection.from !== selection.to) return;
+      if (!selection || selection.from !== selection.to) return false;
       const decorations = [];
+      let revertible = false;
       const caretUnit = unitAt(model, selection.head, "left");
       if (caretUnit && caretUnit.el && caretUnit.kind === "inline") {
         const hint = hintElement([["⌫", "undo"]]);
-        if (insertAtVisible(caretUnit.el, rawToVisible(model, caretUnit, selection.head, "left"), hint)) decorations.push(hint);
+        if (insertAtVisible(caretUnit.el, rawToVisible(model, caretUnit, selection.head, "left"), hint)) {
+          decorations.push(hint);
+          revertible = true;
+        }
       }
       for (const mark of marks) {
         if (!Array.isArray(mark)) continue;
@@ -6779,8 +6789,20 @@
         if (visibleText(model, unit).slice(v0, v1) !== model.source.slice(start, end)) continue;
         decorations.push(...wrapVisible(unit.el, v0, v1, "mk-flow-settled"));
       }
-      settle = { serial, v: version, caret: selection.head, decorations };
+      settle = { serial, v: version, caret: selection.head, decorations, revertible };
       setSelection(selection.head, selection.head, { reveal: false });
+      return revertible;
+    }
+
+    /// The app could not take the fix back (it changed since, or its undo step is no longer the
+    /// last): ⌫ deletes as it would have without the fix, unless the text or caret moved meanwhile.
+    function revertRefused(serial) {
+      const request = revertRequest;
+      revertRequest = null;
+      if (!request || request.serial !== serial || request.v !== version || composing || document.activeElement !== root) return;
+      const selection = readSelection();
+      if (!selection || selection.anchor !== request.anchor || selection.head !== request.head) return;
+      deleteWith({ getTargetRanges: () => [] }, selection, "deleteContentBackward");
     }
 
     function settleMatches() {
@@ -6836,8 +6858,11 @@
         label: message.label
       });
       if (!result || !result.applied) return;
-      if (message.settle && document.activeElement === root) {
-        showSettle(serial, result.from, Array.isArray(message.settle.marks) ? message.settle.marks : []);
+      if (message.settle) {
+        // The app says the fix aloud, with "Delete to undo" only when ⌫ will.
+        const revertible = document.activeElement === root
+          && showSettle(serial, result.from, Array.isArray(message.settle.marks) ? message.settle.marks : []);
+        report("settled", { serial, revertible: Boolean(revertible) });
       } else if (Array.isArray(message.flash)) {
         flash(result.from + Number(message.flash[0]), Number(message.flash[1]));
       }
@@ -6877,6 +6902,9 @@
           return;
         case "apply":
           applyFromApp(message);
+          return;
+        case "revertRefused":
+          revertRefused(message.serial);
           return;
         default:
       }
@@ -6925,10 +6953,12 @@
         return true;
       }
       if (settle) {
-        if (key === "Backspace" && plain && settleMatches()) {
+        if (key === "Backspace" && plain && settle.revertible && settleMatches()) {
           event.preventDefault();
           const serial = settle.serial;
+          const caret = settle.caret;
           clearSettle();
+          revertRequest = { serial, v: version, anchor: caret, head: caret };
           report("revert", { serial });
           return true;
         }
@@ -7010,6 +7040,7 @@
     function afterEdit(op) {
       const pending = carry;
       carry = null;
+      revertRequest = null;
       if (settle) {
         const current = settle;
         settle = null;
@@ -7118,6 +7149,7 @@
       ghost = null;
       settle = null;
       carry = null;
+      revertRequest = null;
     }
 
     function state() {
@@ -7125,7 +7157,7 @@
         spellcheck,
         review: review ? { serial: review.serial, index: review.index, variants: review.variants.length, rendered: review.rendered } : null,
         ghost: ghost ? { serial: ghost.serial, at: ghost.at, text: ghost.text, rendered: ghost.rendered } : null,
-        settle: settle ? { serial: settle.serial, caret: settle.caret } : null
+        settle: settle ? { serial: settle.serial, caret: settle.caret, revertible: settle.revertible } : null
       };
     }
 
