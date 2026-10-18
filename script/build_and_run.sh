@@ -450,6 +450,7 @@ APP_SOURCES=(
   "Sources/Monknot/Views/MarkdownOutlineRail.swift"
   "Sources/Monknot/Views/MonknotCommandOverlay.swift"
   "Sources/Monknot/Views/MarkdownPDFExportOptionsSheet.swift"
+  "Sources/Monknot/Views/MarkdownPreviewFlow.swift"
   "Sources/Monknot/Views/MarkdownPreviewView.swift"
   "Sources/Monknot/Views/MarkdownVisualEditing.swift"
   "Sources/Monknot/Views/MarkdownSymbolQuickOpenView.swift"

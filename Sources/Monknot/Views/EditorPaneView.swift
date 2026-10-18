@@ -615,7 +615,8 @@ struct EditorPaneView: View {
             wikilinkDocuments: store.markdownDocuments,
             createPage: { [store] name in
                 try await store.createPage(named: name, besideDocumentAt: URL(fileURLWithPath: documentID))
-            }
+            },
+            textCheckingOptions: textCheckingOptions
         )
     }
 

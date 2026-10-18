@@ -647,6 +647,23 @@ extension EditorFlowSuggestion {
         return highlights
     }
 
+    /// What VoiceOver says once the correction is in.
+    var settlementAnnouncement: String {
+        guard displayChanges.count == 1, let change = displayChanges.first else {
+            return "Applied \(displayChanges.count) corrections. Delete to undo."
+        }
+        let original = change.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let replacement = change.replacementText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if original.isEmpty, replacement.isEmpty {
+            return "Adjusted spacing. Delete to undo."
+        } else if replacement.isEmpty {
+            return "Removed \(original). Delete to undo."
+        } else if original.isEmpty {
+            return "Inserted \(replacement). Delete to undo."
+        }
+        return "Corrected \(original) to \(replacement). Delete to undo."
+    }
+
     /// The word nearest a deletion at `location` (sentence offsets), and which of its edges faces
     /// the removed text.
     static func deletionAnchor(
@@ -6312,22 +6329,7 @@ class MarkdownNSTextView: NSTextView {
         )
         let ranges = highlights.map(\.range)
         let deletionCollapses = highlights.compactMap(\.deletionCollapse)
-        let announcement: String
-        if suggestion.displayChanges.count == 1, let change = suggestion.displayChanges.first {
-            let original = change.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
-            let replacement = change.replacementText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if original.isEmpty, replacement.isEmpty {
-                announcement = "Adjusted spacing. Delete to undo."
-            } else if replacement.isEmpty {
-                announcement = "Removed \(original). Delete to undo."
-            } else if original.isEmpty {
-                announcement = "Inserted \(replacement). Delete to undo."
-            } else {
-                announcement = "Corrected \(original) to \(replacement). Delete to undo."
-            }
-        } else {
-            announcement = "Applied \(suggestion.displayChanges.count) corrections. Delete to undo."
-        }
+        let announcement = suggestion.settlementAnnouncement
         flowSettlement = EditorFlowSettlement(
             resultingText: string,
             selectedRange: selectedRange(),

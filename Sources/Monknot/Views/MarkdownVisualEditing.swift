@@ -122,7 +122,8 @@ struct MarkdownVisualFormattingState: Equatable {
 /// One patch the visual editor applied to the Markdown source.
 struct MarkdownVisualEditorChange: Equatable {
     enum Kind: String {
-        case typing, delete, enter, format, paste, undo, redo, external, remote
+        /// `flow`: a writing-assistance fix or completion the user took; one undo step of its own.
+        case typing, delete, enter, format, paste, undo, redo, external, remote, flow
 
         /// Changes the app itself asked for; they never become new undo steps.
         var isReplay: Bool {
@@ -330,6 +331,8 @@ struct MarkdownVisualEditingConfiguration {
     let wikilinkDocuments: [WorkspaceDocument]
     /// Creates the Page block's Markdown file from its name and returns its URL.
     var createPage: ((String) async throws -> URL)? = nil
+    /// The writing-assistance settings, which Preview follows as Source does.
+    var textCheckingOptions = EditorTextCheckingOptions.defaultValue
 }
 
 /// What the Image, Video, Audio and File blocks ask the user to pick.

@@ -2932,7 +2932,7 @@
     unacknowledged = [];
     document.documentElement.classList.add("mk-editing");
     root.setAttribute("contenteditable", "true");
-    root.setAttribute("spellcheck", "true");
+    root.setAttribute("spellcheck", Flow.spellcheck ? "true" : "false");
     root.setAttribute("role", "textbox");
     root.setAttribute("aria-multiline", "true");
     root.setAttribute("aria-label", "Document");
@@ -2943,6 +2943,7 @@
     listen(root, "beforeinput", onBeforeInput);
     listen(root, "input", onInput);
     listen(root, "keydown", onKeyDown);
+    listen(root, "keyup", onKeyUp);
     listen(root, "compositionstart", onCompositionStart);
     listen(root, "compositionend", onCompositionEnd);
     listen(root, "paste", onPaste);
@@ -2953,15 +2954,22 @@
     listen(root, "mousedown", onMouseDown);
     listen(root, "mouseup", onMouseUp);
     listen(root, "click", onClick);
-    listen(root, "focus", () => scheduleSelectionReport());
+    listen(root, "focus", () => {
+      post({ type: "focus", focused: true });
+      scheduleSelectionReport();
+    });
     listen(root, "blur", onBlur);
     listen(document, "selectionchange", scheduleSelectionReport);
     listen(document, "keydown", onDocumentKeyDown, true);
     listen(document, "keyup", onDocumentKeyUp, true);
-    listen(window, "resize", () => UI.reposition());
+    listen(window, "resize", () => {
+      UI.reposition();
+      Flow.onResize();
+    });
     listen(window, "scroll", () => {
       UI.reposition();
       Handles.update();
+      Flow.onScroll();
     }, { passive: true });
     listen(document, "mousemove", Handles.onPointerMove, { passive: true });
     listen(document.documentElement, "mouseleave", () => Handles.hide());
@@ -2975,7 +2983,7 @@
       setSelection(payload.selection.anchor, payload.selection.head, { reveal: false });
     }
     if (payload.focus) focus();
-    post({ type: "ready", v: version });
+    post({ type: "ready", v: version, focused: document.activeElement === root });
   }
 
   function deactivate() {
@@ -2983,6 +2991,7 @@
     Handles.cancelDrag();
     Handles.hide();
     UI.closeAll();
+    Flow.forget();
     while (listeners.length) listeners.pop()();
     if (root) {
       root.removeAttribute("contenteditable");
@@ -3488,6 +3497,7 @@
       coalesce: Boolean(coalesce),
       label: op.label || meta.label || ""
     });
+    Flow.afterEdit(op);
     UI.afterEdit(op);
     scheduleSelectionReport();
     return true;
@@ -3600,6 +3610,7 @@
       }
       pendingMarks = null;
     }
+    if (typing) Flow.prepareCarry(selection, text, op);
     apply(op);
     UI.afterTyping(text);
   }
@@ -3701,6 +3712,7 @@
   }
 
   function onCompositionStart() {
+    Flow.compositionStarted();
     const selection = readSelection();
     if (selection && selection.from !== selection.to) {
       const first = unitAt(model, selection.from, "right");
@@ -3776,6 +3788,7 @@
     if (!active) return;
     if (!["Meta", "Shift", "Alt", "Control", "CapsLock"].includes(event.key)) Handles.suppress();
     if (UI.handleKeyDown(event)) return;
+    if (Flow.handleKeyDown(event)) return;
     const mod = event.metaKey && !event.ctrlKey;
     const key = event.key;
     if (mod && event.shiftKey && !event.altKey && (key === "ArrowUp" || key === "ArrowDown")) {
@@ -3847,6 +3860,11 @@
     if ((key === "ArrowDown" || key === "ArrowRight") && !event.shiftKey && !mod) {
       if (createLineAfterLastStructuralBlock(key)) event.preventDefault();
     }
+  }
+
+  function onKeyUp(event) {
+    if (!active) return;
+    Flow.handleKeyUp(event);
   }
 
   function tab(backward) {
@@ -4051,6 +4069,7 @@
     if (pendingMarks && lastSelection && (selection.head !== lastSelection.head || selection.from !== selection.to)) pendingMarks = null;
     lastSelection = selection;
     markCurrentUnit(selection);
+    Flow.selectionChanged(selection);
     const unit = unitAt(model, selection.head, "left");
     const state = inlineState(model, selection);
     for (const style of pendingMarks || []) state[style] = !state[style];
@@ -4064,6 +4083,8 @@
       code: state.code,
       link: Boolean(state.link),
       canFormat: Boolean(unit && unit.kind === "inline"),
+      v: version,
+      focused: document.activeElement === root,
       selectedMarkdown: selection.from === selection.to ? "" : model.source.slice(selection.from, Math.min(selection.to, selection.from + 4000))
     };
     UI.selectionChanged(selection, unit, state, report);
@@ -4084,6 +4105,8 @@
   }
 
   function onBlur() {
+    Flow.blur();
+    post({ type: "focus", focused: false });
     currentUnitElement?.classList.remove("mk-current");
     currentUnitElement = null;
     window.setTimeout(() => {
@@ -4094,6 +4117,7 @@
   // Mouse ---------------------------------------------------------------
 
   function onMouseDown(event) {
+    Flow.pointerDown();
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
     const checkbox = target.closest('input[type="checkbox"][data-monknot-task]');
@@ -4336,12 +4360,13 @@
       remote: true,
       reason: payload.reason || "remote",
       kind: payload.reason || "remote",
+      label: typeof payload.label === "string" ? payload.label : "",
       coalesce: false,
       group: ++groupSequence,
       selectionBefore: keepSelection || undefined,
       selection: payload.reason === "external" ? (document.activeElement === root) : true
     });
-    return { applied };
+    return { applied, from };
   }
 
   function reset(payload) {
@@ -6370,7 +6395,747 @@
       closeAll,
       reposition,
       showWikilinks,
-      get blockMenuOpen() { return Boolean(blockMenu && blockMenu.isOpen); }
+      get blockMenuOpen() { return Boolean(blockMenu && blockMenu.isOpen); },
+      get anyMenuOpen() {
+        if (!slashMenu) return false;
+        return [slashMenu, wikilinkMenu, blockMenu, turnIntoMenu, calloutMenu, languageMenu, tableMenu].some((menu) => menu.isOpen)
+          || linkEditor.classList.contains("mk-visible");
+      }
+    };
+  })();
+
+  // =====================================================================
+  // Writing assistance
+  //
+  // The app checks the sentence before the caret with macOS spelling and grammar, and with Apple's
+  // on-device model when the user allows it, exactly as Source does. It decides; the page only
+  // shows what it sends (a reviewed correction in place of the words it changes, a completion after
+  // the caret, the shimmer of a fix just applied) and reports the keys that act on them. What the
+  // user takes arrives as an ordinary source patch, so nothing reaches the file that the page did
+  // not show. Everything drawn here is a skipped, non-editable element or a wrapper around existing
+  // text, which the text model never sees, and it comes out again before the next edit.
+  // =====================================================================
+
+  const Flow = (() => {
+    const TAB_HOLD_MS = 350;
+    const WRAP = "data-mk-flow-wrap";
+    const MODIFIER_KEYS = new Set(["Meta", "Shift", "Alt", "Control", "CapsLock", "Fn"]);
+    let spellcheck = true;
+    // A reviewed correction: { serial, v, caret, sentence, variants, index, decorations, rendered }.
+    let review = null;
+    // A completion after the caret: { serial, v, at, text, element, rendered }.
+    let ghost = null;
+    // A fix just applied, which ⌫ right after it takes back: { serial, v, caret, decorations }.
+    let settle = null;
+    // A held Tab: { serial, armed, timer }; armed until it is released or held past 350 ms.
+    let tab = null;
+    // A keystroke that types what the completion shows, or a space after the reviewed sentence.
+    let carry = null;
+    let scrollFrame = 0;
+
+    function report(action, fields = {}) {
+      post({ type: "flow", action, ...fields });
+    }
+
+    function configure(message) {
+      spellcheck = message.spellcheck !== false;
+      if (root) root.setAttribute("spellcheck", spellcheck ? "true" : "false");
+    }
+
+    // Drawing in the text ------------------------------------------------
+
+    /// The unit's text nodes with their visible offsets, counted as `visibleOffsetOf` counts them.
+    function textNodesOf(unitElement) {
+      const nodes = [];
+      let position = 0;
+      const visit = (node) => {
+        if (node.nodeType === TEXT) {
+          nodes.push({ node, start: position, end: position + node.data.length });
+          position += node.data.length;
+          return;
+        }
+        if (node.nodeType !== ELEMENT || isSkipped(node, unitElement)) return;
+        if (node !== unitElement && isAtom(node)) {
+          position += 1;
+          return;
+        }
+        for (const child of Array.from(node.childNodes)) visit(child);
+      };
+      visit(unitElement);
+      return nodes;
+    }
+
+    /// Wraps the unit's visible text [v0, v1) in spans of `className`, one per text node it crosses.
+    function wrapVisible(unitElement, v0, v1, className) {
+      const wrappers = [];
+      if (!(v1 > v0)) return wrappers;
+      for (const entry of textNodesOf(unitElement)) {
+        const from = Math.max(v0, entry.start);
+        const to = Math.min(v1, entry.end);
+        if (from >= to) continue;
+        let node = entry.node;
+        if (from > entry.start) node = node.splitText(from - entry.start);
+        if (to - from < node.data.length) node.splitText(to - from);
+        const wrapper = document.createElement("span");
+        wrapper.className = className;
+        wrapper.setAttribute(WRAP, "");
+        node.parentNode.insertBefore(wrapper, node);
+        wrapper.appendChild(node);
+        wrappers.push(wrapper);
+      }
+      return wrappers;
+    }
+
+    /// Puts `element` at a visible offset, after the text before it (inside bold text that ends
+    /// there, as typing would continue it).
+    function insertAtVisible(unitElement, v, element) {
+      const point = domPointAt(unitElement, v, "left");
+      if (!point || !point.node) return false;
+      const { node, offset } = point;
+      if (node.nodeType === TEXT) {
+        if (offset <= 0) node.parentNode.insertBefore(element, node);
+        else if (offset >= node.data.length) node.parentNode.insertBefore(element, node.nextSibling);
+        else node.parentNode.insertBefore(element, node.splitText(offset));
+      } else {
+        node.insertBefore(element, node.childNodes[offset] || null);
+      }
+      return true;
+    }
+
+    function skipElement(className, text) {
+      const element = document.createElement("span");
+      element.className = className;
+      element.setAttribute("contenteditable", "false");
+      element.setAttribute("data-mk-skip", "");
+      if (text) element.textContent = text;
+      return element;
+    }
+
+    /// The shortcut hint after a suggestion: each key on a cap with its action beside it.
+    function hintElement(groups, trailing) {
+      const element = skipElement("mk-flow-hint", "");
+      element.setAttribute("aria-hidden", "true");
+      for (const [key, action] of groups) {
+        const group = document.createElement("span");
+        group.className = "mk-flow-hint-group";
+        const cap = document.createElement("kbd");
+        cap.textContent = key;
+        group.append(cap, document.createTextNode(action));
+        element.appendChild(group);
+      }
+      if (trailing) {
+        const extra = document.createElement("span");
+        extra.className = "mk-flow-hint-group";
+        extra.textContent = trailing;
+        element.appendChild(extra);
+      }
+      return element;
+    }
+
+    /// Takes drawn elements out again and unwraps wrapped text, keeping the caret where it was.
+    function undecorate(decorations) {
+      const connected = (decorations || []).filter((element) => element && element.isConnected);
+      if (!connected.length) return;
+      const keep = document.activeElement === root ? readSelection() : null;
+      const parents = new Set();
+      for (const element of connected) {
+        const parent = element.parentNode;
+        if (!parent) continue;
+        if (element.hasAttribute(WRAP)) {
+          while (element.firstChild) parent.insertBefore(element.firstChild, element);
+        }
+        element.remove();
+        parents.add(parent);
+      }
+      for (const parent of parents) {
+        if (parent.isConnected) parent.normalize();
+      }
+      if (keep) setSelection(keep.anchor, keep.head, { reveal: false });
+    }
+
+    /// Runs once what was just drawn has reached the screen: after the next frame, or after a
+    /// tenth of a second where the page gets no frames (a window behind others).
+    function afterPaint(callback) {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        callback();
+      };
+      window.requestAnimationFrame(() => window.requestAnimationFrame(finish));
+      window.setTimeout(finish, 100);
+    }
+
+    function rectInView(rect) {
+      if (!rect || (!rect.width && !rect.height)) return false;
+      return rect.top >= -1 && rect.left >= -1
+        && rect.bottom <= window.innerHeight + 1
+        && rect.right <= document.documentElement.clientWidth + 1;
+    }
+
+    function caretInView() {
+      const rect = caretRect();
+      return Boolean(rect) && rect.bottom > 0 && rect.top < window.innerHeight;
+    }
+
+    function collapsedAt(position) {
+      const selection = readSelection();
+      return Boolean(selection && selection.from === selection.to && selection.head === position);
+    }
+
+    /// A suggestion shows only for the text and caret it was made for, with the text focused and
+    /// no menu over it.
+    function canPresent(v, caret) {
+      return Boolean(active && model && !composing && v === version && document.activeElement === root
+        && !UI.anyMenuOpen && !Handles.dragging && collapsedAt(caret));
+    }
+
+    // A reviewed correction ----------------------------------------------
+
+    function showReview(message) {
+      dropPresentation();
+      clearSettle();
+      const target = {
+        serial: message.serial,
+        v: message.v,
+        caret: Number(message.caret),
+        sentence: Array.isArray(message.sentence) ? message.sentence.map(Number) : [0, 0],
+        variants: Array.isArray(message.variants) ? message.variants : [],
+        index: Number(message.index) || 0,
+        decorations: [],
+        rendered: false
+      };
+      review = target;
+      if (!drawReview(target)) {
+        review = null;
+        report("unrendered", { serial: target.serial });
+        return;
+      }
+      afterPaint(() => {
+        if (review === target) target.rendered = true;
+      });
+    }
+
+    /// Draws the corrected sentence over the original: each changed word hidden and its
+    /// replacement shown in its place, highlighted, with the hint after the sentence.
+    function drawReview(target) {
+      if (!canPresent(target.v, target.caret) || !caretInView()) return false;
+      const [from, to] = target.sentence;
+      const unit = unitAt(model, from, "right");
+      if (!unit || unit !== unitAt(model, to, "left") || unit.kind !== "inline" || !unit.el || !unit.el.isConnected) return false;
+      const variant = target.variants[target.index];
+      if (!variant || !Array.isArray(variant.changes) || !variant.changes.length) return false;
+      const visible = visibleText(model, unit);
+      // A visible range for source [start, end), or null where markup sits inside it.
+      const span = (start, end) => {
+        const v0 = rawToVisible(model, unit, start, "right");
+        const v1 = end > start ? rawToVisible(model, unit, end, "left") : v0;
+        return visible.slice(v0, v1) === model.source.slice(start, end) ? [v0, v1] : null;
+      };
+      const steps = [];
+      for (const change of variant.changes) {
+        const hidden = span(Number(change.from), Number(change.to));
+        if (!hidden) return false;
+        let mark = null;
+        if (Array.isArray(change.mark)) {
+          mark = span(Number(change.mark[0]), Number(change.mark[1]));
+          if (!mark) return false;
+        }
+        steps.push({ hidden, insert: typeof change.insert === "string" ? change.insert : "", mark });
+      }
+      const decorations = [];
+      const groups = target.variants.length > 1
+        ? [["⇥", "apply"], ["→", "next"], ["Esc", "dismiss"]]
+        : [["⇥", "apply"], ["Esc", "dismiss"]];
+      const hint = hintElement(groups);
+      if (insertAtVisible(unit.el, rawToVisible(model, unit, to, "left"), hint)) decorations.push(hint);
+      for (const step of steps) {
+        const wrappers = wrapVisible(unit.el, step.hidden[0], step.hidden[1], "mk-flow-hidden");
+        decorations.push(...wrappers);
+        if (step.insert) {
+          const inserted = skipElement("mk-flow-insert", step.insert);
+          if (wrappers.length) wrappers[0].before(inserted);
+          else insertAtVisible(unit.el, step.hidden[0], inserted);
+          decorations.push(inserted);
+        }
+        if (step.mark) decorations.push(...wrapVisible(unit.el, step.mark[0], step.mark[1], "mk-flow-mark"));
+      }
+      target.decorations = decorations;
+      setSelection(target.caret, target.caret, { reveal: false });
+      return true;
+    }
+
+    /// → shows the next of Apple's alternatives for the same word.
+    function cycleReview() {
+      const target = review;
+      if (!target || target.variants.length < 2) return false;
+      undecorate(target.decorations);
+      target.decorations = [];
+      target.index = (target.index + 1) % target.variants.length;
+      if (!drawReview(target)) {
+        review = null;
+        report("cancel", { serial: target.serial, scope: "repair" });
+      }
+      return true;
+    }
+
+    function reviewAcceptable() {
+      return Boolean(review && review.rendered && version === review.v && document.activeElement === root
+        && review.decorations.some((element) => element.isConnected) && collapsedAt(review.caret));
+    }
+
+    // A completion after the caret -----------------------------------------
+
+    function showGhost(message) {
+      dropPresentation();
+      clearSettle();
+      const target = {
+        serial: message.serial,
+        v: message.v,
+        at: Number(message.at),
+        text: typeof message.text === "string" ? message.text : "",
+        element: null,
+        rendered: false
+      };
+      ghost = target;
+      if (!drawGhost(target)) {
+        ghost = null;
+        report("unrendered", { serial: target.serial });
+        return;
+      }
+      // A remainder the user already saw takes Tab at once, as in Source.
+      if (message.rendered === true) {
+        target.rendered = true;
+        return;
+      }
+      afterPaint(() => {
+        if (ghost === target) target.rendered = true;
+      });
+    }
+
+    function drawGhost(target) {
+      if (!target.text || /[\r\n]/.test(target.text) || !canPresent(target.v, target.at)) return false;
+      const unit = unitAt(model, target.at, "left");
+      if (!unit || unit.kind !== "inline" || !unit.el || !unit.el.isConnected || insideCode(target.at)) return false;
+      const element = skipElement("mk-flow-ghost", "");
+      element.setAttribute("aria-hidden", "true");
+      const text = document.createElement("span");
+      text.className = "mk-flow-ghost-text";
+      text.textContent = target.text;
+      element.append(text, hintElement([["⇥", "word"]], "· hold for all"));
+      if (!insertAtVisible(unit.el, rawToVisible(model, unit, target.at, "left"), element)) return false;
+      if (!rectInView(text.getBoundingClientRect())) {
+        undecorate([element]);
+        return false;
+      }
+      target.element = element;
+      setSelection(target.at, target.at, { reveal: false });
+      return true;
+    }
+
+    function ghostAcceptable() {
+      if (!ghost || !ghost.rendered || !ghost.element || !ghost.element.isConnected) return false;
+      if (version !== ghost.v || document.activeElement !== root || !collapsedAt(ghost.at)) return false;
+      const text = ghost.element.querySelector(".mk-flow-ghost-text");
+      return Boolean(text) && rectInView(text.getBoundingClientRect());
+    }
+
+    function armTab(target) {
+      tab = {
+        serial: target.serial,
+        armed: true,
+        timer: window.setTimeout(() => {
+          if (!tab || !tab.armed || tab.serial !== target.serial) return;
+          tab.armed = false;
+          if (ghost !== target) return;
+          report("accept", { kind: "completion", serial: target.serial, text: target.text, nextWordOnly: false });
+        }, TAB_HOLD_MS)
+      };
+    }
+
+    // A fix just applied -----------------------------------------------------
+
+    /// Highlights the corrected words (a shimmer that settles) and shows ⌫ undo at the caret.
+    function showSettle(serial, from, marks) {
+      clearSettle();
+      const selection = readSelection();
+      if (!selection || selection.from !== selection.to) return;
+      const decorations = [];
+      const caretUnit = unitAt(model, selection.head, "left");
+      if (caretUnit && caretUnit.el && caretUnit.kind === "inline") {
+        const hint = hintElement([["⌫", "undo"]]);
+        if (insertAtVisible(caretUnit.el, rawToVisible(model, caretUnit, selection.head, "left"), hint)) decorations.push(hint);
+      }
+      for (const mark of marks) {
+        if (!Array.isArray(mark)) continue;
+        const start = from + Number(mark[0]);
+        const end = start + Number(mark[1]);
+        if (!(start >= 0 && end > start && end <= model.source.length)) continue;
+        const unit = unitAt(model, start, "right");
+        if (!unit || unit !== unitAt(model, end, "left") || !unit.el) continue;
+        const v0 = rawToVisible(model, unit, start, "right");
+        const v1 = rawToVisible(model, unit, end, "left");
+        if (visibleText(model, unit).slice(v0, v1) !== model.source.slice(start, end)) continue;
+        decorations.push(...wrapVisible(unit.el, v0, v1, "mk-flow-settled"));
+      }
+      settle = { serial, v: version, caret: selection.head, decorations };
+      setSelection(selection.head, selection.head, { reveal: false });
+    }
+
+    function settleMatches() {
+      return Boolean(settle && settle.v === version && collapsedAt(settle.caret));
+    }
+
+    function clearSettle() {
+      if (!settle) return;
+      const current = settle;
+      settle = null;
+      undecorate(current.decorations);
+    }
+
+    /// The words a completion just inserted fade from a tint.
+    function flash(start, length) {
+      const end = start + length;
+      if (!(length > 0 && start >= 0 && end <= model.source.length)) return;
+      const unit = unitAt(model, start, "right");
+      if (!unit || unit !== unitAt(model, end, "left") || !unit.el) return;
+      const keep = readSelection();
+      const v0 = rawToVisible(model, unit, start, "right");
+      const v1 = rawToVisible(model, unit, end, "left");
+      const wrappers = wrapVisible(unit.el, v0, v1, "mk-flow-flash");
+      if (!wrappers.length) return;
+      if (keep) setSelection(keep.anchor, keep.head, { reveal: false });
+      window.setTimeout(() => undecorate(wrappers), 600);
+    }
+
+    // What the app sends ------------------------------------------------------
+
+    function applyFromApp(message) {
+      const serial = message.serial;
+      if (composing
+        || (message.requireVisible && (document.activeElement !== root || UI.anyMenuOpen || !caretInView()))) {
+        report("declined", { serial });
+        return;
+      }
+      const result = applyRemote({
+        base: message.base,
+        from: message.from,
+        to: message.to,
+        expected: message.expected,
+        insert: message.insert,
+        selection: message.selection,
+        reason: "flow",
+        label: message.label
+      });
+      if (!result || !result.applied) return;
+      if (message.settle && document.activeElement === root) {
+        showSettle(serial, result.from, Array.isArray(message.settle.marks) ? message.settle.marks : []);
+      } else if (Array.isArray(message.flash)) {
+        flash(result.from + Number(message.flash[0]), Number(message.flash[1]));
+      }
+    }
+
+    function clearFromApp(scope) {
+      if (scope === "settle") {
+        clearSettle();
+        return;
+      }
+      if (scope === "completion") {
+        if (!ghost) return;
+        const current = ghost;
+        ghost = null;
+        undecorate([current.element]);
+        return;
+      }
+      dropPresentation();
+    }
+
+    function receive(message) {
+      if (!message) return;
+      if (message.type === "configure") {
+        configure(message);
+        return;
+      }
+      if (!active || !model) return;
+      switch (message.type) {
+        case "review":
+          showReview(message);
+          return;
+        case "ghost":
+          showGhost(message);
+          return;
+        case "clear":
+          clearFromApp(message.scope);
+          return;
+        case "apply":
+          applyFromApp(message);
+          return;
+        default:
+      }
+    }
+
+    // What the user does ------------------------------------------------------
+
+    /// Takes the review or completion off the page without telling the app.
+    function dropPresentation() {
+      if (tab) {
+        window.clearTimeout(tab.timer);
+        tab.armed = false;
+      }
+      if (review) {
+        const current = review;
+        review = null;
+        undecorate(current.decorations);
+      }
+      if (ghost) {
+        const current = ghost;
+        ghost = null;
+        undecorate([current.element]);
+      }
+    }
+
+    function cancel(scope) {
+      const current = review || ghost;
+      if (!current) return;
+      dropPresentation();
+      report("cancel", { serial: current.serial, scope });
+    }
+
+    function isTypedCharacter(event) {
+      return !event.metaKey && !event.ctrlKey && !event.altKey && Array.from(event.key).length === 1;
+    }
+
+    /// Keys that act on what is shown: ⇥ applies a review or takes the completion's next word
+    /// (held, all of it), → shows the next alternative, Esc dismisses, ⌫ right after a fix takes it
+    /// back. With nothing shown, every key keeps its own meaning.
+    function handleKeyDown(event) {
+      const key = event.key;
+      const plain = !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
+      if (key === "Tab" && tab) {
+        // A held Tab and its repeats belong to the suggestion it took.
+        event.preventDefault();
+        return true;
+      }
+      if (settle) {
+        if (key === "Backspace" && plain && settleMatches()) {
+          event.preventDefault();
+          const serial = settle.serial;
+          clearSettle();
+          report("revert", { serial });
+          return true;
+        }
+        if (!MODIFIER_KEYS.has(key)) clearSettle();
+      }
+      if (!review && !ghost) return false;
+      if (key === "ArrowRight" && plain && review && review.variants.length > 1) {
+        event.preventDefault();
+        cycleReview();
+        return true;
+      }
+      if (key === "Tab" && plain) {
+        if (review) {
+          if (reviewAcceptable()) {
+            event.preventDefault();
+            tab = { serial: review.serial, armed: false, timer: 0 };
+            report("accept", { kind: "repair", serial: review.serial, variant: review.index });
+            return true;
+          }
+          // Not drawn yet: Tab does what it would have done.
+          cancel("repair");
+          return false;
+        }
+        if (event.repeat) {
+          event.preventDefault();
+          return true;
+        }
+        if (ghostAcceptable()) {
+          event.preventDefault();
+          armTab(ghost);
+          return true;
+        }
+        cancel("completion");
+        return false;
+      }
+      if (key === "Escape" && plain) {
+        event.preventDefault();
+        const serial = (review || ghost).serial;
+        dropPresentation();
+        report("dismiss", { serial });
+        return true;
+      }
+      if (MODIFIER_KEYS.has(key)) return false;
+      // A space right after the reviewed sentence keeps it; typing what the completion shows
+      // keeps the rest of it. Both are settled once the edit is made.
+      if (key === " " && plain && review) return false;
+      if (ghost && !review && isTypedCharacter(event) && ghost.text.startsWith(key)) return false;
+      cancel("focus");
+      return false;
+    }
+
+    function handleKeyUp(event) {
+      if (event.key !== "Tab" || !tab) return false;
+      event.preventDefault();
+      const current = tab;
+      tab = null;
+      window.clearTimeout(current.timer);
+      if (current.armed && ghost && ghost.serial === current.serial) {
+        report("accept", { kind: "completion", serial: current.serial, text: ghost.text, nextWordOnly: true });
+      }
+      return true;
+    }
+
+    /// Called just before a typed insertion is applied.
+    function prepareCarry(selection, text, op) {
+      carry = null;
+      if (!op || selection.from !== selection.to || op.from !== selection.head || op.to !== selection.head || op.insert !== text) return;
+      if (ghost && ghost.v === version && ghost.at === selection.head
+        && ghost.text.length > text.length && ghost.text.startsWith(text)) {
+        carry = { kind: "ghost", serial: ghost.serial, at: selection.head, text, remainder: ghost.text.slice(text.length) };
+      } else if (review && text === " " && review.v === version
+        && review.caret === selection.head && review.sentence[1] === selection.head) {
+        carry = { kind: "review", serial: review.serial, at: selection.head };
+      }
+    }
+
+    /// After every edit: the page re-rendered the blocks it touched, so what was drawn there is
+    /// gone. A carried completion or review is drawn again for the new text; anything else goes.
+    function afterEdit(op) {
+      const pending = carry;
+      carry = null;
+      if (settle) {
+        const current = settle;
+        settle = null;
+        undecorate(current.decorations);
+      }
+      if (pending && pending.kind === "ghost" && ghost && ghost.serial === pending.serial
+        && op.from === pending.at && op.to === pending.at && op.insert === pending.text) {
+        const target = ghost;
+        undecorate([target.element]);
+        target.element = null;
+        target.at = pending.at + pending.text.length;
+        target.v = version;
+        target.text = pending.remainder;
+        target.rendered = false;
+        if (!drawGhost(target)) {
+          ghost = null;
+          report("unrendered", { serial: target.serial });
+          return;
+        }
+        afterPaint(() => {
+          if (ghost === target) target.rendered = true;
+        });
+        return;
+      }
+      if (pending && pending.kind === "review" && review && review.serial === pending.serial
+        && op.from === pending.at && op.to === pending.at && op.insert === " ") {
+        const target = review;
+        undecorate(target.decorations);
+        target.decorations = [];
+        target.v = version;
+        target.caret = pending.at + 1;
+        target.rendered = false;
+        if (!drawReview(target)) {
+          review = null;
+          report("unrendered", { serial: target.serial });
+          return;
+        }
+        afterPaint(() => {
+          if (review === target) target.rendered = true;
+        });
+        return;
+      }
+      dropPresentation();
+    }
+
+    /// A caret that moved away takes what was shown for the old one with it; the app hears of the
+    /// move from the selection report.
+    function selectionChanged(selection) {
+      if (!selection) return;
+      const collapsed = selection.from === selection.to;
+      if (settle && (!collapsed || selection.head !== settle.caret || version !== settle.v)) clearSettle();
+      if (review && (!collapsed || selection.head !== review.caret || version !== review.v)) dropPresentation();
+      if (ghost && (!collapsed || selection.head !== ghost.at || version !== ghost.v)) dropPresentation();
+    }
+
+    function pointerDown() {
+      clearSettle();
+      cancel("focus");
+    }
+
+    function compositionStarted() {
+      clearSettle();
+      cancel("focus");
+    }
+
+    function blur() {
+      if (tab) {
+        window.clearTimeout(tab.timer);
+        tab = null;
+      }
+      clearSettle();
+      dropPresentation();
+    }
+
+    /// A review whose sentence scrolls away, or a completion no longer wholly on screen, goes, as
+    /// in Source.
+    function onScroll() {
+      if ((!review && !ghost) || scrollFrame) return;
+      scrollFrame = window.setTimeout(() => {
+        scrollFrame = 0;
+        if (review && !caretInView()) {
+          cancel("repair");
+        } else if (ghost && ghost.element) {
+          const text = ghost.element.querySelector(".mk-flow-ghost-text");
+          if (!text || !rectInView(text.getBoundingClientRect())) cancel("completion");
+        }
+      }, 16);
+    }
+
+    /// A new width re-wraps what is shown; Tab waits until it has been drawn again.
+    function onResize() {
+      for (const target of [review, ghost]) {
+        if (!target) continue;
+        target.rendered = false;
+        afterPaint(() => {
+          if (target === review || target === ghost) target.rendered = true;
+        });
+      }
+    }
+
+    /// The page stops editing: its contents are replaced, so drop everything without drawing.
+    function forget() {
+      if (tab) window.clearTimeout(tab.timer);
+      tab = null;
+      review = null;
+      ghost = null;
+      settle = null;
+      carry = null;
+    }
+
+    function state() {
+      return {
+        spellcheck,
+        review: review ? { serial: review.serial, index: review.index, variants: review.variants.length, rendered: review.rendered } : null,
+        ghost: ghost ? { serial: ghost.serial, at: ghost.at, text: ghost.text, rendered: ghost.rendered } : null,
+        settle: settle ? { serial: settle.serial, caret: settle.caret } : null
+      };
+    }
+
+    return {
+      receive,
+      handleKeyDown,
+      handleKeyUp,
+      prepareCarry,
+      afterEdit,
+      selectionChanged,
+      pointerDown,
+      compositionStarted,
+      blur,
+      onScroll,
+      onResize,
+      forget,
+      state,
+      get spellcheck() { return spellcheck; }
     };
   })();
 
@@ -6384,6 +7149,8 @@
     reset,
     insertMarkdown: insertMarkdownAt,
     wikilinkSuggestions: (payload) => UI.showWikilinks(payload),
+    flow: (message) => Flow.receive(message),
+    flowState: () => Flow.state(),
     setIcons,
     sourceLineElements,
     selection: currentSelectionForApp,

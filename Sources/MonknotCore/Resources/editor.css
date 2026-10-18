@@ -985,6 +985,149 @@
   font: 400 calc(12px * var(--mk-tz)) / 1 ui-rounded, var(--ui-font);
 }
 
+/* ---------------------------------------------------------------------
+   Writing assistance (design.md §10.10): a reviewed correction drawn in
+   place of the words it changes, a completion after the caret, and the
+   shimmer of a fix just applied. Source's colours: changed words on the
+   page mixed toward the accent, a completion in the ink mixed toward it.
+   --------------------------------------------------------------------- */
+
+:root {
+  --mk-flow-mark: color-mix(in srgb, var(--accent) 18%, var(--bg));
+  --mk-flow-mark-peak: color-mix(in srgb, var(--accent) 34%, var(--bg));
+  --mk-flow-ink: color-mix(in srgb, var(--accent) 54%, var(--fg));
+  --mk-flow-key: color-mix(in srgb, var(--fg) 9%, var(--bg));
+}
+
+:root[data-theme="dark"] {
+  --mk-flow-mark: color-mix(in srgb, var(--accent) 24%, var(--bg));
+  --mk-flow-mark-peak: color-mix(in srgb, var(--accent) 44%, var(--bg));
+  --mk-flow-ink: color-mix(in srgb, var(--accent) 42%, var(--fg));
+  --mk-flow-key: color-mix(in srgb, var(--fg) 17%, var(--bg));
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --mk-flow-mark: color-mix(in srgb, var(--accent) 28%, var(--bg));
+  }
+
+  :root[data-theme="dark"] {
+    --mk-flow-mark: color-mix(in srgb, var(--accent) 34%, var(--bg));
+  }
+}
+
+/* The original words a reviewed correction replaces. */
+.mk-editing .mk-flow-hidden {
+  display: none;
+}
+
+/* Changed words: a mark (radius 2) that reaches 2 pt past the glyphs without moving them. */
+.mk-editing .mk-flow-insert,
+.mk-editing .mk-flow-mark,
+.mk-editing .mk-flow-settled,
+.mk-editing .mk-flow-flash {
+  margin: 0 calc(-2px * var(--mk-z));
+  padding: 0 calc(2px * var(--mk-z));
+  border-radius: calc(2px * var(--mk-z));
+  background: var(--mk-flow-mark);
+}
+
+.mk-editing .mk-flow-insert {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.mk-editing .mk-flow-settled {
+  animation: mk-flow-settle 1s ease-in-out;
+}
+
+@keyframes mk-flow-settle {
+  0% {
+    background-color: var(--mk-flow-mark);
+  }
+
+  22% {
+    background-color: var(--mk-flow-mark-peak);
+  }
+
+  100% {
+    background-color: var(--mk-flow-mark);
+  }
+}
+
+/* The words a completion just inserted fade from a tint. */
+.mk-editing .mk-flow-flash {
+  background: transparent;
+  animation: mk-flow-flash 520ms linear;
+}
+
+@keyframes mk-flow-flash {
+  from {
+    background-color: color-mix(in srgb, var(--mk-flow-ink) 16%, transparent);
+  }
+
+  to {
+    background-color: transparent;
+  }
+}
+
+.mk-editing .mk-flow-ghost {
+  color: color-mix(in srgb, var(--mk-flow-ink) 68%, transparent);
+  -webkit-user-select: none;
+  user-select: none;
+  pointer-events: none;
+  animation: mk-flow-reveal 180ms ease-out;
+}
+
+@keyframes mk-flow-reveal {
+  from {
+    opacity: 0.3;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* The shortcut hint after a suggestion: each key on a surf3 cap in 12 rounded (design.md §4.4),
+   the action beside it in 12 ink2. */
+.mk-editing .mk-flow-hint {
+  display: inline-flex;
+  align-items: baseline;
+  gap: calc(11px * var(--mk-z));
+  margin-left: calc(10px * var(--mk-z));
+  color: var(--mk-ink2);
+  font: 400 calc(12px * var(--mk-tz)) / 1 var(--ui-font);
+  font-style: normal;
+  letter-spacing: normal;
+  text-decoration: none;
+  white-space: nowrap;
+  -webkit-user-select: none;
+  user-select: none;
+  pointer-events: none;
+}
+
+.mk-editing .mk-flow-hint-group {
+  display: inline-flex;
+  align-items: baseline;
+  gap: calc(6px * var(--mk-z));
+}
+
+.mk-editing .mk-flow-hint kbd {
+  padding: calc(2px * var(--mk-z)) calc(6px * var(--mk-z));
+  border-radius: calc(6px * var(--mk-z));
+  background: var(--mk-flow-key);
+  color: var(--mk-ink);
+  font: 400 calc(12px * var(--mk-tz)) / 1 ui-rounded, var(--ui-font);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mk-editing .mk-flow-settled,
+  .mk-editing .mk-flow-ghost {
+    animation: none;
+  }
+}
+
 @media print {
   .mk-layer {
     display: none;

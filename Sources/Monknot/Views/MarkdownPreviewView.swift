@@ -160,7 +160,12 @@ struct MarkdownPreviewView: NSViewRepresentable {
         context.coordinator.setPendingSourceReveal(sourceLocation)
         context.coordinator.setPendingScrollPosition(scrollPosition, force: didChangeDocument)
         context.coordinator.applySyncScrollTargetLine(syncScrollTargetLine, in: webView)
-        context.coordinator.configureEditing(editing, documentID: documentID, in: webView)
+        context.coordinator.configureEditing(
+            editing,
+            documentID: documentID,
+            in: webView,
+            flowDependencies: context.environment.markdownPreviewFlowDependencies
+        )
 
         guard let service = context.coordinator.service else {
             webView.loadHTMLString(Self.errorHTML("Preview resources could not be loaded."), baseURL: nil)
@@ -476,22 +481,32 @@ struct MarkdownPreviewView: NSViewRepresentable {
         private var editor: EditorState?
         private weak var editorWebView: WKWebView?
         private var wikilinkTask: Task<Void, Never>?
+        /// Writing assistance while the page is editable (`MarkdownPreviewFlow.swift`).
+        private var flow: MarkdownPreviewFlowCoordinator?
 
         var isEditing: Bool { editor != nil }
 
         fileprivate func configureEditing(
             _ configuration: MarkdownVisualEditingConfiguration?,
             documentID: String,
-            in webView: WKWebView
+            in webView: WKWebView,
+            flowDependencies: MarkdownPreviewFlowDependencies = .system
         ) {
             editorWebView = webView
             guard let configuration else {
                 editor = nil
+                flow?.tearDown()
+                flow = nil
                 return
             }
             configuration.session.prepare(documentID: documentID)
             configuration.session.channel = self
             (webView as? MarkdownEditorWebView)?.visualEditingSession = configuration.session
+            let flow = self.flow ?? MarkdownPreviewFlowCoordinator(dependencies: flowDependencies)
+            flow.host = self
+            flow.prepare(documentID: documentID)
+            flow.configure(options: configuration.textCheckingOptions)
+            self.flow = flow
             if let editor, editor.documentID == documentID {
                 editor.configuration = configuration
             } else {
@@ -525,6 +540,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
             editor.acknowledged = 0
             editor.isReady = false
             editor.awaitingReset = nil
+            flow?.pageDidRender(text: request.markdown)
             if let webView = editorWebView {
                 sendEditorIcons(to: webView)
             }
@@ -607,6 +623,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         /// a version the two sides disagree on.
         private func resetEditor(in webView: WKWebView) {
             guard let editor else { return }
+            flow?.pageWillRender()
             let text = editor.configuration.currentText()
             editor.awaitingReset = text
             guard let json = try? WebViewBridge.literal(["text": text]) else { return }
@@ -631,6 +648,9 @@ struct MarkdownPreviewView: NSViewRepresentable {
             case "ready":
                 editor.isReady = true
                 editor.acknowledged = WebViewBridge.integer(body["v"]) ?? 0
+                if let focused = WebViewBridge.boolean(body["focused"]) {
+                    flow?.pageDidChangeFocus(focused)
+                }
             case "edit":
                 guard editor.awaitingReset == nil else { return }
                 guard let change = MarkdownVisualEditorChange.parse(body),
@@ -651,21 +671,29 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 editor.mirror = updated
                 editor.acknowledged = change.version
                 lastRenderedContent = PreviewContentRequest(documentID: editor.documentID, markdown: updated)
-                if change.kind == .external { return }
+                if change.kind == .external {
+                    flow?.pageDidChange(change, text: updated, version: change.version)
+                    return
+                }
                 guard editor.configuration.applyChange(change) else {
                     resetEditor(in: webView)
                     return
                 }
                 editor.configuration.session.record(change)
+                flow?.pageDidChange(change, text: updated, version: change.version)
             case "reset":
                 guard let text = editor.awaitingReset else { return }
                 editor.awaitingReset = nil
                 editor.mirror = text
                 editor.acknowledged = WebViewBridge.integer(body["v"]) ?? editor.acknowledged
                 lastRenderedContent = PreviewContentRequest(documentID: editor.documentID, markdown: text)
+                flow?.pageDidReset(text: text, version: editor.acknowledged)
             case "conflict":
                 if body["reason"] as? String == MarkdownVisualEditorChange.Kind.external.rawValue {
                     resetEditor(in: webView)
+                } else if body["reason"] as? String == MarkdownVisualEditorChange.Kind.flow.rawValue {
+                    // A fix or completion the text moved past; the writing assistance decides.
+                    flow?.pageDidRefuseApply()
                 } else {
                     NSSound.beep()
                 }
@@ -673,6 +701,15 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 guard let selection = MarkdownVisualEditorSelection(body) else { return }
                 editor.configuration.onSelectionChange(selection, (body["selectedMarkdown"] as? String) ?? "")
                 editor.configuration.onFormattingChange(MarkdownVisualFormattingState(body))
+                flow?.pageDidChangeSelection(
+                    selection,
+                    version: WebViewBridge.integer(body["v"]),
+                    focused: WebViewBridge.boolean(body["focused"])
+                )
+            case "focus":
+                flow?.pageDidChangeFocus(WebViewBridge.boolean(body["focused"]) ?? false)
+            case "flow":
+                flow?.handlePageMessage(body)
             case "undo":
                 let manager = editor.configuration.session.undoManager
                 if manager.canUndo { manager.undo() } else { NSSound.beep() }
@@ -943,6 +980,8 @@ struct MarkdownPreviewView: NSViewRepresentable {
             editor = nil
             wikilinkTask?.cancel()
             wikilinkTask = nil
+            flow?.tearDown()
+            flow = nil
         }
 
         func markShellNeedsReload() {
@@ -1397,6 +1436,17 @@ struct MarkdownPreviewView: NSViewRepresentable {
             }
             onVisibleSourceLineChange?(sourceLine)
         }
+    }
+}
+
+extension MarkdownPreviewView.Coordinator: MarkdownPreviewFlowHost {
+    var flowFocusView: NSView? { editorWebView }
+
+    var flowUndoManager: UndoManager? { editor?.configuration.session.undoManager }
+
+    func sendFlow(_ message: [String: Any]) {
+        guard let webView = editorWebView, let json = try? WebViewBridge.literal(message) else { return }
+        webView.evaluateJavaScript("window.MonknotEditor && window.MonknotEditor.flow && window.MonknotEditor.flow(\(json));")
     }
 }
 
