@@ -905,6 +905,10 @@ final class MarkdownPreviewFlowTests: WorkspaceStoreTestCase {
             defer: false
         )
         window.isReleasedWhenClosed = false
+        // AppKit animates a window's ordering on a GCD worker thread. With the screen locked the
+        // animation never ends, so every test window would hold a worker for good, and once the
+        // pool runs dry WebKit's page loads stall in later tests.
+        window.animationBehavior = .none
         let host = NSHostingView(rootView: PreviewFlowHarness(model: harness).frame(width: width, height: 700))
         host.frame = NSRect(x: 0, y: 0, width: width, height: 700)
         window.contentView = host

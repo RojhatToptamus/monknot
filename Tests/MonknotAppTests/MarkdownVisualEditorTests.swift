@@ -1059,6 +1059,9 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
             defer: false
         )
         window.isReleasedWhenClosed = false
+        // As in FlowEditorTestFixture: an animated order-front or close parks a GCD worker for good
+        // while the screen is locked, and enough of them stall WebKit's page loads.
+        window.animationBehavior = .none
         window.appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
         let host = NSHostingView(rootView: VisualEditorHarness(model: harness).frame(width: width, height: 700))
         host.frame = NSRect(x: 0, y: 0, width: width, height: 700)
