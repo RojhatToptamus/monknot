@@ -3,15 +3,17 @@ import MonknotCore
 import SwiftUI
 
 enum MonknotScrollbarStyle {
-    /// The lane a thumb sits in at a scroll view's trailing or bottom edge (design.md §5.7). With
-    /// "Show scroll bars: Always" a document reserves this lane, so text never runs under the thumb.
-    static let trackWidth: CGFloat = 11
+    /// The lane a thumb sits in, flush with a scroll view's trailing or bottom edge (design.md §5.7).
+    /// With "Show scroll bars: Always" a document reserves this lane, so text never runs under the
+    /// thumb.
+    static let trackWidth: CGFloat = 9
     /// The thumb is a slim capsule with no track. It rests quiet and widens and darkens under the
     /// pointer, so it is easy to grab with a mouse.
     static let restingThumbWidth: CGFloat = 4
     static let hoveredThumbWidth: CGFloat = 6
-    /// Where the thumb's centre sits, measured from the container's edge.
-    static let thumbCenterInset: CGFloat = 5
+    /// Where the thumb's centre sits, measured from the container's edge: the middle of the lane, so
+    /// a resting thumb is 2.5 from the edge, close to the divider beside it, and grows from there.
+    static let thumbCenterInset: CGFloat = trackWidth / 2
     static let restingOpacity: CGFloat = 0.25
     static let hoveredOpacity: CGFloat = 0.45
     /// The thumb's ends stay this far from the ends of a list or card, clear of its rounded corners.
@@ -66,8 +68,21 @@ enum MonknotScrollbarStyle {
         }
     }
 
+    /// Clears a thumb's ends of a card's rounded corners. A scroller is inset only along its length:
+    /// an inset across it (the right one for a vertical scroller) moves the whole lane off the edge,
+    /// leaving an unpainted strip between the thumb and the card's edge. With both scrollers, each
+    /// ends where the other's lane begins, so only their far ends are inset.
+    static func endInsets(hasVertical: Bool, hasHorizontal: Bool) -> NSEdgeInsets {
+        NSEdgeInsets(
+            top: hasVertical ? endInset : 0,
+            left: hasHorizontal ? endInset : 0,
+            bottom: hasVertical && !hasHorizontal ? endInset : 0,
+            right: hasHorizontal && !hasVertical ? endInset : 0
+        )
+    }
+
     private static func applyEndInsets(to scrollView: NSScrollView) {
-        let insets = NSEdgeInsets(top: endInset, left: endInset, bottom: endInset, right: endInset)
+        let insets = endInsets(hasVertical: scrollView.hasVerticalScroller, hasHorizontal: scrollView.hasHorizontalScroller)
         if !NSEdgeInsetsEqual(scrollView.scrollerInsets, insets) {
             scrollView.scrollerInsets = insets
         }
@@ -222,7 +237,7 @@ final class MonknotScroller: NSScroller {
     }
 
     /// The visible capsule inside AppKit's knob rect: centred `thumbCenterInset` from the container's
-    /// edge, so it rests 3 from the edge and grows from its centre under the pointer.
+    /// edge, so it rests 2.5 from the edge and grows from its centre under the pointer.
     static func thumbRect(knob: NSRect, bounds: NSRect, isVertical: Bool, isHovered: Bool) -> NSRect {
         let thickness = isHovered
             ? MonknotScrollbarStyle.hoveredThumbWidth

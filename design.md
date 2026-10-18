@@ -392,9 +392,11 @@ paragraphs of explanation and no decorative glyphs.
 trailing 30 push buttons, Cancel before the default action.
 
 **Scroll thumbs.** One thumb everywhere (`MonknotScrollbarStyle`): no track, a capsule 4pt wide at
-`ink` 25 % that grows from its centre to 6pt at 45 % under the pointer, its centre 5 from the
-container's edge (3 clear of it), its ends 6 clear of the lane's ends so it never runs into a card's
-rounded corner. It takes its colour from the theme's `ink`.
+`ink` 25 % that grows from its centre to 6pt at 45 % under the pointer, centred in a 9 lane flush
+with the container's edge (2.5 clear of it at rest, right against the divider beside it), its ends
+6 clear of the lane's ends so it never runs into a card's rounded corner. Only those ends are inset,
+never the lane: an inset across it would leave an unpainted strip between the thumb and the card's
+edge. It takes its colour from the theme's `ink`.
 
 - **Chrome lists** (sidebar, search results, palettes, panels, PDF navigator, diff panes, Settings)
   always overlay, whatever "Show scroll bars" says: the thumb appears only while the list scrolls,
@@ -402,7 +404,7 @@ rounded corner. It takes its colour from the theme's `ink`.
   thumb reads as a resize handle. A chrome list takes the thumb before its first layout, so
   no legacy bar flashes and nothing shifts sideways.
 - **Documents** follow the system setting, so side-by-side panes always behave alike. Overlay: the
-  thumb fades as the system's does. "Always": the same thumb stays in an 11 lane with no track —
+  thumb fades as the system's does. "Always": the same thumb stays in its 9 lane with no track —
   Source and PDF through `MonknotScroller`, Preview through `html.mk-legacy-scrollbars`
   (preview.css), which the page shell carries from its first paint, never WebKit's 17pt legacy bar.
   The lane stays laid out while the document fits, so text never rewraps when it grows past one
@@ -510,9 +512,10 @@ identical regardless of which symbol occupies it. Never rely on a symbol's own s
 
 ### 8.6 Optical adjustment
 
-Exactly two symbols need a nudge because their ink is off-centre in its box: `chevron.right` in a
-disclosure control moves **0.5pt right**; `magnifyingglass` moves **0.5pt left**. Nothing else. Do
-not eyeball others. These positional nudges are separate from the point-size corrections above;
+Exactly one symbol needs a nudge because its ink is off-centre in its box: `magnifyingglass` moves
+**0.5pt left**. Nothing else; measure before adding one. The disclosure `chevron.right` is centred
+with no nudge: its ink sits on the file glyphs' centre line, and because it turns as a folder opens,
+any horizontal nudge would also drop the open chevron below the row's centre. These positional nudges are separate from the point-size corrections above;
 neither changes the control or glyph-column geometry.
 
 ### 8.7 The set
@@ -644,9 +647,9 @@ around the terminal, because the cards' edges are the seams.
 Every gap is **6**: between the sidebar and the document card, between the cards, and between a card
 and the window's trailing and bottom edges. The gaps are the split view's dividers, so a collapsed
 pane leaves its divider at the window edge as that margin, and the document card never moves when a
-pane opens or closes. A divider draws nothing at rest; under the pointer, a 2 pt
-`handle` line in the gap (`ink` 18 %, 30 % while dragging) shows what will move. Never `accent`. The card's top edge meets the
-titlebar, 7 below the tab chips.
+pane opens or closes. A divider draws nothing at rest; under the pointer, a 1 pt hairline down the
+middle of the gap (`ink` 28 %, 42 % while dragging) shows what will move. Never `accent`. The card's
+top edge meets the titlebar, 7 below the tab chips.
 
 Settings uses the same frame: its sections on `chrome`, the page on a card inset 6 from the trailing
 and bottom edges.
@@ -762,8 +765,8 @@ it. The sidebar is part of the frame: `chrome`, no edge line.
 
 Rows are the **row primitive** (§0), on purpose.
 
-**One glyph per row.** A folder's disclosure chevron (10pt, nudged per §8.6, turning 90° over the
-hover duration, instantly with Reduce Motion) sits in the 18pt glyph column, and folders carry no
+**One glyph per row.** A folder's disclosure chevron (10pt semibold, centred in the column, turning
+90° over 150 ms, instantly with Reduce Motion) sits in the 18pt glyph column, and folders carry no
 folder glyph. Files use `doc.text` / `doc.richtext` / `photo` / `play.rectangle` in the same column.
 Names at one depth therefore share a left edge, and a child steps right by exactly the 14 indent.
 
@@ -1131,10 +1134,16 @@ it (112 pt at 1×); a narrower pane hides it rather than letting it cover text.
 - **250ms ease-in-ease-out** for showing and hiding the sidebar and terminal, from the toolbar, the
   menu or the keyboard alike: AppKit's own split-view transition, opening and closing alike. The
   pane's content keeps its open width and slides under the window edge, so rows never squeeze and the
-  terminal is not resized frame by frame. The document beside it takes its final width once, at the
-  start, pinned to the edge that does not move, and the pane clips it as the divider slides: a web
-  view's text and scroll bar move with the divider instead of re-laying out, late, on every frame.
-  Any change of width keeps Preview's reading position: the block at the top of the window stays put.
+  terminal is not resized frame by frame. The document beside it moves as a live layout would: its
+  text column glides with the card's middle and its edge chrome (the outline rail, the word count,
+  the scroll thumb) stays on the card's edge. It lays out once, at its final width, under a snapshot
+  of itself (`WorkspaceTransitionCoverView`) that does the moving and then fades into it over
+  120ms: a web view cannot follow a moving edge frame by frame, and its first frames at a new size
+  are stale, so it is never shown mid-layout. Where the text rewraps between the two widths, that
+  fade is the only change. Nothing else moves: the titlebar's buttons stay put and the tab strip
+  keeps to the card's leading edge until it meets them. A sidebar hidden when the window opened
+  first opens at its default 240, never AppKit's minimum. Any change of width keeps Preview's
+  reading position: the block at the top of the window stays put.
 - **fadeUp** for overlays, toasts and the outline peek card (120ms, 4pt). Preview's editing surfaces
   have their own rule (§10.10): grown from the trigger when the pointer opens them, instant from the
   keyboard.

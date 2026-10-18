@@ -143,6 +143,11 @@ enum WorkspaceSplitMetrics {
     /// The gap between the sidebar, the document card and the terminal card, and the margin a
     /// collapsed pane's divider leaves at the window edge.
     static let dividerThickness: CGFloat = 6
+    /// Under the pointer a divider shows a hairline in the middle of its gap, the theme's ink at
+    /// `handleHoverOpacity`, stronger while dragged (design.md §10.0). Never accent.
+    static let handleLineWidth: CGFloat = 1
+    static let handleHoverOpacity: CGFloat = 0.28
+    static let handleDragOpacity: CGFloat = 0.42
     static let snapThresholdFraction: CGFloat = 0.5
     /// The smallest window that fits the sidebar, document and terminal at 100% zoom.
     static let minimumWindowWidth = sidebarMinimumWidth + detailMinimumWidth + terminalMinimumWidth
@@ -228,23 +233,22 @@ final class WorkspaceNativeSplitView: NSSplitView {
     }
 
     /// A divider is the chrome gap between two cards, so at rest nothing is drawn. Under the pointer
-    /// and while dragging, a 2 pt line in the gap shows what will move.
+    /// and while dragging, a hairline in the middle of the gap shows what will move, crisp on the
+    /// pixel grid like the cards' own rings.
     override func drawDivider(in rect: NSRect) {
         guard !isTerminalFullscreen else { return }
         let index = dividerIndex(nearest: rect.midX)
         let isActive = index == activeDividerIndex
         let isHovered = index == hoveredDividerIndex
         guard isActive || isHovered else { return }
-        let lineWidth: CGFloat = min(2, rect.width)
-        let lineRect = NSRect(
-            x: rect.midX - lineWidth / 2,
-            y: rect.minY,
-            width: lineWidth,
-            height: rect.height
+        let lineWidth = min(WorkspaceSplitMetrics.handleLineWidth, rect.width)
+        let lineRect = backingAlignedRect(
+            NSRect(x: rect.midX - lineWidth / 2, y: rect.minY, width: lineWidth, height: rect.height),
+            options: .alignAllEdgesNearest
         )
-        // The theme's ink, faintly: a resize handle is structure, never the accent (design.md §5.7).
-        let color = handleInkColor.withAlphaComponent(isActive ? 0.30 : 0.18)
-        color.setFill()
+        // The theme's ink: a resize handle is structure, never the accent (design.md §10.0).
+        let opacity = isActive ? WorkspaceSplitMetrics.handleDragOpacity : WorkspaceSplitMetrics.handleHoverOpacity
+        handleInkColor.withAlphaComponent(opacity).setFill()
         lineRect.fill()
     }
 
@@ -596,9 +600,11 @@ final class WorkspaceSidePaneController: NSViewController {
 }
 
 /// Holds the document. While a side pane opens or closes, the document takes its final width once,
-/// pinned to the edge that does not move, and the pane clips it as the divider slides. A web view is
-/// then laid out once per transition instead of on every frame, so its text and scroll bar never lag
-/// behind the divider.
+/// pinned to the edge that does not move, so a web view lays out once per transition instead of on
+/// every frame (it cannot keep up with a moving edge, and its first frames at a new size are stale).
+/// A `WorkspaceTransitionCoverView` lies over it meanwhile: the document as it was, its centred
+/// column gliding with the card's middle and its edge chrome on the card's edges, as a live layout
+/// would place them. When the transition ends the cover fades into the laid-out document.
 final class WorkspaceDetailPaneController: NSViewController {
     enum Anchor {
         case leading
@@ -647,6 +653,8 @@ final class WorkspaceDetailPaneController: NSViewController {
         private var heldWidth: CGFloat?
         private var anchor: Anchor = .trailing
         private var insets = NSEdgeInsetsZero
+        private var cover: WorkspaceTransitionCoverView?
+        private var coverFadeGeneration: UInt = 0
         let card = WorkspaceCardView()
 
         init() {
@@ -670,6 +678,7 @@ final class WorkspaceDetailPaneController: NSViewController {
         }
 
         func beginHold(width: CGFloat, anchor: Anchor) {
+            coverDocument()
             heldWidth = max(1, width.rounded())
             self.anchor = anchor
             layoutContent()
@@ -678,6 +687,41 @@ final class WorkspaceDetailPaneController: NSViewController {
         func endHold() {
             heldWidth = nil
             layoutContent()
+            uncoverDocument()
+        }
+
+        /// Snapshots the document before it changes width. A transition that starts while the last
+        /// one's cover is still fading keeps that cover: it shows the document as it was before
+        /// either began, which is where the new one starts from.
+        private func coverDocument() {
+            coverFadeGeneration &+= 1
+            if let cover {
+                cover.layer?.removeAllAnimations()
+                cover.alphaValue = 1
+                return
+            }
+            guard let content = card.subviews.first,
+                  let cover = WorkspaceTransitionCoverView(snapshotting: content)
+            else { return }
+            cover.frame = card.bounds
+            card.addSubview(cover, positioned: .above, relativeTo: content)
+            self.cover = cover
+        }
+
+        private func uncoverDocument() {
+            guard let cover else { return }
+            let generation = coverFadeGeneration
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = MonknotMotion.paneCoverFadeDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                cover.animator().alphaValue = 0
+            } completionHandler: { [weak self, weak cover] in
+                MainActor.assumeIsolated {
+                    guard let self, generation == self.coverFadeGeneration else { return }
+                    cover?.removeFromSuperview()
+                    self.cover = nil
+                }
+            }
         }
 
         override func resizeSubviews(withOldSize oldSize: NSSize) {
@@ -690,7 +734,7 @@ final class WorkspaceDetailPaneController: NSViewController {
         }
 
         /// The card follows the pane as the divider slides; the document inside it takes its final
-        /// width once, pinned to the edge that does not move.
+        /// width once, pinned to the edge that does not move, and the cover lies over the card.
         private func layoutContent() {
             let cardFrame = NSRect(
                 x: insets.left,
@@ -700,6 +744,9 @@ final class WorkspaceDetailPaneController: NSViewController {
             )
             if card.frame != cardFrame {
                 card.frame = cardFrame
+            }
+            if let cover, cover.frame != card.bounds {
+                cover.frame = card.bounds
             }
             guard let content = card.subviews.first else { return }
             let width = heldWidth.map { max(1, $0 - insets.left - insets.right) } ?? cardFrame.width
@@ -992,11 +1039,20 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
     private func applyDefaultSidebarWidthIfNeeded() {
         guard appliesDefaultSidebarWidth, availableLayoutWidth > 0 else { return }
         appliesDefaultSidebarWidth = false
-        guard !sidebarItem.isCollapsed else { return }
-        setNativeWidth(
-            fittedWidth(retaining: WorkspaceSplitMetrics.sidebarDefaultWidth * layoutScale, for: .sidebar),
-            of: .sidebar
-        )
+        let width = fittedWidth(retaining: WorkspaceSplitMetrics.sidebarDefaultWidth * layoutScale, for: .sidebar)
+        guard sidebarItem.isCollapsed else {
+            setNativeWidth(width, of: .sidebar)
+            return
+        }
+        // A window that opens with the sidebar hidden has never laid it out, so AppKit would reveal
+        // it at its minimum width. Staged now, its first reveal opens to the default width.
+        let wasReconcilingPresentation = isReconcilingPresentation
+        isReconcilingPresentation = true
+        defer { isReconcilingPresentation = wasReconcilingPresentation }
+        let detailMinimum = detailItem.minimumThickness
+        detailItem.minimumThickness = 0
+        defer { detailItem.minimumThickness = detailMinimum }
+        stageCollapsedPane(.sidebar, atWidth: width, limitedToSplitWidth: true)
     }
 
     /// The allocation supplied by the representable's parent. AppKit can
@@ -1790,8 +1846,15 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         isRestoringRetainedWidth = true
         defer { isRestoringRetainedWidth = false }
         panes[pane].collapsedWidth = nil
-        splitView.layoutSubtreeIfNeeded()
-        setNativeWidth(fittedWidth(retaining: width, for: pane), of: pane)
+        // An animated reveal reports the change from inside AppKit's own animation, where implicit
+        // animation is on: frames set by this pass would each start a quarter-second animation of
+        // their own and drift against the reveal's frames. It takes effect at once instead.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            context.allowsImplicitAnimation = false
+            splitView.layoutSubtreeIfNeeded()
+            setNativeWidth(fittedWidth(retaining: width, for: pane), of: pane)
+        }
     }
 
     private func setCollapsed(_ collapsed: Bool, for pane: SidePane, animated: Bool) {
@@ -1810,10 +1873,12 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         let paneController = pane == .sidebar ? sidebarPane : terminalPane
         let paneWidth = clampedWidth(restorableWidth(for: pane), for: pane)
         let transition = paneController.beginTransition(fallbackWidth: paneWidth)
+        // From the pane's width now, so a reversal partway through still holds the right width.
         let detailWidth = detailPane.view.bounds.width
+        let currentPaneWidth = nativePaneWidth(of: pane)
         let finalDetailWidth = collapsed
-            ? detailWidth + paneWidth
-            : detailWidth - paneWidth
+            ? detailWidth + currentPaneWidth
+            : detailWidth - max(0, paneWidth - currentPaneWidth)
         let detailTransition: UInt? = detailWidth > 0 && finalDetailWidth > 0 && !detailItem.isCollapsed
             ? detailPane.beginTransition(width: finalDetailWidth, anchor: pane == .sidebar ? .trailing : .leading)
             : nil

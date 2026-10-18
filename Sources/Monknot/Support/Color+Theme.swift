@@ -139,15 +139,6 @@ extension AppTheme {
         foregroundColor.opacity(isDark ? 0.17 : 0.12)
     }
 
-    /// The line a split divider shows while hovered, and while dragged (design.md §5.7).
-    var dividerHandleColor: Color {
-        foregroundColor.opacity(0.18)
-    }
-
-    var dividerHandleDragColor: Color {
-        foregroundColor.opacity(0.30)
-    }
-
     /// Shadow hue for floating surfaces. Light themes carry 10% of the accent
     /// so shadows stay neutral to the theme instead of turning muddy black.
     var floatingShadowColor: Color {

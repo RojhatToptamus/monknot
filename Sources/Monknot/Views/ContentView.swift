@@ -274,11 +274,17 @@ struct ContentView: View {
     @AppStorage("Monknot.fontSmoothing") private var fontSmoothing = true
     @AppStorage(TerminalWorkingDirectoryPreference.key)
     private var terminalWorkingDirectory = TerminalWorkingDirectoryPreference.defaultValue.rawValue
-    @SceneStorage("Monknot.isTerminalDrawerOpen") private var terminalPreferredVisible = false
+    /// The side panes this window asks for (design.md §10.0). `SceneStorage` restores them with the
+    /// window but takes no writes outside a scene (a SwiftUI preview, a window hosted by a test), so a
+    /// choice the window makes is held in `@State` and the stored value is read until it makes one.
+    @SceneStorage("Monknot.isTerminalDrawerOpen") private var storedTerminalPreference = false
+    @State private var sessionTerminalPreference: Bool?
     @State private var isTerminalVisible = false
     @State private var isTerminalFullscreen = false
     @State private var terminalRevealRequest: UInt = 0
-    @StateObject private var chromeAlignment = ChromeAlignmentModel()
+    /// Held, not observed: the card edge moves on every frame of a pane transition, and only the tab
+    /// strip that follows it should redraw.
+    @State private var chromeAlignment = ChromeAlignmentModel()
     @StateObject private var terminalFocusRestorer = TerminalFocusRestorer()
     @StateObject private var goToLineFocusRestorer = TerminalFocusRestorer()
     @StateObject private var searchFocusRestorer = TerminalFocusRestorer()
@@ -323,7 +329,8 @@ struct ContentView: View {
     @State private var documentSearch = DocumentSearchState()
     @State private var searchOptions = MonknotSearchOptions()
     @State private var isSidebarVisible = true
-    @SceneStorage("Monknot.sidebarPreferredVisible") private var sidebarPreferredVisible = true
+    @SceneStorage("Monknot.sidebarPreferredVisible") private var storedSidebarPreference = true
+    @State private var sessionSidebarPreference: Bool?
     @State private var sidebarRevealRequest: UInt = 0
     @State private var sidebarNewItemRequest: SidebarNewItemRequest?
     @State private var successNotice: SuccessNotice?
@@ -356,6 +363,11 @@ struct ContentView: View {
             case keyboardShortcuts
             case workspaceSwitcher
             case pdfNavigator
+            /// Toggles the sidebar, animated, at each of these seconds after the document shows, so
+            /// the tour can record the transitions.
+            case toggleSidebar(at: [Double])
+            /// Toggles the terminal the same way.
+            case toggleTerminal(at: [Double])
         }
 
         static let standard = InitialLayout()
@@ -372,10 +384,26 @@ struct ContentView: View {
         _themeStore = ObservedObject(wrappedValue: themeStore)
         _workspaceLibrary = ObservedObject(wrappedValue: workspaceLibrary)
         self.terminationCoordinator = terminationCoordinator
-        _sidebarPreferredVisible = SceneStorage(wrappedValue: initialLayout.showsSidebar, "Monknot.sidebarPreferredVisible")
+        _storedSidebarPreference = SceneStorage(wrappedValue: initialLayout.showsSidebar, "Monknot.sidebarPreferredVisible")
         _isSidebarVisible = State(initialValue: initialLayout.showsSidebar)
-        _terminalPreferredVisible = SceneStorage(wrappedValue: initialLayout.showsTerminal, "Monknot.isTerminalDrawerOpen")
+        _storedTerminalPreference = SceneStorage(wrappedValue: initialLayout.showsTerminal, "Monknot.isTerminalDrawerOpen")
         _pendingInitialOverlay = State(initialValue: initialLayout.overlay)
+    }
+
+    private var sidebarPreferredVisible: Bool {
+        get { sessionSidebarPreference ?? storedSidebarPreference }
+        nonmutating set {
+            sessionSidebarPreference = newValue
+            storedSidebarPreference = newValue
+        }
+    }
+
+    private var terminalPreferredVisible: Bool {
+        get { sessionTerminalPreference ?? storedTerminalPreference }
+        nonmutating set {
+            sessionTerminalPreference = newValue
+            storedTerminalPreference = newValue
+        }
     }
 
     private func presentPendingInitialOverlay() {
@@ -410,6 +438,18 @@ struct ContentView: View {
             // Once the PDF viewer is on screen; it ignores toggles sent before it appeared.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 pdfNavigatorToggleCommandSerial &+= 1
+            }
+        case let .toggleSidebar(at: delays):
+            for delay in delays {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    toggleSidebar(animated: true)
+                }
+            }
+        case let .toggleTerminal(at: delays):
+            for delay in delays {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    toggleTerminalDrawer(animated: true)
+                }
             }
         }
     }

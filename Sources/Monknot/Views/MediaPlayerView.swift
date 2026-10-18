@@ -185,7 +185,7 @@ struct MediaPlayerRepresentable: NSViewRepresentable {
 
 /// The player view. Space plays and pauses while it has focus, and closing its window stops
 /// playback, so sound never outlives the window it belongs to.
-final class MediaPlayerNSView: AVPlayerView {
+final class MediaPlayerNSView: AVPlayerView, WorkspaceTransitionCoverExcluded {
     private var windowCloseObserver: NSObjectProtocol?
 
     override var acceptsFirstResponder: Bool {

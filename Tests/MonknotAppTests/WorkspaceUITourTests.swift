@@ -71,6 +71,8 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             Stop(name: "30-switcher-latte", layout: .init(overlay: .workspaceSwitcher), themeID: "catppuccin-latte"),
             Stop(name: "31-switcher-mocha", theme: .dark, layout: .init(overlay: .workspaceSwitcher), themeID: "catppuccin-mocha"),
             Stop(name: "32-dirty-tab-latte", tabs: ["Roadmap.md", "todo.txt"], themeID: "catppuccin-latte", edits: true),
+            Stop(name: "33-long-preview-latte", layout: .init(showsSidebar: true, showsTerminal: true), document: "Long notes.md", themeID: "catppuccin-latte"),
+            Stop(name: "34-long-source-latte", mode: .source, layout: .init(showsSidebar: true, showsTerminal: true), document: "Long notes.md", themeID: "catppuccin-latte"),
         ]
         let filters = only?.split(separator: "|").map(String.init)
         let settingsStops: [(section: String, theme: ThemePreference)] = [
@@ -227,6 +229,109 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             .write(to: directory.appendingPathComponent("\(stop.name).png"))
     }
 
+    private struct TransitionFrame: @unchecked Sendable {
+        let milliseconds: Int
+        let image: CGImage
+    }
+
+    /// Hides and shows a side pane through ContentView's own animated path in one window and saves
+    /// the window as often as the window server allows around each transition, so a review can see
+    /// what moves. Runs only when `MONKNOT_UI_TRANSITION_DIR` names a folder for the frames.
+    /// `MONKNOT_UI_TRANSITION_PANE=terminal` moves the terminal instead of the sidebar,
+    /// `MONKNOT_UI_TRANSITION_COLD` starts with the pane hidden (its first reveal), and
+    /// `MONKNOT_UI_TRANSITION_TERMINAL`, `MONKNOT_UI_TRANSITION_SOURCE` and
+    /// `MONKNOT_UI_TRANSITION_FILE` set the terminal, the editor view and the document.
+    func testCaptureTheSidePaneTransitions() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let output = environment["MONKNOT_UI_TRANSITION_DIR"] else {
+            throw XCTSkip("Set MONKNOT_UI_TRANSITION_DIR to capture the side pane transitions")
+        }
+        let directory = URL(fileURLWithPath: output, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let root = try makeFixtureWorkspace()
+        let movesTerminal = environment["MONKNOT_UI_TRANSITION_PANE"] == "terminal"
+        let startsHidden = environment["MONKNOT_UI_TRANSITION_COLD"] != nil
+        let mode = environment["MONKNOT_UI_TRANSITION_SOURCE"] != nil ? EditorMode.source : .preview
+        let file = environment["MONKNOT_UI_TRANSITION_FILE"] ?? "Long notes.md"
+
+        let defaults = UserDefaults.standard
+        let savedMode = defaults.object(forKey: "Monknot.editorMode")
+        let savedThemeID = defaults.object(forKey: "Monknot.lightThemeID")
+        let splitFramesKey = "NSSplitView Subview Frames \(WorkspaceSplitMetrics.autosaveName)"
+        let savedSplitFrames = defaults.object(forKey: splitFramesKey)
+        defer {
+            defaults.set(savedMode, forKey: "Monknot.editorMode")
+            defaults.set(savedThemeID, forKey: "Monknot.lightThemeID")
+            defaults.set(savedSplitFrames, forKey: splitFramesKey)
+        }
+        defaults.set(mode.rawValue, forKey: "Monknot.editorMode")
+        defaults.set("catppuccin-latte", forKey: "Monknot.lightThemeID")
+        defaults.removeObject(forKey: splitFramesKey)
+
+        let toggles = [1.2, 2.2]
+        let names = startsHidden ? ["open", "close"] : ["close", "open"]
+        let showsTerminal = movesTerminal ? !startsHidden : environment["MONKNOT_UI_TRANSITION_TERMINAL"] != nil
+        let store = makeWorkspaceStore()
+        let host = NSHostingView(rootView: ContentView(
+            store: store,
+            themeStore: ThemeSettingsStore(defaults: defaults),
+            workspaceLibrary: WorkspaceLibraryStore(userDefaults: UserDefaults(suiteName: "MonknotUITour.\(UUID().uuidString)")!),
+            terminationCoordinator: ApplicationTerminationCoordinator(),
+            initialLayout: .init(
+                showsSidebar: movesTerminal || !startsHidden,
+                showsTerminal: showsTerminal,
+                overlay: movesTerminal ? .toggleTerminal(at: toggles) : .toggleSidebar(at: toggles)
+            )
+        ))
+        let window = TourWindow(
+            contentRect: NSRect(origin: NSPoint(x: 60, y: 60), size: NSSize(width: 1_300, height: 820)),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFrontRegardless()
+        defer {
+            window.orderOut(nil)
+            window.contentView = nil
+        }
+        store.openWorkspace(root, selecting: root.appendingPathComponent(file))
+        let opened = await waitUntil(timeout: 10) { !store.isBusy && !store.isDocumentLoading && store.selectedDocument != nil }
+        XCTAssertTrue(opened)
+
+        // The toggles fire at their times after the document shows. The window server is read off
+        // the main thread and the frames are written on other threads, so recording costs the app
+        // no frames.
+        let windowID = CGWindowID(window.windowNumber)
+        let shown = Date()
+        let encoder = DispatchQueue(label: "MonknotUITour.transition", attributes: .concurrent)
+        let written = DispatchGroup()
+        for (toggle, name) in zip(toggles, names) {
+            try await Task.sleep(nanoseconds: UInt64(max(0, toggle - 0.15 - Date().timeIntervalSince(shown)) * 1_000_000_000))
+            await Task.detached(priority: .userInitiated) {
+                let start = Date()
+                var index = 0
+                while Date().timeIntervalSince(start) < 0.7 {
+                    if let image = CGWindowListCreateImage(.null, .optionIncludingWindow, windowID, [.boundsIgnoreFraming, .nominalResolution]) {
+                        let frame = TransitionFrame(milliseconds: Int(Date().timeIntervalSince(start) * 1_000), image: image)
+                        let url = directory.appendingPathComponent(String(format: "%@-%03d-%03dms.png", name, index, frame.milliseconds))
+                        encoder.async(group: written) {
+                            try? NSBitmapImageRep(cgImage: frame.image).representation(using: .png, properties: [:])?.write(to: url)
+                        }
+                        index += 1
+                    }
+                    usleep(6_000)
+                }
+            }.value
+        }
+        await withCheckedContinuation { continuation in
+            written.notify(queue: .global()) { continuation.resume() }
+        }
+    }
+
     private func captureSettings(section: String, theme: ThemePreference, name: String, into directory: URL) async throws {
         let defaults = UserDefaults.standard
         let savedTheme = defaults.object(forKey: "Monknot.themePreference")
@@ -275,6 +380,7 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             ("Projects/Research/Sources.md", "# Sources\n"),
             ("todo.txt", "buy milk\ncall the printer\nrenew the domain\n"),
             ("config.json", "{ \"theme\": \"light\" }\n"),
+            ("Long notes.md", "# Long notes\n\n" + (1...60).map { "## Section \($0)\n\nA paragraph of notes for section \($0), long enough to wrap across the text column once or twice so the document scrolls well past one screen.\n" }.joined(separator: "\n")),
         ] {
             let url = root.appendingPathComponent(path)
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

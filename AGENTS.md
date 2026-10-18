@@ -387,8 +387,13 @@ Before adding custom parsing, indexing, PDF handling, file watching, or renderin
   the shell's root (`legacyScrollbars`) so WebKit's own bar never paints first. During a
   side-pane transition `WorkspaceDetailPaneController` lays the document out once
   at its final width, pinned to the edge that does not move, so web views never
-  re-lay out on every animation frame; `renderer.js` keeps the reading position
-  across width changes.
+  re-lay out on every animation frame, under a `WorkspaceTransitionCoverView`
+  (`WorkspaceTransitionCover.swift`): a snapshot whose text column glides with the
+  card's middle while chrome marked with `WorkspaceTrailingChromeMarker` (outline
+  rail, word count) and the scroll thumb stay on the card's edge, fading into the
+  document at the end. A view whose pixels a snapshot cannot hold (the video
+  player) adopts `WorkspaceTransitionCoverExcluded`. `renderer.js` keeps the
+  reading position across width changes.
 - Sidebar-specific state and tree presentation live in `SidebarView`.
 - Detail/editor state lives in `EditorPaneView`.
 - File tabs are rendered by `DocumentTabBar` under `TopNavigationBar`. Keep tabs lightweight: labels, pinned state, close/pin actions, and save indicators only. Inactive tabs must remain metadata only; do not create per-tab editor/preview runtimes. When split view is active for markdown/HTML documents, `TopNavigationBar` shows an active split indicator (click to turn off; ⌘\\ also toggles).
@@ -475,7 +480,8 @@ Current XCTest coverage focuses on `MonknotCore`:
 - `MarkdownRendererJavaScriptTests`: renderer output in JavaScriptCore.
 - `MarkdownPreviewFlowTests` (app target): writing assistance in Preview in real WebKit with fake checker and models: a certain fix as one undo step that ⌫ takes back (only while its hint shows; a refused revert still deletes), a declined fix offered again, fixes after emoji and in list items and headings, reviewed repairs (Tab, →, Esc, a trailing space), Apple Intelligence's reviewed repair, completions (gating by setting and availability, Tab word and hold, typing that consumes, Esc, a dead-key composition right after a taken word), stale checks, Return, code, link addresses and table cells, nothing checked or asked of the models while a menu is open, Tab's list/table/menu meanings, settings off, Check Document Now and Show Writing Tools.
 - `MarkdownVisualEditorTests` (app target): Preview editing in real WebKit: typing, Return and Delete, Markdown shortcuts, Edit-menu undo and redo (also across a switch to Source), formatting, tasks, links, paste and copy, composition, tables, external changes, the slash rule, toggles, callouts, the + handle, drag-and-drop, the block menu and its shortcuts, 50 KB and 1 MB keystroke timing, and theme and narrow-window snapshots of the page, menus and handles (written to `MONKNOT_EDITOR_SNAPSHOT_DIR` when set).
-- `WorkspaceUITourTests` (app target): with `MONKNOT_UI_TOUR_DIR` set, captures the whole workspace window (sidebar open and collapsed, terminal, Source and Preview, light and dark, narrow and wide, tabs, no workspace, Settings) for design reviews; `MONKNOT_UI_TOUR_ONLY` picks stops by name (`a|b`) and `MONKNOT_UI_TOUR_RAW` also keeps the window server's own image (with WebKit's scroll bars). It skips otherwise. `ContentView.InitialLayout` sets the side panes a window starts with and an overlay it opens once its document shows (Quick Open, Find, Find in Workspace, Keyboard Shortcuts).
+- `WorkspacePaneTransitionTests` (app target): how a side pane's transition cuts the document's snapshot into bands, a sidebar hidden at launch first opening at its default width, an animated reveal covering the document without starting layer animations of its own, and ContentView toggling panes outside a scene.
+- `WorkspaceUITourTests` (app target): with `MONKNOT_UI_TRANSITION_DIR` set, `testCaptureTheSidePaneTransitions` records the window every few milliseconds while a side pane closes and opens (`MONKNOT_UI_TRANSITION_PANE=terminal`, `_COLD`, `_SOURCE`, `_TERMINAL` and `_FILE` vary it). With `MONKNOT_UI_TOUR_DIR` set, captures the whole workspace window (sidebar open and collapsed, terminal, Source and Preview, light and dark, narrow and wide, tabs, no workspace, Settings) for design reviews; `MONKNOT_UI_TOUR_ONLY` picks stops by name (`a|b`) and `MONKNOT_UI_TOUR_RAW` also keeps the window server's own image (with WebKit's scroll bars). It skips otherwise. `ContentView.InitialLayout` sets the side panes a window starts with and an overlay it opens once its document shows (Quick Open, Find, Find in Workspace, Keyboard Shortcuts).
 - `DocumentViewerRoutingTests` (app target): generated fixtures of every listed file type (text, extensionless, uppercase, binary and oversized text, PDF, raster images, video and audio) are scanned and opened in a hosted `EditorPaneView`; also image fit, media playback lifecycle, Open With and Recents.
 
 Manual Core smoke verification used in this repo when SwiftPM is blocked:

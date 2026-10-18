@@ -292,8 +292,8 @@ final class WindowChromeInteractionTests: XCTestCase {
         return nil
     }
 
-    /// design.md §5.7: a slim capsule, 3 from the edge at rest, wider and darker under the pointer,
-    /// never touching the ends of its lane.
+    /// design.md §5.7: a slim capsule centred in its 9 lane, 2.5 from the edge at rest, wider and
+    /// darker under the pointer, never touching the ends of its lane.
     func testScrollThumbIsASlimCapsuleInsetFromItsEdge() {
         XCTAssertLessThan(MonknotScrollbarStyle.restingThumbWidth, MonknotScrollbarStyle.hoveredThumbWidth)
         XCTAssertLessThan(MonknotScrollbarStyle.restingOpacity, MonknotScrollbarStyle.hoveredOpacity)
@@ -301,10 +301,37 @@ final class WindowChromeInteractionTests: XCTestCase {
         let knob = NSRect(x: 0, y: 40, width: MonknotScrollbarStyle.trackWidth, height: 80)
         let resting = MonknotScroller.thumbRect(knob: knob, bounds: bounds, isVertical: true, isHovered: false)
         XCTAssertEqual(resting.width, MonknotScrollbarStyle.restingThumbWidth)
-        XCTAssertEqual(bounds.maxX - resting.maxX, 3, accuracy: 0.001, "Rests 3 from the container's edge")
+        XCTAssertEqual(bounds.maxX - resting.maxX, 2.5, accuracy: 0.001, "Rests 2.5 from the container's edge")
         let hovered = MonknotScroller.thumbRect(knob: knob, bounds: bounds, isVertical: true, isHovered: true)
         XCTAssertEqual(hovered.midX, resting.midX, accuracy: 0.001, "Grows from its centre")
         XCTAssertGreaterThan(resting.minY, knob.minY)
+    }
+
+    /// A document's lane sits flush with the card's trailing edge: only the thumb's ends are inset,
+    /// clear of the card's rounded corners. An inset across the lane would move it off the edge and
+    /// leave an unpainted strip between the thumb and the card's edge.
+    func testADocumentScrollLaneIsFlushWithTheTrailingEdge() throws {
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        scrollView.hasVerticalScroller = true
+        scrollView.documentView = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 2_000))
+        MonknotScrollbarStyle.applyDocument(to: scrollView)
+        scrollView.scrollerStyle = .legacy
+        scrollView.tile()
+
+        XCTAssertEqual(scrollView.scrollerInsets.left, 0)
+        XCTAssertEqual(scrollView.scrollerInsets.right, 0)
+        XCTAssertEqual(scrollView.scrollerInsets.top, MonknotScrollbarStyle.endInset)
+        XCTAssertEqual(scrollView.scrollerInsets.bottom, MonknotScrollbarStyle.endInset)
+        let scroller = try XCTUnwrap(scrollView.verticalScroller)
+        XCTAssertEqual(scroller.frame.maxX, scrollView.bounds.maxX, accuracy: 0.5, "The lane touches the edge")
+        XCTAssertEqual(scroller.frame.width, MonknotScrollbarStyle.trackWidth, accuracy: 0.5)
+
+        // With both scrollers, each lane ends where the other begins; only far ends are inset.
+        let both = MonknotScrollbarStyle.endInsets(hasVertical: true, hasHorizontal: true)
+        XCTAssertEqual(both.right, 0)
+        XCTAssertEqual(both.bottom, 0)
+        XCTAssertEqual(both.top, MonknotScrollbarStyle.endInset)
+        XCTAssertEqual(both.left, MonknotScrollbarStyle.endInset)
     }
 
     func testDisabledRowsDrawNoHoverOrPressFillButKeepTheirSelection() {

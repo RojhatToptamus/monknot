@@ -391,8 +391,9 @@ struct MonknotListRowButtonStyle: ButtonStyle {
 }
 
 /// A folder or group's disclosure chevron in the 18 glyph column: one 10 pt chevron that turns a
-/// quarter as the folder opens (150 ms ease-out; none with Reduce Motion), nudged per design.md §8.6:
-/// the right chevron's ink sits left of centre in its box.
+/// quarter as the folder opens (150 ms ease-out; none with Reduce Motion). It is centred in the
+/// column with no nudge: measured, its ink already sits on the file glyphs' centre line, and any
+/// offset turns with it, so a nudge right would also drop the open chevron below the row's centre.
 struct MonknotDisclosureChevron: View {
     let isExpanded: Bool
     let theme: AppTheme
@@ -406,7 +407,6 @@ struct MonknotDisclosureChevron: View {
     var body: some View {
         Image(systemName: "chevron.right")
             .font(.system(size: glyphScaled(MonknotMetrics.chevronPointSizeBase), weight: .semibold))
-            .offset(x: glyphScaled(0.5))
             .rotationEffect(.degrees(isExpanded ? 90 : 0))
             .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: isExpanded)
             .frame(width: glyphScaled(MonknotMetrics.rowIconColumnWidthBase))
