@@ -333,6 +333,9 @@ struct MarkdownVisualEditingConfiguration {
     var createPage: ((String) async throws -> URL)? = nil
     /// The writing-assistance settings, which Preview follows as Source does.
     var textCheckingOptions = EditorTextCheckingOptions.defaultValue
+    /// Shows Source and opens Writing Tools there: Writing Tools rewrite text in place, and the page
+    /// changes only through source patches.
+    var showWritingTools: (() -> Void)? = nil
 }
 
 /// What the Image, Video, Audio and File blocks ask the user to pick.
@@ -384,10 +387,22 @@ enum MarkdownInsertedFileKind: String {
     }
 }
 
+/// The Edit menu's writing commands while Preview edits the focused document.
+@MainActor
+protocol MarkdownPreviewEditorCommands: AnyObject {
+    var canCheckDocumentNow: Bool { get }
+    /// Check Document Now: the writing assistance checks the sentence before the caret at once.
+    func checkDocumentNow() -> Bool
+    var canShowWritingTools: Bool { get }
+    /// Show Writing Tools: switches to Source, which opens them.
+    func showWritingTools() -> Bool
+}
+
 /// The Preview web view. With a visual editing session it hands the Edit menu that session's undo
 /// history and keeps Writing Tools out of the page, which edits only through source patches.
 final class MarkdownEditorWebView: WKWebView {
     weak var visualEditingSession: MarkdownVisualEditingSession?
+    weak var previewCommands: MarkdownPreviewEditorCommands?
 
     override var undoManager: UndoManager? {
         visualEditingSession?.undoManager ?? super.undoManager

@@ -31,6 +31,8 @@ struct EditorPaneView: View {
     private var onDeviceProseCompletions = EditorTextCheckingOptions.defaultOnDeviceProseCompletions
     /// Preview's undo history; it outlives the page, so switching to Source and back keeps it.
     @State private var visualEditingSession = MarkdownVisualEditingSession()
+    /// Writing Tools asked for in Preview; Source opens them once it is showing.
+    @State private var sourceWritingToolsRequested = false
     @State private var splitScrollSyncLock = false
     @State private var splitSourcePaneRatio = DocumentSplitViewPersistence.defaultSourcePaneRatio
     @State private var previewSyncLine: Int?
@@ -543,6 +545,7 @@ struct EditorPaneView: View {
             onWritingToolsStateChange: { documentID, isActive in
                 store.setWritingToolsActive(isActive, documentID: documentID)
             },
+            writingToolsRequested: $sourceWritingToolsRequested,
             onScrollPositionChange: { position in
                 updateViewportState(selectedDocument.id, .textScrollPosition(position))
             },
@@ -616,7 +619,11 @@ struct EditorPaneView: View {
             createPage: { [store] name in
                 try await store.createPage(named: name, besideDocumentAt: URL(fileURLWithPath: documentID))
             },
-            textCheckingOptions: textCheckingOptions
+            textCheckingOptions: textCheckingOptions,
+            showWritingTools: {
+                editorMode = .source
+                sourceWritingToolsRequested = true
+            }
         )
     }
 

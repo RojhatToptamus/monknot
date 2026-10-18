@@ -30,6 +30,7 @@ struct NativeMarkdownEditorView: View {
     let onFileDropRequest: ((MarkdownFileDropRequest) -> Void)?
     let onWritingToolsTextCommit: ((String, String) -> Void)?
     let onWritingToolsStateChange: ((String, Bool) -> Bool)?
+    @Binding var writingToolsRequested: Bool
 
     init(
         documentID: String,
@@ -58,6 +59,7 @@ struct NativeMarkdownEditorView: View {
         onFileDropRequest: ((MarkdownFileDropRequest) -> Void)? = nil,
         onWritingToolsTextCommit: ((String, String) -> Void)? = nil,
         onWritingToolsStateChange: ((String, Bool) -> Bool)? = nil,
+        writingToolsRequested: Binding<Bool> = .constant(false),
         onScrollPositionChange: @escaping (DocumentScrollPosition) -> Void,
         onVisibleTopLineChange: ((Int) -> Void)?
     ) {
@@ -87,6 +89,7 @@ struct NativeMarkdownEditorView: View {
         self.onFileDropRequest = onFileDropRequest
         self.onWritingToolsTextCommit = onWritingToolsTextCommit
         self.onWritingToolsStateChange = onWritingToolsStateChange
+        self._writingToolsRequested = writingToolsRequested
         self.onScrollPositionChange = onScrollPositionChange
         self.onVisibleTopLineChange = onVisibleTopLineChange
     }
@@ -123,7 +126,8 @@ struct NativeMarkdownEditorView: View {
                     onImagePasteRequest: onImagePasteRequest,
                     onFileDropRequest: onFileDropRequest,
                     onWritingToolsTextCommit: onWritingToolsTextCommit,
-                    onWritingToolsStateChange: onWritingToolsStateChange
+                    onWritingToolsStateChange: onWritingToolsStateChange,
+                    writingToolsRequested: $writingToolsRequested
                 )
 
                 if text.isEmpty {

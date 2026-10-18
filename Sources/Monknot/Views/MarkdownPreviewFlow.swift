@@ -31,6 +31,10 @@ struct MarkdownPreviewFlowDependencies {
         guard let window = view.window else { return false }
         return window.isKeyWindow && window.firstResponder === view
     }
+    var writingToolsAvailability: () -> Bool = {
+        guard #available(macOS 15.2, *) else { return false }
+        return NSWritingToolsCoordinator.isWritingToolsAvailable
+    }
 
     static let system = MarkdownPreviewFlowDependencies()
 }
@@ -451,6 +455,28 @@ final class MarkdownPreviewFlowCoordinator {
         default:
             break
         }
+    }
+
+    // MARK: - Commands
+
+    var canCheckDocumentNow: Bool {
+        isActive && hasFocus && (options.checksSpelling || options.checksGrammar)
+            && selection.map { NSMaxRange($0) > 0 } == true
+    }
+
+    /// Edit › Check Document Now (⌘;): checks the sentence before the caret at once, as though it
+    /// were finished, and shows what it finds the way typing would.
+    @discardableResult
+    func checkDocumentNow() -> Bool {
+        guard canCheckDocumentNow, let selection else { return false }
+        settlement = nil
+        cancelFlowSuggestion()
+        scheduleFlowCheck(completedSentenceEndingAt: NSMaxRange(selection), immediate: true)
+        return true
+    }
+
+    var canShowWritingTools: Bool {
+        isActive && hasFocus && dependencies.writingToolsAvailability()
     }
 
     // MARK: - State

@@ -216,6 +216,22 @@ final class MarkdownPreviewFlowTests: WorkspaceStoreTestCase {
         XCTAssertEqual(checker.requests.first, "We read teh plan")
     }
 
+    func testCheckDocumentNowChecksTheSentenceAtTheCaret() async throws {
+        let checker = PreviewFlowChecker { text in
+            PreviewFlowChecker.corrections(in: text, ["teh": "the"])
+        }
+        let fixture = try await makeFixture(markdown: "We read teh plan\n", checker: checker)
+        try await fixture.setSelection(("We read teh plan" as NSString).length)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(fixture.store.documentText, "We read teh plan\n", "An unfinished sentence waits")
+
+        let commands = try XCTUnwrap((fixture.webView as? MarkdownEditorWebView)?.previewCommands)
+        XCTAssertTrue(commands.canCheckDocumentNow)
+        XCTAssertTrue(commands.checkDocumentNow(), "Check Document Now runs in Preview")
+        let fixed = await waitUntil { fixture.store.documentText == "We read the plan\n" }
+        XCTAssertTrue(fixed, "The sentence at the caret is checked at once: \(fixture.store.documentText)")
+    }
+
     // MARK: - On-device writing assistance
 
     func testOnDeviceRepairIsReviewedAfterAppleChecksIt() async throws {
@@ -482,7 +498,31 @@ final class MarkdownPreviewFlowTests: WorkspaceStoreTestCase {
         XCTAssertTrue(checked, "Checking resumes")
     }
 
-    // MARK: - System predictions
+    // MARK: - Writing Tools and system predictions
+
+    func testShowWritingToolsSwitchesToSource() async throws {
+        let fixture = try await makeFixture(markdown: "Plain prose here\n", writingToolsAvailable: true)
+        try await fixture.setSelection(5)
+        let commands = try XCTUnwrap((fixture.webView as? MarkdownEditorWebView)?.previewCommands)
+        XCTAssertTrue(commands.canShowWritingTools, "Show Writing Tools is enabled in Preview")
+        XCTAssertTrue(commands.showWritingTools())
+        XCTAssertEqual(fixture.harness.editorMode, .source, "Writing Tools open in Source, which rewrites text in place")
+        let sourceFocused = await waitUntil {
+            guard let textView = fixture.documentTextView() else { return false }
+            return fixture.window.firstResponder === textView
+        }
+        XCTAssertTrue(sourceFocused, "Source takes keyboard focus for Writing Tools")
+        XCTAssertEqual(fixture.store.documentText, "Plain prose here\n")
+    }
+
+    func testWritingToolsCommandIsOffWhenWritingToolsAreUnavailable() async throws {
+        let fixture = try await makeFixture(markdown: "Plain prose here\n", writingToolsAvailable: false)
+        try await fixture.setSelection(5)
+        let commands = try XCTUnwrap((fixture.webView as? MarkdownEditorWebView)?.previewCommands)
+        XCTAssertFalse(commands.canShowWritingTools)
+        XCTAssertFalse(commands.showWritingTools())
+        XCTAssertEqual(fixture.harness.editorMode, .preview)
+    }
 
     func testSystemInlinePredictionsStayOffInPreview() async throws {
         let fixture = try await makeFixture(markdown: "Plain prose here\n")
@@ -512,6 +552,7 @@ final class MarkdownPreviewFlowTests: WorkspaceStoreTestCase {
             inlinePredictions: true,
             onDeviceProseCompletions: false
         ),
+        writingToolsAvailable: Bool = false,
         notes: [String] = [],
         width: CGFloat = 800
     ) async throws -> PreviewFlowFixture {
@@ -551,6 +592,7 @@ final class MarkdownPreviewFlowTests: WorkspaceStoreTestCase {
         dependencies.proseOfferDelayNanoseconds = 0
         dependencies.protectedRangesDelayNanoseconds = 0
         dependencies.windowFocusValidator = { _ in true }
+        dependencies.writingToolsAvailability = { writingToolsAvailable }
 
         let harness = PreviewFlowHarnessModel(store: store, defaults: defaults, dependencies: dependencies)
         let window = NSWindow(

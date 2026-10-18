@@ -327,6 +327,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.editorHandlerName)
         webView.configuration.userContentController.removeAllUserScripts()
         (webView as? MarkdownEditorWebView)?.visualEditingSession = nil
+        (webView as? MarkdownEditorWebView)?.previewCommands = nil
     }
 
     private static func errorHTML(_ message: String) -> String {
@@ -502,6 +503,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
             configuration.session.prepare(documentID: documentID)
             configuration.session.channel = self
             (webView as? MarkdownEditorWebView)?.visualEditingSession = configuration.session
+            (webView as? MarkdownEditorWebView)?.previewCommands = self
             let flow = self.flow ?? MarkdownPreviewFlowCoordinator(dependencies: flowDependencies)
             flow.host = self
             flow.prepare(documentID: documentID)
@@ -1439,7 +1441,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
     }
 }
 
-extension MarkdownPreviewView.Coordinator: MarkdownPreviewFlowHost {
+extension MarkdownPreviewView.Coordinator: MarkdownPreviewFlowHost, MarkdownPreviewEditorCommands {
     var flowFocusView: NSView? { editorWebView }
 
     var flowUndoManager: UndoManager? { editor?.configuration.session.undoManager }
@@ -1447,6 +1449,20 @@ extension MarkdownPreviewView.Coordinator: MarkdownPreviewFlowHost {
     func sendFlow(_ message: [String: Any]) {
         guard let webView = editorWebView, let json = try? WebViewBridge.literal(message) else { return }
         webView.evaluateJavaScript("window.MonknotEditor && window.MonknotEditor.flow && window.MonknotEditor.flow(\(json));")
+    }
+
+    var canCheckDocumentNow: Bool { flow?.canCheckDocumentNow == true }
+
+    func checkDocumentNow() -> Bool { flow?.checkDocumentNow() == true }
+
+    var canShowWritingTools: Bool {
+        editor?.configuration.showWritingTools != nil && flow?.canShowWritingTools == true
+    }
+
+    func showWritingTools() -> Bool {
+        guard canShowWritingTools, let show = editor?.configuration.showWritingTools else { return false }
+        show()
+        return true
     }
 }
 

@@ -32,6 +32,9 @@ enum MonknotNativeMarkdownCommand {
 @MainActor
 enum MonknotNativeSpellingCommand {
     static var canCheckDocument: Bool {
+        if let preview = focusedPreview {
+            return preview.canCheckDocumentNow
+        }
         guard let textView = focusedTextView else { return false }
         return writingToolsAreInactive(in: textView)
             && textView.flowWritingToolsInvocationEligible
@@ -39,6 +42,11 @@ enum MonknotNativeSpellingCommand {
 
     @discardableResult
     static func checkSpelling() -> Bool {
+        if let preview = focusedPreview {
+            // Preview has no document-wide marks to refresh; its writing assistance checks the
+            // sentence before the caret now and shows the fix the way typing would.
+            return preview.checkDocumentNow()
+        }
         guard let textView = focusedTextView,
               writingToolsAreInactive(in: textView),
               textView.flowWritingToolsInvocationEligible
@@ -62,6 +70,15 @@ enum MonknotNativeSpellingCommand {
         return nil
     }
 
+    private static var focusedPreview: MarkdownPreviewEditorCommands? {
+        for window in [NSApp.keyWindow, NSApp.mainWindow].compactMap({ $0 }) {
+            if let webView = window.firstResponder as? MarkdownEditorWebView {
+                return webView.previewCommands
+            }
+        }
+        return nil
+    }
+
     private static func writingToolsAreInactive(in textView: MarkdownNSTextView) -> Bool {
         if #available(macOS 15.0, *) {
             return !textView.isWritingToolsActive
@@ -73,6 +90,9 @@ enum MonknotNativeSpellingCommand {
 @MainActor
 enum MonknotNativeWritingToolsCommand {
     static var canShowWritingTools: Bool {
+        if let preview = focusedPreview {
+            return preview.canShowWritingTools
+        }
         guard #available(macOS 15.2, *),
               NSWritingToolsCoordinator.isWritingToolsAvailable,
               let textView = focusedTextView
@@ -85,6 +105,11 @@ enum MonknotNativeWritingToolsCommand {
 
     @discardableResult
     static func showWritingTools() -> Bool {
+        if let preview = focusedPreview {
+            // Writing Tools rewrite text in place; Preview changes only through source patches, so
+            // the document switches to Source and opens them there.
+            return preview.showWritingTools()
+        }
         guard #available(macOS 15.2, *),
               NSWritingToolsCoordinator.isWritingToolsAvailable,
               let textView = focusedTextView,
@@ -96,6 +121,10 @@ enum MonknotNativeWritingToolsCommand {
 
     private static var focusedTextView: MarkdownNSTextView? {
         NSApp.keyWindow?.firstResponder as? MarkdownNSTextView
+    }
+
+    private static var focusedPreview: MarkdownPreviewEditorCommands? {
+        (NSApp.keyWindow?.firstResponder as? MarkdownEditorWebView)?.previewCommands
     }
 }
 
@@ -1741,6 +1770,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
     let onFileDropRequest: ((MarkdownFileDropRequest) -> Void)?
     let onWritingToolsTextCommit: ((String, String) -> Void)?
     let onWritingToolsStateChange: ((String, Bool) -> Bool)?
+    /// Set when Preview asked for Writing Tools (Edit › Show Writing Tools…): the editor opens them
+    /// once it has keyboard focus, then clears the request.
+    @Binding var writingToolsRequested: Bool
 
     init(
         documentID: String,
@@ -1771,7 +1803,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)? = nil,
         onFileDropRequest: ((MarkdownFileDropRequest) -> Void)? = nil,
         onWritingToolsTextCommit: ((String, String) -> Void)? = nil,
-        onWritingToolsStateChange: ((String, Bool) -> Bool)? = nil
+        onWritingToolsStateChange: ((String, Bool) -> Bool)? = nil,
+        writingToolsRequested: Binding<Bool> = .constant(false)
     ) {
         self.documentID = documentID
         self._text = text
@@ -1802,6 +1835,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
         self.onFileDropRequest = onFileDropRequest
         self.onWritingToolsTextCommit = onWritingToolsTextCommit
         self.onWritingToolsStateChange = onWritingToolsStateChange
+        self._writingToolsRequested = writingToolsRequested
     }
 
     func makeCoordinator() -> Coordinator {
@@ -2003,6 +2037,13 @@ struct MarkdownTextEditor: NSViewRepresentable {
         }
 
         context.coordinator.applySyncScrollTargetLine(syncScrollTargetLine, in: textView, scrollView: scrollView)
+
+        if writingToolsRequested {
+            DispatchQueue.main.async {
+                self.writingToolsRequested = false
+            }
+            context.coordinator.requestWritingToolsOnceFocused()
+        }
 
         let searchResult = context.coordinator.applySearch(
             searchState,
@@ -5087,6 +5128,26 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
             scheduleProtectedRangesRefresh(delayNanoseconds: 0)
             return true
+        }
+
+        /// Preview asked for Writing Tools and switched to this editor: focus it once it is in its
+        /// window, then open them as the Edit menu would.
+        func requestWritingToolsOnceFocused(remainingAttempts: Int = 10) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let textView = self.textView else { return }
+                guard let window = textView.window else {
+                    if remainingAttempts > 0 {
+                        self.requestWritingToolsOnceFocused(remainingAttempts: remainingAttempts - 1)
+                    }
+                    return
+                }
+                if window.firstResponder !== textView {
+                    window.makeFirstResponder(textView)
+                }
+                if !self.requestWritingTools() {
+                    NSSound.beep()
+                }
+            }
         }
 
         @discardableResult
