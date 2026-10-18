@@ -90,6 +90,37 @@ html {
 /* The text column: the content-width share of the pane up to a comfortable line length
    (--content-measure, the same width Source uses), centred, with its gutters outside it. Source
    centres the same width, so text starts at the same edge in both modes. */
+/* Scroll bars follow the system (design.md §5.7): WebKit's overlay scroller while it fades, and
+   Monknot's slim thumb — no track, 3 from the card's edge, clear of its corners — when the system
+   shows scroll bars always. */
+html.mk-legacy-scrollbars ::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+  background: transparent;
+}
+
+html.mk-legacy-scrollbars ::-webkit-scrollbar-track {
+  margin: 6px;
+  background: transparent;
+}
+
+html.mk-legacy-scrollbars ::-webkit-scrollbar-thumb {
+  border: 3.5px solid transparent;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  background-clip: content-box;
+}
+
+html.mk-legacy-scrollbars ::-webkit-scrollbar-thumb:hover {
+  border-width: 2.5px;
+  background: color-mix(in srgb, var(--fg) 45%, transparent);
+  background-clip: content-box;
+}
+
+html.mk-legacy-scrollbars ::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 .markdown-body {
   --column-gutter: clamp(18px, 2.2vw, 38px);
   --column-text: min(var(--content-max-width, 88%), var(--content-measure, 45.7em));

@@ -1960,6 +1960,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
         scrollView.backgroundColor = background
         textView.textColor = NSColor(hex: theme.foreground)
         textView.insertionPointColor = NSColor(hex: theme.cursor)
+        // The document's thumb takes the theme's ink, like every scroll thumb (design.md §5.7).
+        MonknotScrollbarStyle.applyDocument(to: scrollView, thumbColor: MonknotScrollbarStyle.thumbColor(for: theme))
         textView.flowCuePalette = .themed(theme)
         textView.selectedTextAttributes = [
             .backgroundColor: NSColor(hex: theme.selectionBackground),

@@ -293,8 +293,8 @@ struct SidebarView: View {
                                 .equatable()
                             }
                         }
-                        .padding(.horizontal, scaled(6))
-                        .padding(.vertical, scaled(6))
+                        .padding(.horizontal, scaled(MonknotMetrics.listGutterBase))
+                        .padding(.vertical, scaled(MonknotMetrics.listTopInsetBase))
                         // Inside the scroll view's hosting view, so the rows' drag gesture and
                         // frame readers measure in the same space.
                         .coordinateSpace(name: SidebarMoveCoordinateSpace.name)
@@ -441,7 +441,7 @@ struct SidebarView: View {
         let rowPitch = rowHeight + scaled(MonknotMetrics.rowGapBase)
         return SidebarRevealedRow(
             id: selectionID,
-            frame: CGRect(x: 0, y: scaled(MonknotMetrics.listGutterBase) + CGFloat(index) * rowPitch, width: 1, height: rowHeight)
+            frame: CGRect(x: 0, y: scaled(MonknotMetrics.listTopInsetBase) + CGFloat(index) * rowPitch, width: 1, height: rowHeight)
         )
     }
 
@@ -972,42 +972,44 @@ private struct SidebarProjectHeader: View {
         activeWorkspace?.displayName ?? workspaceURL?.lastPathComponent ?? "No Workspace"
     }
 
-    private var showsChevron: Bool {
-        workspaces.count > 1 || isWorkspaceTitleHovered || isSwitcherPresented
-    }
-
     var body: some View {
-        HStack(spacing: scaled(6)) {
+        HStack(spacing: scaled(2)) {
             if workspaceURL != nil {
                 Button {
                     isSwitcherPresented.toggle()
                 } label: {
-                    HStack(spacing: scaled(6)) {
-                        // Disabled while a workspace loads: `ink4`, and no hover ink (design.md §5.1).
-                        Text(workspaceName)
-                            .font(.system(size: textScaled(13), weight: .semibold))
-                            .foregroundStyle(
-                                isBusy
-                                    ? theme.disabledForegroundColor
-                                    : theme.sidebarColor(theme.foregroundColor, opacity: 0.92)
-                            )
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                    HStack(spacing: scaled(MonknotMetrics.rowGlyphGapBase)) {
+                        // The monogram sits in the rows' glyph column and the name on their text edge.
+                        SidebarWorkspaceMonogram(name: workspaceName, isDisabled: isBusy, theme: theme, zoomScale: zoomScale)
 
-                        // Beside the name, like a pop-up button (design.md §10.4 "name + chevron").
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: textScaled(10), weight: .regular))
-                            .symbolRenderingMode(.monochrome)
-                            .foregroundStyle(
-                                isBusy
-                                    ? theme.disabledForegroundColor
-                                    : (isWorkspaceTitleHovered || isSwitcherPresented
-                                        ? theme.foregroundColor
-                                        : theme.tertiaryForegroundColor)
-                            )
-                            .opacity(showsChevron ? 1 : 0)
-                            .frame(width: scaled(11))
-                            .animation(MonknotMotion.hoverAnimation, value: showsChevron)
+                        HStack(spacing: scaled(5)) {
+                            // Disabled while a workspace loads: `ink4`, and no hover ink (design.md §5.1).
+                            Text(workspaceName)
+                                .font(.system(size: textScaled(13), weight: .semibold))
+                                .foregroundStyle(
+                                    isBusy
+                                        ? theme.disabledForegroundColor
+                                        : theme.sidebarColor(theme.foregroundColor)
+                                )
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+
+                            // Beside the name, like a pop-up button (design.md §10.4 "name + chevron").
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: textScaled(9), weight: .semibold))
+                                .symbolRenderingMode(.monochrome)
+                                .foregroundStyle(
+                                    isBusy
+                                        ? theme.disabledForegroundColor
+                                        : theme.foregroundColor.opacity(
+                                            isWorkspaceTitleHovered || isSwitcherPresented
+                                                ? AppTheme.sidebarLabelInkOpacity
+                                                : AppTheme.sidebarGlyphInkOpacity
+                                        )
+                                )
+                                .animation(MonknotMotion.hoverAnimation, value: isWorkspaceTitleHovered)
+                        }
+                        .layoutPriority(1)
 
                         Spacer(minLength: 0)
                     }
@@ -1059,18 +1061,6 @@ private struct SidebarProjectHeader: View {
                     .layoutPriority(1)
             }
 
-            Spacer(minLength: scaled(4))
-
-            MonknotIconButton(
-                systemImage: "plus",
-                label: "New Markdown",
-                theme: theme,
-                zoomScale: zoomScale,
-                isDisabled: !canCreateMarkdown,
-                size: .sidebarHeader,
-                action: createMarkdown
-            )
-
             MonknotIconButton(
                 systemImage: MonknotWorkspaceIcons.searchWorkspace,
                 label: "Search Workspace",
@@ -1080,11 +1070,93 @@ private struct SidebarProjectHeader: View {
                 size: .sidebarHeader,
                 action: showWorkspaceSearch
             )
+
+            SidebarComposeButton(
+                isDisabled: !canCreateMarkdown,
+                theme: theme,
+                zoomScale: zoomScale,
+                action: createMarkdown
+            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        // The name sits on the rows' text edge: the list gutter plus the row's own padding.
+        // The name sits on the rows' text edge: the list inset plus the row's own padding.
         .padding(.horizontal, scaled(MonknotMetrics.listGutterBase))
         .frame(height: scaled(40))
+    }
+}
+
+/// The workspace's initial on an accent tile, as Linear marks a workspace (design.md §10.4): it gives
+/// the header an anchor and tells windows on different folders apart at a glance.
+private struct SidebarWorkspaceMonogram: View {
+    let name: String
+    let isDisabled: Bool
+    let theme: AppTheme
+    let zoomScale: Double
+
+    static func initial(of name: String) -> String {
+        guard let first = name.first(where: { $0.isLetter || $0.isNumber }) else { return "•" }
+        return String(first).uppercased()
+    }
+
+    var body: some View {
+        let side = MonknotMetrics.interfaceGlyph(18, theme: theme, zoomScale: zoomScale)
+        Text(Self.initial(of: name))
+            .font(.system(size: MonknotMetrics.interfaceText(10.5, theme: theme, zoomScale: zoomScale), weight: .semibold))
+            .foregroundStyle(isDisabled ? theme.disabledForegroundColor : theme.onAccentForegroundColor)
+            .frame(width: side, height: side)
+            .background(
+                isDisabled ? theme.controlTrackFillColor : theme.accentColor,
+                in: RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale), style: .continuous)
+            )
+            .accessibilityHidden(true)
+    }
+}
+
+/// New Markdown, the header's one prominent action: a round chip like Linear's compose button.
+private struct SidebarComposeButton: View {
+    let isDisabled: Bool
+    let theme: AppTheme
+    let zoomScale: Double
+    let action: () -> Void
+    @State private var isHovered = false
+    @State private var isPressed = false
+
+    var body: some View {
+        let side = MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale)
+        Button(action: action) {
+            Image(systemName: "square.and.pencil")
+                .font(.system(size: MonknotMetrics.interfaceGlyph(13.5, theme: theme, zoomScale: zoomScale), weight: .regular))
+                .offset(x: 0.5, y: -0.5)
+                .foregroundStyle(
+                    isDisabled
+                        ? theme.disabledForegroundColor
+                        : theme.foregroundColor.opacity(isHovered ? 1 : AppTheme.sidebarLabelInkOpacity)
+                )
+                .frame(width: side, height: side)
+                .background {
+                    // Disabled, it is a glyph like every other disabled control: no chip, no ring.
+                    if !isDisabled {
+                        Circle()
+                            .fill(theme.chipFillColor)
+                            .overlay { Circle().strokeBorder(theme.chipRingColor, lineWidth: 1) }
+                            .shadow(color: theme.chipShadowColor, radius: 0.75, y: 1)
+                        if isPressed {
+                            Circle().fill(theme.pressedFillColor)
+                        } else if isHovered {
+                            Circle().fill(theme.hoverFillColor)
+                        }
+                    }
+                }
+                .contentShape(Circle())
+        }
+        .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
+        .focusEffectDisabled()
+        .disabled(isDisabled)
+        .onHover { isHovered = $0 }
+        .animation(MonknotMotion.hoverAnimation, value: isHovered)
+        .help("New Markdown")
+        .accessibilityLabel("New Markdown")
+        .monknotPointerCursor(enabled: !isDisabled)
     }
 }
 
@@ -1107,10 +1179,14 @@ private struct WorkspaceSwitcherPopover: View {
         MonknotMetrics.interfaceText(base, theme: theme, zoomScale: zoomScale)
     }
 
-    /// Up to seven 30 rows (a menu row, as in the editor's menus), 2 apart, inside the list padding.
+    /// Up to seven menu rows, as in the editor's menus, 1 apart, inside the list inset.
     private var workspaceListHeight: CGFloat {
         let visibleCount = CGFloat(min(workspaces.count, 7))
-        return scaled(visibleCount * 30 + max(0, visibleCount - 1) * 2 + 12)
+        return scaled(
+            visibleCount * MonknotMetrics.menuRowHeightBase
+                + max(0, visibleCount - 1)
+                + 2 * MonknotMetrics.menuListInsetBase
+        )
     }
 
     var body: some View {
@@ -1130,7 +1206,7 @@ private struct WorkspaceSwitcherPopover: View {
                     .frame(height: scaled(42), alignment: .leading)
             } else {
                 MonknotScrollView(theme: theme) {
-                    LazyVStack(spacing: scaled(2)) {
+                    LazyVStack(spacing: scaled(1)) {
                         ForEach(Array(workspaces.enumerated()), id: \.element.id) { index, workspace in
                             WorkspaceSwitcherRow(
                                 workspace: workspace,
@@ -1144,16 +1220,16 @@ private struct WorkspaceSwitcherPopover: View {
                             )
                         }
                     }
-                    .padding(.horizontal, scaled(6))
-                    .padding(.vertical, scaled(6))
+                    .padding(scaled(MonknotMetrics.menuListInsetBase))
                 }
                 .frame(height: workspaceListHeight)
             }
 
+            // The editor's menu separator: 4 inside the list inset.
             Rectangle()
                 .fill(theme.separatorColor)
                 .frame(height: 1)
-                .padding(.horizontal, scaled(14))
+                .padding(.horizontal, scaled(MonknotMetrics.menuListInsetBase + 4))
                 .padding(.vertical, scaled(6))
 
             WorkspaceSwitcherActionRow(
@@ -1210,7 +1286,7 @@ private struct WorkspaceSwitcherRow: View {
     var body: some View {
         ZStack(alignment: .trailing) {
             Button(action: open) {
-                HStack(spacing: scaled(8)) {
+                HStack(spacing: scaled(MonknotMetrics.menuRowGlyphGapBase)) {
                     MonknotSystemGlyph(
                         systemImage: isActive ? "folder.fill" : "folder",
                         nominalPointSizeBase: MonknotMetrics.sidebarIconPointSizeBase,
@@ -1260,8 +1336,8 @@ private struct WorkspaceSwitcherRow: View {
                         }
                     }
                 }
-                .padding(.horizontal, scaled(10))
-                .frame(height: scaled(30))
+                .padding(.horizontal, scaled(MonknotMetrics.menuRowPaddingBase))
+                .frame(height: scaled(MonknotMetrics.menuRowHeightBase))
                 .contentShape(Rectangle())
             }
             .buttonStyle(MonknotRowButtonStyle(
@@ -1282,7 +1358,7 @@ private struct WorkspaceSwitcherRow: View {
                     focusRingPlacement: .contained,
                     action: remove
                 )
-                .padding(.trailing, scaled(10))
+                .padding(.trailing, scaled(MonknotMetrics.menuRowPaddingBase))
             }
         }
         .onHover { isHovered = $0 }
@@ -1303,7 +1379,7 @@ private struct WorkspaceSwitcherActionRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: scaled(8)) {
+            HStack(spacing: scaled(MonknotMetrics.menuRowGlyphGapBase)) {
                 MonknotSystemGlyph(
                     systemImage: systemImage,
                     nominalPointSizeBase: MonknotMetrics.sidebarIconPointSizeBase,
@@ -1317,8 +1393,8 @@ private struct WorkspaceSwitcherActionRow: View {
 
                 Spacer()
             }
-            .padding(.horizontal, scaled(10))
-            .frame(height: scaled(30))
+            .padding(.horizontal, scaled(MonknotMetrics.menuRowPaddingBase))
+            .frame(height: scaled(MonknotMetrics.menuRowHeightBase))
             .contentShape(Rectangle())
         }
         .buttonStyle(MonknotRowButtonStyle(
@@ -1326,7 +1402,7 @@ private struct WorkspaceSwitcherActionRow: View {
             isSelected: false,
             cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
         ))
-        .padding(.horizontal, scaled(8))
+        .padding(.horizontal, scaled(MonknotMetrics.menuListInsetBase))
     }
 }
 
@@ -2029,21 +2105,26 @@ private struct SidebarRowButtonStyle: ButtonStyle {
     }
 }
 
-/// A folder or group's disclosure chevron in the 18pt glyph column, nudged per design.md §8.6: the
-/// right chevron's ink sits left of centre in its box.
+/// A folder or group's disclosure chevron in the 18pt glyph column. One chevron that turns a quarter
+/// as the folder opens (150 ms ease-out; none with Reduce Motion), nudged per design.md §8.6: the right
+/// chevron's ink sits left of centre in its box.
 struct SidebarDisclosureChevron: View {
     let isExpanded: Bool
     let theme: AppTheme
     let zoomScale: Double
+    var pointSizeBase: CGFloat = 10
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private func glyphScaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceGlyph(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
-        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-            .font(.system(size: glyphScaled(10), weight: .regular))
-            .offset(x: isExpanded ? 0 : glyphScaled(0.5))
+        Image(systemName: "chevron.right")
+            .font(.system(size: glyphScaled(pointSizeBase), weight: .semibold))
+            .offset(x: glyphScaled(0.5))
+            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: isExpanded)
             .frame(width: glyphScaled(MonknotMetrics.rowIconColumnWidthBase))
             .accessibilityHidden(true)
     }
@@ -2079,7 +2160,7 @@ private struct SidebarRowLabel<Trailing: View>: View {
                 .accessibilityHidden(true)
 
             Text(title)
-                .font(.system(size: MonknotMetrics.interfaceText(13, theme: theme, zoomScale: zoomScale), weight: .regular))
+                .font(MonknotTypography.sidebarLabel(theme: theme, zoomScale: zoomScale))
                 .animation(MonknotMotion.hoverAnimation) { $0.foregroundStyle(labelColor) }
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -2104,12 +2185,13 @@ private struct SidebarRowLabel<Trailing: View>: View {
         }
     }
 
-    // design.md §1.4: label `ink2` and glyph `ink3` at rest, both `ink` when hovered or held. The
-    // selected row's label is `ink` and its glyph `accent` (§1.3). Quiet Sidebar subdues all of it.
+    // design.md §10.4: the label at 75 % ink and the glyph at 55 % at rest; hovered or held, the label
+    // takes full ink and the glyph 75 %. The selected row's label is `ink` and its glyph `accent`
+    // (§1.3). Quiet Sidebar subdues all of it.
     private var labelColor: Color {
         theme.sidebarColor(
             theme.foregroundColor,
-            opacity: isSelected || isHighlighted ? 1 : AppTheme.mutedInkOpacity
+            opacity: isSelected || isHighlighted ? 1 : AppTheme.sidebarLabelInkOpacity
         )
     }
 
@@ -2119,7 +2201,7 @@ private struct SidebarRowLabel<Trailing: View>: View {
         }
         return theme.sidebarColor(
             theme.foregroundColor,
-            opacity: isHighlighted ? 1 : AppTheme.tertiaryInkOpacity
+            opacity: isHighlighted ? AppTheme.sidebarLabelInkOpacity : AppTheme.sidebarGlyphInkOpacity
         )
     }
 }
@@ -2204,8 +2286,8 @@ private struct SidebarSettingsButton: View {
             }
         }
         .buttonStyle(SidebarRowButtonStyle(theme: theme, zoomScale: zoomScale))
-        .padding(.horizontal, scaled(6))
-        .padding(.vertical, scaled(5))
+        .padding(.horizontal, scaled(MonknotMetrics.listGutterBase))
+        .padding(.vertical, scaled(6))
         .help("Open Settings (⌘,)")
     }
 }
@@ -2326,7 +2408,7 @@ private struct SidebarRecentDocumentsSection: View {
                 )
             }
             .buttonStyle(SidebarRowButtonStyle(theme: theme, zoomScale: zoomScale))
-            .padding(.horizontal, scaled(6))
+            .padding(.horizontal, scaled(MonknotMetrics.listGutterBase))
             .help(isExpanded ? "Hide recent documents" : "Show recent documents")
             .accessibilityLabel("Recent documents")
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
@@ -2353,7 +2435,7 @@ private struct SidebarRecentDocumentsSection: View {
                             }
                         }
                     }
-                    .padding(.horizontal, scaled(6))
+                    .padding(.horizontal, scaled(MonknotMetrics.listGutterBase))
                 }
                 .frame(height: viewportHeight)
                 .padding(.bottom, scaled(6))
@@ -2392,10 +2474,10 @@ private struct SidebarGroupHeaderLabel: View {
     var body: some View {
         let ink = theme.sidebarColor(
             theme.foregroundColor,
-            opacity: isHighlighted ? 1 : AppTheme.tertiaryInkOpacity
+            opacity: isHighlighted ? AppTheme.sidebarLabelInkOpacity : AppTheme.sidebarGlyphInkOpacity
         )
         HStack(spacing: scaled(MonknotMetrics.rowGlyphGapBase)) {
-            SidebarDisclosureChevron(isExpanded: isExpanded, theme: theme, zoomScale: zoomScale)
+            SidebarDisclosureChevron(isExpanded: isExpanded, theme: theme, zoomScale: zoomScale, pointSizeBase: 8)
 
             Text(title)
                 .font(MonknotTypography.eyebrow(theme: theme, zoomScale: zoomScale))
@@ -2503,8 +2585,8 @@ private struct EmptySidebarView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, scaled(6))
-            .padding(.vertical, scaled(6))
+            .padding(.horizontal, scaled(MonknotMetrics.listGutterBase))
+            .padding(.vertical, scaled(4))
         }
         .scrollContentBackground(.hidden)
     }

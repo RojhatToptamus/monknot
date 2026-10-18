@@ -160,7 +160,8 @@ final class TerminalChromeLayoutTests: XCTestCase {
             html.contains("postResize();\n            term.focus();"),
             "A pressure-hidden terminal must not focus itself outside the native visibility gate"
         )
-        XCTAssertTrue(html.contains("width: 12px;"))
+        // The shared scroll thumb's lane (design.md §5.7).
+        XCTAssertTrue(html.contains("width: \(Int(MonknotScrollbarStyle.trackWidth))px;"))
         XCTAssertTrue(html.contains("--terminal-bg: \(theme.terminalSurfaceHex);"))
         XCTAssertTrue(html.contains("\"background\":\"\(theme.terminalSurfaceHex)\""))
         // The terminal sits on a card on the document's canvas (design.md §10.0).

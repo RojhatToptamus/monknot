@@ -12,8 +12,15 @@ enum MonknotTypography {
         0
     }
 
+    /// Text in a row: a menu item, a search match, a command (design.md §4.3).
     static func rowTitle(theme: AppTheme, zoomScale: Double) -> Font {
         text(13, weight: .regular, theme: theme, zoomScale: zoomScale)
+    }
+
+    /// The name of a place in a sidebar row (a file, a folder, a settings page): 13, weight 500, as
+    /// Linear sets its navigation (design.md §10.4).
+    static func sidebarLabel(theme: AppTheme, zoomScale: Double) -> Font {
+        text(13, weight: .medium, theme: theme, zoomScale: zoomScale)
     }
 
     static func rowDetail(theme: AppTheme, zoomScale: Double) -> Font {

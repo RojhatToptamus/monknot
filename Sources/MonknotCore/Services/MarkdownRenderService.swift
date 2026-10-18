@@ -60,9 +60,12 @@ public struct MarkdownRenderService: Sendable {
         usePointerCursors: Bool = false,
         fontSmoothing: Bool = true,
         editable: Bool = false,
+        legacyScrollbars: Bool = false,
         baseURL: URL?
     ) throws -> String {
         let includesEditor = editable && supportsVisualEditing
+        // "Show scroll bars: Always" draws Monknot's thumb from the first paint (preview.css).
+        let rootClass = legacyScrollbars ? #" class="mk-legacy-scrollbars""# : ""
         let editorStyle = includesEditor ? (editorStylesheet ?? "") : ""
         let editorScript = includesEditor
             ? "<script>\n\(editorJavaScript ?? "")\n  </script>"
@@ -81,7 +84,7 @@ public struct MarkdownRenderService: Sendable {
 
         return """
         <!doctype html>
-        <html lang="en" data-theme="\(appTheme.isDark ? "dark" : "light")">
+        <html lang="en" data-theme="\(appTheme.isDark ? "dark" : "light")"\(rootClass)>
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">

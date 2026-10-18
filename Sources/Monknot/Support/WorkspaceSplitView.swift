@@ -134,7 +134,7 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
 enum WorkspaceSplitMetrics {
     static let sidebarMinimumWidth: CGFloat = 196
     /// A first window's sidebar: room for a workspace name and its two actions, no more.
-    static let sidebarDefaultWidth: CGFloat = 232
+    static let sidebarDefaultWidth: CGFloat = 240
     static let sidebarMaximumWidth: CGFloat = 440
     static let detailMinimumWidth: CGFloat = 360
     static let terminalMinimumWidth: CGFloat = 320

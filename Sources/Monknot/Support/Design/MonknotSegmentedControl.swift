@@ -67,15 +67,18 @@ struct MonknotSegmentButton: View {
                     width: MonknotMetrics.interfaceControl(28, theme: theme, zoomScale: zoomScale),
                     height: MonknotMetrics.interfaceControl(22, theme: theme, zoomScale: zoomScale)
                 )
-                .background(
-                    background,
-                    in: RoundedRectangle(
-                        cornerRadius: theme.chromeRadius(
-                            6,
-                            zoomScale: zoomScale
-                        )
-                    )
-                )
+                .background {
+                    let shape = RoundedRectangle(cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale))
+                    // The selected cell is a chip lifted out of the track (design.md §5.5).
+                    if isSelected, !isDisabled {
+                        shape
+                            .fill(background)
+                            .shadow(color: theme.chipShadowColor, radius: 0.75, y: 1)
+                            .overlay { shape.strokeBorder(theme.chipRingColor, lineWidth: 0.5) }
+                    } else {
+                        shape.fill(background)
+                    }
+                }
                 .monknotFocusRing(
                     isVisible: Self.showsFocusRing(isFocused: isFocused, isDisabled: isDisabled),
                     cornerRadius: theme.chromeRadius(6, zoomScale: zoomScale),

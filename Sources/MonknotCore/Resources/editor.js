@@ -6085,12 +6085,25 @@
       } else {
         hide(linkCard);
         if (formatBar.classList.contains("mk-visible")) refreshFormatBar(report, unit);
-        else if (!mouseSelecting) showFormatBarIfNeeded(false);
+        else if (!mouseSelecting && !hostSelected) showFormatBarIfNeeded(false);
       }
     }
 
+    // A selection the app sets (a restored caret, a search match it reveals) is not a gesture: the
+    // format bar waits until the person selects something themselves.
+    let hostSelected = false;
+    function hostWillSelect() {
+      build();
+      hostSelected = true;
+      hideFormatBar();
+    }
+    document.addEventListener("keydown", () => {
+      hostSelected = false;
+    }, true);
+
     let mouseSelecting = false;
     document.addEventListener("mousedown", (event) => {
+      hostSelected = false;
       if (layer && layer.contains(event.target)) return;
       mouseSelecting = true;
       hideFormatBar();
@@ -6345,6 +6358,7 @@
       afterTyping,
       afterEdit,
       selectionChanged,
+      hostWillSelect,
       showFormatBarIfNeeded,
       handleKeyDown,
       openLinkEditor,
@@ -6375,6 +6389,7 @@
     selection: currentSelectionForApp,
     setSelection: (anchor, head) => {
       if (!active || !model) return false;
+      UI.hostWillSelect();
       root.focus({ preventScroll: true });
       setSelection(anchor, head ?? anchor);
       return true;

@@ -642,24 +642,30 @@
 }
 
 .mk-menu-list::-webkit-scrollbar {
-  width: calc(10px * var(--mk-z));
+  width: 11px;
 }
 
-/* The chrome lists' overlay thumb (design.md §5.7): no track, shown while the pointer is over
-   the list. */
+/* The chrome lists' overlay thumb (design.md §5.7): no track, a 4 capsule at ink 25 % while the
+   pointer is over the list, 6 at 45 % under the pointer, its ends clear of the menu's corners. */
 .mk-menu-list::-webkit-scrollbar-track {
+  margin: 6px;
   background: transparent;
 }
 
 .mk-menu-list::-webkit-scrollbar-thumb {
-  border: calc(3px * var(--mk-z)) solid transparent;
-  border-radius: 2px;
+  border: 3.5px solid transparent;
+  border-radius: 6px;
   background: transparent;
-  background-clip: padding-box;
+  background-clip: content-box;
 }
 
 .mk-menu-list:hover::-webkit-scrollbar-thumb {
-  background-color: color-mix(in srgb, var(--fg) 35%, transparent);
+  background-color: color-mix(in srgb, var(--fg) 25%, transparent);
+}
+
+.mk-menu-list::-webkit-scrollbar-thumb:hover {
+  border-width: 2.5px;
+  background-color: color-mix(in srgb, var(--fg) 45%, transparent);
 }
 
 /* Section headers read as sentence-case captions, as in Notion's block menu. */

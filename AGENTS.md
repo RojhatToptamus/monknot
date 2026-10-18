@@ -350,7 +350,13 @@ Before adding custom parsing, indexing, PDF handling, file watching, or renderin
   `WorkspaceCardStyle`) inside their split panes. The 6pt dividers are the gaps, and a collapsed
   pane keeps its divider as the window margin, so the fit math always counts both dividers
   (design.md §10.0). Controls are fills, never outlines; selection is the neutral
-  `chromeSelectedFillColor`; chrome rows use `MonknotMetrics.rowHeightBase` and its siblings. During a
+  `chromeSelectedFillColor`; the active tab, a selected segment and New Markdown are the one chip
+  (`chipFillColor`, `chipRingColor`, `chipShadowColor`). Chrome rows use `MonknotMetrics.rowHeightBase`
+  and its siblings, menus and popovers the `menuRow*` metrics (the editor's menu row), and a sidebar
+  place name `MonknotTypography.sidebarLabel` (13/500). Panel toggles never take an on state. Every
+  scroll bar is `MonknotScrollbarStyle`'s thumb; Preview draws it with `html.mk-legacy-scrollbars`
+  (preview.css) when the system shows scroll bars always, a class `MarkdownRenderService` puts on
+  the shell's root (`legacyScrollbars`) so WebKit's own bar never paints first. During a
   side-pane transition `WorkspaceDetailPaneController` lays the document out once
   at its final width, pinned to the edge that does not move, so web views never
   re-lay out on every animation frame; `renderer.js` keeps the reading position
@@ -440,7 +446,7 @@ Current XCTest coverage focuses on `MonknotCore`:
 - `UnsavedChangesIntegrityTests` (app target): hosted editor and PDF viewer sweeps showing that opening, viewing, switching, saving, renaming and reviewing documents never marks unedited files as unsaved, and that a file only counts as changed on disk when its contents changed.
 - `MarkdownRendererJavaScriptTests`: renderer output in JavaScriptCore.
 - `MarkdownVisualEditorTests` (app target): Preview editing in real WebKit: typing, Return and Delete, Markdown shortcuts, Edit-menu undo and redo (also across a switch to Source), formatting, tasks, links, paste and copy, composition, tables, external changes, the slash rule, toggles, callouts, the + handle, drag-and-drop, the block menu and its shortcuts, 50 KB and 1 MB keystroke timing, and theme and narrow-window snapshots of the page, menus and handles (written to `MONKNOT_EDITOR_SNAPSHOT_DIR` when set).
-- `WorkspaceUITourTests` (app target): with `MONKNOT_UI_TOUR_DIR` set, captures the whole workspace window (sidebar open and collapsed, terminal, Source and Preview, light and dark, narrow and wide, tabs, no workspace, Settings) for design reviews; `MONKNOT_UI_TOUR_ONLY` picks stops by name (`a|b`). It skips otherwise. `ContentView.InitialLayout` sets the side panes a window starts with.
+- `WorkspaceUITourTests` (app target): with `MONKNOT_UI_TOUR_DIR` set, captures the whole workspace window (sidebar open and collapsed, terminal, Source and Preview, light and dark, narrow and wide, tabs, no workspace, Settings) for design reviews; `MONKNOT_UI_TOUR_ONLY` picks stops by name (`a|b`) and `MONKNOT_UI_TOUR_RAW` also keeps the window server's own image (with WebKit's scroll bars). It skips otherwise. `ContentView.InitialLayout` sets the side panes a window starts with and an overlay it opens once its document shows (Quick Open, Find, Find in Workspace, Keyboard Shortcuts).
 - `DocumentViewerRoutingTests` (app target): generated fixtures of every listed file type (text, extensionless, uppercase, binary and oversized text, PDF, raster images, video and audio) are scanned and opened in a hosted `EditorPaneView`; also image fit, media playback lifecycle, Open With and Recents.
 
 Manual Core smoke verification used in this repo when SwiftPM is blocked:

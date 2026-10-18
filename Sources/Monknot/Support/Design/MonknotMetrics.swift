@@ -21,16 +21,26 @@ enum MonknotMetrics {
     static let chromeHorizontalPaddingBase: CGFloat = 8
     static let iconButtonSizeBase: CGFloat = 28
     static let iconPointSizeBase: CGFloat = 17
-    static let sidebarIconPointSizeBase: CGFloat = 14
-    static let rowIconColumnWidthBase: CGFloat = 16
-    /// The chrome row primitive (design.md §0): 26 tall, 8 padding, a 14 glyph in the 16 column, 7 gap,
-    /// 13 label, 1 between rows and 14 per depth, inside a 6 list gutter.
-    static let rowHeightBase: CGFloat = 26
-    static let rowGapBase: CGFloat = 1
+    static let sidebarIconPointSizeBase: CGFloat = 15
+    static let rowIconColumnWidthBase: CGFloat = 18
+    /// The chrome row primitive (design.md §0): 28 tall, 8 padding, a 15 glyph in the 18 column, 8 gap,
+    /// a 13 / 500 label, no gap between rows and 14 per depth, inside a 10 list inset.
+    static let rowHeightBase: CGFloat = 28
+    static let rowGapBase: CGFloat = 0
     static let rowPaddingBase: CGFloat = 8
-    static let rowGlyphGapBase: CGFloat = 7
+    static let rowGlyphGapBase: CGFloat = 8
     static let rowIndentBase: CGFloat = 14
-    static let listGutterBase: CGFloat = 6
+    static let listGutterBase: CGFloat = 10
+    static let listTopInsetBase: CGFloat = 4
+    /// A menu row, as in the editor's menus (editor.css `.mk-menu-row`): 30 tall, 8 padding, the glyph
+    /// in an 18 column, 10 gap, a 13 / 400 label, inside a 6 list inset (design.md §10.10).
+    static let menuRowHeightBase: CGFloat = 30
+    static let menuRowPaddingBase: CGFloat = 8
+    static let menuRowGlyphGapBase: CGFloat = 10
+    static let menuListInsetBase: CGFloat = 6
+    /// A file tab's kind glyph: a step smaller than a row's, in its own 16 column (design.md §10.3).
+    static let tabGlyphPointSizeBase: CGFloat = 14
+    static let tabGlyphColumnBase: CGFloat = 16
     static let iconCornerRadiusBase: CGFloat = 8
     /// The document and terminal cards (design.md §7, §10.0).
     static let cardCornerRadius: CGFloat = 12

@@ -19,7 +19,7 @@ struct DocumentTabMetrics {
         padding = MonknotMetrics.interfaceDensity(10, theme: theme, zoomScale: zoomScale)
         gap = MonknotMetrics.interfaceDensity(7, theme: theme, zoomScale: zoomScale)
         glyphColumn = MonknotMetrics.interfaceGlyph(
-            MonknotMetrics.rowIconColumnWidthBase,
+            MonknotMetrics.tabGlyphColumnBase,
             theme: theme,
             zoomScale: zoomScale
         )
@@ -305,7 +305,9 @@ private struct DocumentTabItemView: View {
                     MonknotFileKindGlyph(
                         systemImage: documentIconName,
                         theme: theme,
-                        zoomScale: zoomScale
+                        zoomScale: zoomScale,
+                        pointSizeBase: MonknotMetrics.tabGlyphPointSizeBase,
+                        columnWidthBase: MonknotMetrics.tabGlyphColumnBase
                     )
                         .foregroundStyle(iconColor)
                         .overlay(alignment: .bottomTrailing) {
@@ -401,9 +403,13 @@ private struct DocumentTabItemView: View {
     @ViewBuilder
     private var tabBackground: some View {
         let shape = RoundedRectangle(cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale))
-        // A fill, never a border: the active tab is selected the way a sidebar row is.
+        // The active tab is a chip lifted out of the chrome, like the selected cell of a segmented
+        // control: the card's colour, a hairline, and in light themes a one-point seat (design.md §10.3).
         if isSelected {
-            shape.fill(theme.chromeSelectedFillColor)
+            shape
+                .fill(theme.chipFillColor)
+                .overlay { shape.strokeBorder(theme.chipRingColor, lineWidth: 1) }
+                .shadow(color: theme.chipShadowColor, radius: 0.75, y: 1)
         } else if isPressed && !isDisabled {
             shape.fill(theme.pressedFillColor)
         } else if isHovered && !isDisabled {

@@ -461,6 +461,24 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
 
     // MARK: - Icons
 
+    /// A selection the app sets (a restored caret, a revealed search match) is not a gesture: the format
+    /// bar stays hidden until the person selects something themselves.
+    func testFormatBarWaitsForThePersonsOwnSelection() async throws {
+        let markdown = "A paragraph with plain words to select.\n"
+        let fixture = try await makeFixture(markdown: markdown)
+        _ = try await fixture.evaluate("(() => { const s = document.createElement('style'); s.textContent = '.mk-floating { transition: none !important; }'; document.head.appendChild(s); return true; })()")
+        let plain = (markdown as NSString).range(of: "plain").location
+        try await fixture.setSelection(plain, plain + 5)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let shownForHost = try await fixture.evaluate("Boolean(document.querySelector('.mk-toolbar.mk-visible'))") as? Bool
+        XCTAssertEqual(shownForHost, false, "The app's selection shows no format bar")
+
+        _ = try await fixture.evaluate("document.getElementById('content').dispatchEvent(new MouseEvent('mouseup', {bubbles: true})); true")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let shownForPerson = try await fixture.evaluate("Boolean(document.querySelector('.mk-toolbar.mk-visible'))") as? Bool
+        XCTAssertEqual(shownForPerson, true, "Selecting with the mouse shows it")
+    }
+
     /// The format bar's and link card's buttons are built once; when the page builds them before
     /// the app's glyphs arrive they must fill in then, not stay solid squares.
     func testGlyphsThatArriveAfterTheBarsAreBuiltStillDraw() async throws {
@@ -778,10 +796,10 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
             let source = markdown as NSString
             try await shot("page")
 
-            // Format bar over bold text.
+            // Format bar over bold text, selected as a person would: the mouse comes up on the page.
             let bold = source.range(of: "bold").location
             try await fixture.setSelection(bold, bold + 4)
-            _ = try await fixture.evaluate("document.dispatchEvent(new MouseEvent('mouseup')); true")
+            _ = try await fixture.evaluate("document.getElementById('content').dispatchEvent(new MouseEvent('mouseup', {bubbles: true})); true")
             try await shot("format-bar")
             let barShown = try await visible(".mk-toolbar.mk-visible")
             XCTAssertTrue(barShown, "\(name): format bar")

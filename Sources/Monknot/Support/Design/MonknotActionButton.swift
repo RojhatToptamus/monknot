@@ -56,13 +56,16 @@ struct MonknotActionButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: scaled(MonknotMetrics.Spacing.xs)) {
+            // design.md §5.4: a 14 glyph in a 16 column, 7 to the label, 10 leading and 12 trailing,
+            // because the glyph's own side bearing already adds space on its side.
+            HStack(spacing: scaled(7)) {
                 if let systemImage {
                     Image(systemName: systemImage)
                         .font(.system(
-                            size: MonknotMetrics.interfaceGlyph(11, theme: theme, zoomScale: zoomScale),
+                            size: MonknotMetrics.interfaceGlyph(14, theme: theme, zoomScale: zoomScale),
                             weight: .regular
                         ))
+                        .frame(width: MonknotMetrics.interfaceGlyph(16, theme: theme, zoomScale: zoomScale))
                         .accessibilityHidden(true)
                 }
 
@@ -74,7 +77,8 @@ struct MonknotActionButton: View {
                 weight: .regular
             ))
             .foregroundStyle(foregroundColor)
-            .padding(.horizontal, scaled(MonknotMetrics.Spacing.l))
+            .padding(.leading, scaled(systemImage == nil ? MonknotMetrics.Spacing.l : 10))
+            .padding(.trailing, scaled(MonknotMetrics.Spacing.l))
             .frame(height: MonknotMetrics.interfaceControl(size.heightBase, theme: theme, zoomScale: zoomScale))
             .background {
                 shape.fill(backgroundColor)

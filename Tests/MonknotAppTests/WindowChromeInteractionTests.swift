@@ -190,12 +190,66 @@ final class WindowChromeInteractionTests: XCTestCase {
         XCTAssertEqual(scrollView.scrollerStyle, .overlay)
     }
 
-    func testDocumentsKeepTheSystemScrollerAndHideItOnlyWhenOverlay() {
+    /// design.md §5.7: documents take the same slim thumb as the chrome, and follow the system's
+    /// "Show scroll bars" setting — fading when overlay, staying in a reserved lane when always.
+    func testDocumentsTakeTheMonknotThumbAndFollowTheSystemScrollerStyle() {
         let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
         scrollView.hasVerticalScroller = true
-        MonknotScrollbarStyle.applyDocument(to: scrollView)
-        XCTAssertFalse(scrollView.verticalScroller is MonknotScroller)
+        let ink = NSColor(hex: AppTheme.defaultDark.foreground)
+        MonknotScrollbarStyle.applyDocument(to: scrollView, thumbColor: ink)
+        let scroller = scrollView.verticalScroller as? MonknotScroller
+        XCTAssertNotNil(scroller)
+        XCTAssertEqual(scroller?.thumbColor, ink)
+        XCTAssertEqual(scrollView.scrollerStyle, NSScroller.preferredScrollerStyle)
         XCTAssertEqual(scrollView.autohidesScrollers, NSScroller.preferredScrollerStyle == .overlay)
+        XCTAssertEqual(scrollView.scrollerInsets.top, MonknotScrollbarStyle.endInset, "Clear of a card's rounded corners")
+        XCTAssertEqual(MonknotScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy), MonknotScrollbarStyle.trackWidth)
+    }
+
+    /// design.md §5.7: with "Show scroll bars: Always", Preview draws Monknot's thumb in its 11 lane from
+    /// the shell's first paint, not WebKit's 17 legacy bar until the setting next changes.
+    func testPreviewShellDrawsTheMonknotLaneWhenTheSystemShowsScrollBars() async throws {
+        for legacy in [true, false] {
+            let html = try MarkdownRenderService().htmlDocument(
+                markdown: String(repeating: "A paragraph long enough to scroll.\n\n", count: 120),
+                appTheme: .defaultLight,
+                zoomScale: 1,
+                baseFontSize: AppTheme.defaultLight.codeFontSize,
+                legacyScrollbars: legacy,
+                baseURL: nil
+            )
+            let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 480, height: 320))
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
+                styleMask: [.titled],
+                backing: .buffered,
+                defer: false
+            )
+            window.isReleasedWhenClosed = false
+            window.contentView = webView
+            defer { window.contentView = nil }
+            webView.loadHTMLString(html, baseURL: nil)
+
+            var probe: [Any] = []
+            for _ in 0..<100 {
+                try await Task.sleep(nanoseconds: 50_000_000)
+                // The shell's own document, not the blank page WebKit starts with.
+                if let result = try? await webView.evaluateJavaScript(
+                    "[document.documentElement.classList.contains('mk-legacy-scrollbars'), window.innerWidth - document.documentElement.clientWidth, document.readyState === 'complete' && document.getElementById('content') !== null]"
+                ) as? [Any], (result.last as? Bool) == true {
+                    probe = result
+                    break
+                }
+            }
+            XCTAssertEqual(probe.first as? Bool, legacy, "The shell carries the scroll bar style")
+            if legacy {
+                XCTAssertEqual(
+                    (probe.dropFirst().first as? NSNumber)?.doubleValue,
+                    Double(MonknotScrollbarStyle.trackWidth),
+                    "Monknot's lane, not WebKit's legacy bar"
+                )
+            }
+        }
     }
 
     private static func firstDescendant<View: NSView>(of type: View.Type, in view: NSView) -> View? {
@@ -207,10 +261,19 @@ final class WindowChromeInteractionTests: XCTestCase {
         return nil
     }
 
-    func testScrollThumbsAreSlimRadiusTwoMarks() {
-        XCTAssertEqual(MonknotScrollbarStyle.thumbRadius, 2, "design.md §7: scroll thumbs are radius-2 marks")
+    /// design.md §5.7: a slim capsule, 3 from the edge at rest, wider and darker under the pointer,
+    /// never touching the ends of its lane.
+    func testScrollThumbIsASlimCapsuleInsetFromItsEdge() {
         XCTAssertLessThan(MonknotScrollbarStyle.restingThumbWidth, MonknotScrollbarStyle.hoveredThumbWidth)
         XCTAssertLessThan(MonknotScrollbarStyle.restingOpacity, MonknotScrollbarStyle.hoveredOpacity)
+        let bounds = NSRect(x: 0, y: 0, width: MonknotScrollbarStyle.trackWidth, height: 300)
+        let knob = NSRect(x: 0, y: 40, width: MonknotScrollbarStyle.trackWidth, height: 80)
+        let resting = MonknotScroller.thumbRect(knob: knob, bounds: bounds, isVertical: true, isHovered: false)
+        XCTAssertEqual(resting.width, MonknotScrollbarStyle.restingThumbWidth)
+        XCTAssertEqual(bounds.maxX - resting.maxX, 3, accuracy: 0.001, "Rests 3 from the container's edge")
+        let hovered = MonknotScroller.thumbRect(knob: knob, bounds: bounds, isVertical: true, isHovered: true)
+        XCTAssertEqual(hovered.midX, resting.midX, accuracy: 0.001, "Grows from its centre")
+        XCTAssertGreaterThan(resting.minY, knob.minY)
     }
 
     func testDisabledRowsDrawNoHoverOrPressFillButKeepTheirSelection() {

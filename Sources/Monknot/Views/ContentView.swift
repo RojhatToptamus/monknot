@@ -331,6 +331,8 @@ struct ContentView: View {
     @State private var isExportingPDF = false
     @State private var isResolvingUnsavedChanges = false
     @State private var isKeyboardShortcutsHelpPresented = false
+    /// `InitialLayout.overlay`, until the first document shows.
+    @State private var pendingInitialOverlay: InitialLayout.Overlay?
     @ObservedObject private var systemAppearance = SystemAppearanceMonitor.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.openSettings) private var openSettings
@@ -342,6 +344,15 @@ struct ContentView: View {
     struct InitialLayout: Equatable {
         var showsSidebar = true
         var showsTerminal = false
+        /// An overlay shown once the first document is open, for the UI tour's design reviews.
+        var overlay: Overlay?
+
+        enum Overlay: Equatable {
+            case quickOpen
+            case documentSearch(String)
+            case workspaceSearch(String)
+            case keyboardShortcuts
+        }
 
         static let standard = InitialLayout()
     }
@@ -360,6 +371,33 @@ struct ContentView: View {
         _sidebarPreferredVisible = SceneStorage(wrappedValue: initialLayout.showsSidebar, "Monknot.sidebarPreferredVisible")
         _isSidebarVisible = State(initialValue: initialLayout.showsSidebar)
         _terminalPreferredVisible = SceneStorage(wrappedValue: initialLayout.showsTerminal, "Monknot.isTerminalDrawerOpen")
+        _pendingInitialOverlay = State(initialValue: initialLayout.overlay)
+    }
+
+    private func presentPendingInitialOverlay() {
+        guard let overlay = pendingInitialOverlay,
+              store.selectedDocument != nil,
+              !store.isBusy,
+              !store.isDocumentLoading else { return }
+        pendingInitialOverlay = nil
+        switch overlay {
+        case .quickOpen:
+            showQuickOpen()
+        case let .documentSearch(query):
+            showDocumentSearch()
+            documentSearch.setQuery(query)
+        case let .workspaceSearch(query):
+            showWorkspaceSearch()
+            workspaceSearch.setQuery(
+                query,
+                options: searchOptions,
+                documents: store.documents,
+                dirtyTextByDocumentID: store.dirtyTextByDocumentID,
+                dirtyPDFDataByDocumentID: store.dirtyPDFDataByDocumentID
+            )
+        case .keyboardShortcuts:
+            isKeyboardShortcutsHelpPresented = true
+        }
     }
 
     private var zoomScale: Double {
@@ -650,6 +688,12 @@ struct ContentView: View {
         rootContentStack
             .onAppear {
                 persistedZoomScale = WorkspaceZoomPolicy.clamp(persistedZoomScale)
+            }
+            .onChange(of: store.isDocumentLoading) { _, _ in
+                presentPendingInitialOverlay()
+            }
+            .onChange(of: store.isBusy) { _, _ in
+                presentPendingInitialOverlay()
             }
     }
 

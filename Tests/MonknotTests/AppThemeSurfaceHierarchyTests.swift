@@ -30,18 +30,21 @@ final class AppThemeSurfaceHierarchyTests: XCTestCase {
         }
     }
 
-    func testDarkSidebarRaisesSubtlyTowardInk() {
-        let theme = AppTheme.defaultDark // background #121212, foreground #ebebeb
-        // Lighter than the dark canvas, but a subtle offset (not a heavy panel).
-        XCTAssertGreaterThan(luminance(theme.sidebarSurfaceHex), luminance(theme.background))
-        XCTAssertLessThan(channelDelta(theme.sidebarSurfaceHex, theme.background), 0.16)
+    func testDarkChromeSitsBelowTheCanvas() {
+        for theme in [AppTheme.defaultDark, AppTheme.darkTheme(id: "catppuccin-mocha")] {
+            // Darker than the canvas, so the card reads as lifted, but a step rather than a well.
+            XCTAssertLessThan(luminance(theme.sidebarSurfaceHex), luminance(theme.background), theme.name)
+            XCTAssertLessThan(channelDelta(theme.sidebarSurfaceHex, theme.background), 0.1, theme.name)
+        }
     }
 
-    func testLightSidebarRecessesSubtlyTowardInk() {
-        let theme = AppTheme.defaultLight // background #fdfdfe, foreground #1c1e22
-        // A hair darker than the white canvas, and very subtle in light themes.
-        XCTAssertLessThan(luminance(theme.sidebarSurfaceHex), luminance(theme.background))
-        XCTAssertLessThan(channelDelta(theme.sidebarSurfaceHex, theme.background), 0.06)
+    func testLightChromeRecessesTowardInkVisiblyOnTintedCanvases() {
+        for theme in [AppTheme.defaultLight, AppTheme.lightTheme(id: "catppuccin-latte")] {
+            XCTAssertLessThan(luminance(theme.sidebarSurfaceHex), luminance(theme.background), theme.name)
+            // Enough to see on a tinted canvas, never a grey panel.
+            XCTAssertGreaterThan(channelDelta(theme.sidebarSurfaceHex, theme.background), 0.025, theme.name)
+            XCTAssertLessThan(channelDelta(theme.sidebarSurfaceHex, theme.background), 0.06, theme.name)
+        }
     }
 
     private func luminance(_ hex: String) -> Double {

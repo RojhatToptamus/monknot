@@ -347,13 +347,14 @@ public extension AppTheme {
         AppTheme.blendHex(background, toward: foreground, amount: amount)
     }
 
-    /// The single distinct tool-panel tier (sidebar). Subtly offset from the
-    /// content canvas so the sidebar reads apart without heavy borders: lighter
-    /// in dark themes, a hair darker in light themes. Magnitudes are tuned to
-    /// the reference design, where the sidebar offset is small in light and a
-    /// touch stronger in dark so it remains perceptible against a dark canvas.
+    /// The window's frame around the cards: titlebar, sidebar and the gaps between cards (design.md
+    /// §10.0). It sits below the canvas in both modes, so the document card reads as lifted out of
+    /// it: a step toward the ink in light themes, a step toward black in dark ones. The step is large
+    /// enough to see on tinted canvases such as Catppuccin Latte, where a 3 % step disappeared.
     var sidebarSurfaceHex: String {
-        recessedSurfaceHex(amount: isDark ? 0.075 : 0.028)
+        isDark
+            ? AppTheme.blendHex(background, toward: "#000000", amount: 0.28)
+            : recessedSurfaceHex(amount: 0.055)
     }
 
     /// The terminal sits on a card beside the document's, on the same canvas (design.md §10.0).

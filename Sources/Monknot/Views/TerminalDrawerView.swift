@@ -165,10 +165,6 @@ private struct TerminalDrawerTabGroup: View {
                 }
                 .frame(width: viewportWidth)
 
-                Rectangle()
-                    .fill(theme.separatorColor)
-                    .frame(width: 1, height: scaled(13))
-
                 fullscreenButton
                 newTerminalButton
             }
@@ -245,7 +241,7 @@ private struct TerminalDrawerTabGroup: View {
             label: isFullscreen ? "Restore Terminal Panel" : "Expand Terminal Panel",
             theme: theme,
             zoomScale: zoomScale,
-            isActive: isFullscreen,
+            // Its arrows say which way it goes; like the panel toggles, it never lights up.
             size: .compact,
             action: toggleFullscreen
         )
@@ -267,8 +263,7 @@ private struct TerminalDrawerTabGroup: View {
 
     private var fixedControlsWidth: CGFloat {
         MonknotMetrics.interfaceControl(26, theme: theme, zoomScale: zoomScale) * 2
-            + scaled(6) * 3
-            + 1
+            + scaled(6) * 2
     }
 
     private func performPendingReveal(

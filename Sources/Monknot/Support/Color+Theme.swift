@@ -76,26 +76,40 @@ extension AppTheme {
         sidebarSurfaceColor
     }
 
-    /// The hairline ring of the document and terminal cards. Softer than `line`: the tone step between
-    /// chrome and card already draws the edge.
+    /// The hairline ring of the document and terminal cards (design.md §10.0, `cardring`).
     var cardRingColor: Color {
-        foregroundColor.opacity(isDark ? 0.07 : 0.085)
+        foregroundColor.opacity(isDark ? 0.09 : 0.11)
     }
 
-    /// A selected row, tab or terminal session in the chrome: a neutral fill, like a highlighted menu
-    /// row in the editor, so it never reads as a text selection or competes with the accent glyph.
+    /// A selected sidebar row or terminal session: a neutral fill, like a highlighted menu row in the
+    /// editor, so it never reads as a text selection or competes with the accent glyph (`selected`).
     var chromeSelectedFillColor: Color {
-        foregroundColor.opacity(isDark ? 0.10 : 0.07)
+        foregroundColor.opacity(isDark ? 0.10 : 0.09)
     }
 
     /// A secondary push button: a fill a step deeper than the control track, with no border.
     var secondaryButtonFillColor: Color {
-        foregroundColor.opacity(isDark ? 0.10 : 0.07)
+        foregroundColor.opacity(isDark ? 0.10 : 0.08)
     }
 
-    /// The selected cell of a segmented control, lifted out of its `hover`-tinted track.
+    /// A chip: the active tab and the selected cell of a segmented control, lifted out of the chrome
+    /// or its track — the card's own colour in light themes, a raised tone in dark ones (`chip`).
+    var chipFillColor: Color {
+        isDark ? Color(hex: AppTheme.blendHex(background, toward: foreground, amount: 0.12)) : surfaceColor
+    }
+
+    /// The chip's hairline, and in light themes its one-point seat (`chipring`, `chipshadow`).
+    var chipRingColor: Color {
+        foregroundColor.opacity(isDark ? 0.09 : 0.10)
+    }
+
+    var chipShadowColor: Color {
+        isDark ? .clear : foregroundColor.opacity(0.09)
+    }
+
+    /// The selected cell of a segmented control: the chip (design.md §5.5).
     var segmentSelectedFillColor: Color {
-        isDark ? foregroundColor.opacity(0.14) : surfaceColor
+        chipFillColor
     }
 
     var elevatedSurfaceColor: Color {
@@ -110,6 +124,10 @@ extension AppTheme {
     /// design.md §1.2 `ink2` and `ink3` as opacities of the theme foreground.
     static let mutedInkOpacity = 0.62
     static let tertiaryInkOpacity = 0.40
+    /// A sidebar row's label and glyph at rest (design.md §10.4): quieter than full ink so a long tree
+    /// stays calm, clearer than `ink2` so it never looks washed out.
+    static let sidebarLabelInkOpacity = 0.75
+    static let sidebarGlyphInkOpacity = 0.55
 
     var mutedForegroundColor: Color {
         foregroundColor.opacity(Self.mutedInkOpacity)
@@ -171,9 +189,9 @@ extension AppTheme {
         accentColor.opacity(isDark ? 0.18 : 0.14)
     }
 
-    /// Background for compact controls (segmented tracks, terminal tab chips).
+    /// The track of a segmented control and the fill of a pop-up or settings button (`track`).
     var controlTrackFillColor: Color {
-        hoverFillColor
+        foregroundColor.opacity(isDark ? 0.07 : 0.06)
     }
 
     /// Dimming layer over the editor when a drawer overlays constrained content.

@@ -68,7 +68,18 @@ private struct MonknotSettingsSegmentButton: View {
                 .padding(.horizontal, scaled(12))
                 .padding(.vertical, scaled(6))
                 .frame(minHeight: scaled(28))
-                .background(background, in: RoundedRectangle(cornerRadius: max(0, cornerRadius - 1)))
+                .background {
+                    let shape = RoundedRectangle(cornerRadius: max(0, cornerRadius - 2))
+                    // The selected segment is a chip lifted out of the track (design.md §5.5).
+                    if isSelected {
+                        shape
+                            .fill(background)
+                            .shadow(color: theme.chipShadowColor, radius: 0.75, y: 1)
+                            .overlay { shape.strokeBorder(theme.chipRingColor, lineWidth: 0.5) }
+                    } else {
+                        shape.fill(background)
+                    }
+                }
                 .contentShape(RoundedRectangle(cornerRadius: max(0, cornerRadius - 1)))
                 .monknotFocusRing(isVisible: isFocused, cornerRadius: max(0, cornerRadius - 1), theme: theme)
         }

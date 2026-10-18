@@ -67,9 +67,11 @@ struct WorkspaceSearchView: View {
             searchHeader
             searchControls
 
+            // Inside the list gutter, like the rows it separates from the controls.
             Rectangle()
                 .fill(theme.separatorColor)
                 .frame(height: 1)
+                .padding(.horizontal, scaled(MonknotMetrics.listGutterBase))
 
             searchBody
         }
@@ -131,7 +133,7 @@ struct WorkspaceSearchView: View {
         HStack(spacing: scaled(6)) {
             Text("Find in Workspace")
                 .font(.system(size: textScaled(13), weight: .semibold))
-                .foregroundStyle(theme.sidebarColor(theme.foregroundColor, opacity: 0.92))
+                .foregroundStyle(theme.sidebarColor(theme.foregroundColor))
                 .lineLimit(1)
 
             Spacer(minLength: scaled(4))
@@ -145,15 +147,16 @@ struct WorkspaceSearchView: View {
                 action: close
             )
         }
-        .padding(.leading, scaled(20))
-        .padding(.trailing, scaled(10))
+        // The title on a row's glyph edge, the close button where the header's last action sits.
+        .padding(.leading, scaled(MonknotMetrics.listGutterBase + MonknotMetrics.rowPaddingBase))
+        .padding(.trailing, scaled(MonknotMetrics.listGutterBase))
         .frame(height: scaled(40))
     }
 
     private var searchControls: some View {
         VStack(alignment: .leading, spacing: scaled(MonknotMetrics.Spacing.s)) {
             queryField
-                .padding(.horizontal, scaled(10))
+                .padding(.horizontal, scaled(MonknotMetrics.listGutterBase))
 
             VStack(alignment: .leading, spacing: scaled(2)) {
                 replaceDisclosure
@@ -169,13 +172,12 @@ struct WorkspaceSearchView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    // With the row gutter, the same 10 inset as the query field.
-                    .padding(.horizontal, scaled(4))
+                    // In the list gutter, like the query field.
                     .padding(.bottom, scaled(MonknotMetrics.Spacing.xs))
                 }
                 searchStatusRow
             }
-            .padding(.horizontal, scaled(6))
+            .padding(.horizontal, scaled(MonknotMetrics.listGutterBase))
         }
         .padding(.bottom, scaled(MonknotMetrics.Spacing.xs))
     }
@@ -289,14 +291,14 @@ struct WorkspaceSearchView: View {
         Button {
             isReplaceExpanded.toggle()
         } label: {
-            HStack(spacing: scaled(8)) {
+            HStack(spacing: scaled(MonknotMetrics.rowGlyphGapBase)) {
                 SidebarDisclosureChevron(isExpanded: isReplaceExpanded, theme: theme, zoomScale: zoomScale)
                 Text("Replace")
-                    .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
+                    .font(MonknotTypography.sidebarLabel(theme: theme, zoomScale: zoomScale))
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, scaled(10))
-            .frame(height: scaled(30))
+            .padding(.horizontal, scaled(MonknotMetrics.rowPaddingBase))
+            .frame(height: scaled(MonknotMetrics.rowHeightBase))
             .contentShape(Rectangle())
         }
         .buttonStyle(MonknotRowButtonStyle(
@@ -404,14 +406,16 @@ struct WorkspaceSearchView: View {
     @ViewBuilder
     private var searchStatusRow: some View {
         if hasQuery {
-            HStack(spacing: scaled(6)) {
-                // The spinner and the copy button keep their slots, so the status text never moves.
+            HStack(spacing: scaled(MonknotMetrics.rowGlyphGapBase)) {
+                // The spinner and the copy button keep their slots, so the status text never moves: the
+                // spinner in a row's glyph column, the text on the rows' text edge.
                 MonknotProgressIndicator(
                     size: MonknotMetrics.interfaceGlyph(12, theme: theme, zoomScale: zoomScale),
                     theme: theme,
                     isAnimating: state.isSearching
                 )
                 .opacity(state.isSearching ? 1 : 0)
+                .frame(width: scaled(MonknotMetrics.rowIconColumnWidthBase))
                 .accessibilityHidden(!state.isSearching)
 
                 Text(searchStatusText)
@@ -436,9 +440,9 @@ struct WorkspaceSearchView: View {
                     action: copySearchResults
                 )
             }
-            .padding(.leading, scaled(10))
-            .padding(.trailing, scaled(4))
-            .frame(minHeight: scaled(30))
+            .padding(.leading, scaled(MonknotMetrics.rowPaddingBase))
+            .padding(.trailing, scaled(2))
+            .frame(minHeight: scaled(MonknotMetrics.rowHeightBase))
         }
     }
 
@@ -528,7 +532,7 @@ struct WorkspaceSearchView: View {
     private var resultList: some View {
         let query = state.resultsQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let locationWidthTemplates = state.resultLocationWidthTemplates
-        return LazyVStack(alignment: .leading, spacing: scaled(2)) {
+        return LazyVStack(alignment: .leading, spacing: scaled(MonknotMetrics.rowGapBase)) {
             ForEach(state.resultListItems) { item in
                 switch item {
                 case .header(let group):
@@ -555,8 +559,8 @@ struct WorkspaceSearchView: View {
                 }
             }
         }
-        .padding(.horizontal, scaled(6))
-        .padding(.vertical, scaled(6))
+        .padding(.horizontal, scaled(MonknotMetrics.listGutterBase))
+        .padding(.vertical, scaled(MonknotMetrics.listTopInsetBase))
     }
 
     private func groupCountText(_ group: WorkspaceSearchResultGroup) -> String {
@@ -762,7 +766,7 @@ private struct WorkspaceSearchFileRow: View {
 
     private var name: some View {
         Text(fileName)
-            .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
+            .font(MonknotTypography.sidebarLabel(theme: theme, zoomScale: zoomScale))
             .foregroundStyle(theme.foregroundColor)
             .lineLimit(1)
             .truncationMode(.middle)
@@ -798,8 +802,8 @@ private struct WorkspaceSearchFileRow: View {
                 .monospacedDigit()
                 .foregroundStyle(theme.tertiaryForegroundColor)
         }
-        .padding(.horizontal, scaled(10))
-        .frame(height: scaled(30))
+        .padding(.horizontal, scaled(MonknotMetrics.rowPaddingBase))
+        .frame(height: scaled(MonknotMetrics.rowHeightBase))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(group.relativePath), \(countText) matches")
     }
@@ -906,12 +910,15 @@ private struct WorkspaceSearchResultRow: View, Equatable {
     var body: some View {
         Button(action: open) {
             HStack(spacing: scaled(8)) {
+                // Right-aligned in at least the glyph column, so a short line number puts the match on
+                // the text edge of the file row above it.
                 Text(locationLabel)
                     .monknotReservingWidth(of: locationWidthTemplates)
                     .font(.system(size: textScaled(12)))
                     .monospacedDigit()
                     .foregroundStyle(theme.tertiaryForegroundColor)
                     .lineLimit(1)
+                    .frame(minWidth: scaled(MonknotMetrics.rowIconColumnWidthBase), alignment: .trailing)
 
                 Text(snippet)
                     .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
@@ -919,8 +926,8 @@ private struct WorkspaceSearchResultRow: View, Equatable {
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, scaled(10))
-            .frame(height: scaled(30))
+            .padding(.horizontal, scaled(MonknotMetrics.rowPaddingBase))
+            .frame(height: scaled(MonknotMetrics.rowHeightBase))
             .contentShape(Rectangle())
         }
         .buttonStyle(MonknotRowButtonStyle(

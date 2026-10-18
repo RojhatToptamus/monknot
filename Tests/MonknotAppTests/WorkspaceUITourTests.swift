@@ -22,6 +22,8 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         /// Documents opened in tabs before `document`, left to right.
         var tabs: [String] = []
         var opensWorkspace = true
+        /// A catalog theme for the stop's appearance; nil keeps the default (Harbor).
+        var themeID: String?
     }
 
     func testCaptureTheWorkspaceInEveryLayoutState() async throws {
@@ -48,6 +50,18 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             Stop(name: "12-tabs-dark", theme: .dark, tabs: ["Roadmap.md", "Notes/Meeting notes.md", "config.json"]),
             Stop(name: "13-no-workspace-light", opensWorkspace: false),
             Stop(name: "14-no-workspace-dark", theme: .dark, opensWorkspace: false),
+            Stop(name: "16-latte-terminal", layout: .init(showsSidebar: true, showsTerminal: true), tabs: ["Roadmap.md", "Notes/Meeting notes.md"], themeID: "catppuccin-latte"),
+            Stop(name: "17-mocha-terminal", theme: .dark, layout: .init(showsSidebar: true, showsTerminal: true), tabs: ["Roadmap.md", "Notes/Meeting notes.md"], themeID: "catppuccin-mocha"),
+            Stop(name: "18-latte-source", mode: .source, themeID: "catppuccin-latte"),
+            // Overlays over Source: the tour draws WebKit's own snapshot over a web view, which would
+            // cover an overlay above it.
+            Stop(name: "19-quick-open-light", mode: .source, layout: .init(overlay: .quickOpen)),
+            Stop(name: "20-quick-open-dark", theme: .dark, mode: .source, layout: .init(overlay: .quickOpen)),
+            Stop(name: "21-find-light", layout: .init(overlay: .documentSearch("Markdown"))),
+            Stop(name: "22-find-dark", theme: .dark, mode: .source, layout: .init(overlay: .documentSearch("Markdown"))),
+            Stop(name: "23-workspace-search-light", layout: .init(overlay: .workspaceSearch("step"))),
+            Stop(name: "24-workspace-search-dark", theme: .dark, layout: .init(overlay: .workspaceSearch("step"))),
+            Stop(name: "25-shortcuts-light", mode: .source, layout: .init(overlay: .keyboardShortcuts)),
         ]
         let filters = only?.split(separator: "|").map(String.init)
         for theme in [ThemePreference.light, .dark] where filters == nil || filters!.contains(where: { "15-settings-\(theme.rawValue)".contains($0) }) {
@@ -62,12 +76,25 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         let defaults = UserDefaults.standard
         let savedMode = defaults.object(forKey: "Monknot.editorMode")
         let savedTheme = defaults.object(forKey: "Monknot.themePreference")
+        let themeIDKey = stop.theme == .dark ? "Monknot.darkThemeID" : "Monknot.lightThemeID"
+        let savedThemeID = defaults.object(forKey: themeIDKey)
+        // Each stop opens like a first window: no divider positions left over from the stop before.
+        let splitFramesKey = "NSSplitView Subview Frames \(WorkspaceSplitMetrics.autosaveName)"
+        let savedSplitFrames = defaults.object(forKey: splitFramesKey)
+        defaults.removeObject(forKey: splitFramesKey)
         defer {
             defaults.set(savedMode, forKey: "Monknot.editorMode")
             defaults.set(savedTheme, forKey: "Monknot.themePreference")
+            defaults.set(savedThemeID, forKey: themeIDKey)
+            defaults.set(savedSplitFrames, forKey: splitFramesKey)
         }
         defaults.set(stop.mode.rawValue, forKey: "Monknot.editorMode")
         defaults.set(stop.theme.rawValue, forKey: "Monknot.themePreference")
+        if let themeID = stop.themeID {
+            defaults.set(themeID, forKey: themeIDKey)
+        } else {
+            defaults.removeObject(forKey: themeIDKey)
+        }
 
         let store = makeWorkspaceStore()
         let library = WorkspaceLibraryStore(userDefaults: UserDefaults(suiteName: "MonknotUITour.\(UUID().uuidString)")!)
@@ -118,6 +145,11 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         ) else {
             XCTFail("Could not capture \(stop.name)")
             return
+        }
+        // `MONKNOT_UI_TOUR_RAW` keeps the window server's own image too, before any snapshot is drawn.
+        if ProcessInfo.processInfo.environment["MONKNOT_UI_TOUR_RAW"] != nil {
+            try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
+                .write(to: directory.appendingPathComponent("\(stop.name)-raw.png"))
         }
         // A window behind the app in front has no WebKit tiles in its image; WebKit's own snapshot
         // is drawn over each web view's frame instead.

@@ -179,7 +179,8 @@ struct MarkdownPreviewView: NSViewRepresentable {
             codeFontSize: codeFontSize,
             contentWidthPercent: contentWidthPercent,
             usePointerCursors: usePointerCursors,
-            fontSmoothing: fontSmoothing
+            fontSmoothing: fontSmoothing,
+            legacyScrollbars: context.coordinator.systemShowsLegacyScrollbars
         )
         let contentRequest = PreviewContentRequest(
             documentID: documentID,
@@ -205,6 +206,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
                             usePointerCursors: appearanceRequest.usePointerCursors,
                             fontSmoothing: appearanceRequest.fontSmoothing,
                             editable: shellRequest.isEditable,
+                            legacyScrollbars: appearanceRequest.legacyScrollbars,
                             baseURL: shellRequest.baseURL
                         )
                     }.value
@@ -254,6 +256,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
     }
 
     private func applyAppearance(_ request: PreviewAppearanceRequest, in webView: WKWebView, coordinator: Coordinator) {
+        coordinator.appearanceWebView = webView
         coordinator.setPendingAppearance(request)
         guard coordinator.isShellLoaded else { return }
         guard coordinator.shouldApplyAppearance(request) else { return }
@@ -414,8 +417,40 @@ struct MarkdownPreviewView: NSViewRepresentable {
 
         let resourceHandler = WorkspaceResourceSchemeHandler()
 
+        /// "Show scroll bars: Always": the page then draws Monknot's slim thumb instead of WebKit's
+        /// legacy bar with its opaque track (design.md §5.7). Kept current as the setting or the
+        /// attached mouse changes.
+        private(set) var systemShowsLegacyScrollbars = NSScroller.preferredScrollerStyle == .legacy
+        weak var appearanceWebView: WKWebView?
+        private var scrollerStyleObserver: NSObjectProtocol?
+
         init(onSourceJump: @escaping (MarkdownSourceLocation) -> Void) {
             self.onSourceJump = onSourceJump
+            super.init()
+            scrollerStyleObserver = NotificationCenter.default.addObserver(
+                forName: NSScroller.preferredScrollerStyleDidChangeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.preferredScrollerStyleDidChange()
+                }
+            }
+        }
+
+        deinit {
+            if let scrollerStyleObserver {
+                NotificationCenter.default.removeObserver(scrollerStyleObserver)
+            }
+        }
+
+        private func preferredScrollerStyleDidChange() {
+            let legacy = NSScroller.preferredScrollerStyle == .legacy
+            guard legacy != systemShowsLegacyScrollbars else { return }
+            systemShowsLegacyScrollbars = legacy
+            guard !isTornDown, isShellLoaded, let webView = appearanceWebView, var request = lastAppliedAppearance else { return }
+            request.legacyScrollbars = legacy
+            applyAppearance(request, in: webView)
         }
 
         // MARK: - Visual editing
@@ -887,6 +922,11 @@ struct MarkdownPreviewView: NSViewRepresentable {
         func tearDown() {
             guard !isTornDown else { return }
             isTornDown = true
+            if let scrollerStyleObserver {
+                NotificationCenter.default.removeObserver(scrollerStyleObserver)
+                self.scrollerStyleObserver = nil
+            }
+            appearanceWebView = nil
             cancelShellLoad()
             documentID = nil
             activeRenderID = nil
@@ -939,7 +979,8 @@ struct MarkdownPreviewView: NSViewRepresentable {
             ))
             let payload: [String: Any] = [
                 "theme": request.themeName,
-                "variables": variables
+                "variables": variables,
+                "scrollbars": request.legacyScrollbars ? "legacy" : "overlay"
             ]
 
             do {
@@ -1371,6 +1412,8 @@ fileprivate struct PreviewAppearanceRequest: Equatable {
     let contentWidthPercent: Double
     let usePointerCursors: Bool
     let fontSmoothing: Bool
+    /// "Show scroll bars: Always": the page draws Monknot's slim thumb instead of WebKit's legacy bar.
+    var legacyScrollbars = false
 
     var themeName: String {
         theme.isDark ? "dark" : "light"

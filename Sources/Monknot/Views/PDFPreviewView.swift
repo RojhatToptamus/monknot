@@ -3437,6 +3437,7 @@ struct PDFKitPreviewRepresentable: NSViewRepresentable {
             lastAppliedTheme = theme
             lastAppliedWorkspaceZoomScale = clampedZoomScale
             pdfView.backgroundColor = NSColor(hex: theme.background)
+            pdfView.scrollThumbColor = MonknotScrollbarStyle.thumbColor(for: theme)
             pdfView.freeTextOverlayAppearance = PDFFreeTextOverlayAppearance(theme: theme)
             pdfView.freeTextOverlayMetrics = PDFFreeTextOverlayMetrics(
                 theme: theme,
@@ -4710,6 +4711,14 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
     var serializeDocument: (PDFDocument) -> Data? = { $0.dataRepresentation() }
     private var toolCursor: NSCursor { PDFAnnotationToolCursor.cursor(for: annotationMode) }
 
+    /// The document's scroll thumb takes the theme's ink (design.md §5.7).
+    var scrollThumbColor: NSColor? {
+        didSet {
+            guard scrollThumbColor != oldValue else { return }
+            needsLayout = true
+        }
+    }
+
     override var acceptsFirstResponder: Bool {
         true
     }
@@ -4722,7 +4731,7 @@ final class AnnotatingPDFView: PDFView, NSTextViewDelegate {
         super.layout()
         // PDFKit configures its own scroll view and can replace it when the document changes.
         if let scrollView = documentView?.enclosingScrollView {
-            MonknotScrollbarStyle.applyDocument(to: scrollView)
+            MonknotScrollbarStyle.applyDocument(to: scrollView, thumbColor: scrollThumbColor)
         }
         updateFreeTextSelectionOverlay()
         updateFreeTextEditorFrame()

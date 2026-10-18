@@ -118,7 +118,7 @@ struct PreferencesView: View {
     }
 
     private var settingsSidebar: some View {
-        VStack(alignment: .leading, spacing: scaled(2)) {
+        VStack(alignment: .leading, spacing: scaled(MonknotMetrics.rowGapBase)) {
             ForEach(Section.allCases) { section in
                 Button {
                     selectedSection = section
@@ -129,23 +129,26 @@ struct PreferencesView: View {
                             .foregroundStyle(
                                 selectedSection == section
                                     ? panelTheme.accentColor
-                                    : (hoveredSection == section
-                                        ? panelTheme.foregroundColor
-                                        : panelTheme.tertiaryForegroundColor)
+                                    : panelTheme.foregroundColor.opacity(
+                                        hoveredSection == section
+                                            ? AppTheme.sidebarLabelInkOpacity
+                                            : AppTheme.sidebarGlyphInkOpacity
+                                    )
                             )
                             .frame(width: glyphScaled(MonknotMetrics.rowIconColumnWidthBase))
 
+                        // The main window's sidebar row (design.md §10.4, §12).
                         Text(section.rawValue)
-                            .font(.system(size: textScaled(13), weight: .regular))
+                            .font(MonknotTypography.sidebarLabel(theme: panelTheme, zoomScale: settingsZoomScale))
                             .foregroundStyle(
                                 selectedSection == section || hoveredSection == section
                                     ? panelTheme.foregroundColor
-                                    : panelTheme.mutedForegroundColor
+                                    : panelTheme.foregroundColor.opacity(AppTheme.sidebarLabelInkOpacity)
                             )
                     }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, scaled(MonknotMetrics.rowPaddingBase))
-                        .frame(height: scaled(MonknotMetrics.rowHeightBase + 2))
+                        .frame(height: scaled(MonknotMetrics.rowHeightBase))
                         .background(
                             sidebarRowBackground(for: section),
                             in: RoundedRectangle(cornerRadius: panelTheme.chromeRadius(8, zoomScale: settingsZoomScale))

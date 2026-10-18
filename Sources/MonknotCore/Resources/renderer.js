@@ -1765,6 +1765,7 @@
     const theme = nextState.theme === "dark" ? "dark" : "light";
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
+    applyScrollbarStyle(nextState.scrollbars === "legacy");
 
     if (nextState.variables && typeof nextState.variables === "object") {
       Object.entries(nextState.variables).forEach(([key, value]) => {
@@ -1775,6 +1776,19 @@
     }
 
     restoreScroll();
+  }
+
+  /// With "Show scroll bars: Always" the page draws Monknot's slim thumb (preview.css); otherwise
+  /// WebKit's own overlay scroller, which fades. WebKit keeps a scroll bar's style until the bar is
+  /// rebuilt, so a change briefly hides the overflow to rebuild it.
+  function applyScrollbarStyle(legacy) {
+    const root = document.documentElement;
+    if (root.classList.contains("mk-legacy-scrollbars") === legacy) return;
+    root.classList.toggle("mk-legacy-scrollbars", legacy);
+    const overflow = root.style.overflow;
+    root.style.overflow = "hidden";
+    void root.offsetWidth;
+    root.style.overflow = overflow;
   }
 
   function searchDocument(nextState = {}) {

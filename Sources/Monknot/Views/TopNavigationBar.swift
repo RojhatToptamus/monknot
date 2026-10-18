@@ -157,13 +157,13 @@ struct TopNavigationBar: View {
         .accessibilityValue(isSidebarVisible ? "Open" : "Closed")
     }
 
+    /// Like the sidebar toggle: the open panel shows its own state, so the button never lights up.
     private var drawerToggleButton: some View {
         MonknotIconButton(
             systemImage: MonknotWorkspaceIcons.sidebarRight,
             label: isTerminalPresented ? "Hide Terminal Panel" : "Show Terminal Panel",
             theme: theme,
             zoomScale: zoomScale,
-            isActive: isTerminalPresented,
             action: toggleTerminal
         )
         .accessibilityValue(isTerminalPresented ? "Open" : "Closed")

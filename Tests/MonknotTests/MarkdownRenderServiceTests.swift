@@ -10,6 +10,22 @@ final class MarkdownRenderServiceTests: MarkdownRenderServiceTestCase {
         XCTAssertTrue(html.contains(#"quote \" slash \\ newline"#))
     }
 
+    /// "Show scroll bars: Always" reaches the page with its shell, so its first paint has Monknot's thumb.
+    func testLegacyScrollBarsMarkTheShellRoot() throws {
+        func shell(legacy: Bool) throws -> String {
+            try MarkdownRenderService().htmlDocument(
+                markdown: "",
+                appTheme: .defaultLight,
+                zoomScale: 1,
+                baseFontSize: AppTheme.defaultLight.codeFontSize,
+                legacyScrollbars: legacy,
+                baseURL: nil
+            )
+        }
+        XCTAssertTrue(try shell(legacy: true).contains(#"<html lang="en" data-theme="light" class="mk-legacy-scrollbars">"#))
+        XCTAssertTrue(try shell(legacy: false).contains(#"<html lang="en" data-theme="light">"#))
+    }
+
     func testContentWidthUsesTheAvailablePaneInsteadOfALegacyPixelCap() throws {
         let html = try MarkdownRenderService().htmlDocument(
             markdown: "# Full width",
