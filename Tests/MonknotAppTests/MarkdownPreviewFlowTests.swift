@@ -179,6 +179,45 @@ final class MarkdownPreviewFlowTests: WorkspaceStoreTestCase {
         XCTAssertEqual(caret, ("They are ready. " as NSString).length, "The caret stays after the space")
     }
 
+    /// Fixes land on the right characters wherever the sentence is: after emoji and CJK text (two
+    /// UTF-16 units each for the emoji, on both sides of the bridge), in a list item and in a heading.
+    func testFixesLandAfterEmojiAndInListItemsAndHeadings() async throws {
+        let checker = PreviewFlowChecker { text in
+            PreviewFlowChecker.corrections(in: text, ["teh": "the"])
+        }
+        let cases: [(source: String, caretAfter: String, fixed: String)] = [
+            ("🙂 日本 We read teh plan\n", "🙂 日本 We read teh plan", "🙂 日本 We read the plan.\n"),
+            ("- First item\n- We read teh plan\n", "- First item\n- We read teh plan", "- First item\n- We read the plan.\n"),
+            ("## We read teh plan\n", "## We read teh plan", "## We read the plan.\n"),
+        ]
+        for (source, caretAfter, fixed) in cases {
+            let fixture = try await makeFixture(markdown: source, checker: checker)
+            try await fixture.setSelection((caretAfter as NSString).length)
+            fixture.type(".")
+            let applied = await waitUntil { fixture.store.documentText == fixed }
+            XCTAssertTrue(applied, "\(source.debugDescription) became \(fixture.store.documentText.debugDescription)")
+            let marked = try await fixture.evaluate("[...document.querySelectorAll('.mk-flow-settled')].map(e => e.textContent).join('|')") as? String
+            XCTAssertEqual(marked, "the", "The mark sits on the corrected word in \(source.debugDescription)")
+            let caret = try await fixture.evaluate("window.MonknotEditor.selection().head") as? Int
+            XCTAssertEqual(caret, (fixed as NSString).length - 1, "The caret stays after the sentence")
+            fixture.close()
+        }
+
+        let grammar = PreviewFlowChecker { text in
+            text.contains(" is ") ? PreviewFlowChecker.grammar(in: text, target: "is", corrections: ["are"]) : []
+        }
+        let review = try await makeFixture(markdown: "🙂🙂 They is ready\n", checker: grammar)
+        try await review.setSelection(("🙂🙂 They is ready" as NSString).length)
+        review.type(".")
+        let shown = await review.waitForFlowState { $0.review?.rendered == true }
+        XCTAssertTrue(shown, "A review after emoji is drawn")
+        let inserted = try await review.evaluate("[...document.querySelectorAll('.mk-flow-insert')].map(e => e.textContent).join('|')") as? String
+        XCTAssertEqual(inserted, "are")
+        review.press(.tab)
+        let applied = await waitUntil { review.store.documentText == "🙂🙂 They are ready.\n" }
+        XCTAssertTrue(applied, review.store.documentText.debugDescription)
+    }
+
     func testTypingOnDropsALateCheckWithoutChangingAnything() async throws {
         let checker = PreviewFlowChecker { text in
             PreviewFlowChecker.corrections(in: text, ["teh": "the"])
