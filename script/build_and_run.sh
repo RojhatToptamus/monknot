@@ -319,6 +319,7 @@ CORE_SOURCES=(
   "Sources/MonknotCore/Models/MonknotKeyboardShortcut.swift"
   "Sources/MonknotCore/Models/MonknotKeyboardShortcutCatalog.swift"
   "Sources/MonknotCore/Models/SidebarNode.swift"
+  "Sources/MonknotCore/Models/SidebarSelection.swift"
   "Sources/MonknotCore/Models/TerminalTabState.swift"
   "Sources/MonknotCore/Models/ThemePreference.swift"
   "Sources/MonknotCore/Models/WorkspaceContextChunk.swift"

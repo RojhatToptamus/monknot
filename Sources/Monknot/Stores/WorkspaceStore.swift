@@ -30,9 +30,10 @@ final class WorkspaceStore: ObservableObject {
             cancelExternalDocumentReview()
         }
     }
-    /// The folder selected in the sidebar. The sidebar has one selection: this folder, or the
-    /// selected document while no folder is selected. Selecting a folder leaves the document open.
-    @Published private(set) var selectedFolderID: String?
+    /// The items the sidebar selects itself: a clicked folder, or files and folders picked with the
+    /// arrow keys, ⇧ or ⌘ (design.md §10.4). While it is empty the sidebar selects the open
+    /// document, or nothing. Selecting items leaves the open document open.
+    @Published private(set) var sidebarItemSelection = SidebarSelection()
     /// Whether the sidebar selects the open document while no folder is selected. It stops when
     /// the selection goes to the Trash or the selected document leaves the workspace, so the
     /// document a tab shows in its place is not selected until the user picks one.
@@ -144,28 +145,55 @@ final class WorkspaceStore: ObservableObject {
         return document(id: selectedDocumentID)
     }
 
-    /// The path of the sidebar's selected item: the selected folder, otherwise the selected
-    /// document while the sidebar selects it.
-    var sidebarSelectionID: String? {
-        selectedFolderID ?? (sidebarSelectsOpenDocument ? selectedDocumentID : nil)
+    /// The folder selected in the sidebar when it is the one item the sidebar selects.
+    var selectedFolderID: String? {
+        guard sidebarItemSelection.count == 1,
+              let itemID = sidebarItemSelection.itemIDs.first,
+              rootNode?.node(withID: itemID)?.kind == .folder
+        else { return nil }
+        return itemID
     }
 
-    /// The sidebar's selected item: the selected folder, otherwise the selected document while the
+    /// The path of the sidebar's lead item: the item last picked, otherwise the selected document
+    /// while the sidebar selects it.
+    var sidebarSelectionID: String? {
+        sidebarItemSelection.leadID ?? (sidebarSelectsOpenDocument ? selectedDocumentID : nil)
+    }
+
+    /// The paths of every item the sidebar selects: the items picked, otherwise the selected
+    /// document while the sidebar selects it.
+    var sidebarSelectionIDs: [String] {
+        guard sidebarItemSelection.isEmpty else { return sidebarItemSelection.itemIDs }
+        return sidebarSelectionID.map { [$0] } ?? []
+    }
+
+    /// The sidebar's lead item: the item last picked, otherwise the selected document while the
     /// sidebar selects it.
     var sidebarSelectionURL: URL? {
-        if let selectedFolderID {
-            return URL(fileURLWithPath: selectedFolderID, isDirectory: true)
-        }
-        return sidebarSelectsOpenDocument ? selectedDocument?.url : nil
+        sidebarSelectionID.map(sidebarItemURL(_:))
     }
 
-    /// Where New and Paste put items when no row names a folder: the selected folder, the selected
-    /// document's folder, or the workspace root when nil.
+    /// Every item the sidebar selects, in path order, leaving out any inside another selected
+    /// folder, which goes with that folder.
+    var sidebarSelectionURLs: [URL] {
+        let ids = sidebarSelectionIDs
+        return ids
+            .filter { id in !ids.contains { $0 != id && WorkspaceDocumentSupport.isPath(id, containedIn: $0) } }
+            .sorted()
+            .map(sidebarItemURL(_:))
+    }
+
+    /// Where New and Paste put items when no row names a folder: the lead item when it is a folder,
+    /// otherwise its folder, or the workspace root when nil.
     var sidebarTargetFolderURL: URL? {
-        if let selectedFolderID {
-            return URL(fileURLWithPath: selectedFolderID, isDirectory: true)
-        }
-        return sidebarSelectsOpenDocument ? selectedDocument?.url.deletingLastPathComponent() : nil
+        guard let itemID = sidebarSelectionID else { return nil }
+        let url = sidebarItemURL(itemID)
+        return url.hasDirectoryPath ? url : url.deletingLastPathComponent()
+    }
+
+    private func sidebarItemURL(_ itemID: String) -> URL {
+        let isFolder = documentsByID[itemID] == nil && rootNode?.node(withID: itemID)?.kind == .folder
+        return URL(fileURLWithPath: itemID, isDirectory: isFolder)
     }
 
     /// Selects a folder of the workspace tree in the sidebar; the workspace root is never selected.
@@ -174,38 +202,67 @@ final class WorkspaceStore: ObservableObject {
               id != rootNode.id,
               rootNode.node(withID: id)?.kind == .folder
         else { return }
-        selectedFolderID = id
+        sidebarItemSelection = SidebarSelection(single: id)
     }
 
-    /// Keeps the selected folder in the tree: when it is gone, the nearest folder above it that
-    /// remains is selected instead, and nothing when that is the root. Moving the selection to the
-    /// Trash from Monknot selects nothing instead (`SidebarSelectionAfterLoad.cleared`).
-    private func reconcileSelectedFolder() {
-        guard var folderID = selectedFolderID else { return }
-        guard let rootNode else {
-            selectedFolderID = nil
+    /// Selects items of the workspace tree in the sidebar without opening any: what the arrow keys,
+    /// ⇧ and ⌘ pick. Items the tree does not hold, and the workspace root, are left out; with none
+    /// left, nothing is selected, not even the open document, until the user picks something.
+    func selectSidebarItems(_ selection: SidebarSelection) {
+        guard let rootNode else { return }
+        let next = selection.filtered { $0 != rootNode.id && rootNode.node(withID: $0) != nil }
+        guard !next.isEmpty else {
+            clearSidebarSelection()
             return
         }
-        while folderID != rootNode.id, WorkspaceDocumentSupport.isPath(folderID, containedIn: rootNode.id) {
-            if rootNode.node(withID: folderID)?.kind == .folder {
-                if folderID != selectedFolderID {
-                    selectedFolderID = folderID
-                }
+        if next != sidebarItemSelection {
+            sidebarItemSelection = next
+        }
+    }
+
+    /// Keeps the selected items in the tree. One item that is gone gives way to the nearest folder
+    /// above it that remains, and nothing when that is the root; of several, those that remain stay
+    /// selected. Moving the selection to the Trash from Monknot selects nothing instead
+    /// (`SidebarSelectionAfterLoad.cleared`).
+    private func reconcileSelectedFolder() {
+        guard !sidebarItemSelection.isEmpty else { return }
+        guard let rootNode else {
+            sidebarItemSelection = SidebarSelection()
+            return
+        }
+        let remaining = sidebarItemSelection.filtered { rootNode.node(withID: $0) != nil }
+        guard remaining.isEmpty, sidebarItemSelection.count == 1, var itemID = sidebarItemSelection.itemIDs.first else {
+            if remaining != sidebarItemSelection {
+                sidebarItemSelection = remaining
+            }
+            return
+        }
+        while itemID != rootNode.id, WorkspaceDocumentSupport.isPath(itemID, containedIn: rootNode.id) {
+            itemID = (itemID as NSString).deletingLastPathComponent
+            if itemID != rootNode.id, rootNode.node(withID: itemID)?.kind == .folder {
+                sidebarItemSelection = SidebarSelection(single: itemID)
                 return
             }
-            folderID = (folderID as NSString).deletingLastPathComponent
         }
-        selectedFolderID = nil
+        sidebarItemSelection = SidebarSelection()
+    }
+
+    /// The sidebar's selected items follow the item moved from `sourcePath` to `destinationPath`.
+    private func followSidebarSelection(afterMoving sourcePath: String, to destinationPath: String) {
+        guard !sidebarItemSelection.isEmpty else { return }
+        sidebarItemSelection = sidebarItemSelection.mapped {
+            Self.path($0, afterMoving: sourcePath, to: destinationPath)
+        }
     }
 
     private func selectOpenDocumentInSidebar() {
-        selectedFolderID = nil
+        sidebarItemSelection = SidebarSelection()
         sidebarSelectsOpenDocument = true
     }
 
     /// Leaves nothing selected in the sidebar.
     private func clearSidebarSelection() {
-        selectedFolderID = nil
+        sidebarItemSelection = SidebarSelection()
         sidebarSelectsOpenDocument = false
     }
 
@@ -903,13 +960,23 @@ final class WorkspaceStore: ObservableObject {
     /// Marks a workspace file or folder to be copied by each later paste. A Copy made through the
     /// pasteboard passes the stamp of the item it wrote there.
     func copyItem(at url: URL, pasteboardStamp: WorkspacePasteboardTransferStamp? = nil) {
-        setPendingTransfer(for: url, operation: .copy, pasteboardStamp: pasteboardStamp)
+        copyItems(at: [url], pasteboardStamp: pasteboardStamp)
+    }
+
+    /// Marks workspace files and folders to be copied by each later paste.
+    func copyItems(at urls: [URL], pasteboardStamp: WorkspacePasteboardTransferStamp? = nil) {
+        setPendingTransfer(for: urls, operation: .copy, pasteboardStamp: pasteboardStamp)
     }
 
     /// Marks a workspace file or folder to be moved by the next paste. A Cut made through the
     /// pasteboard passes the stamp of the item it wrote there.
     func cutItem(at url: URL, pasteboardStamp: WorkspacePasteboardTransferStamp? = nil) {
-        setPendingTransfer(for: url, operation: .cut, pasteboardStamp: pasteboardStamp)
+        cutItems(at: [url], pasteboardStamp: pasteboardStamp)
+    }
+
+    /// Marks workspace files and folders to be moved by the next paste.
+    func cutItems(at urls: [URL], pasteboardStamp: WorkspacePasteboardTransferStamp? = nil) {
+        setPendingTransfer(for: urls, operation: .cut, pasteboardStamp: pasteboardStamp)
     }
 
     /// The stamp of the pasteboard item the pending Copy or Cut wrote, if it wrote one.
@@ -931,23 +998,32 @@ final class WorkspaceStore: ObservableObject {
         Self.openStores.allObjects.filter { $0 !== self }
     }
 
-    /// Replaces any earlier transfer, which the newer Copy or Cut supersedes even when its item is
-    /// not a workspace file or folder.
+    /// Replaces any earlier transfer, which the newer Copy or Cut supersedes even when its items
+    /// are not all workspace files or folders.
     private func setPendingTransfer(
-        for url: URL,
+        for urls: [URL],
         operation: WorkspaceDocumentTransferOperation,
         pasteboardStamp: WorkspacePasteboardTransferStamp?
     ) {
-        let url = url.standardizedFileURL
-        guard isWorkspaceItem(url) else {
+        let urls = Self.outermostItems(urls.map(\.standardizedFileURL))
+        guard !urls.isEmpty, urls.allSatisfy(isWorkspaceItem) else {
             pendingDocumentTransfer = nil
             return
         }
         pendingDocumentTransfer = WorkspaceDocumentTransfer(
-            url: url,
+            urls: urls,
             operation: operation,
             pasteboardStamp: pasteboardStamp
         )
+    }
+
+    /// `urls` without any inside another of them, which goes with that folder, in path order.
+    nonisolated static func outermostItems(_ urls: [URL]) -> [URL] {
+        let paths = Set(urls.map(\.standardizedFileURL.path))
+        return paths
+            .filter { path in !paths.contains { $0 != path && WorkspaceDocumentSupport.isPath(path, containedIn: $0) } }
+            .sorted()
+            .compactMap { path in urls.first { $0.standardizedFileURL.path == path }?.standardizedFileURL }
     }
 
     /// Whether the standardized `url` is a document of the workspace or a folder inside it.
@@ -969,7 +1045,7 @@ final class WorkspaceStore: ObservableObject {
         paste(transfer, cutIn: nil, into: directoryURL)
     }
 
-    /// Moves the item another window cut into `directoryURL` (the root when nil), as a Paste in
+    /// Moves the items another window cut into `directoryURL` (the root when nil), as a Paste in
     /// that window would. An item with unsaved changes in that window stays where it is.
     func pasteCut(from owner: WorkspaceStore, into directoryURL: URL?) {
         guard owner !== self,
@@ -990,11 +1066,11 @@ final class WorkspaceStore: ObservableObject {
         guard ensureWritingToolsInactive(for: "changing the workspace") else { return }
 
         let targetDirectory = (directoryURL ?? workspaceURL).standardizedFileURL
-        let sourceURL = transfer.url
-        let displayName = sourceURL.lastPathComponent
+        let sourceURLs = transfer.urls
+        let displayName = Self.itemsName(sourceURLs)
+        let isInTarget = { (url: URL) in url.deletingLastPathComponent().standardizedFileURL == targetDirectory }
 
-        if transfer.operation == .cut,
-           sourceURL.deletingLastPathComponent().standardizedFileURL == targetDirectory {
+        if transfer.operation == .cut, sourceURLs.allSatisfy(isInTarget) {
             completeTransfer(transfer)
             return
         }
@@ -1003,20 +1079,23 @@ final class WorkspaceStore: ObservableObject {
             errorMessage = "Paste items into the current workspace."
             return
         }
-        guard !WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: sourceURL) else {
+        guard !sourceURLs.contains(where: { WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: $0) }) else {
             errorMessage = "A folder cannot be pasted into itself."
             return
         }
         let movesWithinWorkspace = transfer.operation == .cut
-            && WorkspaceDocumentSupport.isURL(sourceURL, containedIn: workspaceURL)
+            && sourceURLs.allSatisfy { WorkspaceDocumentSupport.isURL($0, containedIn: workspaceURL) }
         // A move within this workspace can rewrite the links in any note of it; a move from
-        // another workspace takes only the item.
-        if let owner, let unsaved = owner.unsavedDocument(at: movesWithinWorkspace ? workspaceURL : sourceURL) {
+        // another workspace takes only the items.
+        if let owner,
+           let unsaved = movesWithinWorkspace
+               ? owner.unsavedDocument(at: workspaceURL)
+               : sourceURLs.lazy.compactMap({ owner.unsavedDocument(at: $0) }).first {
             errorMessage = "Save or close \(unsaved.displayName) in its window first."
             return
         }
 
-        if movesWithinWorkspace {
+        if movesWithinWorkspace, sourceURLs.count == 1, let sourceURL = sourceURLs.first {
             requestMarkdownLinkAwareMove(
                 sourceURL: sourceURL,
                 destinationURL: Self.uniqueDocumentURL(for: sourceURL, in: targetDirectory),
@@ -1027,22 +1106,38 @@ final class WorkspaceStore: ObservableObject {
             )
             return
         }
+        if movesWithinWorkspace {
+            // Several items move one after another, as a drop of them does; the Cut ends as they
+            // start, so a second Paste cannot copy them back from its snapshots.
+            completeTransfer(transfer)
+            dropFileURLs(sourceURLs.filter { !isInTarget($0) }, into: targetDirectory)
+            return
+        }
 
-        // A Copy pastes the file as it was at Copy while its snapshot is on the pasteboard, as
-        // a Paste in another app does.
-        let snapshotURL = transfer.operation == .copy
-            ? transfer.pasteboardStamp?.snapshotURL.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
-            : nil
+        // A Copy pastes each file as it was at Copy while its snapshot is on the pasteboard, as a
+        // Paste in another app does.
+        let sources = sourceURLs.map { url in
+            WorkspaceItemTransferSource(
+                url: url,
+                contentsURL: transfer.operation == .copy
+                    ? transfer.pasteboardStamp?.snapshotURL(for: url).flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+                    : nil,
+                targetDirectory: targetDirectory
+            )
+        }
         startItemTransfer(
-            from: sourceURL,
-            contentsOf: snapshotURL,
-            into: targetDirectory,
+            sources,
             moving: transfer.operation == .cut,
             workspaceURL: workspaceURL,
             completedTransfer: transfer,
             failureMessage: "Could not paste \(displayName)",
             undoVerb: transfer.operation == .cut ? .move : .copy
         )
+    }
+
+    /// An item's name, or how many items there are: what a message about them calls them.
+    nonisolated private static func itemsName(_ urls: [URL]) -> String {
+        urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) items"
     }
 
     /// The first document at or inside `url` with unsaved changes.
@@ -1057,9 +1152,9 @@ final class WorkspaceStore: ObservableObject {
             .first
     }
 
-    /// Ends a pasted Cut, which also leaves the pasteboard while it still holds the item, so a
-    /// second Paste does not copy the moved item back from its snapshot. A Copy stays pending, so
-    /// every Paste of it makes another copy.
+    /// Ends a pasted Cut, which also leaves the pasteboard while it still holds the items, so a
+    /// second Paste does not copy the moved items back from their snapshots. A Copy stays pending,
+    /// so every Paste of it makes more copies.
     private func completeTransfer(_ transfer: WorkspaceDocumentTransfer) {
         guard transfer.operation == .cut else { return }
         if pendingDocumentTransfer == transfer {
@@ -1072,88 +1167,118 @@ final class WorkspaceStore: ObservableObject {
 
     /// Copies a workspace file or folder next to itself with a "copy" suffix.
     func duplicateItem(at url: URL) {
-        duplicateItem(at: url, into: url.standardizedFileURL.deletingLastPathComponent())
+        duplicateItems(at: [url])
+    }
+
+    /// Copies workspace files and folders, each next to itself with a "copy" suffix, as one step.
+    func duplicateItems(at urls: [URL]) {
+        copyWorkspaceItems(urls) { $0.deletingLastPathComponent() }
     }
 
     /// Copies a workspace file or folder into `directoryURL` (the root when nil), with a "copy"
     /// suffix when its name is taken there.
     func duplicateItem(at url: URL, into directoryURL: URL?) {
-        let sourceURL = url.standardizedFileURL
-        guard let workspaceURL, isWorkspaceItem(sourceURL) else { return }
+        duplicateItems(at: [url], into: directoryURL)
+    }
+
+    /// Copies workspace files and folders into `directoryURL` (the root when nil), as one step.
+    func duplicateItems(at urls: [URL], into directoryURL: URL?) {
+        guard let workspaceURL else { return }
+        let targetDirectory = (directoryURL ?? workspaceURL).standardizedFileURL
+        copyWorkspaceItems(urls) { _ in targetDirectory }
+    }
+
+    /// Copies each workspace item of `urls` into the folder `targetDirectory` names for it. An item
+    /// inside another one given goes with it.
+    private func copyWorkspaceItems(_ urls: [URL], into targetDirectory: (URL) -> URL) {
+        let sourceURLs = Self.outermostItems(urls).filter(isWorkspaceItem)
+        guard let workspaceURL, !sourceURLs.isEmpty else { return }
         guard ensureNotBusy(), ensureWritingToolsInactive(for: "changing the workspace") else { return }
 
-        let targetDirectory = (directoryURL ?? workspaceURL).standardizedFileURL
-        guard WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: workspaceURL) else {
-            errorMessage = "Copy items into the current workspace."
-            return
+        var sources: [WorkspaceItemTransferSource] = []
+        for sourceURL in sourceURLs {
+            let target = targetDirectory(sourceURL).standardizedFileURL
+            guard WorkspaceDocumentSupport.isURL(target, containedIn: workspaceURL) else {
+                errorMessage = "Copy items into the current workspace."
+                return
+            }
+            guard !WorkspaceDocumentSupport.isURL(target, containedIn: sourceURL) else {
+                errorMessage = "A folder cannot be copied into itself."
+                return
+            }
+            sources.append(WorkspaceItemTransferSource(url: sourceURL, contentsURL: nil, targetDirectory: target))
         }
-        guard !WorkspaceDocumentSupport.isURL(targetDirectory, containedIn: sourceURL) else {
-            errorMessage = "A folder cannot be copied into itself."
-            return
+        let duplicatesInPlace = sources.allSatisfy {
+            $0.targetDirectory == $0.url.deletingLastPathComponent().standardizedFileURL
         }
 
         startItemTransfer(
-            from: sourceURL,
-            into: targetDirectory,
+            sources,
             moving: false,
             workspaceURL: workspaceURL,
             completedTransfer: nil,
-            failureMessage: "Could not duplicate \(sourceURL.lastPathComponent)",
-            undoVerb: targetDirectory == sourceURL.deletingLastPathComponent().standardizedFileURL ? .duplicate : .copy
+            failureMessage: "Could not duplicate \(Self.itemsName(sourceURLs))",
+            undoVerb: duplicatesInPlace ? .duplicate : .copy
         )
     }
 
-    /// Copies a file or folder, or moves one cut in another workspace, into `targetDirectory` and
-    /// selects the result: a file opens, a folder is selected in the sidebar. A copy is made of
-    /// `contentsURL`, a snapshot of the file, when given; otherwise it carries the unsaved text of
-    /// the copied file, or of every document in the copied folder. Whatever was copied before a
-    /// failure stays on disk, so a failure rescans too. A transfer that completes is one step of
-    /// Edit › Undo, named by `undoVerb`.
+    /// Copies files and folders, or moves ones cut in another workspace, each into its target
+    /// folder, and selects the result: one file opens and one folder is selected in the sidebar;
+    /// several items are selected in the sidebar. A copy is made of its source's `contentsURL`, a
+    /// snapshot of the file, when given; otherwise it carries the unsaved text of the copied file,
+    /// or of every document in the copied folder. Whatever was copied before a failure stays on
+    /// disk, so a failure rescans too. A transfer that completes is one step of Edit › Undo, named
+    /// by `undoVerb`.
     private func startItemTransfer(
-        from sourceURL: URL,
-        contentsOf contentsURL: URL? = nil,
-        into targetDirectory: URL,
+        _ sources: [WorkspaceItemTransferSource],
         moving: Bool,
         workspaceURL: URL,
         completedTransfer: WorkspaceDocumentTransfer?,
         failureMessage: String,
         undoVerb: WorkspaceFileOperationVerb
     ) {
-        let sourceID = sourceURL.path
-        let dirtyCopyTexts = moving || contentsURL != nil ? [] : unsavedTexts(inItemAt: sourceID)
+        var dirtyCopyTexts: [String: [(subpath: String, text: String)]] = [:]
+        if !moving {
+            for source in sources where source.contentsURL == nil {
+                dirtyCopyTexts[source.url.path] = unsavedTexts(inItemAt: source.url.path)
+            }
+        }
+        let copyTexts = dirtyCopyTexts
         let preserveSelection = selectedDocumentID
         noteInternalFileMutation()
         let generation = beginDocumentFileOperation()
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
             do {
-                let destinationURL = Self.uniqueDocumentURL(for: sourceURL, in: targetDirectory)
-                let isFolder = Self.isDirectory(sourceURL)
-                if moving {
-                    try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
-                } else {
-                    try FileManager.default.copyItem(at: contentsURL ?? sourceURL, to: destinationURL)
-                    for (subpath, text) in dirtyCopyTexts {
-                        let copiedURL = subpath.isEmpty ? destinationURL : destinationURL.appendingPathComponent(subpath)
-                        try await Self.writeText(text, to: copiedURL)
+                var undoSteps: [WorkspaceFileOperationStep] = []
+                var landedItems: [WorkspaceLandedItem] = []
+                for source in sources {
+                    let sourceURL = source.url
+                    let destinationURL = Self.uniqueDocumentURL(for: sourceURL, in: source.targetDirectory).standardizedFileURL
+                    let isFolder = Self.isDirectory(sourceURL)
+                    if moving {
+                        try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
+                        undoSteps.append(.move(WorkspaceFileMoveStep(
+                            sourceURL: sourceURL,
+                            destinationURL: destinationURL,
+                            isDirectory: isFolder,
+                            usedCaseOnlyRenameHop: false,
+                            rewrittenFiles: []
+                        )))
+                    } else {
+                        try FileManager.default.copyItem(at: source.contentsURL ?? sourceURL, to: destinationURL)
+                        for (subpath, text) in copyTexts[sourceURL.path] ?? [] {
+                            let copiedURL = subpath.isEmpty ? destinationURL : destinationURL.appendingPathComponent(subpath)
+                            try await Self.writeText(text, to: copiedURL)
+                        }
+                        undoSteps.append(.copy(WorkspaceFileCopyStep(
+                            sourceURL: sourceURL,
+                            contentsURL: source.contentsURL,
+                            copyURL: destinationURL,
+                            isDirectory: isFolder
+                        )))
                     }
-                }
-
-                let undoStep: WorkspaceFileOperationStep = if moving {
-                    .move(WorkspaceFileMoveStep(
-                        sourceURL: sourceURL,
-                        destinationURL: destinationURL.standardizedFileURL,
-                        isDirectory: isFolder,
-                        usedCaseOnlyRenameHop: false,
-                        rewrittenFiles: []
-                    ))
-                } else {
-                    .copy(WorkspaceFileCopyStep(
-                        sourceURL: sourceURL,
-                        contentsURL: contentsURL,
-                        copyURL: destinationURL.standardizedFileURL,
-                        isDirectory: isFolder
-                    ))
+                    landedItems.append(WorkspaceLandedItem(url: destinationURL, isFolder: isFolder))
                 }
 
                 let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
@@ -1161,12 +1286,11 @@ final class WorkspaceStore: ObservableObject {
                 await self?.finishDocumentTransfer(
                     result: result,
                     workspaceURL: workspaceURL,
-                    selectedURL: isFolder ? nil : destinationURL,
+                    landedItems: landedItems,
                     preserveSelection: preserveSelection,
-                    sidebarSelection: isFolder ? .folder(destinationURL) : .document,
-                    changedPaths: [sourceID, destinationURL.standardizedFileURL.path],
+                    changedPaths: sources.map(\.url.path) + landedItems.map(\.url.path),
                     completedTransfer: completedTransfer,
-                    undoStep: undoStep,
+                    undoSteps: undoSteps,
                     undoVerb: undoVerb,
                     generation: generation
                 )
@@ -1558,7 +1682,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        startMovingToTrash(document.url, documentIDs: [document.id])
+        startMovingToTrash([document.url], documentIDs: [document.id])
     }
 
     /// Moves a folder and everything in it to the Trash, as `deleteDocument` does for one file.
@@ -1575,27 +1699,77 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
-        startMovingToTrash(folderURL, documentIDs: Set(contained.map(\.id)))
+        startMovingToTrash([folderURL], documentIDs: Set(contained.map(\.id)))
     }
 
-    /// Moves the item at `url`, which holds the documents `documentIDs`, to the Trash and rescans.
-    /// A selected document among them closes, and nothing is selected in the sidebar once the
-    /// selection, or the folder holding it, is in the Trash.
-    private func startMovingToTrash(_ url: URL, documentIDs: Set<String>) {
+    /// Moves several workspace files and folders to the Trash at once, as `deleteDocument` and
+    /// `deleteFolder` do one. An item inside another one given goes with it.
+    func deleteItems(at urls: [URL]) {
         guard let workspaceURL else { return }
-        let path = url.standardizedFileURL.path
+        let rootPath = workspaceURL.standardizedFileURL.path
+        let paths = urls.map(\.standardizedFileURL.path).filter {
+            $0 != rootPath && WorkspaceDocumentSupport.isPath($0, containedIn: rootPath)
+        }
+        let topPaths = Set(paths.filter { path in
+            !paths.contains { $0 != path && WorkspaceDocumentSupport.isPath(path, containedIn: $0) }
+        }).sorted()
+        guard !topPaths.isEmpty else { return }
+        if topPaths.count == 1 {
+            if let document = documentsByID[topPaths[0]] {
+                deleteDocument(document)
+            } else {
+                deleteFolder(at: URL(fileURLWithPath: topPaths[0], isDirectory: true))
+            }
+            return
+        }
+        guard ensureNotBusy(), ensureWritingToolsInactive(for: "moving items to the Trash") else { return }
+
+        let contained = documents.filter { document in
+            topPaths.contains { WorkspaceDocumentSupport.isPath(document.id, containedIn: $0) }
+        }
+        if let unsaved = contained.first(where: { openDocumentIDs.contains($0.id) && !saveState(for: $0.id).isClean }) {
+            errorMessage = "Save or close \(unsaved.displayName) before moving it to the Trash."
+            return
+        }
+        let itemURLs = topPaths.map { path in
+            URL(fileURLWithPath: path, isDirectory: documentsByID[path] == nil && Self.isDirectory(URL(fileURLWithPath: path)))
+        }
+        startMovingToTrash(itemURLs, documentIDs: Set(contained.map(\.id)))
+    }
+
+    /// Moves the items at `urls`, which hold the documents `documentIDs`, to the Trash and rescans.
+    /// A selected document among them closes, and nothing is selected in the sidebar once every
+    /// selected item, or the folder holding it, is in the Trash.
+    private func startMovingToTrash(_ urls: [URL], documentIDs: Set<String>) {
+        guard let workspaceURL, !urls.isEmpty else { return }
+        let paths = urls.map(\.standardizedFileURL.path)
+        let isTrashed = { (itemID: String) in paths.contains { WorkspaceDocumentSupport.isPath(itemID, containedIn: $0) } }
         let containsSelection = selectedDocumentID.map(documentIDs.contains) == true
         let preserveSelection = containsSelection ? nil : selectedDocumentID
-        let sidebarSelection: SidebarSelectionAfterLoad = sidebarSelectionID.map {
-            WorkspaceDocumentSupport.isPath($0, containedIn: path)
-        } == true ? .cleared : .unchanged
+        let sidebarSelectionIDs = sidebarSelectionIDs
+        let sidebarSelection: SidebarSelectionAfterLoad = !sidebarSelectionIDs.isEmpty && sidebarSelectionIDs.allSatisfy(isTrashed)
+            ? .cleared
+            : .unchanged
         noteInternalFileMutation()
         invalidateWorkspaceSearchCaches(paths: documentIDs)
         let generation = beginDocumentFileOperation()
 
         workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner, moveItemToTrash] in
+            var failure: (url: URL, error: Error)?
+            for url in urls {
+                do {
+                    try moveItemToTrash(url)
+                } catch {
+                    failure = (url, error)
+                    break
+                }
+            }
+            if let failure, failure.url == urls[0] {
+                await self?.finishWorkspaceFailure(failure.error, generation: generation, message: "Could not move \(failure.url.lastPathComponent) to the Trash")
+                return
+            }
             do {
-                try moveItemToTrash(url)
+                // Whatever went to the Trash before a failure stays there, so a failure rescans too.
                 let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
                 guard !Task.isCancelled else { return }
                 await self?.finishWorkspaceLoad(
@@ -1604,13 +1778,22 @@ final class WorkspaceStore: ObservableObject {
                     selectedURL: nil,
                     preserveSelection: preserveSelection,
                     reloadSelection: containsSelection,
-                    sidebarSelection: sidebarSelection,
+                    sidebarSelection: failure == nil ? sidebarSelection : .unchanged,
                     generation: generation
                 )
+                if let failure {
+                    await self?.reportTrashFailure(failure.error, url: failure.url, generation: generation)
+                }
             } catch {
-                await self?.finishWorkspaceFailure(error, generation: generation, message: "Could not move \(url.lastPathComponent) to the Trash")
+                let failed = failure ?? (urls[0], error)
+                await self?.finishWorkspaceFailure(failed.error, generation: generation, message: "Could not move \(failed.url.lastPathComponent) to the Trash")
             }
         }
+    }
+
+    private func reportTrashFailure(_ error: Error, url: URL, generation: Int) {
+        guard generation == workspaceGeneration else { return }
+        errorMessage = "Could not move \(url.lastPathComponent) to the Trash: \(error.localizedDescription)"
     }
 
     /// Plans a rename or move that updates the Markdown links to the item, then runs it or asks
@@ -1879,9 +2062,7 @@ final class WorkspaceStore: ObservableObject {
             moveDirtyState(from: mapping.sourceID, to: mapping.destinationID)
         }
         publishItemMove(from: sourcePath, to: destinationPath, mappings: request.mappings)
-        if let selectedFolderID {
-            self.selectedFolderID = Self.path(selectedFolderID, afterMoving: sourcePath, to: destinationPath)
-        }
+        followSidebarSelection(afterMoving: sourcePath, to: destinationPath)
         if let completedTransfer = request.completedTransfer {
             completeTransfer(completedTransfer)
         }
@@ -2197,9 +2378,7 @@ final class WorkspaceStore: ObservableObject {
             for mapping in move.mappings {
                 moveDirtyState(from: mapping.sourceID, to: mapping.destinationID)
             }
-            if let selectedFolderID {
-                self.selectedFolderID = Self.path(selectedFolderID, afterMoving: move.sourcePath, to: move.destinationPath)
-            }
+            followSidebarSelection(afterMoving: move.sourcePath, to: move.destinationPath)
             if let transfer = pendingDocumentTransfer {
                 pendingDocumentTransfer = transfer.following(movedItemAt: move.sourcePath, to: move.destinationPath)
             }
@@ -3307,6 +3486,8 @@ final class WorkspaceStore: ObservableObject {
             selectFolder(id: folderURL.standardizedFileURL.path)
         case .cleared:
             clearSidebarSelection()
+        case .items(let itemIDs):
+            selectSidebarItems(.items(itemIDs))
         }
 
         isBusy = false
@@ -3384,7 +3565,7 @@ final class WorkspaceStore: ObservableObject {
         openDocumentIDs = []
         documentSaveStates = [:]
         selectedDocumentID = nil
-        selectedFolderID = nil
+        sidebarItemSelection = SidebarSelection()
         sidebarSelectsOpenDocument = true
         setDocumentTextIfChanged("")
         lastSavedText = ""
@@ -3536,15 +3717,16 @@ final class WorkspaceStore: ObservableObject {
         return summary
     }
 
+    /// Shows what a copy or transfer made: one file opens and one folder is selected in the
+    /// sidebar; several items are selected in the sidebar, none opened.
     private func finishDocumentTransfer(
         result: WorkspaceDocumentScanResult,
         workspaceURL: URL,
-        selectedURL: URL?,
+        landedItems: [WorkspaceLandedItem],
         preserveSelection: String?,
-        sidebarSelection: SidebarSelectionAfterLoad,
         changedPaths: [String],
         completedTransfer: WorkspaceDocumentTransfer?,
-        undoStep: WorkspaceFileOperationStep,
+        undoSteps: [WorkspaceFileOperationStep],
         undoVerb: WorkspaceFileOperationVerb,
         generation: Int
     ) {
@@ -3554,7 +3736,16 @@ final class WorkspaceStore: ObservableObject {
         if let completedTransfer {
             completeTransfer(completedTransfer)
         }
-        recordFileOperation(undoVerb, steps: [undoStep])
+        recordFileOperation(undoVerb, steps: undoSteps)
+        let selectedURL: URL?
+        let sidebarSelection: SidebarSelectionAfterLoad
+        if landedItems.count == 1, let item = landedItems.first {
+            selectedURL = item.isFolder ? nil : item.url
+            sidebarSelection = item.isFolder ? .folder(item.url) : .document
+        } else {
+            selectedURL = nil
+            sidebarSelection = .items(landedItems.map(\.url.path))
+        }
         finishWorkspaceLoad(
             result: result,
             workspaceURL: workspaceURL,
@@ -5438,6 +5629,22 @@ private enum SidebarSelectionAfterLoad: Equatable, Sendable {
     case folder(URL)
     /// Nothing: the operation moved the selection to the Trash.
     case cleared
+    /// Several items the operation made, without opening any.
+    case items([String])
+}
+
+/// A file or folder to copy, or to move from another workspace, and the folder it goes into.
+private struct WorkspaceItemTransferSource: Sendable {
+    let url: URL
+    /// A snapshot of the file, copied in its place while it exists.
+    let contentsURL: URL?
+    let targetDirectory: URL
+}
+
+/// An item a copy or transfer made.
+private struct WorkspaceLandedItem: Sendable {
+    let url: URL
+    let isFolder: Bool
 }
 
 /// The files or folders Monknot renamed or moved in one operation, with the documents that moved
@@ -5505,16 +5712,21 @@ private enum DroppedTarget: Sendable {
 
 /// A workspace file or folder waiting for Paste, with the pasteboard item its Copy or Cut wrote.
 private struct WorkspaceDocumentTransfer: Equatable, Sendable {
-    let url: URL
+    /// The items, none inside another, in path order.
+    let urls: [URL]
     let operation: WorkspaceDocumentTransferOperation
     let pasteboardStamp: WorkspacePasteboardTransferStamp?
 
-    /// The same transfer once Monknot has moved the item at `sourcePath`, or an item containing it.
+    /// The same transfer once Monknot has moved the item at `sourcePath`, or an item containing
+    /// some of these.
     func following(movedItemAt sourcePath: String, to destinationPath: String) -> WorkspaceDocumentTransfer {
-        let path = WorkspaceStore.path(url.path, afterMoving: sourcePath, to: destinationPath)
-        guard path != url.path else { return self }
+        let followed = urls.map { url in
+            let path = WorkspaceStore.path(url.path, afterMoving: sourcePath, to: destinationPath)
+            return path == url.path ? url : URL(fileURLWithPath: path, isDirectory: url.hasDirectoryPath)
+        }
+        guard followed != urls else { return self }
         return WorkspaceDocumentTransfer(
-            url: URL(fileURLWithPath: path, isDirectory: url.hasDirectoryPath),
+            urls: followed,
             operation: operation,
             pasteboardStamp: pasteboardStamp
         )

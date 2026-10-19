@@ -12,7 +12,8 @@ import SwiftUI
 final class SidebarDragSession: NSObject, NSDraggingSource {
     struct Item {
         let rowID: String
-        let url: URL
+        /// The row's item, or every selected item when the row is one of several selected.
+        let urls: [URL]
         let title: String
         let systemImage: String
     }
@@ -416,15 +417,17 @@ final class SidebarDragSession: NSObject, NSDraggingSource {
         chipPanel = nil
         let point = view.convert(event.locationInWindow, from: nil)
         let margin = Self.shadowMargin
-        let draggingItem = NSDraggingItem(pasteboardWriter: item.url as NSURL)
         let originY = view.isFlipped
             ? point.y - grabOffset.height - margin
             : point.y + grabOffset.height + margin - image.size.height
-        draggingItem.setDraggingFrame(
-            NSRect(x: point.x - grabOffset.width - margin, y: originY, width: image.size.width, height: image.size.height),
-            contents: image
-        )
-        let session = view.beginDraggingSession(with: [draggingItem], event: event, source: self)
+        let frame = NSRect(x: point.x - grabOffset.width - margin, y: originY, width: image.size.width, height: image.size.height)
+        // One file URL per item; the copy is the first item's image and stands for them all.
+        let draggingItems = item.urls.enumerated().map { index, url in
+            let draggingItem = NSDraggingItem(pasteboardWriter: url as NSURL)
+            draggingItem.setDraggingFrame(frame, contents: index == 0 ? image : nil)
+            return draggingItem
+        }
+        let session = view.beginDraggingSession(with: draggingItems, event: event, source: self)
         session.animatesToStartingPositionsOnCancelOrFail = true
         session.draggingFormation = .none
         handlers.handedOff()

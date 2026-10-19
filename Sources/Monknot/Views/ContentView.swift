@@ -333,6 +333,8 @@ struct ContentView: View {
     @State private var sessionSidebarPreference: Bool?
     @State private var sidebarRevealRequest: UInt = 0
     @State private var sidebarNewItemRequest: SidebarNewItemRequest?
+    /// Each change selects every row the sidebar's tree shows.
+    @State private var sidebarSelectAllRequest = 0
     @State private var successNotice: SuccessNotice?
     @State private var pendingWorkspaceRemoval: SavedWorkspaceRemoval?
     @State private var pendingPDFExportDocument: WorkspaceDocument?
@@ -982,10 +984,11 @@ struct ContentView: View {
             showWorkspaceSearch: showWorkspaceSearch,
             dismissWorkspaceSearch: { dismissWorkspaceSearch(restoreFocus: true) },
             workspaceSearchFocusChanged: searchFieldFocusChanged,
-            copyPath: copyPath(_:),
-            copyRelativePath: copyRelativePath(_:),
+            copyPath: copyPaths(_:),
+            copyRelativePath: copyRelativePaths(_:),
             newItemRequest: $sidebarNewItemRequest,
-            workspaceSwitcherRequest: workspaceSwitcherRequest
+            workspaceSwitcherRequest: workspaceSwitcherRequest,
+            selectAllRequest: sidebarSelectAllRequest
         )
         .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
     }
@@ -1118,6 +1121,38 @@ struct ContentView: View {
             showSuccessNotice("Copied \(relativePath)")
         } catch {
             store.errorMessage = "Could not copy the relative path: \(error.localizedDescription)"
+        }
+    }
+
+    /// Copy Path for the sidebar's items: one path, or several one per line.
+    private func copyPaths(_ urls: [URL]) {
+        guard urls.count > 1 else {
+            urls.first.map(copyPath(_:))
+            return
+        }
+        do {
+            try WorkspacePasteboardExportService.copyPlainText(urls.map(\.path).joined(separator: "\n"))
+            showSuccessNotice("Copied \(urls.count) paths")
+        } catch {
+            store.errorMessage = "Could not copy the paths: \(error.localizedDescription)"
+        }
+    }
+
+    private func copyRelativePaths(_ urls: [URL]) {
+        guard urls.count > 1 else {
+            urls.first.map(copyRelativePath(_:))
+            return
+        }
+        guard let workspaceURL = store.workspaceURL else {
+            store.errorMessage = "Open a workspace before copying a relative path."
+            return
+        }
+        do {
+            let relativePaths = try urls.map { try WorkspaceDocumentSupport.validatedRelativePath(for: $0, in: workspaceURL) }
+            try WorkspacePasteboardExportService.copyPlainText(relativePaths.joined(separator: "\n"))
+            showSuccessNotice("Copied \(urls.count) relative paths")
+        } catch {
+            store.errorMessage = "Could not copy the relative paths: \(error.localizedDescription)"
         }
     }
 
@@ -2580,7 +2615,14 @@ struct ContentView: View {
         }
         if documentViewOwnsFocus {
             _ = performInFocusedDocument(#selector(NSText.selectAll(_:)))
+        } else if sidebarOwnsFocus {
+            sidebarSelectAllRequest &+= 1
         }
+    }
+
+    /// The sidebar's tree (or another of its controls) has keyboard focus.
+    private var sidebarOwnsFocus: Bool {
+        TerminalFocusRestorer.firstResponder(in: responderWindow, isInside: .monknotSidebarFocusRegion)
     }
 
     /// A focused document (a PDF) takes the clipboard command or refuses it with the system beep;
@@ -2593,8 +2635,9 @@ struct ContentView: View {
     }
 
     private func putSidebarSelectionOnPasteboard(cutting: Bool) -> Bool {
-        guard let url = store.sidebarSelectionURL, !store.isBusy else { return false }
-        store.putItemOnPasteboard(at: url, cutting: cutting)
+        let urls = store.sidebarSelectionURLs
+        guard !urls.isEmpty, !store.isBusy else { return false }
+        store.putItemsOnPasteboard(at: urls, cutting: cutting)
         return true
     }
 

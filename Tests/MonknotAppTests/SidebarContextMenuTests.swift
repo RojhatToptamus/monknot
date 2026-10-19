@@ -17,7 +17,7 @@ final class SidebarContextMenuTests: FileOperationsTestCase {
         "New File", "New Folder", "-", "Rename", "Copy Path", "Copy Relative Path", "Reveal in Finder", "Export PDF…", "-",
         "Copy", "Cut", "Paste", "Duplicate", "-", "Move to Trash",
     ]
-    static let emptyAreaMenu = ["New File", "New Folder", "-", "Paste", "-", "Copy Path", "Reveal in Finder"]
+    static let emptyAreaMenu = ["New File", "New Folder", "-", "Paste", "-", "Copy Path", "Reveal in Finder", "-", "Collapse All Folders"]
 
     /// docs/{a.md,b.md}, A/B/t.txt (a compact "A/B" row), Collapsed/inner.md, top.md; docs/a.md selected.
     func makeFixture() async throws -> (URL, WorkspaceStore, SidebarMenuHarness) {

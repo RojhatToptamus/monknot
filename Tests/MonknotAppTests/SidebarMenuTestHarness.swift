@@ -51,8 +51,8 @@ final class SidebarMenuHarness {
             showWorkspaceSearch: {},
             dismissWorkspaceSearch: {},
             workspaceSearchFocusChanged: { _ in },
-            copyPath: { copiedPathsSink($0) },
-            copyRelativePath: { copiedRelativeSink($0) },
+            copyPath: { $0.forEach(copiedPathsSink) },
+            copyRelativePath: { $0.forEach(copiedRelativeSink) },
             newItemRequest: .constant(nil),
             pasteboard: pasteboard
         )

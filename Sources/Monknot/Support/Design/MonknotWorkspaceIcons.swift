@@ -18,6 +18,8 @@ enum MonknotWorkspaceIcons {
         MonknotSFSymbol.resolve("arrow.up.forward.app", fallback: "folder")
     }
     static let copyPath = "link"
+    /// The copy that rides under the pointer when several items are dragged.
+    static let dragItems = "doc.on.doc"
     static let outline = "list.bullet.indent"
     static let exportPDF = "arrow.down.doc"
     static let settings = "gearshape"

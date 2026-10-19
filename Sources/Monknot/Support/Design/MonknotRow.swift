@@ -271,6 +271,10 @@ struct MonknotListRowButtonStyle: ButtonStyle {
     var isOpen = false
     /// The row has a context menu: right-clicked, it holds its open state while the menu shows.
     var hasContextMenu = false
+    /// Selected rows next to each other, in a list with no gap between rows, share one fill: the
+    /// corners where a selected row meets another are square (design.md §10.4).
+    var joinsSelectionAbove = false
+    var joinsSelectionBelow = false
 
     /// design.md §1.4: the neutral `selected` fill when selected, otherwise `press` while held or open,
     /// then `hover`. A disabled row draws neither, so it never looks clickable, but keeps its selection.
@@ -299,7 +303,9 @@ struct MonknotListRowButtonStyle: ButtonStyle {
             isSelected: isSelected,
             isOpen: isOpen,
             hasContextMenu: hasContextMenu,
-            cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
+            cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale),
+            joinsAbove: isSelected && joinsSelectionAbove,
+            joinsBelow: isSelected && joinsSelectionBelow
         )
     }
 
@@ -310,6 +316,8 @@ struct MonknotListRowButtonStyle: ButtonStyle {
         let isOpen: Bool
         let hasContextMenu: Bool
         let cornerRadius: CGFloat
+        let joinsAbove: Bool
+        let joinsBelow: Bool
         @Environment(\.isEnabled) private var isEnabled
         @State private var isHovered = false
         @State private var holdsContextMenu = false
@@ -320,7 +328,7 @@ struct MonknotListRowButtonStyle: ButtonStyle {
             configuration.label
                 .environment(\.monknotRowIsHighlighted, isEnabled && (isHovered || configuration.isPressed || isShowingOpen))
                 .background {
-                    RoundedRectangle(cornerRadius: cornerRadius)
+                    UnevenRoundedRectangle(cornerRadii: fillCornerRadii)
                         .monknotStateStyle(fill)
                 }
                 .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
@@ -334,6 +342,15 @@ struct MonknotListRowButtonStyle: ButtonStyle {
 
         private var isShowingOpen: Bool {
             isOpen || holdsContextMenu
+        }
+
+        private var fillCornerRadii: RectangleCornerRadii {
+            RectangleCornerRadii(
+                topLeading: joinsAbove ? 0 : cornerRadius,
+                bottomLeading: joinsBelow ? 0 : cornerRadius,
+                bottomTrailing: joinsBelow ? 0 : cornerRadius,
+                topTrailing: joinsAbove ? 0 : cornerRadius
+            )
         }
 
         private var fill: Color {

@@ -24,6 +24,7 @@ enum MonknotMenuCommand: String, CaseIterable {
     case paste = "Paste"
     case duplicate = "Duplicate"
     case moveToTrash = "Move to Trash"
+    case collapseAllFolders = "Collapse All Folders"
     case open = "Open"
     case pinTab = "Pin Tab"
     case unpinTab = "Unpin Tab"
@@ -51,6 +52,8 @@ enum MonknotMenuCommand: String, CaseIterable {
         case .paste: return MonknotSFSymbol.resolve("clipboard", fallback: "doc.on.clipboard")
         case .duplicate: return "plus.square.on.square"
         case .moveToTrash, .killTerminal: return "trash"
+        case .collapseAllFolders:
+            return MonknotSFSymbol.resolve("rectangle.compress.vertical", fallback: "arrow.down.right.and.arrow.up.left")
         case .open: return "doc"
         case .pinTab: return "pin"
         case .unpinTab: return "pin.slash"
