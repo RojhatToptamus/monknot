@@ -1192,7 +1192,8 @@
   function paragraphRegion(lines) {
     let j = "";
     lines.forEach((view, index) => {
-      if (index > 0) j += /(?: {2,}|(?:^|[^\\])(?:\\\\)*\\)$/.test(j) ? "\n" : " ";
+      // The previous line alone decides, so a long paragraph is not scanned again for every line.
+      if (index > 0) j += /(?: {2,}|(?:^|[^\\])(?:\\\\)*\\)$/.test(lines[index - 1].text) ? "\n" : " ";
       j += view.text;
     });
     return { kind: "lines", lines, j, map: null };
@@ -1518,15 +1519,16 @@
   }
 
   function stripInline(text) {
-    // Escaped characters are text: they sit out the markup stripping and lose their backslash.
-    const escaped = [];
+    // A code span's text and an escaped character are text: they sit out the markup stripping, and
+    // an escape loses its backslash. One left-to-right scan finds both, as the inline parser does:
+    // a backslash escapes nothing inside a code span, and an escaped backtick opens none.
+    const kept = [];
     return text
-      .replace(RE_ESCAPED, (_, character) => `\u0000${escaped.push(character) - 1}\u0001`)
-      .replace(/`([^`]+)`/g, "$1")
+      .replace(/\\([!-\/:-@[-`{-~])|`([^`]+)`/g, (_, character, code) => `\u0000${kept.push(character ?? code) - 1}\u0001`)
       .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
       .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
       .replace(/[*_~#]/g, "")
-      .replace(/\u0000(\d+)\u0001/g, (_, index) => escaped[index]);
+      .replace(/\u0000(\d+)\u0001/g, (_, index) => kept[index]);
   }
 
   function normalizeReferenceLabel(label) {

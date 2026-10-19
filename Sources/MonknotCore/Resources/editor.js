@@ -1315,6 +1315,47 @@
     };
   }
 
+  // Backslashes ---------------------------------------------------------
+  //
+  // Markdown reads a backslash before ASCII punctuation as an escape and hides it. A backslash the
+  // page shows stays shown: where an edit would put punctuation right after it, the edit writes one
+  // more backslash, so the two read as one escaped backslash.
+
+  function isPunctuation(character) {
+    return /^[!-/:-@[-`{-~]$/.test(character);
+  }
+
+  /// How many backslashes run up to `end` in `text`.
+  function backslashesBefore(text, end) {
+    let count = 0;
+    while (end - count > 0 && text[end - count - 1] === "\\") count += 1;
+    return count;
+  }
+
+  /// `text` written at `from` in `source`, `next` being the character that will follow it, with a
+  /// backslash added before it when a backslash shown just before `from` would escape its first
+  /// character, and after it when it ends in a backslash that would escape `next`.
+  function keepBackslashes(source, from, text, next) {
+    let result = text;
+    // An odd run before `from` ends in a shown backslash, unless the punctuation it escapes is still there.
+    const shown = backslashesBefore(source, from) % 2 === 1 && !isPunctuation(source.charAt(from));
+    if (shown && isPunctuation((result + next).charAt(0))) result = "\\" + result;
+    if (result && isPunctuation(next)) {
+      let run = backslashesBefore(result, result.length);
+      if (run === result.length) run += backslashesBefore(source, from);
+      if (run % 2 === 1) result += "\\";
+    }
+    return result;
+  }
+
+  /// Whether text written at `position` reads as Markdown text, where backslashes escape: not in a
+  /// code block, raw block or code span, whose backslashes are always shown.
+  function writesMarkdownText(model, unit, position) {
+    if (!unit || unit.kind !== "inline") return false;
+    const j = jOf(unit, position);
+    return !visibleMap(model, unit).constructs.some((construct) => construct.type === "code" && construct.cs <= j && j <= construct.ce);
+  }
+
   /// Markup that has to stay when [s, e) is deleted inside an inline unit: a
   /// construct marker whose partner lies outside the range. A construct whose
   /// content is deleted whole goes with its markers.
@@ -1446,7 +1487,16 @@
     const op = compose(model.source, parts);
     if (!op) return null;
     op.kind = "delete";
-    return op;
+    return keepingBackslashes(model, op);
+  }
+
+  /// A deletion or join that brings punctuation up to a backslash the page shows keeps it shown; the
+  /// caret goes after it.
+  function keepingBackslashes(model, op) {
+    if (!writesMarkdownText(model, unitAt(model, op.from, "left"), op.from)) return op;
+    const insert = keepBackslashes(model.source, op.from, op.insert, model.source.charAt(op.to));
+    if (insert === op.insert) return op;
+    return { ...op, insert, select: caretAt(op.from + insert.length - op.insert.length) };
   }
 
   /// Inserts typed or pasted text at a collapsed caret.
@@ -1464,12 +1514,14 @@
       return { from: anchor, to: anchor, insert, select: caretAt(caret) };
     }
     if (unit.role === "cell") {
-      const cellText = escapeCell(text);
+      let cellText = escapeCell(text);
       if (unit.missing) return materializeCell(model, unit, cellText);
+      if (writesMarkdownText(model, unit, position)) cellText = keepBackslashes(model.source, position, cellText, model.source.charAt(position));
       return { from: position, to: position, insert: cellText, select: caretAt(position + cellText.length) };
     }
     const prefix = quotePrefixOfLine(model.source, position);
-    const body = prefixFollowingLines(text, prefix, eol);
+    let body = prefixFollowingLines(text, prefix, eol);
+    if (writesMarkdownText(model, unit, position)) body = keepBackslashes(model.source, position, body, model.source.charAt(position));
     return { from: position, to: position, insert: body, select: caretAt(position + body.length) };
   }
 
@@ -1522,8 +1574,13 @@
       if (first && first.role === "cell") body = escapeCell(body);
       else body = prefixFollowingLines(body, quotePrefixOfLine(model.source, selection.from), eol);
       const parts = deleteParts(model, selection.from, selection.to, true);
-      const op = compose(model.source, parts, body);
+      let op = compose(model.source, parts, body);
       if (!op) return null;
+      if (writesMarkdownText(model, first, op.from)) {
+        const next = (op.insert.slice(body.length) + model.source.slice(op.to)).charAt(0);
+        const kept = keepBackslashes(model.source, op.from, body, next);
+        if (kept !== body) op = compose(model.source, parts, kept);
+      }
       op.kind = options.kind || "typing";
       return op;
     }
@@ -1611,7 +1668,9 @@
     const source = model.source;
     const closers = open.slice().reverse().map((construct) => source.slice(rawOf(unit, construct.ce), rawOf(unit, construct.e))).join("");
     const openers = open.map((construct) => source.slice(rawOf(unit, construct.s), rawOf(unit, construct.cs))).join("");
-    const insert = closers + separator + openers;
+    let insert = closers + separator + openers;
+    // Closing markers after a shown backslash; in code the backslash escapes nothing.
+    if (writesMarkdownText(model, unit, position)) insert = keepBackslashes(source, position, insert, source.charAt(position));
     return { from: position, to: position, insert, select: caretAt(position + insert.length) };
   }
 
@@ -1866,11 +1925,9 @@
     if (unit.role !== "paragraph") return planEnter(model, selection);
     if (rawToVisible(model, unit, position, "left") >= visibleText(model, unit).length) return planEnter(model, selection);
     const source = model.source;
-    // After a backslash shown as text, the break's backslash would make the two one escaped
-    // backslash and no break: another backslash keeps the text and the break.
-    let backslashes = 0;
-    while (source[position - backslashes - 1] === "\\") backslashes += 1;
-    const marker = backslashes % 2 ? "\\\\" : "\\";
+    // After a shown backslash, the break's backslash would make the two one escaped backslash and no
+    // break: another backslash keeps both.
+    const marker = keepBackslashes(source, position, "\\", "\n");
     // Before a soft break the line ending is there already and becomes a hard one.
     const lineEnd = lineEndOf(source, position);
     if (lineEnd < unitEnd(unit) && /^[ \t]*$/.test(source.slice(position, lineEnd))) {
@@ -1999,7 +2056,7 @@
     }
     if (isStructural(previous)) return { move: true, select: caretAt(unitEnd(previous)) };
     const joinAt = unitEnd(previous);
-    return { from: joinAt, to: position, insert: "", select: caretAt(joinAt), kind: "delete" };
+    return keepingBackslashes(model, { from: joinAt, to: position, insert: "", select: caretAt(joinAt), kind: "delete" });
   }
 
   function planDeleteForwardAtEnd(model, unit) {
@@ -2030,7 +2087,7 @@
       return { from: lineStart, to: nextLineStart(source, lineStart), insert: "", select: caretAt(position), kind: "delete" };
     }
     if (isStructural(next) || isStructural(unit)) return null;
-    return { from: position, to: unitStart(next), insert: "", select: caretAt(position), kind: "delete" };
+    return keepingBackslashes(model, { from: position, to: unitStart(next), insert: "", select: caretAt(position), kind: "delete" });
   }
 
   /// The nearest unit before `unit` that the page shows (a closed toggle hides its body).
@@ -2109,11 +2166,14 @@
         if (node.e <= js || node.s >= je) continue;
         const inside = node.s >= js && node.e <= je;
         switch (node.t) {
-          case "text":
+          case "text": {
+            // A code span's text is literal: it needs escaping to stay text out of code.
+            const literal = Boolean(styles.code || styles.outer_code);
             for (let index = Math.max(node.s, js); index < Math.min(node.e, je); index += 1) {
-              items.push({ char: j[index], raw: rawSlice(index, index + 1), styles });
+              items.push({ char: j[index], raw: rawSlice(index, index + 1), literal, styles });
             }
             break;
+          }
           case "esc":
             items.push({ char: j[node.cs], raw: rawSlice(node.s, node.e), escaped: true, styles });
             break;
@@ -2174,8 +2234,9 @@
     return Boolean(item.styles[style] || item.styles[`outer_${style}`]);
   }
 
-  /// `before` and `after` are the source characters around the rewritten text.
-  function serializeItems(items, before = "", after = "") {
+  /// `before` and `after` are the source characters around the rewritten text; `backslashes` is how
+  /// many backslashes run up to it, and `lineStart` whether it starts a paragraph's line.
+  function serializeItems(items, before = "", after = "", options = {}) {
     // Leading and trailing spaces stay outside emphasis markers.
     for (const style of ["strong", "em", "del", "code"]) {
       let index = 0;
@@ -2245,24 +2306,63 @@
       }
     };
 
+    // Code text taken out of code stays text: escaped as pasted text is, also where a line starts.
+    const leavesCode = (item) => item && item.literal && !item.styles.code;
+    const lineEscapes = new Set();
+    const lineStarts = options.lineStart ? [0] : [];
+    items.forEach((item, index) => {
+      if (/[\r\n]/.test(item.raw)) lineStarts.push(index + 1);
+    });
+    for (const start of lineStarts) {
+      let end = start;
+      while (end < items.length && leavesCode(items[end]) && !/[\r\n]/.test(items[end].raw)) end += 1;
+      const text = items.slice(start, end).map((item) => item.char).join("");
+      const escaped = escapeLineStart(text);
+      let at = 0;
+      while (at < text.length && escaped[at] === text[at]) at += 1;
+      if (escaped !== text) lineEscapes.add(start + at);
+    }
+    const textOf = (item, position) => {
+      // A backslash escapes nothing in code, so an escaped character goes in as itself.
+      if (item.styles.code) return item.escaped ? item.char : item.raw;
+      // A line ending stays as it is.
+      if (!leavesCode(item) || item.raw !== item.char) return item.raw;
+      const tilde = item.char === "~" && [items[position - 1], items[position + 1]].some((other) => other && other.char === "~");
+      return (lineEscapes.has(position) ? "\\" : "") + (tilde || /[\\`*_[\]]/.test(item.char) ? "\\" : "") + item.char;
+    };
+
     let out = "";
     const stack = [];
+    // A marker after a shown backslash would be read as escaped: one more backslash keeps both.
+    const marker = (text) => {
+      let run = backslashesBefore(out, out.length);
+      if (run === out.length) run += options.backslashes || 0;
+      out += (run % 2 === 1 ? "\\" : "") + text;
+    };
     items.forEach((item, position) => {
       const target = desired(position);
       let common = 0;
       while (common < stack.length && common < target.length && stack[common].key === target[common].key) common += 1;
-      while (stack.length > common) out += stack.pop().close;
+      while (stack.length > common) {
+        const entry = stack.pop();
+        // In code a backslash escapes nothing, the closing backtick included.
+        if (entry.style === "code") out += entry.close;
+        else marker(entry.close);
+      }
       for (let level = common; level < target.length; level += 1) {
         const entry = { ...target[level] };
         entry.open = markerFor(entry.style, stack, out, entry.end);
         entry.close = entry.style === "link" ? entry.tail : entry.open;
-        out += entry.open;
+        marker(entry.open);
         stack.push(entry);
       }
-      // A backslash escapes nothing in code, so an escaped character goes in as itself.
-      out += item.escaped && item.styles.code ? item.char : item.raw;
+      out += textOf(item, position);
     });
-    while (stack.length) out += stack.pop().close;
+    while (stack.length) {
+      const entry = stack.pop();
+      if (entry.style === "code") out += entry.close;
+      else marker(entry.close);
+    }
     return out;
   }
 
@@ -2311,7 +2411,10 @@
     });
     const from = rawOf(unit, js);
     const to = rawOf(unit, je);
-    const insert = serializeItems(items, model.source.charAt(from - 1), model.source.charAt(to));
+    const insert = serializeItems(items, model.source.charAt(from - 1), model.source.charAt(to), {
+      backslashes: backslashesBefore(model.source, from),
+      lineStart: js === 0 && unit.role === "paragraph"
+    });
     const topStart = bStart(unit.top);
     const unitIndex = unitsOf(unit.top).indexOf(unit);
     return {
@@ -2442,11 +2545,23 @@
 
   /// The raw content of a text-like unit, without its block markers, and without the source range
   /// `cut` when one is given.
-  function unitContent(model, unit, cut) {
+  function unitContent(model, unit, cut, unescape = false) {
     const source = model.source;
+    // With `unescape`, an escaped character comes without its backslash, as the page shows it.
+    const dropped = unescape && unit.kind === "inline"
+      ? new Set(visibleMap(model, unit).constructs.filter((construct) => construct.type === "escape").map((construct) => rawOf(unit, construct.s)))
+      : new Set();
+    const take = (s, e) => {
+      if (dropped.size === 0) return source.slice(s, e);
+      let text = "";
+      for (let index = s; index < e; index += 1) {
+        if (!dropped.has(index)) text += source[index];
+      }
+      return text;
+    };
     const slice = (s, e) => (cut
-      ? source.slice(s, Math.max(s, Math.min(e, cut[0]))) + source.slice(Math.min(e, Math.max(s, cut[1])), e)
-      : source.slice(s, e));
+      ? take(s, Math.max(s, Math.min(e, cut[0]))) + take(Math.min(e, Math.max(s, cut[1])), e)
+      : take(s, e));
     if (unit.kind === "empty") return "";
     if (unit.role === "heading") return slice(S(unit, unit.block.contentStart), S(unit, unit.block.contentEnd));
     if (unit.role === "item") {
@@ -2641,7 +2756,8 @@
     let closing = 0;
     const parts = runs.map((run) => {
       const prefix = quotePrefixOfLine(source, run.start);
-      const body = run.units.map((unit) => unitContent(model, unit)).join(eol).split(eol).join(eol + prefix);
+      // In code a backslash escapes nothing, so escaped characters go in as the page shows them.
+      const body = run.units.map((unit) => unitContent(model, unit, null, true)).join(eol).split(eol).join(eol + prefix);
       closing = eol.length + prefix.length + 3;
       return { s: run.start, e: run.end, keep: `${prefix}\`\`\`${eol}${prefix}${body}${eol}${prefix}\`\`\`` };
     });
@@ -2656,7 +2772,8 @@
     const start = S(unit, block.start);
     const end = S(unit, block.end);
     const prefix = quotePrefixOfLine(source, start);
-    const lines = block.body.map((view) => source.slice(S(unit, view.start), S(unit, view.end)));
+    // Code text is literal: escaped, it reads back as the same text.
+    const lines = block.body.map((view) => escapeLineStart(escapeText(source.slice(S(unit, view.start), S(unit, view.end)))));
     const marker = prefixForType(target, 1, null);
     const text = lines.length ? lines.map((line, index) => (index === 0 ? marker : "") + line).join(eol + prefix) : marker;
     return { from: start, to: end, insert: text, select: caretAt(start + marker.length), kind: "format", label: BLOCK_LABELS[target] || "Paragraph" };
@@ -3485,8 +3602,8 @@
   /// divider keeps reading as text: `2020. A year` becomes `2020\. A year`.
   function escapeLineStart(line) {
     return line
-      .replace(/^(?=#{1,6}(?:[ \t]|$)|[-+](?:[ \t]|$)|>|-(?:[ \t]*-){2,}[ \t]*$)/, "\\")
-      .replace(/^(\d{1,9})([.)])(?=[ \t]|$)/, "$1\\$2");
+      .replace(/^([ \t]*)(?=#{1,6}(?:[ \t]|$)|[-+](?:[ \t]|$)|>|-(?:[ \t]*-){2,}[ \t]*$)/, "$1\\")
+      .replace(/^([ \t]*\d{1,9})([.)])(?=[ \t]|$)/, "$1\\$2");
   }
 
   /// A URL as a link destination: spaces encoded, parentheses escaped so they cannot end it.
@@ -3582,6 +3699,7 @@
     cellNeighbor,
     balancedMarkdown,
     htmlToMarkdown,
+    linkDestination,
     bStart,
     bEnd,
     bLine,
@@ -4460,7 +4578,14 @@
         const markers = pendingMarks.map((style) => STYLE_MARKERS[style]);
         const open = markers.join("");
         const close = markers.slice().reverse().join("");
-        op = { from: selection.from, to: selection.from, insert: open + text + close, select: caretAt(selection.from + open.length + text.length), kind: "typing" };
+        const source = model.source;
+        // A typed backslash stays shown before the closing marker (in code it escapes nothing), and so
+        // does a shown backslash before the opening one.
+        const body = pendingMarks.includes("code") ? text : keepBackslashes(open, open.length, text, close.charAt(0));
+        const written = open + body + close;
+        const insert = writesMarkdownText(model, unit, selection.from) ? keepBackslashes(source, selection.from, written, source.charAt(selection.from)) : written;
+        const lead = insert.length - written.length;
+        op = { from: selection.from, to: selection.from, insert, select: caretAt(selection.from + lead + open.length + body.length), kind: "typing" };
       }
       pendingMarks = null;
     }
@@ -4846,14 +4971,15 @@
         const url = String(value || "").trim();
         if (!url) return false;
         const state = inlineState(model, selection);
+        // The editor shows a link's address as it reads; written back, its parentheses are escaped again.
         if (state.link && state.link.kind === "link" && selection.from === selection.to) {
-          return apply(planInlineStyle(model, withOrder(state.link.contentFrom, state.link.contentTo), "link", url.replace(/\s/g, "%20")));
+          return apply(planInlineStyle(model, withOrder(state.link.contentFrom, state.link.contentTo), "link", linkDestination(url)));
         }
         if (selection.from === selection.to) {
-          const label = url;
-          return apply({ ...planInsertText(model, selection, `[${label}](${url.replace(/\s/g, "%20")})`, {}), kind: "format", label: "Link" });
+          const label = url.replace(/([[\]])/g, "\\$1");
+          return apply({ ...planInsertText(model, selection, `[${label}](${linkDestination(url)})`, {}), kind: "format", label: "Link" });
         }
-        return apply(planInlineStyle(model, selection, "link", url.replace(/\s/g, "%20")));
+        return apply(planInlineStyle(model, selection, "link", linkDestination(url)));
       }
       case "paragraph":
         return apply(planBlockType(model, selection, "paragraph"));
@@ -7258,7 +7384,7 @@
         const url = /^[a-z][a-z0-9+.-]*:/i.test(value) ? value : `https://${value}`;
         const label = url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/$/, "");
         const selection = readSelection() || editing.selection;
-        apply({ ...planInsertText(model, selection, `[${label.replace(/([[\]])/g, "\\$1")}](${url.replace(/\s/g, "%20")})`, {}), kind: "format", label: "Web Bookmark" }, { coalesce: false });
+        apply({ ...planInsertText(model, selection, `[${label.replace(/([[\]])/g, "\\$1")}](${linkDestination(url)})`, {}), kind: "format", label: "Web Bookmark" }, { coalesce: false });
         return;
       }
       if (!value) {

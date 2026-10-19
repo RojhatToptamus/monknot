@@ -782,6 +782,44 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
       expectEqual("copied escape", E.balancedMarkdown(model, 1, 3), "\\*");
       expectEqual("line break render", window.MonknotMarkdown.renderMarkdown("C:\\\\\\\nx"), "<p data-source-line=\"1\">C:\\<br>x</p>");
     })();
+
+    // A backslash the page shows stays shown. Markdown reads a backslash before punctuation as an
+    // escape, so an edit that puts a marker or punctuation right after it writes one more.
+    check("bold after a shown backslash", "C:\\«abc»", style("strong"), "C:\\\\**«abc»**");
+    check("italic after a shown backslash", "C:\\«abc»", style("em"), "C:\\\\*«abc»*");
+    check("code after a shown backslash", "C:\\«abc»", style("code"), "C:\\\\`«abc»`");
+    check("strikethrough after a shown backslash", "C:\\«abc»", style("del"), "C:\\\\~~«abc»~~");
+    check("link after a shown backslash", "C:\\«abc»", style("link", "u"), "C:\\\\«[abc](u)»");
+    check("bold ending in a shown backslash", "«C:\\»", style("strong"), "**«C:\\\\»**");
+    check("unbold after an escaped backslash", "C:\\\\**«abc»**", style("strong"), "C:\\\\«abc»");
+    check("enter after a shown backslash in bold", "**C:\\‸x**", enter, "**C:\\\\**\n\n**‸x**");
+    check("enter after a backslash in code", "`C:\\‸x`", enter, "`C:\\`\n\n`‸x`");
+    check("type punctuation after a shown backslash", "C:\\‸x", type("."), "C:\\\\.‸x");
+    check("type a backslash before punctuation", "a‸*b", type("\\"), "a\\\\‸*b");
+    check("type a backslash after a shown backslash", "C:\\‸x", type("\\"), "C:\\\\\\‸x");
+    check("type a backslash after an escaped backslash", "a\\\\‸*b", type("\\"), "a\\\\\\\\‸*b");
+    check("type punctuation after a backslash in code", "`C:\\‸x`", type("."), "`C:\\.‸x`");
+    check("paste markup after a shown backslash", "C:\\‸", (m, s) => E.planInsertText(m, s, "*x*", { kind: "paste" }), "C:\\\\*x*‸");
+    check("replace with punctuation after a shown backslash", "C:\\«x»", type("*"), "C:\\\\*‸");
+    check("delete up to punctuation after a shown backslash", "\\b*", backspaceAt(2), "\\\\‸*");
+    check("join onto a shown backslash", "a\\\n\n‸*b", backspaceAtStart, "a\\\\‸*b");
+    check("join forward onto a shown backslash", "a\\‸\n\n*b", (m, s) => E.planDeleteForwardAtEnd(m, E.unitAt(m, s.head, "left")), "a\\\\‸*b");
+    // A link's address shows as it reads; written back, its parentheses are escaped again.
+    check("link address written back unchanged", "[F‸oo](https://x.org/Foo_\\(bar\\))", (m, s) => {
+      const link = E.inlineState(m, s).link;
+      const content = { anchor: link.contentFrom, head: link.contentTo, from: link.contentFrom, to: link.contentTo };
+      return E.planInlineStyle(m, content, "link", E.linkDestination(link.href));
+    }, "«[Foo](https://x.org/Foo_\\(bar\\))»");
+    expectEqual("link address read", E.inlineState(E.createModel("[Foo](https://x.org/Foo_\\(bar\\))"), { anchor: 2, head: 2, from: 2, to: 2 }).link.href, "https://x.org/Foo_(bar)");
+    expectEqual("link destination", E.linkDestination("https://x.org/Foo_(bar) x"), "https://x.org/Foo_\\(bar\\)%20x");
+    // Code text is literal: out of code it is escaped to read the same, into code it loses escapes.
+    check("remove code holding backslashes", "`«\\d+\\.»`", style("code"), "«\\\\d+\\\\.»");
+    check("remove code holding markup characters", "x `«a*b_c ~~d~~»` y", style("code"), "x «a\\*b\\_c \\~\\~d\\~\\~» y");
+    check("remove code starting a paragraph", "`«1. x»`", style("code"), "«1\\. x»");
+    check("remove code from part of a span", "`a«*»b`", style("code"), "`a`«\\*»`b`");
+    check("text into a code block", "a\\*b `c\\*`‸", block("code"), "```\na*b `c\\*`‸\n```");
+    check("code block into text", "```\n\\d+\\.\n*a* 1. x\n- y‸\n```", block("paragraph"), "‸\\\\d+\\\\.\n\\*a\\* 1. x\n\\- y");
+    check("code block into a heading", "```\n# a_b‸\n```", block("heading1"), "# ‸\\" + "# a\\_b");
     return JSON.stringify({ passed, failures });
     })()
     """#
