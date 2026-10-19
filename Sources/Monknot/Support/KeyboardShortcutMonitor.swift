@@ -272,6 +272,11 @@ enum MonknotNativeUndoCommand {
         TerminalFocusRestorer.firstResponder(in: NSApp.keyWindow, isInside: .monknotTerminalFocusRegion)
     }
 
+    /// A document view (a PDF, an image, a player) has focus, so its own undo takes ⌘Z.
+    @MainActor static var documentViewHasFocus: Bool {
+        TerminalFocusRestorer.firstResponder(in: NSApp.keyWindow, isInside: .monknotDocumentFocusTarget)
+    }
+
     static func performUndoIfAvailable() -> Bool {
         guard let undoManager = currentUndoManager, undoManager.canUndo else { return false }
         undoManager.undo()

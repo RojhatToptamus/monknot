@@ -48,6 +48,8 @@ public enum MonknotKeyboardShortcutCatalog {
             Entry(title: "Rename Selected Item", shortcut: "↩"),
             Entry(title: "Duplicate Selected Item", shortcut: "⌘D"),
             Entry(title: "Move Selected Item to Trash", shortcut: "⌘⌫"),
+            Entry(title: "Undo Move or Copy", shortcut: "⌘Z"),
+            Entry(title: "Redo Move or Copy", shortcut: "⇧⌘Z"),
         ]),
         MonknotKeyboardShortcutSection(title: "Find", entries: [
             Entry(title: "Find in Document or Terminal", shortcut: "⌘F"),

@@ -175,9 +175,16 @@ struct SidebarView: View {
             // The rows come from the tree, which also changes without the documents (an empty folder).
             .onChange(of: store.rootNodeRevision) { _, _ in
                 refreshVisibleNodes()
+                resolvePendingLanding()
             }
             .onChange(of: store.documentIDRemapEvent?.serial ?? 0) { _, _ in
                 followMovedFolders()
+                resolvePendingLanding()
+            }
+            // An item Edit › Undo or Redo moved or copied lands as a dropped one does.
+            .onChange(of: store.fileOperationLanding) { _, landing in
+                guard let landing else { return }
+                pendingLanding = SidebarPendingLanding(itemID: landing.itemID, deadline: Date().addingTimeInterval(10))
                 resolvePendingLanding()
             }
             .onChange(of: store.isBusy) { _, isBusy in

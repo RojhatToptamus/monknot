@@ -970,8 +970,9 @@ selected folder, or the selected document's folder, or the root when nothing is 
 menu acts on that row, and the empty tree's menu and files dropped from another app onto empty
 space act on the root. While the
 tree has focus, ⌘C, ⌘X and ⌘V copy, cut and paste the selection, Return renames it, ⌘D duplicates it and
-⌘⌫ moves it to the Trash, once per press however long the key is held; with the editor, terminal or a
-field focused those keys stay theirs. A created
+⌘⌫ moves it to the Trash, once per press however long the key is held, and ⌘Z and ⇧⌘Z undo and redo
+the last move or copy (Moving files, below); with the editor, terminal or a field focused those keys
+stay theirs. A created
 or pasted item is selected and its folder opens; files pasted or dropped in from elsewhere open their
 folder. The selection follows a rename or move, moves up to the nearest remaining folder when its folder
 is removed outside Monknot, and clears when the workspace changes; open folders stay open when renamed
@@ -1018,6 +1019,21 @@ Paste is enabled only while the clipboard holds something to paste.
   the workspace. Brought back over the tree, it targets as a drag from Finder does.
 - **From Finder** (or another window): the same targets, tint, spring-loading and refusals; files from
   outside are copied in, files already in the workspace are moved.
+- **Undo.** Edit › Undo takes back the last move, rename or copy made in the sidebar — a drag, an
+  Option-drag, Cut and Paste, Duplicate, or a drop of items already in the workspace — as one step
+  named for it: Undo Move “a.md”, Undo Duplicate “a.md”, Undo Move 3 Items. Redo makes it again, and a
+  new move or copy ends what Redo held. Undoing a move puts the item back and the links the move
+  rewrote back as they were, without asking again; undoing a copy moves the copy to the Trash. ⌘Z and
+  ⇧⌘Z reach it while the tree has focus or nothing does; Source, Preview, the terminal and a focused
+  PDF or image keep their own, so typing's undo never moves a file. Of a move and a workspace Replace
+  All, the newer is undone first. Before it acts, the step checks that the disk still matches what the
+  operation left — the item is where it put it, nothing has taken the name it goes back to, every
+  rewritten note holds the text the move wrote — and otherwise changes nothing and says why; it never
+  overwrites. Such a step leaves the history, since the disk no longer matches it; one that would
+  rewrite or trash unsaved text waits until that text is saved. What goes back lands as a drop does:
+  its folders open, it scrolls into view and its row holds the tint. Files copied in from outside the
+  workspace stay; the history is the window's and ends when its workspace changes
+  (`WorkspaceFileOperationHistory`, `WorkspaceStore.undoFileOperation`).
 
 **Recents** is a collapsible group between the tree and the footer: the chevron in the glyph column, a
 group header (§4.3) and a trailing count in 12 `ink3`. Its entries are file rows one level in, whose

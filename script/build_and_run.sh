@@ -399,6 +399,7 @@ APP_SOURCES=(
   "Sources/Monknot/Stores/TerminalSessionCollectionStore.swift"
   "Sources/Monknot/Stores/TerminalSessionStore.swift"
   "Sources/Monknot/Stores/ThemeSettingsStore.swift"
+  "Sources/Monknot/Stores/WorkspaceFileOperationHistory.swift"
   "Sources/Monknot/Stores/WorkspaceLibraryStore.swift"
   "Sources/Monknot/Stores/WorkspaceStore.swift"
   "Sources/Monknot/Support/Color+Theme.swift"

@@ -2331,7 +2331,12 @@ struct ContentView: View {
                 isKeyboardShortcutsHelpPresented = true
             },
             undoWorkspaceReplace: { store.undoLastWorkspaceReplace() },
-            canUndoWorkspaceReplace: canUndoWorkspaceReplace
+            canUndoWorkspaceReplace: canUndoWorkspaceReplace,
+            undoFileOperation: { store.undoFileOperation() },
+            redoFileOperation: { store.redoFileOperation() },
+            fileOperationUndoActionName: store.canUndoFileOperation ? store.fileOperationUndo.undoActionName : nil,
+            fileOperationRedoActionName: store.canRedoFileOperation ? store.fileOperationUndo.redoActionName : nil,
+            fileOperationUndoPrecedesWorkspaceReplace: store.fileOperationUndo.undoPrecedesWorkspaceReplace
         )
     }
 
@@ -2350,6 +2355,21 @@ struct ContentView: View {
 
     private var canUndoWorkspaceReplace: Bool {
         store.canUndoWorkspaceReplace && !store.isBusy
+    }
+
+    /// Where ⌘Z (or ⇧⌘Z) goes now, as the Edit menu decides it.
+    private func undoCommandDestination(redo: Bool) -> MonknotUndoCommandDestination {
+        monknotUndoCommandDestination(
+            isPDFDocumentActive: isPDFViewerDocumentSelected,
+            hasNativeEditingFocus: MonknotNativePasteboardCommand.hasNativeEditingFocus,
+            terminalHasFocus: MonknotNativeUndoCommand.terminalHasFocus,
+            documentViewHasFocus: MonknotNativeUndoCommand.documentViewHasFocus,
+            canPerformNative: redo ? MonknotNativeUndoCommand.canRedo : MonknotNativeUndoCommand.canUndo,
+            canPerformWorkspaceReplace: !redo && canUndoWorkspaceReplace,
+            canPerformFileOperation: redo ? store.canRedoFileOperation : store.canUndoFileOperation,
+            fileOperationIsNewer: redo || store.fileOperationUndo.undoPrecedesWorkspaceReplace,
+            canPerformPDF: isPDFViewerDocumentSelected && (redo ? canRedoPDFAnnotation : canUndoPDFAnnotation)
+        )
     }
 
     private var canToggleMarkdownSplitView: Bool {
@@ -2459,17 +2479,28 @@ struct ContentView: View {
             return false
         }
 
-        // Focused text keeps its own undo. A workspace Replace All is undone from it too once the
-        // text has nothing left to undo, matching the Edit menu; the terminal keeps ⌘Z to itself.
-        if action == .undoWorkspaceReplace,
-           MonknotNativePasteboardCommand.hasNativeEditingFocus,
-           MonknotNativeUndoCommand.canUndo || MonknotNativeUndoCommand.terminalHasFocus {
-            return false
-        }
-
-        if (action == .undoPDFAnnotation || action == .redoPDFAnnotation),
-           MonknotNativePasteboardCommand.hasNativeEditingFocus {
-            return false
+        // ⌘Z and ⇧⌘Z go where the Edit menu sends them: focused text keeps its own undo (a
+        // workspace Replace All is undone from it too once the text has nothing left to undo), the
+        // terminal keeps them to itself, and the sidebar's moves and copies are undone from the
+        // sidebar or with nothing focused.
+        if action == .undoWorkspaceReplace || action == .undoPDFAnnotation || action == .redoPDFAnnotation {
+            let isRedo = action == .redoPDFAnnotation
+            switch undoCommandDestination(redo: isRedo) {
+            case .native, .unavailable:
+                return false
+            case .fileOperation:
+                if isRedo {
+                    store.redoFileOperation()
+                } else {
+                    store.undoFileOperation()
+                }
+                return true
+            case .workspaceReplace:
+                store.undoLastWorkspaceReplace()
+                return true
+            case .pdf:
+                break
+            }
         }
 
         // ↑/↓ choose an input-method candidate while the search field is composing.

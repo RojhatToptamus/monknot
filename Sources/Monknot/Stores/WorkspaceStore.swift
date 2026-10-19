@@ -58,10 +58,20 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var workspaceReplaceSummary: String?
     @Published private(set) var workspaceSearchContentChangeSerial = 0
     @Published private(set) var canUndoWorkspaceReplace = false
+    /// What Edit › Undo and Redo offer for the moves and copies made in the sidebar.
+    @Published private(set) var fileOperationUndo = WorkspaceFileOperationUndoState()
+    /// An item an undo or redo moved or copied, which the sidebar shows and tints as it does an
+    /// item a drop has just moved.
+    @Published private(set) var fileOperationLanding: WorkspaceItemLanding?
     @Published private(set) var recentDocumentChangeSerial = 0
     @Published var errorMessage: String?
 
     private var replaceUndoSnapshot: WorkspaceReplaceUndoSnapshot?
+    private var fileOperationHistory = WorkspaceFileOperationHistory()
+    /// Counts the actions Edit › Undo can take back, so the newer of a file operation and a
+    /// workspace Replace is undone first.
+    private var workspaceUndoSerial = 0
+    private var replaceUndoSerial = 0
 
     private let scanner: any WorkspaceDocumentScanning
     private let moveItemToTrash: @Sendable (URL) throws -> Void
@@ -816,7 +826,8 @@ final class WorkspaceStore: ObservableObject {
             sourceURL: document.url,
             destinationURL: targetURL,
             workspaceURL: workspaceURL,
-            failureMessage: "Could not rename \(document.displayName)"
+            failureMessage: "Could not rename \(document.displayName)",
+            undoVerb: .rename
         )
     }
 
@@ -851,7 +862,8 @@ final class WorkspaceStore: ObservableObject {
             sourceURL: sourceURL,
             destinationURL: targetURL,
             workspaceURL: workspaceURL,
-            failureMessage: "Could not rename \(sourceURL.lastPathComponent)"
+            failureMessage: "Could not rename \(sourceURL.lastPathComponent)",
+            undoVerb: .rename
         )
     }
 
@@ -1028,7 +1040,8 @@ final class WorkspaceStore: ObservableObject {
             moving: transfer.operation == .cut,
             workspaceURL: workspaceURL,
             completedTransfer: transfer,
-            failureMessage: "Could not paste \(displayName)"
+            failureMessage: "Could not paste \(displayName)",
+            undoVerb: transfer.operation == .cut ? .move : .copy
         )
     }
 
@@ -1085,7 +1098,8 @@ final class WorkspaceStore: ObservableObject {
             moving: false,
             workspaceURL: workspaceURL,
             completedTransfer: nil,
-            failureMessage: "Could not duplicate \(sourceURL.lastPathComponent)"
+            failureMessage: "Could not duplicate \(sourceURL.lastPathComponent)",
+            undoVerb: targetDirectory == sourceURL.deletingLastPathComponent().standardizedFileURL ? .duplicate : .copy
         )
     }
 
@@ -1093,7 +1107,8 @@ final class WorkspaceStore: ObservableObject {
     /// selects the result: a file opens, a folder is selected in the sidebar. A copy is made of
     /// `contentsURL`, a snapshot of the file, when given; otherwise it carries the unsaved text of
     /// the copied file, or of every document in the copied folder. Whatever was copied before a
-    /// failure stays on disk, so a failure rescans too.
+    /// failure stays on disk, so a failure rescans too. A transfer that completes is one step of
+    /// Edit › Undo, named by `undoVerb`.
     private func startItemTransfer(
         from sourceURL: URL,
         contentsOf contentsURL: URL? = nil,
@@ -1101,7 +1116,8 @@ final class WorkspaceStore: ObservableObject {
         moving: Bool,
         workspaceURL: URL,
         completedTransfer: WorkspaceDocumentTransfer?,
-        failureMessage: String
+        failureMessage: String,
+        undoVerb: WorkspaceFileOperationVerb
     ) {
         let sourceID = sourceURL.path
         let dirtyCopyTexts = moving || contentsURL != nil ? [] : unsavedTexts(inItemAt: sourceID)
@@ -1123,6 +1139,23 @@ final class WorkspaceStore: ObservableObject {
                     }
                 }
 
+                let undoStep: WorkspaceFileOperationStep = if moving {
+                    .move(WorkspaceFileMoveStep(
+                        sourceURL: sourceURL,
+                        destinationURL: destinationURL.standardizedFileURL,
+                        isDirectory: isFolder,
+                        usedCaseOnlyRenameHop: false,
+                        rewrittenFiles: []
+                    ))
+                } else {
+                    .copy(WorkspaceFileCopyStep(
+                        sourceURL: sourceURL,
+                        contentsURL: contentsURL,
+                        copyURL: destinationURL.standardizedFileURL,
+                        isDirectory: isFolder
+                    ))
+                }
+
                 let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
                 guard !Task.isCancelled else { return }
                 await self?.finishDocumentTransfer(
@@ -1133,6 +1166,8 @@ final class WorkspaceStore: ObservableObject {
                     sidebarSelection: isFolder ? .folder(destinationURL) : .document,
                     changedPaths: [sourceID, destinationURL.standardizedFileURL.path],
                     completedTransfer: completedTransfer,
+                    undoStep: undoStep,
+                    undoVerb: undoVerb,
                     generation: generation
                 )
             } catch {
@@ -1282,6 +1317,7 @@ final class WorkspaceStore: ObservableObject {
 
         // The drop replaces a move waiting for its link review, as any other operation does.
         pendingMarkdownLinkMoveReview = nil
+        endMoveRun()
         moveRunSerial &+= 1
         let runID = moveRunSerial
         moveRun = WorkspaceMoveRun(
@@ -1295,7 +1331,7 @@ final class WorkspaceStore: ObservableObject {
         importPasteboardItems(importedItems.map(WorkspacePasteboardImportItem.fileURL), into: directoryURL, moveRunID: runID)
         // The moves follow the import, and are dropped with it when it is refused.
         if !isBusy {
-            moveRun = nil
+            endMoveRun()
         }
     }
 
@@ -1332,20 +1368,28 @@ final class WorkspaceStore: ObservableObject {
                 failureMessage: "Could not move \(sourceURL.lastPathComponent)",
                 moveRunID: runID
             ) {
-                moveRun = nil
+                endMoveRun()
             }
             return
         }
 
-        moveRun = nil
+        endMoveRun()
         reportMoveRun(run)
     }
 
     /// Ends the run `runID` when its link review is cancelled, reporting the items left unmoved.
     private func cancelMoveRun(_ runID: Int?) {
         guard let runID, let run = moveRun, run.id == runID else { return }
-        moveRun = nil
+        endMoveRun()
         reportMoveRun(run, unmovedCount: 1 + run.moves.count)
+    }
+
+    /// Ends the move run in progress. The moves it made are one step of Edit › Undo, however the
+    /// run ended.
+    private func endMoveRun() {
+        guard let run = moveRun else { return }
+        moveRun = nil
+        recordFileOperation(.move, steps: run.undoSteps)
     }
 
     /// Skips a failed step of the move run `runID` while that run is in progress: the run reports
@@ -1571,7 +1615,8 @@ final class WorkspaceStore: ObservableObject {
 
     /// Plans a rename or move that updates the Markdown links to the item, then runs it or asks
     /// for review. `moveRunID` names the move run it is a step of. Returns false when it cannot
-    /// start.
+    /// start. A move that is made is one step of Edit › Undo, named by `undoVerb`; a step of a
+    /// move run is part of the run's step.
     @discardableResult
     private func requestMarkdownLinkAwareMove(
         sourceURL: URL,
@@ -1580,7 +1625,8 @@ final class WorkspaceStore: ObservableObject {
         failureMessage: String,
         selectDestinationAfterMove: Bool = false,
         completedTransfer: WorkspaceDocumentTransfer? = nil,
-        moveRunID: Int? = nil
+        moveRunID: Int? = nil,
+        undoVerb: WorkspaceFileOperationVerb = .move
     ) -> Bool {
         guard ensureNotBusy(), ensureWritingToolsInactive(for: "renaming or moving files") else { return false }
 
@@ -1608,7 +1654,8 @@ final class WorkspaceStore: ObservableObject {
             completedTransfer: completedTransfer,
             failureMessage: failureMessage,
             itemName: sourceURL.lastPathComponent,
-            moveRunID: moveRunID
+            moveRunID: moveRunID,
+            undoVerb: undoVerb
         )
         let documentSnapshot = documents
         let unsavedMarkdownTexts = dirtyDocumentTexts
@@ -1736,10 +1783,11 @@ final class WorkspaceStore: ObservableObject {
                 }
                 try Task.checkCancellation()
 
-                receipt = try Self.commitMarkdownLinkMove(
+                let committed = try Self.commitMarkdownLinkMove(
                     reviewedPlan,
                     workspaceURL: request.workspaceURL
                 )
+                receipt = committed
                 try Task.checkCancellation()
                 let result = try await Self.scanWorkspace(
                     request.workspaceURL,
@@ -1750,6 +1798,7 @@ final class WorkspaceStore: ObservableObject {
                 let applied = await self?.finishMarkdownLinkMove(
                     result: result,
                     plan: reviewedPlan,
+                    receipt: committed,
                     request: request,
                     generation: generation
                 ) ?? false
@@ -1816,6 +1865,7 @@ final class WorkspaceStore: ObservableObject {
     private func finishMarkdownLinkMove(
         result: WorkspaceDocumentScanResult,
         plan: MarkdownLinkMovePlan,
+        receipt: WorkspaceMarkdownLinkMoveReceipt,
         request: WorkspaceMarkdownLinkMoveRequest,
         generation: Int
     ) -> Bool {
@@ -1861,9 +1911,27 @@ final class WorkspaceStore: ObservableObject {
             generation: generation
         )
         remapRecentDocuments(request.mappings)
+
+        let undoStep = WorkspaceFileOperationStep.move(WorkspaceFileMoveStep(
+            sourceURL: plan.sourceURL.standardizedFileURL,
+            destinationURL: plan.destinationURL.standardizedFileURL,
+            isDirectory: plan.sourceStamp.isDirectory,
+            usedCaseOnlyRenameHop: receipt.usedCaseOnlyRenameHop,
+            rewrittenFiles: receipt.writtenFiles.map {
+                WorkspaceFileMoveRewrite(
+                    originalURL: $0.originalURL.standardizedFileURL,
+                    finalURL: $0.url.standardizedFileURL,
+                    originalRevision: $0.originalRevision,
+                    writtenRevision: $0.writtenRevision
+                )
+            }
+        ))
         if let runID = request.moveRunID, moveRun?.id == runID {
+            moveRun?.undoSteps.append(undoStep)
             moveRun?.movedCount += 1
             continueMoveRun(runID)
+        } else {
+            recordFileOperation(request.undoVerb, steps: [undoStep])
         }
         return true
     }
@@ -1879,6 +1947,320 @@ final class WorkspaceStore: ObservableObject {
               recentDocumentStore.remap(movedDocuments, workspaceURL: workspaceURL)
         else { return }
         recentDocumentChangeSerial &+= 1
+    }
+
+    // MARK: Undo and redo of moves and copies (design.md §10.4)
+
+    /// Whether Edit › Undo can take back the last move or copy now.
+    var canUndoFileOperation: Bool {
+        fileOperationHistory.nextUndo != nil && canRunFileOperationHistory
+    }
+
+    /// Whether Edit › Redo can make the last undone move or copy again now.
+    var canRedoFileOperation: Bool {
+        fileOperationHistory.nextRedo != nil && canRunFileOperationHistory
+    }
+
+    /// Nothing runs, and no move waits for its link review or for the move before it.
+    private var canRunFileOperationHistory: Bool {
+        workspaceURL != nil
+            && !isBusy
+            && pendingMarkdownLinkMoveReview == nil
+            && moveRun == nil
+            && writingToolsDocumentID == nil
+    }
+
+    func undoFileOperation() {
+        runFileOperationHistory(.undo)
+    }
+
+    func redoFileOperation() {
+        runFileOperationHistory(.redo)
+    }
+
+    /// A new move or copy goes on top of Edit › Undo and ends what Redo held.
+    private func recordFileOperation(_ verb: WorkspaceFileOperationVerb, steps: [WorkspaceFileOperationStep]) {
+        guard !steps.isEmpty, let workspaceURL else { return }
+        workspaceUndoSerial &+= 1
+        fileOperationHistory.record(WorkspaceFileOperation(
+            verb: verb,
+            steps: steps,
+            workspaceURL: workspaceURL.standardizedFileURL,
+            serial: workspaceUndoSerial
+        ))
+        publishFileOperationUndoState()
+    }
+
+    private func publishFileOperationUndoState() {
+        let nextUndo = fileOperationHistory.nextUndo
+        let state = WorkspaceFileOperationUndoState(
+            undoActionName: nextUndo?.actionName,
+            redoActionName: fileOperationHistory.nextRedo?.actionName,
+            undoPrecedesWorkspaceReplace: replaceUndoSnapshot == nil || (nextUndo?.serial ?? 0) > replaceUndoSerial
+        )
+        if fileOperationUndo != state {
+            fileOperationUndo = state
+        }
+    }
+
+    /// Undoes or redoes the newest operation of that stack, as one step. It first refuses what
+    /// would lose unsaved text; on disk, each of its moves and copies checks that the disk still
+    /// matches what the operation left and is refused otherwise, putting back what it had done.
+    /// An operation the disk no longer matches leaves the history.
+    private func runFileOperationHistory(_ direction: WorkspaceFileOperationDirection) {
+        guard let workspaceURL = workspaceURL?.standardizedFileURL,
+              let operation = direction == .undo ? fileOperationHistory.nextUndo : fileOperationHistory.nextRedo
+        else { return }
+        let verb = direction == .undo ? "undo" : "redo"
+        guard pendingMarkdownLinkMoveReview == nil, moveRun == nil else {
+            errorMessage = Self.busyMessage
+            return
+        }
+        guard ensureNotBusy(), ensureWritingToolsInactive(for: "\(verb)ing a file operation") else { return }
+        let failureMessage = "Could not \(verb) \(operation.actionName)"
+        if let reason = fileOperationRefusal(operation, direction) {
+            errorMessage = "\(failureMessage): \(reason)"
+            return
+        }
+
+        let effect = fileOperationEffect(operation, direction)
+        var unsavedCopyTexts: [String: [WorkspaceUnsavedCopyText]] = [:]
+        if direction == .redo {
+            for case .copy(let copy) in operation.steps {
+                let sourcePath = copy.sourceURL.standardizedFileURL.path
+                unsavedCopyTexts[sourcePath] = unsavedTexts(inItemAt: sourcePath)
+                    .map { WorkspaceUnsavedCopyText(subpath: $0.subpath, text: $0.text) }
+            }
+        }
+        let disk = WorkspaceFileOperationDisk(
+            workspaceURL: workspaceURL,
+            moveItemToTrash: moveItemToTrash,
+            unsavedCopyTexts: unsavedCopyTexts
+        )
+        noteInternalFileMutation()
+        let generation = beginDocumentFileOperation()
+
+        workspaceTask = Task.detached(priority: .userInitiated) { [weak self, scanner] in
+            var madeChanges = false
+            do {
+                try disk.apply(operation, direction)
+                madeChanges = true
+                try Task.checkCancellation()
+                let result = try await Self.scanWorkspace(workspaceURL, scanner: scanner)
+                try Task.checkCancellation()
+                let applied = await self?.finishFileOperationHistory(
+                    result: result,
+                    operation: operation,
+                    direction: direction,
+                    effect: effect,
+                    generation: generation
+                ) ?? false
+                if !applied {
+                    madeChanges = false
+                    try disk.rollBack(operation, after: direction)
+                }
+            } catch {
+                var finalError = error
+                if madeChanges {
+                    do {
+                        try disk.rollBack(operation, after: direction, failure: error)
+                    } catch let rollbackError {
+                        finalError = rollbackError
+                    }
+                }
+                await self?.finishFileOperationHistoryFailure(
+                    finalError,
+                    direction: direction,
+                    message: failureMessage,
+                    generation: generation
+                )
+            }
+        }
+    }
+
+    /// Why the operation cannot be undone or redone without losing unsaved text: it would rewrite
+    /// the links in a document with unsaved changes, put a copy with unsaved changes in the
+    /// Trash, or take one out of the workspace.
+    private func fileOperationRefusal(
+        _ operation: WorkspaceFileOperation,
+        _ direction: WorkspaceFileOperationDirection
+    ) -> String? {
+        let doing = direction == .undo ? "undoing" : "redoing"
+        for step in operation.steps {
+            switch step {
+            case .move(let move):
+                for rewrite in move.rewrittenFiles {
+                    let path = (direction == .undo ? rewrite.finalURL : rewrite.originalURL).standardizedFileURL.path
+                    if let document = document(id: path), !saveState(for: path).isClean {
+                        return "Save \(document.displayName) first: \(doing) this move updates the links in it."
+                    }
+                }
+                let (fromURL, toURL) = direction == .undo
+                    ? (move.destinationURL, move.sourceURL)
+                    : (move.sourceURL, move.destinationURL)
+                if !isInsideWorkspace(toURL), let unsaved = unsavedDocument(at: fromURL) {
+                    return "Save or close \(unsaved.displayName) first: \(doing) this move takes it out of the workspace."
+                }
+            case .copy(let copy):
+                if direction == .undo, let unsaved = unsavedDocument(at: copy.copyURL) {
+                    return "Save or close \(unsaved.displayName) first: undoing the copy moves it to the Trash."
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Whether `url` is inside the workspace, not the workspace itself.
+    private func isInsideWorkspace(_ url: URL) -> Bool {
+        guard let workspaceURL else { return false }
+        let url = url.standardizedFileURL
+        return url != workspaceURL.standardizedFileURL && WorkspaceDocumentSupport.isURL(url, containedIn: workspaceURL)
+    }
+
+    /// What an undo or redo changes for this window, worked out before the disk changes: the items
+    /// it moves within the workspace and the documents that move with them, what leaves the
+    /// workspace, the notes whose links it rewrites, and the item the sidebar shows landing.
+    private func fileOperationEffect(
+        _ operation: WorkspaceFileOperation,
+        _ direction: WorkspaceFileOperationDirection
+    ) -> WorkspaceFileOperationEffect {
+        var effect = WorkspaceFileOperationEffect()
+        let steps = direction == .undo ? Array(operation.steps.reversed()) : operation.steps
+        for step in steps {
+            switch step {
+            case .move(let move):
+                let (fromURL, toURL) = direction == .undo
+                    ? (move.destinationURL, move.sourceURL)
+                    : (move.sourceURL, move.destinationURL)
+                effect.changedPaths += [fromURL.path, toURL.path]
+                for rewrite in move.rewrittenFiles {
+                    let currentURL = direction == .undo ? rewrite.finalURL : rewrite.originalURL
+                    effect.rewrittenDocumentIDs.insert(currentURL.standardizedFileURL.path)
+                    effect.changedPaths += [rewrite.originalURL.path, rewrite.finalURL.path]
+                }
+                switch (isInsideWorkspace(fromURL), isInsideWorkspace(toURL)) {
+                case (true, true):
+                    let mappings = Self.documentIDMappings(forMoving: fromURL, to: toURL, documents: documents)
+                    effect.itemMoves.append(WorkspaceItemMoveRemap(
+                        sourcePath: fromURL.standardizedFileURL.path,
+                        destinationPath: toURL.standardizedFileURL.path,
+                        mappings: mappings
+                    ))
+                    effect.changedPaths += mappings.flatMap { [$0.sourceID, $0.destinationID] }
+                    effect.landingItemID = toURL.standardizedFileURL.path
+                case (true, false):
+                    effect.removedPaths.append(fromURL.standardizedFileURL.path)
+                case (false, _):
+                    effect.landingItemID = toURL.standardizedFileURL.path
+                }
+            case .copy(let copy):
+                effect.changedPaths.append(copy.copyURL.path)
+                if direction == .undo {
+                    effect.removedPaths.append(copy.copyURL.standardizedFileURL.path)
+                } else {
+                    effect.createdCopy = copy
+                    effect.landingItemID = copy.copyURL.standardizedFileURL.path
+                }
+            }
+        }
+        return effect
+    }
+
+    /// Shows what an undo or redo did as the operation itself showed it: open tabs, unsaved text,
+    /// the selection and Recents follow a moved item; a copy made again is selected; and the item
+    /// lands in the sidebar.
+    private func finishFileOperationHistory(
+        result: WorkspaceDocumentScanResult,
+        operation: WorkspaceFileOperation,
+        direction: WorkspaceFileOperationDirection,
+        effect: WorkspaceFileOperationEffect,
+        generation: Int
+    ) -> Bool {
+        guard generation == workspaceGeneration,
+              operation.workspaceURL == workspaceURL?.standardizedFileURL
+        else { return false }
+
+        let previousSelection = selectedDocumentID
+        let isRemoved = { (path: String) in
+            effect.removedPaths.contains { WorkspaceDocumentSupport.isPath(path, containedIn: $0) }
+        }
+        let selectionIsRemoved = previousSelection.map(isRemoved) ?? false
+        let sidebarSelectionIsRemoved = sidebarSelectionID.map(isRemoved) ?? false
+        let selectedDocumentWasRewritten = previousSelection.map(effect.rewrittenDocumentIDs.contains) ?? false
+        let movedSelection = previousSelection.map { selection in
+            effect.itemMoves.reduce(selection) {
+                Self.path($0, afterMoving: $1.sourcePath, to: $1.destinationPath)
+            }
+        }
+
+        for move in effect.itemMoves {
+            for mapping in move.mappings {
+                moveDirtyState(from: mapping.sourceID, to: mapping.destinationID)
+            }
+            if let selectedFolderID {
+                self.selectedFolderID = Self.path(selectedFolderID, afterMoving: move.sourcePath, to: move.destinationPath)
+            }
+            if let transfer = pendingDocumentTransfer {
+                pendingDocumentTransfer = transfer.following(movedItemAt: move.sourcePath, to: move.destinationPath)
+            }
+        }
+        if !effect.itemMoves.isEmpty {
+            publishItemMoves(effect.itemMoves)
+        }
+        invalidateWorkspaceSearchCaches(paths: effect.changedPaths)
+
+        switch direction {
+        case .undo:
+            fileOperationHistory.didUndo()
+        case .redo:
+            workspaceUndoSerial &+= 1
+            fileOperationHistory.didRedo(serial: workspaceUndoSerial)
+        }
+        publishFileOperationUndoState()
+
+        var selectedURL = movedSelection.flatMap { $0 != previousSelection ? URL(fileURLWithPath: $0) : nil }
+        var sidebarSelection: SidebarSelectionAfterLoad = sidebarSelectionIsRemoved ? .cleared : .unchanged
+        if let copy = effect.createdCopy {
+            if copy.isDirectory {
+                sidebarSelection = .folder(copy.copyURL)
+            } else {
+                selectedURL = copy.copyURL
+                sidebarSelection = .document
+            }
+        }
+        finishWorkspaceLoad(
+            result: result,
+            workspaceURL: operation.workspaceURL,
+            selectedURL: selectedURL,
+            preserveSelection: selectionIsRemoved ? nil : previousSelection,
+            reloadSelection: selectedURL != nil || selectionIsRemoved || selectedDocumentWasRewritten,
+            sidebarSelection: sidebarSelection,
+            generation: generation
+        )
+        remapRecentDocuments(effect.itemMoves.flatMap(\.mappings))
+        if let itemID = effect.landingItemID {
+            fileOperationLanding = WorkspaceItemLanding(
+                serial: (fileOperationLanding?.serial ?? 0) &+ 1,
+                itemID: itemID
+            )
+        }
+        return true
+    }
+
+    /// Reports an undo or redo that was refused or failed. The disk has been put back as it was,
+    /// and no longer matches the operation, so it leaves the history.
+    private func finishFileOperationHistoryFailure(
+        _ error: Error,
+        direction: WorkspaceFileOperationDirection,
+        message: String,
+        generation: Int
+    ) {
+        guard generation == workspaceGeneration else { return }
+        if !(error is CancellationError) {
+            fileOperationHistory.discardNext(direction)
+            publishFileOperationUndoState()
+        }
+        finishWorkspaceFailure(error, generation: generation, message: message)
     }
 
     func setDocumentText(_ editedText: String) {
@@ -2869,7 +3251,7 @@ final class WorkspaceStore: ObservableObject {
         recentDocumentRecordTask?.cancel()
         pendingMarkdownLinkMoveReview = nil
         if moveRunID == nil || moveRun?.id != moveRunID {
-            moveRun = nil
+            endMoveRun()
         }
         workspaceGeneration += 1
         openingWorkspaceURL = nil
@@ -3010,6 +3392,8 @@ final class WorkspaceStore: ObservableObject {
         setSelectedDocumentExternalChangeIfChanged(false)
         setSelectedDocumentSignatureIfChanged(nil)
         clearReplaceUndoSnapshot()
+        fileOperationHistory.removeAll()
+        publishFileOperationUndoState()
         workspaceReplaceSummary = nil
         invalidateAllWorkspaceSearchCaches()
     }
@@ -3080,6 +3464,7 @@ final class WorkspaceStore: ObservableObject {
     private func clearReplaceUndoSnapshot() {
         replaceUndoSnapshot = nil
         canUndoWorkspaceReplace = false
+        publishFileOperationUndoState()
     }
 
     private func finishWorkspaceReplace(
@@ -3120,6 +3505,9 @@ final class WorkspaceStore: ObservableObject {
                     previousTextsByDocumentID: batch.previousTextsByDocumentID
                 )
                 canUndoWorkspaceReplace = true
+                workspaceUndoSerial &+= 1
+                replaceUndoSerial = workspaceUndoSerial
+                publishFileOperationUndoState()
             }
         }
 
@@ -3156,6 +3544,8 @@ final class WorkspaceStore: ObservableObject {
         sidebarSelection: SidebarSelectionAfterLoad,
         changedPaths: [String],
         completedTransfer: WorkspaceDocumentTransfer?,
+        undoStep: WorkspaceFileOperationStep,
+        undoVerb: WorkspaceFileOperationVerb,
         generation: Int
     ) {
         guard generation == workspaceGeneration else { return }
@@ -3164,6 +3554,7 @@ final class WorkspaceStore: ObservableObject {
         if let completedTransfer {
             completeTransfer(completedTransfer)
         }
+        recordFileOperation(undoVerb, steps: [undoStep])
         finishWorkspaceLoad(
             result: result,
             workspaceURL: workspaceURL,
@@ -3913,11 +4304,18 @@ final class WorkspaceStore: ObservableObject {
         to destinationPath: String,
         mappings: [WorkspaceDocumentIDMapping]
     ) {
+        publishItemMoves([
+            WorkspaceItemMoveRemap(sourcePath: sourcePath, destinationPath: destinationPath, mappings: mappings),
+        ])
+    }
+
+    /// One event for every item an operation moved, so a view that reads the latest event sees
+    /// them all.
+    private func publishItemMoves(_ moves: [WorkspaceItemMoveRemap]) {
         documentIDRemapEvent = WorkspaceDocumentIDRemapEvent(
             serial: (documentIDRemapEvent?.serial ?? 0) + 1,
-            itemSourcePath: sourcePath,
-            itemDestinationPath: destinationPath,
-            mappings: mappings.filter { $0.sourceID != $0.destinationID }
+            itemMoves: moves.map { WorkspaceItemPathMove(sourcePath: $0.sourcePath, destinationPath: $0.destinationPath) },
+            mappings: moves.flatMap(\.mappings).filter { $0.sourceID != $0.destinationID }
         )
     }
 
@@ -4438,6 +4836,7 @@ final class WorkspaceStore: ObservableObject {
                 )
                 receipt.writtenFiles.append(WorkspaceMarkdownLinkMoveWrittenFile(
                     url: filePlan.finalURL,
+                    originalURL: filePlan.originalURL,
                     originalRevision: filePlan.originalRevision,
                     writtenRevision: writtenRevision
                 ))
@@ -4488,7 +4887,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    nonisolated private static func moveWorkspaceItem(
+    nonisolated static func moveWorkspaceItem(
         from sourceURL: URL,
         to destinationURL: URL,
         usingCaseOnlyRenameHop: Bool
@@ -4528,7 +4927,7 @@ final class WorkspaceStore: ObservableObject {
         return candidate
     }
 
-    nonisolated private static func isCanonicalURL(_ candidate: URL, containedIn root: URL) -> Bool {
+    nonisolated static func isCanonicalURL(_ candidate: URL, containedIn root: URL) -> Bool {
         let rootComponents = root.standardizedFileURL.pathComponents
         let candidateComponents = candidate.standardizedFileURL.pathComponents
         guard candidateComponents.count >= rootComponents.count else { return false }
@@ -4938,10 +5337,15 @@ private struct WorkspaceMarkdownLinkMoveRequest: Equatable, Sendable {
     let itemName: String
     /// The move run this move is a step of.
     let moveRunID: Int?
+    /// What Edit › Undo calls the move.
+    let undoVerb: WorkspaceFileOperationVerb
 }
 
 private struct WorkspaceMarkdownLinkMoveWrittenFile: Sendable {
+    /// Where the file is after the move, which the move wrote.
     let url: URL
+    /// Where it was before the move.
+    let originalURL: URL
     let originalRevision: WorkspaceTextRevision
     let writtenRevision: WorkspaceTextRevision
 }
@@ -5036,17 +5440,52 @@ private enum SidebarSelectionAfterLoad: Equatable, Sendable {
     case cleared
 }
 
-/// A file or folder Monknot renamed or moved, with the documents that moved with it.
+/// The files or folders Monknot renamed or moved in one operation, with the documents that moved
+/// with them.
 struct WorkspaceDocumentIDRemapEvent: Equatable, Sendable {
     let serial: Int
-    let itemSourcePath: String
-    let itemDestinationPath: String
+    /// In the order they moved; an undo of a drop of several items moves several.
+    let itemMoves: [WorkspaceItemPathMove]
     let mappings: [WorkspaceDocumentIDMapping]
 
-    /// Where `path` is now: the moved item and everything inside it follow it, any other path stays.
+    var itemSourcePath: String { itemMoves.first?.sourcePath ?? "" }
+    var itemDestinationPath: String { itemMoves.first?.destinationPath ?? "" }
+
+    /// Where `path` is now: each moved item and everything inside it follow it, any other path stays.
     func remappedPath(_ path: String) -> String {
-        WorkspaceStore.path(path, afterMoving: itemSourcePath, to: itemDestinationPath)
+        itemMoves.reduce(path) { WorkspaceStore.path($0, afterMoving: $1.sourcePath, to: $1.destinationPath) }
     }
+}
+
+struct WorkspaceItemPathMove: Equatable, Sendable {
+    let sourcePath: String
+    let destinationPath: String
+}
+
+/// An item moved within the workspace, with the documents that moved with it.
+private struct WorkspaceItemMoveRemap {
+    let sourcePath: String
+    let destinationPath: String
+    let mappings: [WorkspaceDocumentIDMapping]
+}
+
+/// What an undo or redo of a file operation changes for the window (`fileOperationEffect`).
+private struct WorkspaceFileOperationEffect {
+    var itemMoves: [WorkspaceItemMoveRemap] = []
+    /// Copies going to the Trash and items going back to another workspace.
+    var removedPaths: [String] = []
+    /// The notes whose links it rewrites, by their paths before it.
+    var rewrittenDocumentIDs: Set<String> = []
+    /// The last copy a redo makes again, which is selected as Duplicate selects its copy.
+    var createdCopy: WorkspaceFileCopyStep?
+    var landingItemID: String?
+    var changedPaths: [String] = []
+}
+
+/// An item an undo or redo moved or copied, which the sidebar shows landing (design.md §10.4).
+struct WorkspaceItemLanding: Equatable, Sendable {
+    let serial: Int
+    let itemID: String
 }
 
 struct WorkspaceDocumentIDMapping: Equatable, Sendable {
@@ -5094,6 +5533,8 @@ private struct WorkspaceMoveRun {
     let id: Int
     var moves: [WorkspaceQueuedMove]
     var movedCount = 0
+    /// The moves made, which Edit › Undo takes back as one step.
+    var undoSteps: [WorkspaceFileOperationStep] = []
     /// Why items were not moved, in order.
     var failures: [String] = []
     /// What the drop's import had to say.

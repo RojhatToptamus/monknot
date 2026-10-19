@@ -28,6 +28,8 @@ final class MonknotKeyboardShortcutCatalogTests: XCTestCase {
                 .init(title: "Rename Selected Item", shortcut: "↩"),
                 .init(title: "Duplicate Selected Item", shortcut: "⌘D"),
                 .init(title: "Move Selected Item to Trash", shortcut: "⌘⌫"),
+                .init(title: "Undo Move or Copy", shortcut: "⌘Z"),
+                .init(title: "Redo Move or Copy", shortcut: "⇧⌘Z"),
             ],
             "Find": [
                 .init(title: "Find in Document or Terminal", shortcut: "⌘F"),
@@ -64,7 +66,7 @@ final class MonknotKeyboardShortcutCatalogTests: XCTestCase {
         for section in MonknotKeyboardShortcutCatalog.sections {
             XCTAssertEqual(section.entries, expected[section.title], section.title)
         }
-        XCTAssertEqual(allEntries.count, 37)
+        XCTAssertEqual(allEntries.count, 39)
     }
 
     func testShortcutsUseAppleKeySymbolsRatherThanWordsOrAscii() {
