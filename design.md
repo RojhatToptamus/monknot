@@ -1179,7 +1179,11 @@ or a copy takes the backslash with the character. A backslash the page shows sta
 typing punctuation after it, or a format, Return, ⇧↩, Delete or join that would put punctuation after
 it writes it as `\\`. Typing in Preview never makes an escape; escapes are written in Source. Code
 text is literal: removing Inline Code, or turning a code block into text, escapes what would otherwise
-read as Markdown, and text turned into a code block goes in as the page showed it.
+read as Markdown, and text turned into a code block goes in as the page showed it. Text an edit moves to
+the start of a line — after ↩ or ⇧↩, a deletion, Turn Into, or unwrapping a heading, item, quote or
+toggle — keeps reading as the text it was: one backslash goes before whatever would start a list,
+heading, quote, divider, code fence, toggle, table of contents or link definition there (`2020\. A
+year`).
 
 **Selection and caret.** Typing at the end of bold or italic text continues it, as in every text editor;
 typing at the edge of a link does not extend the link. Editable text shows its spaces as typed: a space
