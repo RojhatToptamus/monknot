@@ -319,7 +319,7 @@ struct TerminalWebView: NSViewRepresentable {
             outline: none;
             background: var(--terminal-search-hover);
           }
-          \(MonknotScrollbarStyle.webCSS(
+          \(ScrollThumbGeometry.webCSS(
               selector: ".xterm .xterm-viewport",
               restingColor: "var(--terminal-scrollbar-thumb)",
               hoveredColor: "var(--terminal-scrollbar-thumb-hover)"
@@ -746,7 +746,7 @@ struct TerminalWebView: NSViewRepresentable {
 
     static func configureBackground(of webView: WKWebView, theme: AppTheme) {
         webView.wantsLayer = true
-        webView.layer?.backgroundColor = NSColor(hex: theme.terminalSurfaceHex).cgColor
+        webView.layer?.backgroundColor = NSColor(hex: theme.background).cgColor
     }
 
     private static func bundledResource(named name: String, extension fileExtension: String) -> String {
@@ -763,11 +763,11 @@ struct TerminalWebView: NSViewRepresentable {
     /// replaces the whole theme, so a key missing from either would fall back to xterm's default.
     static func xtermTheme(_ theme: AppTheme) -> [String: String] {
         [
-            "background": theme.terminalSurfaceHex,
+            "background": theme.background,
             "foreground": theme.foreground,
             "cursor": theme.accent,
             "selectionBackground": theme.selectionBackground,
-            "black": theme.terminalSurfaceHex,
+            "black": theme.background,
             "white": theme.foreground,
             "brightWhite": theme.foreground,
             "blue": theme.accent,
@@ -819,7 +819,7 @@ struct TerminalAppearance: Equatable {
     var cssVariables: [(name: String, value: String)] {
         let foreground = theme.foreground
         return [
-            ("--terminal-bg", theme.terminalSurfaceHex),
+            ("--terminal-bg", theme.background),
             ("--terminal-fg", foreground),
             ("--terminal-muted-fg", TerminalWebView.rgba(foreground, alpha: 0.62)),
             ("--terminal-accent", theme.accent),

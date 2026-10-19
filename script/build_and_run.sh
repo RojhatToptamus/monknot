@@ -424,7 +424,6 @@ APP_SOURCES=(
   "Sources/Monknot/Support/Design/MonknotTab.swift"
   "Sources/Monknot/Support/Design/MonknotPopUpButton.swift"
   "Sources/Monknot/Support/Design/MonknotFormControls.swift"
-  "Sources/Monknot/Support/Design/MonknotSettingsSegmentedControl.swift"
   "Sources/Monknot/Support/Design/MonknotShortcutLabel.swift"
   "Sources/Monknot/Support/Design/MonknotStableWidth.swift"
   "Sources/Monknot/Support/Design/MonknotStatusSurface.swift"

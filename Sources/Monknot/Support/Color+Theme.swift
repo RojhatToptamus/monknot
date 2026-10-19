@@ -29,22 +29,6 @@ extension AppTheme {
         Color(hex: background)
     }
 
-    /// Alias for the content canvas, used where intent should be explicit.
-    var contentSurfaceColor: Color {
-        surfaceColor
-    }
-
-    /// Recessed tool-panel surface for the sidebar. Distinct-but-related to the
-    /// content canvas so regions read apart without heavy borders.
-    var sidebarSurfaceColor: Color {
-        Color(hex: sidebarSurfaceHex)
-    }
-
-    /// Docked right-edge terminal surface, matching the left sidebar tier.
-    var terminalSurfaceColor: Color {
-        Color(hex: terminalSurfaceHex)
-    }
-
     var foregroundColor: Color {
         Color(hex: foreground)
     }
@@ -69,7 +53,7 @@ extension AppTheme {
     /// The window chrome around the cards: titlebar, sidebar and the gaps between cards (design.md
     /// §10.0). The sidebar tier, so the sidebar reads as part of the frame rather than a panel.
     var chromeSurfaceColor: Color {
-        sidebarSurfaceColor
+        Color(hex: chromeSurfaceHex)
     }
 
     /// The hairline ring of the document and terminal cards (design.md §10.0, `cardring`).
@@ -80,7 +64,7 @@ extension AppTheme {
     /// A selected sidebar row or terminal session: a neutral fill, like a highlighted menu row in the
     /// editor, so it never reads as a text selection or competes with the accent glyph (`selected`).
     var chromeSelectedFillColor: Color {
-        foregroundColor.opacity(isDark ? 0.10 : 0.09)
+        foregroundColor.opacity(selectedInkOpacity)
     }
 
     /// A secondary push button: a fill a step deeper than the control track, with no border.
@@ -108,8 +92,9 @@ extension AppTheme {
         chipFillColor
     }
 
+    /// A floating surface's fill (`surf2`), the same as Preview's menus (`AppTheme.floatingSurfaceHex`).
     var elevatedSurfaceColor: Color {
-        Color(hex: recessedSurfaceHex(amount: isDark ? 0.11 : 0.05))
+        Color(hex: floatingSurfaceHex)
     }
 
     /// Slightly stronger than `elevatedSurfaceColor` for inset fields and wells.
@@ -139,13 +124,9 @@ extension AppTheme {
         foregroundColor.opacity(isDark ? 0.17 : 0.12)
     }
 
-    /// Shadow hue for floating surfaces. Light themes carry 10% of the accent
-    /// so shadows stay neutral to the theme instead of turning muddy black.
+    /// Shadow hue for floating surfaces (`AppTheme.floatingShadowHex`), as Preview's page casts them.
     var floatingShadowColor: Color {
-        guard !isDark else { return .black }
-        let ink = NSColor(hex: foreground)
-        let accent = NSColor(hex: accent)
-        return Color(nsColor: ink.blended(withFraction: 0.10, of: accent) ?? ink)
+        isDark ? .black : Color(hex: floatingShadowHex)
     }
 
     /// Below this opacity small sidebar labels and icons stop being legible in light themes.
@@ -159,17 +140,29 @@ extension AppTheme {
 
     /// design.md §1.2 `hover`: the one hover fill for every row, tab, cell and button.
     var hoverFillColor: Color {
-        foregroundColor.opacity(isDark ? 0.06 : 0.055)
+        foregroundColor.opacity(hoverInkOpacity)
     }
 
     /// design.md §1.2 `press`: replaces the hover fill while a control is held down.
     var pressedFillColor: Color {
-        foregroundColor.opacity(isDark ? 0.11 : 0.10)
+        foregroundColor.opacity(pressInkOpacity)
     }
 
     /// design.md §1.2 `accsoft`: the 3 pt ring around a focused field (`View.monknotField`).
     var accentSoftFillColor: Color {
-        accentColor.opacity(isDark ? 0.18 : 0.14)
+        accentColor.opacity(accentSoftOpacity)
+    }
+
+    /// design.md §1.2 `danger`: destructive and failed — a destructive push button, an invalid field's
+    /// hairline, a failed save, a file missing on disk. The theme's removed-diff colour.
+    var dangerColor: Color {
+        Color(hex: semanticColors.diffRemoved)
+    }
+
+    /// design.md §1.2 `dangersoft`: `danger` at 12 % dark, 10 % light, the fill of a banner whose file
+    /// is gone.
+    var dangerSoftFillColor: Color {
+        dangerColor.opacity(isDark ? 0.12 : 0.10)
     }
 
     /// The track of a segmented control and the fill of a pop-up or settings button (`track`).

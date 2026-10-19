@@ -167,15 +167,6 @@ struct NativeMarkdownEditorView: View {
     }
 }
 
-private extension MarkdownTextEditorCommand {
-    var isInlineFormat: Bool {
-        switch self {
-        case .bold, .italic, .code, .link: return true
-        default: return false
-        }
-    }
-}
-
 /// The document's word count in the bottom-trailing corner of the editor, in Source and Preview
 /// alike: 12 `ink3` with tabular digits on a `surface` capsule, so text scrolling under it stays
 /// legible. Anchored at its trailing edge, a changing count never moves the corner it sits in. The

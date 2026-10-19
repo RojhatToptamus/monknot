@@ -158,16 +158,26 @@ final class WindowChromeInteractionTests: XCTestCase {
         }
     }
 
-    /// An enclosing `.disabled` (a PDF bar while its document loads) reaches every button in it.
-    func testIconButtonsTakeTheirDisabledLookFromAnEnclosingDisabledContainer() {
+    /// An enclosing `.disabled` (a PDF bar while its document loads) reaches every button in it: the
+    /// glyph draws at `ink4`, exactly as a button disabled by its own flag, and the box never changes.
+    func testIconButtonsTakeTheirDisabledLookFromAnEnclosingDisabledContainer() throws {
         let theme = AppTheme.defaultLight
-        let enabled = NSHostingView(rootView: MonknotIconButton(
-            systemImage: "plus", label: "Add", theme: theme, zoomScale: 1, action: {}
-        ))
-        let disabled = NSHostingView(rootView: MonknotIconButton(
-            systemImage: "plus", label: "Add", theme: theme, zoomScale: 1, action: {}
-        ).disabled(true))
-        XCTAssertEqual(enabled.fittingSize, disabled.fittingSize, "Disabling never changes the box")
+        func button(isDisabled: Bool = false) -> MonknotIconButton {
+            MonknotIconButton(systemImage: "plus", label: "Add", theme: theme, zoomScale: 1, isDisabled: isDisabled, action: {})
+        }
+
+        let enabled = try XCTUnwrap(MonknotRenderedInk.peakAlpha(of: button()))
+        let disabledByContainer = try XCTUnwrap(MonknotRenderedInk.peakAlpha(of: button().disabled(true)))
+        let disabledByFlag = try XCTUnwrap(MonknotRenderedInk.peakAlpha(of: button(isDisabled: true)))
+
+        XCTAssertEqual(enabled, theme.glyphInkOpacity, accuracy: 0.02, "A glyph rests at ink3")
+        XCTAssertEqual(disabledByContainer, AppTheme.disabledInkOpacity, accuracy: 0.02, "Disabled by its bar, ink4")
+        XCTAssertEqual(disabledByContainer, disabledByFlag, accuracy: 0.01, "One disabled look, however it is disabled")
+        XCTAssertEqual(
+            NSHostingView(rootView: button()).fittingSize,
+            NSHostingView(rootView: button().disabled(true)).fittingSize,
+            "Disabling never changes the box"
+        )
     }
 
     func testChromeListsKeepTheSlimOverlayThumbWhenTheSystemSwitchesToLegacyScrollBars() async {
@@ -237,7 +247,7 @@ final class WindowChromeInteractionTests: XCTestCase {
         XCTAssertEqual(MonknotScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy), MonknotScrollbarStyle.trackWidth)
     }
 
-    /// design.md §5.7: with "Show scroll bars: Always", Preview draws Monknot's thumb in its 11 lane from
+    /// design.md §5.7: with "Show scroll bars: Always", Preview draws Monknot's thumb in its 9 lane from
     /// the shell's first paint, not WebKit's 17 legacy bar until the setting next changes.
     func testPreviewShellDrawsTheMonknotLaneWhenTheSystemShowsScrollBars() async throws {
         for legacy in [true, false] {
@@ -336,19 +346,23 @@ final class WindowChromeInteractionTests: XCTestCase {
 
     func testDisabledRowsDrawNoHoverOrPressFillButKeepTheirSelection() {
         for theme in [AppTheme.defaultLight, AppTheme.defaultDark] {
-            func fill(selected: Bool = false, hovered: Bool = false, pressed: Bool = false, enabled: Bool) -> Color {
-                MonknotRowButtonStyle.fill(
+            func fill(selected: Bool = false, open: Bool = false, hovered: Bool = false, pressed: Bool = false, enabled: Bool) -> Color {
+                MonknotListRowButtonStyle.fill(
                     theme: theme,
                     isSelected: selected,
-                    isActive: false,
+                    isOpen: open,
                     isHovered: hovered,
                     isPressed: pressed,
                     isEnabled: enabled
                 )
             }
 
+            XCTAssertEqual(fill(enabled: true), .clear)
             XCTAssertEqual(fill(hovered: true, enabled: true), theme.hoverFillColor)
             XCTAssertEqual(fill(hovered: true, pressed: true, enabled: true), theme.pressedFillColor)
+            // A row whose popover is open holds the pressed fill, as an open icon button or pop-up (§5.1).
+            XCTAssertEqual(fill(open: true, enabled: true), theme.pressedFillColor)
+            XCTAssertEqual(fill(open: true, enabled: false), .clear)
             XCTAssertEqual(fill(hovered: true, enabled: false), .clear)
             XCTAssertEqual(fill(hovered: true, pressed: true, enabled: false), .clear)
             // Selection is the neutral fill, never an accent tint (design.md §1.4).

@@ -4,9 +4,9 @@ import SwiftUI
 struct AppearanceSettingsView: View {
     @ObservedObject var themeStore: ThemeSettingsStore
     let uiTheme: AppTheme
+    let zoomScale: Double
     @AppStorage("Monknot.themePreference") private var themePreferenceRawValue = ThemePreference.defaultValue.rawValue
     @ObservedObject private var systemAppearance = SystemAppearanceMonitor.shared
-    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
     @State private var lightDraft = ThemeConfiguration(theme: AppTheme.defaultLight)
     @State private var darkDraft = ThemeConfiguration(theme: AppTheme.defaultDark)
     @State private var lightBaseline = ThemeEditBaseline(themeID: AppTheme.defaultLight.id, configuration: ThemeConfiguration(theme: AppTheme.defaultLight))
@@ -25,26 +25,28 @@ struct AppearanceSettingsView: View {
     }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: uiTheme, zoomScale: settingsZoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: uiTheme, zoomScale: zoomScale)
     }
 
     var body: some View {
-        SettingsPage(theme: uiTheme) {
-            SettingsGroupCard(theme: uiTheme) {
+        SettingsPage(theme: uiTheme, zoomScale: zoomScale) {
+            SettingsGroupCard(theme: uiTheme, zoomScale: zoomScale) {
                 SettingsRow(
                     theme: uiTheme,
+                    zoomScale: zoomScale,
                     title: "Appearance",
                     showsDivider: false
                 ) {
-                    MonknotSettingsSegmentedControl(
+                    MonknotSegmentedControl(
                         options: ThemePreference.allCases.map { preference in
-                            MonknotSettingsSegment(id: preference.rawValue, title: preference.title)
+                            MonknotSegmentOption(id: preference.rawValue, title: preference.title)
                         },
                         selection: Binding(
                             get: { themePreference.rawValue },
                             set: { themePreference = ThemePreference.resolved(rawValue: $0) }
                         ),
-                        theme: uiTheme
+                        theme: uiTheme,
+                        zoomScale: zoomScale
                     )
                     .frame(width: scaled(246))
                 }
@@ -54,7 +56,7 @@ struct AppearanceSettingsView: View {
 
             selectedThemeEditor
 
-            SettingsSectionHeader(theme: uiTheme, title: "Live preview")
+            SettingsSectionHeader(theme: uiTheme, zoomScale: zoomScale, title: "Live preview")
             ThemeLivePreview(
                 theme: draft(for: activeSlot)
                     .applied(to: themeStore.presetTheme(for: activeSlot))
@@ -63,10 +65,11 @@ struct AppearanceSettingsView: View {
                         uiFontSize: themeStore.uiFontSize,
                         codeFontSize: themeStore.codeFontSize
                     ),
-                chromeTheme: uiTheme
+                chromeTheme: uiTheme,
+                zoomScale: zoomScale
             )
 
-            SettingsSectionHeader(theme: uiTheme, title: "Typography")
+            SettingsSectionHeader(theme: uiTheme, zoomScale: zoomScale, title: "Typography")
             typographyControls
         }
         .onAppear(perform: reloadDraftsAndBaselines)
@@ -82,17 +85,17 @@ struct AppearanceSettingsView: View {
     private var themeEditorHeader: some View {
         let isEdited = hasEdits(for: activeSlot)
 
-        return SettingsSectionHeader(theme: uiTheme, title: activeSlot.title) {
+        return SettingsSectionHeader(theme: uiTheme, zoomScale: zoomScale, title: activeSlot.title) {
             HStack(spacing: scaled(10)) {
                 Text("Edited")
-                    .font(MonknotTypography.rowDetail(theme: uiTheme, zoomScale: settingsZoomScale))
+                    .font(MonknotTypography.rowDetail(theme: uiTheme, zoomScale: zoomScale))
                     .foregroundStyle(uiTheme.tertiaryForegroundColor)
 
                 MonknotActionButton(
                     title: "Revert",
                     role: .secondary,
                     theme: uiTheme,
-                    zoomScale: settingsZoomScale,
+                    zoomScale: zoomScale,
                     size: .bar
                 ) {
                     revert(activeSlot)
@@ -108,9 +111,9 @@ struct AppearanceSettingsView: View {
     private var selectedThemeEditor: some View {
         switch activeSlot {
         case .light:
-            ThemeEditorSection(slot: .light, themeStore: themeStore, draft: $lightDraft, uiTheme: uiTheme)
+            ThemeEditorSection(slot: .light, themeStore: themeStore, draft: $lightDraft, uiTheme: uiTheme, zoomScale: zoomScale)
         case .dark:
-            ThemeEditorSection(slot: .dark, themeStore: themeStore, draft: $darkDraft, uiTheme: uiTheme)
+            ThemeEditorSection(slot: .dark, themeStore: themeStore, draft: $darkDraft, uiTheme: uiTheme, zoomScale: zoomScale)
         }
     }
 
@@ -118,9 +121,9 @@ struct AppearanceSettingsView: View {
     private var typographyControls: some View {
         switch activeSlot {
         case .light:
-            ThemeTypographySettings(themeStore: themeStore, draft: $lightDraft, uiTheme: uiTheme)
+            ThemeTypographySettings(themeStore: themeStore, draft: $lightDraft, uiTheme: uiTheme, zoomScale: zoomScale)
         case .dark:
-            ThemeTypographySettings(themeStore: themeStore, draft: $darkDraft, uiTheme: uiTheme)
+            ThemeTypographySettings(themeStore: themeStore, draft: $darkDraft, uiTheme: uiTheme, zoomScale: zoomScale)
         }
     }
 
@@ -185,7 +188,7 @@ private struct ThemeEditorSection: View {
     @ObservedObject var themeStore: ThemeSettingsStore
     @Binding var draft: ThemeConfiguration
     let uiTheme: AppTheme
-    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+    let zoomScale: Double
 
     private var selectedThemeID: Binding<String> {
         Binding(
@@ -205,13 +208,14 @@ private struct ThemeEditorSection: View {
     }
 
     var body: some View {
-        SettingsGroupCard(theme: uiTheme) {
-            SettingsRow(theme: uiTheme, title: "Theme preset") {
-                MonknotSettingsMenuPicker(
-                    title: "Theme preset",
+        SettingsGroupCard(theme: uiTheme, zoomScale: zoomScale) {
+            SettingsRow(theme: uiTheme, zoomScale: zoomScale, title: "Theme preset") {
+                MonknotPopUpButton(
+                    label: "Theme preset",
                     selection: selectedThemeID,
-                    options: slot.themes.map { ($0.id, $0.name) },
+                    items: slot.themes.map { MonknotPopUpItem(id: $0.id, title: $0.name) },
                     theme: uiTheme,
+                    zoomScale: zoomScale,
                     previewsSelection: true,
                     onPreviewSelection: { id in
                         themeStore.previewThemeID(id, for: slot)
@@ -224,12 +228,13 @@ private struct ThemeEditorSection: View {
                 )
             }
 
-            EditableThemeColorRow(theme: uiTheme, label: "Accent", hex: $draft.accent)
-            EditableThemeColorRow(theme: uiTheme, label: "Background", hex: $draft.background)
-            EditableThemeColorRow(theme: uiTheme, label: "Foreground", hex: $draft.foreground)
+            EditableThemeColorRow(theme: uiTheme, zoomScale: zoomScale, label: "Accent", hex: $draft.accent)
+            EditableThemeColorRow(theme: uiTheme, zoomScale: zoomScale, label: "Background", hex: $draft.background)
+            EditableThemeColorRow(theme: uiTheme, zoomScale: zoomScale, label: "Foreground", hex: $draft.foreground)
 
             SettingsToggleRow(
                 theme: uiTheme,
+                zoomScale: zoomScale,
                 title: "Quiet sidebar",
                 detail: "Subdue sidebar text and icons",
                 showsDivider: false,
@@ -243,6 +248,7 @@ private struct ThemeTypographySettings: View {
     @ObservedObject var themeStore: ThemeSettingsStore
     @Binding var draft: ThemeConfiguration
     let uiTheme: AppTheme
+    let zoomScale: Double
 
     private var uiFontSize: Binding<Double> {
         Binding(
@@ -259,9 +265,10 @@ private struct ThemeTypographySettings: View {
     }
 
     var body: some View {
-        SettingsGroupCard(theme: uiTheme) {
+        SettingsGroupCard(theme: uiTheme, zoomScale: zoomScale) {
             SettingsStepperRow(
                 theme: uiTheme,
+                zoomScale: zoomScale,
                 title: "UI font size",
                 detail: "Base text size for Monknot controls",
                 value: uiFontSize,
@@ -270,6 +277,7 @@ private struct ThemeTypographySettings: View {
 
             SettingsStepperRow(
                 theme: uiTheme,
+                zoomScale: zoomScale,
                 title: "Code font size",
                 detail: "Base text size for source and preview code",
                 value: codeFontSize,
@@ -278,6 +286,7 @@ private struct ThemeTypographySettings: View {
 
             SettingsSliderRow(
                 theme: uiTheme,
+                zoomScale: zoomScale,
                 title: "Contrast",
                 showsDivider: false,
                 value: $draft.contrast,
@@ -292,10 +301,10 @@ private struct ThemeTypographySettings: View {
 private struct ThemeLivePreview: View {
     let theme: AppTheme
     let chromeTheme: AppTheme
-    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+    let zoomScale: Double
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: chromeTheme, zoomScale: settingsZoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: chromeTheme, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -307,26 +316,26 @@ private struct ThemeLivePreview: View {
             .padding(scaled(MonknotMetrics.menuListInsetBase + 2))
             .frame(width: scaled(184), alignment: .topLeading)
             .frame(maxHeight: .infinity, alignment: .top)
-            .background(theme.sidebarSurfaceColor)
+            .background(theme.chromeSurfaceColor)
 
             VStack(alignment: .leading, spacing: scaled(6)) {
                 Text("Weekly review")
                     .font(.system(
-                        size: MonknotMetrics.interfaceText(15, theme: chromeTheme, zoomScale: settingsZoomScale),
+                        size: MonknotMetrics.interfaceText(15, theme: chromeTheme, zoomScale: zoomScale),
                         weight: .semibold
                     ))
                     .foregroundStyle(theme.foregroundColor)
                 Text("Draft the outline, then link the project.")
-                    .font(MonknotTypography.rowDetail(theme: chromeTheme, zoomScale: settingsZoomScale))
+                    .font(MonknotTypography.rowDetail(theme: chromeTheme, zoomScale: zoomScale))
                     .foregroundStyle(theme.tertiaryForegroundColor)
                     .lineLimit(1)
             }
             .padding(.horizontal, scaled(16))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .background(theme.contentSurfaceColor)
+            .background(theme.surfaceColor)
         }
         .frame(height: scaled(76))
-        .clipShape(RoundedRectangle(cornerRadius: chromeTheme.chromeRadius(MonknotMetrics.cardCornerRadius, zoomScale: settingsZoomScale)))
+        .clipShape(RoundedRectangle(cornerRadius: chromeTheme.chromeRadius(MonknotMetrics.cardCornerRadius, zoomScale: zoomScale)))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Live preview of the theme")
     }
@@ -337,11 +346,11 @@ private struct ThemeLivePreview: View {
             title: title,
             isSelected: isSelected,
             theme: theme,
-            zoomScale: settingsZoomScale
+            zoomScale: zoomScale
         )
         .background {
             if isSelected {
-                RoundedRectangle(cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: settingsZoomScale))
+                RoundedRectangle(cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale))
                     .fill(theme.chromeSelectedFillColor)
             }
         }

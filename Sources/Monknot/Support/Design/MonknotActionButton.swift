@@ -37,7 +37,7 @@ struct MonknotActionButton: View {
     var systemImage: String? = nil
     let role: MonknotActionRole
     let theme: AppTheme
-    var zoomScale: Double = 1
+    let zoomScale: Double
     var size: MonknotActionButtonSize = .sheet
     var isDisabled: Bool = false
     let action: () -> Void
@@ -105,8 +105,11 @@ struct MonknotActionButton: View {
         }
 
         switch role {
-        case .primary, .destructive:
+        case .primary:
             return theme.onAccentForegroundColor
+        // design.md §5.3: the `danger` fill carries a white label.
+        case .destructive:
+            return .white
         // design.md §1.4: a push button's word is `ink`; a quiet one rests at `ink2`.
         case .secondary:
             return theme.foregroundColor
@@ -124,7 +127,7 @@ struct MonknotActionButton: View {
         case .primary:
             return theme.accentColor
         case .destructive:
-            return Color(hex: theme.semanticColors.diffRemoved)
+            return theme.dangerColor
         case .secondary:
             return theme.secondaryButtonFillColor
         case .quiet:

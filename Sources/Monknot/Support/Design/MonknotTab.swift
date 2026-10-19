@@ -140,11 +140,11 @@ struct MonknotTab: View {
         ZStack {
             switch placement {
             case .chrome:
-                shape
-                    .fill(theme.chipFillColor)
-                    .overlay { shape.strokeBorder(theme.chipRingColor, lineWidth: 1) }
-                    .shadow(color: theme.chipShadowColor, radius: 0.75, y: 1)
-                    .monknotStateOpacity(isSelected ? 1 : 0)
+                MonknotChip(
+                    cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale),
+                    theme: theme
+                )
+                .monknotStateOpacity(isSelected ? 1 : 0)
             case .card:
                 shape.monknotStateStyle(isSelected ? theme.chromeSelectedFillColor : .clear)
             }
@@ -190,7 +190,7 @@ struct MonknotTab: View {
     private func badgeColor(_ badge: Badge) -> Color {
         switch badge {
         case .warning:
-            return Color(hex: theme.semanticColors.diffRemoved)
+            return theme.dangerColor
         case .pinned:
             return isDisabled ? theme.disabledForegroundColor : theme.tertiaryForegroundColor
         }
@@ -254,7 +254,7 @@ struct MonknotDocumentGlyph: View {
                     theme: theme,
                     zoomScale: zoomScale
                 )
-                .foregroundStyle(Color(hex: theme.semanticColors.diffRemoved))
+                .foregroundStyle(theme.dangerColor)
             case .clean, .edited:
                 // Ink changes fade over the hover duration, as a row's label does (design.md §5.6).
                 MonknotFileKindGlyph(systemImage: systemImage, theme: theme, zoomScale: zoomScale)

@@ -8,12 +8,6 @@ import WebKit
 // source and posts it here; the store applies it and this side keeps the undo history. The page
 // never sends HTML back, so Markdown it does not render is kept exactly as written.
 
-/// A Markdown toolbar command for the visual editor while Preview is on screen.
-struct MarkdownVisualEditorCommandRequest: Equatable {
-    let serial: Int
-    let command: MarkdownTextEditorCommand
-}
-
 struct MarkdownVisualEditorSelection: Equatable {
     let anchor: Int
     let head: Int
@@ -40,85 +34,6 @@ struct MarkdownVisualEditorSelection: Equatable {
     }
 }
 
-/// The block and inline formatting at the selection, which the Markdown toolbar reflects.
-struct MarkdownVisualFormattingState: Equatable {
-    enum Block: String {
-        case paragraph
-        case heading1, heading2, heading3, heading4, heading5, heading6
-        case bullet, numbered, todo, quote, code, table
-
-        var title: String {
-            switch self {
-            case .paragraph: return "Paragraph"
-            case .heading1: return "Heading 1"
-            case .heading2: return "Heading 2"
-            case .heading3: return "Heading 3"
-            case .heading4: return "Heading 4"
-            case .heading5: return "Heading 5"
-            case .heading6: return "Heading 6"
-            case .bullet: return "Bullet List"
-            case .numbered: return "Numbered List"
-            case .todo: return "Task List"
-            case .quote: return "Quote"
-            case .code: return "Code Block"
-            case .table: return "Table"
-            }
-        }
-    }
-
-    var block: Block
-    var bold: Bool
-    var italic: Bool
-    var strikethrough: Bool
-    var code: Bool
-    var link: Bool
-    var canFormat: Bool
-
-    init(
-        block: Block = .paragraph,
-        bold: Bool = false,
-        italic: Bool = false,
-        strikethrough: Bool = false,
-        code: Bool = false,
-        link: Bool = false,
-        canFormat: Bool = true
-    ) {
-        self.block = block
-        self.bold = bold
-        self.italic = italic
-        self.strikethrough = strikethrough
-        self.code = code
-        self.link = link
-        self.canFormat = canFormat
-    }
-
-    init(_ body: [String: Any]) {
-        self.init(
-            block: (body["block"] as? String).flatMap(Block.init(rawValue:)) ?? .paragraph,
-            bold: WebViewBridge.boolean(body["strong"]) ?? false,
-            italic: WebViewBridge.boolean(body["em"]) ?? false,
-            strikethrough: WebViewBridge.boolean(body["del"]) ?? false,
-            code: WebViewBridge.boolean(body["code"]) ?? false,
-            link: WebViewBridge.boolean(body["link"]) ?? false,
-            canFormat: WebViewBridge.boolean(body["canFormat"]) ?? true
-        )
-    }
-
-    func isActive(_ command: MarkdownTextEditorCommand) -> Bool {
-        switch command {
-        case .bold: return bold
-        case .italic: return italic
-        case .code: return code
-        case .link: return link
-        case .quote: return block == .quote
-        case .bulletList: return block == .bullet
-        case .numberedList: return block == .numbered
-        case .taskList: return block == .todo
-        case .paragraph, .heading, .image, .horizontalRule: return false
-        }
-    }
-}
-
 /// One patch the visual editor applied to the Markdown source.
 struct MarkdownVisualEditorChange: Equatable {
     enum Kind: String {
@@ -138,8 +53,8 @@ struct MarkdownVisualEditorChange: Equatable {
     let selectionBefore: MarkdownVisualEditorSelection?
     let selectionAfter: MarkdownVisualEditorSelection?
     let kind: Kind
+    /// Patches of one action, or of one typing run, share a group and make one undo step.
     let group: Int
-    let coalesce: Bool
     let label: String
 
     static func parse(_ body: [String: Any]) -> MarkdownVisualEditorChange? {
@@ -160,30 +75,99 @@ struct MarkdownVisualEditorChange: Equatable {
             selectionAfter: MarkdownVisualEditorSelection(body["selectionAfter"]),
             kind: (body["kind"] as? String).flatMap(Kind.init(rawValue:)) ?? .typing,
             group: WebViewBridge.integer(body["group"]) ?? 0,
-            coalesce: WebViewBridge.boolean(body["coalesce"]) ?? false,
             label: (body["label"] as? String) ?? ""
         )
     }
 }
 
-/// A text patch the app asks the page to apply (undo, redo, an external change).
+/// A text patch on the source: one the page made, or one the app asks the page to apply (undo,
+/// redo, an external change). An undo step keeps up to 32 characters of the text on each side
+/// (`before`, `after`), so it applies only where that text still is.
 struct MarkdownVisualEditorPatch: Equatable {
+    static let contextLength = 32
+
     let location: Int
     let removed: String
     let inserted: String
+    var before = ""
+    var after = ""
 
     var inverse: MarkdownVisualEditorPatch {
-        MarkdownVisualEditorPatch(location: location, removed: inserted, inserted: removed)
+        MarkdownVisualEditorPatch(location: location, removed: inserted, inserted: removed, before: before, after: after)
+    }
+
+    /// The patch with the text around it in `text`, the text it applies to.
+    func withContext(in text: NSString) -> MarkdownVisualEditorPatch {
+        let end = location + (removed as NSString).length
+        guard location >= 0, end <= text.length else { return self }
+        var start = max(0, location - Self.contextLength)
+        var limit = min(text.length, end + Self.contextLength)
+        // Never split a surrogate pair.
+        if start > 0, start < location, UTF16.isTrailSurrogate(text.character(at: start)) { start += 1 }
+        if limit < text.length, limit > end, UTF16.isLeadSurrogate(text.character(at: limit - 1)) { limit -= 1 }
+        var patch = self
+        patch.before = text.substring(with: NSRange(location: start, length: location - start))
+        patch.after = text.substring(with: NSRange(location: end, length: limit - end))
+        return patch
+    }
+
+    /// This patch followed by `next` as one patch, when `next` continues it: typing on after it,
+    /// or deleting the character before or after it.
+    func merging(_ next: MarkdownVisualEditorPatch) -> MarkdownVisualEditorPatch? {
+        if next.removed.isEmpty, next.location == location + (inserted as NSString).length {
+            return MarkdownVisualEditorPatch(location: location, removed: removed, inserted: inserted + next.inserted, before: before, after: after)
+        }
+        guard inserted.isEmpty, next.inserted.isEmpty else { return nil }
+        if next.location + (next.removed as NSString).length == location {
+            return MarkdownVisualEditorPatch(location: next.location, removed: next.removed + removed, inserted: "", before: next.before, after: after)
+        }
+        if next.location == location {
+            return MarkdownVisualEditorPatch(location: location, removed: removed + next.removed, inserted: "", before: before, after: next.after)
+        }
+        return nil
+    }
+
+    /// Applies `patches` in order to a copy of `text`, each only where its removed text and context
+    /// still are, and returns the one patch they add up to (removing what it inserts when they
+    /// change nothing). Nil when any of them no longer fits, so a step applies whole or not at all.
+    static func combined(_ patches: [MarkdownVisualEditorPatch], appliedTo text: String) -> MarkdownVisualEditorPatch? {
+        guard !patches.isEmpty else { return MarkdownVisualEditorPatch(location: 0, removed: "", inserted: "") }
+        let buffer = NSMutableString(string: text)
+        let length = buffer.length
+        // The text before `head` and the last `tail` characters are the same before and after.
+        var head = length
+        var tail = length
+        for patch in patches {
+            let removedLength = (patch.removed as NSString).length
+            let beforeLength = (patch.before as NSString).length
+            let afterLength = (patch.after as NSString).length
+            let end = patch.location + removedLength
+            guard patch.location >= beforeLength, end + afterLength <= buffer.length,
+                  buffer.substring(with: NSRange(location: patch.location, length: removedLength)) == patch.removed,
+                  buffer.substring(with: NSRange(location: patch.location - beforeLength, length: beforeLength)) == patch.before,
+                  buffer.substring(with: NSRange(location: end, length: afterLength)) == patch.after
+            else { return nil }
+            head = min(head, patch.location)
+            tail = min(tail, buffer.length - end)
+            buffer.replaceCharacters(in: NSRange(location: patch.location, length: removedLength), with: patch.inserted)
+        }
+        return MarkdownVisualEditorPatch(
+            location: head,
+            removed: (text as NSString).substring(with: NSRange(location: head, length: length - tail - head)),
+            inserted: buffer.substring(with: NSRange(location: head, length: buffer.length - tail - head))
+        )
     }
 }
 
 @MainActor
 protocol MarkdownVisualEditorChannel: AnyObject {
+    /// Applies `patches` in order to the document and the page as one change; false, changing
+    /// nothing, when they no longer fit its text.
     func applyFromApp(
         _ patches: [MarkdownVisualEditorPatch],
         selection: MarkdownVisualEditorSelection?,
         reason: MarkdownVisualEditorChange.Kind
-    )
+    ) -> Bool
 }
 
 /// The visual editor's undo history. WebKit registers its own editing commands with the undo
@@ -208,6 +192,7 @@ final class MarkdownVisualEditingSession {
     private var openStep: Step?
 
     final class Step {
+        /// In the order they were made, each on the text the one before it left.
         var patches: [MarkdownVisualEditorPatch]
         var selectionBefore: MarkdownVisualEditorSelection?
         var selectionAfter: MarkdownVisualEditorSelection?
@@ -215,12 +200,8 @@ final class MarkdownVisualEditingSession {
         let kind: MarkdownVisualEditorChange.Kind
         let label: String
 
-        init(_ change: MarkdownVisualEditorChange) {
-            patches = [MarkdownVisualEditorPatch(
-                location: change.range.location,
-                removed: change.removed,
-                inserted: change.inserted
-            )]
+        init(_ change: MarkdownVisualEditorChange, patch: MarkdownVisualEditorPatch) {
+            patches = [patch]
             selectionBefore = change.selectionBefore
             selectionAfter = change.selectionAfter
             group = change.group
@@ -240,48 +221,32 @@ final class MarkdownVisualEditingSession {
             }
         }
 
-        /// Folds a change into this step: the next character of a typing run, the next backspace,
-        /// or another patch from the same action.
-        func absorb(_ change: MarkdownVisualEditorChange) -> Bool {
-            guard var last = patches.last else { return false }
-            let location = change.range.location
-            if change.group == group {
-                patches.append(MarkdownVisualEditorPatch(
-                    location: location,
-                    removed: change.removed,
-                    inserted: change.inserted
-                ))
-                selectionAfter = change.selectionAfter
-                return true
-            }
-            guard change.coalesce, change.kind == kind else { return false }
-            let lastInsertedLength = (last.inserted as NSString).length
-            if change.removed.isEmpty, location == last.location + lastInsertedLength {
-                last = MarkdownVisualEditorPatch(location: last.location, removed: last.removed, inserted: last.inserted + change.inserted)
-            } else if change.inserted.isEmpty, last.inserted.isEmpty, NSMaxRange(change.range) == last.location {
-                last = MarkdownVisualEditorPatch(location: location, removed: change.removed + last.removed, inserted: "")
-            } else if change.inserted.isEmpty, last.inserted.isEmpty, location == last.location {
-                last = MarkdownVisualEditorPatch(location: location, removed: last.removed + change.removed, inserted: "")
+        /// Folds the next patch of the step's action or typing run in: the next character typed or
+        /// deleted joins the patch before it, anything else follows it.
+        func absorb(_ change: MarkdownVisualEditorChange, patch: MarkdownVisualEditorPatch) {
+            if let last = patches.last, let merged = last.merging(patch) {
+                patches[patches.count - 1] = merged
             } else {
-                return false
+                patches.append(patch)
             }
-            patches[patches.count - 1] = last
             selectionAfter = change.selectionAfter
-            return true
         }
     }
 
     func prepare(documentID: String) {
         guard self.documentID != documentID else { return }
         self.documentID = documentID
-        undoManager.removeAllActions()
-        openStep = nil
+        clearHistory()
     }
 
-    func record(_ change: MarkdownVisualEditorChange) {
+    /// Records a change the page made, as `patch` on the document's text (with its context).
+    func record(_ change: MarkdownVisualEditorChange, patch: MarkdownVisualEditorPatch) {
         guard !change.kind.isReplay else { return }
-        if let openStep, openStep.absorb(change) { return }
-        let step = Step(change)
+        if let openStep, openStep.group == change.group {
+            openStep.absorb(change, patch: patch)
+            return
+        }
+        let step = Step(change, patch: patch)
         undoManager.registerUndo(withTarget: self) { session in
             MainActor.assumeIsolated { session.undo(step) }
         }
@@ -289,14 +254,24 @@ final class MarkdownVisualEditingSession {
         openStep = step
     }
 
-    /// Ends the current typing run, so the next keystroke starts a new undo step.
+    /// Ends the current typing run, so the next keystroke starts a new undo step. A new page
+    /// numbers its groups from the start again, so each render ends the run.
     func breakCoalescing() {
+        openStep = nil
+    }
+
+    /// Forgets every step: the text changed outside the editor, so none of them fits any more.
+    func clearHistory() {
+        undoManager.removeAllActions()
         openStep = nil
     }
 
     private func undo(_ step: Step) {
         openStep = nil
-        channel?.applyFromApp(step.patches.reversed().map(\.inverse), selection: step.selectionBefore, reason: .undo)
+        guard channel?.applyFromApp(step.patches.reversed().map(\.inverse), selection: step.selectionBefore, reason: .undo) == true else {
+            NSSound.beep()
+            return
+        }
         undoManager.registerUndo(withTarget: self) { session in
             MainActor.assumeIsolated { session.redo(step) }
         }
@@ -305,7 +280,10 @@ final class MarkdownVisualEditingSession {
 
     private func redo(_ step: Step) {
         openStep = nil
-        channel?.applyFromApp(step.patches, selection: step.selectionAfter, reason: .redo)
+        guard channel?.applyFromApp(step.patches, selection: step.selectionAfter, reason: .redo) == true else {
+            NSSound.beep()
+            return
+        }
         undoManager.registerUndo(withTarget: self) { session in
             MainActor.assumeIsolated { session.undo(step) }
         }
@@ -318,13 +296,11 @@ struct MarkdownVisualEditingConfiguration {
     let session: MarkdownVisualEditingSession
     /// The selection to show when the editor opens: the one Source left, as source offsets.
     let initialSelection: DocumentTextSelection?
-    let commandRequest: MarkdownVisualEditorCommandRequest?
     /// The store's text, to resynchronize when a change could not be applied.
     let currentText: () -> String
-    /// Applies a change to the store; false when the store refused it.
-    let applyChange: (MarkdownVisualEditorChange) -> Bool
+    /// Applies a patch to the store's text; false when the store refused it.
+    let applyChange: (MarkdownVisualEditorPatch) -> Bool
     let onSelectionChange: (MarkdownVisualEditorSelection, String) -> Void
-    let onFormattingChange: (MarkdownVisualFormattingState) -> Void
     let onImagePasteRequest: ((MarkdownImagePasteRequest) -> Void)?
     let onFileDropRequest: ((MarkdownFileDropRequest) -> Void)?
     /// The notes `[[` offers, ranked by `WikilinkAutocompleteService` as in Source.
@@ -403,12 +379,45 @@ protocol MarkdownPreviewEditorCommands: AnyObject {
 final class MarkdownEditorWebView: PaneTransitionWebView {
     weak var visualEditingSession: MarkdownVisualEditingSession?
     weak var previewCommands: MarkdownPreviewEditorCommands?
+    /// The writing assistance running on this page; it registers itself once the page shows.
+    weak var writingAssistance: MarkdownPreviewFlowCoordinator?
+
+    /// WebKit's context-menu items all send this; the tag says which one it is.
+    private static let webKitMenuAction = NSSelectorFromString("forwardContextMenuAction:")
+    /// WebCore's tag for Ignore Spelling (`ContextMenuItemTagIgnoreSpelling`).
+    static let webKitIgnoreSpellingTag = 17
+    private weak var webKitMenuTarget: AnyObject?
 
     /// Preview's page reflows with the card's edges while a side pane moves.
     override class var paneTransitionMode: WebViewPaneTransitionHold.Mode { .reflow }
 
     override var undoManager: UndoManager? {
         visualEditingSession?.undoManager ?? super.undoManager
+    }
+
+    /// Ignore Spelling ignores the selected word in WebKit's own spelling document. The writing
+    /// assistance checks with a document of its own, so the item now also ignores the word there,
+    /// or Flow would keep flagging it and could fix it. (Learn Spelling needs nothing: it adds the
+    /// word to the user's dictionary, which every document shares.)
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        super.willOpenMenu(menu, with: event)
+        for item in menu.items
+        where item.tag == Self.webKitIgnoreSpellingTag && item.action == Self.webKitMenuAction {
+            webKitMenuTarget = item.target
+            item.target = self
+            item.action = #selector(ignoreSpelling(_:))
+        }
+    }
+
+    @objc private func ignoreSpelling(_ item: NSMenuItem) {
+        // WebKit reads which command this is from the item's tag and title, both unchanged.
+        NSApp.sendAction(Self.webKitMenuAction, to: webKitMenuTarget, from: item)
+        evaluateJavaScript("window.getSelection().toString()") { [weak self] value, _ in
+            guard let word = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !word.isEmpty
+            else { return }
+            self?.writingAssistance?.ignoreWord(word)
+        }
     }
 }
 
@@ -424,14 +433,15 @@ enum MarkdownEditorSymbolAssets {
         "exclamationmark.bubble", "exclamationmark.triangle", "exclamationmark.octagon",
         "arrow.triangle.2.circlepath", "plus.square.on.square", "doc.on.doc", "arrow.up", "arrow.down",
         "arrow.up.to.line", "arrow.down.to.line", "arrow.left.to.line", "arrow.right.to.line", "trash",
-        "magnifyingglass", "doc.text", "link", "plus"
+        "magnifyingglass", "doc.text", "link"
     ]
     /// Glyphs alone in a format bar or link card button (17 nominal).
     private static let toolSymbols = [
         "bold", "italic", "strikethrough", "curlybraces", "link", "arrow.up.right.square",
         "pencil", "trash", "link.badge.minus"
     ]
-    /// A menu row's check and submenu chevron, a dropdown's chevron (11 nominal).
+    /// A menu row's check and submenu chevron, the chevron of a dropdown and a callout's title (11
+    /// nominal).
     private static let smallSymbols = ["checkmark", "chevron.right", "chevron.down"]
 
     @MainActor private static var cached: [String: [String: Any]]?
@@ -488,26 +498,6 @@ enum MarkdownEditorSymbolAssets {
             "width": Double(size.width),
             "height": Double(size.height)
         ]
-    }
-}
-
-extension MarkdownTextEditorCommand {
-    /// The visual editor's name for the command and its argument.
-    var visualEditorCommand: (name: String, value: Any?) {
-        switch self {
-        case .paragraph: return ("paragraph", nil)
-        case .heading(let level): return ("heading", level)
-        case .bold: return ("bold", nil)
-        case .italic: return ("italic", nil)
-        case .quote: return ("quote", nil)
-        case .code: return ("code", nil)
-        case .link: return ("link", nil)
-        case .bulletList: return ("bulletList", nil)
-        case .numberedList: return ("numberedList", nil)
-        case .taskList: return ("taskList", nil)
-        case .image: return ("image", nil)
-        case .horizontalRule: return ("horizontalRule", nil)
-        }
     }
 }
 

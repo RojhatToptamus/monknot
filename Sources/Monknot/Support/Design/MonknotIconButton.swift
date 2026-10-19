@@ -45,6 +45,9 @@ struct MonknotIconButton: View {
     let theme: AppTheme
     let zoomScale: Double
     var isActive: Bool = false
+    /// Its menu or popover is showing: the `press` fill and an `ink` glyph until it closes (design.md
+    /// §5.1), as a pop-up shows its open menu.
+    var isOpen: Bool = false
     var isDisabled: Bool = false
     var size: IconButtonSize = .regular
     /// Off only for the search match options, whose "on" is an `accent` glyph with no fill
@@ -118,7 +121,8 @@ struct MonknotIconButton: View {
     }
 
     /// The fill behind an icon button (design.md §5.1). Pressed replaces hover rather than stacking
-    /// on it; a button that is on takes the neutral `on` fill; a disabled button never fills.
+    /// on it, and an open button holds the pressed fill; a button that is on takes the neutral `on`
+    /// fill; a disabled button never fills.
     enum Fill: Equatable {
         case hover
         case pressed
@@ -135,13 +139,14 @@ struct MonknotIconButton: View {
 
     static func fill(
         isActive: Bool,
+        isOpen: Bool = false,
         drawsActiveBackground: Bool,
         isHovered: Bool,
         isPressed: Bool,
         isDisabled: Bool
     ) -> Fill? {
         guard !isDisabled else { return nil }
-        if isPressed { return .pressed }
+        if isPressed || isOpen { return .pressed }
         if isActive, drawsActiveBackground { return .on }
         return isHovered ? .hover : nil
     }
@@ -161,6 +166,7 @@ struct MonknotIconButton: View {
                 .monknotStateStyle(Self.iconColor(
                     theme: theme,
                     isActive: isActive,
+                    isOpen: isOpen,
                     drawsActiveBackground: drawsActiveBackground,
                     isHovered: isHovered,
                     isDisabled: disabled
@@ -181,6 +187,7 @@ struct MonknotIconButton: View {
             theme: theme,
             cornerRadius: cornerRadius,
             isActive: isActive,
+            isOpen: isOpen,
             drawsActiveBackground: drawsActiveBackground,
             isHovered: isHovered,
             isDisabled: disabled
@@ -195,17 +202,21 @@ struct MonknotIconButton: View {
         .monknotPointerCursor(enabled: !disabled)
     }
 
-    /// design.md §1.4: `ink3` at rest, `ink` when hovered or on, `ink4` disabled; only a search
+    /// design.md §1.4: `ink3` at rest, `ink` when hovered, open or on, `ink4` disabled; only a search
     /// match option that is on turns its glyph `accent` (§1.3).
     static func iconColor(
         theme: AppTheme,
         isActive: Bool,
+        isOpen: Bool = false,
         drawsActiveBackground: Bool = true,
         isHovered: Bool,
         isDisabled: Bool
     ) -> Color {
         if isDisabled {
             return theme.disabledForegroundColor
+        }
+        if isOpen {
+            return theme.foregroundColor
         }
         if isActive {
             return drawsActiveBackground ? theme.foregroundColor : theme.accentColor
@@ -239,6 +250,7 @@ private struct MonknotIconButtonStyle: ButtonStyle {
     let theme: AppTheme
     let cornerRadius: CGFloat
     let isActive: Bool
+    let isOpen: Bool
     let drawsActiveBackground: Bool
     let isHovered: Bool
     let isDisabled: Bool
@@ -249,6 +261,7 @@ private struct MonknotIconButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .monknotStateStyle(MonknotIconButton.fill(
                         isActive: isActive,
+                        isOpen: isOpen,
                         drawsActiveBackground: drawsActiveBackground,
                         isHovered: isHovered,
                         isPressed: configuration.isPressed,
@@ -258,52 +271,32 @@ private struct MonknotIconButtonStyle: ButtonStyle {
     }
 }
 
-/// An icon button that opens a menu of commands ("More"): `MonknotIconButton`'s box, glyph and fills,
-/// so a bar never shows two kinds of button.
-struct MonknotMenuButton<Content: View>: View {
+/// An icon button that opens a menu of commands ("More"): `MonknotIconButton` itself, so it hovers,
+/// presses, takes focus and disables as every bar button does, and holds the `press` fill while its
+/// native menu is open (design.md §5.1). Each group of commands follows a separator.
+struct MonknotMenuButton: View {
     let systemImage: String
     let label: String
     let theme: AppTheme
     let zoomScale: Double
-    @ViewBuilder let content: () -> Content
+    let commands: [[MonknotPopUpAction]]
 
-    @State private var isHovered = false
-    @Environment(\.isEnabled) private var isEnabled
+    @State private var isMenuPresented = false
 
     var body: some View {
-        let size = MonknotIconButton.IconButtonSize.regular
-        let shape = RoundedRectangle(cornerRadius: size.cornerRadius(theme: theme, zoomScale: zoomScale))
-        Menu {
-            content()
-        } label: {
-            MonknotSystemGlyph(
-                systemImage: systemImage,
-                nominalPointSizeBase: size.iconPointSizeBase,
-                theme: theme,
-                zoomScale: zoomScale
-            )
-            .monknotStateStyle(MonknotIconButton.iconColor(
-                theme: theme,
-                isActive: false,
-                isHovered: isHovered,
-                isDisabled: !isEnabled
-            ))
-            .frame(
-                width: size.dimension(theme: theme, zoomScale: zoomScale),
-                height: size.dimension(theme: theme, zoomScale: zoomScale)
-            )
-            .background {
-                shape.monknotStateStyle(isHovered && isEnabled ? theme.hoverFillColor : .clear)
-            }
-            .contentShape(shape)
+        MonknotIconButton(
+            systemImage: systemImage,
+            label: label,
+            theme: theme,
+            zoomScale: zoomScale,
+            isOpen: isMenuPresented
+        ) {
+            isMenuPresented = true
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .onHover { isHovered = $0 }
-        .help(label)
-        .accessibilityLabel(label)
-        .monknotPointerCursor(enabled: isEnabled)
+        .background(
+            MonknotMenuPresenter(isPresented: $isMenuPresented, actionGroups: commands)
+                .allowsHitTesting(false)
+        )
     }
 }
 

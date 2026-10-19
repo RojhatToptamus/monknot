@@ -20,19 +20,10 @@ enum MonknotTypography {
         text(12, theme: theme, zoomScale: zoomScale)
     }
 
-    /// Sheets, panels, overlays and the workspace name title like a heading row: 13, weight 600
-    /// (design.md §4.1, §4.3).
-    static func panelTitle(theme: AppTheme, zoomScale: Double = 1) -> Font {
+    /// Sheets, panels, overlays, empty states and the workspace name title like a heading row: 13,
+    /// weight 600 (design.md §4.1, §4.3).
+    static func panelTitle(theme: AppTheme, zoomScale: Double) -> Font {
         text(13, weight: .semibold, theme: theme, zoomScale: zoomScale)
-    }
-
-    /// Empty states title like panels and sheets (design.md §4.3).
-    static func emptyStateTitle(theme: AppTheme, zoomScale: Double) -> Font {
-        panelTitle(theme: theme, zoomScale: zoomScale)
-    }
-
-    static func emptyStateDetail(theme: AppTheme, zoomScale: Double) -> Font {
-        text(12, theme: theme, zoomScale: zoomScale)
     }
 
     /// The system font at `size` under the interface text zoom.

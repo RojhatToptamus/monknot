@@ -92,7 +92,7 @@ struct HorizontalTabEdgeShadows: View {
     }
 
     private func edgeShadow(isLeading: Bool) -> some View {
-        let fill = surface ?? theme.contentSurfaceColor
+        let fill = surface ?? theme.surfaceColor
         return LinearGradient(
             stops: isLeading
                 ? [

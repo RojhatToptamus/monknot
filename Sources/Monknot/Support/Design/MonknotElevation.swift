@@ -16,9 +16,10 @@ enum MonknotElevation {
         let y: CGFloat
     }
 
-    /// The inset ring: white 14 % in dark, the shadow hue at 8 % in light.
+    /// The inset ring: white 14 % in dark, the shadow hue at 8 % in light, the values Preview's page
+    /// draws its menus with (`AppTheme.floatingRingHex`).
     func ringColor(_ theme: AppTheme) -> Color {
-        theme.isDark ? Color.white.opacity(0.14) : theme.floatingShadowColor.opacity(0.08)
+        Color(hex: theme.floatingRingHex).opacity(theme.floatingRingOpacity)
     }
 
     /// The wide ambient shadow, then the tight key shadow.

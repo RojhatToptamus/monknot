@@ -594,15 +594,16 @@ struct EditorPaneView: View {
         return MarkdownVisualEditingConfiguration(
             session: visualEditingSession,
             initialSelection: activeViewportState?.textSelection,
-            commandRequest: nil,
             currentText: { store.documentText },
-            applyChange: { change in
-                store.applyTextMutation(
+            applyChange: { patch in
+                let before = store.documentText
+                // The store can decline without saying so (while it is busy); then the text is the same.
+                return store.applyTextMutation(
                     documentID: documentID,
-                    range: change.range,
-                    expectedText: change.removed,
-                    replacement: change.inserted
-                ) != nil
+                    range: NSRange(location: patch.location, length: (patch.removed as NSString).length),
+                    expectedText: patch.removed,
+                    replacement: patch.inserted
+                ) != nil && store.documentText != before
             },
             onSelectionChange: { selection, selectedMarkdown in
                 onMarkdownSelectionChange(MarkdownEditorSelectionSnapshot(
@@ -612,7 +613,6 @@ struct EditorPaneView: View {
                     selectedMarkdown: selectedMarkdown
                 ))
             },
-            onFormattingChange: { _ in },
             onImagePasteRequest: onMarkdownImagePasteRequest,
             onFileDropRequest: onMarkdownFileDropRequest,
             wikilinkDocuments: store.markdownDocuments,

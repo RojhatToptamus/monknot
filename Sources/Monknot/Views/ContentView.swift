@@ -518,7 +518,7 @@ struct ContentView: View {
                     theme: activeTheme,
                     zoomScale: zoomScale
                 ),
-                trafficLightLeadingInset: MonknotMetrics.chromeHorizontalPadding(
+                trafficLightLeadingInset: MonknotMetrics.titlebarLeadingInset(
                     theme: activeTheme,
                     zoomScale: zoomScale
                 ),
@@ -772,7 +772,6 @@ struct ContentView: View {
                     isTerminalPresented: terminalPreferredVisible,
                     isTerminalFullscreen: isTerminalFullscreen,
                     layoutScale: activeTheme.layoutScale(zoomScale: zoomScale),
-                    separatorColor: NSColor(activeTheme.separatorColor),
                     handleInkColor: NSColor(hex: activeTheme.foreground),
                     onDocumentLeadingEdgeChange: { edge in
                         if chromeAlignment.documentLeadingEdge != edge {
@@ -781,7 +780,7 @@ struct ContentView: View {
                     },
                     cardStyle: WorkspaceCardStyle(
                         documentBackground: NSColor(activeTheme.surfaceColor),
-                        terminalBackground: NSColor(activeTheme.terminalSurfaceColor),
+                        terminalBackground: NSColor(activeTheme.surfaceColor),
                         border: NSColor(activeTheme.cardRingColor),
                         cornerRadius: MonknotMetrics.cardCornerRadius,
                         inset: WorkspaceSplitMetrics.dividerThickness
@@ -1072,7 +1071,7 @@ struct ContentView: View {
                 close: { setTerminalDrawerPresented(false, animated: true) }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(activeTheme.terminalSurfaceColor)
+            .background(activeTheme.surfaceColor)
         }
     }
 
@@ -1120,7 +1119,7 @@ struct ContentView: View {
         revealURL: URL? = nil,
         actionTitle: String?
     ) {
-        withAnimation(MonknotMotion.toastAnimation(reduceMotion: reduceMotion)) {
+        withAnimation(MonknotMotion.hoverAnimation) {
             successNotice = SuccessNotice(
                 message: message,
                 revealURL: revealURL,
@@ -1239,7 +1238,7 @@ struct ContentView: View {
     /// A toast leaves the way it came, however it is dismissed (design.md §11).
     private func dismissSuccessNotice() {
         pendingWorkspaceRemoval = nil
-        withAnimation(MonknotMotion.toastAnimation(reduceMotion: reduceMotion)) {
+        withAnimation(MonknotMotion.hoverAnimation) {
             successNotice = nil
         }
     }

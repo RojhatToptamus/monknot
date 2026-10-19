@@ -6,18 +6,19 @@ enum MonknotScrollbarStyle {
     /// The lane a thumb sits in, flush with a scroll view's trailing or bottom edge (design.md §5.7).
     /// With "Show scroll bars: Always" a document reserves this lane, so text never runs under the
     /// thumb.
-    static let trackWidth: CGFloat = 9
+    /// The geometry is `ScrollThumbGeometry`'s (MonknotCore), which Preview's page draws from too.
+    static let trackWidth = CGFloat(ScrollThumbGeometry.trackWidth)
     /// The thumb is a slim capsule with no track. It rests quiet and widens and darkens under the
     /// pointer, so it is easy to grab with a mouse.
-    static let restingThumbWidth: CGFloat = 4
-    static let hoveredThumbWidth: CGFloat = 6
+    static let restingThumbWidth = CGFloat(ScrollThumbGeometry.restingThumbWidth)
+    static let hoveredThumbWidth = CGFloat(ScrollThumbGeometry.hoveredThumbWidth)
     /// Where the thumb's centre sits, measured from the container's edge: the middle of the lane, so
     /// a resting thumb is 2.5 from the edge, close to the divider beside it, and grows from there.
     static let thumbCenterInset: CGFloat = trackWidth / 2
-    static let restingOpacity: CGFloat = 0.25
-    static let hoveredOpacity: CGFloat = 0.45
+    static let restingOpacity = CGFloat(ScrollThumbGeometry.restingOpacity)
+    static let hoveredOpacity = CGFloat(ScrollThumbGeometry.hoveredOpacity)
     /// The thumb's ends stay this far from the ends of a list or card, clear of its rounded corners.
-    static let endInset: CGFloat = 6
+    static let endInset = CGFloat(ScrollThumbGeometry.endInset)
 
     /// Documents (editor, plain text, PDF) take the same thumb as the chrome. They follow System
     /// Settings › Appearance › Show scroll bars: an overlay thumb fades and takes no width; with
@@ -94,60 +95,12 @@ enum MonknotScrollbarStyle {
             return scroller
         }
         let scroller = MonknotScroller(frame: .zero)
-        if let current {
-            scroller.thumbColor = (current as? MonknotScroller)?.thumbColor ?? scroller.thumbColor
-        }
         if vertical {
             scrollView.verticalScroller = scroller
         } else {
             scrollView.horizontalScroller = scroller
         }
         return scroller
-    }
-
-    /// The same thumb for a web view's scroll bar (the terminal, and Preview while the system shows
-    /// scroll bars always). WebKit draws a styled scroll bar as a fixed bar and does not repaint it
-    /// when a class changes, so it cannot fade like an overlay scroller: it rests at the resting
-    /// strength and brightens only under the pointer.
-    static func webCSS(
-        selector: String = "*",
-        restingColor: String = "color-mix(in srgb, CanvasText 25%, transparent)",
-        hoveredColor: String = "color-mix(in srgb, CanvasText 45%, transparent)"
-    ) -> String {
-        let restingInset = (trackWidth - restingThumbWidth) / 2
-        let hoveredInset = (trackWidth - hoveredThumbWidth) / 2
-
-        // The border is the inset; the radius includes it so the visible thumb is a capsule.
-        return """
-        \(selector)::-webkit-scrollbar {
-          width: \(cssPixels(trackWidth));
-          height: \(cssPixels(trackWidth));
-          background: transparent;
-        }
-        \(selector)::-webkit-scrollbar-track {
-          background: transparent;
-          margin: \(cssPixels(endInset));
-        }
-        \(selector)::-webkit-scrollbar-thumb {
-          background: \(restingColor);
-          background-clip: content-box;
-          border: \(cssPixels(restingInset)) solid transparent;
-          border-radius: \(cssPixels(trackWidth / 2));
-        }
-        \(selector)::-webkit-scrollbar-thumb:hover {
-          background: \(hoveredColor);
-          background-clip: content-box;
-          border: \(cssPixels(hoveredInset)) solid transparent;
-          border-radius: \(cssPixels(trackWidth / 2));
-        }
-        \(selector)::-webkit-scrollbar-corner {
-          background: transparent;
-        }
-        """
-    }
-
-    private static func cssPixels(_ value: CGFloat) -> String {
-        value.rounded() == value ? "\(Int(value))px" : "\(value)px"
     }
 }
 
@@ -263,8 +216,6 @@ final class MonknotScroller: NSScroller {
     override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {}
 }
 
-/// Keeps a chrome scroll view on the overlay thumb and shows the thumb while the pointer is over the
-/// list, so a mouse user can see there is more and grab it. It fades again like any overlay scroller.
 /// Keeps a chrome list on the overlay thumb whatever "Show scroll bars" says (design.md §5.7). The thumb
 /// appears only while the list scrolls, as the system's overlay scroller does: a thumb that also
 /// appeared whenever the pointer crossed the list sat beside the divider and read as a resize handle.

@@ -53,19 +53,6 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
         }
     }
 
-    func testMonknotPopUpSelectionTransactionPreviewsThenCancelsOrCommits() {
-        var cancelled = MonknotPopUpSelectionTransaction(initialSelection: "harbor-light")
-        cancelled.preview("forge-light")
-        XCTAssertEqual(cancelled.previewedSelection, "forge-light")
-        XCTAssertEqual(cancelled.selectionAfterClose, "harbor-light")
-
-        var committed = MonknotPopUpSelectionTransaction(initialSelection: "harbor-light")
-        committed.preview("forge-light")
-        committed.commit("monolith-light")
-        XCTAssertEqual(committed.previewedSelection, "monolith-light")
-        XCTAssertEqual(committed.selectionAfterClose, "monolith-light")
-    }
-
     func testWorkspaceChromeZoomUsesTheExactDiscreteFactor() {
         let theme = AppTheme.defaultDark
         let compact = theme.layoutScale(zoomScale: WorkspaceZoomPolicy.minimum)
@@ -206,13 +193,13 @@ final class WorkspaceChromeMetricsTests: XCTestCase {
         func fittingHeight(zoomScale: Double) -> CGFloat {
             let row = SettingsRow(
                 theme: .defaultDark,
+                zoomScale: zoomScale,
                 title: "Workspace zoom",
                 detail: "Scale typography, controls, padding, and spacing together",
                 showsDivider: false
             ) {
                 Text("100%")
             }
-            .environment(\.monknotSettingsZoomScale, zoomScale)
             .frame(width: 520)
 
             return NSHostingView(rootView: row).fittingSize.height

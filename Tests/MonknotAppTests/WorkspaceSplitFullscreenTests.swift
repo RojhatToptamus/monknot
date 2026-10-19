@@ -35,13 +35,15 @@ final class WorkspaceSplitFullscreenTests: WorkspaceSplitViewTestCase {
             let sidebar: CGFloat
             let card: NSRect
             let terminal: CGFloat
+            let documentWidth: CGFloat
         }
         func edges() -> Edges {
             Edges(
                 documentShown: !split.arrangedSubviews[1].isHidden,
                 sidebar: split.arrangedSubviews[0].frame.maxX,
                 card: split.convert(controller.detailPane.cardFrameInWindow, from: nil),
-                terminal: split.arrangedSubviews[2].frame.minX
+                terminal: split.arrangedSubviews[2].frame.minX,
+                documentWidth: controller.detailHostingController.view.frame.width
             )
         }
         func record(for seconds: TimeInterval) async -> [Edges] {
@@ -65,7 +67,11 @@ final class WorkspaceSplitFullscreenTests: WorkspaceSplitViewTestCase {
         update(controller, sidebarPresented: true, terminalPresented: true, isTerminalFullscreen: false, recorder: recorder, animated: true)
         let leaving = await record(for: 0.6)
 
-        for (index, sample) in (entering + leaving).enumerated() where sample.documentShown && sample.card.width > 1 {
+        for (index, sample) in (entering + leaving).enumerated() {
+            // The document keeps its width under the terminal, collapsed too: it is never laid out
+            // at a sliver of a width and again on its return.
+            XCTAssertEqual(sample.documentWidth, docked.documentWidth, accuracy: 0.5, "Document width, sample \(index)")
+            guard sample.documentShown, sample.card.width > 1 else { continue }
             XCTAssertEqual(sample.terminal - sample.card.maxX, gap, accuracy: 0.5, "Gap to the terminal, sample \(index)")
             XCTAssertEqual(sample.card.minX - sample.sidebar, gap, accuracy: 0.5, "Gap to the sidebar, sample \(index)")
         }

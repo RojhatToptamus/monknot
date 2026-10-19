@@ -162,7 +162,7 @@ struct MonknotCommandOverlaySeparator: View {
 
 /// A result row: the editor's menu row at 34 (design.md §5.7), a glyph or short tag in the 18 column,
 /// the title, a 12 `ink3` detail and an optional trailing note. The row ↑↓ chose takes the `selected`
-/// fill and an `ink` glyph.
+/// fill and an `ink` glyph; the row under the pointer, the `hover` fill and an `ink` glyph.
 struct MonknotCommandOverlayRow: View {
     let leading: MonknotMenuRowLeading
     let title: String
@@ -192,11 +192,7 @@ struct MonknotCommandOverlayRow: View {
                 }
             }
         }
-        .buttonStyle(MonknotMenuRowButtonStyle(
-            theme: theme,
-            isSelected: isSelected,
-            cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
-        ))
+        .buttonStyle(MonknotMenuRowButtonStyle(theme: theme, zoomScale: zoomScale, isSelected: isSelected))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

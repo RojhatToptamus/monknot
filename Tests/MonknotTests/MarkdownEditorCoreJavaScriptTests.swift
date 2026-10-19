@@ -13,13 +13,27 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
         let result = try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any]
         let failures = result?["failures"] as? [String] ?? ["no result"]
         XCTAssertEqual(failures, [], failures.joined(separator: "\n"))
-        XCTAssertGreaterThanOrEqual(result?["passed"] as? Int ?? 0, 120)
+        XCTAssertGreaterThanOrEqual(result?["passed"] as? Int ?? 0, 190)
+    }
+
+    /// HTML pasted from other apps becomes Markdown that reads back as the same blocks: a code
+    /// block's fence and a code span's backticks are longer than any run inside them, and a list
+    /// nested under an item is indented as far as that item's marker is wide.
+    func testPastedHTMLBecomesMarkdown() throws {
+        let context = try editorContext()
+        let output = try XCTUnwrap(context.evaluateScript(Self.paste)?.toString())
+        let result = try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any]
+        let failures = result?["failures"] as? [String] ?? ["no result"]
+        XCTAssertEqual(failures, [], failures.joined(separator: "\n"))
+        XCTAssertEqual(result?["passed"] as? Int, 7)
     }
 
     /// Random documents and random patches, including CRLF line endings: after every patch the
     /// incrementally updated document must equal a fresh parse of the new text.
     /// Toggles, callouts and `[TOC]` lines are among the snippets, so a typed `</details>` far below
-    /// its `<details>` is covered too.
+    /// its `<details>` is covered too. Toggles opened or closed on the page keep that state wherever
+    /// a toggle still starts at the same place, footnotes and references match a fresh parse, and
+    /// every new unit gets an id no unit had before.
     func testIncrementalParseMatchesAFullParse() throws {
         let context = try editorContext()
         let output = try XCTUnwrap(context.evaluateScript(Self.fuzz)?.toString())
@@ -74,9 +88,19 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
       let seed = 20261017;
       const random = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
       const pick = (list) => list[Math.floor(random() * list.length)];
-      const snippets = ["> [!NOTE]", "> [!TIP]", "<details>", "<details open>", "<summary>Title</summary>", "<summary></summary>", "</details>", "[TOC]", "![v](a.mp4)", "# Title", "## Sub", "para text", "more *em* and **bold**", "- item", "- [ ] task", "1. one", "  - nested", "> quote", "> > deep", "```js", "```", "code line", "| a | b |", "| --- | --- |", "| 1 | 2 |", "---", "[ref]: http://x", "[^n]: note", "see [^n] and [l][ref]", "", "", "text with [link](u) end", "~~del~~", "`code`", "line  ", "next"];
+      const snippets = ["<details>\n<summary>T</summary>\n\nbody [^n]\n\n</details>", "> [!NOTE]", "> [!TIP]", "<details>", "<details open>", "<summary>Title</summary>", "<summary></summary>", "</details>", "[TOC]", "![v](a.mp4)", "# Title", "## Sub", "para text", "more *em* and **bold**", "- item", "- [ ] task", "1. one", "  - nested", "> quote", "> > deep", "```js", "```", "code line", "| a | b |", "| --- | --- |", "| 1 | 2 |", "---", "[ref]: http://x", "[^n]: note", "see [^n] and [l][ref]", "", "", "text with [link](u) end", "~~del~~", "`code`", "line  ", "next"];
       const describe = (model) => model.blocks.map((b) => [b.type, E.bStart(b), E.bEnd(b), E.bLine(b)].join("|")).join("\n")
-        + "\n--\n" + E.allUnits(model).map((u) => [u.kind, u.role, u.region.j, E.unitStart(u), E.unitEnd(u)].join("|")).join("\n");
+        + "\n--\n" + E.allUnits(model).map((u) => [u.kind, u.role, u.region.j, E.unitStart(u), E.unitEnd(u)].join("|")).join("\n")
+        + "\n--\n" + JSON.stringify([[...model.doc.footnotes], [...model.doc.references], model.doc.footnoteOrder]);
+      const toggles = (model) => {
+        const list = [];
+        const walk = (block, shift) => {
+          if (block.type === "toggle") list.push({ block, start: block.start + shift });
+          for (const child of block.children || []) walk(child, shift);
+        };
+        for (const block of model.blocks) walk(block, block.shift);
+        return list;
+      };
       for (let run = 0; run < 1500; run += 1) {
         const lines = [];
         const count = 3 + Math.floor(random() * 20);
@@ -87,15 +111,93 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
           const from = Math.floor(random() * (text.length + 1));
           const to = Math.min(text.length, from + (random() < 0.5 ? 0 : Math.floor(random() * 12)));
           const insert = random() < 0.3 ? "" : pick(["<details>\n", "<summary>S</summary>\n", "</details>", "> [!NOTE]\n", "[TOC]\n", "x", "\n", "\n\n", "# ", "- ", "**", "`", "```", "> ", "|", " ", "[a](b)", pick(snippets) + "\n"]);
+          // Open or close some toggles, as a click on the page does; the state should follow each
+          // toggle that still starts where it did, moved by the patch.
+          const expectedOpen = new Map();
+          for (const toggle of toggles(model)) {
+            if (random() < 0.3) toggle.block.viewOpen = random() < 0.5;
+            if (toggle.block.viewOpen === undefined) continue;
+            if (toggle.start < from) expectedOpen.set(toggle.start, toggle.block.viewOpen);
+            else if (toggle.start >= to) expectedOpen.set(toggle.start + insert.length - (to - from), toggle.block.viewOpen);
+          }
+          const unitsBefore = new Set(E.allUnits(model));
+          const lastId = Math.max(0, ...[...unitsBefore].map((unit) => unit.id));
           text = text.slice(0, from) + insert + text.slice(to);
           E.applyPatch(model, from, to, insert);
           if (model.source !== text) return "source differs at run " + run;
           const incremental = describe(model);
           const full = describe(E.createModel(text));
           if (incremental !== full) return "run " + run + " step " + step + " differs for " + JSON.stringify(text);
+          for (const toggle of toggles(model)) {
+            if (toggle.block.viewOpen !== expectedOpen.get(toggle.start)) return "run " + run + " step " + step + " toggle at " + toggle.start + " is " + toggle.block.viewOpen + " in " + JSON.stringify(text);
+          }
+          const units = E.allUnits(model);
+          if (model.units.size !== units.length || units.some((unit) => model.units.get(unit.id) !== unit)) return "run " + run + " step " + step + " unit map differs";
+          if (units.some((unit) => !unitsBefore.has(unit) && unit.id <= lastId)) return "run " + run + " step " + step + " reuses a unit id";
         }
       }
       return "ok";
+    })()
+    """#
+
+    private static let paste = #"""
+    (() => {
+    (() => {
+      // A small stand-in for WebKit's DOMParser: elements, text and the selectors the converter uses.
+      const VOID = new Set(["BR", "HR", "INPUT", "IMG", "META"]);
+      const decode = (text) => text.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&amp;/g, "&");
+      function element(tagName, attributes) {
+        return {
+          nodeType: 1, tagName, attributes, childNodes: [],
+          get children() { return this.childNodes.filter((node) => node.nodeType === 1); },
+          get className() { return attributes.class || ""; },
+          get checked() { return "checked" in attributes; },
+          get textContent() { return this.childNodes.map((node) => (node.nodeType === 3 ? node.nodeValue : node.textContent)).join(""); },
+          getAttribute(name) { return name in attributes ? attributes[name] : null; },
+          querySelectorAll(selector) {
+            if (selector === ":scope > input[type=checkbox]") return this.children.filter((node) => node.tagName === "INPUT" && node.attributes.type === "checkbox");
+            const found = [];
+            const walk = (node) => node.children.forEach((child) => { if (child.tagName === selector.toUpperCase()) found.push(child); walk(child); });
+            walk(this);
+            return found;
+          },
+          querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+        };
+      }
+      globalThis.DOMParser = function () {};
+      globalThis.DOMParser.prototype.parseFromString = (html) => {
+        const body = element("BODY", {});
+        const stack = [body];
+        for (const match of html.matchAll(/<(\/?)([a-zA-Z0-9]+)([^>]*)>|([^<]+)/g)) {
+          const parent = stack[stack.length - 1];
+          if (match[4] !== undefined) { parent.childNodes.push({ nodeType: 3, nodeValue: decode(match[4]) }); continue; }
+          const tag = match[2].toUpperCase();
+          if (match[1]) { if (stack.length > 1) stack.pop(); continue; }
+          const attributes = {};
+          for (const attribute of match[3].matchAll(/([a-zA-Z-]+)(?:="([^"]*)")?/g)) attributes[attribute[1]] = attribute[2] ?? "";
+          const node = element(tag, attributes);
+          parent.childNodes.push(node);
+          if (!VOID.has(tag)) stack.push(node);
+        }
+        return { body };
+      };
+    })();
+    const E = window.MonknotEditorCore;
+    const failures = [];
+    let passed = 0;
+    const check = (name, html, expected) => {
+      const got = E.htmlToMarkdown(html);
+      if (got === expected) passed += 1;
+      else failures.push(name + ": got " + JSON.stringify(got) + ", expected " + JSON.stringify(expected));
+    };
+    check("paragraphs", "<p>One <b>bold</b></p><p>Two</p>", "One **bold**\n\nTwo");
+    check("code block with a fence inside", "<pre><code class=\"language-md\">a\n```\nb\n</code></pre>", "````md\na\n```\nb\n````");
+    check("inline code with a backtick", "<p>use <code>a`b</code> here</p>", "use ``a`b`` here");
+    check("inline code starting with a backtick", "<p><code>`x</code></p>", "`` `x ``");
+    check("list nested under a numbered item", "<ol><li>a<ul><li>b</li></ul></li><li>c</li></ol>", "1. a\n   - b\n2. c");
+    check("list nested under a bullet", "<ul><li>a<ol start=\"9\"><li>b</li><li>c<ul><li>d</li></ul></li></ol></li></ul>", "- a\n  9. b\n  10. c\n      - d");
+    check("tasks", "<ul><li><input type=\"checkbox\" checked>done</li><li><input type=\"checkbox\">todo</li></ul>", "- [x] done\n- [ ] todo");
+    return JSON.stringify({ passed, failures });
     })()
     """#
 
@@ -264,7 +366,7 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
     // What the block handles and menus do.
     const target = (m, s) => E.handleTargetOf(m, E.unitAt(m, s.head, "left"));
     const move = (gap) => (m, s) => E.planMoveBlock(m, target(m, s), gap, s);
-    const step = (d) => (m, s) => E.planMoveByStep(m, s, d);
+    const step = (d) => (m, s) => E.planMoveByStep(m, target(m, s), d, s);
     const dup = (m, s) => E.planDuplicateBlock(m, target(m, s));
     const delBlock = (m, s) => E.planDeleteBlock(m, target(m, s));
     const wrapToggle = (m, s) => E.planWrapToggle(m, s);
@@ -307,6 +409,87 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
     check("item near above", "- a\n- b‸", (m, s) => E.insertItemNear(m, target(m, s), true), "- a\n- ‸\n- b");
     check("empty before", "A\n\nB‸", (m, s) => E.insertEmptyBeforeBlock(m, 1), "A\n\n‸\nB");
     check("empty before first", "A‸", (m, s) => E.insertEmptyBeforeBlock(m, 0), "‸\nA");
+    const slashQuery = (cmd) => (m, s) => E.planSlashCommand(m, E.unitAt(m, s.head, "left"), m.source.lastIndexOf("/", s.head), s.head, cmd);
+    // Turn Into keeps blocks it cannot convert, and never touches a toggle's title.
+    check("bullets keep a code block between", "«a\n\n```\ncode\n```\n\nb»", block("bullet"), "- «a\n\n```\ncode\n```\n\n- b»");
+    check("text keeps a divider between", "«# a\n\n---\n\n# b»", block("paragraph"), "«a\n\n---\n\nb»");
+    check("quote keeps a table between", "«a\n\n| x |\n| --- |\n| 1 |\n\nb»", block("quote"), "> «a\n\n| x |\n| --- |\n| 1 |\n\n> b»");
+    check("code keeps a table between", "«a\n\n| x |\n| --- |\n| 1 |\n\nb»", block("code"), "```\na\n```\n\n| x |\n| --- |\n| 1 |\n\n```\nb‸\n```");
+    check("heading in a toggle title does nothing", "<details>\n<summary>Ti‸tle</summary>\n\nBody\n\n</details>", block("heading1"), "(no-op)");
+    check("text in a toggle title does nothing", "<details>\n<summary>Ti‸tle</summary>\n\nBody\n\n</details>", block("paragraph"), "(no-op)");
+    check("bullets from a toggle title into its body", "<details open>\n<summary>T«itle</summary>\n\nBo»dy\n\n</details>", block("bullet"), "<details open>\n<summary>Title</summary>\n\n- Bo‸dy\n\n</details>");
+    check("callout in a toggle title does nothing", "<details>\n<summary>Ti‸tle</summary>\n\nBody\n\n</details>", (m, s) => E.planWrapCallout(m, s), "(no-op)");
+    // A heading in a quote keeps one quote marker.
+    check("quoted heading level", "> # Ti‸tle", block("heading2"), "> ## Ti‸tle");
+    check("callout heading to text", "> [!NOTE]\n> # Ti‸tle", block("paragraph"), "> [!NOTE]\n>\n> Ti‸tle");
+    check("quoted heading to code", "> # Ti‸tle", block("code"), "> ```\n> Title‸\n> ```");
+    check("slash in a quoted heading", "> ## /h1‸", slashQuery("h1"), "> # ‸");
+    check("quoted heading to toggle", "> # Ti‸tle", wrapToggle, "> <details>\n> <summary>Title‸</summary>\n>\n> </details>");
+    check("callout text to toggle", "> [!NOTE]\n> Hel‸lo", wrapToggle, "> [!NOTE]\n>\n> <details>\n> <summary>Hello‸</summary>\n>\n> </details>");
+    check("empty callout to toggle", "> [!NOTE]‸", wrapToggle, "> [!NOTE]\n> <details>\n> <summary>‸</summary>\n>\n> </details>");
+    // ⌫ at the start of a heading or quote leaves a paragraph of its own.
+    check("backspace heading between text", "a\n# ‸Title\nb", backspaceAtStart, "a\n\n‸Title\n\nb");
+    check("backspace quote between text", "a\n> ‸Quote\nb", backspaceAtStart, "a\n\n‸Quote\n\nb");
+    check("backspace heading in a quote", "> a\n> # ‸T", backspaceAtStart, "> a\n>\n> ‸T");
+    // ⇧↩ breaks the line inside a paragraph; at its end there is no line to break onto.
+    const lineBreak = (m, s) => E.planLineBreak(m, s);
+    check("line break middle", "ab‸c", lineBreak, "ab\\\n‸c");
+    check("line break end", "abc‸", lineBreak, "abc\n‸\n");
+    check("line break before a soft break", "abc‸\ndef", lineBreak, "abc\\\n‸def");
+    check("line break in a quote", "> ab‸c", lineBreak, "> ab\\\n> ‸c");
+    check("line break end of first line in a quote", "> ab‸\n> cd", lineBreak, "> ab\\\n> ‸cd");
+    // Slash commands change the block as Turn Into does.
+    check("slash todo nested", "- a\n  - /todo‸", slashQuery("todo"), "- a\n  - [ ] ‸");
+    check("slash numbered keeps the text", "Hello /num‸", (m, s) => E.planSlashCommand(m, E.unitAt(m, s.head, "left"), 6, 10, "numbered"), "1. Hello ‸");
+    check("slash code empty heading", "## /code‸", slashQuery("code"), "```\n‸\n```");
+    check("slash code empty item", "- /code‸", slashQuery("code"), "```\n‸\n```");
+    check("slash table empty item", "- a\n- /table‸", slashQuery("table"), "- a\n\n| ‸ |  |  |\n| --- | --- | --- |\n|  |  |  |\n|  |  |  |");
+    check("slash divider empty item", "- a\n- /divider‸\n- b", slashQuery("divider"), "- a\n\n---\n\n‸\n- b");
+    // The caret goes on the code block's line in a quote, and a quote's first line needs no blank above.
+    check("slash code first line of a quote", "> /code‸", slashQuery("code"), "> ```\n>‸\n> ```");
+    check("slash code in a quote", "> a\n>\n> /code‸", slashQuery("code"), "> a\n>\n> ```\n>‸\n> ```");
+    check("slash code after text in a quote", "> Hello /code‸", slashQuery("code"), "> Hello \n>\n> ```\n>‸\n> ```");
+    // Links never nest; emphasis beside emphasis alternates its marker.
+    check("link part of a link", "[a«b»c](u)", style("link", "v"), "[a](u)«[b](v)»[c](u)");
+    check("bold beside bold", "**a**«b»", style("strong"), "**a**__«b»__");
+    check("bold beside italic", "*a*«b»", style("strong"), "*a*__«b»__");
+    check("bold before bold", "«a»**b**", style("strong"), "__«a»__**b**");
+    // ⌦ at the end of a toggle's body never deletes the block after the toggle.
+    check("delete forward in a toggle before a divider", "<details open>\n<summary>T</summary>\n\nBody‸\n\n</details>\n\n---\n\nAfter", delFwd, "(no-op)");
+    // Numbers count per list level and start again after a block between.
+    check("numbered per level", "- «a\n  - b\n- c»", block("numbered"), "1. «a\n  1. b\n2. c»");
+    check("numbered after a code block", "«a\n\n```\nx\n```\n\nb»", block("numbered"), "1. «a\n\n```\nx\n```\n\n1. b»");
+    // Indenting keeps each line's own line ending.
+    check("indent keeps mixed line endings", "- a\r\n- b‸\n  - c", (m, s) => E.planIndent(m, s, 1), "- a\r\n  - b‸\n    - c");
+    check("enter empty nested item outdents its children too", "- a\n  - ‸\n    - c", enter, "- a\n- ‸\n  - c");
+    check("callout kind", "> [!NOTE]\n> Hi‸", (m, s) => E.planCalloutKind(m, E.unitAt(m, s.head, "left"), "tip"), "> [!TIP]\n> Hi");
+    check("callout kind outside a callout", "> Hi‸", (m, s) => E.planCalloutKind(m, E.unitAt(m, s.head, "left"), "tip"), "(no-op)");
+
+    // A toggle opened on the page stays open when an edit re-parses it, and when a changed link
+    // reference renders the whole document again; unit ids keep counting up.
+    function toggleAfter(source, after, insert) {
+      const model = E.createModel(source);
+      const toggle = model.blocks.find((b) => b.type === "toggle");
+      toggle.viewOpen = true;
+      const before = new Set(E.allUnits(model));
+      const maxId = Math.max(...E.allUnits(model).map((u) => u.id));
+      const at = source.indexOf(after) + after.length;
+      const update = E.applyPatch(model, at, at, insert);
+      const next = model.blocks.find((b) => b.type === "toggle");
+      const fresh = E.allUnits(model).filter((u) => !before.has(u));
+      return [update.full ? "full" : "partial", next === toggle ? "kept" : "parsed again", next.viewOpen ? "open" : "closed", fresh.every((u) => u.id > maxId) ? "ids count up" : "ids reused"].join(", ");
+    }
+    const toggleDoc = "Intro [x][ref]\n\n<details>\n<summary>T</summary>\n\nBody\n\n</details>\n\n[ref]: http://a\n\n[^n]: note";
+    const expectEqual = (name, got, expected) => { if (got === expected) passed += 1; else failures.push(name + ": got " + JSON.stringify(got) + ", expected " + JSON.stringify(expected)); };
+    expectEqual("toggle state across a re-parse", toggleAfter(toggleDoc, "Bo", "x"), "partial, parsed again, open, ids count up");
+    expectEqual("toggle state across a rebuild", toggleAfter(toggleDoc, "http://a", "x"), "full, parsed again, open, ids count up");
+    expectEqual("footnote text edits in place", toggleAfter(toggleDoc, "note", "x"), "partial, kept, open, ids count up");
+    (() => {
+      const model = E.createModel(toggleDoc);
+      const at = toggleDoc.indexOf("note") + 2;
+      E.applyPatch(model, at, at, "w");
+      expectEqual("footnote text in the document", model.doc.footnotes.get("n"), "nowte");
+    })();
     return JSON.stringify({ passed, failures });
     })()
     """#

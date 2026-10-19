@@ -954,7 +954,6 @@ private struct SidebarProjectHeader: View {
     let createMarkdown: () -> Void
     let showWorkspaceSearch: () -> Void
     var switcherRequest = 0
-    @State private var isWorkspaceTitleHovered = false
     @State private var isSwitcherPresented = false
 
     private func scaled(_ base: CGFloat) -> CGFloat {
@@ -970,8 +969,10 @@ private struct SidebarProjectHeader: View {
         activeWorkspace?.displayName ?? workspaceURL?.lastPathComponent ?? "No Workspace"
     }
 
+    /// A bar in the list inset (design.md §10.4): the monogram in the rows' glyph column, the name on
+    /// their text edge, and the last action ending on the list's edge.
     var body: some View {
-        HStack(spacing: scaled(2)) {
+        MonknotBar(theme: theme, zoomScale: zoomScale, inset: .list) {
             if workspaceURL != nil {
                 Button {
                     isSwitcherPresented.toggle()
@@ -993,19 +994,7 @@ private struct SidebarProjectHeader: View {
                                 .truncationMode(.tail)
 
                             // Beside the name, like a pop-up button (design.md §10.4 "name + chevron").
-                            Image(systemName: "chevron.down")
-                                .font(.system(
-                                    size: MonknotMetrics.interfaceGlyph(MonknotMetrics.chevronPointSizeBase, theme: theme, zoomScale: zoomScale),
-                                    weight: .semibold
-                                ))
-                                .symbolRenderingMode(.monochrome)
-                                .monknotStateStyle(
-                                    isBusy
-                                        ? theme.disabledForegroundColor
-                                        : (isWorkspaceTitleHovered || isSwitcherPresented
-                                            ? theme.mutedForegroundColor
-                                            : theme.tertiaryForegroundColor)
-                                )
+                            SidebarWorkspaceChevron(theme: theme, zoomScale: zoomScale)
                         }
                         .layoutPriority(1)
 
@@ -1015,14 +1004,8 @@ private struct SidebarProjectHeader: View {
                     .frame(maxWidth: .infinity)
                     .frame(height: scaled(MonknotMetrics.rowHeightBase))
                 }
-                .buttonStyle(MonknotRowButtonStyle(
-                    theme: theme,
-                    isSelected: false,
-                    isActive: isSwitcherPresented,
-                    cornerRadius: theme.chromeRadius(8, zoomScale: zoomScale)
-                ))
+                .buttonStyle(MonknotListRowButtonStyle(theme: theme, zoomScale: zoomScale, isOpen: isSwitcherPresented))
                 .disabled(isBusy)
-                .onHover { isWorkspaceTitleHovered = $0 }
                 .popover(isPresented: $isSwitcherPresented, arrowEdge: .top) {
                     WorkspaceSwitcherPopover(
                         workspaces: workspaces,
@@ -1077,15 +1060,34 @@ private struct SidebarProjectHeader: View {
                 action: createMarkdown
             )
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // The name sits on the rows' text edge: the list inset plus the row's own padding.
-        .padding(.horizontal, scaled(MonknotMetrics.listGutterBase))
-        .frame(height: MonknotMetrics.barHeight(theme: theme, zoomScale: zoomScale))
         .onChange(of: switcherRequest) { _, _ in
             if workspaceURL != nil, !isBusy {
                 isSwitcherPresented = true
             }
         }
+    }
+}
+
+/// The switcher's chevron beside the workspace name: `ink3` at rest, `ink2` while its row is hovered,
+/// held or open, `ink4` while a workspace loads.
+private struct SidebarWorkspaceChevron: View {
+    let theme: AppTheme
+    let zoomScale: Double
+    @Environment(\.monknotRowIsHighlighted) private var isHighlighted
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Image(systemName: "chevron.down")
+            .font(.system(
+                size: MonknotMetrics.interfaceGlyph(MonknotMetrics.chevronPointSizeBase, theme: theme, zoomScale: zoomScale),
+                weight: .semibold
+            ))
+            .symbolRenderingMode(.monochrome)
+            .monknotStateStyle(
+                !isEnabled
+                    ? theme.disabledForegroundColor
+                    : (isHighlighted ? theme.mutedForegroundColor : theme.tertiaryForegroundColor)
+            )
     }
 }
 
@@ -1224,7 +1226,6 @@ private struct WorkspaceSwitcherRow: View {
                     title: workspace.displayName,
                     detail: (workspace.path as NSString).abbreviatingWithTildeInPath,
                     isCurrent: isActive,
-                    isHighlighted: isHovered && !isUnavailable,
                     isDisabled: isUnavailable,
                     theme: theme,
                     zoomScale: zoomScale
@@ -1247,11 +1248,7 @@ private struct WorkspaceSwitcherRow: View {
                     }
                 }
             }
-            .buttonStyle(MonknotMenuRowButtonStyle(
-                theme: theme,
-                isSelected: isActive,
-                cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
-            ))
+            .buttonStyle(MonknotMenuRowButtonStyle(theme: theme, zoomScale: zoomScale, isSelected: isActive))
             .disabled(isBusy || isActive)
 
             // Crossfades with the shortcut, as a tab's close button does with its glyph.
@@ -1283,23 +1280,17 @@ private struct WorkspaceSwitcherActionRow: View {
     let theme: AppTheme
     let zoomScale: Double
     let action: () -> Void
-    @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
             MonknotMenuRowLabel(
                 leading: .glyph(systemImage),
                 title: title,
-                isHighlighted: isHovered,
                 theme: theme,
                 zoomScale: zoomScale
             )
         }
-        .buttonStyle(MonknotMenuRowButtonStyle(
-            theme: theme,
-            cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
-        ))
-        .onHover { isHovered = $0 }
+        .buttonStyle(MonknotMenuRowButtonStyle(theme: theme, zoomScale: zoomScale))
     }
 }
 
@@ -2139,8 +2130,8 @@ private struct SidebarRecentDocumentsSection: View {
     }
 }
 
-/// A collapsible group header in the sidebar: the disclosure chevron in the glyph column, an eyebrow
-/// title (design.md §4.3) and a trailing count, on the row primitive's geometry.
+/// A collapsible group header in the sidebar: the disclosure chevron in the glyph column, a group
+/// header title (design.md §4.3) and a trailing count, on the row primitive's geometry.
 private struct SidebarGroupHeaderLabel: View {
     let title: String
     let count: Int
@@ -2203,7 +2194,7 @@ private extension WorkspaceGitFileStatus {
         switch self {
         case .modified: return Color(hex: theme.semanticColors.skill)
         case .added: return Color(hex: theme.semanticColors.diffAdded)
-        case .deleted: return Color(hex: theme.semanticColors.diffRemoved)
+        case .deleted: return theme.dangerColor
         case .untracked: return theme.sidebarColor(theme.foregroundColor, opacity: theme.glyphInkOpacity)
         case .renamed: return Color(hex: theme.semanticColors.skill)
         }
@@ -2446,7 +2437,7 @@ private struct SidebarNameInputSheet: View {
                 if let validationMessage {
                     Text(validationMessage)
                         .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
-                        .foregroundStyle(Color(hex: theme.semanticColors.diffRemoved))
+                        .foregroundStyle(theme.dangerColor)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

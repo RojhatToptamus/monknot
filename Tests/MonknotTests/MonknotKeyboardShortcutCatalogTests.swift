@@ -35,6 +35,10 @@ final class MonknotKeyboardShortcutCatalogTests: XCTestCase {
                 .init(title: "Find Previous", shortcut: "⇧⌘G"),
             ],
             "Writing": [
+                .init(title: "Bold", shortcut: "⌘B"),
+                .init(title: "Italic", shortcut: "⌘I"),
+                .init(title: "Inline Code", shortcut: "⌘E"),
+                .init(title: "Link", shortcut: "⌘K"),
                 .init(title: "Go to Heading", shortcut: "⇧⌘O"),
                 .init(title: "Complete Wikilink after [[", shortcut: "⇥"),
                 .init(title: "Inspect Links", shortcut: "⌥⌘L"),
@@ -60,7 +64,7 @@ final class MonknotKeyboardShortcutCatalogTests: XCTestCase {
         for section in MonknotKeyboardShortcutCatalog.sections {
             XCTAssertEqual(section.entries, expected[section.title], section.title)
         }
-        XCTAssertEqual(allEntries.count, 33)
+        XCTAssertEqual(allEntries.count, 37)
     }
 
     func testShortcutsUseAppleKeySymbolsRatherThanWordsOrAscii() {

@@ -12,7 +12,6 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
     let isTerminalPresented: Bool
     let isTerminalFullscreen: Bool
     let layoutScale: CGFloat
-    let separatorColor: NSColor
     let handleInkColor: NSColor
     /// The document and terminal sit on cards inset from the chrome (design.md §10.0).
     let cardStyle: WorkspaceCardStyle
@@ -34,7 +33,6 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
         isTerminalPresented: Bool,
         isTerminalFullscreen: Bool = false,
         layoutScale: CGFloat,
-        separatorColor: NSColor,
         handleInkColor: NSColor,
         onDocumentLeadingEdgeChange: ((CGFloat) -> Void)? = nil,
         cardStyle: WorkspaceCardStyle = .none,
@@ -50,7 +48,6 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
         self.isTerminalPresented = isTerminalPresented
         self.isTerminalFullscreen = isTerminalFullscreen
         self.layoutScale = layoutScale
-        self.separatorColor = separatorColor
         self.handleInkColor = handleInkColor
         self.onDocumentLeadingEdgeChange = onDocumentLeadingEdgeChange
         self.cardStyle = cardStyle
@@ -74,7 +71,6 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
             isTerminalPresented: isTerminalPresented,
             isTerminalFullscreen: isTerminalFullscreen,
             layoutScale: layoutScale,
-            separatorColor: separatorColor,
             handleInkColor: handleInkColor,
             sidebarRevealRequest: sidebarRevealRequest,
             terminalRevealRequest: terminalRevealRequest,
@@ -98,7 +94,6 @@ struct WorkspaceSplitView<Sidebar: View, Detail: View, Terminal: View>: NSViewCo
             isTerminalPresented: isTerminalPresented,
             isTerminalFullscreen: isTerminalFullscreen,
             layoutScale: layoutScale,
-            separatorColor: separatorColor,
             handleInkColor: handleInkColor,
             sidebarRevealRequest: sidebarRevealRequest,
             terminalRevealRequest: terminalRevealRequest,
@@ -159,6 +154,9 @@ enum WorkspaceSplitMetrics {
     static let legacyAutosaveName = "Monknot.WorkspaceSplit"
     static let legacyTerminalWidthKey = "Monknot.terminalDrawerWidth"
     static let migrationMarkerKey = "Monknot.WorkspaceSplit.ThreePane.didMigrate"
+    /// Set once the first window under `autosaveName` has opened its sidebar at the default width;
+    /// every later window restores the layout AppKit saved.
+    static let defaultSidebarWidthAppliedKey = autosaveName + ".defaultSidebarWidthApplied"
 
     // NSSplitView treats 490 as the priority at which a split item may no
     // longer move during divider tracking. Keep every item below that boundary.
@@ -178,11 +176,12 @@ enum WorkspaceSplitMetrics {
 /// calculates or stores pane widths; native divider tracking remains the sole
 /// geometry writer.
 final class WorkspaceNativeSplitView: NSSplitView {
-    var separatorColor: NSColor = .separatorColor {
-        didSet { needsDisplay = true }
-    }
     var handleInkColor: NSColor = .labelColor {
-        didSet { needsDisplay = true }
+        didSet {
+            // The representable hands over a new colour object on every update.
+            guard !handleInkColor.isEqual(oldValue) else { return }
+            needsDisplay = true
+        }
     }
     var dividerHitWidth: CGFloat = WorkspaceSplitMetrics.dividerHitWidth {
         didSet {
@@ -503,7 +502,7 @@ final class WorkspaceSidePaneController: NSViewController {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// The card the content sits on and its margins inside the pane; nil draws none (the sidebar).
+    /// The card the content sits on and its margins inside the pane. The sidebar sets none and sits on the chrome.
     func setCard(fill: NSColor, ring: NSColor, cornerRadius: CGFloat, insets: NSEdgeInsets) {
         loadViewIfNeeded()
         (view as? PaneView)?.setCard(fill: fill, ring: ring, cornerRadius: cornerRadius, insets: insets)
@@ -582,7 +581,8 @@ final class WorkspaceSidePaneController: NSViewController {
         /// The card follows the pane; the content inside keeps the open width during a transition,
         /// pinned to the edge away from the window side.
         private func layoutContent() {
-            if heldWidth == nil, bounds.width > 0 {
+            // A hidden pane may be shrunk to its minimum by AppKit; that is not a width it rested at.
+            if heldWidth == nil, bounds.width > 0, !isHiddenOrHasHiddenAncestor {
                 restingWidth = bounds.width
             }
             let width = max(bounds.width, heldWidth ?? 0)
@@ -781,6 +781,9 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         /// macOS 15 can normalize a hidden arranged view to its minimum width, so the width a pane had
         /// is kept while, and only while, it is collapsed.
         var collapsedWidth: CGFloat?
+        /// The width an animated reveal is opening to, while it runs: a pane closed partway through
+        /// keeps this rather than the half-open frame.
+        var revealTargetWidth: CGFloat?
         var lastReportedPresentation: Bool?
         var needsForcedReport = false
         var onPresentationChange: (_ isPresented: Bool, _ userInitiated: Bool) -> Void
@@ -817,9 +820,7 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         }
     }
 
-    var onDocumentLeadingEdgeChange: ((CGFloat) -> Void)? {
-        didSet { lastReportedDocumentLeadingEdge = nil }
-    }
+    var onDocumentLeadingEdgeChange: ((CGFloat) -> Void)?
     private var lastReportedDocumentLeadingEdge: CGFloat?
 
     /// Reports where the document card starts, once per change and outside the layout pass that
@@ -896,7 +897,6 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         isTerminalPresented: Bool,
         isTerminalFullscreen: Bool = false,
         layoutScale: CGFloat,
-        separatorColor: NSColor,
         handleInkColor: NSColor,
         sidebarRevealRequest: UInt = 0,
         terminalRevealRequest: UInt = 0,
@@ -948,7 +948,6 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
 
         workspaceSplitView.isVertical = true
         workspaceSplitView.dividerStyle = .thin
-        workspaceSplitView.separatorColor = separatorColor
         workspaceSplitView.handleInkColor = handleInkColor
         splitView = workspaceSplitView
 
@@ -957,9 +956,9 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         addSplitViewItem(detailItem)
         addSplitViewItem(terminalItem)
 
-        // A window with no saved layout under this name opens with the default sidebar width.
+        // The first window with this layout opens with the default sidebar width.
         appliesDefaultSidebarWidth = autosaveName == WorkspaceSplitMetrics.autosaveName
-            && UserDefaults.standard.object(forKey: "NSSplitView Subview Frames \(autosaveName)") == nil
+            && !UserDefaults.standard.bool(forKey: WorkspaceSplitMetrics.defaultSidebarWidthAppliedKey)
 
         // Assign only after all three native items exist so AppKit restores a
         // divider configuration against the authoritative hierarchy.
@@ -1013,6 +1012,9 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
     private func applyDefaultSidebarWidthIfNeeded() {
         guard appliesDefaultSidebarWidth, availableLayoutWidth > 0 else { return }
         appliesDefaultSidebarWidth = false
+        UserDefaults.standard.set(true, forKey: WorkspaceSplitMetrics.defaultSidebarWidthAppliedKey)
+        // A width AppKit's first passes left (its minimum) must not be restored over the default.
+        panes[.sidebar].collapsedWidth = nil
         let width = fittedWidth(retaining: WorkspaceSplitMetrics.sidebarDefaultWidth * layoutScale, for: .sidebar)
         guard sidebarItem.isCollapsed else {
             setNativeWidth(width, of: .sidebar)
@@ -1105,20 +1107,9 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
               let workspaceSplitView = splitView as? WorkspaceNativeSplitView else {
             return systemRect
         }
-
-        // AppKit hides a collapsed outer divider so it occupies exactly zero
-        // layout width. Its additive effective rect keeps that native divider
-        // reachable at the window edge without reintroducing a visible gutter.
+        // A collapsed pane's divider is the gap at the window edge. AppKit stops tracking it there,
+        // so this keeps it draggable and a pane can be pulled back out.
         return workspaceSplitView.hitRect(forDividerAt: dividerIndex)
-    }
-
-    /// A collapsed pane keeps its divider: the gap it leaves at the window edge is the margin around
-    /// the document card, so the card never moves when a pane opens or closes.
-    override func splitView(
-        _ splitView: NSSplitView,
-        shouldHideDividerAt dividerIndex: Int
-    ) -> Bool {
-        super.splitView(splitView, shouldHideDividerAt: dividerIndex)
     }
 
     private func isCollapsedOuterDivider(_ dividerIndex: Int) -> Bool {
@@ -1238,7 +1229,6 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         isTerminalPresented: Bool,
         isTerminalFullscreen: Bool = false,
         layoutScale: CGFloat,
-        separatorColor: NSColor,
         handleInkColor: NSColor,
         sidebarRevealRequest: UInt = 0,
         terminalRevealRequest: UInt = 0,
@@ -1264,7 +1254,6 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         panes.terminal.revealRequest = terminalRevealRequest
         panes.terminal.onPresentationChange = onTerminalPresentationChange
         self.isTerminalFullscreen = isTerminalFullscreen && isTerminalPresented
-        workspaceSplitView.separatorColor = separatorColor
         workspaceSplitView.handleInkColor = handleInkColor
 
         let normalizedScale = WorkspaceSplitMetrics.normalizedScale(layoutScale)
@@ -1443,6 +1432,7 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         // divider changes after a later resize.
         // The migrated widths are the user's own; the first-window default must not replace them.
         appliesDefaultSidebarWidth = false
+        UserDefaults.standard.set(true, forKey: WorkspaceSplitMetrics.defaultSidebarWidthAppliedKey)
         let legacyTerminalWidth = (UserDefaults.standard.object(
             forKey: WorkspaceSplitMetrics.legacyTerminalWidthKey
         ) as? NSNumber)?.doubleValue ?? 420
@@ -1809,7 +1799,8 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
 
     private func captureWidthBeforeCollapse(of pane: SidePane) {
         guard !item(for: pane).isCollapsed, panes[pane].collapsedWidth == nil else { return }
-        let width = nativePaneWidth(of: pane)
+        let width = panes[pane].revealTargetWidth ?? nativePaneWidth(of: pane)
+        panes[pane].revealTargetWidth = nil
         guard width.isFinite, width > 0 else { return }
         panes[pane].collapsedWidth = width
     }
@@ -1861,9 +1852,14 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         }
 
         // Opening and closing are the same native transition run in opposite directions. The
-        // content holds its open width throughout and slides under the window edge.
+        // content holds its open width throughout and slides under the window edge. A reveal opens
+        // to the width `restoreCollapsedWidthIfNeeded` gives it, so the hold and the announcement
+        // use that same width.
         let paneController = pane == .sidebar ? sidebarPane : terminalPane
-        let paneWidth = clampedWidth(restorableWidth(for: pane), for: pane)
+        let paneWidth = collapsed
+            ? clampedWidth(nativePaneWidth(of: pane), for: pane)
+            : fittedWidth(retaining: restorableWidth(for: pane), for: pane)
+        panes[pane].revealTargetWidth = collapsed ? nil : paneWidth
         let transition = paneController.beginTransition(fallbackWidth: paneWidth)
         // The document is laid out live on every frame, so its text reflows as the card moves. Where
         // the card goes is announced first, from the pane's width now (a reversal partway through
@@ -1872,8 +1868,8 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         let currentPaneWidth = splitView.arrangedSubviews[pane.arrangedIndex].isHidden ? 0 : nativePaneWidth(of: pane)
         let edgeShift = collapsed ? currentPaneWidth : max(0, paneWidth - currentPaneWidth)
         let documentTransition = announceDocumentTransition(
-            leadingShift: pane == .sidebar ? (collapsed ? -edgeShift : edgeShift) : 0,
-            trailingShift: pane == .terminal ? (collapsed ? edgeShift : -edgeShift) : 0
+            moving: pane,
+            shift: (pane == .sidebar) == collapsed ? -edgeShift : edgeShift
         )
         if var started = documentTransition, let window = view.window {
             started.startedAt = Date()
@@ -1889,6 +1885,12 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
             item.animator().isCollapsed = collapsed
         } completionHandler: { [weak self, weak paneController] in
             MainActor.assumeIsolated {
+                if !collapsed, self?.panes[pane].revealTargetWidth == paneWidth {
+                    self?.panes[pane].revealTargetWidth = nil
+                }
+                if let documentTransition, self?.cardEdgeTargets[pane]?.id == documentTransition.id {
+                    self?.cardEdgeTargets[pane] = nil
+                }
                 paneController?.endTransition(transition)
                 if let documentTransition, let window = self?.view.window {
                     NotificationCenter.default.post(
@@ -1902,20 +1904,22 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
     }
 
     private var documentTransitionSerial: UInt = 0
+    /// Where each running side-pane transition takes the card's edge on its side, so a pane that
+    /// starts moving while the other one is (a narrow window trading one for the other) announces
+    /// where both leave the card.
+    private var cardEdgeTargets: [SidePane: (id: UInt, edge: CGFloat)] = [:]
 
-    /// Posts where the document card is and where it ends as a pane moves, or nothing when the
-    /// document is not on screen.
-    private func announceDocumentTransition(leadingShift: CGFloat, trailingShift: CGFloat) -> WorkspacePaneTransition? {
+    /// Posts where the document card is and where it ends as `pane` moves its edge of the card by
+    /// `shift`, or nothing when the document is not on screen.
+    private func announceDocumentTransition(moving pane: SidePane, shift: CGFloat) -> WorkspacePaneTransition? {
         guard let window = view.window, !detailItem.isCollapsed else { return nil }
         let card = detailPane.cardFrameInWindow
         guard card.width > 0 else { return nil }
-        let end = NSRect(
-            x: card.minX + leadingShift,
-            y: card.minY,
-            width: max(0, card.width - leadingShift + trailingShift),
-            height: card.height
-        )
+        let minX = pane == .sidebar ? card.minX + shift : cardEdgeTargets[.sidebar]?.edge ?? card.minX
+        let maxX = pane == .terminal ? card.maxX + shift : cardEdgeTargets[.terminal]?.edge ?? card.maxX
+        let end = NSRect(x: minX, y: card.minY, width: max(0, maxX - minX), height: card.height)
         documentTransitionSerial &+= 1
+        cardEdgeTargets[pane] = (documentTransitionSerial, pane == .sidebar ? minX : maxX)
         let transition = WorkspacePaneTransition(
             id: documentTransitionSerial,
             cardStart: card,

@@ -163,10 +163,9 @@ final class TerminalChromeLayoutTests: XCTestCase {
         )
         // The shared scroll thumb's lane (design.md §5.7).
         XCTAssertTrue(html.contains("width: \(Int(MonknotScrollbarStyle.trackWidth))px;"))
-        XCTAssertTrue(html.contains("--terminal-bg: \(theme.terminalSurfaceHex);"))
-        XCTAssertTrue(html.contains("\"background\":\"\(theme.terminalSurfaceHex)\""))
         // The terminal sits on a card on the document's canvas (design.md §10.0).
-        XCTAssertEqual(theme.terminalSurfaceHex, theme.background)
+        XCTAssertTrue(html.contains("--terminal-bg: \(theme.background);"))
+        XCTAssertTrue(html.contains("\"background\":\"\(theme.background)\""))
     }
 
     func testTerminalResizeKeepsTheFirstScrollbackAnchorAcrossObserverCallbacks() {

@@ -1,108 +1,6 @@
 import MonknotCore
 import SwiftUI
 
-struct MonknotRowButtonStyle: ButtonStyle {
-    let theme: AppTheme
-    let isSelected: Bool
-    var isActive = false
-    var cornerRadius: CGFloat = 8
-
-    /// design.md §5.1: `sel` when selected, otherwise press, then hover. A disabled row draws neither,
-    /// so it never looks clickable; a label that sets its own ink must also switch to `ink4` itself.
-    static func fill(
-        theme: AppTheme,
-        isSelected: Bool,
-        isActive: Bool,
-        isHovered: Bool,
-        isPressed: Bool,
-        isEnabled: Bool
-    ) -> Color {
-        // A neutral fill, like a highlighted menu row in the editor (design.md §1.4).
-        if isSelected {
-            return theme.chromeSelectedFillColor
-        }
-        guard isEnabled else { return .clear }
-        if isPressed {
-            return theme.pressedFillColor
-        }
-        if isActive || isHovered {
-            return theme.hoverFillColor
-        }
-        return .clear
-    }
-
-    func makeBody(configuration: Configuration) -> some View {
-        MonknotRowButtonStyleBody(
-            configuration: configuration,
-            theme: theme,
-            isSelected: isSelected,
-            isActive: isActive,
-            cornerRadius: cornerRadius
-        )
-    }
-
-    private struct MonknotRowButtonStyleBody: View {
-        let configuration: Configuration
-        let theme: AppTheme
-        let isSelected: Bool
-        let isActive: Bool
-        let cornerRadius: CGFloat
-        @Environment(\.isEnabled) private var isEnabled
-        @State private var isHovered = false
-
-        var body: some View {
-            // Fill and ink changes animate colour only, never a frame.
-            configuration.label
-                .monknotStateStyle(foreground)
-                .background {
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .monknotStateStyle(background)
-                }
-                .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
-                .onHover { isHovered = $0 }
-                .monknotPointerCursor(enabled: isEnabled)
-        }
-
-        private var background: Color {
-            MonknotRowButtonStyle.fill(
-                theme: theme,
-                isSelected: isSelected,
-                isActive: isActive,
-                isHovered: isHovered,
-                isPressed: configuration.isPressed,
-                isEnabled: isEnabled
-            )
-        }
-
-        private var foreground: Color {
-            if !isEnabled, !isSelected {
-                return theme.disabledForegroundColor
-            }
-            if isSelected || isActive || isHovered || configuration.isPressed {
-                return theme.foregroundColor
-            }
-            return theme.mutedForegroundColor
-        }
-    }
-}
-
-struct MonknotListRow<Label: View>: View {
-    let theme: AppTheme
-    let isSelected: Bool
-    let action: () -> Void
-    @ViewBuilder let label: () -> Label
-
-    var body: some View {
-        Button(action: action) {
-            label()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(MonknotRowButtonStyle(theme: theme, isSelected: isSelected))
-        .monknotPointerCursor()
-    }
-}
-
 /// What a menu row shows in its glyph column.
 enum MonknotMenuRowLeading {
     case none
@@ -139,12 +37,14 @@ struct MonknotMenuRowLabel<Trailing: View>: View {
     var indentBase: CGFloat = 0
     /// The current item (the open workspace): an `accent` glyph (design.md §1.3, place 2).
     var isCurrent = false
-    /// The row ↑↓ or the pointer has chosen: its glyph goes to `ink`, as in the editor's menus.
+    /// The row ↑↓ has chosen: its glyph goes to `ink`, as in the editor's menus. The pointer's row
+    /// rises the same way through `MonknotMenuRowButtonStyle`.
     var isHighlighted = false
     var isDisabled = false
     let theme: AppTheme
     let zoomScale: Double
     @ViewBuilder var trailing: () -> Trailing
+    @Environment(\.monknotRowIsHighlighted) private var isRowHighlighted
 
     private func density(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
@@ -216,7 +116,7 @@ struct MonknotMenuRowLabel<Trailing: View>: View {
         if isCurrent {
             return theme.accentColor
         }
-        return isHighlighted ? theme.foregroundColor : theme.mutedForegroundColor
+        return isHighlighted || isRowHighlighted ? theme.foregroundColor : theme.mutedForegroundColor
     }
 }
 
@@ -250,18 +150,19 @@ extension MonknotMenuRowLabel where Trailing == EmptyView {
 }
 
 /// A menu row's fills: `selected` for the current or keyboard-chosen row, `press` while held and the
-/// `hover` (highlight) fill under the pointer. Its ink is the label's own (`MonknotMenuRowLabel`).
+/// `hover` (highlight) fill under the pointer, on the row's radius 8. Hovered or held, it tells
+/// `MonknotMenuRowLabel` to raise its glyph to `ink`.
 struct MonknotMenuRowButtonStyle: ButtonStyle {
     let theme: AppTheme
+    let zoomScale: Double
     var isSelected = false
-    var cornerRadius: CGFloat = 8
 
     func makeBody(configuration: Configuration) -> some View {
         MonknotMenuRowButtonStyleBody(
             configuration: configuration,
             theme: theme,
             isSelected: isSelected,
-            cornerRadius: cornerRadius
+            cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
         )
     }
 
@@ -275,6 +176,7 @@ struct MonknotMenuRowButtonStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
+                .environment(\.monknotRowIsHighlighted, isEnabled && (isHovered || configuration.isPressed))
                 .background {
                     RoundedRectangle(cornerRadius: cornerRadius)
                         .monknotStateStyle(fill)
@@ -285,14 +187,13 @@ struct MonknotMenuRowButtonStyle: ButtonStyle {
         }
 
         private var fill: Color {
-            if isSelected {
-                return theme.chromeSelectedFillColor
-            }
-            guard isEnabled else { return .clear }
-            if configuration.isPressed {
-                return theme.pressedFillColor
-            }
-            return isHovered ? theme.hoverFillColor : .clear
+            MonknotListRowButtonStyle.fill(
+                theme: theme,
+                isSelected: isSelected,
+                isHovered: isHovered,
+                isPressed: configuration.isPressed,
+                isEnabled: isEnabled
+            )
         }
     }
 }
@@ -336,23 +237,48 @@ struct MonknotMenuSeparator: View {
 }
 
 extension EnvironmentValues {
-    /// True while the pointer is over a list row or the row is held down; its label and glyph then go
-    /// to `ink` (design.md §1.4).
+    /// True while the pointer is over a row, the row is held down or its menu is open; its label and
+    /// glyph then go to `ink` (design.md §1.4).
     @Entry var monknotRowIsHighlighted = false
 }
 
-/// Fills a list row (the sidebar, Recents, Settings' sections): `selected` when selected, `press` while
-/// held, `hover` under the pointer, and tells `MonknotListRowLabel` when to raise its ink.
+/// Fills a list row (the sidebar and its header, Recents, Find in Workspace's results, Links, Settings'
+/// sections): `selected` when selected, `press` while held or while its menu is open, `hover` under the
+/// pointer, and tells the row's label (`MonknotListRowLabel`) when to raise its ink.
 struct MonknotListRowButtonStyle: ButtonStyle {
     let theme: AppTheme
     let zoomScale: Double
     var isSelected = false
+    /// Its popover or menu is showing (the workspace switcher): `press` and `ink` until it closes, as an
+    /// open icon button or pop-up (design.md §5.1).
+    var isOpen = false
+
+    /// design.md §1.4: the neutral `selected` fill when selected, otherwise `press` while held or open,
+    /// then `hover`. A disabled row draws neither, so it never looks clickable, but keeps its selection.
+    static func fill(
+        theme: AppTheme,
+        isSelected: Bool,
+        isOpen: Bool = false,
+        isHovered: Bool,
+        isPressed: Bool,
+        isEnabled: Bool
+    ) -> Color {
+        if isSelected {
+            return theme.chromeSelectedFillColor
+        }
+        guard isEnabled else { return .clear }
+        if isPressed || isOpen {
+            return theme.pressedFillColor
+        }
+        return isHovered ? theme.hoverFillColor : .clear
+    }
 
     func makeBody(configuration: Configuration) -> some View {
         RowBody(
             configuration: configuration,
             theme: theme,
             isSelected: isSelected,
+            isOpen: isOpen,
             cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
         )
     }
@@ -361,27 +287,29 @@ struct MonknotListRowButtonStyle: ButtonStyle {
         let configuration: Configuration
         let theme: AppTheme
         let isSelected: Bool
+        let isOpen: Bool
         let cornerRadius: CGFloat
         @Environment(\.isEnabled) private var isEnabled
         @State private var isHovered = false
 
         var body: some View {
-            // Fill and ink changes animate colour only, here and in MonknotListRowLabel, never a frame.
+            // Fill and ink changes animate colour only, here and in the row's label, never a frame.
             configuration.label
-                .environment(\.monknotRowIsHighlighted, isEnabled && (isHovered || configuration.isPressed))
+                .environment(\.monknotRowIsHighlighted, isEnabled && (isHovered || configuration.isPressed || isOpen))
                 .background {
                     RoundedRectangle(cornerRadius: cornerRadius)
                         .monknotStateStyle(fill)
                 }
+                .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
                 .onHover { isHovered = $0 }
                 .monknotPointerCursor(enabled: isEnabled)
         }
 
         private var fill: Color {
-            MonknotRowButtonStyle.fill(
+            MonknotListRowButtonStyle.fill(
                 theme: theme,
                 isSelected: isSelected,
-                isActive: false,
+                isOpen: isOpen,
                 isHovered: isHovered,
                 isPressed: configuration.isPressed,
                 isEnabled: isEnabled
@@ -410,7 +338,7 @@ struct MonknotDisclosureChevron: View {
             // Only the turn animates. A value-keyed animation here would also animate the row's
             // move when the list lays out the folder's children in the same transaction, so the
             // chevron would draw at its old place and slide back.
-            .animation(MonknotMotion.disclosureAnimation(reduceMotion: reduceMotion)) {
+            .animation(MonknotMotion.stateMotion(reduceMotion: reduceMotion)) {
                 $0.rotationEffect(.degrees(isExpanded ? 90 : 0))
             }
             .frame(width: glyphScaled(MonknotMetrics.rowIconColumnWidthBase))

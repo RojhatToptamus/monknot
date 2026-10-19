@@ -13,7 +13,7 @@ final class DocumentTabBarLayoutTests: XCTestCase {
                 theme: .defaultLight,
                 zoomScale: zoomScale
             )
-            let leadingInset = MonknotMetrics.chromeHorizontalPadding(
+            let leadingInset = MonknotMetrics.titlebarLeadingInset(
                 theme: .defaultLight,
                 zoomScale: zoomScale
             )

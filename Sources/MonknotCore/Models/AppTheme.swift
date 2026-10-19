@@ -351,15 +351,58 @@ public extension AppTheme {
     /// §10.0). It sits below the canvas in both modes, so the document card reads as lifted out of
     /// it: a step toward the ink in light themes, a step toward black in dark ones. The step is large
     /// enough to see on tinted canvases such as Catppuccin Latte, where a 3 % step disappeared.
-    var sidebarSurfaceHex: String {
+    var chromeSurfaceHex: String {
         isDark
             ? AppTheme.blendHex(background, toward: "#000000", amount: 0.28)
             : recessedSurfaceHex(amount: 0.055)
     }
 
     /// The terminal sits on a card beside the document's, on the same canvas (design.md §10.0).
-    var terminalSurfaceHex: String {
-        background
+}
+
+// MARK: - Fills and floating surfaces (design.md §1.2, §2.1)
+
+/// The chrome and Preview's page read these, so a native menu and a menu on the page cannot drift.
+public extension AppTheme {
+    /// `hover`: the one hover fill for every row, tab, cell and button.
+    var hoverInkOpacity: Double {
+        isDark ? 0.06 : 0.055
+    }
+
+    /// `press`: replaces the hover fill while a control is held down.
+    var pressInkOpacity: Double {
+        isDark ? 0.11 : 0.10
+    }
+
+    /// `selected`: a selected sidebar or Settings row, the active terminal session, and the highlighted
+    /// row of every menu, native or on Preview's page.
+    var selectedInkOpacity: Double {
+        isDark ? 0.10 : 0.09
+    }
+
+    /// `accsoft`: the 3 pt ring around a focused field.
+    var accentSoftOpacity: Double {
+        isDark ? 0.18 : 0.14
+    }
+
+    /// The fill of a floating surface — a menu, popover or the format bar (`surf2`).
+    var floatingSurfaceHex: String {
+        recessedSurfaceHex(amount: isDark ? 0.11 : 0.05)
+    }
+
+    /// A floating surface's shadow hue: black in dark themes; in light ones the ink with 10 % of the
+    /// accent, so the shadow takes the theme's temperature instead of going muddy.
+    var floatingShadowHex: String {
+        isDark ? "#000000" : AppTheme.blendHex(foreground, toward: accent, amount: 0.10)
+    }
+
+    /// A floating surface's inset ring: white at 14 % in dark themes, the shadow hue at 8 % in light ones.
+    var floatingRingHex: String {
+        isDark ? "#FFFFFF" : floatingShadowHex
+    }
+
+    var floatingRingOpacity: Double {
+        isDark ? 0.14 : 0.08
     }
 }
 
@@ -410,7 +453,7 @@ public extension AppTheme {
         let factor = inkLadderContrastFactor
         let key = "\(foreground)|\(background)|\(isDark)|\(factor)"
         if let cached = InkLadder.cache.value(for: key) { return cached }
-        let surfaces = [sidebarSurfaceHex, background]
+        let surfaces = [chromeSurfaceHex, background]
         let ladder = InkLadder(
             label: Self.inkOpacity(ink: foreground, over: surfaces, ratio: 4.5, base: min(0.95, 0.72 * factor)),
             glyph: Self.inkOpacity(ink: foreground, over: surfaces, ratio: 3.0, base: min(0.80, 0.50 * factor))

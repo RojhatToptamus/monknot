@@ -191,12 +191,18 @@ Shorter and more specific is preferable to polished but meaningless copy.
   Markdown. Unrendered Markdown therefore survives byte for byte.
 - Each top-level block and each editable unit (paragraph, heading, item text, table cell, code block,
   raw block, empty line) maps visible text offsets to source offsets. After a patch only the affected
-  blocks are re-parsed (resynchronising at the next unchanged block) and replaced in the page.
+  blocks are re-parsed (resynchronising at the next unchanged block) and replaced in the page; an edit
+  inside a top-level toggle, list or quote re-renders that whole block, a footnote's text is updated in
+  place, and only a changed link reference or footnote key renders the whole document again.
 - The page is the single writer while Preview is editable. It posts each patch with a version number
   to `MarkdownPreviewView.Coordinator` (`monknotEditor` message), which mirrors the page's text,
-  applies the patch through `WorkspaceStore.applyTextMutation` and records undo in
-  `MarkdownVisualEditingSession`. Store changes the page did not make (file changed on disk) and undo
-  or redo go back to the page as patches; a mismatch resets the page to the store's text.
+  moves local edits past app patches the page has not applied yet, applies the patch through
+  `WorkspaceStore.applyTextMutation` and records undo in `MarkdownVisualEditingSession`. Store changes
+  the page did not make (file changed on disk) are diffed against the text already sent, go to the page
+  as patches and clear Preview's undo history. Undo and redo apply to the store first, as one combined
+  patch checked against the text it removes and 32 characters on each side; a step that no longer fits
+  beeps and changes nothing. A mismatch resets the page to the store's text. Files dropped on the page
+  go through the same import as the Image, Video, Audio and File blocks (`dropFiles`).
 - `MarkdownVisualEditingSession` is owned by `EditorPaneView`, so Preview's undo history survives a
   switch to Source and back; steps verify the text they change. `MarkdownEditorWebView` hands the Edit
   menu that undo manager and drops WebKit's own undo registrations.
@@ -204,7 +210,8 @@ Shorter and more specific is preferable to polished but meaningless copy.
   the floating format bar, link card and editor, and table bar live in the page (`editor.js` `UI`);
   the block handles and drag-and-drop are `editor.js` `Handles`. All are styled by `editor.css` from
   theme tokens; SF Symbols come from `MarkdownEditorSymbolAssets` as mask images, and
-  `MarkdownPresentationTokenTests` checks every glyph the page asks for is drawn. There is no docked
+  `MarkdownPresentationTokenTests` checks the glyphs the page asks for and the glyphs drawn match,
+  both ways. There is no docked
   Markdown toolbar in any view mode; the word count is `MarkdownWordCountLabel` in the editor's corner.
   design.md §10.10 is the interaction spec.
 - Notion's blocks map to Markdown the renderer parses: toggles are `<details>`/`<summary>` (an unclosed
@@ -224,8 +231,11 @@ Shorter and more specific is preferable to polished but meaningless copy.
   (`MarkdownPreviewFlow.swift`, owned and torn down by `MarkdownPreviewView.Coordinator`) runs Source's
   pipeline (`EditorFlowCheckPlanner`, the `EditorFlowCheckingClient` checker, `FlowSentenceRepairService`,
   `FlowProseCompletionService`, cooldowns and suppression) on the coordinator's mirror of the source and
-  the caret's source offset, and every repair decision comes from `EditorFlowRepairPolicy`, which Source
-  uses too. The page reports `focus`, its version and focus with each `selection`, and `flow` messages
+  the caret's source offset, and every repair decision, the timings (`EditorFlowTiming`) and the model
+  cooldowns (`EditorFlowModelCooldown`) come from `EditorFlowRepairPolicy.swift`, which Source uses too;
+  only the async pipeline and the presentation are per editor. Preview scans for protected Markdown
+  only while a Flow setting is on, and its context menu's Ignore Spelling also reaches Flow's spell
+  document tag. The page reports `focus`, its version and focus with each `selection`, and `flow` messages
   (accept, dismiss, cancel, unrendered, declined, settled, revert); the coordinator answers with
   `MonknotEditor.flow` (`configure`, `review`, `ghost`, `clear`, `apply`, `revertRefused`, after which
   the page deletes as ⌫ would have). ⌫ takes a fix back only while its `⌫ undo` hint shows, which
@@ -303,7 +313,7 @@ App-layer code should stay in `Sources/Monknot` when it uses SwiftUI state, AppK
 - `TerminalSessionStore`: owns one terminal's transcript, working directory, lifecycle, resize, and PTY interaction.
 - `TerminalPTYSession`: low-level `/bin/zsh` PTY process management using `forkpty`, dispatch read sources, and wait handling.
 - `MarkdownPDFExportService`: uses an offscreen `WKWebView`, `WKPDFConfiguration`, and `PDFKit.PDFDocument` to export paginated PDFs.
-- Writing assistance: `MarkdownTextEditor.Coordinator` runs it for Source, `MarkdownPreviewFlowCoordinator` for Preview; both take their repair decisions from `EditorFlowRepairPolicy` (`Support/EditorFlowRepairPolicy.swift`) and `EditorFlowAIRepairValidator`. Change a decision there, not in one editor.
+- Writing assistance: `MarkdownTextEditor.Coordinator` runs it for Source, `MarkdownPreviewFlowCoordinator` for Preview; both take their repair decisions from `EditorFlowRepairPolicy` (`Support/EditorFlowRepairPolicy.swift`) and `EditorFlowAIRepairValidator`, and their timings and cooldowns from `EditorFlowTiming` / `EditorFlowModelCooldown` in the same file. Change a decision there, not in one editor; only the async pipeline around those decisions (request tokens, deadlines, the checker and model calls, Source's diagnostics) is still written once per editor.
 
 ## Platform API Usage
 
@@ -370,23 +380,33 @@ Before adding custom parsing, indexing, PDF handling, file watching, or renderin
   The document and terminal sit on rounded cards (`WorkspaceCardView`, styled by
   `WorkspaceCardStyle`) inside their split panes. The 6pt dividers are the gaps, and a collapsed
   pane keeps its divider as the window margin, so the fit math always counts both dividers
-  (design.md §10.0). Controls are fills, never outlines; selection is the neutral
+  (design.md §10.0). The titlebar's edges sit on the columns below them: the traffic lights start on
+  the sidebar's glyph column and the last control ends over the terminal bar's buttons
+  (`MonknotMetrics.titlebarLeadingInset` / `titlebarTrailingInset`, design.md §10.1). The first window
+  under the split's autosave name opens its sidebar at the default width and records that in
+  `WorkspaceSplitMetrics.defaultSidebarWidthAppliedKey`; later windows restore AppKit's saved layout. Controls are fills, never outlines; selection is the neutral
   `chromeSelectedFillColor`; the active tab on the chrome and a selected segment are the one chip
   (`chipFillColor`, `chipRingColor`, `chipShadowColor`). The ink ladder is derived per theme
   (`AppTheme.labelInkOpacity` / `glyphInkOpacity`, scaled by the theme's contrast) and shared with the
   Preview editor's `--mk-ink2/3/4`. Build chrome from the shared components in
   `Sources/Monknot/Support/Design`, never a local copy: `MonknotIconButton` (28/17 in bars, 22/13 in
   rows and fields) and `MonknotMenuButton`, `MonknotTab` (files and terminal sessions),
-  `MonknotBar` (every 40 pt bar below the titlebar), `MonknotSegmentedControl`, `MonknotPopUpButton`,
+  `MonknotBar` (every 40 pt bar below the titlebar; the `.list` inset for a header over a list) and
+  `MonknotBanner` (the file-changed banner and the PDF markup hint), `MonknotChip` (the active tab and
+  the selected segment), `MonknotSegmentedControl`, `MonknotPopUpButton`,
   `View.monknotField`, `MonknotStepper`, `MonknotSlider`, `MonknotColorWell`, `MonknotListRowLabel`
-  with `MonknotListRowButtonStyle` (sidebar, Recents, Settings' sections), `MonknotMenuRowLabel` with
+  with `MonknotListRowButtonStyle` (sidebar and its header, Recents, Find in Workspace's results,
+  Links, Settings' sections), `MonknotMenuRowLabel` with
   `MonknotMenuRowButtonStyle` (popovers and overlays), `MonknotDocumentGlyph` (a file's glyph with its
   save state), and `MonknotTypography`'s three styles (label 13/400, title 13/600, secondary 12/400).
+  Every component, Settings' included, takes `zoomScale`. `danger` comes from `dangerColor` /
+  `dangerSoftFillColor`, never `semanticColors.diffRemoved`.
   Panel toggles never take an on state. A state change animates only its colour or opacity
   (`monknotStateStyle`, `monknotStateOpacity` in `MonknotMotion.swift`); a control never takes
   `.animation(_:value:)`, which also slides a frame that moves in the same update
-  (`MonknotMotionContractTests`). Every scroll bar is `MonknotScrollbarStyle`'s thumb; Preview draws it with `html.mk-legacy-scrollbars`
-  (preview.css) when the system shows scroll bars always, a class `MarkdownRenderService` puts on
+  (`MonknotMotionContractTests`). Every scroll bar except an HTML file's own page (which keeps WebKit's) is `MonknotScrollbarStyle`'s thumb; Preview draws it with `html.mk-legacy-scrollbars`
+  (CSS the shell gets from `MarkdownRenderService`, built from `ScrollThumbGeometry`, which
+  `MonknotScrollbarStyle` takes its numbers from too) when the system shows scroll bars always, a class `MarkdownRenderService` puts on
   the shell's root (`legacyScrollbars`) so WebKit's own bar never paints first. During a
   side-pane transition the document is laid out live on every frame (Source and the
   SwiftUI chrome reflow natively), and `WorkspaceSplitViewController` posts
@@ -490,9 +510,12 @@ Current XCTest coverage focuses on `MonknotCore`:
 - `WorkspaceTabStateTests`: open, order, pin, close, remap, prune, and closed-tab history behavior.
 - `UnsavedChangesIntegrityTests` (app target): hosted editor and PDF viewer sweeps showing that opening, viewing, switching, saving, renaming and reviewing documents never marks unedited files as unsaved, and that a file only counts as changed on disk when its contents changed.
 - `MarkdownRendererJavaScriptTests`: renderer output in JavaScriptCore.
-- `MarkdownPreviewFlowTests` (app target): writing assistance in Preview in real WebKit with fake checker and models: a certain fix as one undo step that ⌫ takes back (only while its hint shows; a refused revert still deletes), a declined fix offered again, fixes after emoji and in list items and headings, reviewed repairs (Tab, →, Esc, a trailing space), Apple Intelligence's reviewed repair, completions (gating by setting and availability, Tab word and hold, typing that consumes, Esc, a dead-key composition right after a taken word), stale checks, Return, code, link addresses and table cells, nothing checked or asked of the models while a menu is open, Tab's list/table/menu meanings, settings off, Check Document Now and Show Writing Tools.
-- `MarkdownVisualEditorTests` (app target): Preview editing in real WebKit: typing, Return and Delete, Markdown shortcuts, Edit-menu undo and redo (also across a switch to Source), formatting, tasks, links, paste and copy, composition, tables, external changes, the slash rule, toggles, callouts, the + handle, drag-and-drop, the block menu and its shortcuts, 50 KB and 1 MB keystroke timing, and theme and narrow-window snapshots of the page, menus and handles (written to `MONKNOT_EDITOR_SNAPSHOT_DIR` when set).
-- `WorkspacePaneTransitionTests` (app target): a sidebar hidden at launch first opening at its default width, an animated reveal announcing where the card goes without starting layer animations of its own, and ContentView toggling panes outside a scene. `ContentWidthPreferenceTests` checks Source keeping the line at the top through a width change and the end of a live resize.
+- `MarkdownPreviewFlowTests` (app target): writing assistance in Preview in real WebKit with fake checker and models: a certain fix as one undo step that ⌫ takes back (only while its hint shows; a refused revert still deletes), a declined fix offered again, fixes after emoji and in list items and headings, reviewed repairs (Tab, →, Esc, a trailing space), Apple Intelligence's reviewed repair, completions (gating by setting and availability, Tab word and hold, typing that consumes, Esc, a dead-key composition right after a taken word), stale checks, Return, code, link addresses and table cells, nothing checked or asked of the models while a menu is open, a decline for an old caret, Ignore Spelling in the page's menu, Tab's list/table/menu meanings, settings off, Check Document Now and Show Writing Tools.
+- `EditorFlowRepairPolicyTests` (app target): the shared repair decisions without an editor: which fixes wait for review, issues overlapping protected Markdown, validation sentence offsets, routing after a check, the model cooldowns and the protected-range rebase.
+- `MarkdownVisualEditorTests` (app target): Preview editing in real WebKit: typing, Return and Delete, Markdown shortcuts, Edit-menu undo and redo (also across a switch to Source, after a Source edit or a change on disk, and refused without half-applying), an outside change racing a typed character, composition through `NSTextInputClient`, a click below the last block, smart dashes in code, a dropped file, formatting, tasks, links, paste and copy, composition, tables, external changes, the slash rule, toggles, callouts, the + handle, drag-and-drop, the block menu and its shortcuts, 50 KB and 1 MB keystroke timing, and theme and narrow-window snapshots of the page, menus and handles (written to `MONKNOT_EDITOR_SNAPSHOT_DIR` when set).
+- `MarkdownEditorMenuTests` (app target): the Preview editor's menus in real WebKit: one menu at a time, the table menu and bar, the code language, the link card, Turn Into's timing and every surface following a moved column.
+- `MonknotControlTests` (app target): every 28 pt control measures 28 at each zoom, the bar insets, icon-button open state, pop-up and menu-button commands, slider and stepper values, the switch's disabled state, the zoom level mapping and the danger tokens. `MonknotMotionContractTests` keeps `.animation(_:value:)` out of the app.
+- `WorkspacePaneTransitionTests` (app target): a sidebar hidden at launch first opening at its default width, a saved layout surviving the next window, an animated reveal announcing where the card goes without starting layer animations of its own, a web view holding still while a pane moves and taking the card again after, and ContentView toggling panes outside a scene. `WorkspaceSplitFullscreenTests` records the terminal taking the full width and giving it back, frame by frame. `ContentWidthPreferenceTests` checks Source keeping the line at the top through a width change and the end of a live resize.
 - `WorkspaceUITourTests` (app target): with `MONKNOT_UI_TRANSITION_DIR` set, `testCaptureTheSidePaneTransitions` records the window every few milliseconds while a side pane closes and opens (`MONKNOT_UI_TRANSITION_PANE=terminal`, `=fullscreen` for the terminal taking the full width and back, `=folder` for a sidebar folder clicked open and closed, `_COLD`, `_SOURCE`, `_TERMINAL`, `_FILE`, and `_LIKE_APP` for a large zoom in a full-screen window, vary it). Pages in a test process count as hidden, so it shows Source and the chrome moving but not Preview's reflow. With `MONKNOT_UI_TOUR_DIR` set, captures the whole workspace window (sidebar open and collapsed, terminal, Source and Preview, light and dark, narrow and wide, tabs, no workspace, Settings) for design reviews; `MONKNOT_UI_TOUR_ONLY` picks stops by name (`a|b`) and `MONKNOT_UI_TOUR_RAW` also keeps the window server's own image (with WebKit's scroll bars). It skips otherwise. `ContentView.InitialLayout` sets the side panes a window starts with and an overlay it opens once its document shows (Quick Open, Find, Find in Workspace, Keyboard Shortcuts).
 - `DocumentViewerRoutingTests` (app target): generated fixtures of every listed file type (text, extensionless, uppercase, binary and oversized text, PDF, raster images, video and audio) are scanned and opened in a hosted `EditorPaneView`; also image fit, media playback lifecycle, Open With and Recents.
 

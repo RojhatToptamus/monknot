@@ -6,7 +6,7 @@ import SwiftUI
 struct MarkdownPDFExportOptionsSheet: View {
     let document: WorkspaceDocument
     let theme: AppTheme
-    var zoomScale: Double = 1
+    let zoomScale: Double
     @Binding var options: MarkdownPDFExportOptions
     let isExporting: Bool
     let cancel: () -> Void
@@ -14,7 +14,7 @@ struct MarkdownPDFExportOptionsSheet: View {
 
     var body: some View {
         MonknotSheetLayout(title: "Export PDF", message: document.displayName, theme: theme, zoomScale: zoomScale, width: 520) {
-            SettingsGroupCard(theme: theme) {
+            SettingsGroupCard(theme: theme, zoomScale: zoomScale) {
                 popUpRow(
                     title: "Page size",
                     detail: "Paper size for this export",
@@ -22,7 +22,7 @@ struct MarkdownPDFExportOptionsSheet: View {
                         get: { options.pageSize.rawValue },
                         set: { options.pageSize = MarkdownPDFPageSize(rawValue: $0) ?? options.pageSize }
                     ),
-                    options: MarkdownPDFPageSize.allCases.map { ($0.rawValue, $0.title) }
+                    items: MarkdownPDFPageSize.allCases.map { MonknotPopUpItem(id: $0.rawValue, title: $0.title) }
                 )
 
                 popUpRow(
@@ -32,7 +32,7 @@ struct MarkdownPDFExportOptionsSheet: View {
                         get: { options.marginPreset.rawValue },
                         set: { options.marginPreset = MarkdownPDFMarginPreset(rawValue: $0) ?? options.marginPreset }
                     ),
-                    options: MarkdownPDFMarginPreset.allCases.map { ($0.rawValue, $0.title) }
+                    items: MarkdownPDFMarginPreset.allCases.map { MonknotPopUpItem(id: $0.rawValue, title: $0.title) }
                 )
 
                 popUpRow(
@@ -42,11 +42,12 @@ struct MarkdownPDFExportOptionsSheet: View {
                         get: { options.themeMode.rawValue },
                         set: { options.themeMode = MarkdownPDFThemeMode(rawValue: $0) ?? options.themeMode }
                     ),
-                    options: MarkdownPDFThemeMode.allCases.map { ($0.rawValue, $0.title) }
+                    items: MarkdownPDFThemeMode.allCases.map { MonknotPopUpItem(id: $0.rawValue, title: $0.title) }
                 )
 
                 SettingsSliderRow(
                     theme: theme,
+                    zoomScale: zoomScale,
                     title: "Scale",
                     detail: "Scale the content before it is paginated",
                     value: Binding(
@@ -59,6 +60,7 @@ struct MarkdownPDFExportOptionsSheet: View {
 
                 SettingsSliderRow(
                     theme: theme,
+                    zoomScale: zoomScale,
                     title: "Text size",
                     detail: "Base body text size in points",
                     value: Binding(
@@ -71,6 +73,7 @@ struct MarkdownPDFExportOptionsSheet: View {
 
                 SettingsSliderRow(
                     theme: theme,
+                    zoomScale: zoomScale,
                     title: "Content width",
                     detail: "Share of the printable page used by content",
                     showsDivider: false,
@@ -95,22 +98,21 @@ struct MarkdownPDFExportOptionsSheet: View {
             )
             .keyboardShortcut(.defaultAction)
         }
-        // The Settings rows read their zoom from the environment.
-        .environment(\.monknotSettingsZoomScale, zoomScale)
     }
 
     private func popUpRow(
         title: String,
         detail: String,
         selection: Binding<String>,
-        options: [(String, String)]
+        items: [MonknotPopUpItem]
     ) -> some View {
-        SettingsRow(theme: theme, title: title, detail: detail) {
-            MonknotSettingsMenuPicker(
-                title: title,
+        SettingsRow(theme: theme, zoomScale: zoomScale, title: title, detail: detail) {
+            MonknotPopUpButton(
+                label: title,
                 selection: selection,
-                options: options,
-                theme: theme
+                items: items,
+                theme: theme,
+                zoomScale: zoomScale
             )
         }
     }

@@ -135,7 +135,7 @@ struct DocumentTabBar: View {
                         showsTrailing: overflow.hasTrailingOverflow,
                         theme: theme,
                         zoomScale: zoomScale,
-                        surface: theme.sidebarSurfaceColor
+                        surface: theme.chromeSurfaceColor
                     )
                 }
                 .frame(width: viewportWidth, height: chromeRowHeight)
@@ -286,7 +286,7 @@ private struct DocumentTabItemView: View {
             isSelected: isSelected,
             placement: .chrome,
             status: status,
-            glyphTint: isMissing ? Color(hex: theme.semanticColors.diffRemoved) : nil,
+            glyphTint: isMissing ? theme.dangerColor : nil,
             badges: badges,
             isDisabled: isDisabled,
             isDragging: isDragging,

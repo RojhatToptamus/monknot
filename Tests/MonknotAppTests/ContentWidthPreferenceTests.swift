@@ -256,7 +256,8 @@ final class ContentWidthPreferenceTests: XCTestCase {
             ContentWidthPreference.editorHorizontalInset(
                 viewportWidth: textView.bounds.width,
                 contentWidthPercent: 100,
-                zoomScale: WorkspaceZoomPolicy.minimum
+                zoomScale: WorkspaceZoomPolicy.minimum,
+                fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.minimum)
             ),
             accuracy: 0.5
         )
@@ -286,7 +287,8 @@ final class ContentWidthPreferenceTests: XCTestCase {
             ContentWidthPreference.editorHorizontalInset(
                 viewportWidth: textView.bounds.width,
                 contentWidthPercent: 100,
-                zoomScale: WorkspaceZoomPolicy.maximum
+                zoomScale: WorkspaceZoomPolicy.maximum,
+                fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.maximum)
             ),
             accuracy: 0.5
         )
@@ -378,14 +380,15 @@ final class ContentWidthPreferenceTests: XCTestCase {
     func testEditorPlaceholderGeometryUsesTheSameZoomExtremes() {
         let viewportWidth: CGFloat = 120
 
+        // The text sits Preview's gutter (48 at 1×) from the pane's edge, the padding inside the inset.
         XCTAssertEqual(
             ContentWidthPreference.editorPlaceholderLeadingInset(
                 viewportWidth: viewportWidth,
                 contentWidthPercent: 100,
-                zoomScale: 1
+                zoomScale: 1,
+                fontSize: 13
             ),
-            28,
-            "The established 100% placeholder alignment must not move"
+            48 - 5 + 12
         )
         // The margin above the first line is 2.5 × the text size, Preview's too (DocumentMeasure).
         XCTAssertEqual(ContentWidthPreference.editorVerticalInset(fontSize: 13), 33)
@@ -398,9 +401,10 @@ final class ContentWidthPreferenceTests: XCTestCase {
             ContentWidthPreference.editorPlaceholderLeadingInset(
                 viewportWidth: viewportWidth,
                 contentWidthPercent: 100,
-                zoomScale: WorkspaceZoomPolicy.minimum
+                zoomScale: WorkspaceZoomPolicy.minimum,
+                fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.minimum)
             ),
-            23
+            38 - 4 + 10
         )
         XCTAssertEqual(
             ContentWidthPreference.editorPlaceholderTopInset(
@@ -420,9 +424,10 @@ final class ContentWidthPreferenceTests: XCTestCase {
             ContentWidthPreference.editorPlaceholderLeadingInset(
                 viewportWidth: viewportWidth,
                 contentWidthPercent: 100,
-                zoomScale: WorkspaceZoomPolicy.maximum
+                zoomScale: WorkspaceZoomPolicy.maximum,
+                fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.maximum)
             ),
-            56
+            96 - 10 + 24
         )
         XCTAssertEqual(
             ContentWidthPreference.editorPlaceholderTopInset(
@@ -438,6 +443,49 @@ final class ContentWidthPreferenceTests: XCTestCase {
             ),
             26
         )
+    }
+
+    /// design.md §10.11: switching view mode never moves the first line. Preview is handed its prose
+    /// size (the code size × 14⁄13) yet leaves the same space above the first line as Source.
+    func testPreviewLeavesSourcesTopMarginAtEveryTextSizeAndZoom() {
+        let service = MarkdownRenderService(stylesheet: "", rendererJavaScript: "")
+        for codeSize in [11.0, 12, 13, 14, 16, 17, 20, 24] {
+            for zoom in [WorkspaceZoomPolicy.minimum, 0.9, 1, 1.1, 1.25, 1.5, 1.75, WorkspaceZoomPolicy.maximum] {
+                let values = Dictionary(uniqueKeysWithValues: service.themeVariableValues(
+                    for: .defaultLight,
+                    zoomScale: zoom,
+                    baseFontSize: codeSize * DocumentMeasure.previewProseScale,
+                    contentWidthPercent: 88
+                ))
+                let source = ContentWidthPreference.editorVerticalInset(
+                    fontSize: CGFloat(codeSize * WorkspaceZoomPolicy.documentScale(zoom))
+                )
+                XCTAssertEqual(values["--document-margin-top"], "\(Int(source))px", "\(codeSize) pt at \(zoom)×")
+            }
+        }
+    }
+
+    /// design.md §10.11: on a narrow pane both modes keep the text the same least distance from the
+    /// pane's edge — Preview's gutter, which holds the block handles — at every zoom.
+    func testSourcesLeastInsetIsPreviewsGutterAtEveryZoom() {
+        let service = MarkdownRenderService(stylesheet: "", rendererJavaScript: "")
+        for zoom in [WorkspaceZoomPolicy.minimum, 0.9, 1, 1.1, 1.25, 1.5, 1.75, WorkspaceZoomPolicy.maximum] {
+            let values = Dictionary(uniqueKeysWithValues: service.themeVariableValues(
+                for: .defaultDark,
+                zoomScale: zoom,
+                baseFontSize: 13 * DocumentMeasure.previewProseScale,
+                contentWidthPercent: 88
+            ))
+            for viewportWidth: CGFloat in [200, 480] {
+                let textEdge = ContentWidthPreference.editorHorizontalInset(
+                    viewportWidth: viewportWidth,
+                    contentWidthPercent: 88,
+                    zoomScale: zoom,
+                    fontSize: 13 * CGFloat(WorkspaceZoomPolicy.documentScale(zoom))
+                ) + ContentWidthPreference.editorLineFragmentPadding(zoomScale: zoom)
+                XCTAssertEqual(values["--column-gutter"], "\(Int(textEdge))px", "\(viewportWidth) pt at \(zoom)×")
+            }
+        }
     }
 
     func testRenderedHTMLInstallsTheContentWidthConstraint() {

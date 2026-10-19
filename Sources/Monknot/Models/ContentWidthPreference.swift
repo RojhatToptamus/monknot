@@ -4,9 +4,8 @@ import MonknotCore
 enum ContentWidthPreference {
     static let key = "Monknot.contentWidthPercent"
     static let legacyPreviewWidthKey = "Monknot.previewWidthPercent"
-    static let defaultValue = 88.0
-    static let allowedRange = 55.0...100.0
-    private static let editorMinimumHorizontalInsetBase: CGFloat = 16
+    static let defaultValue = DocumentMeasure.defaultContentWidthPercent
+    static let allowedRange = DocumentMeasure.contentWidthPercentRange
     private static let editorLineFragmentPaddingBase: CGFloat = 5
     private static let editorPlaceholderLeadingGapBase: CGFloat = 12
     /// From the text's top inset to the placeholder's top, as the first line sets its glyphs.
@@ -33,7 +32,7 @@ enum ContentWidthPreference {
     }
 
     static func clamped(_ value: Double) -> Double {
-        min(allowedRange.upperBound, max(allowedRange.lowerBound, value))
+        DocumentMeasure.clampedContentWidthPercent(value)
     }
 
     static let measureReferenceFontSize = CGFloat(DocumentMeasure.referenceFontSize)
@@ -44,7 +43,7 @@ enum ContentWidthPreference {
     static func textColumnWidth(
         viewportWidth: CGFloat,
         contentWidthPercent: Double,
-        fontSize: CGFloat = measureReferenceFontSize
+        fontSize: CGFloat
     ) -> CGFloat {
         let percent = clamped(contentWidthPercent)
         let share = max(0, viewportWidth) * CGFloat(percent / 100)
@@ -55,21 +54,19 @@ enum ContentWidthPreference {
         viewportWidth: CGFloat,
         contentWidthPercent: Double,
         zoomScale: Double,
-        fontSize: CGFloat? = nil
+        fontSize: CGFloat
     ) -> CGFloat {
         let viewportWidth = max(0, viewportWidth)
-        let resolvedFontSize = fontSize ?? measureReferenceFontSize * CGFloat(WorkspaceZoomPolicy.documentScale(zoomScale))
         let column = textColumnWidth(
             viewportWidth: viewportWidth,
             contentWidthPercent: contentWidthPercent,
-            fontSize: resolvedFontSize
+            fontSize: fontSize
         )
         // The line fragment padding sits inside the inset, so the first glyph lands where Preview's
-        // does: half the leftover width from the pane's edge.
-        return max(
-            scaledEditorMetric(editorMinimumHorizontalInsetBase, zoomScale: zoomScale),
-            (viewportWidth - column) / 2 - editorLineFragmentPadding(zoomScale: zoomScale)
-        )
+        // does: half the leftover width from the pane's edge, and never nearer the edge than
+        // Preview's gutter (`DocumentMeasure.minimumTextEdge`).
+        let edge = CGFloat(DocumentMeasure.minimumTextEdge(zoomScale: WorkspaceZoomPolicy.documentScale(zoomScale)))
+        return max(edge, (viewportWidth - column) / 2) - editorLineFragmentPadding(zoomScale: zoomScale)
     }
 
     /// The space above the first line (and below the last), the same as Preview's top margin.
@@ -85,7 +82,7 @@ enum ContentWidthPreference {
         viewportWidth: CGFloat,
         contentWidthPercent: Double,
         zoomScale: Double,
-        fontSize: CGFloat? = nil
+        fontSize: CGFloat
     ) -> CGFloat {
         editorHorizontalInset(
             viewportWidth: viewportWidth,

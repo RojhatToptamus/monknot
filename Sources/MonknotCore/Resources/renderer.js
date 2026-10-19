@@ -46,11 +46,15 @@
     let position = offset;
     let line = lineNumber;
     const length = source.length;
+    // The next carriage return, searched for again only once a line has passed it: a search on every
+    // line would make a long file with one CR anywhere quadratic to read.
+    let cr = hasCR ? source.indexOf("\r", position) : -1;
     return {
       at(index) {
         while (lines.length <= index) {
           if (position >= length) return null;
-          const view = readLine(source, position, hasCR);
+          if (cr >= 0 && cr < position) cr = source.indexOf("\r", position);
+          const view = readLine(source, position, cr);
           view.line = line;
           lines.push(view);
           position = view.next;
@@ -65,7 +69,8 @@
     return { at: (index) => (index < lines.length ? lines[index] : null) };
   }
 
-  function readLine(source, position, hasCR) {
+  /// The line at `position`; `cr` is the first carriage return at or after it, or -1.
+  function readLine(source, position, cr) {
     const length = source.length;
     let end = source.indexOf("\n", position);
     let next;
@@ -75,12 +80,9 @@
     } else {
       next = end + 1;
     }
-    if (hasCR) {
-      const cr = source.indexOf("\r", position);
-      if (cr >= 0 && cr < end) {
-        end = cr;
-        next = source.charCodeAt(cr + 1) === 10 ? cr + 2 : cr + 1;
-      }
+    if (cr >= 0 && cr < end) {
+      end = cr;
+      next = source.charCodeAt(cr + 1) === 10 ? cr + 2 : cr + 1;
     }
     return { text: source.slice(position, end), start: position, end, next, line: 0 };
   }
@@ -573,7 +575,7 @@
     pushEmpties(blocks, blanks, topLevel ? (hasBlock ? "trailing" : "only") : "between", topLevel, context, false);
     if (context.editing && blocks.length === 0) {
       // Nothing to type into yet: one empty line, where text would go.
-      const block = emptyBlock(reader.at(0) || null, "only", 0, 0, context);
+      const block = emptyBlock(reader.at(0) || null, "only", context);
       if (block.view && context.separators) {
         block.needsSeparatorBefore = true;
         block.needsSeparatorAfter = true;
@@ -595,21 +597,19 @@
     let first = position === "between" ? 1 : 0;
     if (!topLevel && position === "between" && blocks.length === 0) first = 1;
     for (let index = first; index < count; index += 1) {
-      const block = emptyBlock(blanks[index], position, index, count, context);
+      const block = emptyBlock(blanks[index], position, context);
       block.needsSeparatorBefore = blocks.length > 0 && index === 0;
       block.needsSeparatorAfter = followedByBlock && index === count - 1;
       blocks.push(block);
     }
   }
 
-  function emptyBlock(view, position, index, count, context) {
+  function emptyBlock(view, position, context) {
     const anchor = view ? view.start : (context.anchor || 0);
     return {
       type: "empty",
       view,
       position,
-      runIndex: index,
-      runLength: count,
       start: view ? (view.prefixStart ?? view.start) : anchor,
       end: view ? view.end : anchor,
       anchor,
@@ -661,7 +661,7 @@
   /// The inline passes, applied in order. A match becomes one opaque token,
   /// so later passes can span it but never split it.
   const PASSES = [
-    { name: "code", re: /`([\s\S]+?)`/dg, needs: ["`"] },
+    { name: "code", scan: codeSpans, needs: ["`"] },
     { name: "wikilink", re: /\[\[([^\]\n]+)\]\]/dg, needs: ["[["] },
     { name: "reflink", re: /(?<!!)\[([^\]\n]+)\]\[([^\]\n]*)\]/dg, needs: ["]["] },
     { name: "br", re: /(?: {2,}|\\)\n/dg, needs: ["\n"] },
@@ -677,7 +677,6 @@
     { name: "emu", re: /(^|[^_])_([^_\s][^_]*?)_/dg, needs: ["_"] }
   ];
   const INLINE_TRIGGER = /[`[\n!:<*_~\uE000-\uF8FF]/;
-  const PASS_INDEX = Object.fromEntries(PASSES.map((pass, index) => [pass.name, index]));
 
   /// Tokenizes inline Markdown in `j` into nodes that carry `j` offsets.
   function parseInline(j, context) {
@@ -782,7 +781,7 @@
     if (!pass.needs.some((needle) => view.w.indexOf(needle) >= 0)) return;
     // Building a node parses its content with these same expressions, so
     // collect every match before building any.
-    const matches = Array.from(view.w.matchAll(pass.re));
+    const matches = pass.scan ? pass.scan(view.w) : Array.from(view.w.matchAll(pass.re));
     const found = [];
     for (const match of matches) {
       if (match[0].length === 0) continue;
@@ -815,6 +814,49 @@
     view.w = pieces.join("");
     view.map = map;
     view.base = 0;
+  }
+
+  /// Code spans as CommonMark reads them (6.1): a run of N backticks opens one and the next run of
+  /// exactly N closes it, so ``a`b`` holds a backtick; a run nothing closes is literal. When the content
+  /// starts and ends with a space and is not all spaces, one space each side is markup, not text.
+  /// Returns matches shaped as `matchAll`'s: the span, then its content.
+  function codeSpans(w) {
+    const matches = [];
+    // Run lengths with no closing run after the position last searched: later openers have none either.
+    const unclosed = new Set();
+    let open = w.indexOf("`");
+    while (open >= 0) {
+      let after = open;
+      while (w[after] === "`") after += 1;
+      const length = after - open;
+      let close = -1;
+      if (!unclosed.has(length)) {
+        for (let start = w.indexOf("`", after); start >= 0; start = w.indexOf("`", start)) {
+          let end = start;
+          while (w[end] === "`") end += 1;
+          if (end - start === length) {
+            close = start;
+            break;
+          }
+          start = end;
+        }
+        if (close < 0) unclosed.add(length);
+      }
+      if (close < 0) {
+        open = w.indexOf("`", after);
+        continue;
+      }
+      let cs = after;
+      let ce = close;
+      if (ce - cs >= 2 && w[cs] === " " && w[ce - 1] === " " && /[^ ]/.test(w.slice(cs, ce))) {
+        cs += 1;
+        ce -= 1;
+      }
+      const end = close + length;
+      matches.push({ 0: w.slice(open, end), indices: [[open, end], [cs, ce]] });
+      open = w.indexOf("`", end);
+    }
+    return matches;
   }
 
   function trimRange(text, from, to) {
@@ -1509,34 +1551,22 @@
     return renderDocument(parseDocument(source)).html;
   }
 
+  // What the visual editor (editor.js) and the tests use.
   const MonknotMarkdown = {
     parseDocument,
     parseBlockList,
-    parseBlock,
     streamReader,
-    arrayReader,
-    readLine,
-    renderDocument,
     renderBlock,
     renderFootnotes,
-    renderInline,
     parseInline,
     collectDefinitions,
     newRender,
     unitMap,
     regionMap,
     renderMarkdown,
-    openingFence,
     isBlank,
-    definitionOf,
-    splitTableRow,
     tableRow,
-    escapeHTML,
-    escapeAttr,
-    slug,
-    stripInline,
-    highlightCode,
-    sanitizeURL
+    slug
   };
   window.MonknotMarkdown = MonknotMarkdown;
 
@@ -1558,8 +1588,18 @@
   if (!target) return;
 
   let readingAnchor = null;
-  let readingAnchorFrame = 0;
+  let readingAnchorTimer = 0;
   let readingWidth = window.innerWidth;
+  // The scroll offset the page last set to hold the anchor, so its own scroll is not taken for the reader's.
+  let heldScrollTop = -1;
+  // Every [data-source-line] element of the read-only page, in document order; rebuilt after a render.
+  let lineElements = null;
+  // An edit that replaces the block holding the anchor records a new one (editor.js swaps whole blocks).
+  const blockObserver = typeof MutationObserver === "function"
+    ? new MutationObserver(() => {
+      if (readingAnchor && readingAnchor.node && !readingAnchor.node.isConnected) scheduleReadingAnchor();
+    })
+    : null;
 
   window.monknotRender = render;
   window.monknotApplyAppearance = applyAppearance;
@@ -1575,9 +1615,10 @@
   target.addEventListener("dblclick", handleSourceJump);
   target.addEventListener("click", handleInteraction);
   if (typeof window.addEventListener === "function") {
-    window.addEventListener("scroll", scheduleReadingAnchor, { passive: true });
+    window.addEventListener("scroll", readerScrolled, { passive: true });
     window.addEventListener("resize", keepReadingPosition);
   }
+  blockObserver?.observe(target, { childList: true });
 
   function editor() {
     const instance = window.MonknotEditor;
@@ -1616,6 +1657,7 @@
     } else {
       target.innerHTML = renderMarkdown(markdown);
     }
+    lineElements = null;
     hasRendered = true;
     scheduleReadingAnchor();
     if (searchQuery) {
@@ -1651,7 +1693,6 @@
     heading?.scrollIntoView({ block: "start", behavior: "smooth" });
     return heading || null;
   }
-  window.monknotScrollToHeading = scrollToHeading;
 
   function handleInteraction(event) {
     const tocAnchor = event.target instanceof Element ? event.target.closest("a[data-mk-toc]") : null;
@@ -1702,14 +1743,24 @@
   }
   window.monknotPostLinkInteraction = (kind, destination) => postInteraction("link", { kind, destination });
 
-  // The reading position survives a change of width (the window resized, a side pane opened):
-  // the block at the top of the window stays where it was, rather than the text rewrapping under a
-  // fixed scroll offset and sliding out of view.
+  // The reading position survives a change of width (the window resized, a side pane opened): the
+  // line at the top of the window stays where it was while the text rewraps under it. The anchor is a
+  // text position, so a line partway down a long list, table, code block, toggle or callout holds too.
+  // It is recorded as the reader scrolls and after a render, never while a side pane's transition runs,
+  // and holding it never records a new one: the first character of the top line changes as text
+  // rewraps, so re-recording would drift a line at a time.
+  function readerScrolled() {
+    const scroller = document.scrollingElement || document.documentElement;
+    if (paneTransition || Math.abs(scroller.scrollTop - heldScrollTop) < 1) return;
+    heldScrollTop = -1;
+    recordReadingAnchor();
+  }
+
   function scheduleReadingAnchor() {
-    if (readingAnchorFrame || typeof window.setTimeout !== "function") return;
-    readingAnchorFrame = window.setTimeout(() => {
-      readingAnchorFrame = 0;
-      recordReadingAnchor();
+    if (readingAnchorTimer || typeof window.setTimeout !== "function") return;
+    readingAnchorTimer = window.setTimeout(() => {
+      readingAnchorTimer = 0;
+      if (!paneTransition) recordReadingAnchor();
     }, 50);
   }
 
@@ -1719,41 +1770,57 @@
       readingAnchor = { atTop: true };
       return;
     }
-    const blocks = target.children;
-    let low = 0;
-    let high = blocks.length - 1;
-    let found = null;
-    while (low <= high) {
-      const middle = (low + high) >> 1;
-      const rect = blocks[middle].getBoundingClientRect();
-      if (rect.bottom <= 0) {
-        low = middle + 1;
-      } else {
-        found = blocks[middle];
-        high = middle - 1;
-      }
-    }
-    readingAnchor = found ? { element: found, top: found.getBoundingClientRect().top } : null;
+    readingAnchor = textAnchor() || elementAnchor();
+  }
+
+  /// The text position at the start of the line at the top of the column, and that line's top.
+  function textAnchor() {
+    if (typeof document.caretRangeFromPoint !== "function") return null;
+    const box = target.getBoundingClientRect();
+    const x = box.left + (parseFloat(window.getComputedStyle(target).paddingLeft) || 0) + 1;
+    const hit = document.caretRangeFromPoint(x, 1);
+    const node = hit && hit.startContainer;
+    if (!node || node.nodeType !== 3 || !target.contains(node) || node.parentElement.closest("[data-mk-skip]")) return null;
+    const anchor = { node, offset: hit.startOffset, top: 0 };
+    const top = anchorTop(anchor);
+    if (top === null) return null;
+    anchor.top = top;
+    return anchor;
+  }
+
+  /// Without a text position there (an image, a divider), the deepest element at the top.
+  function elementAnchor() {
+    const entries = sourceLineElements();
+    const index = lastEntryAtOrAbove(entries, 1);
+    const element = index >= 0 ? entries[index].element : null;
+    return element ? { element, top: element.getBoundingClientRect().top } : null;
+  }
+
+  /// Where the anchor is now: the top of the line holding its character, or null once it has left the page.
+  function anchorTop(anchor) {
+    if (anchor.element) return anchor.element.isConnected ? anchor.element.getBoundingClientRect().top : null;
+    const node = anchor.node;
+    if (!node.isConnected) return null;
+    const length = node.nodeValue.length;
+    if (length === 0) return null;
+    const start = Math.min(anchor.offset, length - 1);
+    const range = document.createRange();
+    range.setStart(node, start);
+    range.setEnd(node, start + 1);
+    const rect = range.getClientRects()[0];
+    return rect ? rect.top : null;
   }
 
   function keepReadingPosition() {
     if (window.innerWidth === readingWidth) return;
     readingWidth = window.innerWidth;
-    const anchor = readingAnchor;
-    if (!anchor) return;
-    const scroller = document.scrollingElement || document.documentElement;
-    if (anchor.atTop) {
-      scroller.scrollTop = 0;
-    } else if (anchor.element && anchor.element.isConnected) {
-      scroller.scrollTop += anchor.element.getBoundingClientRect().top - anchor.top;
-    }
-    recordReadingAnchor();
+    holdReadingAnchor();
   }
 
   // A side pane opening or closing (design.md §11). The host holds the web view still over the
   // card's old and new areas and says which part the card shows at the start and at the end; this
   // animates that part on the host's clock, so the column lays out in it and reflows and glides on
-  // every frame, as a live layout would, while the block at the top of the window stays put. With a
+  // every frame, as a live layout would, while the line at the top of the window stays put. With a
   // scroll bar always shown and the card's trailing edge moving, a stand-in thumb rides that edge:
   // the real one is at the held web view's edge, outside the card.
   let paneTransition = null;
@@ -1761,7 +1828,6 @@
   function beginPaneTransition(spec) {
     const root = document.documentElement;
     stopPaneTransition();
-    recordReadingAnchor();
     const inset = (left, right) => ({
       "--mk-pane-left": `${Math.max(0, Number(left) || 0)}px`,
       "--mk-pane-right": `${Math.max(0, Number(right) || 0)}px`,
@@ -1782,6 +1848,9 @@
       root.style.setProperty("--mk-pane-left", to["--mk-pane-left"]);
       root.style.setProperty("--mk-pane-right", to["--mk-pane-right"]);
     }
+    // The anchor recorded at rest holds through the transition, and through one that interrupts it;
+    // without one, it is recorded in the frame now shown.
+    if (!readingAnchor) recordReadingAnchor();
     const thumb = spec.thumb && root.classList.contains("mk-legacy-scrollbars") ? document.createElement("div") : null;
     if (thumb) {
       thumb.className = "mk-pane-thumb";
@@ -1802,7 +1871,6 @@
     stopPaneTransition();
     holdReadingAnchor();
     readingWidth = window.innerWidth;
-    recordReadingAnchor();
   }
 
   function stopPaneTransition() {
@@ -1820,15 +1888,18 @@
     const anchor = readingAnchor;
     if (!anchor) return;
     const scroller = document.scrollingElement || document.documentElement;
+    const top = anchor.atTop ? null : anchorTop(anchor);
     if (anchor.atTop) {
       scroller.scrollTop = 0;
-    } else if (anchor.element && anchor.element.isConnected) {
-      scroller.scrollTop += anchor.element.getBoundingClientRect().top - anchor.top;
+    } else if (top !== null) {
+      scroller.scrollTop += top - anchor.top;
     }
+    heldScrollTop = scroller.scrollTop;
   }
 
-  // The legacy thumb's geometry (preview.css): a 9 px lane, the track 6 px clear of the ends, the
-  // thumb a 4 px capsule 2.5 px inside the lane.
+  // The stand-in takes the legacy thumb's geometry, which the page's shell sets
+  // (MarkdownRenderService.legacyScrollbarCSS): the lane, the track's clearance at each end and the
+  // thumb's width. Like WebKit's, the thumb is never shorter than the borders that inset it.
   function placePaneThumb(thumb) {
     if (!thumb) return;
     const scroller = document.scrollingElement || document.documentElement;
@@ -1838,20 +1909,27 @@
       thumb.style.display = "none";
       return;
     }
-    const track = Math.max(0, viewport - 12);
-    const height = Math.max(Math.min(track, 20), track * (viewport / content));
+    const style = getComputedStyle(document.documentElement);
+    const lane = parseFloat(style.getPropertyValue("--mk-scroll-lane")) || 0;
+    const end = parseFloat(style.getPropertyValue("--mk-scroll-end")) || 0;
+    const inset = Math.max(0, (lane - (parseFloat(style.getPropertyValue("--mk-scroll-thumb")) || 0)) / 2);
+    const track = Math.max(0, viewport - 2 * end);
+    const length = Math.max(2 * inset, Math.round(track * viewport / content));
     const progress = scroller.scrollTop / Math.max(1, content - viewport);
-    const right = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--mk-pane-right")) || 0;
+    const right = parseFloat(style.getPropertyValue("--mk-pane-right")) || 0;
     thumb.style.display = "block";
-    thumb.style.top = `${6 + (track - height) * progress + 2.5}px`;
-    thumb.style.height = `${Math.max(0, height - 5)}px`;
-    thumb.style.right = `${right + 2.5 - 9}px`;
+    thumb.style.top = `${end + (track - length) * progress + inset}px`;
+    thumb.style.height = `${Math.max(0, length - 2 * inset)}px`;
+    thumb.style.right = `${right + inset - lane}px`;
   }
 
   function tearDown() {
     stopPaneTransition();
+    blockObserver?.disconnect();
+    if (readingAnchorTimer) window.clearTimeout(readingAnchorTimer);
+    readingAnchorTimer = 0;
     if (typeof window.removeEventListener === "function") {
-      window.removeEventListener("scroll", scheduleReadingAnchor);
+      window.removeEventListener("scroll", readerScrolled);
       window.removeEventListener("resize", keepReadingPosition);
     }
     target.removeEventListener("dblclick", handleSourceJump);
@@ -1941,10 +2019,6 @@
     revealCurrentSearchMatch(queryChanged || navigationChanged);
     return searchResult();
   }
-  window.monknotRefreshSearch = () => {
-    if (!searchQuery) return;
-    searchDocument({ query: searchQuery, ...searchOptions, navigationSerial: searchNavigationSerial, direction: "current", isPresented: true });
-  };
 
   function searchResult() {
     return {
@@ -2117,7 +2191,7 @@
 
           const parent = node.parentElement;
           if (!parent) return NodeFilter.FILTER_REJECT;
-          if (parent.closest("script, style, mark.monknot-search-match, [data-mk-skip], .mk-menu-layer")) {
+          if (parent.closest("script, style, mark.monknot-search-match, [data-mk-skip]")) {
             return NodeFilter.FILTER_REJECT;
           }
 
@@ -2140,7 +2214,7 @@
       if (currentRange) CSS.highlights.set("monknot-search-current", new Highlight(currentRange));
       if (shouldScroll && currentRange) {
         const element = currentRange.startContainer.parentElement;
-        element?.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+        if (element) shownElement(element).scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
       }
       return;
     }
@@ -2151,8 +2225,27 @@
 
     const current = searchMatches[searchCurrentIndex];
     if (shouldScroll && current) {
-      current.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+      shownElement(current).scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
     }
+  }
+
+  /// Whether `element` is drawn. A closed toggle's body is not: WebKit either gives it no box or
+  /// skips it (`content-visibility`), keeping a box whose place means nothing.
+  function isShown(element) {
+    return typeof element.checkVisibility === "function" ? element.checkVisibility() : element.getClientRects().length > 0;
+  }
+
+  /// `element`, or what can be scrolled to in its place when a closed toggle hides it: a read-only
+  /// toggle opens, as a click on its title would; on the editing page the closed toggle stands in.
+  function shownElement(element) {
+    if (!isShown(element)) {
+      for (let details = element.parentElement?.closest("details:not([open])"); details; details = details.parentElement?.closest("details:not([open])")) {
+        details.open = true;
+      }
+    }
+    let shown = element;
+    while (shown.parentElement && shown !== target && !isShown(shown)) shown = shown.parentElement;
+    return shown;
   }
 
   function revealSourceLine(nextState = {}) {
@@ -2162,10 +2255,34 @@
   function sourceLineElements() {
     const active = editor();
     if (active) return active.sourceLineElements();
-    return Array.from(target.querySelectorAll("[data-source-line]")).map((element) => ({
-      element,
-      line: Number(element.dataset.sourceLine || "0")
-    }));
+    if (!lineElements) {
+      lineElements = Array.from(target.querySelectorAll("[data-source-line]"), (element) => ({
+        element,
+        line: Number(element.dataset.sourceLine || "0")
+      }));
+    }
+    return lineElements;
+  }
+
+  /// The index of the last of `entries` (in document order, so in order down the page) whose element's
+  /// top is at or above `y`, or -1. Elements a closed toggle hides are skipped: their rect would read
+  /// as the top of the window, or as the toggle's place.
+  function lastEntryAtOrAbove(entries, y) {
+    let low = 0;
+    let high = entries.length - 1;
+    let found = -1;
+    while (low <= high) {
+      const middle = (low + high) >> 1;
+      let probe = middle;
+      while (probe <= high && !isShown(entries[probe].element)) probe += 1;
+      if (probe <= high && entries[probe].element.getBoundingClientRect().top <= y) {
+        found = probe;
+        low = probe + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+    return found;
   }
 
   function scrollToSourceLine(nextState = {}, options = {}) {
@@ -2192,7 +2309,7 @@
       }
     }
 
-    const targetElement = bestElement || nextElement;
+    const targetElement = bestElement || nextElement ? shownElement(bestElement || nextElement) : null;
     if (!targetElement) return false;
 
     if (options.highlight) {
@@ -2220,20 +2337,13 @@
     return true;
   }
 
+  /// The source line at the top of the window (12 px down), for split view's scroll sync. It runs on
+  /// every scroll frame, so it measures only the elements a binary search visits.
   function visibleSourceLine() {
-    const probeY = Math.max(0, (window.scrollY || 0) + 12);
-    const elements = sourceLineElements();
-    let bestLine = 1;
-
-    for (const { element, line: sourceLine } of elements) {
-      if (!Number.isFinite(sourceLine) || sourceLine < 1) continue;
-      const top = element.getBoundingClientRect().top + (window.scrollY || 0);
-      if (top <= probeY && sourceLine >= bestLine) {
-        bestLine = sourceLine;
-      }
-    }
-
-    return bestLine;
+    const entries = sourceLineElements();
+    const index = lastEntryAtOrAbove(entries, 12);
+    const line = index >= 0 ? entries[index].line : 1;
+    return Number.isFinite(line) && line >= 1 ? line : 1;
   }
 
   function captureScrollAnchor() {

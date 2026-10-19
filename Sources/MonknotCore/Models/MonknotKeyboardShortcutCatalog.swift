@@ -55,6 +55,10 @@ public enum MonknotKeyboardShortcutCatalog {
             Entry(title: "Find Previous", shortcut: "⇧⌘G"),
         ]),
         MonknotKeyboardShortcutSection(title: "Writing", entries: [
+            Entry(title: "Bold", shortcut: "⌘B"),
+            Entry(title: "Italic", shortcut: "⌘I"),
+            Entry(title: "Inline Code", shortcut: "⌘E"),
+            Entry(title: "Link", shortcut: "⌘K"),
             Entry(title: "Go to Heading", shortcut: "⇧⌘O"),
             Entry(title: "Complete Wikilink after [[", shortcut: "⇥"),
             Entry(title: "Inspect Links", shortcut: "⌥⌘L"),

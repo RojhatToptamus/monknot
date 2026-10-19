@@ -5,35 +5,36 @@ import SwiftUI
 // MARK: - Row Primitives
 
 /// A Settings row (design.md §12): label and detail on the left, the control on the right, at least
-/// 40 tall, 12 padding, and a `line2` separator inset 12 below it. A disabled row draws its words in
-/// `ink4`; nothing is dimmed by opacity on top.
+/// 40 tall, 12 padding, and a `line2` separator inset 12 below it. A disabled row (an enclosing
+/// `.disabled`) draws its words in `ink4` and its control disables itself; nothing is dimmed by opacity
+/// on top.
 struct SettingsRow<Control: View>: View {
     let theme: AppTheme
+    let zoomScale: Double
     let title: String
     var detail: String? = nil
     var showsDivider: Bool = true
-    var isDisabled: Bool = false
     @ViewBuilder let control: () -> Control
-    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
+    @Environment(\.isEnabled) private var isEnabled
 
     static var minimumHeightBase: CGFloat { 40 }
     static var horizontalPaddingBase: CGFloat { 12 }
     static var verticalPaddingBase: CGFloat { 8 }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
         HStack(alignment: .center, spacing: scaled(12)) {
             VStack(alignment: .leading, spacing: scaled(3)) {
                 Text(title)
-                    .font(MonknotTypography.rowTitle(theme: theme, zoomScale: settingsZoomScale))
-                    .foregroundStyle(isDisabled ? theme.disabledForegroundColor : theme.foregroundColor)
+                    .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
+                    .foregroundStyle(isEnabled ? theme.foregroundColor : theme.disabledForegroundColor)
                 if let detail {
                     Text(detail)
-                        .font(MonknotTypography.rowDetail(theme: theme, zoomScale: settingsZoomScale))
-                        .foregroundStyle(isDisabled ? theme.disabledForegroundColor : theme.tertiaryForegroundColor)
+                        .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
+                        .foregroundStyle(isEnabled ? theme.tertiaryForegroundColor : theme.disabledForegroundColor)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -59,6 +60,7 @@ struct SettingsRow<Control: View>: View {
 /// Convenience: toggle row.
 struct SettingsToggleRow: View {
     let theme: AppTheme
+    let zoomScale: Double
     let title: String
     var detail: String? = nil
     var showsDivider: Bool = true
@@ -68,18 +70,17 @@ struct SettingsToggleRow: View {
     var body: some View {
         SettingsRow(
             theme: theme,
+            zoomScale: zoomScale,
             title: title,
             detail: detail,
-            showsDivider: showsDivider,
-            isDisabled: isDisabled
+            showsDivider: showsDivider
         ) {
             // The switch style draws no label, so name the control for VoiceOver explicitly.
             Toggle(title, isOn: $isOn)
-                .toggleStyle(MonknotSwitchStyle(theme: theme, isDisabled: isDisabled))
+                .toggleStyle(MonknotSwitchStyle(theme: theme, zoomScale: zoomScale))
                 .labelsHidden()
                 .accessibilityLabel(title)
                 .accessibilityHint(detail ?? "")
-                .monknotPointerCursor(enabled: !isDisabled)
         }
         .disabled(isDisabled)
     }
@@ -88,6 +89,7 @@ struct SettingsToggleRow: View {
 /// Convenience: stepper row with numeric display.
 struct SettingsStepperRow: View {
     let theme: AppTheme
+    let zoomScale: Double
     let title: String
     let detail: String
     var showsDivider: Bool = true
@@ -95,10 +97,9 @@ struct SettingsStepperRow: View {
     let range: ClosedRange<Double>
     var step = 1.0
     var suffix = "px"
-    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
 
     var body: some View {
-        SettingsRow(theme: theme, title: title, detail: detail, showsDivider: showsDivider) {
+        SettingsRow(theme: theme, zoomScale: zoomScale, title: title, detail: detail, showsDivider: showsDivider) {
             MonknotStepper(
                 title: title,
                 value: $value,
@@ -107,7 +108,7 @@ struct SettingsStepperRow: View {
                 displayValue: displayValue,
                 suffix: suffix,
                 theme: theme,
-                zoomScale: settingsZoomScale
+                zoomScale: zoomScale
             )
             .accessibilityHint(detail)
         }
@@ -123,20 +124,20 @@ struct SettingsStepperRow: View {
 /// Convenience: slider row.
 struct SettingsSliderRow: View {
     let theme: AppTheme
+    let zoomScale: Double
     let title: String
     var detail: String? = nil
     var showsDivider: Bool = true
     @Binding var value: Double
     let range: ClosedRange<Double>
     var suffix = ""
-    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
-        SettingsRow(theme: theme, title: title, detail: detail, showsDivider: showsDivider) {
+        SettingsRow(theme: theme, zoomScale: zoomScale, title: title, detail: detail, showsDivider: showsDivider) {
             HStack(spacing: scaled(10)) {
                 MonknotSlider(
                     title: title,
@@ -145,11 +146,11 @@ struct SettingsSliderRow: View {
                     valueDescription: "\(Int(value.rounded()))\(suffix)",
                     hint: detail,
                     theme: theme,
-                    zoomScale: settingsZoomScale
+                    zoomScale: zoomScale
                 )
                     .frame(width: scaled(100))
                 Text("\(Int(value.rounded()))\(suffix)")
-                    .font(MonknotTypography.rowDetail(theme: theme, zoomScale: settingsZoomScale))
+                    .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
                     .monospacedDigit()
                     .foregroundStyle(theme.tertiaryForegroundColor)
                     .frame(width: scaled(suffix.isEmpty ? 30 : 44), alignment: .trailing)
@@ -159,44 +160,70 @@ struct SettingsSliderRow: View {
     }
 }
 
-/// The one switch (design.md §5.7): a 32 × 18 capsule with a 14 knob, `accent` when on, the control
-/// `track` inside a `line` hairline when off; disabled at `ink4`.
+/// The one switch (design.md §5.7): a 32 × 18 capsule with a 14 knob (the slider's knob), `accent`
+/// when on, the control `track` inside a `line` hairline when off. Disabled by an enclosing
+/// `.disabled`, its track draws at half and its knob dims, on or off. With keyboard focus it takes the
+/// shared focus ring, and Space flips it.
 struct MonknotSwitchStyle: ToggleStyle {
     let theme: AppTheme
-    var isDisabled = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
-
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
-    }
+    let zoomScale: Double
 
     func makeBody(configuration: Configuration) -> some View {
+        MonknotSwitch(isOn: configuration.$isOn, theme: theme, zoomScale: zoomScale)
+    }
+
+    /// The track: `accent` on, the `track` fill off; half of either while disabled.
+    static func trackFill(theme: AppTheme, isOn: Bool, isEnabled: Bool) -> Color {
+        (isOn ? theme.accentColor : theme.controlTrackFillColor).opacity(isEnabled ? 1 : 0.5)
+    }
+
+    /// The off track's `line` hairline, at half while disabled; none on.
+    static func trackRing(theme: AppTheme, isOn: Bool, isEnabled: Bool) -> Color {
+        isOn ? .clear : theme.borderColor.opacity(isEnabled ? 1 : 0.5)
+    }
+}
+
+private struct MonknotSwitch: View {
+    @Binding var isOn: Bool
+    let theme: AppTheme
+    let zoomScale: Double
+
+    @FocusState private var isFocused: Bool
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
         Button {
-            configuration.isOn.toggle()
+            isOn.toggle()
         } label: {
             ZStack {
                 Capsule()
-                    .monknotStateStyle(configuration.isOn ? theme.accentColor.opacity(isDisabled ? 0.45 : 1) : theme.controlTrackFillColor)
+                    .monknotStateStyle(MonknotSwitchStyle.trackFill(theme: theme, isOn: isOn, isEnabled: isEnabled))
                     .overlay {
                         Capsule()
-                            .strokeBorder(theme.borderColor, lineWidth: 1)
-                            .monknotStateOpacity(configuration.isOn ? 0 : 1)
+                            .strokeBorder(lineWidth: 1)
+                            .monknotStateStyle(MonknotSwitchStyle.trackRing(theme: theme, isOn: isOn, isEnabled: isEnabled))
                     }
 
                 // Only the knob moves; it slides over the hover duration, or jumps with Reduce Motion.
-                Circle()
-                    .fill(Color.white)
-                    .frame(width: scaled(14), height: scaled(14))
-                    .shadow(color: .black.opacity(0.22), radius: 1, y: 0.5)
-                    .animation(reduceMotion ? nil : MonknotMotion.hoverAnimation) {
-                        $0.offset(x: configuration.isOn ? scaled(7) : -scaled(7))
+                MonknotKnob(diameter: scaled(14), theme: theme, isDimmed: !isEnabled)
+                    .animation(MonknotMotion.stateMotion(reduceMotion: reduceMotion)) {
+                        $0.offset(x: isOn ? scaled(7) : -scaled(7))
                     }
             }
             .frame(width: scaled(32), height: scaled(18))
+            .monknotFocusRing(isVisible: isFocused && isEnabled, cornerRadius: scaled(18) / 2, theme: theme)
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .focusable(isEnabled && NSApp.isFullKeyboardAccessEnabled)
+        .focused($isFocused)
+        .focusEffectDisabled()
+        .monknotPointerCursor(enabled: isEnabled)
     }
 }
 
@@ -204,18 +231,18 @@ struct MonknotSwitchStyle: ToggleStyle {
 
 struct EditableThemeColorRow: View {
     let theme: AppTheme
+    let zoomScale: Double
     let label: String
     var showsDivider: Bool = true
     @Binding var hex: String
     @FocusState private var isHexFieldFocused: Bool
-    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
-        SettingsRow(theme: theme, title: label, showsDivider: showsDivider) {
+        SettingsRow(theme: theme, zoomScale: zoomScale, title: label, showsDivider: showsDivider) {
             HStack(spacing: scaled(8)) {
                 MonknotColorWell(color: NSColor(hex: hex)) { color in
                     if let nextHex = NSColor.monknotHexString(from: Color(nsColor: color)) {
@@ -232,17 +259,15 @@ struct EditableThemeColorRow: View {
                 ))
                 .textFieldStyle(.plain)
                 .focused($isHexFieldFocused)
-                .font(.system(
-                    size: MonknotMetrics.interfaceText(12, theme: theme, zoomScale: settingsZoomScale),
-                    weight: .regular,
-                    design: .monospaced
-                ))
-                .foregroundStyle(isHexValid ? theme.foregroundColor : validationColor)
+                // A field's 13 (design.md §4.3), its digits tabular so the value keeps one width.
+                .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
+                .monospacedDigit()
+                .foregroundStyle(isHexValid ? theme.foregroundColor : theme.dangerColor)
                 .monknotField(
                     isFocused: isHexFieldFocused,
                     isInvalid: !isHexValid,
                     theme: theme,
-                    zoomScale: settingsZoomScale
+                    zoomScale: zoomScale
                 )
                 .frame(width: scaled(104))
                 .accessibilityLabel("\(label) hexadecimal value")
@@ -254,10 +279,6 @@ struct EditableThemeColorRow: View {
 
     private var isHexValid: Bool {
         RGBHex(hex) != nil
-    }
-
-    private var validationColor: Color {
-        Color(hex: theme.semanticColors.diffRemoved)
     }
 
     private static func normalizedInput(_ value: String) -> String {
@@ -285,21 +306,21 @@ struct EditableThemeColorRow: View {
 /// header's line without changing the rhythm.
 struct SettingsSectionHeader<Accessory: View>: View {
     let theme: AppTheme
+    let zoomScale: Double
     let title: String
     var isFirst = false
     @ViewBuilder var accessory: () -> Accessory
-    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
 
     static var topSpacingBase: CGFloat { 18 }
     static var bottomSpacingBase: CGFloat { 8 }
 
     private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: settingsZoomScale)
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
     }
 
     var body: some View {
         Text(title)
-            .font(MonknotTypography.groupHeader(theme: theme, zoomScale: settingsZoomScale))
+            .font(MonknotTypography.groupHeader(theme: theme, zoomScale: zoomScale))
             .foregroundStyle(theme.tertiaryForegroundColor)
             .accessibilityAddTraits(.isHeader)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -313,8 +334,8 @@ struct SettingsSectionHeader<Accessory: View>: View {
 }
 
 extension SettingsSectionHeader where Accessory == EmptyView {
-    init(theme: AppTheme, title: String, isFirst: Bool = false) {
-        self.init(theme: theme, title: title, isFirst: isFirst, accessory: { EmptyView() })
+    init(theme: AppTheme, zoomScale: Double, title: String, isFirst: Bool = false) {
+        self.init(theme: theme, zoomScale: zoomScale, title: title, isFirst: isFirst, accessory: { EmptyView() })
     }
 }
 

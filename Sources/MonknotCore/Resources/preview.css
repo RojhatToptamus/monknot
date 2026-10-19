@@ -2,7 +2,6 @@
 :root {
   color-scheme: light dark;
   --accent: #0a52a3;
-  --onaccent: #ffffff;
   --link: var(--accent);
   --bg: #fdfdfe;
   --fg: #1c1e22;
@@ -15,14 +14,8 @@
   --soft-strong: rgba(28, 30, 34, 0.09);
   --code-bg: #f1f1f2;
   --code-fg: #1c1e22;
-  --quote-bg: rgba(10, 82, 163, 0.112);
-  --quote-border: rgba(10, 82, 163, 0.7);
-  --blockquote-bg: var(--quote-bg);
-  --blockquote-border: var(--quote-border);
   --table-border: var(--border);
   --table-header-bg: var(--soft);
-  --table-row-alt-bg: var(--soft);
-  --shadow: rgba(0, 0, 0, 0.08);
   --selection-bg: #ccdbec;
   --selection-fg: #1c1e22;
   --tok-keyword: #7436ab;
@@ -35,6 +28,11 @@
   --ui-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
   --code-font: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   --task-check: none;
+  /* The page's margins at the default 13 pt code size and 1× zoom (DocumentMeasure, design.md §10.11);
+     the app sends them for the current size and zoom. */
+  --document-margin-top: 33px;
+  --document-margin-bottom: max(66px, 25vh);
+  --column-gutter: 48px;
   /* Document rhythm: one block gap, one item gap. */
   --block-gap: 0.85em;
   --item-gap: 0.25em;
@@ -51,9 +49,6 @@
   --soft-strong: rgba(255, 255, 255, 0.09);
   --code-bg: #1d1d1f;
   --code-fg: #ebebeb;
-  --quote-bg: rgba(83, 153, 234, 0.112);
-  --quote-border: rgba(83, 153, 234, 0.82);
-  --shadow: rgba(0, 0, 0, 0.32);
   --selection-bg: #24384e;
   --selection-fg: #ebebeb;
   --tok-keyword: #c092e7;
@@ -104,66 +99,30 @@ html {
   overflow-y: scroll;
 }
 
-/* The text column: the content-width share of the pane up to a comfortable line length
-   (--content-measure, the same width Source uses), centred, with its gutters outside it. Source
-   centres the same width, so text starts at the same edge in both modes. */
-/* Scroll bars follow the system (design.md §5.7): WebKit's overlay scroller while it fades, and
-   Monknot's slim thumb — no track, centred in a 9 lane flush with the card's edge, clear of its
-   corners — when the system shows scroll bars always. */
-html.mk-legacy-scrollbars ::-webkit-scrollbar {
-  width: 9px;
-  height: 9px;
-  background: transparent;
-}
-
-html.mk-legacy-scrollbars ::-webkit-scrollbar-track {
-  margin: 6px;
-  background: transparent;
-}
-
-html.mk-legacy-scrollbars ::-webkit-scrollbar-thumb {
-  border: 2.5px solid transparent;
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--fg) 25%, transparent);
-  background-clip: content-box;
-}
-
-html.mk-legacy-scrollbars ::-webkit-scrollbar-thumb:hover {
-  border-width: 1.5px;
-  background: color-mix(in srgb, var(--fg) 45%, transparent);
-  background-clip: content-box;
-}
-
-html.mk-legacy-scrollbars ::-webkit-scrollbar-corner {
-  background: transparent;
-}
-
-/* The legacy thumb's stand-in while a side pane's transition moves the card's trailing edge. */
+/* Scroll bars follow the system (design.md §5.7): WebKit's overlay scroller, or with "Show scroll
+   bars: Always" Monknot's thumb, which the app's shell styles (MarkdownRenderService). This is its
+   stand-in while a side pane's transition moves the card's trailing edge. */
 .mk-pane-thumb {
   position: fixed;
   z-index: 2147483000;
-  width: 4px;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  width: var(--mk-scroll-thumb);
+  border-radius: calc(var(--mk-scroll-thumb) / 2);
+  background: var(--mk-scroll-thumb-color);
   pointer-events: none;
 }
 
-/* The page's margins (design.md §10.11). Top and bottom follow the text size, as Source's do, so
-   switching view mode never moves the first line and a larger zoom keeps the same proportions: the
-   top is 2.5 × the code size, the bottom twice that or a quarter of the window, whichever is more,
-   so the last line can be read and written above the window's bottom edge. The gutters follow the
-   width the card shows. */
+/* The text column (design.md §10.11): the content-width share of the pane up to a comfortable line
+   length (--content-measure), centred, with its gutters outside it. The margins are Source's: the
+   same space above the first line and beside the text, so text starts at the same x and the first
+   line at the same y in both modes at every width; below the last line, room to read and write it
+   above the window's edge. */
 .markdown-body {
-  --column-gutter: clamp(18px, calc((100vw - var(--mk-pane-left, 0px) - var(--mk-pane-right, 0px)) * 0.022), 38px);
   --column-text: min(var(--content-max-width, 88%), var(--content-measure, 45.7em));
   box-sizing: border-box;
   width: min(calc(var(--column-text) + 2 * var(--column-gutter)), 100%);
   max-width: none;
   margin: 0 auto;
-  padding:
-    var(--document-margin-top, calc(var(--base-font-size, 13px) * 2.5))
-    var(--column-gutter)
-    max(calc(var(--document-margin-top, calc(var(--base-font-size, 13px) * 2.5)) * 2), 25vh);
+  padding: var(--document-margin-top) var(--column-gutter) var(--document-margin-bottom);
   color: var(--muted);
   line-height: 1.6;
 }
@@ -456,7 +415,7 @@ nav.toc li + li {
 }
 
 nav.toc a {
-  color: color-mix(in srgb, var(--fg) 72%, transparent);
+  color: var(--mk-ink2, color-mix(in srgb, var(--fg) 72%, transparent));
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, var(--fg) 22%, transparent);
   text-underline-offset: 0.2em;

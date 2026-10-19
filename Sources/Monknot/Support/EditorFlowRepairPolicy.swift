@@ -1,12 +1,402 @@
 import AppKit
 import MonknotCore
 
+/// The pauses and limits writing assistance keeps the same in Source and in Preview.
+enum EditorFlowTiming {
+    /// The pause after typing before Apple's on-device model is asked for a completion.
+    static let proseCompletionDelayNanoseconds: UInt64 = 360_000_000
+    /// A completion never shows sooner than this after it was asked for.
+    static let proseOfferDelayNanoseconds: UInt64 = 420_000_000
+    /// How long Apple's checker may take before the sentence is left to the system.
+    static let checkingTimeoutNanoseconds: UInt64 = 2_000_000_000
+    /// The pause after an edit before the protected Markdown is scanned again.
+    static let protectedRangesDelayNanoseconds: UInt64 = 140_000_000
+    /// How long a completion waits for that scan before it is dropped.
+    static let protectedRangesRetryNanoseconds: UInt64 = 1_000_000_000
+    /// How long a model that failed is left alone (`EditorFlowModelCooldown`).
+    static let modelFailureCooldown: TimeInterval = 30
+}
+
+/// The pause after one of Apple's on-device models failed: no completion is asked for at all, and
+/// no repair of the same sentence (compared without its surrounding whitespace).
+struct EditorFlowModelCooldown {
+    private var until: Date?
+    private var sentence: String?
+
+    mutating func start(for sentence: String? = nil, now: Date = Date()) {
+        until = now.addingTimeInterval(EditorFlowTiming.modelFailureCooldown)
+        self.sentence = sentence.map(Self.key)
+    }
+
+    mutating func end() {
+        until = nil
+        sentence = nil
+    }
+
+    /// Whether the pause covers `sentence` (or, started for no sentence, everything) now. A pause
+    /// that has run out ends.
+    mutating func applies(to sentence: String? = nil, now: Date = Date()) -> Bool {
+        guard let until else { return false }
+        guard until > now else {
+            end()
+            return false
+        }
+        return self.sentence == sentence.map(Self.key)
+    }
+
+    private static func key(_ sentence: String) -> String {
+        sentence.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// How a sentence check ends when Flow shows nothing for it. Source records the reason in its
+/// diagnostics; Preview has none.
+enum EditorFlowRepairEnd: Equatable {
+    /// Nothing for Flow to fix, so a completion may follow.
+    case clear(EditorFlowTerminalReason)
+    /// Apple found something Flow does not fix: the system's own marks stay, and nothing is
+    /// completed until the sentence changes.
+    case unresolved(EditorFlowTerminalReason)
+    /// Apple found nothing in a check that did not cover the whole sentence: wait for the rest.
+    case blocked
+}
+
+/// What Apple's answer for a checked sentence leads to.
+enum EditorFlowCheckStep: Equatable {
+    case end(EditorFlowRepairEnd)
+    /// Apple found nothing; Apple's on-device model may still repair the sentence.
+    case modelRepair
+    /// Apple's issues, all outside protected Markdown, to resolve into fixes.
+    case resolve([EditorFlowDetectedIssue])
+}
+
+/// Apple's answers for a sentence with issues: the exact fixes for the kinds of check that are on,
+/// the grammar issues that come with alternatives, and the misspelled words whose guesses are still
+/// to be asked for.
+struct EditorFlowAppleCandidates: Equatable {
+    let concrete: [EditorFlowCorrectionCandidate]
+    let alternatives: [EditorFlowAlternativeCandidate]
+    let spellingLookups: [EditorFlowSpellingCandidateLookup]
+}
+
+/// What Apple's fixes and alternatives for a sentence lead to.
+enum EditorFlowCandidateStep: Equatable {
+    /// Check each of one issue's alternatives in the corrected sentence before any is offered.
+    case validate(
+        EditorFlowAlternativeCandidate,
+        concreteCandidates: [EditorFlowCorrectionCandidate],
+        forcesReview: Bool
+    )
+    /// Present these fixes, if they resolve into a suggestion.
+    case present([EditorFlowCorrectionCandidate])
+}
+
+/// Why there is no model answer to show (the model was not asked, is not there, or failed), and
+/// whether that counts as the model failing, which keeps Flow from asking it again for a while
+/// (`EditorFlowModelCooldown`).
+struct EditorFlowModelFailure: Equatable {
+    let reason: EditorFlowTerminalReason
+    let startsCooldown: Bool
+
+    init(_ reason: EditorFlowTerminalReason, startsCooldown: Bool = false) {
+        self.reason = reason
+        self.startsCooldown = startsCooldown
+    }
+
+    /// The failure in a model's outcome; nil for an answer. A model that is not there has not
+    /// failed; one that errs, runs out of time or answers something unusable has.
+    init?(_ outcome: FlowModelOutcome) {
+        switch outcome {
+        case .success:
+            return nil
+        case .unavailable:
+            self.init(.modelUnavailable)
+        case .failed:
+            self.init(.modelFailed, startsCooldown: true)
+        case .timedOut:
+            self.init(.modelTimedOut, startsCooldown: true)
+        case .validationRejected:
+            self.init(.validationRejected, startsCooldown: true)
+        }
+    }
+}
+
+/// What the on-device model's answer to a repair request leads to.
+enum EditorFlowModelRepairAnswer: Equatable {
+    /// A repair, still to be checked with Apple's checker before anyone sees it.
+    case candidate(sentence: String, edits: [EditorFlowCorrectionEdit])
+    /// The model left the sentence as it was.
+    case unchanged
+    case failure(EditorFlowModelFailure)
+}
+
+/// The model's repair once Apple's checker has seen its sentence.
+enum EditorFlowModelSuggestion: Equatable {
+    /// Always for review: the model's repairs never apply by themselves.
+    case review(EditorFlowSuggestion)
+    /// Not shown; `startsCooldown` keeps the model off this sentence for a while.
+    case rejected(EditorFlowRepairEnd, startsCooldown: Bool)
+}
+
 /// Decisions writing assistance (Flow) makes the same way in Source and in Preview: which checker
-/// results become a fix, whether a fix applies at once or waits for review, and which edits keep
-/// clear of Markdown syntax. Source's `MarkdownTextEditor.Coordinator` and Preview's
-/// `MarkdownPreviewFlowCoordinator` run the same checker, planners and models through these; only
-/// how a suggestion is shown and taken differs between the two editors.
+/// results become a fix, whether a fix applies at once or waits for review, when the on-device
+/// model is asked and what its answers lead to, and which edits keep clear of Markdown syntax.
+/// Source's `MarkdownTextEditor.Coordinator` and Preview's `MarkdownPreviewFlowCoordinator` run the
+/// same checker, planners and models through these; only how a suggestion is shown and taken
+/// differs between the two editors.
 enum EditorFlowRepairPolicy {
+    // MARK: - Routing a check
+
+    /// What Apple's answer for a checked sentence leads to. An issue in protected Markdown, wholly
+    /// or in part, is never Flow's to fix; fixes come only from a check of a whole sentence that
+    /// offers them as one batch; a clean sentence may still go to the model when on-device writing
+    /// assistance is on.
+    static func step(
+        afterChecking results: [NSTextCheckingResult],
+        snapshot: EditorFlowCheckSnapshot,
+        protectedRanges: [NSRange]
+    ) -> EditorFlowCheckStep {
+        let allDetectedIssues = EditorFlowCorrectionResolver.detectedIssues(
+            in: snapshot.checkedText,
+            caretUTF16Offset: (snapshot.checkedText as NSString).length,
+            results: results,
+            options: snapshot.options
+        )
+        let (issues, hasPartiallyProtectedIssue) = unprotectedIssues(
+            allDetectedIssues,
+            checkedRange: snapshot.checkedRange,
+            protectedRanges: protectedRanges
+        )
+        if hasPartiallyProtectedIssue || issues.isEmpty && !allDetectedIssues.isEmpty {
+            return .end(.unresolved(.protected))
+        }
+        if issues.isEmpty {
+            guard snapshot.coversWholeCurrentSentence else { return .end(.blocked) }
+            return snapshot.offersSentenceBatch && snapshot.options.onDeviceProseCompletions
+                ? .modelRepair
+                : .end(.clear(.clean))
+        }
+        guard snapshot.offersSentenceBatch else { return .end(.unresolved(.unresolvedAppleResult)) }
+        return .resolve(issues)
+    }
+
+    /// Apple's fixes and alternatives in a sentence with issues. With more misspelled words than
+    /// can be looked up, nothing resolves, and the sentence goes to the model.
+    static func appleCandidates(
+        in results: [NSTextCheckingResult],
+        snapshot: EditorFlowCheckSnapshot
+    ) -> EditorFlowAppleCandidates {
+        let checked = snapshot.checkedText
+        let caret = (checked as NSString).length
+        let spellingLookups = snapshot.options.checksSpelling
+            ? EditorFlowCorrectionResolver.spellingCandidateLookups(
+                in: checked,
+                caretUTF16Offset: caret,
+                results: results
+            )
+            : []
+        guard let spellingLookups else {
+            return EditorFlowAppleCandidates(concrete: [], alternatives: [], spellingLookups: [])
+        }
+        let concrete = EditorFlowCorrectionResolver.concreteCorrections(
+            in: checked,
+            caretUTF16Offset: caret,
+            results: results
+        ).filter { candidate in
+            switch candidate.kind {
+            case .spelling: return snapshot.options.checksSpelling
+            case .grammar: return snapshot.options.checksGrammar
+            }
+        }
+        return EditorFlowAppleCandidates(
+            concrete: concrete,
+            alternatives: EditorFlowCorrectionResolver.ambiguousGrammarCorrections(
+                in: checked,
+                caretUTF16Offset: caret,
+                results: results
+            ),
+            spellingLookups: spellingLookups
+        )
+    }
+
+    /// The alternatives Apple's guesses for a misspelled word make, or nil when its automatic fix
+    /// already is the only guess.
+    static func spellingAlternative(
+        for lookup: EditorFlowSpellingCandidateLookup,
+        candidateResults: [NSTextCheckingResult],
+        in checkedText: String
+    ) -> EditorFlowAlternativeCandidate? {
+        let replacements = EditorFlowCorrectionResolver.spellingReviewReplacements(
+            in: checkedText,
+            lookup: lookup,
+            candidateResults: candidateResults
+        )
+        guard replacements.contains(where: { $0 != lookup.primaryReplacement }) else { return nil }
+        return EditorFlowAlternativeCandidate(range: lookup.range, replacementTexts: replacements, kind: .spelling)
+    }
+
+    /// What a sentence's fixes and alternatives lead to. Exactly one issue with alternatives has
+    /// them checked first, and a spelling one always waits for review; with more than one, nothing
+    /// is presented and the sentence goes to the model.
+    static func step(
+        concreteCandidates: [EditorFlowCorrectionCandidate],
+        alternatives: [EditorFlowAlternativeCandidate],
+        detectedIssues: [EditorFlowDetectedIssue],
+        snapshot: EditorFlowCheckSnapshot,
+        protectedRanges: [NSRange],
+        sourceUTF16Length: Int
+    ) -> EditorFlowCandidateStep {
+        if alternatives.count == 1, let alternative = alternatives.first {
+            let remaining = concreteCandidates.filter {
+                $0.range != alternative.range || $0.kind != alternative.kind
+            }
+            if let candidate = alternativeCandidateForValidation(
+                alternative,
+                concreteCandidates: remaining,
+                detectedIssues: detectedIssues,
+                snapshot: snapshot,
+                protectedRanges: protectedRanges,
+                sourceUTF16Length: sourceUTF16Length
+            ) {
+                return .validate(candidate, concreteCandidates: remaining, forcesReview: candidate.kind == .spelling)
+            }
+        }
+        return .present(alternatives.isEmpty ? concreteCandidates : [])
+    }
+
+    /// How a sentence ends when Apple's issues resolved into nothing Flow could show, or nil when
+    /// the model is asked to repair it: it is not when the user already turned this fix down or
+    /// took it back.
+    static func end(
+        afterUnresolvedFixes candidates: [EditorFlowCorrectionCandidate],
+        snapshot: EditorFlowCheckSnapshot,
+        suppression: EditorFlowSuggestionSuppression?
+    ) -> EditorFlowRepairEnd? {
+        suppression?.applies(to: candidates, snapshot: snapshot) == true
+            ? .unresolved(.suppressedDuplicate)
+            : nil
+    }
+
+    // MARK: - The on-device model's repairs
+
+    /// What the model's answer leads to. A repair must keep every protected fragment as it was and
+    /// pass `EditorFlowAIRepairValidator`, or the model counts as failing.
+    static func modelRepairAnswer(
+        _ outcome: FlowModelOutcome,
+        snapshot: EditorFlowCheckSnapshot
+    ) -> EditorFlowModelRepairAnswer {
+        if let failure = EditorFlowModelFailure(outcome) { return .failure(failure) }
+        guard case let .success(sentence) = outcome, sentence != snapshot.checkedText else { return .unchanged }
+        guard protectedFragments(in: sentence, mode: snapshot.sourceMode)
+                == protectedFragments(in: snapshot.checkedText, mode: snapshot.sourceMode),
+              let edits = EditorFlowAIRepairValidator.edits(
+                originalSentence: snapshot.checkedText,
+                candidateSentence: sentence
+              )
+        else { return .failure(EditorFlowModelFailure(.validationRejected, startsCooldown: true)) }
+        return .candidate(sentence: sentence, edits: edits)
+    }
+
+    /// How a sentence ends when the model gives no repair for it: Apple's issues are left to the
+    /// system, and a sentence Apple found clean is clear for completions. A failure starts the
+    /// sentence's cooldown only in the first case.
+    static func end(
+        withoutModelRepair failure: EditorFlowModelFailure,
+        appleFoundIssues: Bool
+    ) -> (end: EditorFlowRepairEnd, startsCooldown: Bool) {
+        appleFoundIssues
+            ? (.unresolved(failure.reason), failure.startsCooldown)
+            : (.clear(failure.reason), false)
+    }
+
+    /// How a sentence ends when the model left it as it was; this also ends any cooldown.
+    static func end(forUnchangedSentenceAfterAppleFoundIssues appleFoundIssues: Bool) -> EditorFlowRepairEnd {
+        appleFoundIssues ? .unresolved(.validationRejected) : .clear(.clean)
+    }
+
+    /// The model's repair once Apple has checked its sentence: shown for review only when the
+    /// sentence checks clean, the user has not already turned down exactly these edits, and no edit
+    /// touches protected Markdown.
+    static func modelSuggestion(
+        sentence: String,
+        edits: [EditorFlowCorrectionEdit],
+        checkResults: [NSTextCheckingResult],
+        orthography: NSOrthography?,
+        appleFoundIssues: Bool,
+        snapshot: EditorFlowCheckSnapshot,
+        protectedRanges: [NSRange],
+        suppression: EditorFlowSuggestionSuppression?
+    ) -> EditorFlowModelSuggestion {
+        guard orthography != nil, allCheckingResultsAreClean(checkResults) else {
+            let outcome = end(
+                withoutModelRepair: EditorFlowModelFailure(.validationRejected, startsCooldown: true),
+                appleFoundIssues: appleFoundIssues
+            )
+            return .rejected(outcome.end, startsCooldown: outcome.startsCooldown)
+        }
+        let absoluteEdits = edits.map { edit in
+            EditorFlowCorrectionEdit(
+                range: NSRange(location: snapshot.checkedRange.location + edit.range.location, length: edit.range.length),
+                originalText: edit.originalText,
+                replacementText: edit.replacementText,
+                kind: edit.kind
+            )
+        }
+        if let suppression,
+           suppression.edits.count == absoluteEdits.count,
+           absoluteEdits.allSatisfy(suppression.suppresses) {
+            return .rejected(.unresolved(.suppressedDuplicate), startsCooldown: false)
+        }
+        guard absoluteEdits.allSatisfy({
+            editRangeIsOutsideProtectedRanges($0.range, protectedRanges: protectedRanges)
+        }) else {
+            return .rejected(.unresolved(.validationRejected), startsCooldown: true)
+        }
+        return .review(EditorFlowSuggestion(
+            documentID: snapshot.documentID,
+            revision: snapshot.revision,
+            selectedRange: snapshot.selectedRange,
+            caretUTF16Offset: snapshot.caretUTF16Offset,
+            sentenceRange: snapshot.checkedRange,
+            originalSentence: snapshot.checkedText,
+            correctedSentence: sentence,
+            source: .ai,
+            acceptance: .reviewOnly,
+            edits: absoluteEdits
+        ))
+    }
+
+    // MARK: - Protected Markdown
+
+    /// Protected ranges after `length` UTF-16 units were inserted at `location`: a range that starts
+    /// at the insertion or after it moves past it.
+    static func rebasedProtectedRanges(
+        _ ranges: [NSRange],
+        insertingAt location: Int,
+        length: Int
+    ) -> [NSRange] {
+        ranges.map { range in
+            guard range.location >= location else { return range }
+            return NSRange(location: range.location + length, length: range.length)
+        }
+    }
+
+    /// Whether the selection is a caret with no protected Markdown at it: the character after it,
+    /// or the last one at the end of the text.
+    static func caretIsOutsideProtectedRanges(
+        _ ranges: [NSRange],
+        selection: NSRange,
+        sourceUTF16Length: Int
+    ) -> Bool {
+        guard selection.length == 0 else { return false }
+        guard sourceUTF16Length > 0 else { return true }
+        let caret = min(max(0, selection.location), sourceUTF16Length)
+        let probe = caret < sourceUTF16Length
+            ? NSRange(location: caret, length: 1)
+            : NSRange(location: sourceUTF16Length - 1, length: 1)
+        return !ranges.contains { NSIntersectionRange($0, probe).length > 0 }
+    }
+
     static func editRangeIsOutsideProtectedRanges(
         _ range: NSRange,
         protectedRanges: [NSRange]
@@ -23,40 +413,6 @@ enum EditorFlowRepairPolicy {
         return !protectedRanges.contains {
             NSIntersectionRange($0, range).length > 0
         }
-    }
-
-    static func isOrdinaryProseInsertion(
-        _ replacement: String,
-        in source: NSString,
-        at insertionLocation: Int,
-        mode: FlowSourceMode
-    ) -> Bool {
-        guard replacement.count == 1 else { return false }
-        if replacement == " " {
-            guard mode == .markdown else { return true }
-            let precedingRange = NSRange(location: 0, length: insertionLocation)
-            let newlineRange = source.range(
-                of: "\n",
-                options: .backwards,
-                range: precedingRange
-            )
-            let lineStart = newlineRange.location == NSNotFound ? 0 : NSMaxRange(newlineRange)
-            let linePrefix = source.substring(with: NSRange(
-                location: lineStart,
-                length: insertionLocation - lineStart
-            ))
-            return linePrefix.unicodeScalars.contains {
-                !CharacterSet.whitespacesAndNewlines.contains($0)
-            }
-        }
-        let scalars = replacement.unicodeScalars
-        let isProseScalar: (Unicode.Scalar) -> Bool = {
-            CharacterSet.letters.contains($0) || CharacterSet.decimalDigits.contains($0)
-        }
-        return scalars.contains(where: isProseScalar)
-            && scalars.allSatisfy {
-                isProseScalar($0) || CharacterSet.nonBaseCharacters.contains($0)
-            }
     }
 
     static func insertionRemainsOutsideProtectedSyntax(
@@ -156,10 +512,12 @@ enum EditorFlowRepairPolicy {
             }
     }
 
+    // MARK: - Fixes
+
     /// Apple's issues in the checked sentence that do not lie wholly inside protected Markdown. An
-    /// issue that only partly overlaps protected source is reported, imprecise, so the caller can
-    /// leave the sentence unresolved rather than repair half of a code span or link.
-    static func unprotectedIssues(
+    /// issue that only partly overlaps protected source is reported, imprecise, so the sentence is
+    /// left unresolved rather than half of a code span or link repaired.
+    private static func unprotectedIssues(
         _ issues: [EditorFlowDetectedIssue],
         checkedRange: NSRange,
         protectedRanges: [NSRange]
@@ -189,7 +547,7 @@ enum EditorFlowRepairPolicy {
         return (unprotected, hasPartiallyProtectedIssue)
     }
 
-    static func alternativeCandidateForValidation(
+    private static func alternativeCandidateForValidation(
         _ candidate: EditorFlowAlternativeCandidate,
         concreteCandidates: [EditorFlowCorrectionCandidate],
         detectedIssues: [EditorFlowDetectedIssue],
@@ -425,13 +783,17 @@ enum EditorFlowRepairPolicy {
         )
     }
 
+    /// Whether a sentence with one of Apple's alternatives in it checks clean. The checker is asked
+    /// for everything (`EditorFlowCheckingTypes.validation`); grammar counts only while it is
+    /// checked, and with spelling off only a misspelling in the alternative itself counts.
     static func checkingValidationIsClean(
         _ results: [NSTextCheckingResult],
+        orthography: NSOrthography?,
         options: EditorTextCheckingOptions,
         requiredSpellingRange: NSRange,
         checkedUTF16Length: Int
     ) -> Bool {
-        !results.contains { result in
+        orthography != nil && !results.contains { result in
             switch result.resultType {
             case .grammar:
                 return options.checksGrammar
@@ -452,7 +814,7 @@ enum EditorFlowRepairPolicy {
         }
     }
 
-    static func allCheckingResultsAreClean(
+    private static func allCheckingResultsAreClean(
         _ results: [NSTextCheckingResult]
     ) -> Bool {
         !results.contains {

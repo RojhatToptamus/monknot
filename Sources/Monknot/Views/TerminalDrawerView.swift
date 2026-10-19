@@ -44,7 +44,7 @@ struct TerminalDrawerView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.terminalSurfaceColor)
+        .background(theme.surfaceColor)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Terminal panel")
         .onAppear {
@@ -166,7 +166,7 @@ private struct TerminalDrawerTabGroup: View {
                     showsTrailing: overflow.hasTrailingOverflow,
                     theme: theme,
                     zoomScale: zoomScale,
-                    surface: theme.terminalSurfaceColor
+                    surface: theme.surfaceColor
                 )
             }
             .frame(width: viewportWidth)
@@ -301,10 +301,10 @@ private struct TerminalTabChip: View {
         case .running:
             return Color(hex: theme.semanticColors.diffAdded)
         case .failed:
-            return Color(hex: theme.semanticColors.diffRemoved)
+            return theme.dangerColor
         case let .exited(status):
             if let status, status != 0 {
-                return Color(hex: theme.semanticColors.diffRemoved)
+                return theme.dangerColor
             }
             return nil
         case .idle:
@@ -355,6 +355,6 @@ private struct TerminalEmptySurface: View {
                 action: createTerminal
             )
         }
-        .background(theme.terminalSurfaceColor)
+        .background(theme.surfaceColor)
     }
 }

@@ -29,7 +29,7 @@ struct MarkdownLinkInspectionPanel: View {
         }
         .frame(width: panelWidth)
         .frame(maxHeight: .infinity)
-        .background(theme.sidebarSurfaceColor)
+        .background(theme.chromeSurfaceColor)
         // A structural edge takes `line`, not the in-container `line2` (design.md §3).
         .overlay(alignment: .leading) {
             Rectangle()
@@ -41,10 +41,10 @@ struct MarkdownLinkInspectionPanel: View {
         .accessibilityLabel("Link inspection for \(document.displayName)")
     }
 
-    /// The sidebar header's geometry: 40 tall, the title on the rows' glyph edge, the actions 2 apart
-    /// inside the list gutter. The document's path follows the title in 12 `ink3`.
+    /// The sidebar header's geometry (a bar in the list inset): the title on the rows' glyph edge, the
+    /// actions 2 apart ending on the list's edge. The document's path follows the title in 12 `ink3`.
     private var header: some View {
-        HStack(spacing: scaled(MonknotMetrics.barItemGapBase)) {
+        MonknotBar(theme: theme, zoomScale: zoomScale, inset: .list) {
             HStack(alignment: .firstTextBaseline, spacing: scaled(6)) {
                 Text("Links")
                     .font(MonknotTypography.panelTitle(theme: theme, zoomScale: zoomScale))
@@ -55,6 +55,7 @@ struct MarkdownLinkInspectionPanel: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
+            .padding(.leading, scaled(MonknotMetrics.rowPaddingBase))
             .help(document.relativePath)
 
             Spacer(minLength: scaled(8))
@@ -75,9 +76,6 @@ struct MarkdownLinkInspectionPanel: View {
                 action: close
             )
         }
-        .padding(.leading, scaled(MonknotMetrics.listGutterBase + MonknotMetrics.rowPaddingBase))
-        .padding(.trailing, scaled(MonknotMetrics.listGutterBase))
-        .frame(height: MonknotMetrics.barHeight(theme: theme, zoomScale: zoomScale))
     }
 
     @ViewBuilder
@@ -138,15 +136,18 @@ struct MarkdownLinkInspectionPanel: View {
                 emptyRow("No Markdown files link here.")
             } else {
                 ForEach(links) { link in
-                    MonknotListRow(theme: theme, isSelected: false) {
+                    Button {
                         openSource(link.sourceDocumentID, link.location)
                     } label: {
-                        linkRowLabel(
+                        MarkdownLinkRowLabel(
                             systemImage: "arrow.turn.down.right",
                             title: link.sourceRelativePath,
-                            detail: "Line \(link.location.line), column \(link.column) · \(link.label)"
+                            detail: "Line \(link.location.line), column \(link.column) · \(link.label)",
+                            theme: theme,
+                            zoomScale: zoomScale
                         )
                     }
+                    .buttonStyle(MonknotListRowButtonStyle(theme: theme, zoomScale: zoomScale))
                     .accessibilityLabel("Incoming link from \(link.sourceRelativePath), line \(link.location.line), column \(link.column)")
                 }
             }
@@ -160,15 +161,18 @@ struct MarkdownLinkInspectionPanel: View {
             } else {
                 ForEach(issues) { issue in
                     VStack(alignment: .leading, spacing: scaled(4)) {
-                        MonknotListRow(theme: theme, isSelected: false) {
+                        Button {
                             openSource(document.id, issue.location)
                         } label: {
-                            linkRowLabel(
+                            MarkdownLinkRowLabel(
                                 systemImage: issueSystemImage(issue.kind),
                                 title: issue.label,
-                                detail: "\(issueTitle(issue.kind)) · line \(issue.location.line), column \(issue.column)"
+                                detail: "\(issueTitle(issue.kind)) · line \(issue.location.line), column \(issue.column)",
+                                theme: theme,
+                                zoomScale: zoomScale
                             )
                         }
+                        .buttonStyle(MonknotListRowButtonStyle(theme: theme, zoomScale: zoomScale))
                         .accessibilityLabel("\(issueTitle(issue.kind)) link \(issue.label), line \(issue.location.line), column \(issue.column)")
 
                         if issue.kind == .ambiguous {
@@ -224,26 +228,6 @@ struct MarkdownLinkInspectionPanel: View {
             .padding(.vertical, scaled(6))
     }
 
-    /// A link row: its glyph in the 18 column, the 13 title, and a 12 `ink3` detail under it.
-    private func linkRowLabel(systemImage: String, title: String, detail: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: scaled(8)) {
-            MonknotFileKindGlyph(systemImage: systemImage, theme: theme, zoomScale: zoomScale)
-                .foregroundStyle(theme.tertiaryForegroundColor)
-            VStack(alignment: .leading, spacing: scaled(2)) {
-                Text(title)
-                    .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Text(detail)
-                    .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
-                    .foregroundStyle(theme.tertiaryForegroundColor)
-                    .lineLimit(1)
-            }
-        }
-        .padding(.horizontal, scaled(MonknotMetrics.rowPaddingBase))
-        .padding(.vertical, scaled(6))
-    }
-
     private func issueTitle(_ kind: MarkdownOutgoingLinkIssueKind) -> String {
         switch kind {
         case .missing: return "Unresolved"
@@ -256,5 +240,49 @@ struct MarkdownLinkInspectionPanel: View {
         case .missing: return "link"
         case .ambiguous: return "arrow.triangle.branch"
         }
+    }
+}
+
+/// A link row: the list row's glyph column and label with a 12 `ink3` detail under the title, so it
+/// takes two lines. Its glyph rests at `ink3` and its title at `ink2`, both `ink` while the row is
+/// hovered or held, as every list row's (`MonknotListRowLabel`).
+private struct MarkdownLinkRowLabel: View {
+    let systemImage: String
+    let title: String
+    let detail: String
+    let theme: AppTheme
+    let zoomScale: Double
+    @Environment(\.monknotRowIsHighlighted) private var isHighlighted
+
+    private func scaled(_ base: CGFloat) -> CGFloat {
+        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: scaled(MonknotMetrics.rowGlyphGapBase)) {
+            MonknotFileKindGlyph(systemImage: systemImage, theme: theme, zoomScale: zoomScale)
+                .monknotStateStyle(theme.sidebarColor(
+                    theme.foregroundColor,
+                    opacity: isHighlighted ? 1 : theme.glyphInkOpacity
+                ))
+            VStack(alignment: .leading, spacing: scaled(2)) {
+                Text(title)
+                    .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
+                    .monknotStateStyle(theme.sidebarColor(
+                        theme.foregroundColor,
+                        opacity: isHighlighted ? 1 : theme.labelInkOpacity
+                    ))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(detail)
+                    .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
+                    .foregroundStyle(theme.tertiaryForegroundColor)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, scaled(MonknotMetrics.rowPaddingBase))
+        .padding(.vertical, scaled(6))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }

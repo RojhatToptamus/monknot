@@ -9,9 +9,12 @@ struct MonknotPopUpItem: Identifiable, Equatable {
     var image: NSImage?
 }
 
-/// A command listed after a pop-up's values, below a separator ("Stroke Width…").
+/// A command in a native menu: after a pop-up's values, below a separator ("Stroke Width…"), or in a
+/// menu button's menu ("More"), with its glyph.
 struct MonknotPopUpAction: Identifiable {
     let title: String
+    var systemImage: String?
+    var isEnabled = true
     let action: () -> Void
 
     var id: String { title }
@@ -71,12 +74,12 @@ struct MonknotPopUpButton<Value: View>: View {
         .focusEffectDisabled()
         .fixedSize(horizontal: width == nil, vertical: true)
         .background(
-            MonknotPopUpMenuPresenter(
+            MonknotMenuPresenter(
                 isPresented: $isMenuPresented,
                 selection: $selection,
                 previewedSelection: $previewedSelection,
                 items: items,
-                actions: actions,
+                actionGroups: [actions],
                 previewsSelection: previewsSelection,
                 onPreviewSelection: onPreviewSelection,
                 onCancelPreview: onCancelPreview
@@ -99,7 +102,6 @@ extension MonknotPopUpButton where Value == MonknotPopUpTitle {
         selection: Binding<String>,
         items: [MonknotPopUpItem],
         actions: [MonknotPopUpAction] = [],
-        placeholder: String = "",
         theme: AppTheme,
         zoomScale: Double,
         previewsSelection: Bool = false,
@@ -117,8 +119,8 @@ extension MonknotPopUpButton where Value == MonknotPopUpTitle {
         self.onCancelPreview = onCancelPreview
         self.value = { shown in
             MonknotPopUpTitle(
-                title: items.first { $0.id == shown }?.title ?? placeholder,
-                reservedTitles: items.map(\.title) + (placeholder.isEmpty ? [] : [placeholder]),
+                title: items.first { $0.id == shown }?.title ?? "",
+                reservedTitles: items.map(\.title),
                 theme: theme,
                 zoomScale: zoomScale
             )
@@ -138,16 +140,11 @@ struct MonknotPopUpLabel<Value: View>: View {
     let zoomScale: Double
     var isHovered = false
     var isOpen = false
-    var isDisabled = false
     /// 10 for text, whose side bearing adds optical space; 8 for a swatch or a glyph.
     var leadingPaddingBase: CGFloat = Self.leadingPaddingBase
     @ViewBuilder let value: () -> Value
 
     @Environment(\.isEnabled) private var isEnabled
-
-    private var disabled: Bool {
-        isDisabled || !isEnabled
-    }
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale))
@@ -158,40 +155,18 @@ struct MonknotPopUpLabel<Value: View>: View {
                     size: MonknotMetrics.interfaceGlyph(MonknotMetrics.chevronPointSizeBase, theme: theme, zoomScale: zoomScale),
                     weight: .semibold
                 ))
-                .monknotStateStyle(disabled ? theme.disabledForegroundColor : theme.tertiaryForegroundColor)
+                .monknotStateStyle(isEnabled ? theme.tertiaryForegroundColor : theme.disabledForegroundColor)
                 .accessibilityHidden(true)
         }
         .padding(.leading, MonknotMetrics.interfaceDensity(leadingPaddingBase, theme: theme, zoomScale: zoomScale))
         .padding(.trailing, MonknotMetrics.interfaceDensity(Self.trailingPaddingBase, theme: theme, zoomScale: zoomScale))
         .frame(height: MonknotMetrics.interfaceControl(Self.heightBase, theme: theme, zoomScale: zoomScale))
         .background {
-            shape.monknotStateStyle(isOpen && !disabled ? theme.pressedFillColor : theme.controlTrackFillColor.opacity(disabled ? 0.5 : 1))
-            shape.monknotStateStyle(isHovered && !isOpen && !disabled ? theme.hoverFillColor : .clear)
+            shape.monknotStateStyle(isOpen && isEnabled ? theme.pressedFillColor : theme.controlTrackFillColor.opacity(isEnabled ? 1 : 0.5))
+            shape.monknotStateStyle(isHovered && !isOpen && isEnabled ? theme.hoverFillColor : .clear)
         }
         .contentShape(shape)
-        .environment(\.monknotPopUpDisabled, disabled)
-    }
-}
-
-extension MonknotPopUpLabel where Value == MonknotPopUpTitle {
-    /// A pop-up label whose value is text, in the chrome label style.
-    init(
-        title: String,
-        reservingWidthOf titles: [String] = [],
-        theme: AppTheme,
-        zoomScale: Double,
-        isHovered: Bool = false,
-        isOpen: Bool = false,
-        isDisabled: Bool = false
-    ) {
-        self.theme = theme
-        self.zoomScale = zoomScale
-        self.isHovered = isHovered
-        self.isOpen = isOpen
-        self.isDisabled = isDisabled
-        self.value = {
-            MonknotPopUpTitle(title: title, reservedTitles: titles, theme: theme, zoomScale: zoomScale)
-        }
+        .environment(\.monknotPopUpDisabled, !isEnabled)
     }
 }
 
@@ -248,40 +223,21 @@ struct MonknotPopUpGlyph: View {
     }
 }
 
-/// What a pop-up's menu has chosen so far: highlighted values preview, and only a chosen one stays.
-struct MonknotPopUpSelectionTransaction: Equatable {
-    let initialSelection: String
-    private(set) var previewedSelection: String
-    private(set) var committedSelection: String?
-
-    init(initialSelection: String) {
-        self.initialSelection = initialSelection
-        self.previewedSelection = initialSelection
-    }
-
-    mutating func preview(_ selection: String) {
-        previewedSelection = selection
-    }
-
-    mutating func commit(_ selection: String) {
-        previewedSelection = selection
-        committedSelection = selection
-    }
-
-    var selectionAfterClose: String {
-        committedSelection ?? initialSelection
-    }
-}
-
-private struct MonknotPopUpMenuPresenter: NSViewRepresentable {
+/// Shows a native menu from a SwiftUI control (design.md §5.1, §5.3): a pop-up's values, the current
+/// one checked and the menu opened over the control with it under the pointer, as `NSPopUpButton` does,
+/// then groups of commands, each after a separator. A command menu ("More") drops below its button. It
+/// opens on the turn after `isPresented` becomes true, so the control draws its open fill first, and
+/// sets `isPresented` back once the menu closes. With `previewsSelection`, highlighting a value previews
+/// it and closing the menu without choosing cancels the preview.
+struct MonknotMenuPresenter: NSViewRepresentable {
     @Binding var isPresented: Bool
-    @Binding var selection: String
-    @Binding var previewedSelection: String?
-    let items: [MonknotPopUpItem]
-    let actions: [MonknotPopUpAction]
-    let previewsSelection: Bool
-    let onPreviewSelection: ((String) -> Void)?
-    let onCancelPreview: (() -> Void)?
+    var selection: Binding<String>?
+    var previewedSelection: Binding<String?>?
+    var items: [MonknotPopUpItem] = []
+    var actionGroups: [[MonknotPopUpAction]] = []
+    var previewsSelection = false
+    var onPreviewSelection: ((String) -> Void)?
+    var onCancelPreview: (() -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -299,7 +255,7 @@ private struct MonknotPopUpMenuPresenter: NSViewRepresentable {
             return
         }
 
-        // Presented on the next turn, so the button shows its open fill before the menu tracks.
+        // Presented on the next turn, so the control shows its open fill before the menu tracks.
         context.coordinator.isPresentationScheduled = true
         DispatchQueue.main.async { [weak nsView, weak coordinator = context.coordinator] in
             guard let nsView, let coordinator else { return }
@@ -311,25 +267,27 @@ private struct MonknotPopUpMenuPresenter: NSViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject, NSMenuDelegate {
-        var parent: MonknotPopUpMenuPresenter
+        var parent: MonknotMenuPresenter
         var isTracking = false
         var isPresentationScheduled = false
-        private var transaction: MonknotPopUpSelectionTransaction?
+        /// The commands of the menu being shown, by item tag.
+        private var commands: [MonknotPopUpAction] = []
+        private var didChooseValue = false
 
-        init(parent: MonknotPopUpMenuPresenter) {
+        init(parent: MonknotMenuPresenter) {
             self.parent = parent
         }
 
-        func presentMenu(from anchor: NSView) {
-            guard !isTracking else { return }
+        /// The menu for the current values and commands; showing it starts a new choice.
+        func makeMenu(minimumWidth: CGFloat) -> NSMenu {
+            didChooseValue = false
+            commands = []
+            let current = parent.selection?.wrappedValue
 
-            let initialSelection = parent.selection
-            transaction = MonknotPopUpSelectionTransaction(initialSelection: initialSelection)
-
-            let menu = NSMenu(title: parent.selection)
+            let menu = NSMenu(title: current ?? "")
             menu.autoenablesItems = false
             menu.delegate = self
-            menu.minimumWidth = anchor.bounds.width
+            menu.minimumWidth = minimumWidth
 
             for option in parent.items {
                 let item = NSMenuItem(
@@ -340,27 +298,43 @@ private struct MonknotPopUpMenuPresenter: NSViewRepresentable {
                 item.target = self
                 item.representedObject = option.id
                 item.image = option.image
-                item.state = option.id == initialSelection ? .on : .off
+                item.state = option.id == current ? .on : .off
                 menu.addItem(item)
             }
 
-            if !parent.actions.isEmpty {
-                menu.addItem(.separator())
-                for (index, action) in parent.actions.enumerated() {
+            for group in parent.actionGroups where !group.isEmpty {
+                if !menu.items.isEmpty {
+                    menu.addItem(.separator())
+                }
+                for command in group {
                     let item = NSMenuItem(
-                        title: action.title,
-                        action: #selector(performAction(_:)),
+                        title: command.title,
+                        action: #selector(performCommand(_:)),
                         keyEquivalent: ""
                     )
                     item.target = self
-                    item.tag = index
+                    item.tag = commands.count
+                    item.image = command.systemImage.flatMap {
+                        NSImage(systemSymbolName: $0, accessibilityDescription: nil)
+                    }
+                    item.isEnabled = command.isEnabled
                     menu.addItem(item)
+                    commands.append(command)
                 }
             }
+            return menu
+        }
 
-            // The current value opens over the button; with none (a zoom between presets) the menu
-            // drops below it.
-            let positioningItem = menu.items.first { ($0.representedObject as? String) == initialSelection }
+        func presentMenu(from anchor: NSView) {
+            guard !isTracking else { return }
+
+            let menu = makeMenu(minimumWidth: anchor.bounds.width)
+            // The current value opens over the control; with none (a zoom between presets, a command
+            // menu) the menu drops below it.
+            let current = parent.selection?.wrappedValue
+            let positioningItem = current.flatMap { current in
+                menu.items.first { ($0.representedObject as? String) == current }
+            }
             isTracking = true
             _ = menu.popUp(
                 positioning: positioningItem,
@@ -368,13 +342,15 @@ private struct MonknotPopUpMenuPresenter: NSViewRepresentable {
                 in: anchor
             )
             isTracking = false
+            finishTracking()
+        }
 
-            if parent.previewsSelection,
-               transaction?.committedSelection == nil {
+        /// The menu closed: a preview that nothing chose is cancelled, and the control closes.
+        func finishTracking() {
+            if parent.previewsSelection, !didChooseValue {
                 parent.onCancelPreview?()
             }
-            parent.previewedSelection = nil
-            transaction = nil
+            parent.previewedSelection?.wrappedValue = nil
             parent.isPresented = false
         }
 
@@ -383,21 +359,20 @@ private struct MonknotPopUpMenuPresenter: NSViewRepresentable {
                   let selection = item?.representedObject as? String else {
                 return
             }
-            transaction?.preview(selection)
-            parent.previewedSelection = selection
+            parent.previewedSelection?.wrappedValue = selection
             parent.onPreviewSelection?(selection)
         }
 
         @objc private func commitSelection(_ sender: NSMenuItem) {
             guard let selection = sender.representedObject as? String else { return }
-            transaction?.commit(selection)
-            parent.selection = selection
-            parent.previewedSelection = nil
+            didChooseValue = true
+            parent.selection?.wrappedValue = selection
+            parent.previewedSelection?.wrappedValue = nil
         }
 
-        @objc private func performAction(_ sender: NSMenuItem) {
-            guard parent.actions.indices.contains(sender.tag) else { return }
-            parent.actions[sender.tag].action()
+        @objc private func performCommand(_ sender: NSMenuItem) {
+            guard commands.indices.contains(sender.tag) else { return }
+            commands[sender.tag].action()
         }
     }
 }

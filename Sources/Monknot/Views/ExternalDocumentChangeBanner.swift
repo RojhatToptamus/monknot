@@ -94,27 +94,15 @@ struct ExternalDocumentChangeBanner: View {
         return "This file changed on disk while you have unsaved changes."
     }
 
-    private func scaled(_ base: CGFloat) -> CGFloat {
-        MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
-    }
-
+    /// The shared banner (design.md §13): `dangersoft` when the file is gone.
     var body: some View {
-        HStack(spacing: scaled(MonknotMetrics.rowGlyphGapBase)) {
-            MonknotFileKindGlyph(
-                systemImage: isRemovedExternally ? "exclamationmark.triangle.fill" : "arrow.triangle.2.circlepath",
-                theme: theme,
-                zoomScale: zoomScale
-            )
-            .foregroundStyle(isRemovedExternally ? removedColor : theme.tertiaryForegroundColor)
-            .accessibilityHidden(true)
-
-            Text(message)
-                .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
-                .foregroundStyle(theme.foregroundColor)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.trailing, scaled(4))
-
+        MonknotBanner(
+            systemImage: isRemovedExternally ? "exclamationmark.triangle.fill" : "arrow.triangle.2.circlepath",
+            message: message,
+            tone: isRemovedExternally ? .danger : .neutral,
+            theme: theme,
+            zoomScale: zoomScale
+        ) {
             if isMarkupDocument {
                 if documentKind == .pdf {
                     MonknotActionButton(
@@ -178,16 +166,6 @@ struct ExternalDocumentChangeBanner: View {
                 }
             }
         }
-        // A bar across the top of the document (design.md §2, §13): 40 tall with 28 buttons, a soft
-        // fill (`dangersoft` when the file is gone), and a `line2` rule between it and the text.
-        .padding(.horizontal, scaled(SettingsRow<EmptyView>.horizontalPaddingBase))
-        .frame(maxWidth: .infinity, minHeight: MonknotMetrics.barHeight(theme: theme, zoomScale: zoomScale))
-        .background(isRemovedExternally ? removedColor.opacity(theme.isDark ? 0.12 : 0.10) : theme.elevatedSurfaceColor)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(theme.separatorColor)
-                .frame(height: 1)
-        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(message)
         .confirmationDialog(
@@ -212,10 +190,6 @@ struct ExternalDocumentChangeBanner: View {
         } message: {
             Text("This replaces your unsaved local text with the latest validated disk copy.")
         }
-    }
-
-    private var removedColor: Color {
-        Color(hex: theme.semanticColors.diffRemoved)
     }
 
 }
@@ -580,6 +554,6 @@ struct ExternalDocumentReconciliationSheet: View {
     }
 
     private var removedColor: Color {
-        Color(hex: theme.semanticColors.diffRemoved)
+        theme.dangerColor
     }
 }

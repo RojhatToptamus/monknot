@@ -199,8 +199,13 @@ final class WebViewPaneTransitionHold {
         pendingSpec = nil
         let wanted = areaInWindow ?? held
         let changesFrame = !Self.roughlyEqual(wanted, held)
-        let snapshot = changesFrame && animatedCover
-            ? Self.snapshot(of: webView, in: webView.convert(wanted, from: nil).intersection(webView.bounds))
+        // What is on screen of the area the web view is released into, kept where it is in the
+        // window: a `.still` page held at its start frame covers only part of a card that grew, and
+        // the cover's fill takes the rest rather than the picture stretching over it.
+        let shownRect = webView.convert(wanted, from: nil).intersection(webView.bounds)
+        let shownInWindow = webView.convert(shownRect, to: nil)
+        let snapshot = changesFrame && animatedCover && !shownRect.isEmpty
+            ? Self.snapshot(of: webView, in: shownRect)
             : nil
         heldRect = nil
         applyFrame()
@@ -208,7 +213,7 @@ final class WebViewPaneTransitionHold {
             run(script: "window.monknotPaneTransition && window.monknotPaneTransition.end()")
         }
         if let snapshot {
-            showCover(snapshot, imageRect: webView.bounds, fadeDuration: 0, tracksCard: false)
+            showCover(snapshot, imageRect: webView.convert(shownInWindow, from: nil), fadeDuration: 0, tracksCard: false)
         }
     }
 

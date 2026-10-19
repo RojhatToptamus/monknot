@@ -164,7 +164,7 @@ private struct MarkdownOutlineRailContent: View {
         }
         .frame(width: totalWidth)
         .animation(
-            MonknotMotion.outlineAnimation(reduceMotion: reduceMotion),
+            MonknotMotion.stateMotion(reduceMotion: reduceMotion),
             value: isExpanded
         )
         .accessibilityElement(children: .contain)
@@ -247,7 +247,7 @@ private struct MarkdownOutlineRailContent: View {
     }
 
     private func scroll(to itemID: String, using proxy: ScrollViewProxy, animated: Bool) {
-        if animated, let animation = MonknotMotion.outlineAnimation(reduceMotion: reduceMotion) {
+        if animated, let animation = MonknotMotion.stateMotion(reduceMotion: reduceMotion) {
             withAnimation(animation) {
                 proxy.scrollTo(itemID, anchor: MarkdownOutlineRailLayout.revealAnchor)
             }
@@ -372,11 +372,7 @@ private struct MarkdownOutlineHoverPanel: View {
                     .monospacedDigit()
             }
         }
-        .buttonStyle(MonknotMenuRowButtonStyle(
-            theme: theme,
-            isSelected: isRevealed,
-            cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
-        ))
+        .buttonStyle(MonknotMenuRowButtonStyle(theme: theme, zoomScale: zoomScale, isSelected: isRevealed))
         .help("\(item.title), line \(item.location.line)")
         .accessibilityLabel("Go to heading: \(item.title)")
         .accessibilityValue("Heading level \(item.level), line \(item.location.line)")
@@ -387,7 +383,7 @@ private struct MarkdownOutlineHoverPanel: View {
         guard let revealedItemID else { return }
         DispatchQueue.main.async {
             if animated,
-               let animation = MonknotMotion.outlineAnimation(reduceMotion: reduceMotion) {
+               let animation = MonknotMotion.stateMotion(reduceMotion: reduceMotion) {
                 withAnimation(animation) {
                     proxy.scrollTo(
                         revealedItemID,

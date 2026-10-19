@@ -46,7 +46,7 @@ public struct MarkdownRenderService: Sendable {
             appTheme: appTheme,
             zoomScale: zoomScale,
             baseFontSize: appTheme.codeFontSize,
-            contentWidthPercent: 88,
+            contentWidthPercent: DocumentMeasure.defaultContentWidthPercent,
             baseURL: baseURL
         )
     }
@@ -56,7 +56,7 @@ public struct MarkdownRenderService: Sendable {
         appTheme: AppTheme,
         zoomScale: Double,
         baseFontSize: Double,
-        contentWidthPercent: Double = 88,
+        contentWidthPercent: Double = DocumentMeasure.defaultContentWidthPercent,
         usePointerCursors: Bool = false,
         fontSmoothing: Bool = true,
         editable: Bool = false,
@@ -92,6 +92,7 @@ public struct MarkdownRenderService: Sendable {
           \(baseTag)
           <style>
         \(stylesheet)
+        \(Self.legacyScrollbarCSS)
         \(editorStyle)
         \(cssVariables)
           </style>
@@ -152,22 +153,20 @@ public struct MarkdownRenderService: Sendable {
         usePointerCursors: Bool = false,
         fontSmoothing: Bool = true
     ) -> [(String, String)] {
+        let zoom = max(0.5, min(3, zoomScale))
+        // The margins follow the code size, as Source's do: Preview's prose is set a step above it.
+        let marginTop = Int(DocumentMeasure.verticalMargin(fontSize: baseFontSize * zoomScale / DocumentMeasure.previewProseScale))
         let baseFont = max(8, min(120, baseFontSize * zoomScale))
         let baseFontSize = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), baseFont)
-        let contentWidth = String(
-            format: "%.0f",
-            locale: Locale(identifier: "en_US_POSIX"),
-            max(55, min(100, contentWidthPercent))
-        )
+        let contentWidthPercent = DocumentMeasure.clampedContentWidthPercent(contentWidthPercent)
+        let contentWidth = String(format: "%.0f", locale: Locale(identifier: "en_US_POSIX"), contentWidthPercent)
         let contrast = max(0, min(100, theme.contrast))
         let borderMix = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), 8 + contrast * 0.16)
         let softMix = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), 3 + contrast * 0.06)
         let softStrongMix = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), 6 + contrast * 0.10)
-        let quoteMix = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), 8 + contrast * 0.08)
         let border = "color-mix(in srgb, \(theme.foreground) \(borderMix)%, transparent)"
         let soft = "color-mix(in srgb, \(theme.foreground) \(softMix)%, transparent)"
         let softStrong = "color-mix(in srgb, \(theme.foreground) \(softStrongMix)%, transparent)"
-        let blockquoteBackground = "color-mix(in srgb, \(theme.accent) \(quoteMix)%, transparent)"
         let uiFontStack = fontStack(
             preferred: theme.uiFontName,
             fallback: "-apple-system, BlinkMacSystemFont, \"SF Pro Text\", \"Segoe UI\", sans-serif"
@@ -188,15 +187,9 @@ public struct MarkdownRenderService: Sendable {
             ("--soft-strong", softStrong),
             ("--code-bg", "color-mix(in srgb, \(theme.background) \(theme.isDark ? "93" : "95.5")%, \(theme.foreground))"),
             ("--code-fg", theme.foreground),
-            ("--blockquote-bg", blockquoteBackground),
-            ("--blockquote-border", theme.accent),
-            ("--quote-bg", "var(--blockquote-bg)"),
-            ("--quote-border", "var(--blockquote-border)"),
             ("--table-border", border),
             // A light page needs only a wash to set the header row apart; a dark one needs more.
             ("--table-header-bg", theme.isDark ? softStrong : soft),
-            ("--table-row-alt-bg", soft),
-            ("--shadow", "rgba(0, 0, 0, \(theme.isDark ? "0.36" : "0.08"))"),
             ("--selection-bg", theme.selectionBackground),
             ("--selection-fg", theme.selectionForeground),
             ("--tok-keyword", theme.codeKeyword),
@@ -205,10 +198,15 @@ public struct MarkdownRenderService: Sendable {
             ("--tok-comment", theme.codeComment),
             ("--tok-builtin", theme.codeBuiltin),
             ("--base-font-size", "\(baseFontSize)px"),
-            // The space above the first line, as Source's (DocumentMeasure.verticalMarginEm).
-            ("--document-margin-top", "\(Int(DocumentMeasure.verticalMargin(fontSize: baseFont)))px"),
+            // The page's margins (design.md §10.11). Above the first line, the same as Source's; below
+            // the last, twice that or a quarter of the window, so the last block can be read and
+            // written above the window's edge; beside the text, at least Source's least inset, which
+            // holds the block handles. Text starts at the same x in both modes at every width.
+            ("--document-margin-top", "\(marginTop)px"),
+            ("--document-margin-bottom", "max(\(2 * marginTop)px, 25vh)"),
+            ("--column-gutter", "\(Int(DocumentMeasure.minimumTextEdge(zoomScale: zoom)))px"),
             ("--content-max-width", "\(contentWidth)%"),
-            ("--content-measure", DocumentMeasure.previewCSSLength(contentWidthPercent: max(55, min(100, contentWidthPercent)))),
+            ("--content-measure", DocumentMeasure.previewCSSLength(contentWidthPercent: contentWidthPercent)),
             ("--font-smoothing", fontSmoothing ? "antialiased" : "auto"),
             ("--interactive-cursor", usePointerCursors ? "pointer" : "default"),
             ("--ui-font", uiFontStack),
@@ -217,10 +215,16 @@ public struct MarkdownRenderService: Sendable {
             ("--danger", theme.semanticColors.diffRemoved),
             ("--ok", theme.semanticColors.diffAdded),
             ("--skill", theme.semanticColors.skill),
-            ("--onaccent", theme.onAccentForegroundHex),
             ("--task-check", taskCheckImage(color: theme.onAccentForegroundHex)),
-            // The neutral fill under a highlighted menu row or a hovered control: the chrome's hover fill.
-            ("--highlight", "color-mix(in srgb, \(theme.foreground) \(theme.isDark ? "6" : "5.5")%, transparent)"),
+            // The editor's fills and floating surfaces, from the values the native chrome uses
+            // (design.md §1.2, §2.1): a highlighted menu row takes a native menu row's `selected` fill.
+            ("--mk-hover", inkMix(theme.foreground, theme.hoverInkOpacity)),
+            ("--mk-press", inkMix(theme.foreground, theme.pressInkOpacity)),
+            ("--mk-highlight", inkMix(theme.foreground, theme.selectedInkOpacity)),
+            ("--mk-accsoft", inkMix(theme.accent, theme.accentSoftOpacity)),
+            ("--mk-floating", theme.floatingSurfaceHex),
+            ("--mk-shadow-hue", theme.floatingShadowHex),
+            ("--mk-ring", inkMix(theme.floatingRingHex, theme.floatingRingOpacity)),
             // The chrome's ink ladder, derived per theme (design.md §1.2), so the page's menus, format
             // bar and hints read exactly like the native sidebar, tabs and Settings.
             ("--mk-ink2", inkMix(theme.foreground, theme.labelInkOpacity)),
@@ -228,19 +232,45 @@ public struct MarkdownRenderService: Sendable {
             ("--mk-ink4", inkMix(theme.foreground, AppTheme.disabledInkOpacity)),
             // The editor's menus and toolbars scale with workspace zoom; text also with the
             // theme's interface font size, as the native chrome does.
-            ("--mk-z", String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"), max(0.5, min(3, zoomScale)))),
+            ("--mk-z", String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"), zoom)),
             ("--mk-tz", String(
                 format: "%.3f",
                 locale: Locale(identifier: "en_US_POSIX"),
-                max(0.5, min(3, zoomScale)) * min(1.25, max(0.875, theme.uiFontSize / 16))
+                zoom * min(1.25, max(0.875, theme.uiFontSize / 16))
             ))
         ]
     }
 
     private func inkMix(_ ink: String, _ opacity: Double) -> String {
-        let percent = String(format: "%.0f", locale: Locale(identifier: "en_US_POSIX"), opacity * 100)
-        return "color-mix(in srgb, \(ink) \(percent)%, transparent)"
+        "color-mix(in srgb, \(ink) \(Self.cssPercent(opacity)), transparent)"
     }
+
+    private static func cssPercent(_ fraction: Double) -> String {
+        var percent = String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), fraction * 100)
+        if percent.hasSuffix(".0") { percent.removeLast(2) }
+        return percent + "%"
+    }
+
+    /// With "Show scroll bars: Always" (`legacyScrollbars`) the page draws Monknot's thumb instead of
+    /// WebKit's legacy bar (design.md §5.7), and renderer.js draws its stand-in from the same numbers
+    /// while a side pane moves the card's edge.
+    static let legacyScrollbarCSS: String = {
+        let thumb = ScrollThumbGeometry.self
+        let resting = "color-mix(in srgb, var(--fg) \(cssPercent(thumb.restingOpacity)), transparent)"
+        return thumb.webCSS(
+            selector: "html.mk-legacy-scrollbars ",
+            restingColor: resting,
+            hoveredColor: "color-mix(in srgb, var(--fg) \(cssPercent(thumb.hoveredOpacity)), transparent)"
+        ) + """
+
+        :root {
+          --mk-scroll-lane: \(ScrollThumbGeometry.cssPixels(thumb.trackWidth));
+          --mk-scroll-end: \(ScrollThumbGeometry.cssPixels(thumb.endInset));
+          --mk-scroll-thumb: \(ScrollThumbGeometry.cssPixels(thumb.restingThumbWidth));
+          --mk-scroll-thumb-color: \(resting);
+        }
+        """
+    }()
 
     /// The tick drawn inside a checked task box, in the colour that reads on the accent. The SVG
     /// namespace is a name, not an address; its colon is percent-encoded so the page holds no
@@ -302,6 +332,65 @@ public struct MarkdownRenderService: Sendable {
             .replacingOccurrences(of: "\"", with: "&quot;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
+    }
+}
+
+/// Monknot's scroll thumb (design.md §5.7): a slim capsule with no track, centred in a lane flush with
+/// the edge, its ends clear of a card's rounded corners. It rests quiet and widens and darkens under
+/// the pointer. The native scroller (`MonknotScrollbarStyle`) and every page that styles a scroll bar
+/// (Preview, the terminal) take these numbers.
+public enum ScrollThumbGeometry {
+    /// The lane, flush with the trailing or bottom edge.
+    public static let trackWidth: Double = 9
+    public static let restingThumbWidth: Double = 4
+    public static let hoveredThumbWidth: Double = 6
+    /// The thumb's ends stay this far from the ends of a list or card.
+    public static let endInset: Double = 6
+    public static let restingOpacity: Double = 0.25
+    public static let hoveredOpacity: Double = 0.45
+
+    /// The thumb for a web view's scroll bar. WebKit draws a styled scroll bar as a fixed bar and does
+    /// not repaint it when a class changes, so it cannot fade like an overlay scroller: it rests at the
+    /// resting strength and brightens only under the pointer.
+    public static func webCSS(
+        selector: String = "*",
+        restingColor: String = "color-mix(in srgb, CanvasText 25%, transparent)",
+        hoveredColor: String = "color-mix(in srgb, CanvasText 45%, transparent)"
+    ) -> String {
+        let restingInset = (trackWidth - restingThumbWidth) / 2
+        let hoveredInset = (trackWidth - hoveredThumbWidth) / 2
+
+        // The border is the inset; the radius includes it so the visible thumb is a capsule.
+        return """
+        \(selector)::-webkit-scrollbar {
+          width: \(cssPixels(trackWidth));
+          height: \(cssPixels(trackWidth));
+          background: transparent;
+        }
+        \(selector)::-webkit-scrollbar-track {
+          background: transparent;
+          margin: \(cssPixels(endInset));
+        }
+        \(selector)::-webkit-scrollbar-thumb {
+          background: \(restingColor);
+          background-clip: content-box;
+          border: \(cssPixels(restingInset)) solid transparent;
+          border-radius: \(cssPixels(trackWidth / 2));
+        }
+        \(selector)::-webkit-scrollbar-thumb:hover {
+          background: \(hoveredColor);
+          background-clip: content-box;
+          border: \(cssPixels(hoveredInset)) solid transparent;
+          border-radius: \(cssPixels(trackWidth / 2));
+        }
+        \(selector)::-webkit-scrollbar-corner {
+          background: transparent;
+        }
+        """
+    }
+
+    static func cssPixels(_ value: Double) -> String {
+        value.rounded() == value ? "\(Int(value))px" : "\(value)px"
     }
 }
 

@@ -97,13 +97,17 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         let savedThemeID = defaults.object(forKey: themeIDKey)
         // Each stop opens like a first window: no divider positions left over from the stop before.
         let splitFramesKey = "NSSplitView Subview Frames \(WorkspaceSplitMetrics.autosaveName)"
+        let defaultWidthKey = WorkspaceSplitMetrics.defaultSidebarWidthAppliedKey
         let savedSplitFrames = defaults.object(forKey: splitFramesKey)
+        let savedDefaultWidth = defaults.object(forKey: defaultWidthKey)
         defaults.removeObject(forKey: splitFramesKey)
+        defaults.removeObject(forKey: defaultWidthKey)
         defer {
             defaults.set(savedMode, forKey: "Monknot.editorMode")
             defaults.set(savedTheme, forKey: "Monknot.themePreference")
             defaults.set(savedThemeID, forKey: themeIDKey)
             defaults.set(savedSplitFrames, forKey: splitFramesKey)
+            defaults.set(savedDefaultWidth, forKey: defaultWidthKey)
         }
         defaults.set(stop.mode.rawValue, forKey: "Monknot.editorMode")
         defaults.set(stop.theme.rawValue, forKey: "Monknot.themePreference")
@@ -281,15 +285,19 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         let savedMode = defaults.object(forKey: "Monknot.editorMode")
         let savedThemeID = defaults.object(forKey: "Monknot.lightThemeID")
         let splitFramesKey = "NSSplitView Subview Frames \(WorkspaceSplitMetrics.autosaveName)"
+        let defaultWidthKey = WorkspaceSplitMetrics.defaultSidebarWidthAppliedKey
         let savedSplitFrames = defaults.object(forKey: splitFramesKey)
+        let savedDefaultWidth = defaults.object(forKey: defaultWidthKey)
         defer {
             defaults.set(savedMode, forKey: "Monknot.editorMode")
             defaults.set(savedThemeID, forKey: "Monknot.lightThemeID")
             defaults.set(savedSplitFrames, forKey: splitFramesKey)
+            defaults.set(savedDefaultWidth, forKey: defaultWidthKey)
         }
         defaults.set(mode.rawValue, forKey: "Monknot.editorMode")
         defaults.set("catppuccin-latte", forKey: "Monknot.lightThemeID")
         defaults.removeObject(forKey: splitFramesKey)
+        defaults.removeObject(forKey: defaultWidthKey)
         // `MONKNOT_UI_TRANSITION_LIKE_APP` records at a large zoom in a full-screen window, where the
         // text column is wider than the card and rewraps whenever a pane opens or closes.
         let likeApp = environment["MONKNOT_UI_TRANSITION_LIKE_APP"] != nil
@@ -314,6 +322,8 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
                 "349.000000, 0.000000, 1445.000000, 1053.000000, NO, NO",
                 "1800.000000, 0.000000, 560.000000, 1053.000000, YES, NO",
             ], forKey: splitFramesKey)
+            // A saved layout, as the app has: the first-window default must not replace it.
+            defaults.set(true, forKey: defaultWidthKey)
         }
         let windowSize = likeApp ? NSSize(width: 1_800, height: 1_100) : NSSize(width: 1_300, height: 820)
 

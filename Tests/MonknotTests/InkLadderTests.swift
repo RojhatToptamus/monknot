@@ -12,7 +12,7 @@ final class InkLadderTests: XCTestCase {
 
     func testLabelsReadFourAndAHalfAndGlyphsThreeOnTheChromeAndTheCanvasOfEveryTheme() throws {
         for theme in themes {
-            for surface in [theme.sidebarSurfaceHex, theme.background] {
+            for surface in [theme.chromeSurfaceHex, theme.background] {
                 let fullInk = try contrast(of: theme, opacity: 1, over: surface)
                 XCTAssertGreaterThanOrEqual(
                     try contrast(of: theme, opacity: theme.labelInkOpacity, over: surface),
@@ -40,7 +40,7 @@ final class InkLadderTests: XCTestCase {
     /// Each rung is the lowest that reads: a hundredth less fails somewhere, unless it sits on its floor.
     func testEachRungIsTheLowestOpacityThatReads() throws {
         for theme in themes {
-            let surfaces = [theme.sidebarSurfaceHex, theme.background]
+            let surfaces = [theme.chromeSurfaceHex, theme.background]
             let factor = theme.inkLadderContrastFactor
             for (opacity, floor, ratio) in [
                 (theme.labelInkOpacity, (0.72 * factor * 100).rounded() / 100, 4.5),

@@ -8,7 +8,6 @@ struct MonknotFileKindGlyph: View {
     let theme: AppTheme
     let zoomScale: Double
     var pointSizeBase: CGFloat = MonknotMetrics.sidebarIconPointSizeBase
-    var columnWidthBase: CGFloat = MonknotMetrics.rowIconColumnWidthBase
 
     var body: some View {
         MonknotSystemGlyph(
@@ -18,7 +17,7 @@ struct MonknotFileKindGlyph: View {
             zoomScale: zoomScale
         )
             .frame(width: MonknotMetrics.interfaceGlyph(
-                columnWidthBase,
+                MonknotMetrics.rowIconColumnWidthBase,
                 theme: theme,
                 zoomScale: zoomScale
             ))

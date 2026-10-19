@@ -185,9 +185,6 @@ final class WorkspaceSplitTransitionTests: WorkspaceSplitViewTestCase {
         XCTAssertTrue(controller.terminalItem.isCollapsed)
     }
 
-    /// The document is laid out once per side-pane transition, at its final width, pinned to the
-    /// edge that does not move: a web view's text and scroll bar then slide with the divider instead
-    /// of being re-laid out, late, on every frame.
     /// design.md §10.0: the document and terminal sit on rounded cards, 6 from every window edge and
     /// from each other, and the document card stays put when a pane opens or closes.
     func testDocumentAndTerminalSitOnCardsSixPointsFromEveryEdge() throws {

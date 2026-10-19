@@ -140,6 +140,134 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         XCTAssertTrue(undone, fixture.store.documentText)
     }
 
+    /// An undo that no longer fits the text (Source changed part of the typed words) changes
+    /// nothing: not the characters that still match, and nothing to redo afterwards.
+    func testUndoAfterSourceChangedTheTypedWordsChangesNothing() async throws {
+        let fixture = try await makeFixture(markdown: "Alpha\n")
+        try await fixture.setSelection(5)
+        fixture.type(" beta")
+        let typed = await waitUntil { fixture.store.documentText == "Alpha beta\n" }
+        XCTAssertTrue(typed, fixture.store.documentText)
+
+        let webView = try await fixture.editInSource { $0.replacingOccurrences(of: "beta", with: "bXta") }
+        let undoManager = try XCTUnwrap(webView.undoManager)
+        XCTAssertTrue(undoManager.canUndo)
+        undoManager.undo()
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(fixture.store.documentText, "Alpha bXta\n", "No part of the typing run is taken back")
+        let page = try await fixture.evaluate("window.MonknotEditor.source()") as? String
+        XCTAssertEqual(page, "Alpha bXta\n")
+        XCTAssertFalse(undoManager.canRedo, "A refused undo leaves nothing to redo")
+    }
+
+    /// Undoing a deletion inserts the deleted text again only where it was: after Source moved the
+    /// text, it inserts nothing anywhere.
+    func testUndoingADeletionAfterSourceMovedTheTextInsertsNothing() async throws {
+        let fixture = try await makeFixture(markdown: "One two three\n")
+        try await fixture.setSelection(8)
+        for _ in 0..<4 { fixture.press(.backspace) }
+        let deleted = await waitUntil { fixture.store.documentText == "One three\n" }
+        XCTAssertTrue(deleted, fixture.store.documentText)
+
+        let webView = try await fixture.editInSource { "Zero " + $0 }
+        let undoManager = try XCTUnwrap(webView.undoManager)
+        undoManager.undo()
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(fixture.store.documentText, "Zero One three\n")
+        XCTAssertFalse(undoManager.canRedo)
+    }
+
+    /// A Source edit away from a step leaves it undoable and redoable.
+    func testUndoAfterAnUnrelatedSourceEditStillApplies() async throws {
+        let tail = String(repeating: "Unrelated words in a later paragraph. ", count: 3)
+        let fixture = try await makeFixture(markdown: "Alpha\n\n\(tail)\n")
+        try await fixture.setSelection(5)
+        fixture.type(" beta")
+        let typed = await waitUntil { fixture.store.documentText.hasPrefix("Alpha beta\n") }
+        XCTAssertTrue(typed, fixture.store.documentText)
+
+        let webView = try await fixture.editInSource { $0 + "\nAdded in Source\n" }
+        let undoManager = try XCTUnwrap(webView.undoManager)
+        undoManager.undo()
+        let undone = await waitUntil { fixture.store.documentText == "Alpha\n\n\(tail)\n\nAdded in Source\n" }
+        XCTAssertTrue(undone, fixture.store.documentText)
+        XCTAssertTrue(undoManager.canRedo)
+        undoManager.redo()
+        let redone = await waitUntil { fixture.store.documentText == "Alpha beta\n\n\(tail)\n\nAdded in Source\n" }
+        XCTAssertTrue(redone, fixture.store.documentText)
+        let page = try await fixture.evaluate("window.MonknotEditor.source()") as? String
+        XCTAssertEqual(page, fixture.store.documentText)
+    }
+
+    /// The page restarts its undo groups when it renders again; typing on a new page must not join
+    /// the last step of the page before.
+    func testTypingOnANewPageStartsItsOwnUndoStep() async throws {
+        let fixture = try await makeFixture(markdown: "One\n")
+        try await fixture.setSelection(3)
+        fixture.type(" two")
+        let typed = await waitUntil { fixture.store.documentText == "One two\n" }
+        XCTAssertTrue(typed, fixture.store.documentText)
+
+        let webView = try await fixture.editInSource { $0 }
+        try await fixture.setSelection(7)
+        fixture.type(" three")
+        let typedAgain = await waitUntil { fixture.store.documentText == "One two three\n" }
+        XCTAssertTrue(typedAgain, fixture.store.documentText)
+
+        let undoManager = try XCTUnwrap(webView.undoManager)
+        undoManager.undo()
+        let undone = await waitUntil { fixture.store.documentText == "One two\n" }
+        XCTAssertTrue(undone, "Only the typing on the new page is taken back: \(fixture.store.documentText)")
+        undoManager.undo()
+        let undoneAgain = await waitUntil { fixture.store.documentText == "One\n" }
+        XCTAssertTrue(undoneAgain, fixture.store.documentText)
+    }
+
+    /// Typed characters merge into one patch, so an undo is one change on the page, not one per key.
+    func testOneUndoOfATypingRunIsOneChangeOnThePage() async throws {
+        let fixture = try await makeFixture(markdown: "Alpha\n")
+        try await fixture.setSelection(5)
+        fixture.type(" beta gamma")
+        let typed = await waitUntil { fixture.store.documentText == "Alpha beta gamma\n" }
+        XCTAssertTrue(typed, fixture.store.documentText)
+        let version = try await fixture.evaluate("window.MonknotEditor.version()") as? Int
+        fixture.webView.undoManager?.undo()
+        let undone = await waitUntil { fixture.store.documentText == "Alpha\n" }
+        XCTAssertTrue(undone, fixture.store.documentText)
+        let synced = await waitUntil {
+            ((try? await fixture.evaluate("window.MonknotEditor.source()")) as? String) == "Alpha\n"
+        }
+        XCTAssertTrue(synced)
+        let after = try await fixture.evaluate("window.MonknotEditor.version()") as? Int
+        XCTAssertEqual(after, (version ?? 0) + 1, "The page applied the whole step as one patch")
+    }
+
+    /// A change from outside the editor leaves no step that could still fit; typing after it
+    /// starts a new history.
+    func testAChangeFromOutsideEndsTheUndoHistory() async throws {
+        let fixture = try await makeFixture(markdown: "Alpha\n")
+        try await fixture.setSelection(5)
+        fixture.type(" beta")
+        let typed = await waitUntil { fixture.store.documentText == "Alpha beta\n" }
+        XCTAssertTrue(typed, fixture.store.documentText)
+        let undoManager = try XCTUnwrap(fixture.webView.undoManager)
+
+        fixture.store.setDocumentText("Intro\n\nAlpha beta\n")
+        let synced = await waitUntil {
+            ((try? await fixture.evaluate("window.MonknotEditor.source()")) as? String) == "Intro\n\nAlpha beta\n"
+        }
+        XCTAssertTrue(synced)
+        XCTAssertFalse(undoManager.canUndo, "The steps before the change no longer fit the text")
+
+        try await fixture.setSelection(("Intro\n\nAlpha beta" as NSString).length)
+        fixture.type("!")
+        let typedAgain = await waitUntil { fixture.store.documentText == "Intro\n\nAlpha beta!\n" }
+        XCTAssertTrue(typedAgain, fixture.store.documentText)
+        undoManager.undo()
+        let undone = await waitUntil { fixture.store.documentText == "Intro\n\nAlpha beta\n" }
+        XCTAssertTrue(undone, fixture.store.documentText)
+    }
+
     // MARK: - Formatting and structure
 
     func testBoldCommandWrapsTheSelectionAndKeepsItSelected() async throws {
@@ -378,6 +506,51 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         XCTAssertEqual(marker, "same page", "The page was patched, not reloaded")
     }
 
+    /// The page types a character and reports it; before the report reaches the app, the store
+    /// takes a change from outside and sends it. Both land once, in both places, and SwiftUI
+    /// updating again before the page answers sends nothing twice.
+    func testAChangeFromOutsideRacingATypedCharacterKeepsBoth() async throws {
+        let fixture = try await makeFixture(markdown: "Hello\n")
+        try await fixture.setSelection(5)
+        fixture.webView.evaluateJavaScript(
+            "document.getElementById('content').dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: 'X', bubbles: true, cancelable: true })); true",
+            completionHandler: nil
+        )
+        fixture.store.setDocumentText("Intro\n\nHello\n")
+        for _ in 0..<3 {
+            await Task.yield()
+            fixture.harness.objectWillChange.send()
+        }
+        let expected = "Intro\n\nHelloX\n"
+        let synced = await waitUntil {
+            guard fixture.store.documentText == expected else { return false }
+            return ((try? await fixture.evaluate("window.MonknotEditor.source()")) as? String) == expected
+        }
+        XCTAssertTrue(synced, "store: \(fixture.store.documentText.debugDescription)")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(fixture.store.documentText, expected)
+        let page = try await fixture.evaluate("window.MonknotEditor.source()") as? String
+        XCTAssertEqual(page, expected)
+    }
+
+    /// A change sent to the page is sent once, however often SwiftUI updates before the page answers.
+    func testAChangeFromOutsideIsSentOnce() async throws {
+        let fixture = try await makeFixture(markdown: "Line one\n")
+        fixture.store.setDocumentText("Line one\nLine two\n")
+        for _ in 0..<5 {
+            await Task.yield()
+            fixture.harness.objectWillChange.send()
+        }
+        let synced = await waitUntil {
+            ((try? await fixture.evaluate("window.MonknotEditor.source()")) as? String) == "Line one\nLine two\n"
+        }
+        XCTAssertTrue(synced)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let page = try await fixture.evaluate("window.MonknotEditor.source()") as? String
+        XCTAssertEqual(page, "Line one\nLine two\n", "The insertion applied once")
+        XCTAssertEqual(fixture.store.documentText, "Line one\nLine two\n")
+    }
+
     // MARK: - Performance
 
     /// A 1 MB document opens editable and a keystroke stays far under one frame.
@@ -455,6 +628,209 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         let p95 = try XCTUnwrap(timing?["p95"] as? Double)
         print("Typical document: keystroke median \(String(format: "%.2f", median)) ms, p95 \(String(format: "%.2f", p95)) ms")
         XCTAssertLessThan(p95, 8)
+    }
+
+    /// A note with many footnotes: a keystroke in a paragraph without a reference costs what it
+    /// costs in any note, and typing a reference still renumbers the notes.
+    func testKeystrokeCostInANoteWithFootnotes() async throws {
+        var markdown = "# Notes\n\n"
+        for index in 1...150 {
+            markdown += "Paragraph \(index) cites a source[^n\(index)] in passing.\n\nA plain paragraph with **bold** text and nothing to cite.\n\n"
+        }
+        for index in 1...150 { markdown += "[^n\(index)]: Source number \(index).\n\n" }
+        let fixture = try await makeFixture(markdown: markdown)
+        let plain = (markdown as NSString).range(of: "A plain paragraph", range: NSRange(location: (markdown as NSString).length / 3, length: 2000)).location
+        try await fixture.setSelection(plain + 2)
+        let timing = try await fixture.evaluate("""
+        (() => {
+          const root = document.getElementById('content');
+          const times = [];
+          for (let i = 0; i < 40; i += 1) {
+            const start = performance.now();
+            root.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: 'x', bubbles: true, cancelable: true }));
+            times.push(performance.now() - start);
+          }
+          times.sort((a, b) => a - b);
+          return { median: times[20], p95: times[37] };
+        })()
+        """) as? [String: Any]
+        let median = try XCTUnwrap(timing?["median"] as? Double)
+        let p95 = try XCTUnwrap(timing?["p95"] as? Double)
+        print("Note with footnotes: keystroke median \(String(format: "%.2f", median)) ms, p95 \(String(format: "%.2f", p95)) ms")
+        XCTAssertLessThan(p95, 8)
+
+        try await fixture.setSelection(("# Notes\n\nParagraph" as NSString).length)
+        _ = try await fixture.evaluate("document.getElementById('content').dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: '[^n150]', bubbles: true, cancelable: true })); true")
+        let numbers = try await fixture.evaluate("""
+        [...document.querySelectorAll('#content sup.footnote-ref a')].slice(0, 3).map(a => a.textContent).join(',') + '|' +
+        document.querySelector('#content section.footnotes li')?.id
+        """) as? String
+        XCTAssertEqual(numbers, "1,2,3|fn-n150", "The new first reference is note 1 and the notes follow it")
+    }
+
+    // MARK: - Clicks below the text
+
+    /// A click below the last block is no edit: the file stays clean and there is nothing to undo.
+    /// After text, typing continues it.
+    func testAClickBelowTheTextChangesNothingAndTypingContinuesIt() async throws {
+        let fixture = try await makeFixture(markdown: "Hello\n")
+        try await fixture.clickBelowTheLastBlock()
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(fixture.store.documentText, "Hello\n")
+        XCTAssertFalse(fixture.store.hasUnsavedChanges, "A click does not make the document dirty")
+        XCTAssertEqual(fixture.webView.undoManager?.canUndo, false)
+
+        fixture.type("!")
+        let typed = await waitUntil { fixture.store.documentText == "Hello!\n" }
+        XCTAssertTrue(typed, fixture.store.documentText)
+    }
+
+    /// After a table, which typing cannot continue, the first character typed opens a line below
+    /// it, and one undo takes both back.
+    func testTypingAfterAClickBelowATableOpensALineAfterIt() async throws {
+        let source = "| A | B |\n| --- | --- |\n| 1 | 2 |\n"
+        let fixture = try await makeFixture(markdown: source)
+        try await fixture.clickBelowTheLastBlock()
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(fixture.store.documentText, source)
+        XCTAssertFalse(fixture.store.hasUnsavedChanges)
+
+        fixture.type("xy")
+        let typed = await waitUntil { fixture.store.documentText == source + "\nxy\n" }
+        XCTAssertTrue(typed, fixture.store.documentText.debugDescription)
+        let page = try await fixture.evaluate("[...document.querySelectorAll('#content > *')].map(e => e.tagName + ':' + e.textContent.trim()).pop()") as? String
+        XCTAssertEqual(page, "P:xy")
+        fixture.webView.undoManager?.undo()
+        let undone = await waitUntil { fixture.store.documentText == source }
+        XCTAssertTrue(undone, "The line and the typing are one step: \(fixture.store.documentText.debugDescription)")
+    }
+
+    // MARK: - Input methods and substitutions
+
+    /// Korean starts the next syllable's composition as soon as one ends. Driven through the web
+    /// view's own marked-text calls, each syllable must land once.
+    func testACompositionThatStartsRightAfterAnotherTypesEachSyllableOnce() async throws {
+        let fixture = try await makeFixture(markdown: "A\n")
+        try await fixture.setSelection(1)
+        let client = try XCTUnwrap(fixture.webView as? NSTextInputClient, "WKWebView takes marked text as an NSTextInputClient")
+        let none = NSRange(location: NSNotFound, length: 0)
+        client.setMarkedText("ㅎ", selectedRange: NSRange(location: 1, length: 0), replacementRange: none)
+        client.setMarkedText("하", selectedRange: NSRange(location: 1, length: 0), replacementRange: none)
+        client.insertText("하", replacementRange: none)
+        client.setMarkedText("ㄴ", selectedRange: NSRange(location: 1, length: 0), replacementRange: none)
+        client.setMarkedText("나", selectedRange: NSRange(location: 1, length: 0), replacementRange: none)
+        client.insertText("나", replacementRange: none)
+        let typed = await waitUntil { fixture.store.documentText == "A하나\n" }
+        XCTAssertTrue(typed, fixture.store.documentText.debugDescription)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(fixture.store.documentText, "A하나\n")
+        let page = try await fixture.evaluate("window.MonknotEditor.source()") as? String
+        XCTAssertEqual(page, "A하나\n")
+    }
+
+    /// The page's own reconcile after a composition ends waits while the next one is open, so
+    /// nothing of a syllable still being composed reaches the file.
+    func testNothingReachesTheFileWhileTheNextCompositionIsOpen() async throws {
+        let fixture = try await makeFixture(markdown: "A\n")
+        try await fixture.setSelection(1)
+        _ = try await fixture.evaluate("""
+        (() => {
+          const root = document.getElementById('content');
+          const text = root.querySelector('p').firstChild;
+          root.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
+          text.data = 'A하';
+          root.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '하' }));
+          root.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
+          text.data = 'A하ㄴ';
+          return true;
+        })()
+        """)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(fixture.store.documentText, "A\n", "The marked ㄴ is not written while it is composed")
+        _ = try await fixture.evaluate("""
+        (() => {
+          const root = document.getElementById('content');
+          root.querySelector('p').firstChild.data = 'A하나';
+          root.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '나' }));
+          return true;
+        })()
+        """)
+        let typed = await waitUntil { fixture.store.documentText == "A하나\n" }
+        XCTAssertTrue(typed, fixture.store.documentText.debugDescription)
+    }
+
+    /// Tab while an input method has marked text belongs to the input method, not to the list.
+    func testTabDuringACompositionLeavesTheListAlone() async throws {
+        let fixture = try await makeFixture(markdown: "- One\n- Two\n")
+        try await fixture.setSelection(("- One\n- Two" as NSString).length)
+        _ = try await fixture.evaluate("""
+        (() => {
+          const root = document.getElementById('content');
+          root.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
+          const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+          root.dispatchEvent(event);
+          root.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '' }));
+          return event.defaultPrevented;
+        })()
+        """)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(fixture.store.documentText, "- One\n- Two\n", "The item was not indented")
+    }
+
+    /// macOS turns "--" into a dash by replacing the two hyphens; in code they stay as typed.
+    func testSmartDashInCodeKeepsTheHyphens() async throws {
+        let source = "Run `cmd --` now\n"
+        let fixture = try await makeFixture(markdown: source)
+        let dashes = (source as NSString).range(of: "--")
+        try await fixture.setSelection(NSMaxRange(dashes))
+        _ = try await fixture.evaluate("""
+        (() => {
+          const root = document.getElementById('content');
+          const code = root.querySelector('code');
+          const text = code.firstChild;
+          const at = text.data.indexOf('--');
+          const range = new StaticRange({ startContainer: text, startOffset: at, endContainer: text, endOffset: at + 2 });
+          root.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertReplacementText', data: '\\u2014', targetRanges: [range], bubbles: true, cancelable: true }));
+          return true;
+        })()
+        """)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(fixture.store.documentText, source, "Code keeps the two hyphens")
+        XCTAssertFalse(fixture.store.hasUnsavedChanges)
+    }
+
+    // MARK: - Dropped files
+
+    /// Files dropped on the page go through the same import as Source's drop, linked where they
+    /// were dropped.
+    func testFilesDroppedOnThePageGoThroughTheImport() async throws {
+        let fixture = try await makeFixture(markdown: "Before after\n")
+        let file = fixture.store.workspaceURL!.appendingPathComponent("photo.png")
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: file)
+        let drag = NSPasteboard(name: .drag)
+        drag.clearContents()
+        drag.writeObjects([file as NSURL])
+        _ = try await fixture.evaluate("""
+        (() => {
+          const root = document.getElementById('content');
+          const text = root.querySelector('p').firstChild;
+          const range = document.createRange();
+          range.setStart(text, 6);
+          const box = range.getBoundingClientRect();
+          const data = new DataTransfer();
+          data.items.add(new File([new Uint8Array([1])], 'photo.png', { type: 'image/png' }));
+          root.dispatchEvent(new DragEvent('drop', { dataTransfer: data, clientX: box.left + 1, clientY: box.top + box.height / 2, bubbles: true, cancelable: true }));
+          return true;
+        })()
+        """)
+        let requested = await waitUntil { !fixture.harness.fileDropRequests.isEmpty }
+        XCTAssertTrue(requested, "The drop reached the import")
+        let request = try XCTUnwrap(fixture.harness.fileDropRequests.first)
+        XCTAssertEqual(request.urls.map(\.standardizedFileURL), [file.standardizedFileURL])
+        XCTAssertEqual(request.insertionRange, NSRange(location: 6, length: 0))
+        XCTAssertTrue(request.insertMarkdown("![photo](photo.png)"))
+        let inserted = await waitUntil { fixture.store.documentText == "Before![photo](photo.png) after\n" }
+        XCTAssertTrue(inserted, fixture.store.documentText)
     }
 
     // MARK: - Snapshots for design review
@@ -1163,6 +1539,40 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
 
+        /// Switches to Source, changes the text there as `transform` says and comes back to a new
+        /// Preview page showing it.
+        func editInSource(_ transform: (String) -> String) async throws -> WKWebView {
+            harness.editorMode = .source
+            let shown = await test.waitUntil { self.documentTextView() != nil && self.findWebView() == nil }
+            XCTAssertTrue(shown, "Source shows")
+            store.setDocumentText(transform(store.documentText))
+            let expected = store.documentText
+            harness.editorMode = .preview
+            let webView = try await waitForEditor()
+            let synced = await test.waitUntil {
+                ((try? await self.evaluate("window.MonknotEditor.source()")) as? String) == expected
+            }
+            XCTAssertTrue(synced, "Preview shows the text from Source")
+            return webView
+        }
+
+        /// A click in the margin below the document's last block.
+        func clickBelowTheLastBlock() async throws {
+            window.makeFirstResponder(webView)
+            _ = try await evaluate("""
+            (() => {
+              const root = document.getElementById('content');
+              const blocks = [...root.children].filter(e => !e.classList.contains('footnotes'));
+              const box = blocks[blocks.length - 1].getBoundingClientRect();
+              const point = { clientX: box.left + 10, clientY: box.bottom + 16, bubbles: true, cancelable: true };
+              root.dispatchEvent(new MouseEvent('mousedown', point));
+              root.dispatchEvent(new MouseEvent('mouseup', point));
+              return true;
+            })()
+            """)
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+
         /// Moves the pointer over the block holding `text`, as a hover would, until its handles show.
         func hoverBlock(containing text: String) async throws {
             let literal = String(data: try JSONSerialization.data(withJSONObject: text, options: .fragmentsAllowed), encoding: .utf8)!
@@ -1276,6 +1686,8 @@ private final class VisualEditorHarnessModel: ObservableObject {
     @Published var editorMode = EditorMode.preview
     /// What the document was left with: its scroll position and selection.
     var viewportState: DocumentViewportState?
+    /// The file imports the editor asked for, as a drop would.
+    var fileDropRequests: [MarkdownFileDropRequest] = []
 
     init(store: WorkspaceStore, theme: AppTheme) {
         self.store = store
@@ -1333,7 +1745,7 @@ private struct VisualEditorHarness: View {
             onMarkdownLinkRequest: { _ in },
             onInspectLinks: nil,
             onMarkdownImagePasteRequest: { _ in },
-            onMarkdownFileDropRequest: { _ in },
+            onMarkdownFileDropRequest: { model.fileDropRequests.append($0) },
             onMarkdownPreviewLinkRequest: { _ in },
             onMarkdownTaskRequest: { _ in }
         )

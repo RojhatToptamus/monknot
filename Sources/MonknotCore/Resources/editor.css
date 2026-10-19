@@ -12,33 +12,23 @@
   --mk-placeholder: var(--mk-ink4);
   --mk-line: color-mix(in srgb, var(--fg) 12%, transparent);
   --mk-line2: color-mix(in srgb, var(--fg) 8%, transparent);
-  --mk-hover: color-mix(in srgb, var(--fg) 5.5%, transparent);
-  --mk-press: color-mix(in srgb, var(--fg) 10%, transparent);
-  /* A highlighted menu row: neutral, so it never reads as a second text selection. */
-  --mk-highlight: var(--highlight, var(--mk-hover));
   /* A format that is on, in the format bar: a fill that reads at a glance on a 28 pt button. */
   --mk-on: color-mix(in srgb, var(--fg) 12%, transparent);
-  --mk-floating: color-mix(in srgb, var(--bg) 97%, var(--fg));
-  --mk-shadow-hue: color-mix(in srgb, var(--fg) 90%, var(--accent));
-  --mk-ring: color-mix(in srgb, var(--mk-shadow-hue) 9%, transparent);
+  /* The app sends the fills (--mk-hover, --mk-press and --mk-highlight, a highlighted menu row's,
+     neutral so it never reads as a second text selection), a focused field's ring (--mk-accsoft) and
+     the floating surfaces' fill, shadow hue and ring (--mk-floating, --mk-shadow-hue, --mk-ring): the
+     values its own chrome uses (MarkdownRenderService, design.md §1.2, §2.1). */
   --mk-shadow:
     0 4px 12px color-mix(in srgb, var(--mk-shadow-hue) 8%, transparent),
     0 1px 3px color-mix(in srgb, var(--mk-shadow-hue) 5%, transparent);
-  --mk-focus: color-mix(in srgb, var(--accent) 35%, transparent);
   --mk-caret: var(--caret, var(--fg));
   --mk-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  --mk-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
 }
 
 :root[data-theme="dark"] {
   --mk-line: color-mix(in srgb, var(--fg) 9%, transparent);
   --mk-line2: color-mix(in srgb, var(--fg) 6%, transparent);
-  --mk-hover: color-mix(in srgb, var(--fg) 6%, transparent);
-  --mk-press: color-mix(in srgb, var(--fg) 11%, transparent);
-  --mk-highlight: var(--highlight, color-mix(in srgb, var(--fg) 9%, transparent));
   --mk-on: color-mix(in srgb, var(--fg) 17%, transparent);
-  --mk-floating: color-mix(in srgb, var(--bg) 90%, var(--fg));
-  --mk-ring: rgba(255, 255, 255, 0.12);
   --mk-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.34);
 }
 
@@ -46,13 +36,12 @@
    The writing surface
    --------------------------------------------------------------------- */
 
-/* The side padding leaves room for the block handles in the left gutter. */
+/* The page's margins are the read-only page's: its gutter already holds the block handles
+   (DocumentMeasure.minimumTextEdge). */
 .mk-editing .markdown-body {
-  --column-gutter: max(44px, clamp(18px, 2.2vw, 38px));
   outline: none;
   caret-color: var(--mk-caret);
   min-height: calc(100vh - 34px);
-  padding-bottom: 40vh;
 }
 
 .mk-editing .markdown-body [data-source-line] {
@@ -161,9 +150,9 @@
   height: 1.4em;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: calc(6px * var(--mk-z));
   background: transparent;
-  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  color: var(--mk-ink3);
   cursor: default;
   transition: background-color 120ms ease, color 120ms ease;
 }
@@ -211,20 +200,22 @@
   gap: 0.3em;
   margin-left: -0.3em;
   padding: 0 0.3em;
-  border-radius: 4px;
+  border-radius: calc(6px * var(--mk-z));
   cursor: default;
   user-select: none;
   transition: background-color 120ms ease;
 }
 
+/* Its menu's chevron.down, as the format bar's block selector draws it beside its label: the app's
+   glyph, sent to the page as --mk-chevron-down (editor.js setIcons). */
 .mk-editing .callout-title::after {
   content: "";
-  width: 0.36em;
-  height: 0.36em;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
+  width: 1em;
+  height: 0.62em;
+  background: currentColor;
+  -webkit-mask: var(--mk-chevron-down, linear-gradient(transparent, transparent)) center / contain no-repeat;
+  mask: var(--mk-chevron-down, linear-gradient(transparent, transparent)) center / contain no-repeat;
   opacity: 0;
-  transform: translateY(-0.12em) rotate(45deg);
   transition: opacity 120ms ease;
 }
 
@@ -312,8 +303,8 @@
 .mk-editing .mk-code-language {
   position: absolute;
   z-index: 1;
-  top: 6px;
-  left: 8px;
+  top: calc(6px * var(--mk-z));
+  left: calc(8px * var(--mk-z));
   height: calc(22px * var(--mk-z));
   padding: 0 calc(6px * var(--mk-z));
   border: 0;
@@ -357,13 +348,13 @@
 
 /* A block picked with its handle, or just moved: tinted like selected text. */
 .mk-editing .mk-block-picked {
-  border-radius: 4px;
+  border-radius: calc(8px * var(--mk-z));
   background: color-mix(in srgb, var(--selection-bg) 55%, transparent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--selection-bg) 55%, transparent);
 }
 
 .mk-editing .mk-block-moved {
-  border-radius: 4px;
+  border-radius: calc(8px * var(--mk-z));
   animation: mk-moved 900ms var(--mk-ease-out);
 }
 
@@ -406,7 +397,7 @@
   position: absolute;
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: calc(1px * var(--mk-z));
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -433,7 +424,7 @@
   background: transparent;
   color: var(--mk-ink3);
   cursor: default;
-  transition: background-color 120ms ease, color 120ms ease, transform 100ms var(--mk-ease-out);
+  transition: background-color 120ms ease, color 120ms ease, transform 120ms var(--mk-ease-out);
 }
 
 .mk-handle:hover,
@@ -444,7 +435,7 @@
 
 .mk-handle:active {
   background: var(--mk-press);
-  transform: scale(0.94);
+  transform: scale(0.96);
 }
 
 .mk-handle-drag {
@@ -452,7 +443,7 @@
   cursor: grab;
 }
 
-/* The handles' two glyphs are one drawing (design.md §10.10): a 16 pt box, the + a 1.5 pt cross
+/* The handles' two glyphs are one drawing (design.md §8.9, item 4): a 16 pt box, the + a 1.5 pt cross
    with 9 pt arms, the grip six 2.6 pt dots on whole points (SF Symbols has no 2×3 grid), so they
    match in size and weight. Masks, so they take the handle's ink. */
 .mk-handle-glyph {
@@ -605,9 +596,20 @@
     transition: opacity 120ms linear, visibility 0s;
   }
 
-  .mk-editing .mk-toggle-arrow::before,
-  .mk-handle {
+  .mk-editing .mk-toggle-arrow::before {
     transition: none;
+  }
+
+  /* A pressed button or handle keeps its size; its fill and ink still fade. (The layer's prefix
+     outranks the buttons' own rules below.) */
+  .mk-layer .mk-handle,
+  .mk-layer .mk-tool {
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+
+  .mk-layer .mk-handle:active,
+  .mk-layer .mk-tool:active {
+    transform: none;
   }
 
   .mk-editing .mk-block-moved {
@@ -661,7 +663,8 @@
 }
 
 /* The chrome lists' overlay thumb (design.md §5.7): no track, a 4 capsule at ink 25 % while the
-   pointer is over the list, 6 at 45 % under the pointer, its ends clear of the menu's corners. */
+   list scrolls (never merely because the pointer is over it), 6 at 45 % under the pointer, its ends
+   clear of the menu's corners. editor.js marks a scrolling list `mk-scrolling`. */
 .mk-menu-list::-webkit-scrollbar-track {
   margin: 6px;
   background: transparent;
@@ -674,7 +677,7 @@
   background-clip: content-box;
 }
 
-.mk-menu-list:hover::-webkit-scrollbar-thumb {
+.mk-menu-list.mk-scrolling::-webkit-scrollbar-thumb {
   background-color: color-mix(in srgb, var(--fg) 25%, transparent);
 }
 
@@ -839,7 +842,7 @@
 
 .mk-menu-search input::placeholder,
 .mk-field::placeholder {
-  color: var(--mk-ink3);
+  color: var(--mk-ink4);
 }
 
 /* Format bar, link card, table bar ------------------------------------------ */
@@ -848,7 +851,7 @@
 .mk-link-card {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: calc(2px * var(--mk-z));
   padding: calc(4px * var(--mk-z));
   white-space: nowrap;
 }
@@ -865,10 +868,11 @@
   border: 0;
   border-radius: calc(8px * var(--mk-z));
   background: transparent;
-  color: var(--mk-ink2);
+  /* An icon button rests at ink3 (design.md §5.1); a menu button's word at ink2 (.mk-tool-menu). */
+  color: var(--mk-ink3);
   font: inherit;
   cursor: default;
-  transition: background-color 120ms ease, color 120ms ease, transform 100ms var(--mk-ease-out);
+  transition: background-color 120ms ease, color 120ms ease, transform 120ms var(--mk-ease-out);
 }
 
 .mk-tool:hover {
@@ -909,15 +913,9 @@
   transform: none;
 }
 
-.mk-tool:focus-visible,
-.mk-code-language:focus-visible,
-.mk-handle:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--mk-focus);
-}
-
 .mk-tool-menu {
   gap: calc(4px * var(--mk-z));
+  color: var(--mk-ink2);
   padding: 0 calc(6px * var(--mk-z)) 0 calc(9px * var(--mk-z));
 }
 
@@ -974,7 +972,7 @@
   min-width: 0;
   box-sizing: border-box;
   height: calc(28px * var(--mk-z));
-  padding: 0 calc(10px * var(--mk-z));
+  padding: 0 calc(8px * var(--mk-z));
   border: 1px solid var(--mk-line);
   border-radius: calc(8px * var(--mk-z));
   outline: none;
@@ -984,13 +982,10 @@
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
+/* Focused, an accent hairline and a 3 pt accsoft ring, as View.monknotField draws it (design.md §5.7). */
 .mk-field:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--mk-focus);
-}
-
-.mk-link-editor .mk-push {
-  display: none;
+  box-shadow: 0 0 0 3px var(--mk-accsoft);
 }
 
 .mk-link-editor::after {

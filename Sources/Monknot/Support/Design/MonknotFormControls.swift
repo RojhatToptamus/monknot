@@ -11,7 +11,6 @@ extension View {
         isFocused: Bool,
         isInvalid: Bool = false,
         isDisabled: Bool = false,
-        leadingPadding: CGFloat = 8,
         trailingPadding: CGFloat = 8,
         theme: AppTheme,
         zoomScale: Double
@@ -20,7 +19,6 @@ extension View {
             isFocused: isFocused,
             isInvalid: isInvalid,
             isDisabled: isDisabled,
-            leadingPadding: leadingPadding,
             trailingPadding: trailingPadding,
             theme: theme,
             zoomScale: zoomScale
@@ -32,7 +30,6 @@ private struct MonknotFieldModifier: ViewModifier {
     let isFocused: Bool
     let isInvalid: Bool
     let isDisabled: Bool
-    let leadingPadding: CGFloat
     let trailingPadding: CGFloat
     let theme: AppTheme
     let zoomScale: Double
@@ -41,7 +38,7 @@ private struct MonknotFieldModifier: ViewModifier {
         let radius = theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
         let shape = RoundedRectangle(cornerRadius: radius)
         content
-            .padding(.leading, MonknotMetrics.interfaceDensity(leadingPadding, theme: theme, zoomScale: zoomScale))
+            .padding(.leading, MonknotMetrics.interfaceDensity(8, theme: theme, zoomScale: zoomScale))
             .padding(.trailing, MonknotMetrics.interfaceDensity(trailingPadding, theme: theme, zoomScale: zoomScale))
             .frame(height: MonknotMetrics.interfaceControl(MonknotMetrics.iconButtonSizeBase, theme: theme, zoomScale: zoomScale))
             .background(theme.surfaceColor, in: shape)
@@ -58,7 +55,7 @@ private struct MonknotFieldModifier: ViewModifier {
     }
 
     private var strokeColor: Color {
-        if isInvalid { return Color(hex: theme.semanticColors.diffRemoved) }
+        if isInvalid { return theme.dangerColor }
         if isDisabled { return theme.borderColor.opacity(0.5) }
         return isFocused ? theme.accentColor : theme.borderColor
     }
@@ -125,16 +122,41 @@ struct MonknotStepper: View {
     }
 
     private func increment() {
-        value = min(range.upperBound, value + step)
+        value = Self.value(value, steppedBy: step, in: range)
     }
 
     private func decrement() {
-        value = max(range.lowerBound, value - step)
+        value = Self.value(value, steppedBy: -step, in: range)
+    }
+
+    /// `value` moved by `delta` and kept in `range`. A value between steps (a 10.5 pt text box) moves by
+    /// the whole step from where it is.
+    static func value(_ value: Double, steppedBy delta: Double, in range: ClosedRange<Double>) -> Double {
+        min(range.upperBound, max(range.lowerBound, value + delta))
+    }
+}
+
+/// The white knob of the switch and the slider (design.md §5.7): a `line` hairline and a one-point
+/// shadow, so it reads on the canvas beside a track as well as on the accent. Dimmed while its control
+/// is disabled.
+struct MonknotKnob: View {
+    let diameter: CGFloat
+    let theme: AppTheme
+    var isDimmed = false
+
+    var body: some View {
+        Circle()
+            .fill(Color.white)
+            .overlay { Circle().strokeBorder(theme.borderColor, lineWidth: 1) }
+            .shadow(color: .black.opacity(0.18), radius: 1.5, y: 0.5)
+            .frame(width: diameter, height: diameter)
+            .opacity(isDimmed ? 0.5 : 1)
     }
 }
 
 /// The one slider (design.md §5.7): a 4 pt track in the `on` fill, `accent` up to a 16 pt white knob.
-/// Settings' content width and the PDF stroke width use it.
+/// Dragging, ← and → while it has keyboard focus, and VoiceOver all set the value through one path,
+/// which keeps it in range and on its step. Settings' content width and the PDF stroke width use it.
 struct MonknotSlider: View {
     let title: String
     @Binding var value: Double
@@ -144,6 +166,9 @@ struct MonknotSlider: View {
     var hint: String?
     let theme: AppTheme
     let zoomScale: Double
+
+    @FocusState private var isFocused: Bool
+    @Environment(\.isEnabled) private var isEnabled
 
     private func scaled(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
@@ -160,14 +185,11 @@ struct MonknotSlider: View {
                     .frame(height: scaled(4))
 
                 Capsule()
-                    .fill(theme.accentColor)
+                    .fill(theme.accentColor.opacity(isEnabled ? 1 : 0.5))
                     .frame(width: knobDiameter / 2 + travel * fraction, height: scaled(4))
 
-                Circle()
-                    .fill(Color.white)
-                    .frame(width: knobDiameter, height: knobDiameter)
-                    .overlay { Circle().strokeBorder(theme.borderColor, lineWidth: 1) }
-                    .shadow(color: .black.opacity(0.18), radius: 1.5, y: 0.5)
+                MonknotKnob(diameter: knobDiameter, theme: theme, isDimmed: !isEnabled)
+                    .monknotFocusRing(isVisible: isFocused && isEnabled, cornerRadius: knobDiameter / 2, theme: theme)
                     .offset(x: travel * fraction)
             }
             .frame(maxHeight: .infinity)
@@ -176,18 +198,57 @@ struct MonknotSlider: View {
                 DragGesture(minimumDistance: 0)
                     .onChanged { gesture in
                         let fraction = min(1, max(0, (gesture.location.x - knobDiameter / 2) / max(1, travel)))
-                        setValue(range.lowerBound + Double(fraction) * (range.upperBound - range.lowerBound))
+                        snappedValue.wrappedValue = range.lowerBound + Double(fraction) * (range.upperBound - range.lowerBound)
                     }
             )
         }
         .frame(height: scaled(20))
+        .focusable(isEnabled && NSApp.isFullKeyboardAccessEnabled)
+        .focused($isFocused)
+        .focusEffectDisabled()
+        .onMoveCommand { direction in
+            switch direction {
+            case .left, .down: snappedValue.wrappedValue = value - keyboardStep
+            case .right, .up: snappedValue.wrappedValue = value + keyboardStep
+            @unknown default: break
+            }
+        }
         .accessibilityRepresentation {
-            Slider(value: $value, in: range)
+            accessibilitySlider
                 .accessibilityLabel(title)
                 .accessibilityValue(valueDescription)
                 .accessibilityHint(hint ?? "")
         }
-        .monknotPointerCursor()
+        .monknotPointerCursor(enabled: isEnabled)
+    }
+
+    @ViewBuilder
+    private var accessibilitySlider: some View {
+        if let step, step > 0 {
+            Slider(value: snappedValue, in: range, step: step)
+        } else {
+            Slider(value: snappedValue, in: range)
+        }
+    }
+
+    /// The value as every input sets it: kept in range and on the step.
+    var snappedValue: Binding<Double> {
+        Binding(
+            get: { value },
+            set: { proposed in
+                let next = Self.resolvedValue(proposed, in: range, step: step)
+                if next != value {
+                    value = next
+                }
+            }
+        )
+    }
+
+    /// One arrow press: the step, or one unit when the slider has none (every slider counts in whole
+    /// percents or points).
+    private var keyboardStep: Double {
+        if let step, step > 0 { return step }
+        return 1
     }
 
     private var fraction: CGFloat {
@@ -195,14 +256,13 @@ struct MonknotSlider: View {
         return CGFloat((value - range.lowerBound) / (range.upperBound - range.lowerBound))
     }
 
-    private func setValue(_ newValue: Double) {
-        var next = min(range.upperBound, max(range.lowerBound, newValue))
+    /// `proposed` kept in `range` and, with a step, on the nearest step from the range's start.
+    static func resolvedValue(_ proposed: Double, in range: ClosedRange<Double>, step: Double?) -> Double {
+        var next = min(range.upperBound, max(range.lowerBound, proposed))
         if let step, step > 0 {
-            next = range.lowerBound + ((next - range.lowerBound) / step).rounded() * step
+            next = min(range.upperBound, range.lowerBound + ((next - range.lowerBound) / step).rounded() * step)
         }
-        if next != value {
-            value = next
-        }
+        return next
     }
 }
 

@@ -1,34 +1,42 @@
 import AppKit
 import MonknotCore
 import PDFKit
+import SwiftUI
 import XCTest
 @testable import MonknotApp
 
 final class PDFTextMarkupGeometryTests: PDFTextMarkupTestCase {
-    func testFreeTextPopoverMetricsKeepCompactRowInvariantAcrossWorkspaceZoom() {
+    /// The text style popover's widest row — the font size stepper at its largest value beside Bold and
+    /// Italic — fits the popover at every zoom, so nothing in it clips or wraps.
+    @MainActor
+    func testFreeTextPopoverFitsItsSizeAndEmphasisRowAtEveryZoom() {
+        let theme = AppTheme.defaultLight
         for zoom in WorkspaceZoomPolicy.supportedLevels {
-            let metrics = PDFFreeTextPopoverMetrics(
-                theme: .defaultLight,
-                zoomScale: zoom
-            )
-            XCTAssertEqual(
-                metrics.fontMenuWidth + metrics.itemSpacing + metrics.colorWellWidth,
-                metrics.contentWidth,
-                accuracy: 0.01,
-                "zoom \(zoom)"
-            )
+            let metrics = PDFFreeTextPopoverMetrics(theme: theme, zoomScale: zoom)
             XCTAssertEqual(
                 metrics.width,
-                MonknotMetrics.interfaceDensity(
-                    PDFFreeTextPopoverMetrics.baseWidth,
-                    theme: .defaultLight,
-                    zoomScale: zoom
-                )
+                MonknotMetrics.interfaceDensity(PDFFreeTextPopoverMetrics.baseWidth, theme: theme, zoomScale: zoom)
             )
-            XCTAssertEqual(
-                metrics.controlHeight,
-                MonknotMetrics.interfaceControl(28, theme: .defaultLight, zoomScale: zoom)
-            )
+            let stepper = NSHostingView(rootView: MonknotStepper(
+                title: "Font Size",
+                value: .constant(144),
+                range: 6...144,
+                displayValue: "144",
+                suffix: "pt",
+                theme: theme,
+                zoomScale: zoom
+            )).fittingSize.width
+            let emphasis = NSHostingView(rootView: MonknotSegmentedControl(
+                options: [
+                    MonknotSegmentOption(id: "bold", systemImage: "bold", accessibilityLabel: "Bold"),
+                    MonknotSegmentOption(id: "italic", systemImage: "italic", accessibilityLabel: "Italic")
+                ],
+                toggled: .constant(["bold"]),
+                theme: theme,
+                zoomScale: zoom
+            )).fittingSize.width
+            XCTAssertGreaterThan(metrics.fontMenuWidth, 0, "zoom \(zoom)")
+            XCTAssertLessThanOrEqual(stepper + metrics.itemSpacing + emphasis, metrics.contentWidth, "zoom \(zoom)")
         }
     }
 

@@ -1,23 +1,11 @@
 import MonknotCore
 import SwiftUI
 
-private struct MonknotSettingsZoomScaleKey: EnvironmentKey {
-    static let defaultValue = WorkspaceZoomPolicy.defaultValue
-}
-
-extension EnvironmentValues {
-    var monknotSettingsZoomScale: Double {
-        get { self[MonknotSettingsZoomScaleKey.self] }
-        set { self[MonknotSettingsZoomScaleKey.self] = WorkspaceZoomPolicy.clamp(newValue) }
-    }
-}
-
 /// Shared workspace geometry. Interface Zoom applies one bounded factor to
 /// layout, controls, rows, text, and symbols; text and symbols snap to half
 /// points while box metrics snap to whole points.
 enum MonknotMetrics {
     static let chromeHeightBase: CGFloat = 44
-    static let chromeHorizontalPaddingBase: CGFloat = 8
     static let iconButtonSizeBase: CGFloat = 28
     static let iconPointSizeBase: CGFloat = 17
     /// The small icon button, inside a row or a field (design.md §5.1).
@@ -60,7 +48,8 @@ enum MonknotMetrics {
     static let iconCornerRadiusBase: CGFloat = 8
     /// The document and terminal cards (design.md §7, §10.0).
     static let cardCornerRadius: CGFloat = 12
-    /// The fixed-size native traffic lights and their leading inset.
+    /// The titlebar's room for the fixed-size native traffic lights, from the close light's edge:
+    /// the trio is 52 wide, and 12 more keep it clear of the first control.
     static let trafficLightReserveBase: CGFloat = 64
     /// File tabs hug their label up to this width and have no minimum (design.md §10.3).
     static let tabMaxWidthBase: CGFloat = 220
@@ -74,7 +63,6 @@ enum MonknotMetrics {
     enum Spacing {
         static let xs: CGFloat = 4
         static let s: CGFloat = 6
-        static let m: CGFloat = 8
         static let l: CGFloat = 12
     }
 
@@ -106,8 +94,18 @@ enum MonknotMetrics {
         (chromeHeightBase * theme.interfaceRowScale(zoomScale: zoomScale)).rounded()
     }
 
-    static func chromeHorizontalPadding(theme: AppTheme, zoomScale: Double) -> CGFloat {
-        interfaceDensity(chromeHorizontalPaddingBase, theme: theme, zoomScale: zoomScale)
+    /// The titlebar's leading edge (design.md §10.1): the close light starts on the sidebar's glyph
+    /// column, the list gutter plus a row's padding, level with the rows and the workspace badge.
+    static func titlebarLeadingInset(theme: AppTheme, zoomScale: Double) -> CGFloat {
+        interfaceDensity(listGutterBase, theme: theme, zoomScale: zoomScale)
+            + interfaceDensity(rowPaddingBase, theme: theme, zoomScale: zoomScale)
+    }
+
+    /// The titlebar's trailing edge (design.md §10.1): its last control ends over the terminal bar's
+    /// buttons, the card's margin plus a bar's padding.
+    static func titlebarTrailingInset(theme: AppTheme, zoomScale: Double) -> CGFloat {
+        WorkspaceSplitMetrics.dividerThickness
+            + interfaceDensity(barPaddingBase, theme: theme, zoomScale: zoomScale)
     }
 
     static func barHeight(theme: AppTheme, zoomScale: Double) -> CGFloat {
@@ -232,6 +230,21 @@ enum WorkspaceZoomPolicy {
             return supportedLevels.first(where: { $0 > current + epsilon }) ?? maximum
         }
         return supportedLevels.last(where: { $0 < current - epsilon }) ?? minimum
+    }
+
+    /// The zoom's place among the supported levels, for a stepper that counts in levels (Settings'
+    /// workspace zoom); a zoom between two levels counts as the one above it.
+    static func levelIndex(_ value: Double) -> Int {
+        let current = clamp(value)
+        return supportedLevels.firstIndex { $0 >= current - 0.000_001 } ?? supportedLevels.count - 1
+    }
+
+    /// The zoom a level stepper moves to from `value` when it asks for level `index`: the next
+    /// supported level up or down, as ⌘+ and ⌘− do.
+    static func zoom(steppingToLevel index: Int, from value: Double) -> Double {
+        let current = levelIndex(value)
+        guard index != current else { return clamp(value) }
+        return stepped(value, by: index > current ? step : -step)
     }
 
     /// Non-PDF document content and workspace chrome share the same factor.

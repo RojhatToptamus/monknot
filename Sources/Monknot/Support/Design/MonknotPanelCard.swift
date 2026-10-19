@@ -5,12 +5,11 @@ import SwiftUI
 /// as macOS groups a form. The PDF export sheet uses it too.
 struct MonknotPanelCard<Content: View>: View {
     let theme: AppTheme
+    let zoomScale: Double
     @ViewBuilder let content: () -> Content
 
-    @Environment(\.monknotSettingsZoomScale) private var settingsZoomScale
-
     private var cornerRadius: CGFloat {
-        theme.chromeRadius(12, zoomScale: settingsZoomScale)
+        theme.chromeRadius(12, zoomScale: zoomScale)
     }
 
     var body: some View {
@@ -34,7 +33,7 @@ struct MonknotSheetLayout<Content: View, Buttons: View>: View {
     let title: String
     var message: String? = nil
     let theme: AppTheme
-    var zoomScale: Double = 1
+    let zoomScale: Double
     var width: CGFloat = 440
     @ViewBuilder let content: () -> Content
     @ViewBuilder let buttons: () -> Buttons
@@ -69,6 +68,6 @@ struct MonknotSheetLayout<Content: View, Buttons: View>: View {
         }
         .padding(scaled(20))
         .frame(width: scaled(width))
-        .background(theme.contentSurfaceColor)
+        .background(theme.surfaceColor)
     }
 }

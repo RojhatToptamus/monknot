@@ -123,6 +123,9 @@ struct MarkdownPreviewView: NSViewRepresentable {
             // macOS 15 deployment target, hence key-value coding.
             configuration.setValue(NSWritingToolsBehavior.none.rawValue, forKey: "writingToolsBehavior")
         }
+        // WebKit would show and commit its own predictions in the page, in code and links too and
+        // beside the editor's completion (design.md §10.10).
+        configuration.allowsInlinePredictions = false
 
         configuration.setURLSchemeHandler(
             context.coordinator.resourceHandler,
@@ -234,9 +237,6 @@ struct MarkdownPreviewView: NSViewRepresentable {
 
         applyAppearance(appearanceRequest, in: webView, coordinator: context.coordinator)
 
-        if let commandRequest = editing?.commandRequest {
-            context.coordinator.applyEditorCommand(commandRequest, in: webView)
-        }
         if context.coordinator.syncEditorIfActive(contentRequest, in: webView) {
             applySearch(searchState, options: searchOptions, in: webView, coordinator: context.coordinator)
             applySourceReveal(in: webView, coordinator: context.coordinator)
@@ -462,22 +462,57 @@ struct MarkdownPreviewView: NSViewRepresentable {
 
         // MARK: - Visual editing
 
-        /// The page's copy of the source as of the last change it reported (`acknowledged`), so a
-        /// store update the page caused is recognised and not sent back.
+        /// The page's copy of the source as of the last change it reported (`mirror`, at version
+        /// `acknowledged`), the patches sent to it that it has not applied yet (`pending`) and the
+        /// text it will have once it has (`sentText`), which is the store's text: a store update
+        /// the page caused, or one already sent, is recognised and not sent again.
         private final class EditorState {
             var configuration: MarkdownVisualEditingConfiguration
             var documentID: String
             var renderID = 0
             var mirror: String?
             var acknowledged = 0
-            var isReady = false
+            var sentText = ""
+            var pending: [SentPatch] = []
             var awaitingReset: String?
-            var lastCommandSerial: Int?
 
             init(configuration: MarkdownVisualEditingConfiguration, documentID: String) {
                 self.configuration = configuration
                 self.documentID = documentID
             }
+
+            /// A change the page made, as a patch on the store's text: moved past the patches the
+            /// page had not applied when it made it, which move past it in turn, as `applyRemote`
+            /// moves the app's patches past the page's edits. Nil when the two overlap.
+            func rebase(_ change: MarkdownVisualEditorChange) -> MarkdownVisualEditorPatch? {
+                var from = change.range.location
+                var to = NSMaxRange(change.range)
+                let delta = (change.inserted as NSString).length - change.range.length
+                var moved = pending
+                for index in moved.indices {
+                    let sent = moved[index]
+                    if to <= sent.from {
+                        moved[index].from += delta
+                        moved[index].to += delta
+                    } else if from >= sent.to {
+                        from += sent.delta
+                        to += sent.delta
+                    } else {
+                        return nil
+                    }
+                }
+                pending = moved
+                return MarkdownVisualEditorPatch(location: from, removed: change.removed, inserted: change.inserted)
+            }
+        }
+
+        /// A patch sent to the page, as a range on the mirror with the patches sent before it applied.
+        private struct SentPatch {
+            var from: Int
+            var to: Int
+            let length: Int
+
+            var delta: Int { length - (to - from) }
         }
 
         private var editor: EditorState?
@@ -513,10 +548,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
             if let editor, editor.documentID == documentID {
                 editor.configuration = configuration
             } else {
-                let state = EditorState(configuration: configuration, documentID: documentID)
-                // A command requested before this page existed was meant for the previous one.
-                state.lastCommandSerial = configuration.commandRequest?.serial
-                editor = state
+                editor = EditorState(configuration: configuration, documentID: documentID)
             }
         }
 
@@ -536,13 +568,18 @@ struct MarkdownPreviewView: NSViewRepresentable {
             return payload
         }
 
-        fileprivate func editorDidRender(_ request: PreviewContentRequest, renderID: Int) {
+        /// The page is about to show `request`. Its first messages (ready, focus) arrive while it
+        /// renders, so they must already find this render's ID.
+        fileprivate func editorWillRender(_ request: PreviewContentRequest, renderID: Int) {
             guard let editor, editor.documentID == request.documentID else { return }
             editor.renderID = renderID
             editor.mirror = request.markdown
+            editor.sentText = request.markdown
+            editor.pending = []
             editor.acknowledged = 0
-            editor.isReady = false
             editor.awaitingReset = nil
+            // The new page numbers its undo groups from the start again.
+            editor.configuration.session.breakCoalescing()
             flow?.pageDidRender(text: request.markdown)
             if let webView = editorWebView {
                 sendEditorIcons(to: webView)
@@ -550,76 +587,78 @@ struct MarkdownPreviewView: NSViewRepresentable {
         }
 
         /// While the editor is showing this document, store changes reach the page as patches:
-        /// nothing when the page made the change itself, otherwise the difference. True when the
-        /// request was handled this way.
+        /// nothing when the page made the change or was already sent it, otherwise the difference.
+        /// True when the request was handled this way.
         fileprivate func syncEditorIfActive(_ request: PreviewContentRequest, in webView: WKWebView) -> Bool {
             guard let editor,
                   editor.documentID == request.documentID,
-                  let mirror = editor.mirror,
+                  editor.mirror != nil,
                   lastRenderedContent?.documentID == request.documentID,
                   isShellLoaded
             else { return false }
-            if request.markdown == mirror {
-                lastRenderedContent = request
-                return true
-            }
-            if editor.awaitingReset != nil {
-                return true
-            }
-            guard let patch = MarkdownTextDifference.patch(from: mirror, to: request.markdown) else {
-                lastRenderedContent = request
-                return true
-            }
-            // A change from outside the editor (the file changed on disk, a task toggled elsewhere).
-            sendEditorPatches([patch], selection: nil, reason: .external, in: webView)
             lastRenderedContent = request
+            sendExternalChange(to: request.markdown, in: webView)
             return true
         }
 
-        fileprivate func applyEditorCommand(_ request: MarkdownVisualEditorCommandRequest, in webView: WKWebView) {
-            guard let editor, editor.lastCommandSerial != request.serial else { return }
-            editor.lastCommandSerial = request.serial
-            let command = request.command.visualEditorCommand
-            var arguments: [Any] = [command.name]
-            if let value = command.value { arguments.append(value) }
-            guard let json = try? WebViewBridge.literal(arguments) else { return }
-            webView.evaluateJavaScript("window.MonknotEditor && window.MonknotEditor.command(...\(json));")
+        /// A change from outside the editor (the file changed on disk, a task toggled elsewhere).
+        /// The undo history no longer fits the text, so it starts over.
+        private func sendExternalChange(to text: String, in webView: WKWebView) {
+            guard let editor, editor.awaitingReset == nil,
+                  let patch = MarkdownTextDifference.patch(from: editor.sentText, to: text)
+            else { return }
+            editor.sentText = text
+            editor.configuration.session.clearHistory()
+            sendEditorPatch(patch, selection: nil, reason: .external, in: webView)
         }
 
+        /// Undo and redo: the step applies to the store's text whole, or not at all, and then
+        /// reaches the page as one patch.
         func applyFromApp(
             _ patches: [MarkdownVisualEditorPatch],
             selection: MarkdownVisualEditorSelection?,
             reason: MarkdownVisualEditorChange.Kind
-        ) {
-            guard let webView = editorWebView, editor?.isReady == true || editor?.mirror != nil else {
-                NSSound.beep()
-                return
-            }
-            sendEditorPatches(patches, selection: selection, reason: reason, in: webView)
+        ) -> Bool {
+            guard let editor, editor.mirror != nil, editor.awaitingReset == nil, let webView = editorWebView else { return false }
+            let text = editor.configuration.currentText()
+            // A store change not sent to the page yet clears the history as it goes out.
+            guard text == editor.sentText,
+                  let patch = MarkdownVisualEditorPatch.combined(patches, appliedTo: text)
+            else { return false }
+            guard patch.removed != patch.inserted else { return true }
+            guard editor.configuration.applyChange(patch) else { return false }
+            editor.sentText = editor.configuration.currentText()
+            sendEditorPatch(patch, selection: selection, reason: reason, in: webView)
+            return true
         }
 
-        private func sendEditorPatches(
-            _ patches: [MarkdownVisualEditorPatch],
+        /// Sends the page a patch the store already has, on the text the page will have once it has
+        /// applied the ones sent before.
+        private func sendEditorPatch(
+            _ patch: MarkdownVisualEditorPatch,
             selection: MarkdownVisualEditorSelection?,
             reason: MarkdownVisualEditorChange.Kind,
             in webView: WKWebView
         ) {
             guard let editor else { return }
-            for (index, patch) in patches.enumerated() {
-                var payload: [String: Any] = [
-                    "base": editor.acknowledged,
-                    "from": patch.location,
-                    "to": patch.location + (patch.removed as NSString).length,
-                    "expected": patch.removed,
-                    "insert": patch.inserted,
-                    "reason": reason.rawValue
-                ]
-                if index == patches.count - 1, let selection {
-                    payload["selection"] = selection.payload
-                }
-                guard let json = try? WebViewBridge.literal(payload) else { continue }
-                webView.evaluateJavaScript("window.MonknotEditor && window.MonknotEditor.applyRemote(\(json));")
+            let to = patch.location + (patch.removed as NSString).length
+            var payload: [String: Any] = [
+                "base": editor.acknowledged,
+                "from": patch.location,
+                "to": to,
+                "expected": patch.removed,
+                "insert": patch.inserted,
+                "reason": reason.rawValue
+            ]
+            if let selection {
+                payload["selection"] = selection.payload
             }
+            guard let json = try? WebViewBridge.literal(payload) else {
+                resetEditor(in: webView)
+                return
+            }
+            editor.pending.append(SentPatch(from: patch.location, to: to, length: (patch.inserted as NSString).length))
+            webView.evaluateJavaScript("window.MonknotEditor && window.MonknotEditor.applyRemote(\(json));")
         }
 
         /// Replaces the page's document with the store's text, after a change the store refused or
@@ -649,7 +688,6 @@ struct MarkdownPreviewView: NSViewRepresentable {
 
             switch type {
             case "ready":
-                editor.isReady = true
                 editor.acknowledged = WebViewBridge.integer(body["v"]) ?? 0
                 if let focused = WebViewBridge.boolean(body["focused"]) {
                     flow?.pageDidChangeFocus(focused)
@@ -658,44 +696,57 @@ struct MarkdownPreviewView: NSViewRepresentable {
                 guard editor.awaitingReset == nil else { return }
                 guard let change = MarkdownVisualEditorChange.parse(body),
                       change.version == editor.acknowledged + 1,
-                      let mirror = editor.mirror
+                      let mirror = editor.mirror as NSString?,
+                      NSMaxRange(change.range) <= mirror.length,
+                      mirror.substring(with: change.range) == change.removed
                 else {
                     resetEditor(in: webView)
                     return
                 }
-                let mirrorText = mirror as NSString
-                guard NSMaxRange(change.range) <= mirrorText.length,
-                      mirrorText.substring(with: change.range) == change.removed
-                else {
-                    resetEditor(in: webView)
-                    return
-                }
-                let updated = mirrorText.replacingCharacters(in: change.range, with: change.inserted)
+                let updated = mirror.replacingCharacters(in: change.range, with: change.inserted)
                 editor.mirror = updated
                 editor.acknowledged = change.version
-                lastRenderedContent = PreviewContentRequest(documentID: editor.documentID, markdown: updated)
-                let inTableCell = WebViewBridge.boolean(body["cell"])
-                if change.kind == .external {
-                    flow?.pageDidChange(change, text: updated, version: change.version, inTableCell: inTableCell)
-                    return
+                if change.kind.isReplay {
+                    // The page applied the oldest patch it was sent; the store already has it.
+                    guard let sent = editor.pending.first,
+                          sent.from == change.range.location,
+                          sent.to == NSMaxRange(change.range),
+                          sent.length == (change.inserted as NSString).length
+                    else {
+                        resetEditor(in: webView)
+                        return
+                    }
+                    editor.pending.removeFirst()
+                } else {
+                    guard let patch = editor.rebase(change)?.withContext(in: editor.sentText as NSString),
+                          editor.configuration.applyChange(patch)
+                    else {
+                        resetEditor(in: webView)
+                        return
+                    }
+                    editor.sentText = editor.configuration.currentText()
+                    editor.configuration.session.record(change, patch: patch)
                 }
-                guard editor.configuration.applyChange(change) else {
-                    resetEditor(in: webView)
-                    return
-                }
-                editor.configuration.session.record(change)
-                flow?.pageDidChange(change, text: updated, version: change.version, inTableCell: inTableCell)
+                lastRenderedContent = PreviewContentRequest(documentID: editor.documentID, markdown: editor.sentText)
+                flow?.pageDidChange(change, text: updated, version: change.version, inTableCell: WebViewBridge.boolean(body["cell"]))
             case "reset":
                 guard let text = editor.awaitingReset else { return }
                 editor.awaitingReset = nil
                 editor.mirror = text
+                editor.sentText = text
+                editor.pending = []
                 editor.acknowledged = WebViewBridge.integer(body["v"]) ?? editor.acknowledged
                 lastRenderedContent = PreviewContentRequest(documentID: editor.documentID, markdown: text)
                 flow?.pageDidReset(text: text, version: editor.acknowledged)
+                // The store may have changed while the page was being reset.
+                sendExternalChange(to: editor.configuration.currentText(), in: webView)
             case "conflict":
-                if body["reason"] as? String == MarkdownVisualEditorChange.Kind.external.rawValue {
+                guard editor.awaitingReset == nil else { return }
+                let reason = (body["reason"] as? String).flatMap(MarkdownVisualEditorChange.Kind.init(rawValue:))
+                if reason?.isReplay == true {
+                    // The store already has the patch the page could not apply.
                     resetEditor(in: webView)
-                } else if body["reason"] as? String == MarkdownVisualEditorChange.Kind.flow.rawValue {
+                } else if reason == .flow {
                     // A fix or completion the text moved past; the writing assistance decides.
                     flow?.pageDidRefuseApply()
                 } else {
@@ -704,7 +755,6 @@ struct MarkdownPreviewView: NSViewRepresentable {
             case "selection":
                 guard let selection = MarkdownVisualEditorSelection(body) else { return }
                 editor.configuration.onSelectionChange(selection, (body["selectedMarkdown"] as? String) ?? "")
-                editor.configuration.onFormattingChange(MarkdownVisualFormattingState(body))
                 flow?.pageDidChangeSelection(
                     selection,
                     version: WebViewBridge.integer(body["v"]),
@@ -730,11 +780,11 @@ struct MarkdownPreviewView: NSViewRepresentable {
                     documents: editor.configuration.wikilinkDocuments,
                     in: webView
                 )
-            case "requestImage":
-                requestFile(.image, at: MarkdownVisualEditorSelection(body["selection"]), in: webView)
             case "requestFile":
                 let kind = (body["kind"] as? String).flatMap(MarkdownInsertedFileKind.init(rawValue:)) ?? .file
                 requestFile(kind, at: MarkdownVisualEditorSelection(body["selection"]), in: webView)
+            case "dropFiles":
+                dropFiles(at: MarkdownVisualEditorSelection(body["selection"]))
             case "pasteImage":
                 pasteImage(at: MarkdownVisualEditorSelection(body["selection"]), in: webView)
             case "createPage":
@@ -774,15 +824,19 @@ struct MarkdownPreviewView: NSViewRepresentable {
             }
         }
 
-        /// Inserts Markdown at a selection the page reported, once an image is saved. If the text
-        /// changed meanwhile, the page inserts at its current caret instead.
+        /// Inserts Markdown at a selection the page reported, once a file is imported, if the page
+        /// still shows the same document. If the text changed meanwhile, the page inserts at its
+        /// current caret instead.
         private func insertion(
             at selection: MarkdownVisualEditorSelection,
             expectedLength: Int,
             label: String
         ) -> (String) -> Bool {
-            { [weak self] markdown in
-                guard let self, let webView = self.editorWebView, self.editor != nil else { return false }
+            let documentID = editor?.documentID
+            return { [weak self] markdown in
+                guard let self, let webView = self.editorWebView, let documentID,
+                      self.editor?.documentID == documentID
+                else { return false }
                 let payload: [String: Any] = [
                     "markdown": markdown,
                     "selection": selection.payload,
@@ -803,7 +857,9 @@ struct MarkdownPreviewView: NSViewRepresentable {
             at selection: MarkdownVisualEditorSelection?,
             in webView: WKWebView
         ) {
-            guard let editor, let selection, let handler = editor.configuration.onFileDropRequest else { return }
+            guard let editor, editor.configuration.onFileDropRequest != nil, let selection else { return }
+            let documentID = editor.documentID
+            let sourceText = editor.configuration.currentText()
             let panel = NSOpenPanel()
             panel.allowsMultipleSelection = false
             panel.canChooseDirectories = false
@@ -812,26 +868,50 @@ struct MarkdownPreviewView: NSViewRepresentable {
             }
             panel.prompt = "Insert"
             panel.message = kind.panelMessage
-            let documentID = editor.documentID
-            let sourceText = editor.configuration.currentText()
             let complete: (NSApplication.ModalResponse) -> Void = { [weak self] response in
-                guard response == .OK, let url = panel.url, let self else { return }
-                let insert = self.insertion(at: selection, expectedLength: (sourceText as NSString).length, label: kind.undoLabel)
-                let request = MarkdownFileDropRequest(
-                    documentID: documentID,
-                    revision: 0,
-                    sourceText: sourceText,
-                    insertionRange: selection.range,
-                    urls: [url],
-                    insertion: { markdown in insert(kind.markdown(fromDropMarkdown: markdown)) }
-                )
-                handler(request)
+                guard response == .OK, let url = panel.url else { return }
+                self?.importFiles([url], into: documentID, at: selection, in: sourceText, label: kind.undoLabel, markdown: kind.markdown(fromDropMarkdown:))
             }
             if let window = webView.window {
                 panel.beginSheetModal(for: window, completionHandler: complete)
             } else {
                 panel.begin(completionHandler: complete)
             }
+        }
+
+        /// Files dropped on the page: the drag's file URLs go through Source's drop import, linked
+        /// where they were dropped.
+        private func dropFiles(at selection: MarkdownVisualEditorSelection?) {
+            guard let editor, let selection,
+                  let urls = NSPasteboard(name: .drag).readObjects(
+                      forClasses: [NSURL.self],
+                      options: [.urlReadingFileURLsOnly: true]
+                  ) as? [URL],
+                  !urls.isEmpty
+            else { return }
+            importFiles(urls, into: editor.documentID, at: selection, in: editor.configuration.currentText(), label: "Drop", markdown: { $0 })
+        }
+
+        /// `sourceText` is the text of `documentID` the selection was reported in; nothing is
+        /// imported once another document shows.
+        private func importFiles(
+            _ urls: [URL],
+            into documentID: String,
+            at selection: MarkdownVisualEditorSelection,
+            in sourceText: String,
+            label: String,
+            markdown: @escaping (String) -> String
+        ) {
+            guard let editor, editor.documentID == documentID, let handler = editor.configuration.onFileDropRequest else { return }
+            let insert = insertion(at: selection, expectedLength: (sourceText as NSString).length, label: label)
+            handler(MarkdownFileDropRequest(
+                documentID: editor.documentID,
+                revision: 0,
+                sourceText: sourceText,
+                insertionRange: selection.range,
+                urls: urls,
+                insertion: { insert(markdown($0)) }
+            ))
         }
 
         /// The Page block: a Markdown file named by the user, created beside this one and linked
@@ -1116,6 +1196,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
 
                 await MainActor.run {
                     guard let self, self.renderSerial == serial, let webView else { return }
+                    self.editorWillRender(request, renderID: serial)
                     webView.evaluateJavaScript("window.monknotRender && window.monknotRender(\(payload));") { [weak self, weak webView] _, error in
                         guard let self, self.renderSerial == serial, let webView else { return }
                         self.renderTask = nil
@@ -1125,7 +1206,6 @@ struct MarkdownPreviewView: NSViewRepresentable {
                         }
 
                         self.markRenderedContent(request, renderID: serial)
-                        self.editorDidRender(request, renderID: serial)
                         self.applySearch(
                             self.pendingSearch ?? searchState,
                             options: self.pendingSearchOptions,

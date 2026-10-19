@@ -25,7 +25,6 @@ class WorkspaceSplitViewTestCase: XCTestCase {
             isTerminalPresented: terminalPresented,
             isTerminalFullscreen: isTerminalFullscreen,
             layoutScale: layoutScale,
-            separatorColor: .separatorColor,
             handleInkColor: .labelColor,
             onSidebarPresentationChange: { isPresented, userInitiated in
                 recorder.sidebarEvents.append(PresentationEvent(
@@ -74,7 +73,6 @@ class WorkspaceSplitViewTestCase: XCTestCase {
             isTerminalPresented: terminalPresented,
             isTerminalFullscreen: isTerminalFullscreen,
             layoutScale: layoutScale ?? controller.layoutScale,
-            separatorColor: .separatorColor,
             handleInkColor: .labelColor,
             sidebarRevealRequest: sidebarRevealRequest,
             terminalRevealRequest: terminalRevealRequest,
@@ -577,13 +575,7 @@ class WorkspaceSplitViewTestCase: XCTestCase {
     }
 
     private func splitAutosaveSnapshot(named autosaveName: String) -> [String]? {
-        let defaults = UserDefaults.standard
-        guard let key = defaults.dictionaryRepresentation().keys.first(where: {
-            $0.contains(autosaveName)
-        }) else {
-            return nil
-        }
-        return defaults.stringArray(forKey: key)
+        UserDefaults.standard.stringArray(forKey: "NSSplitView Subview Frames \(autosaveName)")
     }
 
     func splitFixtureError(_ description: String) -> NSError {
@@ -1026,7 +1018,6 @@ struct MountedSplitZoomFixture: View {
                 isSidebarPresented: true,
                 isTerminalPresented: false,
                 layoutScale: model.layoutScale,
-                separatorColor: .separatorColor,
                 handleInkColor: .labelColor,
                 onSidebarPresentationChange: { _, _ in },
                 onTerminalPresentationChange: { _, _ in },
@@ -1094,7 +1085,6 @@ struct MountedConstrainedScaleFixture: View {
                 isSidebarPresented: model.sidebarPreferred,
                 isTerminalPresented: model.terminalPreferred,
                 layoutScale: model.layoutScale,
-                separatorColor: .separatorColor,
                 handleInkColor: .labelColor,
                 onSidebarPresentationChange: model.handleSidebar(_:userInitiated:),
                 onTerminalPresentationChange: model.handleTerminal(_:userInitiated:),
@@ -1199,7 +1189,6 @@ struct LiveSplitFeedbackFixture: View {
             isSidebarPresented: model.sidebarPreferred,
             isTerminalPresented: model.terminalPreferred,
             layoutScale: 1,
-            separatorColor: .separatorColor,
             handleInkColor: .labelColor,
             onSidebarPresentationChange: model.handleSidebar,
             onTerminalPresentationChange: model.handleTerminal,
@@ -1233,7 +1222,8 @@ final class SplitResizeCounter: @unchecked Sendable {
 }
 
 /// Mirrors ContentView's pane state: a toolbar button shows a pane that is not visible, with a
-/// reveal request, and hides one that is.
+/// reveal request, and hides one that is; the button reflects the request at once, and a pane that
+/// cannot open reports back (`requestSidebarPresentation`, `setTerminalDrawerPresented`).
 @MainActor
 final class ChromeToggleModel: ObservableObject {
     @Published var sidebarPreferred = true
@@ -1252,10 +1242,9 @@ final class ChromeToggleModel: ObservableObject {
         let isPresented = !sidebarVisible
         apply(animated: animated) {
             sidebarPreferred = isPresented
+            sidebarVisible = isPresented
             if isPresented {
                 sidebarRevealRequest &+= 1
-            } else {
-                sidebarVisible = false
             }
         }
     }
@@ -1264,10 +1253,9 @@ final class ChromeToggleModel: ObservableObject {
         let isPresented = !terminalVisible
         apply(animated: animated) {
             terminalPreferred = isPresented
+            terminalVisible = isPresented
             if isPresented {
                 terminalRevealRequest &+= 1
-            } else {
-                terminalVisible = false
             }
         }
     }
@@ -1309,7 +1297,6 @@ struct ChromeToggleFixture: View {
             isSidebarPresented: model.sidebarPreferred,
             isTerminalPresented: model.terminalPreferred,
             layoutScale: model.layoutScale,
-            separatorColor: .separatorColor,
             handleInkColor: .labelColor,
             sidebarRevealRequest: model.sidebarRevealRequest,
             terminalRevealRequest: model.terminalRevealRequest,

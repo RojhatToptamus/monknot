@@ -396,6 +396,57 @@ final class MarkdownPreviewFlowTests: WorkspaceStoreTestCase {
         XCTAssertTrue(fixed, "The declined fix is offered again: \(fixture.store.documentText.prefix(40))")
     }
 
+    /// A certain fix is on its way to the page when the caret moves to another sentence, so the page
+    /// declines it. That answer was about the old caret: the check at the new one must still ask
+    /// the on-device model about a sentence Apple flagged but could not fix.
+    func testADeclineForAnOldCaretLeavesTheNextSentenceToTheModel() async throws {
+        let first = "We read teh plan."
+        let second = "Their going home."
+        let source = first + "\n\n" + second + "\n"
+        let repairs = SentenceRepairRequests()
+        var dependencies = MarkdownPreviewFlowDependencies()
+        dependencies.checkingClient = EditorFlowCheckingClient({ text, _, _, _, completion in
+            if text.contains("teh") {
+                completion(PreviewFlowChecker.corrections(in: text, ["teh": "the"]), PreviewFlowChecker.english)
+            } else if text == second {
+                // A grammar issue without a precise range resolves into no fix.
+                let whole = NSRange(location: 0, length: (text as NSString).length)
+                completion([NSTextCheckingResult.grammarCheckingResult(range: whole, details: [])], PreviewFlowChecker.english)
+            } else {
+                completion([], PreviewFlowChecker.english)
+            }
+        })
+        dependencies.sentenceRepairService = FlowSentenceRepairService(isAvailable: { _ in true }) { request, _ in
+            repairs.append(request.sentence)
+            return nil
+        }
+        dependencies.proseCompletionService = FlowProseCompletionService(isAvailable: { _ in false }) { _, _ in nil }
+        dependencies.checkDelayNanoseconds = 0
+        dependencies.protectedRangesDelayNanoseconds = 0
+        dependencies.protectedRangeProvider = { _, _ in [] }
+        dependencies.windowFocusValidator = { _ in true }
+        let host = RecordingPreviewFlowHost()
+        let flow = MarkdownPreviewFlowCoordinator(dependencies: dependencies)
+        defer { flow.tearDown() }
+        flow.host = host
+        flow.prepare(documentID: "Note.md")
+        flow.configure(options: Self.onDevice)
+        flow.pageDidRender(text: source)
+        flow.pageDidChangeFocus(true)
+
+        let firstEnd = (first as NSString).length
+        flow.pageDidChangeSelection(MarkdownVisualEditorSelection(anchor: firstEnd, head: firstEnd), version: 0, focused: true)
+        let sent = await waitUntil { host.messages.contains { $0["type"] as? String == "apply" } }
+        XCTAssertTrue(sent, "The certain fix is sent to the page: \(host.messages)")
+        let apply = try XCTUnwrap(host.messages.last { $0["type"] as? String == "apply" })
+
+        let secondEnd = (source as NSString).length - 1
+        flow.pageDidChangeSelection(MarkdownVisualEditorSelection(anchor: secondEnd, head: secondEnd), version: 0, focused: true)
+        flow.handlePageMessage(["action": "declined", "serial": try XCTUnwrap(apply["serial"] as? Int)])
+        let asked = await waitUntil { repairs.sentences.contains(second) }
+        XCTAssertTrue(asked, "The model is asked about the sentence at the new caret: \(repairs.sentences)")
+    }
+
     // MARK: - On-device writing assistance
 
     func testOnDeviceRepairIsReviewedAfterAppleChecksIt() async throws {
@@ -825,6 +876,43 @@ final class MarkdownPreviewFlowTests: WorkspaceStoreTestCase {
         XCTAssertFalse(commands.canShowWritingTools)
         XCTAssertFalse(commands.showWritingTools())
         XCTAssertEqual(fixture.harness.editorMode, .preview)
+    }
+
+    /// WebKit's Ignore Spelling ignores the word in WebKit's own spelling document; the writing
+    /// assistance checks in another, so the item ignores the word there too and still reaches WebKit.
+    func testIgnoreSpellingInThePageMenuAlsoIgnoresTheWordForWritingAssistance() async throws {
+        let fixture = try await makeFixture(markdown: "We read tehh plan\n")
+        let start = ("We read " as NSString).length
+        try await fixture.setSelection(start, start + 4)
+        let webView = try XCTUnwrap(fixture.webView as? MarkdownEditorWebView)
+        let flow = try XCTUnwrap(webView.writingAssistance, "Flow registers with the page it runs on")
+        XCTAssertFalse(NSSpellChecker.shared.ignoredWords(inSpellDocumentWithTag: flow.spellDocumentTag)?.contains("tehh") == true)
+
+        let webKit = WebKitMenuTargetStandIn()
+        let menu = NSMenu()
+        let item = NSMenuItem(title: "Ignore Spelling", action: NSSelectorFromString("forwardContextMenuAction:"), keyEquivalent: "")
+        item.tag = MarkdownEditorWebView.webKitIgnoreSpellingTag
+        item.target = webKit
+        menu.addItem(item)
+        let click = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .rightMouseDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: fixture.window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1
+        ))
+        webView.willOpenMenu(menu, with: click)
+        menu.performActionForItem(at: 0)
+
+        XCTAssertEqual(webKit.forwardedTags, [MarkdownEditorWebView.webKitIgnoreSpellingTag], "WebKit still ignores it")
+        let ignored = await waitUntil {
+            NSSpellChecker.shared.ignoredWords(inSpellDocumentWithTag: flow.spellDocumentTag)?.contains("tehh") == true
+        }
+        XCTAssertTrue(ignored, "The writing assistance ignores the selected word in its own spelling document")
     }
 
     func testSystemInlinePredictionsStayOffInPreview() async throws {
@@ -1304,5 +1392,40 @@ private struct PreviewFlowHarness: View {
         )
         .defaultAppStorage(model.defaults)
         .environment(\.markdownPreviewFlowDependencies, model.dependencies)
+    }
+}
+
+/// The sentences Preview's writing assistance asked the on-device model to repair.
+final class SentenceRepairRequests: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [String] = []
+
+    var sentences: [String] {
+        lock.withLock { recorded }
+    }
+
+    func append(_ sentence: String) {
+        lock.withLock { recorded.append(sentence) }
+    }
+}
+
+/// A page stand-in for `MarkdownPreviewFlowCoordinator`: it records what the app sends.
+@MainActor
+final class RecordingPreviewFlowHost: MarkdownPreviewFlowHost {
+    let flowFocusView: NSView? = NSView()
+    let flowUndoManager: UndoManager? = UndoManager()
+    private(set) var messages: [[String: Any]] = []
+
+    func sendFlow(_ message: [String: Any]) {
+        messages.append(message)
+    }
+}
+
+/// Stands in for WebKit's menu target, which receives every item of the page's context menu.
+final class WebKitMenuTargetStandIn: NSObject {
+    private(set) var forwardedTags: [Int] = []
+
+    @objc func forwardContextMenuAction(_ sender: Any?) {
+        forwardedTags.append((sender as? NSMenuItem)?.tag ?? -1)
     }
 }

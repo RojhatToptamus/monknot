@@ -123,8 +123,8 @@ final class PDFNavigatorLayoutTests: PDFNavigatorTestCase {
                 item.maximum,
                 "base width must clamp before scaling at zoom \(item.zoom)"
             )
-            // The bar over chrome rows: 40, 28 rows and 14 per level, the selection inside the menu
-            // inset with the text 8 inside it.
+            // The bar over chrome rows: 40, 28 rows and 14 per level, the selection inside the 10 list
+            // inset, as the header's, with the text a row's 8 inside it.
             XCTAssertEqual(metrics.headerHeight, density(40))
             XCTAssertEqual(metrics.headerInset, density(10))
             XCTAssertEqual(metrics.segmentedHeight, density(28))
@@ -135,9 +135,9 @@ final class PDFNavigatorLayoutTests: PDFNavigatorTestCase {
             XCTAssertEqual(metrics.outlineFontSize, text(13))
             XCTAssertEqual(metrics.annotationRowHeight, density(28))
             XCTAssertEqual(metrics.annotationFontSize, text(13))
-            XCTAssertEqual(metrics.cellInset, density(14))
-            XCTAssertEqual(metrics.selectionHorizontalInset, density(6))
-            XCTAssertEqual(metrics.selectionVerticalInset, 0)
+            XCTAssertEqual(metrics.cellInset, density(18))
+            XCTAssertEqual(metrics.selectionHorizontalInset, density(10))
+            XCTAssertEqual(metrics.selectionHorizontalInset, metrics.headerInset, "On the header's edge")
             XCTAssertEqual(metrics.selectionCornerRadius, density(8))
             XCTAssertEqual(metrics.emptyFontSize, text(12))
             XCTAssertEqual(metrics.emptyInset, density(16))
@@ -261,7 +261,12 @@ final class PDFNavigatorLayoutTests: PDFNavigatorTestCase {
         XCTAssertEqual(navigator.metrics.thumbnailLabelFontSize, 15)
         XCTAssertTrue(navigator.foregroundColor.isEqual(NSColor(hex: theme.foreground)))
         // Selection is the neutral `selected` fill, never the text selection colour (design.md §1.4).
-        XCTAssertTrue(navigator.selectionColor.isEqual(NSColor(hex: theme.foreground).withAlphaComponent(0.10)))
+        let selection = try XCTUnwrap(navigator.selectionColor.usingColorSpace(.sRGB))
+        let ink = try XCTUnwrap(NSColor(hex: theme.foreground).usingColorSpace(.sRGB))
+        XCTAssertEqual(selection.redComponent, ink.redComponent, accuracy: 0.002)
+        XCTAssertEqual(selection.greenComponent, ink.greenComponent, accuracy: 0.002)
+        XCTAssertEqual(selection.blueComponent, ink.blueComponent, accuracy: 0.002)
+        XCTAssertEqual(selection.alphaComponent, 0.10, accuracy: 0.002)
         XCTAssertTrue(
             NSColor(cgColor: try XCTUnwrap(navigator.layer?.backgroundColor))?
                 .isEqual(NSColor(hex: theme.background)) == true
@@ -469,21 +474,13 @@ final class PDFNavigatorLayoutTests: PDFNavigatorTestCase {
         container.prepareForDismantle()
     }
 
-    func testNavigatorSelectedRowsUseScaledInsetsAndKeepTheNeutralFillInTheBackground() {
+    func testNavigatorSelectedRowsUseScaledInsetsInTheListGutter() {
         let metrics = PDFNavigatorMetrics(theme: .defaultLight, workspaceZoomScale: 1.5)
         let row = PDFNavigatorTableRowView(frame: NSRect(x: 0, y: 0, width: 300, height: 45))
-        row.themedSelectionColor = .systemBlue
         row.selectionHorizontalInset = metrics.selectionHorizontalInset
-        row.selectionVerticalInset = metrics.selectionVerticalInset
         row.selectionCornerRadius = metrics.selectionCornerRadius
-        row.isEmphasized = true
 
-        XCTAssertEqual(row.selectionDrawingRect, NSRect(x: 9, y: 0, width: 282, height: 45))
+        XCTAssertEqual(row.selectionDrawingRect, NSRect(x: 15, y: 0, width: 270, height: 45))
         XCTAssertEqual(row.selectionCornerRadius, 12)
-        XCTAssertTrue(row.resolvedSelectionColor(isKeyWindow: true).isEqual(NSColor.systemBlue))
-        XCTAssertTrue(row.resolvedSelectionColor(isKeyWindow: false).isEqual(NSColor.systemBlue))
-
-        row.isEmphasized = false
-        XCTAssertTrue(row.resolvedSelectionColor(isKeyWindow: true).isEqual(NSColor.systemBlue))
     }
 }

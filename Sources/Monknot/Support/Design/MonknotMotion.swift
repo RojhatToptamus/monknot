@@ -17,8 +17,10 @@ enum MonknotMotion {
         .easeOut(duration: hoverDuration)
     }
 
-    /// A disclosure chevron's quarter turn: motion, so none with Reduce Motion.
-    static func disclosureAnimation(reduceMotion: Bool) -> Animation? {
+    /// A state change that moves something rather than fading it (a disclosure chevron's quarter
+    /// turn, the outline rail widening and scrolling to a heading): the hover timing, and none with
+    /// Reduce Motion.
+    static func stateMotion(reduceMotion: Bool) -> Animation? {
         reduceMotion ? nil : hoverAnimation
     }
 
@@ -34,14 +36,6 @@ enum MonknotMotion {
     /// Reduce Motion shows and hides panes instantly.
     static func paneTransition(reduceMotion: Bool) -> Animation? {
         reduceMotion ? nil : paneTransition
-    }
-
-    static func outlineAnimation(reduceMotion: Bool) -> Animation? {
-        reduceMotion ? nil : hoverAnimation
-    }
-
-    static func toastAnimation(reduceMotion: Bool) -> Animation {
-        hoverAnimation
     }
 
     /// fadeUp: in from 4 pt below, and back out the same way; a plain fade with Reduce Motion.

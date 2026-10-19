@@ -18,32 +18,26 @@ final class AppThemeSurfaceHierarchyTests: XCTestCase {
         XCTAssertEqual(AppTheme.blendHex("not-a-color", toward: "#FFFFFF", amount: 0.5), "not-a-color")
     }
 
-    func testTerminalCardSharesTheDocumentCanvasInBothModes() {
-        XCTAssertEqual(AppTheme.defaultDark.terminalSurfaceHex, AppTheme.defaultDark.background)
-        XCTAssertEqual(AppTheme.defaultLight.terminalSurfaceHex, AppTheme.defaultLight.background)
-    }
-
     func testChromeToneIsDistinctFromTheCards() {
         for theme in [AppTheme.defaultDark, AppTheme.defaultLight] {
-            XCTAssertNotEqual(theme.sidebarSurfaceHex, theme.background)
-            XCTAssertNotEqual(theme.sidebarSurfaceHex, theme.terminalSurfaceHex)
+            XCTAssertNotEqual(theme.chromeSurfaceHex, theme.background)
         }
     }
 
     func testDarkChromeSitsBelowTheCanvas() {
         for theme in [AppTheme.defaultDark, AppTheme.darkTheme(id: "catppuccin-mocha")] {
             // Darker than the canvas, so the card reads as lifted, but a step rather than a well.
-            XCTAssertLessThan(luminance(theme.sidebarSurfaceHex), luminance(theme.background), theme.name)
-            XCTAssertLessThan(channelDelta(theme.sidebarSurfaceHex, theme.background), 0.1, theme.name)
+            XCTAssertLessThan(luminance(theme.chromeSurfaceHex), luminance(theme.background), theme.name)
+            XCTAssertLessThan(channelDelta(theme.chromeSurfaceHex, theme.background), 0.1, theme.name)
         }
     }
 
     func testLightChromeRecessesTowardInkVisiblyOnTintedCanvases() {
         for theme in [AppTheme.defaultLight, AppTheme.lightTheme(id: "catppuccin-latte")] {
-            XCTAssertLessThan(luminance(theme.sidebarSurfaceHex), luminance(theme.background), theme.name)
+            XCTAssertLessThan(luminance(theme.chromeSurfaceHex), luminance(theme.background), theme.name)
             // Enough to see on a tinted canvas, never a grey panel.
-            XCTAssertGreaterThan(channelDelta(theme.sidebarSurfaceHex, theme.background), 0.025, theme.name)
-            XCTAssertLessThan(channelDelta(theme.sidebarSurfaceHex, theme.background), 0.06, theme.name)
+            XCTAssertGreaterThan(channelDelta(theme.chromeSurfaceHex, theme.background), 0.025, theme.name)
+            XCTAssertLessThan(channelDelta(theme.chromeSurfaceHex, theme.background), 0.06, theme.name)
         }
     }
 

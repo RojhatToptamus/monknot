@@ -153,7 +153,6 @@ final class WorkspaceSplitSwiftUIBridgeTests: WorkspaceSplitViewTestCase {
             isSidebarPresented: true,
             isTerminalPresented: true,
             layoutScale: 1,
-            separatorColor: .separatorColor,
             handleInkColor: .labelColor,
             onSidebarPresentationChange: { _, _ in },
             onTerminalPresentationChange: { _, _ in },

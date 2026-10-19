@@ -44,10 +44,10 @@ short completions.
 
 - **Local files:** Monknot reads and writes supported files in place. It does
   not import them into a separate library.
-- **Markdown:** Edit with syntax highlighting, formatting controls, tabs, Quick
-  Open, heading navigation, daily notes, and wikilinks.
+- **Markdown:** Edit with syntax highlighting, formatting shortcuts (⌘B, ⌘I,
+  ⌘E, ⌘K), tabs, Quick Open, heading navigation, daily notes, and wikilinks.
 - **Editing in Preview:** Edit Markdown as rendered text in the full-width
-  preview, with Notion's block menu: `/` at the start of a line inserts text,
+  preview, with a block menu: `/` at the start of a line inserts text,
   headings, lists, to-dos, toggles, callouts, quotes, tables, dividers, code,
   images, video, audio, files, a new page or a table of contents. Drag a
   block's handle to reorder it, or click it to turn the block into another

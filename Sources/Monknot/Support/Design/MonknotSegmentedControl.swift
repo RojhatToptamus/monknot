@@ -19,37 +19,102 @@ struct MonknotSegmentOption: Identifiable {
     }
 }
 
-/// The one segmented control (design.md §5.5): a `track` with 2 padding and 2 between cells, cells 24
-/// tall, so the control is 28 like every control beside it. Icon cells are 28 wide; text cells pad 12.
-/// The titlebar's view mode, the PDF tools and navigator, and Settings all use it.
+/// The one segmented control (design.md §5.5): cells 24 tall on a `track` 28 tall, like every control
+/// beside it, 2 between cells and the track's padding what the two heights leave, so the outer box is
+/// one rounding of 28 at every zoom. Icon cells are 28 wide; text cells pad 12. The titlebar's view
+/// mode, the PDF tools and navigator, the text style popover and Settings all use it. It chooses one
+/// option (a mode), or with `toggled` turns each option on and off on its own (Bold and Italic).
 struct MonknotSegmentedControl: View {
     let options: [MonknotSegmentOption]
-    @Binding var selection: String
     let theme: AppTheme
     let zoomScale: Double
     var isDisabled = false
+    private let isSelected: (String) -> Bool
+    private let choose: (String) -> Void
     @Environment(\.isEnabled) private var isEnabled
 
+    /// One option at a time: choosing a cell selects it.
+    init(
+        options: [MonknotSegmentOption],
+        selection: Binding<String>,
+        theme: AppTheme,
+        zoomScale: Double,
+        isDisabled: Bool = false
+    ) {
+        self.options = options
+        self.theme = theme
+        self.zoomScale = zoomScale
+        self.isDisabled = isDisabled
+        self.isSelected = { selection.wrappedValue == $0 }
+        self.choose = { selection.wrappedValue = $0 }
+    }
+
+    /// Independent toggles on one track: each cell turns its own option on or off.
+    init(
+        options: [MonknotSegmentOption],
+        toggled: Binding<Set<String>>,
+        theme: AppTheme,
+        zoomScale: Double,
+        isDisabled: Bool = false
+    ) {
+        self.options = options
+        self.theme = theme
+        self.zoomScale = zoomScale
+        self.isDisabled = isDisabled
+        self.isSelected = { toggled.wrappedValue.contains($0) }
+        self.choose = { id in
+            if toggled.wrappedValue.contains(id) {
+                toggled.wrappedValue.remove(id)
+            } else {
+                toggled.wrappedValue.insert(id)
+            }
+        }
+    }
+
+    /// The track's padding: half of what a 24 cell leaves of the 28 control, each height rounded once,
+    /// so the track lands on the same 28 as a button, a pop-up or a tab (design.md §9.3).
+    static func trackPadding(theme: AppTheme, zoomScale: Double) -> CGFloat {
+        (MonknotMetrics.interfaceControl(MonknotMetrics.iconButtonSizeBase, theme: theme, zoomScale: zoomScale)
+            - MonknotMetrics.interfaceControl(MonknotSegmentButton.cellHeightBase, theme: theme, zoomScale: zoomScale)) / 2
+    }
+
     var body: some View {
-        HStack(spacing: MonknotMetrics.scale(MonknotSegmentButton.cellGapBase, theme: theme, zoomScale: zoomScale)) {
+        HStack(spacing: MonknotMetrics.interfaceDensity(MonknotSegmentButton.cellGapBase, theme: theme, zoomScale: zoomScale)) {
             ForEach(options) { option in
                 MonknotSegmentButton(
                     content: option.content,
                     accessibilityLabel: option.accessibilityLabel,
-                    isSelected: selection == option.id,
+                    isSelected: isSelected(option.id),
                     theme: theme,
                     zoomScale: zoomScale,
                     isDisabled: isDisabled,
-                    action: { selection = option.id }
+                    action: { choose(option.id) }
                 )
             }
         }
-        .padding(MonknotMetrics.scale(MonknotSegmentButton.trackPaddingBase, theme: theme, zoomScale: zoomScale))
+        .padding(.horizontal, Self.trackPadding(theme: theme, zoomScale: zoomScale))
+        .frame(height: MonknotMetrics.interfaceControl(MonknotMetrics.iconButtonSizeBase, theme: theme, zoomScale: zoomScale))
         // A track, not a border: the selected cell lifts out of it (design.md §5.5).
         .background(
             theme.controlTrackFillColor.opacity(isDisabled || !isEnabled ? 0.5 : 1),
             in: RoundedRectangle(cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale))
         )
+    }
+}
+
+/// The chip (design.md §5.5, §10.3): the active tab on the chrome and a selected segment, lifted out of
+/// what holds it — the `chip` fill, a 1 pt `chipring` hairline, and in light themes the one-point
+/// `chipseat` under it (radius 0.75, y 1).
+struct MonknotChip: View {
+    let cornerRadius: CGFloat
+    let theme: AppTheme
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius)
+        shape
+            .fill(theme.chipFillColor)
+            .shadow(color: theme.chipShadowColor, radius: 0.75, y: 1)
+            .overlay { shape.strokeBorder(theme.chipRingColor, lineWidth: 1) }
     }
 }
 
@@ -63,7 +128,6 @@ struct MonknotSegmentButton: View {
     static let iconCellWidthBase: CGFloat = 28
     static let textCellPaddingBase: CGFloat = 12
     static let cellRadiusBase: CGFloat = 6
-    static let trackPaddingBase: CGFloat = 2
     static let cellGapBase: CGFloat = 2
     static let glyphPointSizeBase: CGFloat = 16
 
@@ -136,15 +200,11 @@ struct MonknotSegmentButton: View {
             label
                 .frame(height: MonknotMetrics.interfaceControl(Self.cellHeightBase, theme: theme, zoomScale: zoomScale))
                 .background {
-                    let shape = RoundedRectangle(cornerRadius: cellRadius)
-                    // The selected cell is a chip lifted out of the track (design.md §5.5): its
-                    // shadow and ring fade with its fill.
-                    shape
-                        .fill(theme.segmentSelectedFillColor)
-                        .shadow(color: theme.chipShadowColor, radius: 0.75, y: 1)
-                        .overlay { shape.strokeBorder(theme.chipRingColor, lineWidth: 0.5) }
+                    // The selected cell is the chip lifted out of the track (design.md §5.5); it fades
+                    // in and out whole.
+                    MonknotChip(cornerRadius: cellRadius, theme: theme)
                         .monknotStateOpacity(isSelected && !disabled ? 1 : 0)
-                    shape.monknotStateStyle(background)
+                    RoundedRectangle(cornerRadius: cellRadius).monknotStateStyle(background)
                 }
                 .monknotFocusRing(
                     isVisible: Self.showsFocusRing(isFocused: isFocused, isDisabled: disabled),

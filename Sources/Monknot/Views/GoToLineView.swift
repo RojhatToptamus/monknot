@@ -41,7 +41,7 @@ struct GoToLineView: View {
                 if let errorMessage {
                     Text(errorMessage)
                         .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
-                        .foregroundStyle(Color(hex: theme.semanticColors.diffRemoved))
+                        .foregroundStyle(theme.dangerColor)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, scaled(MonknotCommandOverlayMetrics.contentInsetBase))

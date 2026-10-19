@@ -159,12 +159,8 @@
     model.doc.source = source;
     const reader = MD.streamReader(source, parseStart, parseLine, hasCR);
     const context = { definitions: true, top: true, editing: true, anchor: 0 };
-    const parsed = MD.parseBlockList(reader, context, true, stop);
-    let added = parsed.blocks;
-    let replaceTo = resyncIndex >= 0 ? resyncIndex : blocks.length;
-    if (parseStart === 0 && restart < 0 && resyncIndex < 0 && added.length === 0) {
-      added = [];
-    }
+    const added = MD.parseBlockList(reader, context, true, stop).blocks;
+    const replaceTo = resyncIndex >= 0 ? resyncIndex : blocks.length;
 
     // Keep blocks whose text did not change, so the page keeps their elements.
     let keepFront = 0;
@@ -182,17 +178,23 @@
       keepBack += 1;
     }
 
-    const removed = blocks.slice(replaceFrom + keepFront, replaceTo - keepBack);
+    const index = replaceFrom + keepFront;
+    const removed = blocks.slice(index, replaceTo - keepBack);
     const inserted = added.slice(keepFront, added.length - keepBack);
-    const definitionsChanged = removed.some((block) => block.type === "definition")
-      || inserted.some((block) => block.type === "definition");
 
     model.source = source;
     model.hasCR = hasCR;
-    if (definitionsChanged) {
-      const rebuilt = createModel(source);
-      Object.assign(model, rebuilt);
-      return { full: true };
+    const isDefinition = (block) => block.type === "definition";
+    if (removed.some(isDefinition) || inserted.some(isDefinition)) {
+      const definitions = definitionsAfter(blocks, index, removed.length, inserted);
+      if (!readsTheSame(model.doc, definitions)) {
+        // A reference link or footnote mark anywhere may now read differently.
+        rebuild(model, from, to, delta);
+        return { full: true };
+      }
+      // Only a footnote's text changed, which the footnotes list alone shows.
+      model.doc.footnotes = definitions.footnotes;
+      model.doc.footnoteOrder = definitions.footnoteOrder;
     }
 
     for (const block of removed) {
@@ -200,7 +202,6 @@
     }
     carryToggleState(model, removed, inserted, from, to, delta);
     renderBlocks(model, inserted);
-    const index = replaceFrom + keepFront;
     blocks.splice(index, removed.length, ...inserted);
     for (let position = index + inserted.length; position < blocks.length; position += 1) {
       blocks[position].shift += delta;
@@ -233,6 +234,41 @@
       for (const child of block.children || []) if (child.type === "toggle" || child.type === "quote") assign(child);
     };
     inserted.forEach(assign);
+  }
+
+  /// The footnotes and link references once `inserted` takes the place of `count` blocks at `index`.
+  function definitionsAfter(blocks, index, count, inserted) {
+    const list = [];
+    const add = (block) => {
+      if (block.type === "definition") list.push(block);
+    };
+    for (let position = 0; position < index; position += 1) add(blocks[position]);
+    inserted.forEach(add);
+    for (let position = index + count; position < blocks.length; position += 1) add(blocks[position]);
+    const definitions = { blocks: list };
+    MD.collectDefinitions(definitions);
+    return definitions;
+  }
+
+  /// Whether the text outside the definitions renders as before: every reference keeps its
+  /// destination and title, and the same footnotes exist (a footnote's text shows only in the list).
+  function readsTheSame(doc, next) {
+    if (doc.references.size !== next.references.size || doc.footnotes.size !== next.footnotes.size) return false;
+    for (const key of doc.footnotes.keys()) if (!next.footnotes.has(key)) return false;
+    for (const [key, reference] of doc.references) {
+      const other = next.references.get(key);
+      if (!other || other.destination !== reference.destination || other.title !== reference.title) return false;
+    }
+    return true;
+  }
+
+  /// Parses and renders the whole source again after the change [from, to) of `delta` characters.
+  /// Toggles keep their open state, and unit ids keep counting up, so none is used twice.
+  function rebuild(model, from, to, delta) {
+    const doc = MD.parseDocument(model.source, { editing: true });
+    carryToggleState(model, model.blocks, doc.blocks, from, to, delta);
+    Object.assign(model, { doc, blocks: doc.blocks, units: new Map(), eol: detectEol(model.source), hasCR: doc.hasCR });
+    renderBlocks(model, model.blocks);
   }
 
   // ---------------------------------------------------------------------
@@ -282,6 +318,12 @@
 
   function isTextLike(unit) {
     return unit.kind === "empty" || unit.kind === "raw" || (unit.kind === "inline" && unit.role !== "cell");
+  }
+
+  /// Text a block type change may re-mark: not a definition's raw line, nor a toggle's title, whose
+  /// markup holds the toggle.
+  function isConvertible(unit) {
+    return isTextLike(unit) && unit.kind !== "raw" && unit.role !== "summary";
   }
 
   function isStructural(unit) {
@@ -556,7 +598,7 @@
   /// Gives every line after the first the container prefix (`> ` in a quote).
   function prefixFollowingLines(text, prefix, eol) {
     if (!prefix) return text;
-    const blank = prefix.replace(/[ \t]+$/, "");
+    const blank = prefix.trimEnd();
     return text.split(eol).map((line, index) => {
       if (index === 0) return line;
       return line.length ? prefix + line : blank;
@@ -579,6 +621,11 @@
     return { count, trailing: !prefix, hasTerminator: true };
   }
 
+  /// How many line breaks leave one empty line after a block, given `blankLinesAfter` it.
+  function breaksForEmptyLine(gap) {
+    return gap.trailing ? (gap.hasTerminator ? 1 : 2) : gap.count >= 1 ? 1 : 2;
+  }
+
   function blankLinesBefore(source, lineStart, prefix) {
     let count = 0;
     let end = previousLineEnd(source, lineStart);
@@ -595,7 +642,7 @@
   /// as a block of its own: without them it continues the list item or paragraph above it, and
   /// a following ordered item or paragraph folds into it. Lines in another container are left alone.
   function paragraphSeparation(source, start, end, prefix, eol) {
-    const blank = prefix.replace(/[ \t]+$/, "");
+    const blank = prefix.trimEnd();
     const sameContainer = (lineStart) => quoteDepth(quotePrefixOfLine(source, lineStart)) === quoteDepth(prefix);
     const previousEnd = previousLineEnd(source, start);
     const previousStart = previousEnd >= 0 ? lineStartOf(source, previousEnd) : -1;
@@ -621,7 +668,12 @@
     return { anchor: position, head: position };
   }
 
-  function compose(source, parts, text = "", caretOffset = null) {
+  /// A selection from `anchor` to `head` with its ordered ends.
+  function withOrder(anchor, head) {
+    return { anchor, head, from: Math.min(anchor, head), to: Math.max(anchor, head) };
+  }
+
+  function compose(source, parts, text = "") {
     const sorted = parts.filter(Boolean).sort((a, b) => a.s - b.s);
     if (sorted.length === 0) return null;
     let insert = text;
@@ -635,7 +687,7 @@
       from,
       to: sorted[sorted.length - 1].e,
       insert,
-      select: caretAt(from + (caretOffset ?? text.length))
+      select: caretAt(from + text.length)
     };
   }
 
@@ -759,8 +811,9 @@
   }
 
   function planDelete(model, from, to) {
-    const units = allUnits(model);
-    if (units.length && from <= unitStart(units[0]) && to >= unitEnd(units[units.length - 1]) && to > from) {
+    const first = firstUnitFrom(model, 0);
+    const last = lastUnitUpTo(model, model.blocks.length - 1);
+    if (first && from <= unitStart(first) && to >= unitEnd(last) && to > from) {
       // Everything selected: the document becomes empty.
       return { from: 0, to: model.source.length, insert: "", select: caretAt(0), kind: "delete" };
     }
@@ -815,7 +868,7 @@
     const start = S(unit, block.view.start);
     const end = S(unit, block.view.end);
     const prefix = quotePrefixOfLine(model.source, start);
-    const blank = prefix.replace(/[ \t]+$/, "");
+    const blank = prefix.trimEnd();
     const lead = prefix && !/[ \t]$/.test(model.source.slice(lineStartOf(model.source, start), start)) ? " " : "";
     const before = block.needsSeparatorBefore ? eol + (blank ? prefix : "") : "";
     const body = prefixFollowingLines(text, prefix || "", eol);
@@ -897,10 +950,8 @@
       }
       if (character === "-" && j === "--") {
         const lineEnd = unitEnd(unit);
-        const gap = blankLinesAfter(model.source, lineEnd, prefix);
-        const blank = prefix.replace(/[ \t]+$/, "");
-        const count = prefix ? (gap.count >= 1 ? 1 : 2) : gap.trailing ? (gap.hasTerminator ? 1 : 2) : (gap.count >= 1 ? 1 : 2);
-        const insert = "---" + (eol + blank).repeat(count);
+        const breaks = breaksForEmptyLine(blankLinesAfter(model.source, lineEnd, prefix));
+        const insert = "---" + (eol + prefix.trimEnd()).repeat(breaks);
         return {
           from: start,
           to: lineEnd,
@@ -960,13 +1011,7 @@
   function insertEmptyAt(model, at, prefix) {
     const source = model.source;
     const eol = model.eol;
-    const blank = prefix.replace(/[ \t]+$/, "");
-    const gap = blankLinesAfter(source, at, prefix);
-    let count;
-    if (prefix) count = gap.count >= 1 ? 1 : 2;
-    else if (gap.trailing) count = gap.hasTerminator ? 1 : 2;
-    else count = gap.count >= 1 ? 1 : 2;
-    const insert = (eol + blank).repeat(count);
+    const insert = (eol + prefix.trimEnd()).repeat(breaksForEmptyLine(blankLinesAfter(source, at, prefix)));
     return {
       from: at,
       to: at,
@@ -980,7 +1025,7 @@
     const eol = model.eol;
     const lineStart = lineStartOf(source, unit.role === "item" ? S(unit, unit.item.view.start) : unitStart(unit));
     const prefix = quotePrefixOfLine(source, lineStart);
-    const blank = prefix.replace(/[ \t]+$/, "");
+    const blank = prefix.trimEnd();
     const gap = blankLinesBefore(source, lineStart, prefix);
     const count = gap.leading ? 1 : gap.count >= 1 ? 1 : 2;
     const insert = (blank + eol).repeat(count);
@@ -1004,7 +1049,7 @@
     const eol = model.eol;
     const source = model.source;
     const prefix = quotePrefixOfLine(source, position);
-    const blank = prefix.replace(/[ \t]+$/, "");
+    const blank = prefix.trimEnd();
 
     if (unit.kind === "empty") return enterOnEmpty(model, unit);
     if (unit.kind === "raw") return { ...insertionAt(model, unit, position, eol), kind: "enter" };
@@ -1020,7 +1065,7 @@
       const indent = (/^[ \t]*/.exec(lineText) || [""])[0];
       return { ...insertionAt(model, unit, position, eol + indent), kind: "enter" };
     }
-    if (unit.role === "cell") return { kind: "move", select: null, cellMove: "down", unit };
+    if (unit.role === "cell") return { move: true, select: null, cellMove: "down", unit };
 
     const visible = visibleText(model, unit);
     const v = rawToVisible(model, unit, position, "left");
@@ -1070,9 +1115,7 @@
           previous = previousLineEnd(source, start);
         }
         const cut = previousLineEnd(source, firstBlank);
-        const gap = blankLinesAfter(source, end, "");
-        const count = gap.trailing ? (gap.hasTerminator ? 1 : 2) : gap.count >= 1 ? 1 : 2;
-        const insert = eol.repeat(count);
+        const insert = eol.repeat(breaksForEmptyLine(blankLinesAfter(source, end, "")));
         return {
           from: cut,
           to: end,
@@ -1083,7 +1126,7 @@
       }
     }
     const at = S(unit, block.view.end);
-    const blank = prefix.replace(/[ \t]+$/, "");
+    const blank = prefix.trimEnd();
     return { from: at, to: at, insert: eol + blank, select: (next) => caretOnFirstEmptyAfter(next, at + 1), kind: "enter" };
   }
 
@@ -1098,7 +1141,7 @@
     if (first && first.scope === toggle && first.kind === "empty") return { move: true, select: caretAt(unitStart(first)) };
     const at = S(unit, toggle.summaryView.end);
     const prefix = quotePrefixOfLine(source, at);
-    const blank = prefix.replace(/[ \t]+$/, "");
+    const blank = prefix.trimEnd();
     // The body starts after one separating blank line; the empty line goes after it.
     const existing = Math.min(2, blankLinesAfter(source, at, prefix).count);
     const insert = (eol + blank).repeat(Math.max(1, 2 - existing));
@@ -1154,8 +1197,8 @@
 
     if (before === "" && after === "") {
       if (item.indent >= 2) {
-        const remove = Math.min(indent.length, indent.startsWith("\t") ? 1 : 2);
-        return { from: lineStart, to: lineStart + remove, insert: "", select: caretAt(position - remove), kind: "enter", label: "Outdent" };
+        const outdent = planIndent(model, withOrder(position, position), -1);
+        if (outdent) return { ...outdent, kind: "enter" };
       }
       const contentEnd = S(unit, item.end);
       const lineBefore = blankLinesBefore(source, lineStartOf(source, lineStart), prefix);
@@ -1189,17 +1232,23 @@
     return { ...splitAt(model, unit, position, eol + prefix + indent + marker), kind: "enter" };
   }
 
+  /// ⇧↩ in a paragraph: a hard line break, `\` before a line ending. At the paragraph's end there
+  /// is no line to break onto (Markdown drops a break there), so it starts a new block as ↩ does.
   function planLineBreak(model, selection) {
     const position = selection.head;
     const unit = unitAt(model, position, "left");
     if (!unit) return null;
-    if (unit.kind === "code" || unit.kind === "raw") return planEnter(model, selection);
-    if (unit.role === "paragraph") {
-      const prefix = quotePrefixOfLine(model.source, position);
-      const insert = "\\" + model.eol + prefix;
-      return { from: position, to: position, insert, select: caretAt(position + insert.length), kind: "typing" };
+    if (unit.role !== "paragraph") return planEnter(model, selection);
+    if (rawToVisible(model, unit, position, "left") >= visibleText(model, unit).length) return planEnter(model, selection);
+    const source = model.source;
+    // Before a soft break the line ending is there already and becomes a hard one.
+    const lineEnd = lineEndOf(source, position);
+    if (lineEnd < unitEnd(unit) && /^[ \t]*$/.test(source.slice(position, lineEnd))) {
+      const next = unit.block.lines.find((view) => S(unit, view.start) > lineEnd);
+      return { from: position, to: lineEnd, insert: "\\", select: caretAt(S(unit, next.start) + 1 - (lineEnd - position)), kind: "typing" };
     }
-    return planEnter(model, selection);
+    const insert = "\\" + model.eol + quotePrefixOfLine(source, position);
+    return { from: position, to: position, insert, select: caretAt(position + insert.length), kind: "typing" };
   }
 
   // Backspace and forward delete at unit edges -----------------------
@@ -1234,12 +1283,14 @@
     }
     if (unit.role === "heading") {
       const block = unit.block;
-      const lineStart = S(unit, block.start);
-      const removePrefix = { s: lineStart, e: S(unit, block.prefixEnd), keep: "" };
-      const lineEnd = S(unit, block.view.end);
-      const closing = S(unit, block.contentEnd) < lineEnd ? { s: S(unit, block.contentEnd), e: lineEnd, keep: "" } : null;
-      const op = compose(source, [removePrefix, closing]);
-      op.select = caretAt(lineStart);
+      const [lineStart, lineEnd] = unitLineRange(model, unit);
+      const lead = source.slice(lineStart, S(unit, block.start));
+      const gap = paragraphSeparation(source, lineStart, lineEnd, quotePrefixOfLine(source, lineStart), model.eol);
+      const op = compose(source, [
+        { s: lineStart, e: S(unit, block.prefixEnd), keep: gap.before + lead },
+        { s: S(unit, block.contentEnd), e: lineEnd, keep: gap.after }
+      ]);
+      op.select = caretAt(lineStart + gap.before.length + lead.length);
       op.kind = "format";
       op.label = "Paragraph";
       return op;
@@ -1249,7 +1300,7 @@
       // A nested item steps out a level first, as ⇧⇥ does: without its marker it would read as
       // more of its parent's text.
       if (item.indent >= 2) {
-        const outdent = planIndent(model, { from: position, to: position, anchor: position, head: position }, -1);
+        const outdent = planIndent(model, withOrder(position, position), -1);
         if (outdent) return outdent;
       }
       const from = S(unit, item.view.start);
@@ -1272,8 +1323,12 @@
         e: S(unit, view.start),
         keep: ""
       }));
+      const [lineStart, lineEnd] = unitLineRange(model, unit);
+      const gap = paragraphSeparation(source, lineStart, lineEnd, "", model.eol);
+      parts[0].keep = gap.before;
+      parts.push({ s: lineEnd, e: lineEnd, keep: gap.after });
       const op = compose(source, parts);
-      op.select = caretAt(parts[0].s);
+      op.select = caretAt(lineStart + gap.before.length);
       op.kind = "format";
       op.label = "Paragraph";
       return op;
@@ -1332,7 +1387,8 @@
     if (!next) return null;
     const topIndex = blockIndex(model, unit.top);
     const nextTop = model.blocks[topIndex + 1];
-    if (next.top !== unit.top && isAtomBlock(nextTop)) {
+    // A divider or table of contents right after goes, unless the caret is inside a toggle it follows.
+    if (next.top !== unit.top && isAtomBlock(nextTop) && unit.scope === next.scope) {
       const after = model.blocks[topIndex + 2];
       return { from: bStart(nextTop), to: after ? bStart(after) : bEnd(nextTop), insert: "", select: caretAt(position), kind: "delete", label: atomBlockLabel(nextTop) };
     }
@@ -1482,7 +1538,8 @@
     return Boolean(item.styles[style] || item.styles[`outer_${style}`]);
   }
 
-  function serializeItems(items) {
+  /// `before` and `after` are the source characters around the rewritten text.
+  function serializeItems(items, before = "", after = "") {
     // Leading and trailing spaces stay outside emphasis markers.
     for (const style of ["strong", "em", "del", "code"]) {
       let index = 0;
@@ -1535,12 +1592,13 @@
       .sort((a, b) => (a.style === "code") - (b.style === "code") || b.end - a.end || STYLE_ORDER.indexOf(a.style) - STYLE_ORDER.indexOf(b.style));
 
     // Nested or adjacent markers of the same character would read as one
-    // marker, so emphasis alternates between * and _.
-    const markerFor = (style, stack, out) => {
+    // marker, so emphasis alternates between * and _, also beside the text around.
+    const markerFor = (style, stack, out, end) => {
       const starOpen = stack.some((entry) => entry.open === "*" || entry.open === "**");
       const underscoreOpen = stack.some((entry) => entry.open === "_" || entry.open === "__");
-      const last = out[out.length - 1];
-      const useUnderscore = starOpen || (last === "*" && !underscoreOpen);
+      const last = out.length ? out[out.length - 1] : before;
+      const next = end === items.length ? after : "";
+      const useUnderscore = starOpen || ((last === "*" || next === "*") && !underscoreOpen);
       switch (style) {
         case "strong": return useUnderscore ? "__" : "**";
         case "em": return useUnderscore ? "_" : "*";
@@ -1560,7 +1618,7 @@
       while (stack.length > common) out += stack.pop().close;
       for (let level = common; level < target.length; level += 1) {
         const entry = { ...target[level] };
-        entry.open = markerFor(entry.style, stack, out);
+        entry.open = markerFor(entry.style, stack, out, entry.end);
         entry.close = entry.style === "link" ? entry.tail : entry.open;
         out += entry.open;
         stack.push(entry);
@@ -1595,12 +1653,10 @@
       && selectedItems.some((item) => !item.opaque && !/\s/.test(item.char));
     const removing = style === "link" ? !value : allHave;
 
-    if (removing && selectedItems.some((item) => item.styles[`outer_${style}`])) {
-      // The style comes from a construct around the region; rewrite all of it.
-      const constructs = map.constructs.filter((construct) => (construct.type === style
-        || (style === "link" && construct.type === "link")
-        || (style === "strong" && construct.type === "strong"))
-        && construct.s <= js && construct.e >= je);
+    if ((removing || style === "link") && selectedItems.some((item) => item.styles[`outer_${style}`])) {
+      // The style comes from a construct around the region; rewrite all of it. A link set on part
+      // of a link's text splits it, as links cannot nest.
+      const constructs = map.constructs.filter((construct) => construct.type === style && construct.s <= js && construct.e >= je);
       for (const construct of constructs) {
         js = Math.min(js, construct.s);
         je = Math.max(je, construct.e);
@@ -1616,9 +1672,9 @@
       else styles[style] = !removing;
       return { ...item, styles };
     });
-    const insert = serializeItems(items);
     const from = rawOf(unit, js);
     const to = rawOf(unit, je);
+    const insert = serializeItems(items, model.source.charAt(from - 1), model.source.charAt(to));
     const topStart = bStart(unit.top);
     const unitIndex = unitsOf(unit.top).indexOf(unit);
     return {
@@ -1733,8 +1789,6 @@
 
   // Block types -------------------------------------------------------
 
-  const BLOCK_TYPES = ["paragraph", "heading1", "heading2", "heading3", "heading4", "heading5", "heading6", "bullet", "numbered", "todo", "quote", "code"];
-
   function blockTypeOf(unit) {
     if (!unit) return "paragraph";
     if (unit.kind === "code") return "code";
@@ -1749,20 +1803,24 @@
     return "paragraph";
   }
 
-  /// The raw content of a text-like unit, without its block markers.
-  function unitContent(model, unit) {
+  /// The raw content of a text-like unit, without its block markers, and without the source range
+  /// `cut` when one is given.
+  function unitContent(model, unit, cut) {
     const source = model.source;
+    const slice = (s, e) => (cut
+      ? source.slice(s, Math.max(s, Math.min(e, cut[0]))) + source.slice(Math.min(e, Math.max(s, cut[1])), e)
+      : source.slice(s, e));
     if (unit.kind === "empty") return "";
-    if (unit.role === "heading") return source.slice(S(unit, unit.block.contentStart), S(unit, unit.block.contentEnd));
+    if (unit.role === "heading") return slice(S(unit, unit.block.contentStart), S(unit, unit.block.contentEnd));
     if (unit.role === "item") {
       return unit.item.lines.map((view, index) => index === 0
-        ? source.slice(S(unit, unit.item.contentStart), S(unit, view.end))
-        : source.slice(S(unit, view.start), S(unit, view.end)).replace(/^\s+/, "")).join(" ");
+        ? slice(S(unit, unit.item.contentStart), S(unit, view.end))
+        : slice(S(unit, view.start), S(unit, view.end)).replace(/^\s+/, "")).join(" ");
     }
     if (unit.role === "paragraph") {
-      return unit.block.lines.map((view) => source.slice(S(unit, view.start), S(unit, view.end))).join(model.eol);
+      return unit.block.lines.map((view) => slice(S(unit, view.start), S(unit, view.end))).join(model.eol);
     }
-    return source.slice(unitStart(unit), unitEnd(unit));
+    return slice(unitStart(unit), unitEnd(unit));
   }
 
   /// The source lines a unit occupies, from the start of its first line
@@ -1774,7 +1832,7 @@
       const start = lineStartOf(source, S(unit, unit.block.view.start));
       return [start, lineEndOf(source, start)];
     }
-    if (unit.role === "heading") return [S(unit, unit.block.start), S(unit, unit.block.view.end)];
+    if (unit.role === "heading") return [lineStartOf(source, S(unit, unit.block.start)), S(unit, unit.block.view.end)];
     if (unit.role === "item") return [lineStartOf(source, S(unit, unit.item.view.start)), S(unit, unit.item.end)];
     if (unit.role === "paragraph") {
       const lines = unit.block.lines;
@@ -1783,21 +1841,28 @@
     return [lineStartOf(source, unitStart(unit)), lineEndOf(source, unitEnd(unit))];
   }
 
-  function prefixForType(type, index, unit) {
+  function prefixForType(type, number, unit) {
     switch (type) {
       case "heading1": case "heading2": case "heading3": case "heading4": case "heading5": case "heading6":
         return "#".repeat(Number(type.slice(-1))) + " ";
       case "bullet": return "- ";
-      case "numbered": return `${index + 1}. `;
+      case "numbered": return `${number}. `;
       case "todo": return unit && unit.role === "item" && unit.item.task && unit.item.task.checked ? "- [x] " : "- [ ] ";
       default: return "";
     }
   }
 
+  /// Whether the source between two converted units holds blocks of its own (a code block, a
+  /// table, a divider), which stay as they are: anything but blank lines and quote markers.
+  function holdsBlock(between) {
+    return /[^\s>]/.test(between);
+  }
+
   /// Turns the selected blocks into `type`. Converting blocks that already
   /// all have the type turns them back into paragraphs when `toggle` is set.
+  /// `without` is a source range left out of the text (a slash command).
   function planBlockType(model, selection, type, options = {}) {
-    const units = unitsBetween(model, selection.from, selection.to).filter((unit) => isTextLike(unit) || unit.kind === "code");
+    const units = unitsBetween(model, selection.from, selection.to).filter((unit) => isConvertible(unit) || unit.kind === "code");
     if (units.length === 0) return null;
     let target = type;
     if (options.toggle && units.every((unit) => blockTypeOf(unit) === type)) target = "paragraph";
@@ -1805,69 +1870,78 @@
       if (target === "code") return null;
       return codeToText(model, units[0], target);
     }
-    const textUnits = units.filter(isTextLike).filter((unit) => unit.kind !== "raw");
+    const textUnits = units.filter(isConvertible);
     if (textUnits.length === 0) return null;
-    if (target === "code") return textToCode(model, textUnits, selection);
+    if (target === "code") return textToCode(model, textUnits);
+    if (textUnits.length === 1 && textUnits[0].kind === "empty") {
+      const marker = target === "quote" ? "> " : prefixForType(target, 1, textUnits[0]);
+      if (!marker) return null;
+      return { ...materializeEmpty(model, textUnits[0], marker), kind: "format", label: BLOCK_LABELS[target] };
+    }
 
     const source = model.source;
     const eol = model.eol;
     const listLike = target === "bullet" || target === "numbered" || target === "todo";
     const caret = describeSelection(model, selection, textUnits);
-    const parts = [];
+    // Numbers count per list level, and start again after a block kept between.
+    let levels = [];
+    const numberAt = (indent) => {
+      levels = levels.filter((level) => level.indent <= indent);
+      const last = levels[levels.length - 1];
+      if (last && last.indent === indent) return ++last.count;
+      levels.push({ indent, count: 1 });
+      return 1;
+    };
     let previousEnd = null;
     let replacement = "";
     let rangeStart = null;
-    textUnits.forEach((unit, index) => {
+    for (const unit of textUnits) {
       const [lineStart, lineEnd] = unitLineRange(model, unit);
       const prefix = target === "quote" ? "" : quotePrefixOfLine(source, lineStart);
-      const blank = prefix.replace(/[ \t]+$/, "");
-      const inQuote = Boolean(prefix);
-      const content = unitContent(model, unit);
-      let lineText;
-      if (target === "quote") {
-        const body = content.split(eol);
-        const existing = quotePrefixOfLine(source, lineStart);
-        lineText = body.map((line) => `${existing}> ${line}`.replace(/> $/, ">")).join(eol);
-      } else if (unit.kind === "empty" && target === "paragraph") {
-        lineText = prefix;
+      if (previousEnd === null) {
+        rangeStart = lineStart;
       } else {
-        const marker = prefixForType(target, index, unit);
-        const indent = unit.role === "item" && listLike ? source.slice(lineStartOf(source, S(unit, unit.item.view.start)) + prefix.length, S(unit, unit.item.markerStart)) : "";
-        const body = target.startsWith("heading") ? content.split(eol).join(" ") : prefixFollowingLines(content, prefix, eol);
-        lineText = prefix + indent + marker + body;
-      }
-      if (rangeStart === null) rangeStart = lineStart;
-      if (previousEnd !== null) {
         const between = source.slice(previousEnd, lineStart);
-        const bothList = listLike;
-        const blockSeparator = eol + (inQuote ? blank : "") + eol;
-        replacement += bothList ? eol : (/^\s*$/.test(between.replace(/>/g, "")) && countLineBreaks(between) >= 2 ? between : (target === "paragraph" || target === "quote" ? blockSeparator : between));
+        if (holdsBlock(between)) {
+          replacement += between;
+          levels = [];
+        } else if (listLike) {
+          replacement += eol;
+        } else {
+          const separates = countLineBreaks(between) >= 2 || (target !== "paragraph" && target !== "quote");
+          replacement += separates ? between : eol + prefix.trimEnd() + eol;
+        }
       }
-      replacement += lineText;
+      const content = unitContent(model, unit, options.without);
+      if (target === "quote") {
+        const existing = quotePrefixOfLine(source, lineStart);
+        replacement += content.split(eol).map((line) => `${existing}> ${line}`.replace(/> $/, ">")).join(eol);
+      } else if (unit.kind === "empty" && target === "paragraph") {
+        replacement += prefix;
+      } else {
+        const item = unit.role === "item" && listLike ? unit.item : null;
+        const marker = prefixForType(target, numberAt(item ? item.indent : 0), unit);
+        const indent = item ? source.slice(lineStart + prefix.length, S(unit, item.markerStart)) : "";
+        const body = target.startsWith("heading") ? content.split(eol).join(" ") : prefixFollowingLines(content, prefix, eol);
+        replacement += prefix + indent + marker + body;
+      }
       previousEnd = lineEnd;
-    });
+    }
     // An item or heading made into text gets blank lines around it, so it does not join its neighbours.
     let gap = { before: "", after: "" };
     if (target === "paragraph" && rangeStart === lineStartOf(source, rangeStart)
       && textUnits.some((unit) => unit.role === "item" || unit.role === "heading")) {
       gap = paragraphSeparation(source, rangeStart, lineEndOf(source, previousEnd), quotePrefixOfLine(source, rangeStart), eol);
     }
-    parts.push({ s: rangeStart, e: previousEnd, keep: gap.before + replacement + gap.after });
-    const op = compose(source, parts);
-    op.kind = "format";
-    op.label = BLOCK_LABELS[target] || "Format";
     const restoreFrom = rangeStart + gap.before.length;
-    op.select = (next) => restoreDescribedSelection(next, caret, restoreFrom);
-    if (textUnits.length === 1 && textUnits[0].kind === "empty") {
-      const unit = textUnits[0];
-      const marker = target === "quote" ? "> " : prefixForType(target, 0, unit);
-      if (!marker) return null;
-      const materialized = materializeEmpty(model, unit, marker);
-      materialized.kind = "format";
-      materialized.label = BLOCK_LABELS[target];
-      return materialized;
-    }
-    return op;
+    return {
+      from: rangeStart,
+      to: previousEnd,
+      insert: gap.before + replacement + gap.after,
+      select: (next) => restoreDescribedSelection(next, caret, restoreFrom, isConvertible),
+      kind: "format",
+      label: BLOCK_LABELS[target] || "Format"
+    };
   }
 
   const BLOCK_LABELS = {
@@ -1897,11 +1971,9 @@
     return { anchor: describe(selection.anchor, "left"), head: describe(selection.head, "left") };
   }
 
-  function restoreDescribedSelection(model, described, rangeStart) {
-    const units = [];
-    for (const unit of allUnits(model)) {
-      if (unitStart(unit) >= rangeStart || unitEnd(unit) >= rangeStart) units.push(unit);
-    }
+  /// The described selection in `model`, counting the units from `rangeStart` that `include` takes.
+  function restoreDescribedSelection(model, described, rangeStart, include = () => true) {
+    const units = allUnits(model).filter((unit) => unitEnd(unit) >= rangeStart && include(unit));
     const resolve = (point) => {
       if (!point) return null;
       const unit = units[point.index] || units[units.length - 1];
@@ -1910,21 +1982,34 @@
     };
     const anchor = resolve(described.anchor);
     const head = resolve(described.head);
-    if (anchor === null && head === null) return caretAt(rangeStart);
+    if (anchor === null && head === null) return caretAt(closestUnitPosition(model, rangeStart));
     return { anchor: anchor ?? head, head: head ?? anchor };
   }
 
-  function textToCode(model, units, selection) {
+  /// Text blocks made into code: one code block for each run of them, around the blocks between
+  /// runs, which stay. The caret goes to the end of the last one's code.
+  function textToCode(model, units) {
     const source = model.source;
     const eol = model.eol;
-    const [start] = unitLineRange(model, units[0]);
-    const [, end] = unitLineRange(model, units[units.length - 1]);
-    const prefix = quotePrefixOfLine(source, start);
-    const contents = units.map((unit) => unitContent(model, unit));
-    const body = contents.join(eol).split(eol).map((line, index) => (index === 0 ? "" : "") + line).join(eol + prefix);
-    const insert = `${prefix}\`\`\`${eol}${prefix}${body}${eol}${prefix}\`\`\``;
-    const caret = start + prefix.length + 3 + eol.length + prefix.length + body.length;
-    return { from: start, to: end, insert, select: caretAt(caret), kind: "format", label: "Code Block" };
+    const runs = [];
+    let previousEnd = null;
+    for (const unit of units) {
+      const [start, end] = unitLineRange(model, unit);
+      if (previousEnd === null || holdsBlock(source.slice(previousEnd, start))) runs.push({ start, units: [] });
+      const run = runs[runs.length - 1];
+      run.units.push(unit);
+      run.end = end;
+      previousEnd = end;
+    }
+    let closing = 0;
+    const parts = runs.map((run) => {
+      const prefix = quotePrefixOfLine(source, run.start);
+      const body = run.units.map((unit) => unitContent(model, unit)).join(eol).split(eol).join(eol + prefix);
+      closing = eol.length + prefix.length + 3;
+      return { s: run.start, e: run.end, keep: `${prefix}\`\`\`${eol}${prefix}${body}${eol}${prefix}\`\`\`` };
+    });
+    const op = compose(source, parts);
+    return { ...op, select: caretAt(op.from + op.insert.length - closing), kind: "format", label: "Code Block" };
   }
 
   function codeToText(model, unit, target) {
@@ -1935,7 +2020,7 @@
     const end = S(unit, block.end);
     const prefix = quotePrefixOfLine(source, start);
     const lines = block.body.map((view) => source.slice(S(unit, view.start), S(unit, view.end)));
-    const marker = prefixForType(target, 0, null);
+    const marker = prefixForType(target, 1, null);
     const text = lines.length ? lines.map((line, index) => (index === 0 ? marker : "") + line).join(eol + prefix) : marker;
     return { from: start, to: end, insert: text, select: caretAt(start + marker.length), kind: "format", label: BLOCK_LABELS[target] || "Paragraph" };
   }
@@ -1958,23 +2043,22 @@
     const units = unitsBetween(model, selection.from, selection.to).filter((unit) => unit.role === "item");
     if (units.length === 0) return null;
     const source = model.source;
-    const eol = model.eol;
     const first = units[0];
     const last = units[units.length - 1];
     const start = lineStartOf(source, S(first, first.item.view.start));
     const end = S(last, itemSubtreeEnd(last.list, last.item));
-    if (direction > 0) {
-      const siblings = first.list.items;
-      if (siblings.indexOf(first.item) === 0 && first.item.indent === first.list.items[0].indent) return null;
-    }
+    // A list's first item has no item above to go under.
+    if (direction > 0 && first.list.items[0] === first.item) return null;
     const prefix = quotePrefixOfLine(source, start);
     const width = Math.max(2, first.item.contentStart - first.item.markerStart - (first.item.task ? 4 : 0));
-    const lines = source.slice(start, end).split(/\r\n|\r|\n/);
+    // The lines at even places, each followed by its own line ending, which stays.
+    const pieces = source.slice(start, end).split(/(\r\n|\r|\n)/);
     // How far the anchor and the head each move: by what changes on their line and the lines above.
     let anchorShift = 0;
     let headShift = 0;
     let lineOffset = start;
-    const changed = lines.map((line) => {
+    for (let index = 0; index < pieces.length; index += 2) {
+      const line = pieces[index];
       const body = line.slice(prefix.length);
       let result;
       let change;
@@ -1989,22 +2073,22 @@
       }
       if (lineOffset <= selection.anchor) anchorShift += change;
       if (lineOffset <= selection.head) headShift += change;
-      lineOffset += line.length + eol.length;
-      return result;
-    });
+      lineOffset += line.length + (pieces[index + 1] || "").length;
+      pieces[index] = result;
+    }
     // A numbered item indented under a sibling with no sub-list starts one, numbered from 1.
     let renumbered = 0;
     if (direction > 0 && first.list.ordered) {
       const siblings = first.list.items;
       const previous = siblings[siblings.indexOf(first.item) - 1];
       if (previous && previous.children.length === 0) {
-        changed[0] = changed[0].replace(/^((?:[ \t>]*?)[ \t]*)(\d+)([.)])/, (match, lead, number, delimiter) => {
+        pieces[0] = pieces[0].replace(/^((?:[ \t>]*?)[ \t]*)(\d+)([.)])/, (match, lead, number, delimiter) => {
           renumbered = number.length - 1;
           return `${lead}1${delimiter}`;
         });
       }
     }
-    const insert = changed.join(eol);
+    const insert = pieces.join("");
     if (insert === source.slice(start, end)) return null;
     return {
       from: start,
@@ -2020,6 +2104,11 @@
 
   function tableCells(model, table) {
     return allUnits(model).filter((unit) => unit.role === "cell" && unit.table === table);
+  }
+
+  /// The cells of the table holding `cell`, from the units of its top-level block alone.
+  function cellsOf(cell) {
+    return unitsOf(cell.top).filter((unit) => unit.role === "cell" && unit.table === cell.table);
   }
 
   function emptyRow(table) {
@@ -2082,9 +2171,9 @@
         op.kind = "format";
         op.label = "Insert Column";
         op.select = (next) => {
-          const cells = allUnits(next).filter((candidate) => candidate.role === "cell" && candidate.rowIndex === unit.rowIndex && bStart(candidate.top) === bStart(unit.top));
           const targetColumn = action === "columnLeft" ? column : column + 1;
-          const cell = cells.find((candidate) => candidate.column === targetColumn);
+          const top = next.blocks[lastBlockStartingAtOrBefore(next.blocks, bStart(unit.top))];
+          const cell = top && unitsOf(top).find((candidate) => candidate.role === "cell" && candidate.rowIndex === unit.rowIndex && candidate.column === targetColumn);
           return caretAt(cell ? unitStart(cell) : op.from);
         };
         return op;
@@ -2119,7 +2208,7 @@
   }
 
   function cellNeighbor(model, unit, direction) {
-    const cells = tableCells(model, unit.table);
+    const cells = cellsOf(unit);
     const index = cells.indexOf(unit);
     if (direction === "next") return cells[index + 1] || null;
     if (direction === "previous") return cells[index - 1] || null;
@@ -2149,7 +2238,7 @@
     }
     const at = unit.role === "item" ? S(unit, unit.item.end) : lineEndOfUnit(model, unit);
     const prefix = quotePrefixOfLine(source, at);
-    const blank = prefix.replace(/[ \t]+$/, "");
+    const blank = prefix.trimEnd();
     const after = blankLinesAfter(source, at, prefix);
     const body = prefixFollowingLines(text, prefix, eol);
     const before = eol + blank + eol + prefix;
@@ -2165,10 +2254,12 @@
     };
   }
 
+  /// `caretIn` moved past the container prefixes `prefixFollowingLines` gives the lines of `text`:
+  /// the whole prefix, or its trimmed form on a blank line.
   function adjustCaretForPrefix(text, caretIn, prefix, eol) {
-    if (!prefix) return caretIn;
-    const lineBreaks = countLineBreaks(text.slice(0, caretIn));
-    return caretIn + lineBreaks * prefix.length;
+    const lineEnd = text.indexOf(eol, caretIn);
+    const end = lineEnd < 0 ? text.length : lineEnd;
+    return prefixFollowingLines(text.slice(0, end), prefix, eol).length - (end - caretIn);
   }
 
   /// Replaces the `/query` typed in `unit` with the chosen block.
@@ -2176,42 +2267,16 @@
     const source = model.source;
     const eol = model.eol;
     if (!unit || unit.kind !== "inline") return null;
-    const content = visibleText(model, unit);
-    const slashV0 = rawToVisible(model, unit, slashFrom, "right");
-    const slashV1 = rawToVisible(model, unit, slashTo, "left");
-    const remaining = content.slice(0, slashV0) + content.slice(slashV1);
     const removeSlash = { s: slashFrom, e: slashTo, keep: "" };
-    const lineStart = unitLineRange(model, unit)[0];
-    const prefix = quotePrefixOfLine(source, lineStart);
-    const isEmpty = remaining.trim() === "";
     const typeCommands = {
       text: "paragraph", h1: "heading1", h2: "heading2", h3: "heading3",
       bullet: "bullet", numbered: "numbered", todo: "todo", quote: "quote"
     };
 
     if (typeCommands[command]) {
-      const target = typeCommands[command];
-      if (unit.role === "cell") return compose(source, [removeSlash]);
-      const [start, end] = unitLineRange(model, unit);
-      const contentWithoutSlash = source.slice(unitStart(unit), slashFrom) + source.slice(slashTo, unitEnd(unit));
-      const existingPrefix = source.slice(start, unitStart(unit));
-      let marker;
-      if (target === "quote") marker = "> ";
-      else marker = prefixForType(target, 0, unit);
-      const containerPrefix = target === "quote" ? existingPrefix.match(QUOTE_PREFIX)?.[0] || "" : prefix;
-      const line = containerPrefix + marker + (unit.role === "heading" || unit.role === "item" || target !== "paragraph" ? contentWithoutSlash.replace(/^\s+/, "") : contentWithoutSlash);
-      const caretOffset = slashFrom - unitStart(unit);
-      const lineTailEnd = unit.role === "paragraph" ? end : unitEnd(unit);
-      const restAfterUnit = source.slice(unitEnd(unit), lineTailEnd);
-      const insert = line + restAfterUnit;
-      return {
-        from: start,
-        to: lineTailEnd,
-        insert,
-        select: caretAt(start + containerPrefix.length + marker.length + Math.max(0, caretOffset - (contentWithoutSlash.length - contentWithoutSlash.replace(/^\s+/, "").length))),
-        kind: "format",
-        label: BLOCK_LABELS[target]
-      };
+      // The block changes as Turn Into changes it, without the command's text.
+      const op = unit.role === "cell" ? null : planBlockType(model, withOrder(slashFrom, slashFrom), typeCommands[command], { without: [slashFrom, slashTo] });
+      return op || compose(source, [removeSlash]);
     }
 
     let block = null;
@@ -2243,21 +2308,21 @@
     }
     // A divider or table of contents holds no text: the caret goes to a line after it.
     const atomic = command === "divider" || command === "toc";
+    const content = visibleText(model, unit);
+    const remaining = content.slice(0, rawToVisible(model, unit, slashFrom, "right")) + content.slice(rawToVisible(model, unit, slashTo, "left"));
 
-    if (isEmpty && unit.role === "paragraph") {
+    // A paragraph, heading or item holding nothing else gives its line to the block.
+    if (remaining.trim() === "" && (unit.role === "paragraph" || unit.role === "heading" || unit.role === "item")) {
       const [start, end] = unitLineRange(model, unit);
+      const prefix = quotePrefixOfLine(source, start);
+      const blank = prefix.trimEnd();
       const gapAfter = blankLinesAfter(source, end, prefix);
-      const gapBefore = blankLinesBefore(source, start, prefix);
-      const blank = prefix.replace(/[ \t]+$/, "");
       const body = prefixFollowingLines(block, prefix, eol);
       let trailing = "";
-      if (atomic) {
-        const count = gapAfter.trailing ? (gapAfter.hasTerminator ? 1 : 2) : gapAfter.count >= 1 ? 1 : 2;
-        trailing = (eol + blank).repeat(count);
-      } else if (!gapAfter.trailing && gapAfter.count === 0) {
-        trailing = eol + blank;
-      }
-      const leading = !gapBefore.leading && gapBefore.count === 0 ? blank + eol : "";
+      if (atomic) trailing = (eol + blank).repeat(breaksForEmptyLine(gapAfter));
+      else if (!gapAfter.trailing && gapAfter.count === 0) trailing = eol + blank;
+      // Text above in the same container needs a blank line between; a container's first line does not.
+      const leading = paragraphSeparation(source, start, end, prefix, eol).before;
       const insert = leading + prefix + body + trailing;
       const caret = start + leading.length + prefix.length + adjustCaretForPrefix(block, caretIn, prefix, eol);
       return {
@@ -2369,9 +2434,9 @@
     return model.source.slice(lineStartOf(model.source, bStart(block)), bEnd(block));
   }
 
-  /// Text that puts `chunk` in the gap before block `index` (after the last block when `index` is
-  /// the block count), with one blank line on each side.
-  function topInsertion(model, gap, chunk) {
+  /// Where a block goes in the gap before block `gap` (after the last block when `gap` is the
+  /// block count), and the line breaks around it that leave one blank line on each side.
+  function topInsertion(model, gap) {
     const blocks = model.blocks;
     const source = model.source;
     const eol = model.eol;
@@ -2459,7 +2524,7 @@
     const removal = topRemovalRange(model, index);
     const chunk = topChunk(model, index);
     const chunkStart = lineStartOf(model.source, bStart(blocks[index]));
-    const place = topInsertion(model, gap, chunk);
+    const place = topInsertion(model, gap);
     const text = place.before + chunk + place.after;
     const op = compose(model.source, [{ s: removal.s, e: removal.e, keep: "" }, { s: place.at, e: place.at, keep: text }]);
     if (!op) return null;
@@ -2475,16 +2540,11 @@
     return op;
   }
 
-  /// ⌘⇧↑ / ⌘⇧↓: the block holding the caret swaps with its neighbour.
-  function planMoveByStep(model, selection, direction) {
-    const unit = unitAt(model, selection.head, "left");
-    const target = handleTargetOf(model, unit);
+  /// ⇧⌘↑ / ⇧⌘↓: a handle's block swaps with its neighbour (`direction` -1 or 1).
+  function planMoveByStep(model, target, direction, selection) {
     if (!target) return null;
-    if (target.kind === "item") {
-      const from = target.list.items.indexOf(target.item);
-      return planMoveBlock(model, target, direction < 0 ? from - 1 : from + 2, selection);
-    }
-    return planMoveBlock(model, target, direction < 0 ? target.index - 1 : target.index + 2, selection);
+    const index = target.kind === "item" ? target.list.items.indexOf(target.item) : target.index;
+    return planMoveBlock(model, target, direction < 0 ? index - 1 : index + 2, selection);
   }
 
   function planDuplicateBlock(model, target) {
@@ -2544,19 +2604,17 @@
       ? unitsOf(target.top).filter((unit) => unit.role === "item" && unit.item === target.item)
       : unitsOf(target.block);
     if (units.length === 0) return null;
-    return withOrderCore(unitStart(units[0]), unitEnd(units[units.length - 1]));
-  }
-
-  function withOrderCore(anchor, head) {
-    return { anchor, head, from: Math.min(anchor, head), to: Math.max(anchor, head) };
+    return withOrder(unitStart(units[0]), unitEnd(units[units.length - 1]));
   }
 
   /// Lines `[start, end)` replaced by `text`, with a blank line kept on each side.
   function replaceIsolated(model, start, end, text, prefix) {
     const source = model.source;
     const eol = model.eol;
-    const blank = prefix.replace(/[ \t]+$/, "");
-    const before = start > 0 && !isBlankLineIn(source, lineStartOf(source, previousLineEnd(source, start)), prefix) ? eol + blank : "";
+    const blank = prefix.trimEnd();
+    // An empty callout's or toggle's line is at the end of its marker line: the text starts a line.
+    const before = start !== lineStartOf(source, start) ? eol
+      : start > 0 && !isBlankLineIn(source, lineStartOf(source, previousLineEnd(source, start)), prefix) ? blank + eol : "";
     const next = nextLineStart(source, end);
     const after = next > end && next < source.length && !isBlankLineIn(source, next, prefix) ? eol + blank : "";
     return { from: start, to: end, insert: before + text + after, offset: before.length };
@@ -2565,14 +2623,13 @@
   /// Turns the text block holding the caret into a toggle titled with its text, opened.
   function planWrapToggle(model, selection) {
     const unit = unitAt(model, selection.head, "left");
-    if (!unit || !(isTextLike(unit) || unit.role === "summary") || unit.kind === "raw" || unit.role === "cell") return null;
-    if (unit.role === "summary") return null;
+    if (!unit || !isConvertible(unit)) return null;
     const source = model.source;
     const eol = model.eol;
     const [start, end] = unitLineRange(model, unit);
     const prefix = quotePrefixOfLine(source, start);
     const title = unitContent(model, unit).split(eol).join(" ").replace(/^\s+/, "");
-    const blank = prefix.replace(/[ \t]+$/, "");
+    const blank = prefix.trimEnd();
     const text = `${prefix}<details>${eol}${prefix}<summary>${title}</summary>${eol}${blank}${eol}${prefix}</details>`;
     const op = replaceIsolated(model, start, end, text, prefix);
     const openAt = op.from + op.offset;
@@ -2584,7 +2641,7 @@
   /// whole quote one.
   function planWrapCallout(model, selection, kind = "NOTE") {
     const unit = unitAt(model, selection.head, "left");
-    if (!unit || !isTextLike(unit) || unit.kind === "raw") return null;
+    if (!unit || !isConvertible(unit)) return null;
     const source = model.source;
     const eol = model.eol;
     const marker = `[!${kind}]`;
@@ -2687,13 +2744,13 @@
     const parsed = new DOMParser().parseFromString(html, "text/html");
     const body = parsed.body;
     if (!body) return null;
-    const blocks = convertBlocks(body, 0);
+    const blocks = convertBlocks(body);
     return blocks.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
   }
 
   const BLOCK_TAGS = new Set(["P", "DIV", "H1", "H2", "H3", "H4", "H5", "H6", "UL", "OL", "LI", "BLOCKQUOTE", "PRE", "TABLE", "HR", "SECTION", "ARTICLE", "HEADER", "FOOTER", "MAIN", "FIGURE"]);
 
-  function convertBlocks(element, depth) {
+  function convertBlocks(element) {
     const blocks = [];
     let inline = "";
     const flush = () => {
@@ -2704,7 +2761,7 @@
     for (const node of Array.from(element.childNodes)) {
       if (node.nodeType === 1 && BLOCK_TAGS.has(node.tagName)) {
         flush();
-        const converted = convertBlock(node, depth);
+        const converted = convertBlock(node);
         if (converted) blocks.push(converted);
       } else if (node.nodeType === 1 && node.tagName === "BR") {
         inline += "\\\n";
@@ -2716,49 +2773,58 @@
     return blocks;
   }
 
-  function convertBlock(element, depth) {
+  /// A backtick run longer than any in `text`, so `text` can sit inside it.
+  function backtickFence(text, shortest) {
+    const longest = Math.max(0, ...(text.match(/`+/g) || []).map((run) => run.length));
+    return "`".repeat(Math.max(shortest, longest + 1));
+  }
+
+  function convertBlock(element) {
     const tag = element.tagName;
     switch (tag) {
       case "H1": case "H2": case "H3": case "H4": case "H5": case "H6":
         return "#".repeat(Number(tag[1])) + " " + inlineOf(element).replace(/\s+/g, " ").trim();
       case "UL":
       case "OL":
-        return convertList(element, depth);
+        return convertList(element, "");
       case "BLOCKQUOTE":
-        return convertBlocks(element, depth).join("\n\n").split("\n").map((line) => (line ? `> ${line}` : ">")).join("\n");
+        return convertBlocks(element).join("\n\n").split("\n").map((line) => (line ? `> ${line}` : ">")).join("\n");
       case "PRE": {
         const code = element.textContent.replace(/\n$/, "");
         const language = ((element.querySelector("code") || element).className.match(/language-([\w.+-]+)/) || [])[1] || "";
-        return "```" + language + "\n" + code + "\n```";
+        const fence = backtickFence(code, 3);
+        return fence + language + "\n" + code + "\n" + fence;
       }
       case "TABLE":
         return convertTable(element);
       case "HR":
         return "---";
       default:
-        return convertBlocks(element, depth).join("\n\n");
+        return convertBlocks(element).join("\n\n");
     }
   }
 
-  function convertList(element, depth) {
+  /// A list's items, each line after `indent`; a nested list goes under its item's text, as far in
+  /// as the item's marker is wide.
+  function convertList(element, indent) {
     const ordered = element.tagName === "OL";
     const lines = [];
     let number = Number(element.getAttribute("start")) || 1;
     for (const item of Array.from(element.children)) {
       if (item.tagName !== "LI") continue;
       const checkbox = item.querySelector(":scope > input[type=checkbox]");
+      const marker = ordered ? `${number}. ` : "- ";
+      number += 1;
       let text = "";
       const nested = [];
       for (const child of Array.from(item.childNodes)) {
-        if (child.nodeType === 1 && (child.tagName === "UL" || child.tagName === "OL")) nested.push(convertList(child, depth + 1));
+        if (child.nodeType === 1 && (child.tagName === "UL" || child.tagName === "OL")) nested.push(convertList(child, indent + " ".repeat(marker.length)));
         else if (child.nodeType === 1 && child.tagName === "INPUT") continue;
-        else if (child.nodeType === 1 && BLOCK_TAGS.has(child.tagName)) text += " " + convertBlocks(child, depth + 1).join(" ");
+        else if (child.nodeType === 1 && BLOCK_TAGS.has(child.tagName)) text += " " + convertBlocks(child).join(" ");
         else text += convertInline(child);
       }
-      const marker = ordered ? `${number}. ` : "- ";
-      number += 1;
       const task = checkbox ? (checkbox.checked ? "[x] " : "[ ] ") : "";
-      lines.push("  ".repeat(depth) + marker + task + text.replace(/\s+/g, " ").trim());
+      lines.push(indent + marker + task + text.replace(/\s+/g, " ").trim());
       lines.push(...nested);
     }
     return lines.join("\n");
@@ -2798,8 +2864,14 @@
         return wrap("*", inner());
       case "DEL": case "S": case "STRIKE":
         return wrap("~~", inner());
-      case "CODE": case "KBD": case "SAMP":
-        return "`" + node.textContent.replace(/`/g, "") + "`";
+      case "CODE": case "KBD": case "SAMP": {
+        // A code span opens and closes with a backtick run longer than any inside it, and a space
+        // keeps a backtick at its edge apart from the run.
+        const code = node.textContent;
+        const fence = backtickFence(code, 1);
+        const pad = /^`|`$/.test(code) ? " " : "";
+        return fence + pad + code + pad + fence;
+      }
       case "A": {
         const href = node.getAttribute("href") || "";
         const text = inner().trim();
@@ -2906,7 +2978,11 @@
   let lastEditEnd = -1;
   let selectionFrame = 0;
   let lastReportedSelection = null;
+  // A click below a last block that typing cannot continue (a table, code, a divider): the first
+  // character typed at `at` opens a line after it, so the click alone changes nothing.
+  let trailingLine = null;
   let footnotesElement = null;
+  let footnotesHTML = null;
   let icons = {};
   let layer = null;
   const listeners = [];
@@ -2941,7 +3017,10 @@
     renderID = payload.renderID || 0;
     version = 0;
     unacknowledged = [];
+    pendingRemote = [];
     menuReportedOpen = false;
+    lastReportedSelection = null;
+    trailingLine = null;
     document.documentElement.classList.add("mk-editing");
     root.setAttribute("contenteditable", "true");
     root.setAttribute("spellcheck", Flow.spellcheck ? "true" : "false");
@@ -3043,6 +3122,7 @@
       bindUnits(block);
     });
     footnotesElement = null;
+    footnotesHTML = null;
     refreshFootnotes();
     markEmptyDocument();
   }
@@ -3077,12 +3157,19 @@
     }
     if (removed.some(changesContents) || inserted.some(changesContents)) refreshTablesOfContents();
     Handles.hide();
-    refreshFootnotes();
+    if (removed.some(holdsFootnotes) || inserted.some(holdsFootnotes)) refreshFootnotes();
     markEmptyDocument();
   }
 
   function changesContents(block) {
     return block.type === "heading" || block.type === "toc";
+  }
+
+  /// Only an edit to a block with a footnote reference, or to a footnote's definition, can change
+  /// the numbers or the notes under the document.
+  function holdsFootnotes(block) {
+    if (block.type === "definition") return Boolean(block.definition && block.definition.kind === "footnote");
+    return typeof block.html === "string" && block.html.includes("footnote-ref");
   }
 
   /// A table of contents lists the headings as they are now; after a heading changes it is drawn
@@ -3106,20 +3193,28 @@
   /// export; after an edit they are renumbered on the page.
   function refreshFootnotes() {
     const doc = model.doc;
-    if (footnotesElement && !footnotesElement.isConnected) footnotesElement = null;
-    if (!doc.footnotes || doc.footnotes.size === 0) {
-      footnotesElement?.remove();
+    if (footnotesElement && !footnotesElement.isConnected) {
       footnotesElement = null;
-      return;
+      footnotesHTML = null;
     }
     const numbers = new Map();
-    root.querySelectorAll("sup.footnote-ref").forEach((element) => {
-      const key = keyFromFootnoteElement(element);
-      if (!numbers.has(key)) numbers.set(key, numbers.size + 1);
-      const anchor = element.querySelector("a");
-      if (anchor) anchor.textContent = String(numbers.get(key));
-    });
-    const html = MD.renderFootnotes(doc, { ...MD.newRender(doc, { editing: true }), refNumbers: numbers });
+    if (doc.footnotes && doc.footnotes.size) {
+      const keys = new Map();
+      for (const key of doc.footnoteOrder) {
+        const id = `fnref-${MD.slug(key)}`;
+        if (!keys.has(id)) keys.set(id, key);
+      }
+      for (const element of root.querySelectorAll("sup.footnote-ref")) {
+        const key = keys.get(element.id || "") ?? (element.id || "");
+        if (!numbers.has(key)) numbers.set(key, numbers.size + 1);
+        const anchor = element.querySelector("a");
+        const label = String(numbers.get(key));
+        if (anchor && anchor.textContent !== label) anchor.textContent = label;
+      }
+    }
+    const html = numbers.size ? MD.renderFootnotes(doc, { ...MD.newRender(doc, { editing: true }), refNumbers: numbers }) : "";
+    if (html === footnotesHTML && (footnotesElement || !html)) return;
+    footnotesHTML = html;
     if (!html) {
       footnotesElement?.remove();
       footnotesElement = null;
@@ -3131,14 +3226,6 @@
     if (footnotesElement) footnotesElement.replaceWith(section);
     else root.appendChild(section);
     footnotesElement = section;
-  }
-
-  function keyFromFootnoteElement(element) {
-    const id = element.id || "";
-    for (const key of model.doc.footnoteOrder) {
-      if (`fnref-${MD.slug(key)}` === id) return key;
-    }
-    return id;
   }
 
   let onlyElement = null;
@@ -3265,21 +3352,30 @@
       if (v === null) return side === "right" ? unitStart(unit) : unitEnd(unit);
       return visibleToRaw(model, unit, v, v === 0 ? "right" : side);
     }
-    // Outside any unit (a margin, a list marker, between blocks): the nearest unit.
-    const elements = Array.from(root.querySelectorAll("[data-mk-u]"));
-    const point = document.createRange();
-    try {
-      point.setStart(node, offset);
-    } catch {
-      return null;
+    // Outside any unit (a margin, a list marker, between blocks): the nearest unit, found by
+    // walking from the point to the unit elements that start on either side of it.
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
+      acceptNode: (element) => (element.hasAttribute("data-mk-u") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP)
+    });
+    // The first node after the point, in document order; null at the very end.
+    let next = node.nodeType === ELEMENT ? node.childNodes[offset] || null : node;
+    if (!next && node.nodeType === ELEMENT) {
+      let current = node;
+      while (current !== root && !current.nextSibling) current = current.parentNode;
+      next = current === root ? null : current.nextSibling;
     }
-    let before = null;
     let after = null;
-    for (const element of elements) {
-      const elementRange = document.createRange();
-      elementRange.selectNodeContents(element);
-      if (point.compareBoundaryPoints(Range.START_TO_START, elementRange) >= 0) before = element;
-      else if (!after) after = element;
+    let before = null;
+    if (next) {
+      walker.currentNode = next;
+      after = next.nodeType === ELEMENT && next.hasAttribute("data-mk-u") ? next : walker.nextNode();
+      walker.currentNode = next;
+      before = walker.previousNode();
+    } else {
+      let last = root;
+      while (last.lastChild) last = last.lastChild;
+      walker.currentNode = last;
+      before = last.nodeType === ELEMENT && last.hasAttribute("data-mk-u") ? last : walker.previousNode();
     }
     const choice = side === "right" ? after || before : before || after;
     const unit = unitForElement(choice);
@@ -3404,10 +3500,6 @@
     return backward ? withOrder(end, start) : withOrder(start, end);
   }
 
-  function withOrder(anchor, head) {
-    return { anchor, head, from: Math.min(anchor, head), to: Math.max(anchor, head) };
-  }
-
   function setSelection(anchor, head, options = {}) {
     if (!model) return;
     const length = model.source.length;
@@ -3470,6 +3562,7 @@
       return false;
     }
     if (op.from === undefined) return false;
+    trailingLine = null;
     const before = meta.selectionBefore || readSelection() || withOrder(op.from, op.from);
     const removed = model.source.slice(op.from, op.to);
     if (removed === op.insert) {
@@ -3497,6 +3590,8 @@
     let after = typeof op.select === "function" ? op.select(model) : op.select;
     if (!after) after = mapSelectionThrough(before, op);
     if (meta.selection !== false && after) setSelection(after.anchor, after.head);
+    // The page's selection stays where it was; the offsets kept for it moved with the text.
+    else sticky = null;
     if (profile) profile.push({ patch: t1 - t0, dom: t2 - t1, selection: performance.now() - t2 });
     post({
       type: "edit",
@@ -3569,6 +3664,9 @@
             const end = domToRaw(ranges[0].endContainer, ranges[0].endOffset, "left");
             if (start !== null && end !== null) target = withOrder(start, end);
           }
+          // macOS turns typed quotes and dashes into curly ones by replacing them; in code the
+          // replacement is cancelled, so "--" stays as typed.
+          if (/^[\u2013\u2014\u2018\u2019\u201C\u201D]+$/.test(text) && insideCode(target.from)) return;
         }
         typeText(target, text, type === "insertText");
         return;
@@ -3619,6 +3717,16 @@
   }
 
   function typeText(selection, text, typing) {
+    let group = 0;
+    if (typing && trailingLine && selection.from === trailingLine.at && selection.to === trailingLine.at) {
+      // The first character after a click below the last block opens the line it goes on.
+      trailingLine = null;
+      group = newGroup();
+      const last = model.blocks[model.blocks.length - 1];
+      if (!last || !apply({ ...insertEmptyAfterBlock(model, last), kind: "typing" }, { group })) return;
+      selection = readSelection();
+      if (!selection) return;
+    }
     if (/[\u2013\u2014\u2018\u2019\u201C\u201D]/.test(text) && insideCode(selection.from)) {
       text = text.replace(/[\u2013\u2014\u2018\u2019\u201C\u201D]/g, (character) => STRAIGHT[character]);
     }
@@ -3635,7 +3743,7 @@
       pendingMarks = null;
     }
     if (typing) Flow.prepareCarry(selection, text, op);
-    apply(op);
+    apply(op, group ? { group } : {});
     UI.afterTyping(text);
   }
 
@@ -3750,6 +3858,9 @@
   function onCompositionEnd() {
     composing = false;
     window.setTimeout(() => {
+      // A new composition already started (Korean starts the next syllable at once): its own end
+      // reconciles both.
+      if (composing) return;
       reconcile();
       const queued = pendingRemote;
       pendingRemote = [];
@@ -3771,13 +3882,13 @@
         if (Array.from(root.children).length !== model.blocks.length + (footnotesElement ? 1 : 0)) fullRender();
         return;
       }
-      reconcileUnit(changed, changed.el, null);
+      reconcileUnit(changed, changed.el);
       return;
     }
-    reconcileUnit(unit, element, selection);
+    reconcileUnit(unit, element);
   }
 
-  function reconcileUnit(unit, element, selection) {
+  function reconcileUnit(unit, element) {
     const pageText = visibleTextOfElement(element).replace(/\u00A0/g, " ");
     const modelText = visibleText(model, unit);
     if (pageText === modelText) return;
@@ -3812,6 +3923,8 @@
   function onKeyDown(event) {
     if (!active) return;
     if (!["Meta", "Shift", "Alt", "Control", "CapsLock"].includes(event.key)) Handles.suppress();
+    // Keys that pick or commit marked text belong to the input method.
+    if (composing || event.isComposing) return;
     if (UI.handleKeyDown(event)) return;
     if (Flow.handleKeyDown(event)) return;
     const mod = event.metaKey && !event.ctrlKey;
@@ -3978,8 +4091,8 @@
 
   // Commands ----------------------------------------------------------
 
-  /// Runs a formatting command on the current selection: from the docked
-  /// toolbar, the floating toolbar, the slash menu or a shortcut.
+  /// Runs a formatting command on the current selection: from the format bar, a menu or a
+  /// shortcut.
   function command(name, value) {
     if (!active || !model) return false;
     const selection = readSelection() || lastSelection;
@@ -4091,6 +4204,7 @@
       return;
     }
     if (sticky && (selection.anchor !== sticky.anchor || selection.head !== sticky.head)) sticky = null;
+    if (trailingLine && (selection.from !== trailingLine.at || selection.to !== trailingLine.at)) trailingLine = null;
     if (pendingMarks && lastSelection && (selection.head !== lastSelection.head || selection.from !== selection.to)) pendingMarks = null;
     lastSelection = selection;
     markCurrentUnit(selection);
@@ -4114,10 +4228,13 @@
       selectedMarkdown: selection.from === selection.to ? "" : model.source.slice(selection.from, Math.min(selection.to, selection.from + 4000))
     };
     UI.selectionChanged(selection, unit, state, report);
-    const key = JSON.stringify(report);
+    // The app needs the selection, its Markdown and what the writing assistance asks for.
+    const { anchor, head, v, focused, cell, selectedMarkdown } = report;
+    const message = { type: "selection", anchor, head, v, focused, cell, selectedMarkdown };
+    const key = JSON.stringify(message);
     if (key === lastReportedSelection) return;
     lastReportedSelection = key;
-    post({ type: "selection", ...report });
+    post(message);
   }
 
   let currentUnitElement = null;
@@ -4200,14 +4317,24 @@
       return;
     }
     if (target === root && model) {
-      // A click below the last block puts the caret on a new line there.
+      // A click below the last block puts the caret at the end, and the file changes only once a
+      // character is typed: after text typing continues it; after a block it cannot continue (a
+      // table, code, a quote, a divider) that character opens a line below the block.
       const last = model.blocks[model.blocks.length - 1];
-      if (last && last.el) {
-        const rect = last.el.getBoundingClientRect();
-        if (event.clientY > rect.bottom && last.type !== "empty") {
-          event.preventDefault();
-          root.focus({ preventScroll: true });
+      if (last && last.el && last.type !== "empty" && event.clientY > last.el.getBoundingClientRect().bottom) {
+        event.preventDefault();
+        root.focus({ preventScroll: true });
+        let unit = lastUnitUpTo(model, model.blocks.length - 1);
+        while (unit && isHiddenUnit(unit)) unit = previousUnit(model, unit);
+        if (!unit) {
+          // Nowhere for the caret to wait (a document of dividers): the line is made now.
           apply({ ...insertEmptyAfterBlock(model, last), kind: "enter" });
+          return;
+        }
+        const end = unitEnd(unit);
+        setSelection(end, end);
+        if (unit.top !== last || isStructural(unit) || unit.kind === "raw" || unit.container || unit.role === "summary") {
+          trailingLine = { at: end };
         }
       }
     }
@@ -4330,20 +4457,26 @@
     event.preventDefault();
     const data = event.dataTransfer;
     if (!data) return;
-    const text = data.getData("application/x-monknot-markdown") || data.getData("text/plain");
-    if (!text || (data.files && data.files.length)) return;
     const caret = document.caretRangeFromPoint ? document.caretRangeFromPoint(event.clientX, event.clientY) : null;
-    if (!caret) return;
-    const raw = domToRaw(caret.startContainer, caret.startOffset, "left");
-    if (raw === null) return;
+    const raw = caret ? domToRaw(caret.startContainer, caret.startOffset, "left") : null;
+    if (data.files && data.files.length) {
+      // Files: the app reads their URLs from the drag and imports them as Source does.
+      if (raw !== null) post({ type: "dropFiles", selection: { anchor: raw, head: raw } });
+      return;
+    }
+    const text = data.getData("application/x-monknot-markdown") || data.getData("text/plain");
+    if (!text || raw === null) return;
     apply(planInsertText(model, withOrder(raw, raw), text, { kind: "paste" }), { coalesce: false, label: "Drop" });
   }
 
   // Messages from the app ----------------------------------------------
 
-  /// Applies a change the app asks for (undo, redo, a file inserted, the
-  /// file changed on disk). `base` is the last version the app has seen;
-  /// local edits it has not seen yet are transformed through first.
+  /// Applies a change the app asks for (undo, redo, the file changed on
+  /// disk) or a writing-assistance fix. `base` is the last version the app
+  /// has seen; local edits it has not seen yet move the request first, and
+  /// those after it move past it in turn: the app's next request is made on
+  /// its text with this one applied, and the app moves those edits the same
+  /// way when they reach it.
   function applyRemote(payload) {
     if (!active || !model) return { applied: false };
     if (composing) {
@@ -4357,6 +4490,7 @@
     let selection = payload.selection ? { anchor: payload.selection.anchor, head: payload.selection.head } : null;
     // The app's request already accounts for every change it asked for itself; only local edits
     // it has not seen yet move the request.
+    const later = [];
     for (const entry of unacknowledged) {
       if (!entry.local) continue;
       const entryDelta = entry.length - (entry.to - entry.from);
@@ -4365,7 +4499,7 @@
         to += entryDelta;
         if (selection) selection = { anchor: selection.anchor + entryDelta, head: selection.head + entryDelta };
       } else if (entry.from >= to) {
-        continue;
+        later.push(entry);
       } else {
         post({ type: "conflict", reason: payload.reason || "" });
         return { applied: false };
@@ -4383,7 +4517,9 @@
     const keepSelection = readSelection();
     const op = { from, to, insert, select: selection || null };
     const applied = apply(op, {
-      remote: true,
+      // The app applies a fix it sent to the document only when the page reports it, as it does
+      // the page's own edits; its other requests are in the document already.
+      remote: payload.reason !== "flow",
       reason: payload.reason || "remote",
       kind: payload.reason || "remote",
       label: typeof payload.label === "string" ? payload.label : "",
@@ -4392,6 +4528,13 @@
       selectionBefore: keepSelection || undefined,
       selection: payload.reason === "external" ? (document.activeElement === root) : true
     });
+    if (applied) {
+      const delta = insert.length - (to - from);
+      for (const entry of later) {
+        entry.from += delta;
+        entry.to += delta;
+      }
+    }
     return { applied, from };
   }
 
@@ -4402,6 +4545,10 @@
     fullRender();
     version += 1;
     unacknowledged = [];
+    // Everything the app sent before is in the text it resets to.
+    pendingRemote = [];
+    sticky = null;
+    trailingLine = null;
     post({ type: "reset", v: version });
     const selection = payload.selection || keep;
     if (selection && document.activeElement === root) setSelection(selection.anchor, selection.head, { reveal: false });
@@ -4471,9 +4618,21 @@
     span.style.setProperty("--mk-icon-height", `${glyph.height}px`);
   }
 
+  /// Glyphs drawn by a pseudo-element (a callout title's chevron), which reach it as a variable.
+  const CSS_ICONS = { "--mk-chevron-down": "small:chevron.down" };
+
   function setIcons(map) {
     icons = map && typeof map === "object" ? map : {};
     document.querySelectorAll(".mk-icon[data-mk-icon]").forEach(applyIcon);
+    for (const [variable, key] of Object.entries(CSS_ICONS)) {
+      if (icons[key]) document.documentElement.style.setProperty(variable, `url("${icons[key].url}")`);
+      else document.documentElement.style.removeProperty(variable);
+    }
+  }
+
+  /// The workspace zoom every chrome metric scales with (design.md §9).
+  function zoom() {
+    return parseFloat(window.getComputedStyle(document.documentElement).getPropertyValue("--mk-z")) || 1;
   }
 
   function caretRect() {
@@ -4522,18 +4681,19 @@
     element.style.top = "0px";
     const width = element.offsetWidth;
     const height = element.offsetHeight;
-    const gap = 6;
-    const margin = 8;
+    const z = zoom();
+    const gap = 6 * z;
+    const margin = 8 * z;
     const viewportWidth = document.documentElement.clientWidth;
     const viewportHeight = window.innerHeight;
     let left;
     let top;
     let origin;
     if (preference === "right") {
-      left = rect.right + 4;
-      if (left + width > viewportWidth - margin) left = rect.left - width - 4;
+      left = rect.right + 4 * z;
+      if (left + width > viewportWidth - margin) left = rect.left - width - 4 * z;
       left = Math.max(margin, left);
-      top = Math.max(margin, Math.min(rect.top - 6, viewportHeight - height - margin));
+      top = Math.max(margin, Math.min(rect.top - 6 * z, viewportHeight - height - margin));
       origin = `${left < rect.left ? "100%" : "0"} ${Math.round(Math.max(0, Math.min(height, rect.top - top + rect.height / 2)))}px`;
     } else {
       const above = rect.top - height - gap;
@@ -4542,7 +4702,7 @@
       else top = below + height <= viewportHeight - margin || above < margin ? below : above;
       if (align === "start") left = rect.left;
       else if (align === "center") left = rect.left + (rect.width || 0) / 2 - width / 2;
-      else left = rect.left - 10;
+      else left = rect.left - 10 * z;
       left = Math.max(margin, Math.min(left, viewportWidth - width - margin));
       const anchorX = Math.round(Math.max(0, Math.min(width, rect.left + (rect.width || 0) / 2 - left)));
       origin = `${anchorX}px ${top < rect.top ? "100%" : "0"}`;
@@ -4577,6 +4737,20 @@
 
   const ZERO_RECT = { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 };
 
+  /// The anchor of a surface that stays beside `element` while the column reflows (a resize, a side
+  /// pane moving): `rect` moved by as much as the element has moved since it was measured.
+  function following(element, rect) {
+    if (!element || !rect) return null;
+    const start = element.getBoundingClientRect();
+    return () => {
+      if (!element.isConnected) return null;
+      const now = element.getBoundingClientRect();
+      const dx = now.left - start.left;
+      const dy = now.top - start.top;
+      return { left: rect.left + dx, right: rect.right + dx, top: rect.top + dy, bottom: rect.bottom + dy, width: rect.width, height: rect.height };
+    };
+  }
+
   // Menu ----------------------------------------------------------------
 
   /// A list of choices with keyboard and pointer selection: the slash menu, the block menu and its
@@ -4606,6 +4780,13 @@
     const list = document.createElement("div");
     list.className = "mk-menu-list";
     element.appendChild(list);
+    // The scroll thumb shows while the list scrolls, never merely under the pointer (design.md §5.7).
+    let scrollingTimer = 0;
+    list.addEventListener("scroll", () => {
+      list.classList.add("mk-scrolling");
+      window.clearTimeout(scrollingTimer);
+      scrollingTimer = window.setTimeout(() => list.classList.remove("mk-scrolling"), 700);
+    }, { passive: true });
     if (options.footer) {
       const footer = document.createElement("div");
       footer.className = "mk-menu-footer";
@@ -4620,13 +4801,15 @@
       element.appendChild(footer);
     }
     layer.appendChild(element);
-    const state = { items: [], visible: [], index: 0, open: false, query: "", preference: "below", align: "caret", owner: null };
+    const state = { items: [], visible: [], index: 0, open: false, query: "", preference: "below", align: "caret", owner: null, follow: null };
     let hoverTimer = 0;
 
     const selectable = (item) => Boolean(item) && !item.separator;
     const rows = () => list.querySelectorAll(".mk-menu-row");
 
     const render = () => {
+      // A submenu the pointer was about to open belongs to rows that are about to go.
+      window.clearTimeout(hoverTimer);
       list.textContent = "";
       const query = state.query.trim().toLowerCase();
       const pool = query && options.searchItems ? options.searchItems(state.items) : state.items;
@@ -4700,15 +4883,16 @@
         row.addEventListener("mousemove", () => {
           if (state.index !== index) setIndex(index, false);
           window.clearTimeout(hoverTimer);
-          if (item.submenu) {
-            if (!row.classList.contains("mk-open-submenu")) hoverTimer = window.setTimeout(() => choose(index), 120);
-          } else {
-            options.onHoverRow?.();
+          options.onHoverRow?.(item);
+          if (item.submenu && !row.classList.contains("mk-open-submenu")) {
+            hoverTimer = window.setTimeout(() => {
+              if (state.open && state.visible[index] === item) choose(index, true);
+            }, 120);
           }
         });
         row.addEventListener("click", (event) => {
           event.preventDefault();
-          choose(index);
+          choose(index, true);
         });
         list.appendChild(row);
       });
@@ -4747,22 +4931,18 @@
       else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
     };
 
-    const rowRect = (index) => {
-      const row = list.querySelector(`.mk-menu-row[data-index="${index}"]`);
-      return row ? row.getBoundingClientRect() : element.getBoundingClientRect();
-    };
-
-    const choose = (index) => {
+    /// Chooses a row; `pointer` when a click or a hover chose it rather than a key.
+    const choose = (index, pointer = false) => {
       const at = index ?? state.index;
       const item = state.visible[at];
       if (!selectable(item)) return;
       if (item.submenu) {
         rows().forEach((row) => row.classList.toggle("mk-open-submenu", Number(row.dataset.index) === at));
-        options.onSubmenu?.(item, rowRect(at));
+        options.onSubmenu?.(item, list.querySelector(`.mk-menu-row[data-index="${at}"]`) || element, pointer);
         return;
       }
       close("choose");
-      options.onChoose(item);
+      options.onChoose(item, pointer);
     };
 
     const open = (items, rect, settings = {}) => {
@@ -4773,6 +4953,9 @@
       state.preference = settings.preference || "below";
       state.align = settings.align || "caret";
       state.anchor = rect ? { rect, scrollX: window.scrollX, scrollY: window.scrollY } : null;
+      // Where the menu goes when the column reflows: beside the control that opened it, unless the
+      // opener says otherwise.
+      state.follow = settings.follow || following(settings.owner, rect);
       // The control that opened the menu shows it is open until the menu closes.
       state.owner?.classList.remove("mk-open");
       state.owner = settings.owner || null;
@@ -4807,6 +4990,7 @@
       state.owner?.classList.remove("mk-open");
       state.owner?.setAttribute("aria-expanded", "false");
       state.owner = null;
+      state.follow = null;
       hide(element);
       options.onClose?.(reason);
       noteMenuChange();
@@ -4886,8 +5070,10 @@
       get isOpen() { return state.open; },
       get matchCount() { return state.visible.filter(selectable).length; },
       get query() { return state.query; },
-      reposition(rect) {
-        if (!state.open || !rect) return;
+      /// Moves the menu to `rect`, or beside whatever it follows.
+      reposition(anchor) {
+        const rect = state.open ? anchor || state.follow?.() : null;
+        if (!rect) return;
         state.anchor = { rect, scrollX: window.scrollX, scrollY: window.scrollY };
         place(element, rect, state.preference === "right" ? "right" : element.dataset.placement === "above" ? "above" : "below", state.align);
       }
@@ -5023,13 +5209,15 @@
     return model.blocks[target.index] === target.block ? target : null;
   }
 
+  /// The <li> of `item`, a list item in the top-level block `top`.
+  function itemElement(top, item) {
+    const unit = unitsOf(top).find((candidate) => candidate.role === "item" && candidate.item === item);
+    return unit && unit.el ? unit.el.closest("li") : null;
+  }
+
   function targetElement(target) {
     if (!target) return null;
-    if (target.kind === "item") {
-      const unit = unitsOf(target.top).find((candidate) => candidate.role === "item" && candidate.item === target.item);
-      return unit && unit.el ? unit.el.closest("li") : null;
-    }
-    return target.block.el || null;
+    return target.kind === "item" ? itemElement(target.top, target.item) : target.block.el || null;
   }
 
   function targetCaret(target) {
@@ -5041,7 +5229,7 @@
   function flashBlockAt(position) {
     const unit = unitAt(model, position, "right");
     if (!unit) return;
-    const element = unit.role === "item" && unit.el ? unit.el.closest("li") : unit.top.el;
+    const element = unit.role === "item" ? itemElement(unit.top, unit.item) : unit.top.el;
     if (!element) return;
     element.classList.remove("mk-block-moved");
     void element.offsetWidth;
@@ -5051,11 +5239,8 @@
 
   function moveTarget(target, direction) {
     const selection = readSelection();
-    const gap = target.kind === "item"
-      ? target.list.items.indexOf(target.item) + (direction < 0 ? -1 : 2)
-      : target.index + (direction < 0 ? -1 : 2);
     const keep = selection && handleTargetMatches(target, selection) ? selection : null;
-    const op = planMoveBlock(model, target, gap, keep);
+    const op = planMoveByStep(model, target, direction, keep);
     if (!op) return false;
     if (!keep && op.movedStart !== undefined) op.select = (next) => caretAt(closestUnitPosition(next, op.movedStart));
     const applied = apply(op, { coalesce: false });
@@ -5188,9 +5373,10 @@
         tooltip.style.left = "0px";
         tooltip.style.top = "0px";
         const width = tooltip.offsetWidth;
-        const left = Math.max(8, rect.left + rect.width / 2 - width / 2);
+        const z = zoom();
+        const left = Math.max(8 * z, rect.left + rect.width / 2 - width / 2);
         tooltip.style.left = `${Math.round(left + window.scrollX)}px`;
-        tooltip.style.top = `${Math.round(rect.bottom + 6 + window.scrollY)}px`;
+        tooltip.style.top = `${Math.round(rect.bottom + 6 * z + window.scrollY)}px`;
         tooltip.classList.add("mk-visible");
       }, 450);
     }
@@ -5205,8 +5391,13 @@
       if (suppressed && pointer && Math.abs(event.clientX - pointer.x) + Math.abs(event.clientY - pointer.y) < 3) return;
       suppressed = false;
       pointer = { x: event.clientX, y: event.clientY };
+      scheduleUpdate();
+    }
+
+    /// Follows the pointer and the scroll at most once a frame. A timer, unlike an animation frame,
+    /// also runs while the window is in the background.
+    function scheduleUpdate() {
       if (frame) return;
-      // A timer, unlike an animation frame, also runs while the window is in the background.
       frame = window.setTimeout(() => {
         frame = 0;
         update();
@@ -5300,12 +5491,13 @@
         top = box.top + box.height / 2 - height / 2;
       }
       let right;
+      const z = zoom();
       if (found.item) {
         const list = found.el.parentElement;
         const marker = list ? parseFloat(window.getComputedStyle(list).paddingLeft) || 24 : 24;
-        right = found.el.getBoundingClientRect().left - marker - 2;
+        right = found.el.getBoundingClientRect().left - marker - 2 * z;
       } else {
-        right = found.el.getBoundingClientRect().left - 6;
+        right = found.el.getBoundingClientRect().left - 6 * z;
       }
       element.style.left = `${Math.round(right - width + window.scrollX)}px`;
       element.style.top = `${Math.round(top + window.scrollY)}px`;
@@ -5393,10 +5585,7 @@
       const contentLeft = content.left + (parseFloat(style.paddingLeft) || 0);
       const contentRight = content.right - (parseFloat(style.paddingRight) || 0);
       if (target.kind === "item") {
-        const elements = target.list.items.map((item) => {
-          const unit = unitsOf(target.top).find((candidate) => candidate.role === "item" && candidate.item === item);
-          return unit && unit.el ? unit.el.closest("li") : null;
-        });
+        const elements = target.list.items.map((item) => itemElement(target.top, item));
         if (elements.some((li) => !li)) return gaps;
         const rects = elements.map((li) => li.getBoundingClientRect());
         const list = elements[0].parentElement;
@@ -5497,7 +5686,7 @@
     return {
       build,
       onPointerMove,
-      update,
+      update: scheduleUpdate,
       hide: hideHandles,
       suppress() {
         suppressed = true;
@@ -5526,21 +5715,29 @@
     let pickedElement = null;
     let turnIntoMenu = null;
     let turnContext = null;
+    // The pointer on its way from Turn into to its submenu crosses other rows: the submenu waits
+    // this long before it closes for them, and stays once the pointer reaches it.
+    let submenuCloseTimer = 0;
     let calloutMenu = null;
     let calloutUnit = null;
     let languageMenu = null;
     let languageTarget = null;
     let tableMenu = null;
+    // The cell the table menu was opened for: its actions apply to that table only.
+    let tableMenuUnit = null;
     let formatBar = null;
     let formatButtons = {};
     let turnIntoButton = null;
     let linkCard = null;
+    let linkCardAnchor = null;
     let linkEditor = null;
     let linkField = null;
     let linkGlyph = null;
     let linkEditing = null;
     let tableBar = null;
     let tableUnit = null;
+    // The source offset of the table the bar was placed for.
+    let tableStart = -1;
     let lastState = null;
     let formatBarSuppressed = false;
     let typingTimer = 0;
@@ -5552,7 +5749,7 @@
         label: "Insert block",
         emptyText: "No matching blocks",
         footer: [["↑↓", "Choose"], ["↩", "Insert"], ["Esc", "Close"]],
-        onChoose: (item) => runSlash(item.id),
+        onChoose: (item, pointer) => runSlash(item.id, pointer),
         onClose: (reason) => {
           if (reason === "choose") return;
           const info = slash;
@@ -5583,9 +5780,17 @@
           ...items.filter((item) => !item.separator && !item.submenu),
           ...(items.some((item) => item.submenu) ? TURN_INTO.map((item) => ({ ...item, id: `turn:${item.id}`, label: `Turn into ${item.label}`, keywords: [item.label] })) : [])
         ],
-        onSubmenu: (item, rect) => openTurnIntoForBlock(rect),
-        onHoverRow: () => {
-          if (turnIntoMenu.isOpen) turnIntoMenu.close("back");
+        onSubmenu: (item, row, pointer) => openTurnIntoForBlock(row, pointer),
+        onHoverRow: (item) => {
+          if (item.submenu || !turnIntoMenu.isOpen) {
+            cancelSubmenuClose();
+            return;
+          }
+          if (submenuCloseTimer) return;
+          submenuCloseTimer = window.setTimeout(() => {
+            submenuCloseTimer = 0;
+            turnIntoMenu.close("back");
+          }, 120);
         },
         onQuery: () => {
           if (turnIntoMenu.isOpen) turnIntoMenu.close("back");
@@ -5596,6 +5801,11 @@
           if (event.key === "ArrowLeft" || event.key === "Escape") {
             event.preventDefault();
             turnIntoMenu.close("back");
+            return true;
+          }
+          // → is the submenu's already: it must not choose Turn into again under it.
+          if (event.key === "ArrowRight") {
+            event.preventDefault();
             return true;
           }
           return false;
@@ -5629,11 +5839,13 @@
           }
         },
         onClose: (reason) => {
+          cancelSubmenuClose();
           blockMenu?.closeSubmenuMark();
           if (reason === "back" || reason === "parent") return;
           if (reason !== "choose") turnContext = null;
         }
       });
+      turnIntoMenu.element.addEventListener("mouseenter", cancelSubmenuClose);
       calloutMenu = createMenu({
         label: "Callout type",
         narrow: true,
@@ -5669,14 +5881,34 @@
         label: "Table",
         narrow: true,
         onChoose: (item) => {
+          const unit = tableMenuUnit;
+          tableMenuUnit = null;
           root.focus({ preventScroll: true });
-          if (tableUnit) apply(planTable(model, tableUnit, item.id), { coalesce: false });
+          if (unit && model.units.has(unit.id)) apply(planTable(model, unit, item.id), { coalesce: false });
+        },
+        onClose: (reason) => {
+          if (reason !== "choose") tableMenuUnit = null;
         }
       });
       buildFormatBar();
       buildLinkCard();
       buildLinkEditor();
       buildTableBar();
+    }
+
+    function cancelSubmenuClose() {
+      window.clearTimeout(submenuCloseTimer);
+      submenuCloseTimer = 0;
+    }
+
+    /// One menu at a time: opening `menu` closes every other one and the link field. (Turn Into
+    /// opened from the block menu is its submenu and leaves it open.)
+    function closeMenusFor(menu) {
+      for (const other of [blockMenu, turnIntoMenu, calloutMenu, languageMenu, tableMenu, slashMenu]) {
+        if (other !== menu) other.close("menu");
+      }
+      if (menu !== wikilinkMenu) endWikilink("menu");
+      closeLinkEditor(false);
     }
 
     function button(name, label, shortcut, onPress) {
@@ -5731,6 +5963,7 @@
       turnIntoButton = menuButton("Text", (element) => {
         const selection = lastSelection;
         if (!selection) return;
+        closeMenusFor(turnIntoMenu);
         turnContext = { kind: "selection", selection: { anchor: selection.anchor, head: selection.head } };
         const current = lastState ? lastState.block : "paragraph";
         turnIntoMenu.open(TURN_INTO.map((item) => ({ ...item, checked: item.id === current })), element.getBoundingClientRect(), { preference: "below", align: "start", animate: true, owner: element });
@@ -5743,7 +5976,10 @@
       formatButtons.del = button("strikethrough", "Strikethrough", "⇧⌘X", () => command("strikethrough"));
       formatButtons.code = button("curlybraces", "Inline code", "⌘E", () => command("code"));
       formatBar.append(formatButtons.strong, formatButtons.em, formatButtons.del, formatButtons.code, divider());
-      formatButtons.link = button("link", "Link", "⌘K", () => command("link"));
+      formatButtons.link = button("link", "Link", "⌘K", () => {
+        const selection = readSelection() || lastSelection;
+        if (selection) openLinkEditor(selection, "link", true);
+      });
       formatBar.appendChild(formatButtons.link);
       layer.appendChild(formatBar);
     }
@@ -5765,7 +6001,7 @@
       }));
       linkCard.appendChild(button("pencil", "Edit link", "⌘K", () => {
         const selection = lastSelection;
-        if (selection) openLinkEditor(selection);
+        if (selection) openLinkEditor(selection, "link", true);
       }));
       linkCard.appendChild(button("link.badge.minus", "Remove link", "", () => command("removeLink")));
       layer.appendChild(linkCard);
@@ -5783,11 +6019,8 @@
       linkField.className = "mk-field";
       linkField.spellcheck = false;
       linkField.autocapitalize = "off";
-      const submit = document.createElement("button");
-      submit.type = "submit";
-      submit.className = "mk-push mk-primary";
-      submit.textContent = "Apply";
-      linkEditor.append(linkGlyph, linkField, submit);
+      linkEditor.append(linkGlyph, linkField);
+      // A form with one field submits on Return.
       linkEditor.addEventListener("submit", (event) => {
         event.preventDefault();
         commitLink();
@@ -5809,7 +6042,11 @@
       tableBar.className = "mk-floating mk-toolbar mk-table-bar mk-hidden";
       tableBar.setAttribute("role", "toolbar");
       tableBar.setAttribute("aria-label", "Table");
-      const open = (items) => (element) => tableMenu.open(items(), element.getBoundingClientRect(), { preference: "below", align: "start", animate: true, owner: element });
+      const open = (items) => (element) => {
+        closeMenusFor(tableMenu);
+        tableMenuUnit = tableUnit;
+        tableMenu.open(items(), element.getBoundingClientRect(), { preference: "below", align: "start", animate: true, owner: element });
+      };
       tableBar.appendChild(menuButton("Row", open(() => [
         { id: "rowAbove", label: "Insert row above", icon: "arrow.up.to.line" },
         { id: "rowBelow", label: "Insert row below", icon: "arrow.down.to.line" },
@@ -5854,6 +6091,7 @@
         if (!unit || unit.kind !== "inline" || !SLASH_ROLES.has(unit.role)) return;
         const v = rawToVisible(model, unit, selection.head, "left");
         if (visibleText(model, unit).slice(0, Math.max(0, v - 1)).trim() !== "") return;
+        closeMenusFor(slashMenu);
         slash = { unit: unit.id, from: selection.head - 1, to: selection.head, fromPlus };
         slashMenu.open(SLASH_COMMANDS, caretRect() || ZERO_RECT, { preference: "below" });
         return;
@@ -5886,7 +6124,7 @@
       if (slashMenu.matchCount === 0 && query.length > 3) slashMenu.close("empty");
     }
 
-    function runSlash(id) {
+    function runSlash(id, pointer) {
       if (!slash) return;
       const info = slash;
       slash = null;
@@ -5919,7 +6157,7 @@
         case "page": {
           removeQuery();
           const selection = readSelection();
-          if (selection) openLinkEditor(selection, id);
+          if (selection) openLinkEditor(selection, id, pointer);
           return;
         }
         case "pageLink": {
@@ -5977,7 +6215,10 @@
       const items = titles.map((title) => ({ id: title, label: title, icon: "doc.text" }));
       // Like the slash menu, it stays where it opened while the query grows.
       if (wikilinkMenu.isOpen) wikilinkMenu.setItems(items);
-      else wikilinkMenu.open(items, caretRect() || ZERO_RECT, { preference: "below" });
+      else {
+        closeMenusFor(wikilinkMenu);
+        wikilinkMenu.open(items, caretRect() || ZERO_RECT, { preference: "below" });
+      }
     }
 
     function endWikilink(reason) {
@@ -6028,6 +6269,7 @@
     function openBlockMenu(target, rect, animate) {
       build();
       if (!target) return;
+      closeMenusFor(blockMenu);
       hideFormatBar();
       hide(linkCard);
       blockMenuTarget = target;
@@ -6048,17 +6290,22 @@
       if (!last) items.push({ id: "moveDown", label: "Move down", icon: "arrow.down", hint: "⇧⌘↓" });
       items.push({ separator: true });
       items.push({ id: "delete", label: "Delete", icon: "trash", destructive: true });
-      blockMenu.open(items, rect, { preference: "below", align: "start", animate });
+      // While the column reflows the menu stays beside the block, as it opened.
+      blockMenu.open(items, rect, { preference: "below", align: "start", animate, follow: following(pickedElement, rect) });
     }
 
-    function openTurnIntoForBlock(rect) {
+    /// Turn Into beside the block menu's row: grown from it when the pointer opened it, at once
+    /// from → or ↩.
+    function openTurnIntoForBlock(row, animate) {
       const target = blockTarget(blockMenuTarget);
       if (!target) return;
+      cancelSubmenuClose();
       turnContext = { kind: "block", target };
       const caret = targetCaret(target);
       const unit = caret ? unitAt(model, caret.head, "right") : null;
       const current = blockTypeOf(unit);
-      turnIntoMenu.open(TURN_INTO.map((item) => ({ ...item, checked: item.id === current })), rect, { preference: "right", animate: true });
+      const items = TURN_INTO.map((item) => ({ ...item, checked: item.id === current }));
+      turnIntoMenu.open(items, row.getBoundingClientRect(), { preference: "right", animate, follow: () => (row.isConnected ? row.getBoundingClientRect() : null) });
     }
 
     function endBlockMenu(reason) {
@@ -6115,6 +6362,7 @@
       const unitElement = callout && callout.querySelector("[data-mk-u]");
       const unit = unitForElement(unitElement);
       if (!unit || !calloutOf(unit)) return;
+      closeMenusFor(calloutMenu);
       calloutUnit = unit;
       const current = calloutOf(unit).callout.kind;
       calloutMenu.open(CALLOUT_KINDS.map((item) => ({ ...item, checked: item.id === current })), titleElement.getBoundingClientRect(), { preference: "below", align: "start", animate: true, owner: titleElement });
@@ -6128,7 +6376,7 @@
       if (!selection) {
         hideFormatBar();
         hide(linkCard);
-        hide(tableBar);
+        updateTableBar(null);
         return;
       }
       updateSlash();
@@ -6139,7 +6387,7 @@
         updateLinkCard(selection, state);
       } else {
         hide(linkCard);
-        if (formatBar.classList.contains("mk-visible")) refreshFormatBar(report, unit);
+        if (formatBar.classList.contains("mk-visible")) refreshFormatBar(report);
         else if (!mouseSelecting && !hostSelected) showFormatBarIfNeeded(false);
       }
     }
@@ -6164,12 +6412,14 @@
       hideFormatBar();
       if (blockMenu && blockMenu.isOpen) blockMenu.close("outside");
       if (calloutMenu && calloutMenu.isOpen) calloutMenu.close("outside");
+      if (tableMenu && tableMenu.isOpen) tableMenu.close("outside");
     }, true);
     document.addEventListener("mouseup", () => {
       mouseSelecting = false;
     }, true);
 
-    function showFormatBarIfNeeded(immediate) {
+    /// Shows the format bar over a selection; `animate` when the pointer made the selection.
+    function showFormatBarIfNeeded(animate) {
       build();
       if (!active || formatBarSuppressed || slash || wikilink || blockMenu.isOpen || Handles.dragging) return;
       const selection = readSelection();
@@ -6180,9 +6430,9 @@
       if (first.kind === "code" || first.kind === "raw" || last.kind === "code") return;
       const rect = selectionRect();
       if (!rect) return;
-      refreshFormatBar(lastState, first);
+      refreshFormatBar(lastState);
       place(formatBar, rect, "above", "center");
-      show(formatBar, immediate === true);
+      show(formatBar, animate === true);
     }
 
     function refreshFormatBar(report) {
@@ -6220,8 +6470,8 @@
       const url = linkCard.querySelector(".mk-link-url");
       url.textContent = state.link.href || "";
       url.title = state.link.href || "";
-      const anchor = linkAnchorElement() || element;
-      place(linkCard, anchor.getBoundingClientRect(), "below");
+      linkCardAnchor = linkAnchorElement() || element;
+      place(linkCard, linkCardAnchor.getBoundingClientRect(), "below");
       show(linkCard);
     }
 
@@ -6239,12 +6489,14 @@
     };
 
     /// One field over the text: a link's address (⌘K), a web bookmark's address, or the name of a
-    /// new page, which the app creates as a Markdown file next to this one and links here.
-    function openLinkEditor(selection, mode = "link") {
+    /// new page, which the app creates as a Markdown file next to this one and links here. `animate`
+    /// when the pointer opened it.
+    function openLinkEditor(selection, mode = "link", animate = false) {
       build();
+      closeMenusFor(null);
       const settings = EDITOR_MODES[mode] || EDITOR_MODES.link;
       const state = inlineState(model, selection);
-      linkEditing = { selection, state, mode };
+      linkEditing = { selection, state, mode, follow: null };
       linkField.value = mode === "link" && state.link && state.link.kind === "link" ? state.link.href : "";
       linkField.placeholder = settings.placeholder;
       linkField.type = settings.type;
@@ -6254,9 +6506,13 @@
       linkGlyph.appendChild(icon(settings.glyph));
       hideFormatBar();
       hide(linkCard);
-      const rect = selection.from === selection.to ? caretRect() : selectionRect();
+      const collapsed = selection.from === selection.to;
+      const rect = collapsed ? caretRect() : selectionRect();
+      // The field takes the focus, and the text's selection with it: the editor follows the unit.
+      const unit = unitAt(model, selection.from, collapsed ? "left" : "right");
+      linkEditing.follow = following(unit && unit.el, rect);
       place(linkEditor, rect || ZERO_RECT, "below");
-      show(linkEditor, mode === "link" && selection.from !== selection.to);
+      show(linkEditor, animate);
       noteMenuChange();
       window.setTimeout(() => {
         linkField.focus();
@@ -6269,7 +6525,6 @@
       const value = linkField.value.trim();
       closeLinkEditor(true);
       if (!editing) return;
-      setSelection(editing.selection.anchor, editing.selection.head, { reveal: false });
       if (editing.mode === "page") {
         if (!value) return;
         const selection = readSelection() || editing.selection;
@@ -6305,16 +6560,34 @@
 
     // Tables ----------------------------------------------------------------
 
+    /// The table bar follows the caret's table. It is measured only when the caret enters another
+    /// table (and on scroll and resize), never on each keystroke in a cell; its menu closes with it.
     function updateTableBar(unit) {
       if (!unit || unit.role !== "cell" || !unit.top.el) {
         tableUnit = null;
+        tableStart = -1;
+        tableMenu.close("table");
         hide(tableBar);
         return;
       }
       tableUnit = unit;
-      const rect = unit.top.el.getBoundingClientRect();
-      place(tableBar, { left: rect.left, right: rect.right, top: rect.top, bottom: rect.top, width: rect.width, height: 0 }, "above", "start");
+      if (bStart(unit.top) === tableStart && tableBar.classList.contains("mk-visible")) return;
+      tableStart = bStart(unit.top);
+      tableMenu.close("table");
+      placeTableBar();
       show(tableBar);
+    }
+
+    /// Above the table, below it where there is no room, and on screen while any of the table is.
+    function placeTableBar() {
+      const table = tableUnit && tableUnit.top.el;
+      if (!table || !table.isConnected) return;
+      const rect = table.getBoundingClientRect();
+      place(tableBar, rect, "above", "start");
+      const viewportHeight = window.innerHeight;
+      if (rect.bottom <= 0 || rect.top >= viewportHeight) return;
+      const limit = Math.max(0, viewportHeight - tableBar.offsetHeight - 8 * zoom());
+      if (parseFloat(tableBar.style.top) - window.scrollY > limit) tableBar.style.top = `${Math.round(limit + window.scrollY)}px`;
     }
 
     // Code language ---------------------------------------------------------
@@ -6325,6 +6598,7 @@
       const unitElement = block && block.querySelector("[data-mk-u]");
       const unit = unitForElement(unitElement);
       if (!unit) return;
+      closeMenusFor(languageMenu);
       languageTarget = unit;
       const current = unit.block.fence.language;
       const items = LANGUAGES.map(([id, label]) => ({ id, label, checked: id === current, keywords: [id] }));
@@ -6397,18 +6671,38 @@
       blockMenu.close("blur");
       languageMenu.close("blur");
       closeLinkEditor(false);
-      hide(tableBar);
+      updateTableBar(null);
     }
 
+    /// Keeps every open surface beside its anchor as the page scrolls or the column reflows (a
+    /// resize, a side pane moving), once a frame however often it is asked; a timer stands in where
+    /// the page gets no frames.
+    let repositionPending = false;
     function reposition() {
-      if (!slashMenu) return;
-      if (slashMenu.isOpen) slashMenu.reposition(caretRect());
-      if (wikilinkMenu.isOpen) wikilinkMenu.reposition(caretRect());
-      if (formatBar.classList.contains("mk-visible")) {
+      if (!slashMenu || repositionPending) return;
+      repositionPending = true;
+      window.requestAnimationFrame(repositionNow);
+      window.setTimeout(repositionNow, 50);
+    }
+
+    function repositionNow() {
+      if (!repositionPending) return;
+      repositionPending = false;
+      const visible = (element) => element.classList.contains("mk-visible");
+      if (visible(formatBar)) {
         const rect = selectionRect();
         if (rect) place(formatBar, rect, "above", "center");
       }
-      if (tableUnit && tableBar.classList.contains("mk-visible")) updateTableBar(tableUnit);
+      if (visible(linkCard) && linkCardAnchor && linkCardAnchor.isConnected) place(linkCard, linkCardAnchor.getBoundingClientRect(), "below");
+      if (visible(linkEditor) && linkEditing && linkEditing.follow) {
+        const rect = linkEditing.follow();
+        if (rect) place(linkEditor, rect, "below");
+      }
+      if (tableUnit && visible(tableBar)) placeTableBar();
+      if (slashMenu.isOpen) slashMenu.reposition(caretRect());
+      if (wikilinkMenu.isOpen) wikilinkMenu.reposition(caretRect());
+      // Turn Into last: it sits beside the block menu's row, or below the format bar's selector.
+      for (const menu of [blockMenu, calloutMenu, languageMenu, tableMenu, turnIntoMenu]) menu.reposition();
     }
 
     return {
@@ -6653,14 +6947,22 @@
         rendered: false
       };
       review = target;
-      if (!drawReview(target)) {
-        review = null;
+      presented(target, drawReview(target));
+    }
+
+    /// After drawing a review or a completion: one drawn takes ⇥ once it has reached the screen; one
+    /// that could not be drawn goes, and the app hears so.
+    function presented(target, drawn) {
+      if (!drawn) {
+        if (review === target) review = null;
+        if (ghost === target) ghost = null;
         report("unrendered", { serial: target.serial });
-        return;
+        return false;
       }
       afterPaint(() => {
-        if (review === target) target.rendered = true;
+        if (target === review || target === ghost) target.rendered = true;
       });
+      return true;
     }
 
     /// Draws the corrected sentence over the original: each changed word hidden and its
@@ -6745,19 +7047,8 @@
         rendered: false
       };
       ghost = target;
-      if (!drawGhost(target)) {
-        ghost = null;
-        report("unrendered", { serial: target.serial });
-        return;
-      }
       // A remainder the user already saw takes Tab at once, as in Source.
-      if (message.rendered === true) {
-        target.rendered = true;
-        return;
-      }
-      afterPaint(() => {
-        if (ghost === target) target.rendered = true;
-      });
+      if (presented(target, drawGhost(target)) && message.rendered === true) target.rendered = true;
     }
 
     function drawGhost(target) {
@@ -6930,10 +7221,7 @@
         return;
       }
       if (scope === "completion") {
-        if (!ghost) return;
-        const current = ghost;
-        ghost = null;
-        undecorate([current.element]);
+        dropGhost();
         return;
       }
       dropPresentation();
@@ -6979,11 +7267,14 @@
         review = null;
         undecorate(current.decorations);
       }
-      if (ghost) {
-        const current = ghost;
-        ghost = null;
-        undecorate([current.element]);
-      }
+      dropGhost();
+    }
+
+    function dropGhost() {
+      if (!ghost) return;
+      const current = ghost;
+      ghost = null;
+      undecorate([current.element]);
     }
 
     function cancel(scope) {
@@ -7097,11 +7388,7 @@
       const pending = carry;
       carry = null;
       revertRequest = null;
-      if (settle) {
-        const current = settle;
-        settle = null;
-        undecorate(current.decorations);
-      }
+      clearSettle();
       if (pending && pending.kind === "ghost" && ghost && ghost.serial === pending.serial
         && op.from === pending.at && op.to === pending.at && op.insert === pending.text) {
         const target = ghost;
@@ -7111,14 +7398,7 @@
         target.v = version;
         target.text = pending.remainder;
         target.rendered = false;
-        if (!drawGhost(target)) {
-          ghost = null;
-          report("unrendered", { serial: target.serial });
-          return;
-        }
-        afterPaint(() => {
-          if (ghost === target) target.rendered = true;
-        });
+        presented(target, drawGhost(target));
         return;
       }
       if (pending && pending.kind === "review" && review && review.serial === pending.serial
@@ -7129,14 +7409,7 @@
         target.v = version;
         target.caret = pending.at + 1;
         target.rendered = false;
-        if (!drawReview(target)) {
-          review = null;
-          report("unrendered", { serial: target.serial });
-          return;
-        }
-        afterPaint(() => {
-          if (review === target) target.rendered = true;
-        });
+        presented(target, drawReview(target));
         return;
       }
       dropPresentation();
