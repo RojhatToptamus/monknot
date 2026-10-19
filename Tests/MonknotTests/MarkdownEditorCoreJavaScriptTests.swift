@@ -820,6 +820,38 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
     check("text into a code block", "a\\*b `c\\*`‸", block("code"), "```\na*b `c\\*`‸\n```");
     check("code block into text", "```\n\\d+\\.\n*a* 1. x\n- y‸\n```", block("paragraph"), "‸\\\\d+\\\\.\n\\*a\\* 1. x\n\\- y");
     check("code block into a heading", "```\n# a_b‸\n```", block("heading1"), "# ‸\\" + "# a\\_b");
+    check("remove code holding a bullet", "`«* x»`", style("code"), "«\\* x»");
+    check("remove code holding a definition", "`«[x]: y»`", style("code"), "«\\[x\\]: y»");
+    // Text an edit moves to the start of a line keeps reading as text: a backslash goes before what
+    // would start a block there. Text that stays after a marker, or was a block already, stays.
+    check("item to text escapes a number", "- a\n- ‸2020. A year\n- c", block("paragraph"), "- a\n\n‸2020\\. A year\n\n- c");
+    check("items to text escape each", "- «- a\n- * b»", block("paragraph"), "«\\- a\n\n\\* b»");
+    check("item to text escapes a fence", "- ‸```js\n- b", block("paragraph"), "‸\\```js\n\n- b");
+    check("heading to text escapes a heading marker", "## ‸# x", block("paragraph"), "‸\\" + "# x");
+    check("quoted heading to text escapes a number", "> ## ‸1. x", block("paragraph"), "> ‸1\\. x");
+    check("item to quote escapes a heading marker", "- ‸# x", block("quote"), "> ‸\\" + "# x");
+    check("heading to callout escapes a list marker", "# ‸- x", (m, s) => E.planWrapCallout(m, s), "> [!NOTE]\n> \\- x‸");
+    check("heading to a bullet keeps its text", "## ‸- x", block("bullet"), "- ‸- x");
+    check("backspace item escapes a number", "- a\n- ‸2020. A year\n- c", backspaceAtStart, "- a\n\n‸2020\\. A year\n\n- c");
+    check("backspace item escapes only its first line", "- ‸- x\n  more", backspaceAtStart, "‸\\- x\n  more");
+    check("backspace task escapes a heading marker", "- [ ] ‸# x", backspaceAtStart, "‸\\" + "# x");
+    check("backspace item in a quote escapes a divider", "> - a\n> - ‸***", backspaceAtStart, "> - a\n>\n> ‸\\***");
+    check("backspace nested item stays an item", "- a\n  - ‸# b", backspaceAtStart, "- a\n- ‸# b");
+    check("backspace heading escapes a quote marker", "a\n# ‸> b #\nc", backspaceAtStart, "a\n\n‸\\> b\n\nc");
+    check("backspace heading escapes a definition", "# ‸[a]: https://x.org", backspaceAtStart, "‸[a]\\: https://x.org");
+    check("backspace toggle title escapes a number", "<details>\n<summary>‸1. x</summary>\n\nBody\n\n</details>", backspaceAtStart, "‸1\\. x\n\nBody");
+    // A quote reads its lines as blocks as the page around it does, but never as definitions.
+    check("unwrap quote escapes a definition", "> a\n> [x]: https://x.org‸", unquote, "a\n[x]\\: https://x.org‸");
+    check("unwrap quote keeps its blocks", "> # T‸\n>\n> 2020. x\n>\n> ```\n> [x]: y\n> ```", unquote, "# T‸\n\n2020. x\n\n```\n[x]: y\n```");
+    check("backspace quote escapes a footnote", "> ‸[^1]: note", backspaceAtStart, "‸[^1]\\: note");
+    // Whatever an item holds reads as the same text once ⌫ takes its marker away.
+    for (const text of ["2020. A year", "1) x", "12345678901. x", "- x", "+ x", "* x", "# x", "> x", "***", "___", "```js", "~~~", "[TOC]", "[a]: b", "[^1]: note"]) {
+      const model = E.createModel("- " + text);
+      const op = E.planBackspaceAtStart(model, E.allUnits(model)[0]);
+      E.applyPatch(model, op.from, op.to, op.insert);
+      const html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      expectEqual("item text reads as text: " + text, window.MonknotMarkdown.renderMarkdown(model.source), "<p data-source-line=\"1\">" + html + "</p>");
+    }
     return JSON.stringify({ passed, failures });
     })()
     """#
