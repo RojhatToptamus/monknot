@@ -1611,6 +1611,7 @@
     parseDocument,
     parseBlockList,
     parseList,
+    listEnd,
     streamReader,
     renderBlock,
     renderListItem,
@@ -1663,11 +1664,13 @@
   let heldScrollTop = -1;
   // Every [data-source-line] element of the read-only page, in document order; rebuilt after a render.
   let lineElements = null;
-  // An edit that replaces the block holding the anchor records a new one (editor.js swaps the
-  // elements of the blocks and list items an edit changed).
+  // An edit that replaces the element holding the anchor records a new one. editor.js swaps the
+  // elements of the blocks and list items an edit changed at any depth, and replaces what a kept
+  // <li> holds, so the whole subtree is watched; the check is the same whatever changed.
   const blockObserver = typeof MutationObserver === "function"
     ? new MutationObserver(() => {
-      if (readingAnchor && readingAnchor.node && !readingAnchor.node.isConnected) scheduleReadingAnchor();
+      const held = readingAnchor && (readingAnchor.node || readingAnchor.element);
+      if (held && !held.isConnected) scheduleReadingAnchor();
     })
     : null;
 
@@ -1688,7 +1691,7 @@
     window.addEventListener("scroll", readerScrolled, { passive: true });
     window.addEventListener("resize", keepReadingPosition);
   }
-  blockObserver?.observe(target, { childList: true });
+  blockObserver?.observe(target, { childList: true, subtree: true });
 
   function editor() {
     const instance = window.MonknotEditor;

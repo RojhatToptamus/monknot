@@ -717,9 +717,8 @@
     }
     const added = parsed.list.items;
     const replaceTo = resync >= 0 ? resync : items.length;
-    const subtreeEnd = (item) => (item.children.length ? Math.max(item.end, item.children[item.children.length - 1].end) : item.end);
     const sameItem = (old, item, shift) => nodeStart(old) + shift === item.view.start
-      && edit.oldSource.slice(nodeStart(old), nodeEnd(old)) === edit.source.slice(item.view.start, subtreeEnd(item));
+      && edit.oldSource.slice(nodeStart(old), nodeEnd(old)) === edit.source.slice(item.view.start, MD.listEnd(item));
     let keepFront = 0;
     while (keepFront < added.length
       && restart + keepFront < replaceTo
@@ -3852,6 +3851,8 @@
       fullRender();
       return;
     }
+    // Asked before a kept <li> takes the new item's content, which the old item's element would show.
+    const footnotes = removed.some(holdsFootnotes) || inserted.some(holdsFootnotes);
     const template = document.createElement("template");
     template.innerHTML = inserted.map((node) => node.html).join("");
     const elements = Array.from(template.content.children);
@@ -3867,6 +3868,7 @@
       for (const attribute of Array.from(replacement.attributes)) element.setAttribute(attribute.name, attribute.value);
       element.replaceChildren(...replacement.childNodes);
       replacement.remove();
+      removed[position].el = null;
       bindElements(inserted[position], element);
     }
     for (let position = kept; position < removed.length; position += 1) removed[position].el?.remove();
@@ -3875,7 +3877,7 @@
     inserted.forEach(bindUnits);
     if (container.type === "list") host.classList.toggle("contains-task-list", container.items.some((item) => item.task));
     Handles.hide();
-    if (removed.some(holdsFootnotes) || inserted.some(holdsFootnotes)) refreshFootnotes();
+    if (footnotes) refreshFootnotes();
     markEmptyDocument();
   }
 
@@ -5929,15 +5931,15 @@
     return model.blocks[target.index] === target.block ? target : null;
   }
 
-  /// The <li> of `item`, a list item in the top-level block `top`.
-  function itemElement(top, item) {
-    const unit = unitsOf(top).find((candidate) => candidate.role === "item" && candidate.item === item);
-    return unit && unit.el ? unit.el.closest("li") : null;
+  /// The <li> of `item`, or null once an edit has replaced the item (its <li> is gone, or kept for
+  /// the item that took its place).
+  function itemElement(item) {
+    return item.el && item.el.isConnected ? item.el : null;
   }
 
   function targetElement(target) {
     if (!target) return null;
-    return target.kind === "item" ? itemElement(target.top, target.item) : target.block.el || null;
+    return target.kind === "item" ? itemElement(target.item) : target.block.el || null;
   }
 
   function targetCaret(target) {
@@ -5949,7 +5951,7 @@
   function flashBlockAt(position) {
     const unit = unitAt(model, position, "right");
     if (!unit) return;
-    const element = unit.role === "item" ? itemElement(unit.top, unit.item) : unit.top.el;
+    const element = unit.role === "item" ? itemElement(unit.item) : unit.top.el;
     if (!element) return;
     element.classList.remove("mk-block-moved");
     void element.offsetWidth;
@@ -6305,7 +6307,7 @@
       const contentLeft = content.left + (parseFloat(style.paddingLeft) || 0);
       const contentRight = content.right - (parseFloat(style.paddingRight) || 0);
       if (target.kind === "item") {
-        const elements = target.list.items.map((item) => itemElement(target.top, item));
+        const elements = target.list.items.map(itemElement);
         if (elements.some((li) => !li)) return gaps;
         const rects = elements.map((li) => li.getBoundingClientRect());
         const list = elements[0].parentElement;
