@@ -778,6 +778,26 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         }
     }
 
+    /// Deleting the last reference to a note from a list item takes the note off the list under the
+    /// document, though the item keeps its <li> and only what it holds is replaced.
+    func testDeletingTheLastReferenceInAListItemTakesItsNoteAway() async throws {
+        let markdown = "- a [^n]\n  - b\n\n[^n]: note\n"
+        let fixture = try await makeFixture(markdown: markdown)
+        let notes = "document.querySelectorAll('#content section.footnotes li').length"
+        let before = try await fixture.evaluate(notes) as? Int
+        XCTAssertEqual(before, 1)
+
+        try await fixture.setSelection((markdown as NSString).range(of: "b\n").location + 1)
+        fixture.type("x")
+        let reference = (markdown as NSString).range(of: "[^n]")
+        try await fixture.setSelection(reference.location, reference.location + reference.length)
+        fixture.press(.backspace)
+        let edited = await waitUntil { fixture.store.documentText == "- a \n  - bx\n\n[^n]: note\n" }
+        XCTAssertTrue(edited, "The reference went: \(fixture.store.documentText.debugDescription)")
+        let after = try await fixture.evaluate(notes) as? Int
+        XCTAssertEqual(after, 0, "No note is listed once nothing refers to it")
+    }
+
     /// Random typing, returns and deletions inside toggles, lists, quotes and callouts: after each
     /// one the page is what a fresh render of the new Markdown draws.
     func testEditsInsideContainersLeaveThePageAsAFreshRenderDrawsIt() async throws {
@@ -787,7 +807,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         <details open>
         <summary>Toggle</summary>
 
-        A paragraph in the toggle with **bold**.
+        A paragraph in the toggle with **bold** and a note.[^a]
 
         - An item
         - [ ] A task
@@ -798,7 +818,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         </details>
 
         - Top item one
-        - Top item two
+        - Top item two[^b]
           wrapped onto a second line
           1. Numbered under two
           2. Numbered again
@@ -809,7 +829,7 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         >
         > - A list in the callout
 
-        > A plain quote,
+        > A plain quote,[^a]
         > on two lines.
         >
         > <details>
@@ -820,6 +840,10 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         > </details>
 
         Closing paragraph.
+
+        [^a]: The first note.
+
+        [^b]: The second note.
 
         """
         let fixture = try await makeFixture(markdown: markdown)
@@ -869,8 +893,11 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
     }
 
     /// Edits at random places, through the page's own input handling; after each the page's markup,
-    /// read as a tree of elements, must be a fresh render's, aside from unit ids, line numbers,
-    /// toggles' open state and the page's own marks (the current line, an empty document).
+    /// read as a tree of elements, must be a fresh render's, aside from unit ids, toggles' open state
+    /// and the page's own marks (the current line, an empty document). The notes under the document
+    /// must be a read-only render's, and the line the page maps each top-level block to a fresh
+    /// render's: the page reads lines from the model, not from the elements' `data-source-line`,
+    /// which blocks after an edit keep as they were.
     private static let containerEditFuzz = #"""
     (() => {
       const root = document.getElementById('content');
@@ -939,6 +966,21 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         }
         const ids = [...root.querySelectorAll("[data-mk-u]")].map((element) => element.getAttribute("data-mk-u"));
         if (new Set(ids).size !== ids.length) return "step " + step + ": a unit id is on the page twice";
+        const notesTemplate = document.createElement("template");
+        notesTemplate.innerHTML = window.MonknotMarkdown.renderMarkdown(after);
+        const notes = (section) => (section ? canonical(section) : "none");
+        const pageNotes = notes(root.querySelector(":scope > section.footnotes"));
+        const freshNotes = notes(notesTemplate.content.querySelector("section.footnotes"));
+        if (pageNotes !== freshNotes) return "step " + step + " (" + event.inputType + " at " + position + ") notes in " + JSON.stringify(after) + ": page " + pageNotes + " | fresh " + freshNotes;
+        const lineTemplate = document.createElement("template");
+        lineTemplate.innerHTML = E.createModel(after).blocks.map((block) => block.html).join("");
+        const drawn = (container) => [...container.children].filter((element) => !element.classList.contains("mk-empty") && !element.classList.contains("footnotes"));
+        const mapped = window.MonknotEditor.sourceLineElements();
+        const lines = mapped.map((entry) => entry.line).join(",");
+        const freshLines = drawn(lineTemplate.content).map((element) => element.getAttribute("data-source-line")).join(",");
+        if (lines !== freshLines) return "step " + step + " (" + event.inputType + " at " + position + ") lines in " + JSON.stringify(after) + ": page " + lines + " | fresh " + freshLines;
+        const elements = drawn(root);
+        if (mapped.length !== elements.length || mapped.some((entry, index) => entry.element !== elements[index])) return "step " + step + ": the line map's elements are not the page's blocks";
       }
       return inside > steps / 3 ? "ok" : "only " + inside + " of " + steps + " edits were inside a container";
     })()

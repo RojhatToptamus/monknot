@@ -135,6 +135,42 @@ final class MarkdownPreviewPageTests: XCTestCase {
         }
     }
 
+    /// An edit inside a long list replaces only what the item's <li> holds, deep in the page; the line
+    /// at the top, in that item, still holds through the next width change.
+    func testTheLineAtTheTopHoldsAfterAnEditInsideAListItem() async throws {
+        let items = (1...200).map { "- Item \($0): a sentence long enough to wrap once the column narrows, and a few words more." }
+        let webView = try await loadPage("# List\n\n" + items.joined(separator: "\n"), width: 900, height: 400, editable: true)
+        _ = try await webView.evaluateJavaScript("""
+        (() => {
+          const item = document.querySelectorAll('#content li')[119];
+          window.__item = item;
+          window.scrollTo(0, item.getBoundingClientRect().top + window.scrollY + 5);
+          window.dispatchEvent(new Event('scroll'));
+          return true;
+        })()
+        """)
+        // The anchor is recorded from the scroll, then the edit replaces the text it was in.
+        try await Task.sleep(nanoseconds: 300_000_000)
+        _ = try await webView.evaluateJavaScript("""
+        (() => {
+          const start = window.MonknotEditor.source().indexOf('Item 120:');
+          window.MonknotEditor.applyRemote({ base: window.MonknotEditor.version(), from: start, to: start, insert: 'Edited. ', reason: 'external' });
+          return true;
+        })()
+        """)
+        let kept = try await webView.evaluateJavaScript("window.__item.isConnected && window.__item.textContent.startsWith('Edited. Item 120')") as? Bool
+        XCTAssertEqual(kept, true, "The edit kept the item's <li> and replaced what it holds")
+        try await Task.sleep(nanoseconds: 1_200_000_000)
+        let itemTop = "window.__item.getBoundingClientRect().top"
+        let top = try await number(webView, itemTop)
+        XCTAssertEqual(top, -5, accuracy: 2)
+        for width: CGFloat in [480, 900] {
+            try await resize(webView, to: width)
+            let topAfterResize = try await number(webView, itemTop)
+            XCTAssertEqual(topAfterResize, top, accuracy: 2, "The edited item's line stays at the top at \(width)")
+        }
+    }
+
     /// An edit replaces the block that holds the anchor (editor.js swaps whole blocks); the line at the
     /// top still holds through the next width change.
     func testTheLineAtTheTopHoldsAfterAnEditReplacesItsBlock() async throws {
