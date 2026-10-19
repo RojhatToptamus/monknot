@@ -203,10 +203,13 @@ Shorter and more specific is preferable to polished but meaningless copy.
   item after it. A container's own line lists (`body`, `lines`, `inner`) go stale after edits inside
   it, so they are read from the source (`nodeLines`). A footnote's text is updated in place, and only
   a changed link reference or footnote key renders the whole document again.
-- `renderer.js` reads CommonMark backslash escapes: `\*` shows `*`, and its backslash is markup that
-  typing stays outside of and that is deleted, styled and copied with its character. HTML pasted from
-  other apps (`htmlToMarkdown`) escapes text that would otherwise read as Markdown, such as
-  `2020\. A year` or `snake\_case`.
+- `renderer.js` reads CommonMark backslash escapes (`\*` shows `*`); an escape's backslash is markup
+  that typing stays outside of, and that is deleted, styled and copied with its character. `editor.js`
+  `keepBackslashes` keeps a shown backslash shown wherever an edit would put punctuation after it,
+  except in code. `htmlToMarkdown` (HTML pasted from other apps), Remove Inline Code and code-to-text
+  escape text that would otherwise read as Markdown, such as `2020\. A year` or `snake\_case`.
+- The read-only page watches `#content`'s subtree for the element holding its reading anchor, since an
+  edit inside a container replaces nested elements or what a kept `<li>` holds.
 - The page is the single writer while Preview is editable. It posts each patch with a version number
   to `MarkdownPreviewView.Coordinator` (`monknotEditor` message), which mirrors the page's text,
   moves local edits past app patches the page has not applied yet, applies the patch through
