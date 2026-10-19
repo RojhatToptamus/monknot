@@ -24,8 +24,8 @@ struct EditorFlowHold: OptionSet {
     /// Flow leaves the text alone and keeps its state: Writing Tools have the text (Source), or
     /// no page is shown (Preview). Nothing is scheduled, checked or scanned.
     static let suspended = EditorFlowHold(rawValue: 1 << 0)
-    /// Flow runs nothing where the caret is, and a check asked for ends what was running: a
-    /// Preview table cell, or a menu open over the page.
+    /// Flow runs nothing where the caret is: a Preview table cell, or a menu open over the page. A
+    /// completion stops; a check already running is dropped as stale when it returns.
     static let paused = EditorFlowHold(rawValue: 1 << 1)
     /// The editor does not have keyboard focus.
     static let unfocused = EditorFlowHold(rawValue: 1 << 2)
@@ -1023,8 +1023,9 @@ final class EditorFlowPipeline {
     }
 
     /// Asks the on-device model for a completion after the pause, once the protected ranges are
-    /// known; `reusingToken` resumes a request that waited for them.
-    func scheduleProseCompletion(delayNanoseconds: UInt64? = nil, reusingToken: Int? = nil) {
+    /// known; `reusingToken` resumes a request that waited for them. False when nothing was asked.
+    @discardableResult
+    func scheduleProseCompletion(delayNanoseconds: UInt64? = nil, reusingToken: Int? = nil) -> Bool {
         guard onDeviceProseCompletionIsAvailable,
               !proseCompletionCooldown.applies(),
               gate.allowsAutocomplete,
@@ -1036,11 +1037,11 @@ final class EditorFlowPipeline {
                 selectedRange: selection,
                 protectedRanges: []
               ) != nil
-        else { return }
+        else { return false }
 
         let token: Int
         if let reusingToken {
-            guard reusingToken == proseRequestToken else { return }
+            guard reusingToken == proseRequestToken else { return false }
             token = reusingToken
         } else {
             proseRequestToken &+= 1
@@ -1087,6 +1088,7 @@ final class EditorFlowPipeline {
             self.receiveProseCompletion(outcome, snapshot: prepared.snapshot, token: token)
         }
         host.flowAvailabilityDidChange()
+        return true
     }
 
     private func deferProseCompletionUntilProtectedRanges(token: Int) {
@@ -1123,7 +1125,14 @@ final class EditorFlowPipeline {
             attemptEndedAfterRefresh(.autocomplete, .protected, token: retry.token)
             return
         }
-        scheduleProseCompletion(delayNanoseconds: 0, reusingToken: retry.token)
+        guard scheduleProseCompletion(delayNanoseconds: 0, reusingToken: retry.token) else {
+            // Nothing asked the model again (it went away, a cooldown or a hold began), so the
+            // attempt that waited for the ranges ends here instead of staying open.
+            proseCompletionTask?.cancel()
+            proseCompletionTask = nil
+            attemptEndedAfterRefresh(.autocomplete, .stale, token: retry.token)
+            return
+        }
     }
 
     private func prepareProseCompletion(token: Int) -> ProseCompletionPreparation {

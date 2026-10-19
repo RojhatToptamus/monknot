@@ -325,6 +325,8 @@ li > ol {
 .task-list-item > input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;
+  /* A form control keeps WebKit's own small font, so its em would not follow the text or zoom. */
+  font-size: inherit;
   position: absolute;
   /* Centred on the line, then 0.06em lower: SF's x-height sits below the line box's middle. */
   top: calc((1.6em - 1em) / 2 + 0.06em);
@@ -388,7 +390,7 @@ details > summary::before {
   height: 0;
   border-top: 0.3em solid transparent;
   border-bottom: 0.3em solid transparent;
-  border-left: 0.44em solid color-mix(in srgb, var(--fg) 55%, transparent);
+  border-left: 0.44em solid var(--mk-ink3);
 }
 
 details[open] > summary::before {

@@ -246,7 +246,7 @@ Shorter and more specific is preferable to polished but meaningless copy.
   `FlowSentenceRepairService`, `FlowProseCompletionService`, cooldowns and suppression) on the
   coordinator's mirror of the source and the caret's source offset, and every repair decision, the
   timings (`EditorFlowTiming`) and the model cooldowns (`EditorFlowModelCooldown`) come from
-  `EditorFlowRepairPolicy.swift`; only the presentation is per editor. Preview scans for protected Markdown
+  `EditorFlowRepairPolicy.swift`; only the presentation and taking a fix or completion are per editor. Preview scans for protected Markdown
   only while a Flow setting is on, and its context menu's Ignore Spelling also reaches Flow's spell
   document tag. The page reports `focus`, its version and focus with each `selection`, and `flow` messages
   (accept, dismiss, cancel, unrendered, declined, settled, revert); the coordinator answers with
@@ -379,9 +379,11 @@ Before adding custom parsing, indexing, PDF handling, file watching, or renderin
 
 ## UI Conventions
 
-- `design.md` is the authoritative design-language and interface-metrics guide. Read it before
-  implementing, refining, or reviewing material UI changes, then compare the rendered app with
-  the guide and reconcile conflicts explicitly.
+- `design.md` is the authoritative design-language and interface-metrics guide. Before any UI work,
+  read its opening sections (how to use it, the bar, the workflow, the generic patterns that do not
+  belong) and the sections its table names for what you are touching; verify the rendered app the
+  way its workflow says (light and dark, zoom 0.8 and 2.0, frame-by-frame for motion), and update it
+  in the same change when a rule changes.
 - Preserve the current native outline rail and peek UI unless an explicit product decision
   replaces it.
 

@@ -1973,6 +1973,10 @@ private final class VisualEditorHarnessModel: ObservableObject {
 
 /// The editor pane as `ContentView` mounts it, in Preview with no split.
 private struct VisualEditorHarness: View {
+    /// `MONKNOT_EDITOR_SNAPSHOT_ZOOM` takes the editor and its snapshots at that workspace zoom.
+    static let zoomScale = ProcessInfo.processInfo.environment["MONKNOT_EDITOR_SNAPSHOT_ZOOM"]
+        .flatMap(Double.init).map(WorkspaceZoomPolicy.clamp) ?? 1
+
     @ObservedObject var model: VisualEditorHarnessModel
     @State private var isSplitViewEnabled = false
     @State private var sourceLocation: MarkdownSourceLocation?
@@ -1987,7 +1991,7 @@ private struct VisualEditorHarness: View {
             editorMode: $model.editorMode,
             isSplitViewEnabled: $isSplitViewEnabled,
             theme: model.theme,
-            zoomScale: 1,
+            zoomScale: Self.zoomScale,
             codeFontSize: 13,
             contentWidthPercent: 88,
             showsDocumentOutline: false,

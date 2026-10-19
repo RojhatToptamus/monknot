@@ -1,17 +1,112 @@
 # Monknot — design language and UI rules
 
-Authoritative reference for the Monknot macOS app (markdown, PDF, image and code editor, with a
-video and audio player). Read this before implementing, refining or proposing any interface work.
+Authoritative reference for the Monknot macOS app: a Markdown, PDF, image and code editor with a
+video and audio player and a terminal. Every interface change follows it, and a change that needs a
+rule this document does not have adds the rule here first, with its numbers and its reason.
 
 Monknot is a **native SwiftUI/AppKit app**. Glyphs are **SF Symbols**. Type is **SF Pro Text** for
 UI and **SF Mono** for code. Everything below is prescriptive: if a choice is not derivable from
 these rules, it is not a Monknot choice.
 
-The character to aim for is **calm, quiet, native macOS chrome** in the manner of Linear, Codex and
-Claude: one chrome tone frames the window, and the document and terminal sit on rounded cards set
-into it. Controls are fills, never outlines. Colour is scarce. Nothing moves that does not have to.
-The Preview editor's surfaces (§10.10) and the window's chrome are one system: the same fills, row
-geometry, radii and ink.
+## How to use this document
+
+Before any interface work, read **The bar**, **Workflow** and **Generic patterns** below, then the
+sections for what you are touching:
+
+| Touching | Read |
+|---|---|
+| a colour, a fill, a theme | §1, §2, §3, §14 |
+| a control: button, tab, row, field, menu, pop-up, segmented control | §0, §4, §5, §6, §7, §8 |
+| anything that changes size with zoom | §9 |
+| the window, a pane, a bar, the titlebar | §10.0–§10.7a |
+| Preview editing, its menus and surfaces | §10.10, §10.11 |
+| anything that moves | §11 |
+| Settings | §12 |
+| words on screen | §13 |
+
+- **The numbers are the code's numbers.** When this document and the implementation disagree, one of
+  them is wrong: fix the code, or change the rule here in the same change and say why.
+- **Keep the reason with the rule.** The reason is what lets the next change judge a case the rule
+  did not foresee, so an edit that drops it makes the document weaker.
+- **Describe behaviour, never another product.** A rule says what Monknot does and why. "Like app X"
+  tells the next reader nothing they can check.
+- **Name the mechanism.** Where a rule is enforced by a component, a function or a test, name it, so a
+  change can find every place it lands.
+
+## The bar
+
+Monknot reads as calm, native macOS chrome. One chrome tone frames the window; the document and the
+terminal sit on rounded cards set into it. Controls are fills, never outlines. Colour is scarce.
+Nothing moves that does not have to. The Preview editor's surfaces (§10.10) and the window's chrome
+are one system: the same fills, row geometry, radii and ink.
+
+Polish here is not taste. It is a set of properties anyone can check:
+
+1. **One system.** Every control is a shared component (`Sources/Monknot/Support/Design`; AGENTS.md
+   lists them). A screen that needs a variant extends the component; it never draws a local copy.
+   Two screens that each size their own buttons or type read as two apps.
+2. **Every value is derived.** Colours come from §1.2, sizes from the scale tables (§6, §10.7)
+   through the zoom functions (§9). A literal colour or point size is a bug even when it looks right,
+   because it will not follow the theme, the zoom or the next change to its siblings.
+3. **Edges sit on columns.** What stacks lines up: the titlebar's edges on the sidebar's glyph column
+   and the terminal bar's buttons (§10.1), a header's title on its rows' text edge, the tab strip on
+   the card's edge. Check alignment by measuring; an edge a few points off its column reads as broken.
+4. **Siblings are identical.** Things of one kind — a filename in a tab and in the sidebar, the chip
+   in the tab strip and in a segmented control, every 28 pt control in a bar — resolve to the same
+   numbers and the same states: rest, hover, press, focus, selected, open, disabled.
+5. **Only what changes moves.** Two timings (§11). A change animates only the property it changes.
+   Whatever opens one way closes the same way in reverse. Nothing jumps, flashes, settles or slides
+   back.
+6. **It holds everywhere.** Light and dark, every zoom level from 0.8 to 2.0, a narrow window, Reduce
+   Motion, "Show scroll bars: Always", a long document, an empty one.
+7. **Less, not more.** When unsure, remove: a border, a fill, a badge, a button, a line of copy, an
+   animation. A missing element is easy to add later; a wrong one teaches users a habit.
+
+## Workflow for any interface change
+
+1. **Read** the sections for what you are touching, and find the shared component that already does
+   it. Change the component, and so every place that uses it, rather than one screen.
+2. **Design before building** anything new or visibly different: lay it out in the design canvas (the
+   Monknot design-system boards: the window in a light and a dark theme, PDF, overlays, the switcher,
+   Settings and the components) with the real tokens and metrics, settle it there, then build the app
+   to match, and keep the canvas in step with what shipped.
+3. **Build from components and tokens.** No local copy of a control, no literal colour, no literal
+   size outside the scale tables. A web page (Preview and its menus) takes its values from Swift
+   (`MarkdownRenderService` sends the tokens), never from its own copy in CSS.
+4. **Verify what renders, not what you wrote.**
+   - The UI tour (`MONKNOT_UI_TOUR_DIR`) in light and dark, and again at the zoom extremes
+     (`MONKNOT_UI_TOUR_ZOOM=0.8` and `2.0`); `MONKNOT_UI_TOUR_RAW` also keeps WebKit's own scroll
+     bars for documents with scroll bars shown always.
+   - The Preview editor's gallery (`MONKNOT_EDITOR_SNAPSHOT_DIR`, and `MONKNOT_EDITOR_SNAPSHOT_ZOOM`
+     for its menus, bars and handles at another zoom).
+   - For anything that moves, the frame-by-frame capture (`MONKNOT_UI_TRANSITION_DIR`, with
+     `MONKNOT_UI_TRANSITION_PANE`), measuring edges on every frame: a still image cannot show a
+     jump, a flash or a one-way animation.
+   - Every state of every control you changed, and the same control where else it appears.
+   - Captures need an awake, unlocked screen: a locked screen or a sleeping display returns black
+     chrome and stops AppKit animations, so tests that wait for them fail.
+5. **Update this document in the same change**, and sweep for the old rule's vocabulary (§16, item 7).
+
+## Generic patterns that do not belong
+
+Each of these is a common default of generated or hurried interfaces. Monknot does the opposite, for
+the reason in the section named.
+
+| Generic habit | Monknot instead | § |
+|---|---|---|
+| Borders around buttons, panels and cards | fills; a hairline only on fields and grouped containers | §3, §5.2 |
+| A shadow under docked panels or resting cards | a tone step; only floating surfaces cast | §2 |
+| Gradients, glows, glass and blur as decoration | flat, derived tones | §1, §13 |
+| Accent colour as decoration; icons coloured by file type | accent in six places; monochrome glyphs on the ink ladder | §1.3, §8.8 |
+| A size picked per screen (a 14 pt label here, a 30 pt button there) | the scale tables, through zoom | §6, §9, §10.7 |
+| Bold for emphasis; a label that gets bolder when hovered or selected | two weights; state is a fill and one step of ink | §4 |
+| Uppercase, letter-spaced section labels | sentence-case 12 `ink3` group headers | §4.3 |
+| A row of icon buttons, a "⋯" overflow menu | two affordances right of the tabs; everything else in the menu bar | §10.1 |
+| Badges, count pills and status chips on everything | state in the glyph column | §10.3 |
+| Motion for its own sake: springs, bounces, staggered slide-ins | two timings; only what changes moves | §11 |
+| Empty states with an illustration and a paragraph | one glyph, a title, one line, at most two actions | §5.7 |
+| Copy that explains the interface or sells it | matter-of-fact and specific | §13 |
+| A one-off copy of a shared control "for this screen" | extend the component | The bar |
 
 ---
 
@@ -56,9 +151,8 @@ surface renders as dark, correctly.
 
 ```
 bg        = surface
-sidebar   = mix(surface → ink, dark ? 0.075 : 0.028)
-surf2     = mix(surface → ink, dark ? 0.11  : 0.05)
-surf3     = mix(surface → ink, dark ? 0.17  : 0.09)
+surf2     = mix(surface → ink, dark ? 0.11  : 0.05)     floating surfaces: menus, popovers, the format bar
+surf3     = mix(surface → ink, dark ? 0.17  : 0.09)     inset wells, key caps
 
 ink       = ink
 ink2      = ink @ max(72%, the least that reads 4.5:1 on chrome and surface)   label at rest
@@ -67,7 +161,6 @@ ink4      = ink @ 30%     disabled, placeholders
 
 line      = ink @ (dark ? 9%  : 12%)    structural seams + control borders
 line2     = ink @ (dark ? 6%  : 8%)     in-container dividers only
-frame     = ink @ (dark ? 14% : 9%)     window rim
 
 hover     = ink @ (dark ? 6%  : 5.5%)
 press     = ink @ (dark ? 11% : 10%)
@@ -116,7 +209,7 @@ backwards makes light chrome look seamless and dark chrome look over-ruled.
 1. The active tab's kind glyph
 2. The selected sidebar row's glyph (and Settings' selected section)
 3. A dirty/unsaved dot
-4. The workspace monogram in the sidebar header — the window's identity, as Linear marks a workspace
+4. The workspace monogram in the sidebar header — the window's identity
 5. A search match option that is on
 6. The terminal glyph of a session awaiting input
 
@@ -164,13 +257,11 @@ dark:
   e1     inset ring: white 9%
   e2     inset ring: white 14%   +  0 8px 24px black 50%,  0 2px 6px black 34%
   e3     inset ring: white 14%   +  0 24px 60px black 64%, 0 6px 16px black 40%
-  win    0 24px 60px black 64%, 0 6px 16px black 40%  + outer ring: frame
 
 light:  (shadowHue = mix(ink → accent, 10%))
   e1     inset ring: ink 12%
   e2     inset ring: sh 8%  +  0 4px 12px sh 8%,   0 1px 3px sh 5%
   e3     inset ring: sh 8%  +  0 16px 40px sh 14%, 0 4px 10px sh 6%
-  win    0 16px 40px sh 14%, 0 4px 10px sh 6%  + outer ring: frame
 ```
 
 Light shadows are **never pure black** — black on a warm white goes muddy. The 10% accent mix picks
@@ -183,9 +274,9 @@ Always two shadow layers: the tight key gives the edge, the wide ambient gives t
 
 ### 2.2 Windows
 
-A window uses `win`, not `e3`: same detached ambient, but `frame` as a single **outer** ring instead
-of `e3`'s inset one, because a window clips its content and its edge must be drawn outside. **One
-ring per boundary** — never `e3` and `frame` together, which gives a 2px rim.
+A window's shadow and rim are the system's. Monknot draws neither around a window, and puts no
+`e3` on a window's content: a second rim inside the system's reads as a 2px edge. **One ring per
+boundary** everywhere.
 
 ### 2.3 Never
 
@@ -204,10 +295,10 @@ ring per boundary** — never `e3` and `frame` together, which gives a 2px rim.
 |---|---|---|
 | `line` | ink 9% dark / 12% light | **Field** and **grouped container** edges. The frame has no edges of its own (§10.0); no button, segmented control or pop-up has a border. |
 | `line2` | ink 6% dark / 8% light | In-container dividers only — between rows of a card, between popover blocks, under a panel header. Always inset from the container edge so it never meets a radius. |
-| `frame` | ink 14% dark / 9% light | Window rim, one per window, inside `win`. |
 | elevation rings | inside `e1`/`e2`/`e3` | Part of the elevation token; must never be paired with a separate border. |
 | accent stroke | 1px `accent` | **Only** a focused field. Not active buttons — see §5.2. |
-| focus ring | 3px `accent` @ 35%, outside the box by default | In addition to the control's own border, never replacing it. Icon buttons nested in a fixed-height search shell contain the ring inside their box; every other control draws it outside the layout box. Neither treatment participates in layout. |
+| field focus ring | 3px `accsoft`, centred 1.5 outside the field's edge | Around the accent stroke of a focused field (`View.monknotField`), fading with the field's state. |
+| keyboard focus ring | 3px `accent` @ 35%, 2 outside the box | A button reached with the keyboard (`MonknotIconButton.focusRingOpacity`). Icon buttons inside a fixed-height field contain it within their box instead. Neither ring takes part in layout. |
 
 **Never use `line2` for a structural edge.** It is the in-container divider; an edge drawn with it
 disappears. The frame itself has no edges at all: the cards' edges are its seams (§10.0).
@@ -264,10 +355,10 @@ takes a fill plus one step up the ink ladder — fill is a far louder signal tha
 | Row + tab + button label | 13 / 1 |
 | Field text, overlay queries included | 13 / 1 |
 | Panel, sheet, overlay and empty-state title | 13 / 1, weight 600 |
-| Body prose | 13.5 / 1.6 |
 | Secondary + caption | 12 / 1.4 |
 | Group header (sidebar Recents, Settings sections, menus over the document) | 12 / 1.2, weight 400, `ink3`, sentence case ("Recents", "Basic blocks"), no tracking. Nothing in Monknot is uppercased. |
-| Code | 13 / 1.65 SF Mono |
+| Source and code | 13 SF Mono (the theme's code size); Source's line is max(22, ⌈size × 1.45⌉), 22 at 13 (`MarkdownEditorLayout.lineHeight`) |
+| Terminal | 13.5 SF Mono (`TerminalDrawerView.fontSizeBase`) |
 
 ### 4.4 Shortcut labels
 
@@ -279,7 +370,7 @@ in Settings or the Keyboard Shortcuts reference uses `ink2`, 9 horizontal and 4 
 radius 6 and `surf3`/inset fill. A key cap contains only the key or modifier sequence; trigger
 context such as “after [[” belongs in the action label. A list footer pairs each quiet hint with its
 action in plain 12 `ink3` beside it (`↑↓` Choose · `↩` Open · `Esc` Close); words never go inside
-the label. Modifiers and named keys use Apple's symbols (⌘ ⇧ ⌥ ⌃ ↩ ⇥ −); Escape is written “Esc”.
+the label. Modifiers and named keys use the macOS key symbols (⌘ ⇧ ⌥ ⌃ ↩ ⇥ −); Escape is written “Esc”.
 Shortcut text embedded in prose, help strings, tooltips and native menu items keeps the surrounding
 native text treatment.
 
@@ -365,8 +456,8 @@ same control.
 
 ### 5.6 Hover timing
 
-120ms ease on **fill and foreground colour only**. Never animate size, position, elevation, border
-or weight. The hover fill covers the whole 28pt box, not an inset — an inset highlight makes the
+120ms ease-out on **fill and foreground colour only** (`monknotStateStyle`, §11). Never animate
+size, position, elevation, border or weight. The hover fill covers the whole 28pt box, not an inset — an inset highlight makes the
 target look smaller than it is.
 
 ### 5.7 Other controls
@@ -431,7 +522,7 @@ edge. It takes its colour from the theme's `ink`.
 | Bar height | **tab height + 16** for the titlebar (44: 8 of air each side of a 28 control); **40** for every bar below it (`MonknotBar`: the terminal's and the PDF's, the sidebar and panel headers, the banners), 6 padding; a header over a list (the sidebar, Find in Workspace, Links) pads by the 10 list inset instead, so its title or monogram sits on the rows' glyph column and its last button ends on the list's edge. |
 
 **Where the ratios stop.** Editor body text, PDF page content, image pixels and empty-state illustrations are not
-chrome and follow none of this. Everything from the window rim inward to the document does.
+chrome and follow none of this. Everything from the window's edge inward to the document does.
 
 **Why this matters more than it looks.** If two rows can appear on screen at once and hold the same
 kind of thing — a filename in a tab and the same filename in the sidebar — they must resolve to
@@ -504,8 +595,8 @@ widest glyph in the set at 15pt measures about 17.4pt; its side bearing absorbs 
 Centre the symbol on the label's **cap height, not its baseline.** SF Symbols are drawn centred on
 the cap-height band, so a baseline-aligned symbol sits visibly low.
 
-Reliable form: `HStack(alignment: .center)` with both inside a fixed-height row — which the 30pt row
-already gives you. If you must use `.firstTextBaseline`, apply an `.alignmentGuide` offset of about
+Reliable form: `HStack(alignment: .center)` with both inside a fixed-height row — which the 28pt chrome row
+and the 30pt menu row already give you. If you must use `.firstTextBaseline`, apply an `.alignmentGuide` offset of about
 `-1pt * z`.
 
 ### 8.5 Horizontal spacing
@@ -567,9 +658,9 @@ is what makes an icon set look sourced from different libraries.
 
 ## 9. Zoom — one factor, the whole workspace
 
-⌘+ / ⌘− / ⌘0 change `workspaceZoom`. **Every** metric in the window is a function of it: titlebar,
-tabs, sidebar rows, glyph point sizes, gaps, paddings, radii, outline rail width and dash lengths,
-and all document text. Chrome and content move together, the way VS Code and Xcode do it.
+⌘+ / ⌘− / ⌘0 change the workspace zoom (`Monknot.zoomScale`, handed to every view as `zoomScale`).
+**Every** metric in the window is a function of it: titlebar, tabs, sidebar rows, glyph point sizes,
+gaps, paddings, radii, outline rail width and dash lengths, and all document text. Chrome and content move together, so the window keeps one proportion.
 
 Zooming only the body text is the usual mistake — 125% prose under an unchanged 44pt titlebar makes
 the chrome look borrowed from another app.
@@ -580,7 +671,8 @@ the chrome look borrowed from another app.
 
 Discrete, so every level has been seen by someone. A continuous slider guarantees levels where a
 13pt label rounds to 13.4 and every sidebar row sits on a different subpixel. ⌘0 returns to 1.0. The
-level is per window and persists per workspace.
+level is one for the app (`WorkspaceZoomPolicy.supportedLevels`), shared by every window and kept
+across launches.
 
 ### 9.2 Never `.scaleEffect`
 
@@ -600,14 +692,16 @@ Round **once**, at the point of use, from the base number in the scale table. Ne
 
 ### 9.4 What does not scale
 
-Traffic lights (the system owns them) · the window corner radius · every 1px hairline (`line`,
-`line2`, `frame`, elevation rings stay one device hairline at every zoom, because a border is a
+The traffic lights themselves (the system owns them; their inset follows the sidebar's glyph column,
+which does scale, §10.1) · the window corner radius · every 1px hairline (`line`,
+`line2`, `cardring`, elevation rings stay one device hairline at every zoom, because a border is a
 boundary rather than an object) · shadow blur and offset, for the same reason · focus rings stay 3px.
 
 ### 9.5 Titles stay in proportion
 
-The document h1 is 22pt at 1.0 and scales with the same factor, so the ratio between window title,
-tab label and body text is constant. **Nothing is clamped.** A clamped element is exactly what makes
+Preview's prose is the code size × 14⁄13 (14 at the default 13) and its h1 1.875 em of it, about 26
+at 1.0. Both scale with the same factor as the chrome, so the ratio between a tab label, body text
+and a heading is constant. **Nothing is clamped.** A clamped element is exactly what makes
 a zoomed interface look unbalanced, because it silently changes the proportion the eye is using to
 judge everything else.
 
@@ -619,7 +713,7 @@ stays a scroll map rather than a list that runs off the bottom.
 
 ### 9.7 Floor, and the PDF exception
 
-At 0.8 the row is 24pt, glyph 12pt, label 10.5pt — the floor. Below that macOS hit-target guidance
+At 0.8 a row is 22pt, its glyph 12pt and its label 10.5pt — the floor. Below that macOS hit-target guidance
 breaks before the type does, which is why the scale stops there rather than at a smaller type size.
 
 **PDF is the exception**, and an image with it. A page has a true physical size, so over a PDF or an
@@ -676,13 +770,13 @@ button; its ink then sits 17 from the right edge, matching the left. Both follow
 those columns do (`MonknotMetrics.titlebarLeadingInset`, `titlebarTrailingInset`). Move the native
 traffic-light trio as one group so its macOS inter-button spacing remains unchanged.
 
-Navigation leading, document actions trailing — the split Finder, Safari and Xcode use. **Exactly
+Navigation leading, document actions trailing, as a macOS window's toolbar orders them. **Exactly
 two affordances right of the gap.** There is no ⋯ overflow: anything that would land in one belongs
 in the menu bar, where macOS already indexes it for Help search.
 
 Tabs live in this single 44pt bar. There is no second bar and no centred workspace title — the
-workspace name appears only in the sidebar. Outline is the rail, not a button. Export, share and
-print are menu items with shortcuts (⇧⌘E, ⌘P).
+workspace name appears only in the sidebar. Outline is the rail, not a button. Export is a File menu
+item (Export PDF…, in Print's place, with no shortcut; ⌘P is Quick Open).
 
 **Ceiling:** never more than two icon affordances right of the tab strip. Hitting the ceiling means
 the next command goes to the menu bar, not into the window.
@@ -741,7 +835,7 @@ a 10 badge for a pinned tab (`pin.fill`, `ink3`) or a file missing on disk (`dan
   **nearest edge**, plus one 3pt gap. **Never centre it** — re-centring moves every other tab out
   from under the pointer, so the tab you meant to click next is somewhere else. If already fully
   visible, nothing scrolls.
-- **Edge fade:** 24pt linear fade to `sidebar`, present on a side only while content remains that
+- **Edge fade:** 24pt linear fade to `chrome`, present on a side only while content remains that
   way, cross-fading over 120ms, non-interactive so the tab beneath stays clickable. **This is the
   only overflow affordance** — no count pill, no chevron, no menu.
 - **Truncation:** only when one name alone exceeds 220. Then middle-elide the basename and keep the
@@ -753,8 +847,7 @@ a 10 badge for a pinned tab (`pin.fill`, `ink3`) or a file missing on disk (`dan
   truncation — that can only clip the tail and would append a second ellipsis to an already
   middle-elided string, taking the extension with it.
 - **Close:** a 9pt semibold `xmark` in a 16 round target, `ink2` → `ink` with the `hover` fill under
-  the pointer. It takes the glyph's place while the pointer is over the tab, as Safari's does, active
-  or not, and VoiceOver reaches it as the tab's named action. A pinned tab has none. ⌘W closes the
+  the pointer. It takes the glyph's place while the pointer is over the tab, active or not, and VoiceOver reaches it as the tab's named action. A pinned tab has none. ⌘W closes the
   active tab.
 - **Pinned:** sits left of the unpinned run and scrolls with everything else. Pinning is about order
   and session persistence, not about staying on screen.
@@ -800,13 +893,14 @@ under the pointer), the open one the current row with the `accent` `folder.fill`
 Workspace… and Manage Workspaces…. Labels are `ink`, glyphs `ink2`, as in the editor's menus. Find in
 Workspace's Replace scope is a pop-up (§5.3).
 
-**Selection.** The tree has one selection, as in Finder: a folder, or else the open document. Clicking a
+**Selection.** The tree has one selection: a folder, or else the open document. Clicking a
 folder selects it, opens or closes it and gives the tree keyboard focus, without closing the open
 document. Clicking a file opens it; a document shown for typing (Markdown in Source or Preview, text,
 or a source beside its preview) takes keyboard focus, ready for typing, while any other file (an image, a PDF, video,
 audio, a preview) leaves focus in the tree, so ⌘C, ⌘X and ⌘V act on it. New Markdown, New File, New Folder and Paste put items in the
 selected folder, or the selected document's folder, or the root when nothing is selected; a row's context
-menu acts on that row, and the empty tree's menu and Finder drops on empty space on the root. While the
+menu acts on that row, and the empty tree's menu and files dropped from another app onto empty
+space act on the root. While the
 tree has focus, ⌘C, ⌘X and ⌘V copy, cut and paste the selection, Return renames it, ⌘D duplicates it and
 ⌘⌫ moves it to the Trash, once per press however long the key is held; with the editor, terminal or a
 field focused those keys stay theirs. A created
@@ -820,7 +914,7 @@ user picks it.
 **Row menus.** Folder and file rows start with New File and New Folder (in the folder, or beside the
 file), then Rename and the location items, then Copy, Cut, Paste and Duplicate, then Move to Trash.
 Paste is enabled only while the clipboard holds something to paste. Dragging a row moves the item, and
-holding Option as the drag ends copies it, as Finder does.
+holding Option as the drag ends copies it.
 
 **Recents** is a collapsible group between the tree and the footer: the chevron in the glyph column, a
 group header (§4.3) and a trailing count in 12 `ink3`. Its entries are file rows one level in, whose
@@ -869,7 +963,7 @@ fade; being clipped by the panel edge is correct.
 
 **The screen belongs to the session.** Hiding the panel or switching sessions keeps the scrollback,
 the alternate screen, mouse modes and the scroll position exactly as the program left them. A program
-that reports the mouse (Claude Code, vim, less) scrolls as far per wheel flick as plain output does.
+that reports the mouse (vim, less, any full-screen program) scrolls as far per wheel flick as plain output does.
 The scroll bar is the shared thumb (§5.7) at its resting strength.
 
 The header order is session scroller → fullscreen → new session → close panel, set apart by space.
@@ -923,7 +1017,7 @@ divider `line2`, its lists the row primitive in the 10 list inset (selection 10 
 ### 10.8 Images
 
 Raster images (PNG, JPEG, GIF, HEIC, TIFF, WebP, BMP, ICO, AVIF) are workspace documents and open
-in the PDF viewer, the way Preview marks up images: one page that draws the file's own pixels, never
+in the PDF viewer for markup: one page that draws the file's own pixels, never
 a recompressed copy. An image opens whole, at no more than its actual size; a Retina screenshot
 shows at the point size it was taken at.
 
@@ -983,13 +1077,14 @@ a change from outside the editor (the file changed on disk) clears the history. 
 block puts the caret at the end; a new line appears only once something is typed, so a click never
 changes the file.
 
-**Blocks.** Preview offers Notion's block set, less what a Markdown file cannot hold (databases,
-columns, synced blocks, embeds). Every block is plain Markdown another editor or GitHub reads:
+**Blocks.** Preview offers a block editor's familiar set of blocks, less what a Markdown file cannot
+hold (databases, columns, synced blocks, embeds). Every block is plain Markdown that any reader of
+CommonMark with tables and task lists renders:
 
 | Block | Markdown | On the page |
 |---|---|---|
 | Text, Heading 1–3 | paragraph, `#`–`###` | the type scale of §4.3 |
-| Bulleted, Numbered, To-do list | `-`, `1.`, `- [ ]` | markers per level as in Notion (• ◦ ▪, 1. a. i.); every item's text on one edge, a to-do's box (1 em, radius 0.25 em, 1.5 pt ring of `ink` at 42 %; checked: `accent` fill with an `onaccent` tick, text `ink` at 45 %, struck) in the marker's place |
+| Bulleted, Numbered, To-do list | `-`, `1.`, `- [ ]` | markers per level (• ◦ ▪, 1. a. i.); every item's text on one edge, a to-do's box (1 em, radius 0.25 em, 1.5 pt ring of `ink` at 42 %; checked: `accent` fill with an `onaccent` tick, text `ink` at 45 %, struck) in the marker's place |
 | Toggle list | `<details>` · `<summary>title</summary>` · blank line · body · `</details>` | a triangle in the marker column that turns 90° when open; title and body on the list text edge. Opening is a view state: the file keeps its `open` attribute. A new toggle opens. Without `</details>` it runs to the end, as HTML closes it |
 | Callout | `> [!NOTE]` (TIP, IMPORTANT, WARNING, CAUTION) | a 7 % tinted panel, radius 8, its kind as a 0.875 em / 600 title; clicking the title changes the kind |
 | Quote | `>` | a 2 pt bar of `ink` at 28 %, no fill |
@@ -1008,7 +1103,7 @@ columns, synced blocks, embeds). Every block is plain Markdown another editor or
 | Surface | Appears | Contents |
 |---|---|---|
 | Format bar | text selected with the pointer or keyboard, centred above the selection (below when there is no room) | Turn Into selector (the block's name and `chevron.down`) · bold, italic, strikethrough, inline code · link |
-| Slash menu | `/` at the start of a text block — an empty line, heading or list item. Never after text, in code, a table cell or a toggle title, so a `/` in a sentence stays a slash | the blocks above in Notion's sections (Basic blocks, Media, Advanced blocks, Inline), filtered by what follows the `/`; the Markdown to type instead as a trailing hint; a footer: `↑↓` Choose `↩` Insert `Esc` Close |
+| Slash menu | `/` at the start of a text block — an empty line, heading or list item. Never after text, in code, a table cell or a toggle title, so a `/` in a sentence stays a slash | the blocks above in four sections (Basic blocks, Media, Advanced blocks, Inline), filtered by what follows the `/`; the Markdown to type instead as a trailing hint; a footer: `↑↓` Choose `↩` Insert `Esc` Close |
 | Block handles | the pointer over a block, in its left gutter; gone while typing | + (a new line below with the slash menu open on it; ⌥ above; Esc takes the line back) and the grip (drag to move; click for the block menu). A tooltip after 450 ms names both gestures |
 | Block menu | a click on the grip, or ⌘/ at the caret | a search field, Turn into ›, Duplicate ⌘D, Copy, Move up ⇧⌘↑, Move down ⇧⌘↓, Delete; the block it acts on is tinted with the selection colour while it is open. Typing in the field lists the Turn Into targets too |
 | Turn Into | the block menu's row (hover, → or ↩) or the format bar's selector | Text, Heading 1–3, the three lists, Toggle list, Code, Quote, Callout, the current one checked; beside the menu, aligned to its row |
@@ -1055,7 +1150,7 @@ divider or table of contents deletes it. ⇥/⇧⇥ indent and outdent list item
 duplicates the block, ⇧⌘↑/⇧⌘↓ move it. ⌘B ⌘I ⌘E ⇧⌘X ⌘K and ⌥⌘0–6 format. ⌘-click opens a link.
 
 **Clipboard.** Copy puts the selection's Markdown on the pasteboard as plain text (markers balanced at
-cut emphasis) and its rendering as HTML, so a paste into Mail stays formatted and a paste into Source
+cut emphasis) and its rendering as HTML, so a paste into a rich-text app stays formatted and a paste into Source
 stays Markdown. Pasted HTML becomes Markdown; pasted code goes in as text; a pasted image is saved
 into the workspace and linked.
 
@@ -1072,8 +1167,8 @@ review could not be drawn.
 
 | Case | When | On the page | Keys |
 |---|---|---|---|
-| Certain fix | a sentence ends (`.` `!` `?` or ↩) and, 0.82 s later, Apple's checker resolves everything it finds in it to exact spelling or punctuation fixes | applied at once; the changed words take the mark, rising to its peak in 220 ms and settling over the rest of a second; `⌫ undo` sits at the caret until the next key, click or caret move, except on an empty line (after ↩) | ⌫ takes it back while `⌫ undo` shows ("Accept Flow Correction", or "Fix N Flow Issues"); where it does not show, or the fix can no longer be taken back, ⌫ deletes as usual |
-| Reviewed repair | a grammar fix that changes words, a spelling fix that drops letters, a choice between Apple's alternatives, or Apple Intelligence's repair of the sentence (always reviewed, and only after Apple's checker finds the repaired sentence clean) | the corrected words in place of the originals, on the mark, the rest of the sentence keeping its formatting; `⇥ apply · → next · Esc dismiss` after the sentence | ⇥ applies once the review has been drawn; → shows the next alternative; Esc dismisses it for that sentence; one space right after the sentence keeps it; any other key drops it |
+| Certain fix | a sentence ends (`.` `!` `?` or ↩) and, 0.82 s later, the system spell checker (`NSSpellChecker`) resolves everything it finds in it to exact spelling or punctuation fixes | applied at once; the changed words take the mark, rising to its peak in 220 ms and settling over the rest of a second; `⌫ undo` sits at the caret until the next key, click or caret move, except on an empty line (after ↩) | ⌫ takes it back while `⌫ undo` shows ("Accept Flow Correction", or "Fix N Flow Issues"); where it does not show, or the fix can no longer be taken back, ⌫ deletes as usual |
+| Reviewed repair | a grammar fix that changes words, a spelling fix that drops letters, a choice between the checker's alternatives, or Apple Intelligence's repair of the sentence (always reviewed, and only after the system checker finds the repaired sentence clean) | the corrected words in place of the originals, on the mark, the rest of the sentence keeping its formatting; `⇥ apply · → next · Esc dismiss` after the sentence | ⇥ applies once the review has been drawn; → shows the next alternative; Esc dismisses it for that sentence; one space right after the sentence keeps it; any other key drops it |
 | Completion | On-device writing assistance and Inline predictions on, the model available, two words or more before the caret, the rest of the line empty, and the sentence checked clean | up to eight words after the caret in `ink` mixed 54 % (light) or 42 % (dark) toward `accent` at 68 %, fading in over 180 ms; `⇥ word · hold for all` after them | a tap on ⇥ takes the next word (the rest returns once the sentence checks clean); ⇥ held 350 ms takes it all and its repeats insert nothing; typing what it shows consumes it; Esc or any other key dismisses it ("Accept Flow Word", "Accept Flow Completion") |
 
 The mark is `accent` mixed into `surface` at 18 % (24 % dark; 28 % and 34 % with Increase Contrast),
@@ -1232,44 +1327,37 @@ options never resizes it.
   button sits, one 13 `ink` line, 28 push buttons 8 apart, on the elevated surface — or `dangersoft`
   when the file is gone. Warnings are soft fills, never danger borders.
 - Short captions over before/after grids.
-- No emoji. No decorative gradients. No icon-plus-coloured-left-border cards.
+- No emoji in the interface's own words. No decorative gradients. No icon-plus-coloured-left-border cards.
 - Copy is matter-of-fact and specific. Say the number, not "optimised spacing".
 
 ---
 
-## 14. Applying a `codex-theme-v1` string
+## 14. A theme, worked through
 
-Themes arrive as `codex-theme-v1:` followed by JSON. Parse it, map it onto the six inputs, then run
-the §1.2 derivation. Nothing else in the app changes.
+A theme (`AppTheme`; the bundled ones are `MonknotThemeCatalog`) supplies the six inputs of §1.1 and a
+few settings. §1.2 derives everything else from them, and nothing else in the app changes with a
+theme.
 
-```json
-codex-theme-v1:{"codeThemeId":"absolutely","theme":{
-  "accent":"#cc7d5e","contrast":40,
-  "fonts":{"code":"\"SFMono-Regular\"","ui":"Geist, Inter"},
-  "ink":"#2d2d2b","opaqueWindows":true,
-  "semanticColors":{"diffAdded":"#00c853","diffRemoved":"#ff5f38","skill":"#cc7d5e"},
-  "surface":"#f9f9f7"},"variant":"light"}
-```
-
-**Mapping**
-
-| JSON | Input |
+| Theme field | Input or setting |
 |---|---|
-| `theme.surface` | `surface` |
-| `theme.ink` | `ink` |
-| `theme.accent` | `accent` |
-| `theme.semanticColors.diffAdded` | `ok` |
-| `theme.semanticColors.diffRemoved` | `danger` |
-| `theme.semanticColors.skill` | `skill` |
-| `theme.fonts.ui` | UI font stack, ahead of the SF Pro fallback |
-| `theme.fonts.code` | mono stack |
-| `variant` | **advisory only** — verify against measured luminance |
-| `contrast` | ink-ladder scalar, see below |
-| `opaqueWindows` | `true` → solid `surface`; `false` → `NSVisualEffectView` behind chrome, tokens unchanged |
-| `codeThemeId` | syntax highlighting only; never affects chrome |
+| `background` | `surface` |
+| `foreground` | `ink` |
+| `accent` | `accent` |
+| `semanticColors.diffAdded` | `ok` |
+| `semanticColors.diffRemoved` | `danger` |
+| `semanticColors.skill` | `skill` |
+| `contrast` | the ink ladder's floors, below |
+| `uiFontName` | Preview's prose and its menus, ahead of SF Pro Text; the native chrome stays SF Pro |
+| `codeFontName` | Source and code in Preview, ahead of SF Mono |
+| `uiFontSize`, `codeFontSize` | the chrome's and the editor's text size; zoom multiplies both |
+| `codeThemeID` | syntax highlighting only; never the chrome |
 
-**`variant` is advisory.** Always compute `dark = relativeLuminance(surface) < 0.45` and use that.
-Here luminance is 0.946 → light, agreeing with the string. When they disagree, the measurement wins.
+Light or dark is measured, never declared: `dark = relativeLuminance(surface) < 0.45` (§1.1). The
+example below has a surface of luminance 0.946, so it is light.
+
+```
+surface #f9f9f7   ink #2d2d2b   accent #cc7d5e   ok #00c853   danger #ff5f38   skill #cc7d5e
+```
 
 **`contrast`** (0–100, default 40) scales the ink ladder's floors only: `ink2` starts at
 `72% × (0.85 + contrast/100 × 0.375)` and `ink3` at `50% ×` the same factor, and both still rise until
@@ -1277,38 +1365,40 @@ they read (§1.2). `ink`, `ink4` and `surface` never move — contrast adjusts t
 text, it does not push the extremes. At the default 40 the factor is 1.0 and the ladder is exactly
 §1.2; Settings › Appearance › Contrast sets it (`AppTheme.inkLadderContrastFactor`).
 
-**Fonts.** `Geist, Inter` is a *substitution*, not a redesign. Every size, weight, ratio and metric in
-this document is unchanged — Geist's cap height is close enough to SF Pro Text that the
-15pt-glyph-to-13pt-label ratio still holds. Do **not** re-derive proportions for a new font. Keep
-`-apple-system` / SF Pro at the end of the stack so the app still looks native if Geist is missing.
+**Fonts.** A theme's font is a *substitution*, not a redesign. Every size, weight, ratio and metric
+in this document stays as it is: a text face with a cap height near SF Pro Text's keeps the
+15 pt-glyph-to-13 pt-label ratio. Do **not** re-derive proportions for a new font; the system face
+stays at the end of the stack (`MarkdownRenderService.fontStack`), so the page still reads as native
+when the font is missing.
 
-### 14.1 Derived tokens for this exact theme
+### 14.1 Derived tokens for the example
 
 Computed, not chosen — check any implementation against these:
 
 ```
 bg        #f9f9f7        line      ink @ 12%   rgba(45,45,43,.12)
-sidebar   #f3f3f1        line2     ink @ 8%    rgba(45,45,43,.08)
-surf2     #efefed        frame     ink @ 9%    rgba(45,45,43,.09)
-surf3     #e7e7e5        hover     ink @ 5.5%  rgba(45,45,43,.055)
-ink       #2d2d2b        press     ink @ 10%   rgba(45,45,43,.10)
-ink2      rgba(45,45,43,.62)
-ink3      rgba(45,45,43,.40)      accent    #cc7d5e
-ink4      rgba(45,45,43,.24)      onaccent  #ffffff   (accent lum 0.283 ≤ 0.5)
-                                  sel       #f0e0d8
-ok        #00c853                 accsoft   rgba(204,125,94,.14)
-danger    #ff5f38
-skill     #cc7d5e
+chrome    #eeeeec        line2     ink @ 8%    rgba(45,45,43,.08)
+surf2     #efefed        hover     ink @ 5.5%  rgba(45,45,43,.055)
+surf3     #e7e7e5        press     ink @ 10%   rgba(45,45,43,.10)
+chip      #f9f9f7        selected  ink @ 9%    rgba(45,45,43,.09)
+ink       #2d2d2b
+ink2      rgba(45,45,43,.72)      (the floor already reads 4.5:1)
+ink3      rgba(45,45,43,.53)      (raised from 50 % to read 3:1 on chrome)
+ink4      rgba(45,45,43,.30)
+                                  accent    #cc7d5e
+ok        #00c853                 onaccent  #101010   (6.0:1, where white gives 3.2:1)
+danger    #ff5f38                 sel       #f0e0d8
+skill     #cc7d5e                 accsoft   rgba(204,125,94,.14)
 
 shadowHue #3d3530   = mix(ink → accent, 10%)
 
 e1     inset ring rgba(45,45,43,.12)
 e2     inset ring rgba(61,53,48,.08) + 0 4px 12px rgba(61,53,48,.08), 0 1px 3px rgba(61,53,48,.05)
 e3     inset ring rgba(61,53,48,.08) + 0 16px 40px rgba(61,53,48,.14), 0 4px 10px rgba(61,53,48,.06)
-win    0 16px 40px rgba(61,53,48,.14), 0 4px 10px rgba(61,53,48,.06) + outer ring rgba(45,45,43,.09)
 ```
 
-Two things to expect from this theme specifically. The warm terracotta accent puts `sel` at
+Three things to expect from this theme specifically. Its accent is mid-luminance, so a primary
+button labels it in near-black, not white (§1.2 `onaccent`). The warm terracotta accent puts `sel` at
 `#f0e0d8` — a tinted surface, not a grey. That is correct: text selection and search matches carry
 the theme's hue, while a selected row keeps the neutral `selected` fill (§1.4). And because it is a
 **light** theme, the chip's `chipseat` is live and `e1` is a ring with no shadow.
@@ -1344,13 +1434,22 @@ Before calling any UI work done:
 - [ ] One scroll thumb (§5.7) on every surface: check documents with "Show scroll bars: Always",
       where WebKit would otherwise draw its own 17pt bar.
 - [ ] No chrome glyph over 17. No square button over 28 (§10.7).
-- [ ] Every metric derives from `workspaceZoom`. No `.scaleEffect`. Nothing clamped.
+- [ ] Every metric derives from the workspace zoom through `MonknotMetrics` (§9.3). No `.scaleEffect`.
+      Nothing clamped.
 - [ ] Hairlines, shadows and focus rings do not scale.
 - [ ] Tabs hug to 220 and scroll; fades appear only where content actually overflows.
 - [ ] Terminal sessions are tabs showing glyph + number, never a session name.
 - [ ] A divider's handle is `ink` 28 % / 42 %, never accent; chrome lists show a thumb only while they
       scroll.
 - [ ] Hover animates colour only, 120ms.
+- [ ] Every control comes from the shared components; nothing on the screen is a local copy of one.
+- [ ] No `.animation(_:value:)` on a control; a state change animates only what it changes (§11).
+- [ ] Stacked edges measured, not eyeballed: the titlebar's on the sidebar's glyph column and the
+      terminal bar's buttons, a header's title on its rows' text edge.
+- [ ] Seen in light and dark, at zoom 0.8, 1.0 and 2.0, and in a narrow window (Workflow, step 4).
+- [ ] Anything that moves recorded frame by frame: nothing jumps, flashes or settles, and it closes
+      the way it opened. Reduce Motion makes it instant or a fade; colours still fade.
+- [ ] A value the page and the chrome share (a token, a metric) is written once, in Swift.
 
 ---
 
@@ -1379,3 +1478,19 @@ symptom, so they are worth checking deliberately rather than hoping to notice.
 9. **A rule promising a state nothing renders**, or a rendered state no rule covers — spec and
    implementation must agree in both directions.
 10. **`.scaleEffect` for zoom** — soft text, smudged hairlines, hit rectangles in the wrong place.
+11. **A value-keyed animation on a control** — `.animation(_:value:)` also animates any frame that
+    moves in the same update: a sidebar chevron drew one row lower and slid back as its folder
+    opened. Animate only the property that changes (§11); `MonknotMotionContractTests` guards it.
+12. **A transition that runs one way** — a pane that animates open and snaps shut reads as broken.
+    Opening and closing are one transition run in opposite directions, at the same duration.
+13. **An edge almost on its column** — an edge 4 pt off the column under it looks worse than one
+    clearly elsewhere. Derive the edge from the column (`MonknotMetrics.titlebarLeadingInset`, a
+    bar's list inset) and measure the rendered window.
+14. **A web control sized in `em`** — `<input>` and `<button>` keep WebKit's own small font, so an
+    `em` size stays put at every zoom (a task's checkbox and a toggle's triangle did). Give the
+    control `font-size: inherit`, or size it from `--mk-z`, and look at zoom 2.0.
+15. **A size rounded more than once** — a 24 cell rounded plus two 2 paddings rounded is not 28
+    rounded: the segmented control missed 28 at five zoom levels. Round the outer box once and derive
+    the parts from it (§9.3).
+16. **One value written in two places** — a token in CSS and in Swift, a metric in two components:
+    they drift apart. Keep one source; the page takes its values from Swift.

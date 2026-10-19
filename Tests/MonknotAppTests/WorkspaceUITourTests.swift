@@ -10,6 +10,7 @@ import XCTest
 /// Captures the whole workspace window in the states a design review walks through: sidebar open
 /// and collapsed, the terminal, Source and Preview, light and dark, narrow and wide. Runs only when
 /// `MONKNOT_UI_TOUR_DIR` names a folder for the images; it asserts nothing about pixels.
+/// `MONKNOT_UI_TOUR_ZOOM` (0.8…2) takes the whole tour at one workspace zoom.
 @MainActor
 final class WorkspaceUITourTests: WorkspaceStoreTestCase {
     private struct Stop {
@@ -35,6 +36,13 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         let directory = URL(fileURLWithPath: output, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let root = try makeFixtureWorkspace()
+        // `MONKNOT_UI_TOUR_ZOOM` takes every stop, Settings included, at that workspace zoom.
+        let zoomKey = "Monknot.zoomScale"
+        let savedZoom = UserDefaults.standard.object(forKey: zoomKey)
+        defer { UserDefaults.standard.set(savedZoom, forKey: zoomKey) }
+        if let zoom = ProcessInfo.processInfo.environment["MONKNOT_UI_TOUR_ZOOM"].flatMap(Double.init) {
+            UserDefaults.standard.set(WorkspaceZoomPolicy.clamp(zoom), forKey: zoomKey)
+        }
 
         let only = ProcessInfo.processInfo.environment["MONKNOT_UI_TOUR_ONLY"]
         let stops: [Stop] = [

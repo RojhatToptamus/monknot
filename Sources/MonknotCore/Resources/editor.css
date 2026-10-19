@@ -139,6 +139,8 @@
 }
 
 .mk-editing .mk-toggle-arrow {
+  /* A button keeps WebKit's own small font, so its em would not follow the title or zoom. */
+  font-size: inherit;
   position: absolute;
   /* Centred on the summary's lowercase letters rather than its line box. */
   top: 0.15em;
