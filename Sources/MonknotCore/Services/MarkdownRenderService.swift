@@ -205,6 +205,8 @@ public struct MarkdownRenderService: Sendable {
             ("--tok-comment", theme.codeComment),
             ("--tok-builtin", theme.codeBuiltin),
             ("--base-font-size", "\(baseFontSize)px"),
+            // The space above the first line, as Source's (DocumentMeasure.verticalMarginEm).
+            ("--document-margin-top", "\(Int(DocumentMeasure.verticalMargin(fontSize: baseFont)))px"),
             ("--content-max-width", "\(contentWidth)%"),
             ("--content-measure", DocumentMeasure.previewCSSLength(contentWidthPercent: max(55, min(100, contentWidthPercent)))),
             ("--font-smoothing", fontSmoothing ? "antialiased" : "auto"),

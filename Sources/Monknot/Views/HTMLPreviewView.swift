@@ -36,7 +36,8 @@ struct HTMLPreviewView: NSViewRepresentable {
             forURLScheme: WorkspaceResourceSchemeHandler.scheme
         )
 
-        let webView = WKWebView(frame: .zero, configuration: configuration)
+        // Held still while a side pane moves; an HTML file's own page keeps its layout until the end.
+        let webView = PaneTransitionWebView(frame: .zero, configuration: configuration)
         webView.identifier = .monknotDocumentFocusTarget
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
@@ -72,6 +73,7 @@ struct HTMLPreviewView: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
+        (webView as? PaneTransitionWebView)?.tearDownPaneTransitions()
         webView.navigationDelegate = nil
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.scrollPositionHandlerName)
     }

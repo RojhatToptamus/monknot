@@ -400,9 +400,12 @@ protocol MarkdownPreviewEditorCommands: AnyObject {
 
 /// The Preview web view. With a visual editing session it hands the Edit menu that session's undo
 /// history and keeps Writing Tools out of the page, which edits only through source patches.
-final class MarkdownEditorWebView: WKWebView {
+final class MarkdownEditorWebView: PaneTransitionWebView {
     weak var visualEditingSession: MarkdownVisualEditingSession?
     weak var previewCommands: MarkdownPreviewEditorCommands?
+
+    /// Preview's page reflows with the card's edges while a side pane moves.
+    override class var paneTransitionMode: WebViewPaneTransitionHold.Mode { .reflow }
 
     override var undoManager: UndoManager? {
         visualEditingSession?.undoManager ?? super.undoManager

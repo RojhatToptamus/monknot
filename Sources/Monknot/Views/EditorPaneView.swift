@@ -178,7 +178,6 @@ struct EditorPaneView: View {
                     GeometryReader { proxy in
                         if wordCountFits(paneWidth: proxy.size.width) {
                             MarkdownWordCountLabel(theme: theme, zoomScale: zoomScale, statistics: textStatistics)
-                                .background(WorkspaceTrailingChromeMarker())
                                 .padding(.trailing, MonknotMetrics.interfaceDensity(14, theme: theme, zoomScale: zoomScale))
                                 .padding(.bottom, MonknotMetrics.interfaceDensity(10, theme: theme, zoomScale: zoomScale))
                                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
@@ -505,7 +504,6 @@ struct EditorPaneView: View {
                 )
                 .equatable()
                 .frame(maxHeight: .infinity)
-                .background(WorkspaceTrailingChromeMarker())
                 .padding(.trailing, documentScrollBarWidth)
                 .zIndex(5)
             }

@@ -156,7 +156,7 @@ struct NativeMarkdownEditorView: View {
                         )
                         .padding(
                             .top,
-                            ContentWidthPreference.editorPlaceholderTopInset(zoomScale: zoomScale)
+                            ContentWidthPreference.editorPlaceholderTopInset(fontSize: fontSize, zoomScale: zoomScale)
                         )
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)

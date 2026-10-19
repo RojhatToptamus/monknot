@@ -6671,9 +6671,57 @@ class MarkdownNSTextView: NSTextView {
     }
 
     override func setFrameSize(_ newSize: NSSize) {
+        // A change of width rewraps the text: the line at the top of the window stays where it was,
+        // as Preview's does (design.md §11). AppKit would instead scroll to keep the insertion point
+        // in view, nudging the text a line or so whenever a side pane opens or closes.
+        let anchor = abs(newSize.width - frame.width) > 0.5 ? readingAnchor() : nil
         super.setFrameSize(newSize)
         refreshContentWidthLayout()
+        if let anchor {
+            restoreReadingAnchor(anchor)
+        }
         invalidateFlowPresentationForGeometryChange()
+    }
+
+    /// A pane transition is a live resize; at its end AppKit scrolls to the insertion point again.
+    override func viewDidEndLiveResize() {
+        let anchor = readingAnchor()
+        super.viewDidEndLiveResize()
+        if let anchor {
+            restoreReadingAnchor(anchor)
+        }
+    }
+
+    private enum ReadingAnchor {
+        case top
+        /// The character starting the line at the top of the visible text, and how far that line's
+        /// top sits from the visible top.
+        case line(index: Int, offset: CGFloat)
+    }
+
+    private func readingAnchor() -> ReadingAnchor? {
+        guard let layoutManager, let textContainer, let clip = enclosingScrollView?.contentView else { return nil }
+        let top = clip.bounds.minY
+        guard top > 0.5, layoutManager.numberOfGlyphs > 0 else { return .top }
+        let origin = textContainerOrigin
+        let glyph = layoutManager.glyphIndex(for: NSPoint(x: 0, y: max(0, top - origin.y + 1)), in: textContainer)
+        let line = layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        return .line(index: layoutManager.characterIndexForGlyph(at: glyph), offset: line.minY + origin.y - top)
+    }
+
+    private func restoreReadingAnchor(_ anchor: ReadingAnchor) {
+        guard let clip = enclosingScrollView?.contentView else { return }
+        var top: CGFloat = 0
+        if case let .line(index, offset) = anchor {
+            guard let layoutManager, index < (textStorage?.length ?? 0) else { return }
+            let glyph = layoutManager.glyphIndexForCharacter(at: index)
+            layoutManager.ensureLayout(forGlyphRange: NSRange(location: glyph, length: 1))
+            let line = layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            top = max(0, line.minY + textContainerOrigin.y - offset)
+        }
+        guard abs(top - clip.bounds.minY) > 0.5 else { return }
+        clip.scroll(to: NSPoint(x: clip.bounds.minX, y: top))
+        enclosingScrollView?.reflectScrolledClipView(clip)
     }
 
     func invalidateFlowPresentationForGeometryChange() {
@@ -6948,7 +6996,7 @@ class MarkdownNSTextView: NSTextView {
                 zoomScale: zoomScale,
                 fontSize: columnFontSize
             ),
-            height: ContentWidthPreference.editorVerticalInset(zoomScale: zoomScale)
+            height: ContentWidthPreference.editorVerticalInset(fontSize: columnFontSize)
         )
     }
 

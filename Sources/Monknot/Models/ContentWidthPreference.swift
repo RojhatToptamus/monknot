@@ -7,10 +7,10 @@ enum ContentWidthPreference {
     static let defaultValue = 88.0
     static let allowedRange = 55.0...100.0
     private static let editorMinimumHorizontalInsetBase: CGFloat = 16
-    private static let editorVerticalInsetBase: CGFloat = 18
     private static let editorLineFragmentPaddingBase: CGFloat = 5
     private static let editorPlaceholderLeadingGapBase: CGFloat = 12
-    private static let editorPlaceholderTopInsetBase: CGFloat = 26
+    /// From the text's top inset to the placeholder's top, as the first line sets its glyphs.
+    private static let editorPlaceholderLineOffsetBase: CGFloat = 8
     private static let editorPlaceholderMinimumFontSizeBase: CGFloat = 13
 
     static func initialValue(in defaults: UserDefaults = .standard) -> Double {
@@ -72,8 +72,9 @@ enum ContentWidthPreference {
         )
     }
 
-    static func editorVerticalInset(zoomScale: Double) -> CGFloat {
-        scaledEditorMetric(editorVerticalInsetBase, zoomScale: zoomScale)
+    /// The space above the first line (and below the last), the same as Preview's top margin.
+    static func editorVerticalInset(fontSize: CGFloat) -> CGFloat {
+        CGFloat(DocumentMeasure.verticalMargin(fontSize: Double(fontSize)))
     }
 
     static func editorLineFragmentPadding(zoomScale: Double) -> CGFloat {
@@ -94,8 +95,9 @@ enum ContentWidthPreference {
         ) + scaledEditorMetric(editorPlaceholderLeadingGapBase, zoomScale: zoomScale)
     }
 
-    static func editorPlaceholderTopInset(zoomScale: Double) -> CGFloat {
-        scaledEditorMetric(editorPlaceholderTopInsetBase, zoomScale: zoomScale)
+    /// The empty-document placeholder sits on the first line.
+    static func editorPlaceholderTopInset(fontSize: CGFloat, zoomScale: Double) -> CGFloat {
+        editorVerticalInset(fontSize: fontSize) + scaledEditorMetric(editorPlaceholderLineOffsetBase, zoomScale: zoomScale)
     }
 
     static func editorPlaceholderMinimumFontSize(zoomScale: Double) -> CGFloat {

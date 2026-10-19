@@ -11,6 +11,15 @@ public enum DocumentMeasure {
     public static let defaultContentWidthPercent: Double = 88
     /// Preview sets prose at the code size × 14⁄13.
     public static let previewProseScale: Double = 14 / 13
+    /// The space above the first line, in multiples of the code size (zoom included), the same in
+    /// Source and Preview, so switching view mode never moves the first line and a larger text size
+    /// keeps the margin's proportion (design.md §10.11).
+    public static let verticalMarginEm: Double = 2.5
+
+    /// `verticalMarginEm` of `fontSize`, in points.
+    public static func verticalMargin(fontSize: Double) -> Double {
+        (max(1, fontSize) * verticalMarginEm).rounded()
+    }
 
     public static func points(contentWidthPercent: Double, fontSize: Double = referenceFontSize) -> Double {
         guard contentWidthPercent < 100 else { return .infinity }

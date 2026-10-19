@@ -407,7 +407,7 @@ APP_SOURCES=(
   "Sources/Monknot/Support/EditorFlowRepairPolicy.swift"
   "Sources/Monknot/Support/EditorSentenceRepairPolicy.swift"
   "Sources/Monknot/Support/WorkspaceSplitView.swift"
-  "Sources/Monknot/Support/WorkspaceTransitionCover.swift"
+  "Sources/Monknot/Support/WorkspacePaneTransition.swift"
   "Sources/Monknot/Support/Design/MonknotActionButton.swift"
   "Sources/Monknot/Support/Design/MonknotBar.swift"
   "Sources/Monknot/Support/Design/MonknotElevation.swift"

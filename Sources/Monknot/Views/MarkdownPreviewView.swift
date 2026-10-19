@@ -319,6 +319,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
             "window.monknotTearDown && window.monknotTearDown(); window.monknotScrollTrackingTeardown && window.monknotScrollTrackingTeardown();"
         )
         webView.stopLoading()
+        (webView as? PaneTransitionWebView)?.tearDownPaneTransitions()
         coordinator.tearDown()
         webView.navigationDelegate = nil
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Coordinator.sourceJumpHandlerName)

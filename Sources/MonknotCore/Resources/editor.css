@@ -452,13 +452,27 @@
   cursor: grab;
 }
 
-/* Six dots, the drag affordance every block editor uses; SF Symbols has no 2×3 grid. */
+/* The handles' two glyphs are one drawing (design.md §10.10): a 16 pt box, the + a 1.5 pt cross
+   with 9 pt arms, the grip six 2.6 pt dots on whole points (SF Symbols has no 2×3 grid), so they
+   match in size and weight. Masks, so they take the handle's ink. */
+.mk-handle-glyph {
+  display: block;
+  flex: none;
+  width: calc(16px * var(--mk-z));
+  height: calc(16px * var(--mk-z));
+  background: currentColor;
+  -webkit-mask: var(--mk-handle-glyph) center / contain no-repeat;
+  mask: var(--mk-handle-glyph) center / contain no-repeat;
+}
+
+.mk-handle-plus {
+  --mk-handle-glyph: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M8 3.5v9M3.5 8h9' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round'/></svg>");
+}
+
+/* Six dots, the drag affordance every block editor uses. */
 .mk-grip {
-  width: calc(8px * var(--mk-z));
-  height: calc(14px * var(--mk-z));
-  background:
-    radial-gradient(circle, currentColor calc(1.25px * var(--mk-z)), transparent calc(1.5px * var(--mk-z)))
-    0 0 / calc(4px * var(--mk-z)) calc(4.67px * var(--mk-z));
+  width: calc(10px * var(--mk-z));
+  --mk-handle-glyph: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'><g fill='black'><circle cx='3' cy='3.5' r='1.3'/><circle cx='7' cy='3.5' r='1.3'/><circle cx='3' cy='8' r='1.3'/><circle cx='7' cy='8' r='1.3'/><circle cx='3' cy='12.5' r='1.3'/><circle cx='7' cy='12.5' r='1.3'/></g></svg>");
 }
 
 .mk-tooltip {

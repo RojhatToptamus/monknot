@@ -5144,14 +5144,16 @@
       addButton.className = "mk-handle mk-handle-add";
       addButton.tabIndex = -1;
       addButton.setAttribute("aria-label", "Add a block below");
-      addButton.appendChild(icon("plus"));
+      const plus = document.createElement("span");
+      plus.className = "mk-handle-glyph mk-handle-plus";
+      addButton.appendChild(plus);
       grip = document.createElement("button");
       grip.type = "button";
       grip.className = "mk-handle mk-handle-drag";
       grip.tabIndex = -1;
       grip.setAttribute("aria-label", "Drag to move, or click for the block menu");
       const dots = document.createElement("span");
-      dots.className = "mk-grip";
+      dots.className = "mk-handle-glyph mk-grip";
       grip.appendChild(dots);
       element.append(addButton, grip);
       tooltip = document.createElement("div");

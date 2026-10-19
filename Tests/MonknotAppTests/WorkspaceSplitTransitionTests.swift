@@ -242,7 +242,10 @@ final class WorkspaceSplitTransitionTests: WorkspaceSplitViewTestCase {
         return nil
     }
 
-    func testDocumentKeepsItsFinalWidthAndFarEdgeWhileASidePaneMoves() {
+    /// The document is laid out live while a side pane moves, so its text reflows with the card on
+    /// every frame and nothing jumps when the pane stops (design.md §11). (A web view keeps still
+    /// on its own; see `WebViewPaneTransitionHold`.)
+    func testDocumentFollowsItsPaneOnEveryFrameWhileASidePaneMoves() {
         let recorder = PresentationRecorder()
         let controller = makeController(terminalPresented: false, recorder: recorder)
         let window = mount(controller, width: 1_280)
@@ -257,17 +260,17 @@ final class WorkspaceSplitTransitionTests: WorkspaceSplitViewTestCase {
         let finalWidth = restingWidth + sidebarWidth
 
         update(controller, sidebarPresented: false, terminalPresented: false, recorder: recorder, animated: true)
-        var sawMovingDivider = false
+        var widths: [CGFloat] = []
         let deadline = Date().addingTimeInterval(MonknotMotion.paneTransitionDuration * 2)
         while Date() < deadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.02))
             let paneWidth = documentPane.frame.width
             guard paneWidth > restingWidth + 1, paneWidth < finalWidth - 1 else { continue }
-            sawMovingDivider = true
-            XCTAssertEqual(document.frame.width, finalWidth, accuracy: 1, "One width for the whole transition")
-            XCTAssertEqual(document.frame.maxX, documentPane.bounds.width, accuracy: 0.5, "Pinned to the trailing edge")
+            widths.append(document.frame.width)
+            XCTAssertEqual(document.frame.width, documentPane.bounds.width, accuracy: 0.5, "The document fills its pane mid-transition")
         }
-        XCTAssertTrue(sawMovingDivider, "Precondition: the sidebar animates closed")
+        XCTAssertGreaterThan(Set(widths.map { Int($0) }).count, 1, "Precondition: the sidebar animates closed through several widths")
+        XCTAssertEqual(widths, widths.sorted(), "The width only grows as the sidebar closes")
         XCTAssertTrue(controller.sidebarItem.isCollapsed)
         XCTAssertEqual(document.frame.width, documentPane.bounds.width, accuracy: 0.5, "At rest the document fills its pane")
 
@@ -279,7 +282,7 @@ final class WorkspaceSplitTransitionTests: WorkspaceSplitViewTestCase {
             let terminal = controller.splitView.arrangedSubviews[2]
             guard !terminal.isHidden, terminal.frame.width > 1, terminal.frame.width < controller.terminalHostingController.view.frame.width - 1 else { continue }
             sawTerminalMove = true
-            XCTAssertEqual(document.frame.minX, 0, accuracy: 0.5, "Pinned to the leading edge while the terminal opens")
+            XCTAssertEqual(document.frame.width, documentPane.bounds.width, accuracy: 0.5, "The document fills its pane while the terminal opens")
         }
         XCTAssertTrue(sawTerminalMove, "Precondition: the terminal animates open")
         XCTAssertEqual(document.frame.width, documentPane.bounds.width, accuracy: 0.5)

@@ -267,6 +267,32 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         defaults.set(mode.rawValue, forKey: "Monknot.editorMode")
         defaults.set("catppuccin-latte", forKey: "Monknot.lightThemeID")
         defaults.removeObject(forKey: splitFramesKey)
+        // `MONKNOT_UI_TRANSITION_LIKE_APP` records at a large zoom in a full-screen window, where the
+        // text column is wider than the card and rewraps whenever a pane opens or closes.
+        let likeApp = environment["MONKNOT_UI_TRANSITION_LIKE_APP"] != nil
+        let appKeys: [String: Any] = [
+            "Monknot.zoomScale": 1.75,
+            "Monknot.codeFontSize": 17,
+            "Monknot.uiFontSize": 17,
+            ContentWidthPreference.key: 84.77,
+        ]
+        let savedAppValues = appKeys.keys.map { ($0, defaults.object(forKey: $0)) }
+        defer {
+            for (key, value) in savedAppValues {
+                defaults.set(value, forKey: key)
+            }
+        }
+        if likeApp {
+            for (key, value) in appKeys {
+                defaults.set(value, forKey: key)
+            }
+            defaults.set([
+                "0.000000, 0.000000, 343.000000, 1053.000000, NO, NO",
+                "349.000000, 0.000000, 1445.000000, 1053.000000, NO, NO",
+                "1800.000000, 0.000000, 560.000000, 1053.000000, YES, NO",
+            ], forKey: splitFramesKey)
+        }
+        let windowSize = likeApp ? NSSize(width: 1_800, height: 1_100) : NSSize(width: 1_300, height: 820)
 
         let toggles = [1.2, 2.2]
         let names = startsHidden ? ["open", "close"] : ["close", "open"]
@@ -284,7 +310,7 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             )
         ))
         let window = TourWindow(
-            contentRect: NSRect(origin: NSPoint(x: 60, y: 60), size: NSSize(width: 1_300, height: 820)),
+            contentRect: NSRect(origin: NSPoint(x: likeApp ? 0 : 60, y: likeApp ? 0 : 60), size: windowSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -301,10 +327,9 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         store.openWorkspace(root, selecting: root.appendingPathComponent(file))
         let opened = await waitUntil(timeout: 10) { !store.isBusy && !store.isDocumentLoading && store.selectedDocument != nil }
         XCTAssertTrue(opened)
+        // A test process's pages count as hidden, so WebKit runs no animations here: Preview's
+        // reflow shows only in a window of the app itself. Source and the chrome record as they run.
 
-        // The toggles fire at their times after the document shows. The window server is read off
-        // the main thread and the frames are written on other threads, so recording costs the app
-        // no frames.
         let windowID = CGWindowID(window.windowNumber)
         let shown = Date()
         let encoder = DispatchQueue(label: "MonknotUITour.transition", attributes: .concurrent)

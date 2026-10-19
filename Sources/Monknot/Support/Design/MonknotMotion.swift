@@ -6,8 +6,6 @@ enum MonknotMotion {
     static let outlineDuration: Double = 0.16
     /// Sidebar and terminal open and close with the standard macOS split-view transition.
     static let paneTransitionDuration: Double = 0.25
-    /// The snapshot over the document fades into the laid-out document once a pane has moved.
-    static let paneCoverFadeDuration: Double = 0.12
     static let terminalFullscreenTransitionDuration: Double = 0.18
 
     static var hoverAnimation: Animation {

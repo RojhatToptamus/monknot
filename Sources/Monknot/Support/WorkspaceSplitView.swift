@@ -599,20 +599,12 @@ final class WorkspaceSidePaneController: NSViewController {
     }
 }
 
-/// Holds the document. While a side pane opens or closes, the document takes its final width once,
-/// pinned to the edge that does not move, so a web view lays out once per transition instead of on
-/// every frame (it cannot keep up with a moving edge, and its first frames at a new size are stale).
-/// A `WorkspaceTransitionCoverView` lies over it meanwhile: the document as it was, its centred
-/// column gliding with the card's middle and its edge chrome on the card's edges, as a live layout
-/// would place them. When the transition ends the cover fades into the laid-out document.
+/// Holds the document on its card. The document is laid out live, on every frame of a side pane's
+/// transition too, so its text reflows as the card's edges move (design.md §11); a web view, which
+/// cannot follow a moving edge frame by frame, keeps still and reflows its page instead
+/// (`WebViewPaneTransitionHold`).
 final class WorkspaceDetailPaneController: NSViewController {
-    enum Anchor {
-        case leading
-        case trailing
-    }
-
     private let content: NSViewController
-    private var transitionGeneration: UInt = 0
 
     init(content: NSViewController) {
         self.content = content
@@ -630,6 +622,12 @@ final class WorkspaceDetailPaneController: NSViewController {
         (view as? PaneView)?.setCard(fill: fill, ring: ring, cornerRadius: cornerRadius, insets: insets)
     }
 
+    /// The card's frame in window coordinates.
+    var cardFrameInWindow: NSRect {
+        guard let card = (view as? PaneView)?.card, card.window != nil else { return .zero }
+        return card.convert(card.bounds, to: nil)
+    }
+
     override func loadView() {
         let paneView = PaneView()
         addChild(content)
@@ -637,24 +635,8 @@ final class WorkspaceDetailPaneController: NSViewController {
         view = paneView
     }
 
-    /// Lays the document out at `width`, pinned to `anchor`, until the matching `endTransition`.
-    func beginTransition(width: CGFloat, anchor: Anchor) -> UInt {
-        transitionGeneration &+= 1
-        (view as? PaneView)?.beginHold(width: width, anchor: anchor)
-        return transitionGeneration
-    }
-
-    func endTransition(_ generation: UInt) {
-        guard generation == transitionGeneration else { return }
-        (view as? PaneView)?.endHold()
-    }
-
     private final class PaneView: NSView {
-        private var heldWidth: CGFloat?
-        private var anchor: Anchor = .trailing
         private var insets = NSEdgeInsetsZero
-        private var cover: WorkspaceTransitionCoverView?
-        private var coverFadeGeneration: UInt = 0
         let card = WorkspaceCardView()
 
         init() {
@@ -677,53 +659,6 @@ final class WorkspaceDetailPaneController: NSViewController {
             layoutContent()
         }
 
-        func beginHold(width: CGFloat, anchor: Anchor) {
-            coverDocument()
-            heldWidth = max(1, width.rounded())
-            self.anchor = anchor
-            layoutContent()
-        }
-
-        func endHold() {
-            heldWidth = nil
-            layoutContent()
-            uncoverDocument()
-        }
-
-        /// Snapshots the document before it changes width. A transition that starts while the last
-        /// one's cover is still fading keeps that cover: it shows the document as it was before
-        /// either began, which is where the new one starts from.
-        private func coverDocument() {
-            coverFadeGeneration &+= 1
-            if let cover {
-                cover.layer?.removeAllAnimations()
-                cover.alphaValue = 1
-                return
-            }
-            guard let content = card.subviews.first,
-                  let cover = WorkspaceTransitionCoverView(snapshotting: content)
-            else { return }
-            cover.frame = card.bounds
-            card.addSubview(cover, positioned: .above, relativeTo: content)
-            self.cover = cover
-        }
-
-        private func uncoverDocument() {
-            guard let cover else { return }
-            let generation = coverFadeGeneration
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = MonknotMotion.paneCoverFadeDuration
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                cover.animator().alphaValue = 0
-            } completionHandler: { [weak self, weak cover] in
-                MainActor.assumeIsolated {
-                    guard let self, generation == self.coverFadeGeneration else { return }
-                    cover?.removeFromSuperview()
-                    self.cover = nil
-                }
-            }
-        }
-
         override func resizeSubviews(withOldSize oldSize: NSSize) {
             layoutContent()
         }
@@ -733,8 +668,6 @@ final class WorkspaceDetailPaneController: NSViewController {
             layoutContent()
         }
 
-        /// The card follows the pane as the divider slides; the document inside it takes its final
-        /// width once, pinned to the edge that does not move, and the cover lies over the card.
         private func layoutContent() {
             let cardFrame = NSRect(
                 x: insets.left,
@@ -745,19 +678,9 @@ final class WorkspaceDetailPaneController: NSViewController {
             if card.frame != cardFrame {
                 card.frame = cardFrame
             }
-            if let cover, cover.frame != card.bounds {
-                cover.frame = card.bounds
-            }
             guard let content = card.subviews.first else { return }
-            let width = heldWidth.map { max(1, $0 - insets.left - insets.right) } ?? cardFrame.width
-            let frame = NSRect(
-                x: heldWidth != nil && anchor == .trailing ? cardFrame.width - width : 0,
-                y: 0,
-                width: width,
-                height: cardFrame.height
-            )
-            if content.frame != frame {
-                content.frame = frame
+            if content.frame != card.bounds {
+                content.frame = card.bounds
             }
         }
     }
@@ -1873,27 +1796,70 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         let paneController = pane == .sidebar ? sidebarPane : terminalPane
         let paneWidth = clampedWidth(restorableWidth(for: pane), for: pane)
         let transition = paneController.beginTransition(fallbackWidth: paneWidth)
-        // From the pane's width now, so a reversal partway through still holds the right width.
-        let detailWidth = detailPane.view.bounds.width
-        let currentPaneWidth = nativePaneWidth(of: pane)
-        let finalDetailWidth = collapsed
-            ? detailWidth + currentPaneWidth
-            : detailWidth - max(0, paneWidth - currentPaneWidth)
-        let detailTransition: UInt? = detailWidth > 0 && finalDetailWidth > 0 && !detailItem.isCollapsed
-            ? detailPane.beginTransition(width: finalDetailWidth, anchor: pane == .sidebar ? .trailing : .leading)
-            : nil
+        // The document is laid out live on every frame, so its text reflows as the card moves. Where
+        // the card goes is announced first, from the pane's width now (a reversal partway through
+        // starts from there), for a web view that holds still and reflows its page instead.
+        // A collapsed pane is hidden but keeps its last frame.
+        let currentPaneWidth = splitView.arrangedSubviews[pane.arrangedIndex].isHidden ? 0 : nativePaneWidth(of: pane)
+        let edgeShift = collapsed ? currentPaneWidth : max(0, paneWidth - currentPaneWidth)
+        let documentTransition = announceDocumentTransition(
+            leadingShift: pane == .sidebar ? (collapsed ? -edgeShift : edgeShift) : 0,
+            trailingShift: pane == .terminal ? (collapsed ? edgeShift : -edgeShift) : 0
+        )
+        if var started = documentTransition, let window = view.window {
+            started.startedAt = Date()
+            NotificationCenter.default.post(
+                name: .workspacePaneTransitionDidStart,
+                object: window,
+                userInfo: [WorkspacePaneTransition.userInfoKey: started]
+            )
+        }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = MonknotMotion.paneTransitionDuration
             context.timingFunction = MonknotMotion.paneTimingFunction
             item.animator().isCollapsed = collapsed
-        } completionHandler: { [weak paneController, weak detailPane] in
+        } completionHandler: { [weak self, weak paneController] in
             MainActor.assumeIsolated {
                 paneController?.endTransition(transition)
-                if let detailTransition {
-                    detailPane?.endTransition(detailTransition)
+                if let documentTransition, let window = self?.view.window {
+                    NotificationCenter.default.post(
+                        name: .workspacePaneTransitionDidEnd,
+                        object: window,
+                        userInfo: [WorkspacePaneTransition.userInfoKey: documentTransition]
+                    )
                 }
             }
         }
+    }
+
+    private var documentTransitionSerial: UInt = 0
+
+    /// Posts where the document card is and where it ends as a pane moves, or nothing when the
+    /// document is not on screen.
+    private func announceDocumentTransition(leadingShift: CGFloat, trailingShift: CGFloat) -> WorkspacePaneTransition? {
+        guard let window = view.window, !detailItem.isCollapsed else { return nil }
+        let card = detailPane.cardFrameInWindow
+        guard card.width > 0 else { return nil }
+        let end = NSRect(
+            x: card.minX + leadingShift,
+            y: card.minY,
+            width: max(0, card.width - leadingShift + trailingShift),
+            height: card.height
+        )
+        documentTransitionSerial &+= 1
+        let transition = WorkspacePaneTransition(
+            id: documentTransitionSerial,
+            cardStart: card,
+            cardEnd: end,
+            duration: MonknotMotion.paneTransitionDuration,
+            startedAt: Date()
+        )
+        NotificationCenter.default.post(
+            name: .workspacePaneTransitionWillBegin,
+            object: window,
+            userInfo: [WorkspacePaneTransition.userInfoKey: transition]
+        )
+        return transition
     }
 
     private func restorableWidth(for pane: SidePane) -> CGFloat {

@@ -548,8 +548,10 @@ Only four cases:
    down-arrowhead as a separate 10pt regular text run so it remains trailing. Its ink center is
    3.2pt below the 13pt title's ink center, so apply a scalable +3.2pt baseline offset.
 
-4. **Block grip** — six dots in two columns of three, the drag affordance of every block editor;
-   SF Symbols has no 2×3 grid. Draw 2.5pt dots on a 4 × 4.67pt pitch in an 8 × 14 box, `ink3` at rest.
+4. **Block handles' + and grip** — one drawing in a 16pt box so the pair matches in size and
+   weight: the + a 1.5pt cross with 9pt arms and round caps, the grip six 2.6pt dots in two columns of
+   three on whole points (SF Symbols has no 2×3 grid), both `ink3` at rest. They are masks, so they
+   take the handle's ink.
    The toggle's triangle is a filled CSS triangle in the document's marker column, a marker like a
    list bullet rather than a chrome glyph.
 
@@ -884,7 +886,7 @@ fill its box.** If an icon looks small, that is correct — macOS chrome glyphs 
 | Bar | 40 · padding 6 · 28 controls 2 apart, groups 8 apart · no rule (terminal, PDF, panel headers) |
 | Sidebar | width 240 (196 minimum) · header 40: monogram 18 (radius 6, initial 10.5/600), name 13/600, chevron 10, search and New Markdown 28/17 · row 28 · padding-x 8 · disclosure chevron 10 or file glyph 15 in the 18 column · gap 8 · label 13/400 · indent 14 · list inset 10, top 4 · no gap between rows · Recents header: chevron, group header, count 12 · footer 28 |
 | Menus | popover 340 (switcher) · list inset 6 · row 30 (34 in an overlay) · glyph 15 in 18 · gap 10 · label 13 `ink` · detail 12 `ink3` · group header 12 `ink3` · separator `line2` 4 inside the inset · overlay header 44, footer 32 |
-| Preview editing | format bar: 28 buttons / 17 glyph, 2 between, 4 padding, dividers 1×16, block selector label 13 with an 11 `chevron.down` · menus: width 272 (232 for Turn Into, callout kinds, table actions and languages), list padding 6, row 30 / 15 glyph (or a 12/600 `H1` tag) in the 18 column, gap 10, label 13 on a 1.35 line, hint 12 rounded `ink3`, section header 12 `ink3` sentence case, footer 32 with 12 `ink3` actions and 12 rounded `ink3` keys, submenu chevron 11, at most 380 tall; a menu of plain names (languages) has no glyph column · handles: + 22×24 and grip 18×24, radius 6, 1 apart, `ink3` at rest and `hover` fill with `ink2` on hover, 6 left of the block (left of the marker for a list item), centred on its first line · drop line 3 tall, radius 2, caret colour at 70 % · tooltip 12 on 1.45, inverted surface, padding 8 × 5, radius 6 · link editor: field 28, width 340 · code language label 22 tall / 12, top-left · all on radius 12 surfaces, rows radius 8 |
+| Preview editing | format bar: 28 buttons / 17 glyph, 2 between, 4 padding, dividers 1×16, block selector label 13 with an 11 `chevron.down` · menus: width 272 (232 for Turn Into, callout kinds, table actions and languages), list padding 6, row 30 / 15 glyph (or a 12/600 `H1` tag) in the 18 column, gap 10, label 13 on a 1.35 line, hint 12 rounded `ink3`, section header 12 `ink3` sentence case, footer 32 with 12 `ink3` actions and 12 rounded `ink3` keys, submenu chevron 11, at most 380 tall; a menu of plain names (languages) has no glyph column · handles: + 22×24 and grip 18×24, each a 16 glyph (§8), radius 6, 1 apart, `ink3` at rest and `hover` fill with `ink2` on hover, 6 left of the block (left of the marker for a list item), centred on its first line · drop line 3 tall, radius 2, caret colour at 70 % · tooltip 12 on 1.45, inverted surface, padding 8 × 5, radius 6 · link editor: field 28, width 340 · code language label 22 tall / 12, top-left · all on radius 12 surfaces, rows radius 8 |
 | Terminal | the bar (40) · session tabs 28, hugging glyph + number · Expand, New, Hide 28/17 |
 | PDF | the bar (40): navigator 28/17, page count 12 tabular · undo, redo · modes segmented · markup actions · style pop-up · zoom pop-up · save with the unsaved dot · navigator: header 40, segmented 28, rows 28, 14 per level |
 | Elsewhere | field 28 · push button 28 bars / 30 sheets · small icon button 22/13 · toggle 32×18, knob 14 · stepper 28 · slider track 4 / knob 16 · colour well 44×22 · overlay row 34 · Settings row ≥ 40, padding 12 × 8 · outline dash 22/14/9 × 2 |
@@ -1118,6 +1120,12 @@ measure: the column fills the pane. `DocumentMeasure` holds the numbers for both
 **Edge.** Both modes centre that width: Source's first glyph and Preview's sit on the same x, to
 the point. Preview's gutters (and the block handles' 44 pt) lie outside the column, never inside it.
 
+**Top and bottom.** Both modes leave 2.5 × the code size (zoom included) above the first line —
+33 at 13pt, 74 at 17pt and 175 % zoom — so switching view mode never moves the first line and a
+larger text size keeps the page's proportions (`DocumentMeasure.verticalMarginEm`). Source leaves the
+same below the last line; Preview leaves twice that or a quarter of the window, whichever is more, so
+the last block can be read and written above the window's edge. No margin steps at a width.
+
 **Contents.** Callouts, code blocks and quotes span the column; a table is as wide as its columns
 need (6 em at least each), wraps its cells before it grows past the column, and scrolls sideways only
 for what cannot wrap. PDF export keeps its own page width.
@@ -1134,16 +1142,17 @@ it (112 pt at 1×); a narrower pane hides it rather than letting it cover text.
 - **250ms ease-in-ease-out** for showing and hiding the sidebar and terminal, from the toolbar, the
   menu or the keyboard alike: AppKit's own split-view transition, opening and closing alike. The
   pane's content keeps its open width and slides under the window edge, so rows never squeeze and the
-  terminal is not resized frame by frame. The document beside it moves as a live layout would: its
-  text column glides with the card's middle and its edge chrome (the outline rail, the word count,
-  the scroll thumb) stays on the card's edge. It lays out once, at its final width, under a snapshot
-  of itself (`WorkspaceTransitionCoverView`) that does the moving and then fades into it over
-  120ms: a web view cannot follow a moving edge frame by frame, and its first frames at a new size
-  are stale, so it is never shown mid-layout. Where the text rewraps between the two widths, that
-  fade is the only change. Nothing else moves: the titlebar's buttons stay put and the tab strip
-  keeps to the card's leading edge until it meets them. A sidebar hidden when the window opened
-  first opens at its default 240, never AppKit's minimum. Any change of width keeps Preview's
-  reading position: the block at the top of the window stays put.
+  terminal is not resized frame by frame. The document beside it is laid out live, as in a browser:
+  its column re-centres and its text rewraps on every frame, the outline rail, word count and scroll
+  thumb ride the card's edges, and nothing jumps at the end because the last frame is the final
+  layout. Preview's web view cannot follow a moving edge frame by frame (it lays out in another
+  process and shows a stale frame at each new size), so it holds still over the card's old and new
+  areas while its page reflows inside them on the same clock (`WebViewPaneTransitionHold`,
+  renderer.js `monknotPaneTransition`); a snapshot covers it only while its frame really changes. In
+  Low Power Mode WebKit draws at 30 fps, so there Preview's reflow steps at 30 fps. The line at the
+  top of the window stays put in both modes as the text rewraps. Nothing else moves: the titlebar's
+  buttons stay put and the tab strip keeps to the card's leading edge until it meets them. A sidebar
+  hidden when the window opened first opens at its default 240, never AppKit's minimum.
 - **fadeUp** for overlays, toasts and the outline peek card (120ms, 4pt). Preview's editing surfaces
   have their own rule (§10.10): grown from the trigger when the pointer opens them, instant from the
   keyboard.

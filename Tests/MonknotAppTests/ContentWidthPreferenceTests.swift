@@ -262,7 +262,7 @@ final class ContentWidthPreferenceTests: XCTestCase {
         )
         XCTAssertEqual(
             textView.textContainerInset.height,
-            ContentWidthPreference.editorVerticalInset(zoomScale: WorkspaceZoomPolicy.minimum),
+            ContentWidthPreference.editorVerticalInset(fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.minimum)),
             accuracy: 0.5
         )
         XCTAssertEqual(
@@ -292,7 +292,7 @@ final class ContentWidthPreferenceTests: XCTestCase {
         )
         XCTAssertEqual(
             textView.textContainerInset.height,
-            ContentWidthPreference.editorVerticalInset(zoomScale: WorkspaceZoomPolicy.maximum),
+            ContentWidthPreference.editorVerticalInset(fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.maximum)),
             accuracy: 0.5
         )
         XCTAssertEqual(
@@ -302,6 +302,77 @@ final class ContentWidthPreferenceTests: XCTestCase {
         )
         XCTAssertGreaterThan(textView.textContainerInset.width, compactInsets.width)
         XCTAssertGreaterThan(textView.textContainerInset.height, compactInsets.height)
+    }
+
+    /// A side pane's transition changes the editor's width on every frame and ends a live resize,
+    /// after which AppKit scrolls to keep the insertion point in view. The line at the top of the
+    /// window stays put instead (design.md §11), at the top of the document and partway down.
+    func testAWidthChangeKeepsTheLineAtTheTopOfTheWindow() throws {
+        var text = (1...240).map { "Line \($0): a sentence long enough to wrap once the column narrows." }
+            .joined(separator: "\n")
+        var sourceLocation: MarkdownSourceLocation?
+        var searchState = DocumentSearchState()
+        let host = NSHostingView(rootView: MarkdownTextEditor(
+            documentID: "/anchor.md",
+            text: Binding(get: { text }, set: { text = $0 }),
+            theme: .defaultLight,
+            fontSize: 13,
+            zoomScale: 1,
+            contentWidthPercent: 100,
+            fontSmoothing: true,
+            scrollPosition: nil,
+            sourceLocation: Binding(get: { sourceLocation }, set: { sourceLocation = $0 }),
+            searchState: Binding(get: { searchState }, set: { searchState = $0 }),
+            onScrollPositionChange: { _ in }
+        ))
+        host.frame = NSRect(x: 0, y: 0, width: 900, height: 400)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        defer { window.contentView = nil }
+        window.layoutIfNeeded()
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendantsForContentWidthTesting().compactMap { $0 as? NSTextView }.first)
+        let clip = try XCTUnwrap(textView.enclosingScrollView?.contentView)
+        let layoutManager = try XCTUnwrap(textView.layoutManager)
+        let textContainer = try XCTUnwrap(textView.textContainer)
+        window.makeFirstResponder(textView)
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+
+        func resize(to width: CGFloat) {
+            textView.viewWillStartLiveResize()
+            for step in 1...6 {
+                host.frame.size.width = 900 + (width - 900) * CGFloat(step) / 6
+                window.layoutIfNeeded()
+                host.layoutSubtreeIfNeeded()
+            }
+            textView.viewDidEndLiveResize()
+        }
+
+        func lineAtTop() -> Int {
+            let point = NSPoint(x: 0, y: clip.bounds.minY - textView.textContainerOrigin.y + 1)
+            let glyph = layoutManager.glyphIndex(for: point, in: textContainer)
+            let index = layoutManager.characterIndexForGlyph(at: glyph)
+            return (textView.string as NSString).lineRange(for: NSRange(location: index, length: 0)).location
+        }
+
+        resize(to: 420)
+        XCTAssertEqual(clip.bounds.minY, 0, accuracy: 0.5, "At the top it stays at the top")
+        resize(to: 900)
+        XCTAssertEqual(clip.bounds.minY, 0, accuracy: 0.5)
+
+        let line = (textView.string as NSString).range(of: "Line 120:")
+        let glyph = layoutManager.glyphIndexForCharacter(at: line.location)
+        layoutManager.ensureLayout(forGlyphRange: NSRange(location: 0, length: glyph + 1))
+        let rect = layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        clip.scroll(to: NSPoint(x: 0, y: rect.minY + textView.textContainerOrigin.y))
+        textView.enclosingScrollView?.reflectScrolledClipView(clip)
+        let top = lineAtTop()
+        XCTAssertEqual(top, line.location)
+
+        resize(to: 420)
+        XCTAssertEqual(lineAtTop(), top, "Partway down, the same line stays at the top as the text rewraps")
+        resize(to: 900)
+        XCTAssertEqual(lineAtTop(), top)
     }
 
     func testEditorPlaceholderGeometryUsesTheSameZoomExtremes() {
@@ -316,9 +387,11 @@ final class ContentWidthPreferenceTests: XCTestCase {
             28,
             "The established 100% placeholder alignment must not move"
         )
-        XCTAssertEqual(ContentWidthPreference.editorVerticalInset(zoomScale: 1), 18)
+        // The margin above the first line is 2.5 × the text size, Preview's too (DocumentMeasure).
+        XCTAssertEqual(ContentWidthPreference.editorVerticalInset(fontSize: 13), 33)
+        XCTAssertEqual(ContentWidthPreference.editorVerticalInset(fontSize: 17 * 1.75), 74)
         XCTAssertEqual(ContentWidthPreference.editorLineFragmentPadding(zoomScale: 1), 5)
-        XCTAssertEqual(ContentWidthPreference.editorPlaceholderTopInset(zoomScale: 1), 26)
+        XCTAssertEqual(ContentWidthPreference.editorPlaceholderTopInset(fontSize: 13, zoomScale: 1), 41)
         XCTAssertEqual(ContentWidthPreference.editorPlaceholderMinimumFontSize(zoomScale: 1), 13)
 
         XCTAssertEqual(
@@ -331,9 +404,11 @@ final class ContentWidthPreferenceTests: XCTestCase {
         )
         XCTAssertEqual(
             ContentWidthPreference.editorPlaceholderTopInset(
+                fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.minimum),
                 zoomScale: WorkspaceZoomPolicy.minimum
             ),
-            21
+            CGFloat(DocumentMeasure.verticalMargin(fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.minimum)))
+                + (8 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.minimum)).rounded()
         )
         XCTAssertEqual(
             ContentWidthPreference.editorPlaceholderMinimumFontSize(
@@ -351,9 +426,11 @@ final class ContentWidthPreferenceTests: XCTestCase {
         )
         XCTAssertEqual(
             ContentWidthPreference.editorPlaceholderTopInset(
+                fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.maximum),
                 zoomScale: WorkspaceZoomPolicy.maximum
             ),
-            52
+            CGFloat(DocumentMeasure.verticalMargin(fontSize: 13 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.maximum)))
+                + (8 * WorkspaceZoomPolicy.documentScale(WorkspaceZoomPolicy.maximum)).rounded()
         )
         XCTAssertEqual(
             ContentWidthPreference.editorPlaceholderMinimumFontSize(

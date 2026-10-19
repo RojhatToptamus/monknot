@@ -3,147 +3,8 @@ import SwiftUI
 import XCTest
 @testable import MonknotApp
 
-/// How a document snapshot is cut while a side pane opens or closes (design.md §10.0).
-final class WorkspaceTransitionCoverBandsTests: XCTestCase {
-    private let background: UInt32 = 0xFF_F5_F1_EF
-    private let ink: UInt32 = 0xFF_40_3A_33
-
-    /// A 4-byte-per-pixel bitmap of `width` × `height`, background everywhere except `inked` columns
-    /// (in every row, or only in `rows`).
-    private func bitmap(width: Int, height: Int = 12, inked: [(columns: Range<Int>, rows: Range<Int>?)]) -> [UInt32] {
-        var pixels = [UInt32](repeating: background, count: width * height)
-        for stroke in inked {
-            for y in stroke.rows ?? 0..<height {
-                for x in stroke.columns {
-                    pixels[y * width + x] = ink
-                }
-            }
-        }
-        return pixels
-    }
-
-    private func detect(
-        _ pixels: [UInt32],
-        width: Int,
-        height: Int = 12,
-        padding: Int = 4,
-        chrome: Int? = nil
-    ) -> WorkspaceTransitionCoverBands {
-        pixels.withUnsafeBytes { buffer in
-            WorkspaceTransitionCoverBands.detect(
-                pixels: buffer.baseAddress!,
-                width: width,
-                height: height,
-                bytesPerRow: width * 4,
-                background: background,
-                paddingPixels: padding,
-                trailingChromeStart: chrome
-            )
-        }
-    }
-
-    private func isBackground(column x: Int, in pixels: [UInt32], width: Int, height: Int = 12) -> Bool {
-        (0..<height).allSatisfy { pixels[$0 * width + x] == background }
-    }
-
-    func testAWideDocumentKeepsItsColumnApartFromTheChromeOnItsEdge() {
-        // A text column, then a wide margin, then a rail and a scroll thumb against the edge.
-        let pixels = bitmap(width: 200, inked: [
-            (40..<150, nil),
-            (180..<190, 2..<10),
-            (196..<198, 3..<6),
-        ])
-
-        let bands = detect(pixels, width: 200)
-
-        XCTAssertEqual(bands.centreStart, 36, "The centre band starts a padding before the text")
-        XCTAssertEqual(bands.centreEnd, 154, "and ends a padding after its last ink")
-        XCTAssertEqual(bands.trailingStart, 164, "The chrome's band starts in the margin, past the column's mirror")
-        XCTAssertTrue(isBackground(column: bands.trailingStart, in: pixels, width: 200))
-    }
-
-    func testMarkedChromeStartsTheTrailingBandEvenWhenTheTextComesClose() {
-        // A narrow card: the text's ragged end reaches into the rail's frame, whose marks hug the
-        // edge. The marker starts at 166; the text ends at 170 and the rail's marks start at 176.
-        let pixels = bitmap(width: 200, inked: [
-            (20..<170, nil),
-            (176..<190, nil),
-            (196..<198, 3..<6),
-        ])
-
-        let unmarked = detect(pixels, width: 200)
-        XCTAssertEqual(unmarked.trailingStart, 190, "Without a marker the rail glides with the column")
-
-        let bands = detect(pixels, width: 200, chrome: 166)
-        XCTAssertEqual(bands.trailingStart, 170, "The background column nearest the marker, past the text")
-        XCTAssertEqual(bands.centreEnd, 170)
-        XCTAssertTrue(isBackground(column: bands.trailingStart, in: pixels, width: 200))
-    }
-
-    func testAMarkerOverInkWithNoBackgroundNearItFallsBackToTheMirror() {
-        // A floating panel covers the text up to the edge's chrome: no clean cut near the marker.
-        let pixels = bitmap(width: 200, inked: [(30..<196, nil)])
-
-        let bands = detect(pixels, width: 200, chrome: 120)
-
-        XCTAssertEqual(bands, WorkspaceTransitionCoverBands(centreStart: 26, centreEnd: 196, trailingStart: 196))
-    }
-
-    func testABlankSnapshotGlidesWhole() {
-        let pixels = bitmap(width: 120, inked: [])
-
-        XCTAssertEqual(detect(pixels, width: 120), .whole(width: 120))
-    }
-
-    func testInkAcrossTheWholeWidthGlidesWhole() {
-        // A banner across the top leaves no background column anywhere.
-        let pixels = bitmap(width: 120, inked: [(0..<120, 0..<2), (30..<90, nil)])
-
-        let bands = detect(pixels, width: 120)
-
-        XCTAssertEqual(bands.centreStart, 0)
-        XCTAssertEqual(bands.centreEnd, 120)
-        XCTAssertEqual(bands.trailingStart, 120)
-    }
-
-    func testAntialiasedBackgroundCountsAsBackgroundAndFaintInkAsInk() {
-        var pixels = bitmap(width: 100, inked: [(30..<60, nil)])
-        pixels[5 * 100 + 5] = background &- 0x00_00_00_02
-        pixels[5 * 100 + 10] = background &- 0x00_00_00_08
-
-        let bands = detect(pixels, width: 100)
-
-        XCTAssertEqual(bands.centreStart, 6, "2 off the background at x 5 is background; 8 off at x 10 is the first ink")
-    }
-
-    func testEveryCutIsABackgroundColumn() {
-        // Columns and chrome at many offsets: a cut never passes through ink.
-        for start in stride(from: 4, to: 60, by: 7) {
-            for gap in [2, 6, 12, 30] {
-                let end = 150 - start / 2
-                let chrome = min(193, end + gap)
-                let pixels = bitmap(width: 200, inked: [
-                    (start..<end, nil),
-                    (chrome..<min(200, chrome + 5), 1..<9),
-                ])
-                for marker in [nil, chrome - 3, chrome + 1] as [Int?] {
-                    let bands = detect(pixels, width: 200, chrome: marker)
-                    XCTAssertLessThanOrEqual(bands.centreStart, start)
-                    XCTAssertLessThanOrEqual(bands.centreEnd, bands.trailingStart)
-                    if bands.trailingStart < 200 {
-                        XCTAssertTrue(
-                            isBackground(column: bands.trailingStart, in: pixels, width: 200),
-                            "start \(start) gap \(gap) marker \(String(describing: marker)) cut \(bands.trailingStart)"
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Side panes open and close as one native transition while the document lays out once
-/// (design.md §10.0).
+/// Side panes open and close as one native transition while the document lays out live
+/// (design.md §11).
 final class WorkspacePaneTransitionTests: WorkspaceSplitViewTestCase {
     func testASidebarHiddenAtLaunchFirstOpensToTheDefaultWidth() {
         let autosaveName = WorkspaceSplitMetrics.autosaveName
@@ -182,7 +43,7 @@ final class WorkspacePaneTransitionTests: WorkspaceSplitViewTestCase {
         )
     }
 
-    func testAnAnimatedRevealCoversTheDocumentAndStartsNoAnimationsOfItsOwn() async throws {
+    func testAnAnimatedRevealAnnouncesWhereTheCardGoesAndStartsNoAnimationsOfItsOwn() async throws {
         let recorder = PresentationRecorder()
         let controller = makeController(sidebarPresented: true, terminalPresented: false, recorder: recorder)
         let window = mount(controller, width: 1_300)
@@ -198,24 +59,40 @@ final class WorkspacePaneTransitionTests: WorkspaceSplitViewTestCase {
         update(controller, sidebarPresented: false, terminalPresented: false, recorder: recorder)
         layout(window, controller)
         XCTAssertTrue(controller.splitView.arrangedSubviews[0].isHidden)
+        let closedCard = controller.splitView.arrangedSubviews[1].convert(
+            controller.splitView.arrangedSubviews[1].bounds,
+            to: nil
+        )
+
+        var began: WorkspacePaneTransition?
+        var ended: WorkspacePaneTransition?
+        let center = NotificationCenter.default
+        let observers = [
+            center.addObserver(forName: .workspacePaneTransitionWillBegin, object: window, queue: nil) { note in
+                began = note.userInfo?[WorkspacePaneTransition.userInfoKey] as? WorkspacePaneTransition
+            },
+            center.addObserver(forName: .workspacePaneTransitionDidEnd, object: window, queue: nil) { note in
+                ended = note.userInfo?[WorkspacePaneTransition.userInfoKey] as? WorkspacePaneTransition
+            },
+        ]
+        defer { observers.forEach(center.removeObserver) }
 
         update(controller, sidebarPresented: true, terminalPresented: false, recorder: recorder, animated: true)
 
-        let detail = controller.splitView.arrangedSubviews[1]
-        XCTAssertNotNil(
-            firstDescendant(of: WorkspaceTransitionCoverView.self, in: detail),
-            "The document lies under a snapshot while the pane moves"
-        )
+        let transition = try XCTUnwrap(began, "A web view learns where the card goes before it moves")
+        XCTAssertEqual(transition.cardEnd.maxX, transition.cardStart.maxX, accuracy: 0.5, "The trailing edge stays")
+        XCTAssertEqual(transition.cardEnd.minX - transition.cardStart.minX, openWidth, accuracy: 1)
+        XCTAssertEqual(transition.cardStart.maxX, closedCard.maxX, accuracy: 7, "It starts where the document's card is")
         // AppKit reports the reveal from inside its own animation, where implicit animation is on;
         // frames the split sets there must not animate on their own and drift against the reveal.
+        let detail = controller.splitView.arrangedSubviews[1]
         for view in descendants(of: detail) {
             XCTAssertEqual(view.layer?.animationKeys() ?? [], [], "\(type(of: view)) animates on its own")
         }
 
-        let uncovered = await waitUntil(timeout: 3) {
-            self.firstDescendant(of: WorkspaceTransitionCoverView.self, in: detail) == nil
-        }
-        XCTAssertTrue(uncovered, "The cover fades out once the pane has moved")
+        let finished = await waitUntil(timeout: 3) { ended != nil }
+        XCTAssertTrue(finished)
+        XCTAssertEqual(ended?.id, transition.id)
         XCTAssertEqual(controller.splitView.arrangedSubviews[0].frame.width, openWidth, accuracy: 1)
     }
 

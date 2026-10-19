@@ -77,8 +77,25 @@ body {
   font-feature-settings: "ss01", "cv01";
 }
 
+/* What a side pane covers while it opens or closes (design.md §11): the host holds the web view
+   still over the card's old and new areas, and renderer.js animates these with the card's edges so
+   the column lays out, and reflows, in the part the card shows. Both are 0 at rest. */
+@property --mk-pane-left {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --mk-pane-right {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
 body {
   box-sizing: border-box;
+  padding-left: var(--mk-pane-left, 0px);
+  padding-right: var(--mk-pane-right, 0px);
 }
 
 /* A legacy scroll bar stays laid out while the preview fits, so text never rewraps when the preview
@@ -121,14 +138,32 @@ html.mk-legacy-scrollbars ::-webkit-scrollbar-corner {
   background: transparent;
 }
 
+/* The legacy thumb's stand-in while a side pane's transition moves the card's trailing edge. */
+.mk-pane-thumb {
+  position: fixed;
+  z-index: 2147483000;
+  width: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  pointer-events: none;
+}
+
+/* The page's margins (design.md §10.11). Top and bottom follow the text size, as Source's do, so
+   switching view mode never moves the first line and a larger zoom keeps the same proportions: the
+   top is 2.5 × the code size, the bottom twice that or a quarter of the window, whichever is more,
+   so the last line can be read and written above the window's bottom edge. The gutters follow the
+   width the card shows. */
 .markdown-body {
-  --column-gutter: clamp(18px, 2.2vw, 38px);
+  --column-gutter: clamp(18px, calc((100vw - var(--mk-pane-left, 0px) - var(--mk-pane-right, 0px)) * 0.022), 38px);
   --column-text: min(var(--content-max-width, 88%), var(--content-measure, 45.7em));
   box-sizing: border-box;
   width: min(calc(var(--column-text) + 2 * var(--column-gutter)), 100%);
   max-width: none;
   margin: 0 auto;
-  padding: 34px var(--column-gutter) 56px;
+  padding:
+    var(--document-margin-top, calc(var(--base-font-size, 13px) * 2.5))
+    var(--column-gutter)
+    max(calc(var(--document-margin-top, calc(var(--base-font-size, 13px) * 2.5)) * 2), 25vh);
   color: var(--muted);
   line-height: 1.6;
 }
@@ -619,14 +654,6 @@ audio {
 .footnote-ref,
 .footnote-backref {
   font-size: 0.78em;
-}
-
-@media (max-width: 720px) {
-  .markdown-body {
-    --column-gutter: 22px;
-    padding-top: 22px;
-    padding-bottom: 48px;
-  }
 }
 
 @media print {

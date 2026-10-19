@@ -1570,6 +1570,7 @@
   window.monknotCurrentIdentity = currentIdentity;
   window.monknotNormalizeHeadingFragment = slug;
   window.monknotTearDown = tearDown;
+  window.monknotPaneTransition = { begin: beginPaneTransition, end: endPaneTransition };
   render(window.monknot || {});
   target.addEventListener("dblclick", handleSourceJump);
   target.addEventListener("click", handleInteraction);
@@ -1749,7 +1750,106 @@
     recordReadingAnchor();
   }
 
+  // A side pane opening or closing (design.md §11). The host holds the web view still over the
+  // card's old and new areas and says which part the card shows at the start and at the end; this
+  // animates that part on the host's clock, so the column lays out in it and reflows and glides on
+  // every frame, as a live layout would, while the block at the top of the window stays put. With a
+  // scroll bar always shown and the card's trailing edge moving, a stand-in thumb rides that edge:
+  // the real one is at the held web view's edge, outside the card.
+  let paneTransition = null;
+
+  function beginPaneTransition(spec) {
+    const root = document.documentElement;
+    stopPaneTransition();
+    recordReadingAnchor();
+    const inset = (left, right) => ({
+      "--mk-pane-left": `${Math.max(0, Number(left) || 0)}px`,
+      "--mk-pane-right": `${Math.max(0, Number(right) || 0)}px`,
+    });
+    const from = inset(spec.fromLeft, spec.fromRight);
+    const to = inset(spec.toLeft, spec.toRight);
+    const duration = Math.max(1, Number(spec.duration) || 1);
+    let animation = null;
+    if (typeof root.animate === "function") {
+      animation = root.animate([from, to], {
+        duration,
+        easing: typeof spec.easing === "string" ? spec.easing : "ease-in-out",
+        fill: "forwards",
+      });
+      const elapsed = Date.now() - Number(spec.startedAt);
+      animation.currentTime = Number.isFinite(elapsed) ? Math.max(0, Math.min(duration, elapsed)) : 0;
+    } else {
+      root.style.setProperty("--mk-pane-left", to["--mk-pane-left"]);
+      root.style.setProperty("--mk-pane-right", to["--mk-pane-right"]);
+    }
+    const thumb = spec.thumb && root.classList.contains("mk-legacy-scrollbars") ? document.createElement("div") : null;
+    if (thumb) {
+      thumb.className = "mk-pane-thumb";
+      thumb.setAttribute("aria-hidden", "true");
+      document.body.appendChild(thumb);
+    }
+    paneTransition = { animation, thumb, frame: 0 };
+    const step = () => {
+      if (!paneTransition) return;
+      holdReadingAnchor();
+      placePaneThumb(paneTransition.thumb);
+      paneTransition.frame = window.requestAnimationFrame(step);
+    };
+    step();
+  }
+
+  function endPaneTransition() {
+    stopPaneTransition();
+    holdReadingAnchor();
+    readingWidth = window.innerWidth;
+    recordReadingAnchor();
+  }
+
+  function stopPaneTransition() {
+    if (!paneTransition) return;
+    const current = paneTransition;
+    paneTransition = null;
+    if (current.frame) window.cancelAnimationFrame(current.frame);
+    if (current.animation) current.animation.cancel();
+    if (current.thumb) current.thumb.remove();
+    document.documentElement.style.removeProperty("--mk-pane-left");
+    document.documentElement.style.removeProperty("--mk-pane-right");
+  }
+
+  function holdReadingAnchor() {
+    const anchor = readingAnchor;
+    if (!anchor) return;
+    const scroller = document.scrollingElement || document.documentElement;
+    if (anchor.atTop) {
+      scroller.scrollTop = 0;
+    } else if (anchor.element && anchor.element.isConnected) {
+      scroller.scrollTop += anchor.element.getBoundingClientRect().top - anchor.top;
+    }
+  }
+
+  // The legacy thumb's geometry (preview.css): a 9 px lane, the track 6 px clear of the ends, the
+  // thumb a 4 px capsule 2.5 px inside the lane.
+  function placePaneThumb(thumb) {
+    if (!thumb) return;
+    const scroller = document.scrollingElement || document.documentElement;
+    const viewport = scroller.clientHeight;
+    const content = scroller.scrollHeight;
+    if (content <= viewport + 1) {
+      thumb.style.display = "none";
+      return;
+    }
+    const track = Math.max(0, viewport - 12);
+    const height = Math.max(Math.min(track, 20), track * (viewport / content));
+    const progress = scroller.scrollTop / Math.max(1, content - viewport);
+    const right = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--mk-pane-right")) || 0;
+    thumb.style.display = "block";
+    thumb.style.top = `${6 + (track - height) * progress + 2.5}px`;
+    thumb.style.height = `${Math.max(0, height - 5)}px`;
+    thumb.style.right = `${right + 2.5 - 9}px`;
+  }
+
   function tearDown() {
+    stopPaneTransition();
     if (typeof window.removeEventListener === "function") {
       window.removeEventListener("scroll", scheduleReadingAnchor);
       window.removeEventListener("resize", keepReadingPosition);
