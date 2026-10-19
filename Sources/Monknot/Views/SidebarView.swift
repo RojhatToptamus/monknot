@@ -999,14 +999,13 @@ private struct SidebarProjectHeader: View {
                                     weight: .semibold
                                 ))
                                 .symbolRenderingMode(.monochrome)
-                                .foregroundStyle(
+                                .monknotStateStyle(
                                     isBusy
                                         ? theme.disabledForegroundColor
                                         : (isWorkspaceTitleHovered || isSwitcherPresented
                                             ? theme.mutedForegroundColor
                                             : theme.tertiaryForegroundColor)
                                 )
-                                .animation(MonknotMotion.hoverAnimation, value: isWorkspaceTitleHovered)
                         }
                         .layoutPriority(1)
 
@@ -1243,7 +1242,7 @@ private struct WorkspaceSwitcherRow: View {
                                 theme: theme,
                                 zoomScale: zoomScale
                             )
-                            .opacity(isHovered ? 0 : 1)
+                            .monknotStateOpacity(isHovered ? 0 : 1)
                         }
                     }
                 }
@@ -1255,21 +1254,23 @@ private struct WorkspaceSwitcherRow: View {
             ))
             .disabled(isBusy || isActive)
 
-            if isHovered {
-                MonknotIconButton(
-                    systemImage: "xmark",
-                    label: "Remove \(workspace.displayName)",
-                    theme: theme,
-                    zoomScale: zoomScale,
-                    isDisabled: isBusy,
-                    size: .small,
-                    focusRingPlacement: .contained,
-                    action: remove
-                )
-                // On the row's trailing padding minus the small button's own inset, so its glyph
-                // sits where the shortcut's last character was.
-                .padding(.trailing, MonknotMetrics.interfaceDensity(MonknotMetrics.menuRowPaddingBase - 4, theme: theme, zoomScale: zoomScale))
-            }
+            // Crossfades with the shortcut, as a tab's close button does with its glyph.
+            MonknotIconButton(
+                systemImage: "xmark",
+                label: "Remove \(workspace.displayName)",
+                theme: theme,
+                zoomScale: zoomScale,
+                isDisabled: isBusy || !isHovered,
+                size: .small,
+                focusRingPlacement: .contained,
+                action: remove
+            )
+            // On the row's trailing padding minus the small button's own inset, so its glyph
+            // sits where the shortcut's last character was.
+            .padding(.trailing, MonknotMetrics.interfaceDensity(MonknotMetrics.menuRowPaddingBase - 4, theme: theme, zoomScale: zoomScale))
+            .monknotStateOpacity(isHovered ? 1 : 0)
+            .allowsHitTesting(isHovered)
+            .accessibilityHidden(!isHovered)
         }
         .onHover { isHovered = $0 }
         .accessibilityElement(children: .contain)

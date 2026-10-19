@@ -478,9 +478,9 @@ struct WorkspaceSearchView: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .opacity(state.isSearching ? Self.staleResultsOpacity : 1)
+            // Only the dimming fades; the new results replace the old ones at once.
+            .monknotStateOpacity(state.isSearching ? Self.staleResultsOpacity : 1)
             .allowsHitTesting(!state.isSearching)
-            .animation(MonknotMotion.hoverAnimation, value: state.isSearching)
         }
     }
 

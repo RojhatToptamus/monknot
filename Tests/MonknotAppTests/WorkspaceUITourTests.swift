@@ -229,6 +229,25 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             .write(to: directory.appendingPathComponent("\(stop.name).png"))
     }
 
+    private static func click(at point: NSPoint, in window: NSWindow) {
+        for (type, delay) in [(NSEvent.EventType.leftMouseDown, 0.0), (.leftMouseUp, 0.06)] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard let event = NSEvent.mouseEvent(
+                    with: type,
+                    location: point,
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber,
+                    context: nil,
+                    eventNumber: 0,
+                    clickCount: 1,
+                    pressure: type == .leftMouseDown ? 1 : 0
+                ) else { return }
+                window.sendEvent(event)
+            }
+        }
+    }
+
     private struct TransitionFrame: @unchecked Sendable {
         let milliseconds: Int
         let image: CGImage
@@ -237,8 +256,9 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
     /// Hides and shows a side pane through ContentView's own animated path in one window and saves
     /// the window as often as the window server allows around each transition, so a review can see
     /// what moves. Runs only when `MONKNOT_UI_TRANSITION_DIR` names a folder for the frames.
-    /// `MONKNOT_UI_TRANSITION_PANE=terminal` moves the terminal instead of the sidebar,
-    /// `MONKNOT_UI_TRANSITION_COLD` starts with the pane hidden (its first reveal), and
+    /// `MONKNOT_UI_TRANSITION_PANE=terminal` moves the terminal instead of the sidebar, `fullscreen`
+    /// takes the terminal full width and back, and `folder` clicks the first sidebar folder open and
+    /// closed; `MONKNOT_UI_TRANSITION_COLD` starts with the pane hidden (its first reveal), and
     /// `MONKNOT_UI_TRANSITION_TERMINAL`, `MONKNOT_UI_TRANSITION_SOURCE` and
     /// `MONKNOT_UI_TRANSITION_FILE` set the terminal, the editor view and the document.
     func testCaptureTheSidePaneTransitions() async throws {
@@ -249,7 +269,10 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         let directory = URL(fileURLWithPath: output, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let root = try makeFixtureWorkspace()
-        let movesTerminal = environment["MONKNOT_UI_TRANSITION_PANE"] == "terminal"
+        // `MONKNOT_UI_TRANSITION_PANE`: `terminal` moves the terminal, `fullscreen` takes it full
+        // width and back, `folder` clicks the first folder in the sidebar open and closed.
+        let pane = environment["MONKNOT_UI_TRANSITION_PANE"] ?? "sidebar"
+        let movesTerminal = pane == "terminal" || pane == "fullscreen"
         let startsHidden = environment["MONKNOT_UI_TRANSITION_COLD"] != nil
         let mode = environment["MONKNOT_UI_TRANSITION_SOURCE"] != nil ? EditorMode.source : .preview
         let file = environment["MONKNOT_UI_TRANSITION_FILE"] ?? "Long notes.md"
@@ -295,7 +318,7 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         let windowSize = likeApp ? NSSize(width: 1_800, height: 1_100) : NSSize(width: 1_300, height: 820)
 
         let toggles = [1.2, 2.2]
-        let names = startsHidden ? ["open", "close"] : ["close", "open"]
+        let names = startsHidden || pane == "folder" || pane == "fullscreen" ? ["open", "close"] : ["close", "open"]
         let showsTerminal = movesTerminal ? !startsHidden : environment["MONKNOT_UI_TRANSITION_TERMINAL"] != nil
         let store = makeWorkspaceStore()
         let host = NSHostingView(rootView: ContentView(
@@ -306,7 +329,9 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
             initialLayout: .init(
                 showsSidebar: movesTerminal || !startsHidden,
                 showsTerminal: showsTerminal,
-                overlay: movesTerminal ? .toggleTerminal(at: toggles) : .toggleSidebar(at: toggles)
+                overlay: pane == "folder" ? nil
+                    : pane == "fullscreen" ? .toggleTerminalFullscreen(at: toggles)
+                    : movesTerminal ? .toggleTerminal(at: toggles) : .toggleSidebar(at: toggles)
             )
         ))
         let window = TourWindow(
@@ -336,6 +361,13 @@ final class WorkspaceUITourTests: WorkspaceStoreTestCase {
         let written = DispatchGroup()
         for (toggle, name) in zip(toggles, names) {
             try await Task.sleep(nanoseconds: UInt64(max(0, toggle - 0.15 - Date().timeIntervalSince(shown)) * 1_000_000_000))
+            if pane == "folder" {
+                // The first tree row, "Notes", clicked as a person would.
+                let point = NSPoint(x: 60, y: window.contentLayoutRect.maxY - 58)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    Self.click(at: point, in: window)
+                }
+            }
             await Task.detached(priority: .userInitiated) {
                 let start = Date()
                 var index = 0

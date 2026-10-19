@@ -200,6 +200,11 @@ final class WorkspaceNativeSplitView: NSSplitView {
     var isTerminalFullscreen = false {
         didSet {
             guard oldValue != isTerminalFullscreen else { return }
+            // The divider thickness changes with it. The split keeps the thickness it last read in
+            // its own constraints until its divider style changes; the document pane, holding the
+            // least, takes up the difference on the next layout.
+            dividerStyle = .thick
+            dividerStyle = .thin
             needsLayout = true
             needsDisplay = true
             window?.invalidateCursorRects(for: self)
@@ -635,9 +640,16 @@ final class WorkspaceDetailPaneController: NSViewController {
         view = paneView
     }
 
+    /// The card follows the part of the pane the split shows. While the split collapses or reveals
+    /// the document (a terminal taken full width), it keeps the pane at its open width and only
+    /// clips it, so the card shrinks with its ring and corners intact and the document inside keeps
+    /// its width under it, as a side pane's content does. Collapsed, the document keeps that width
+    /// too, so it is not laid out at zero width and again on its return.
     private final class PaneView: NSView {
         private var insets = NSEdgeInsetsZero
         let card = WorkspaceCardView()
+        private var frameObserver: NSObjectProtocol?
+        private var openContentWidth: CGFloat = 0
 
         init() {
             super.init(frame: .zero)
@@ -650,6 +662,10 @@ final class WorkspaceDetailPaneController: NSViewController {
             fatalError("init(coder:) has not been implemented")
         }
 
+        deinit {
+            frameObserver.map(NotificationCenter.default.removeObserver)
+        }
+
         func setCard(fill: NSColor, ring: NSColor, cornerRadius: CGFloat, insets: NSEdgeInsets) {
             card.fillColor = fill
             card.ringColor = ring
@@ -657,6 +673,27 @@ final class WorkspaceDetailPaneController: NSViewController {
             guard !NSEdgeInsetsEqual(self.insets, insets) else { return }
             self.insets = insets
             layoutContent()
+        }
+
+        override func viewWillMove(toSuperview newSuperview: NSView?) {
+            super.viewWillMove(toSuperview: newSuperview)
+            if let frameObserver {
+                NotificationCenter.default.removeObserver(frameObserver)
+                self.frameObserver = nil
+            }
+        }
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            guard let superview else { return }
+            superview.postsFrameChangedNotifications = true
+            frameObserver = NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification,
+                object: superview,
+                queue: nil
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.layoutContent() }
+            }
         }
 
         override func resizeSubviews(withOldSize oldSize: NSSize) {
@@ -669,18 +706,28 @@ final class WorkspaceDetailPaneController: NSViewController {
         }
 
         private func layoutContent() {
+            let shownWidth = superview.map { min(bounds.width, $0.bounds.width - frame.minX) } ?? bounds.width
             let cardFrame = NSRect(
                 x: insets.left,
                 y: insets.bottom,
-                width: max(0, bounds.width - insets.left - insets.right),
+                width: max(0, shownWidth - insets.left - insets.right),
                 height: max(0, bounds.height - insets.top - insets.bottom)
             )
             if card.frame != cardFrame {
                 card.frame = cardFrame
             }
             guard let content = card.subviews.first else { return }
-            if content.frame != card.bounds {
-                content.frame = card.bounds
+            if bounds.width > 0 {
+                openContentWidth = max(0, bounds.width - insets.left - insets.right)
+            }
+            let contentFrame = NSRect(
+                x: 0,
+                y: 0,
+                width: max(cardFrame.width, openContentWidth),
+                height: cardFrame.height
+            )
+            if content.frame != contentFrame {
+                content.frame = contentFrame
             }
         }
     }
@@ -779,7 +826,7 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
     /// moved it.
     private func reportDocumentLeadingEdge() {
         guard let onDocumentLeadingEdgeChange, view.window != nil else { return }
-        let edge = detailPane.view.convert(detailPane.view.bounds, to: nil).minX.rounded()
+        let edge = detailPane.cardFrameInWindow.minX.rounded()
         guard edge.isFinite, edge != lastReportedDocumentLeadingEdge else { return }
         lastReportedDocumentLeadingEdge = edge
         DispatchQueue.main.async {
@@ -791,11 +838,15 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         // The margin matches the divider, which does not scale with zoom, so every gap is equal.
         let margin = cardStyle.inset
         let radius = cardStyle.cornerRadius
+        // A terminal taken full width halves the dividers, so the two that meet where the document
+        // collapsed still make one gap. The document card takes back what each divider gave up and
+        // stays where it is as the dividers change.
+        let side = max(0, WorkspaceSplitMetrics.dividerThickness - workspaceSplitView.dividerThickness)
         detailPane.setCard(
             fill: cardStyle.documentBackground,
             ring: cardStyle.border,
             cornerRadius: radius,
-            insets: NSEdgeInsets(top: 0, left: 0, bottom: margin, right: 0)
+            insets: NSEdgeInsets(top: 0, left: side, bottom: margin, right: side)
         )
         terminalPane.setCard(
             fill: cardStyle.terminalBackground,
@@ -1506,7 +1557,7 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
 
         suspendSplitAutosaveForTerminalFullscreen()
         configureItems()
-        workspaceSplitView.isTerminalFullscreen = true
+        setDividersHalved(true)
         workspaceSplitView.disabledDividerIndices = [0, 1]
         workspaceSplitView.needsDisplay = true
 
@@ -1542,25 +1593,18 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         isReconcilingTerminalFullscreen = true
         let generation = beginTerminalFullscreenTransition()
 
-        // Keep the document mounted and start it at zero width. Moving the
-        // terminal divider then reveals the same document view without a fade,
-        // replacement host, or loss of editor state.
+        // The document stays mounted throughout, so it returns with its editor state.
         detailItem.minimumThickness = 0
         detailItem.canCollapse = true
         terminalItem.maximumThickness = NSSplitViewItem.unspecifiedDimension
         terminalItem.canCollapse = true
         terminalItem.canCollapseFromWindowResize = true
-        detailItem.isCollapsed = false
-        splitView.layoutSubtreeIfNeeded()
+        let terminalWidth = fittedWidth(retaining: retainedWidth, for: .terminal)
 
-        let targetPosition = dividerPosition(
-            forWidth: fittedWidth(retaining: retainedWidth, for: .terminal),
-            of: .terminal
-        )
-
-        guard animated, view.window != nil else {
-            splitView.setPosition(targetPosition, ofDividerAt: 1)
+        guard animated, view.window != nil, detailItem.isCollapsed else {
+            detailItem.isCollapsed = false
             splitView.layoutSubtreeIfNeeded()
+            setTerminalWidth(terminalWidth)
             finishTerminalFullscreenRestore(
                 generation: generation,
                 retainedWidth: retainedWidth
@@ -1568,13 +1612,39 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
             return
         }
 
+        // Leaving is entering run backwards (design.md §11): the document's collapse is undone by
+        // the same native animation. It is staged first at the width it returns to, so the reveal
+        // ends exactly there; nothing draws between the staging passes.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            context.allowsImplicitAnimation = false
+            detailItem.isCollapsed = false
+            splitView.layoutSubtreeIfNeeded()
+            setTerminalWidth(terminalWidth)
+            detailItem.isCollapsed = true
+            splitView.layoutSubtreeIfNeeded()
+        }
+
         animateTerminalFullscreenTransition {
-            splitView.animator().setPosition(targetPosition, ofDividerAt: 1)
+            detailItem.animator().isCollapsed = false
         } completion: { [weak self] in
             self?.finishTerminalFullscreenRestore(
                 generation: generation,
                 retainedWidth: retainedWidth
             )
+        }
+    }
+
+    /// Switches the split between its full-width-terminal dividers and its usual ones at once, with
+    /// the document card compensating (`applyCardStyle`), so no edge moves when they change.
+    private func setDividersHalved(_ halved: Bool) {
+        guard workspaceSplitView.isTerminalFullscreen != halved else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            context.allowsImplicitAnimation = false
+            workspaceSplitView.isTerminalFullscreen = halved
+            applyCardStyle()
+            splitView.layoutSubtreeIfNeeded()
         }
     }
 
@@ -1590,8 +1660,8 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
         completion: @escaping @MainActor () -> Void
     ) {
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = MonknotMotion.terminalFullscreenTransitionDuration
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.duration = MonknotMotion.paneTransitionDuration
+            context.timingFunction = MonknotMotion.paneTimingFunction
             changes()
         } completionHandler: {
             DispatchQueue.main.async {
@@ -1613,9 +1683,8 @@ final class WorkspaceSplitViewController<Sidebar: View, Detail: View, Terminal: 
             return
         }
 
-        workspaceSplitView.isTerminalFullscreen = false
         configureItems()
-        splitView.layoutSubtreeIfNeeded()
+        setDividersHalved(false)
         setTerminalWidth(fittedWidth(retaining: retainedWidth, for: .terminal))
         terminalWidthBeforeFullscreen = nil
         workspaceSplitView.disabledDividerIndices = []

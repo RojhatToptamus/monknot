@@ -177,24 +177,26 @@ struct MonknotSwitchStyle: ToggleStyle {
         } label: {
             ZStack {
                 Capsule()
-                    .fill(configuration.isOn ? theme.accentColor.opacity(isDisabled ? 0.45 : 1) : theme.controlTrackFillColor)
+                    .monknotStateStyle(configuration.isOn ? theme.accentColor.opacity(isDisabled ? 0.45 : 1) : theme.controlTrackFillColor)
                     .overlay {
-                        if !configuration.isOn {
-                            Capsule().strokeBorder(theme.borderColor, lineWidth: 1)
-                        }
+                        Capsule()
+                            .strokeBorder(theme.borderColor, lineWidth: 1)
+                            .monknotStateOpacity(configuration.isOn ? 0 : 1)
                     }
 
+                // Only the knob moves; it slides over the hover duration, or jumps with Reduce Motion.
                 Circle()
                     .fill(Color.white)
                     .frame(width: scaled(14), height: scaled(14))
                     .shadow(color: .black.opacity(0.22), radius: 1, y: 0.5)
-                    .offset(x: configuration.isOn ? scaled(7) : -scaled(7))
+                    .animation(reduceMotion ? nil : MonknotMotion.hoverAnimation) {
+                        $0.offset(x: configuration.isOn ? scaled(7) : -scaled(7))
+                    }
             }
             .frame(width: scaled(32), height: scaled(18))
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isOn)
     }
 }
 

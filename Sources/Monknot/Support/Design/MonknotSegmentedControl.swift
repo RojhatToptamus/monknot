@@ -137,15 +137,14 @@ struct MonknotSegmentButton: View {
                 .frame(height: MonknotMetrics.interfaceControl(Self.cellHeightBase, theme: theme, zoomScale: zoomScale))
                 .background {
                     let shape = RoundedRectangle(cornerRadius: cellRadius)
-                    // The selected cell is a chip lifted out of the track (design.md §5.5).
-                    if isSelected, !disabled {
-                        shape
-                            .fill(background)
-                            .shadow(color: theme.chipShadowColor, radius: 0.75, y: 1)
-                            .overlay { shape.strokeBorder(theme.chipRingColor, lineWidth: 0.5) }
-                    } else {
-                        shape.fill(background)
-                    }
+                    // The selected cell is a chip lifted out of the track (design.md §5.5): its
+                    // shadow and ring fade with its fill.
+                    shape
+                        .fill(theme.segmentSelectedFillColor)
+                        .shadow(color: theme.chipShadowColor, radius: 0.75, y: 1)
+                        .overlay { shape.strokeBorder(theme.chipRingColor, lineWidth: 0.5) }
+                        .monknotStateOpacity(isSelected && !disabled ? 1 : 0)
+                    shape.monknotStateStyle(background)
                 }
                 .monknotFocusRing(
                     isVisible: Self.showsFocusRing(isFocused: isFocused, isDisabled: disabled),
@@ -160,8 +159,6 @@ struct MonknotSegmentButton: View {
         .focusEffectDisabled()
         .disabled(isDisabled)
         .onHover { isHovered = $0 }
-        .animation(MonknotMotion.hoverAnimation, value: isHovered)
-        .animation(MonknotMotion.hoverAnimation, value: isSelected)
         .help(content.isSymbol ? accessibilityLabel : "")
         .accessibilityLabel(accessibilityLabel)
         // Disabled, the control shows no current mode, so it reports none either.
@@ -179,12 +176,12 @@ struct MonknotSegmentButton: View {
                 theme: theme,
                 zoomScale: zoomScale
             )
-            .foregroundStyle(foreground)
+            .monknotStateStyle(foreground)
             .frame(width: MonknotMetrics.interfaceControl(Self.iconCellWidthBase, theme: theme, zoomScale: zoomScale))
         case let .text(title):
             Text(title)
                 .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
-                .foregroundStyle(foreground)
+                .monknotStateStyle(foreground)
                 .lineLimit(1)
                 .fixedSize()
                 .padding(.horizontal, MonknotMetrics.interfaceDensity(Self.textCellPaddingBase, theme: theme, zoomScale: zoomScale))
@@ -209,7 +206,8 @@ struct MonknotSegmentButton: View {
             return .clear
         }
         if isSelected {
-            return theme.segmentSelectedFillColor
+            // The chip draws the selected fill.
+            return .clear
         }
         if isPressed {
             return theme.pressedFillColor

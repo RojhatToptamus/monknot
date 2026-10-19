@@ -158,7 +158,7 @@ struct MonknotIconButton: View {
                 theme: theme,
                 zoomScale: zoomScale
             )
-                .foregroundStyle(Self.iconColor(
+                .monknotStateStyle(Self.iconColor(
                     theme: theme,
                     isActive: isActive,
                     drawsActiveBackground: drawsActiveBackground,
@@ -190,8 +190,6 @@ struct MonknotIconButton: View {
         .focusEffectDisabled()
         .disabled(isDisabled)
         .onHover { isHovered = $0 }
-        .animation(MonknotMotion.hoverAnimation, value: isHovered)
-        .animation(MonknotMotion.hoverAnimation, value: isActive)
         .help(label)
         .accessibilityLabel(label)
         .monknotPointerCursor(enabled: !disabled)
@@ -248,18 +246,15 @@ private struct MonknotIconButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .background {
-                if let fill = MonknotIconButton.fill(
-                    isActive: isActive,
-                    drawsActiveBackground: drawsActiveBackground,
-                    isHovered: isHovered,
-                    isPressed: configuration.isPressed,
-                    isDisabled: isDisabled
-                ) {
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(fill.color(theme))
-                }
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .monknotStateStyle(MonknotIconButton.fill(
+                        isActive: isActive,
+                        drawsActiveBackground: drawsActiveBackground,
+                        isHovered: isHovered,
+                        isPressed: configuration.isPressed,
+                        isDisabled: isDisabled
+                    )?.color(theme) ?? .clear)
             }
-            .animation(MonknotMotion.hoverAnimation, value: configuration.isPressed)
     }
 }
 
@@ -287,7 +282,7 @@ struct MonknotMenuButton<Content: View>: View {
                 theme: theme,
                 zoomScale: zoomScale
             )
-            .foregroundStyle(MonknotIconButton.iconColor(
+            .monknotStateStyle(MonknotIconButton.iconColor(
                 theme: theme,
                 isActive: false,
                 isHovered: isHovered,
@@ -298,9 +293,7 @@ struct MonknotMenuButton<Content: View>: View {
                 height: size.dimension(theme: theme, zoomScale: zoomScale)
             )
             .background {
-                if isHovered, isEnabled {
-                    shape.fill(theme.hoverFillColor)
-                }
+                shape.monknotStateStyle(isHovered && isEnabled ? theme.hoverFillColor : .clear)
             }
             .contentShape(shape)
         }
@@ -308,7 +301,6 @@ struct MonknotMenuButton<Content: View>: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .onHover { isHovered = $0 }
-        .animation(MonknotMotion.hoverAnimation, value: isHovered)
         .help(label)
         .accessibilityLabel(label)
         .monknotPointerCursor(enabled: isEnabled)
@@ -390,30 +382,32 @@ struct MonknotTabCloseButton: View {
                     size: MonknotMetrics.interfaceGlyph(MonknotMetrics.closeGlyphPointSizeBase, theme: theme, zoomScale: zoomScale),
                     weight: .semibold
                 ))
-                .foregroundStyle(
+                .monknotStateStyle(
                     isDisabled
                         ? theme.disabledForegroundColor
                         : (isHovered ? theme.foregroundColor : theme.mutedForegroundColor)
                 )
                 .frame(width: dimension, height: dimension)
                 .background {
-                    if isPressed, !isDisabled {
-                        Circle().fill(theme.pressedFillColor)
-                    } else if isHovered, !isDisabled {
-                        Circle().fill(theme.hoverFillColor)
-                    }
+                    Circle().monknotStateStyle(fill)
                 }
                 .contentShape(Circle())
         }
         .buttonStyle(MonknotPressTrackingButtonStyle(isPressed: $isPressed))
         .focusEffectDisabled()
         .disabled(isDisabled || !isVisible)
-        .opacity(isVisible ? 1 : 0)
+        .allowsHitTesting(isVisible)
+        .monknotStateOpacity(isVisible ? 1 : 0)
         .onHover { isHovered = $0 }
-        .animation(MonknotMotion.hoverAnimation, value: isHovered)
         .help(label)
         .accessibilityLabel(label)
         .accessibilityHidden(!isVisible)
         .monknotPointerCursor(enabled: isVisible && !isDisabled)
+    }
+
+    private var fill: Color {
+        guard !isDisabled else { return .clear }
+        if isPressed { return theme.pressedFillColor }
+        return isHovered ? theme.hoverFillColor : .clear
     }
 }

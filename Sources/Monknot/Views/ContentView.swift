@@ -368,6 +368,8 @@ struct ContentView: View {
             case toggleSidebar(at: [Double])
             /// Toggles the terminal the same way.
             case toggleTerminal(at: [Double])
+            /// Toggles the terminal's fullscreen the same way.
+            case toggleTerminalFullscreen(at: [Double])
         }
 
         static let standard = InitialLayout()
@@ -449,6 +451,12 @@ struct ContentView: View {
             for delay in delays {
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                     toggleTerminalDrawer(animated: true)
+                }
+            }
+        case let .toggleTerminalFullscreen(at: delays):
+            for delay in delays {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    toggleTerminalFullscreen(animated: true)
                 }
             }
         }
@@ -811,14 +819,13 @@ struct ContentView: View {
                     showInFinder: {
                         guard let revealURL = successNotice.revealURL else { return }
                         NSWorkspace.shared.activateFileViewerSelecting([revealURL])
-                        self.successNotice = nil
+                        dismissSuccessNotice()
                     },
                     performAction: {
                         undoWorkspaceRemoval()
                     },
                     dismiss: {
-                        self.successNotice = nil
-                        self.pendingWorkspaceRemoval = nil
+                        dismissSuccessNotice()
                     }
                 )
                 .padding(20)
@@ -903,10 +910,7 @@ struct ContentView: View {
             guard successNotice != nil else { return }
             try? await Task.sleep(nanoseconds: 4_000_000_000)
             guard !Task.isCancelled else { return }
-            withAnimation(MonknotMotion.toastAnimation(reduceMotion: reduceMotion)) {
-                successNotice = nil
-                pendingWorkspaceRemoval = nil
-            }
+            dismissSuccessNotice()
         }
     }
 
@@ -1229,6 +1233,11 @@ struct ContentView: View {
     private func undoWorkspaceRemoval() {
         guard let removal = pendingWorkspaceRemoval else { return }
         workspaceLibrary.restore(removal)
+        dismissSuccessNotice()
+    }
+
+    /// A toast leaves the way it came, however it is dismissed (design.md §11).
+    private func dismissSuccessNotice() {
         pendingWorkspaceRemoval = nil
         withAnimation(MonknotMotion.toastAnimation(reduceMotion: reduceMotion)) {
             successNotice = nil
@@ -3031,15 +3040,9 @@ struct ContentView: View {
 
     private func toggleTerminalFullscreen(animated: Bool) {
         guard isTerminalVisible else { return }
-        let updates = {
+        // The same transition as a pane opening or closing (design.md §11).
+        updateChromeState(animated: animated) {
             isTerminalFullscreen.toggle()
-        }
-        if animated && !reduceMotion {
-            withAnimation(MonknotMotion.terminalFullscreenTransition, updates)
-        } else {
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction, updates)
         }
     }
 

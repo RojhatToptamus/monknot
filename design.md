@@ -768,7 +768,7 @@ it. The sidebar is part of the frame: `chrome`, no edge line.
 Rows are the **row primitive** (§0), on purpose.
 
 **One glyph per row.** A folder's disclosure chevron (10pt semibold, centred in the column, turning
-90° over 150 ms, instantly with Reduce Motion) sits in the 18pt glyph column, and folders carry no
+90° over 120 ms, instantly with Reduce Motion) sits in the 18pt glyph column, and folders carry no
 folder glyph. Files use `doc.text` / `doc.richtext` / `photo` / `play.rectangle` in the same column.
 Names at one depth therefore share a left edge, and a child steps right by exactly the 14 indent.
 
@@ -1099,7 +1099,7 @@ the table menus, the format bar after a mouse selection) grows in from its trigg
 with opacity over 150 ms, `cubic-bezier(0.23, 1, 0.32, 1)`, origin at the side that faces the anchor.
 A surface the keyboard opens (the slash and wikilink menus, ⌘/, ⌘K) appears at once — typing is
 never made to wait for an animation. Everything leaves in 90 ms. Handles fade 120 ms; the toggle
-triangle turns in 180 ms ease-out; a pressed button or handle scales to 0.96. Only transform and
+triangle turns in 120 ms ease-out, as a sidebar chevron does; a pressed button or handle scales to 0.96. Only transform and
 opacity animate, with one exception shared with Source: the mark on a fix just applied rises and
 settles over a second, and words a completion inserts fade from a tint over 520 ms (a dead key or input
 method used meanwhile takes the tint off at once, and nothing drawn changes while it composes). With Reduce Motion
@@ -1137,12 +1137,22 @@ it (112 pt at 1×); a narrower pane hides it rather than letting it cover text.
 
 ## 11. Motion
 
-- **120ms ease** on hover: fill and foreground colour only.
-- **180ms standard ease** for terminal fullscreen: width only, with no fade or scale.
-- **250ms ease-in-ease-out** for showing and hiding the sidebar and terminal, from the toolbar, the
-  menu or the keyboard alike: AppKit's own split-view transition, opening and closing alike. The
-  pane's content keeps its open width and slides under the window edge, so rows never squeeze and the
-  terminal is not resized frame by frame. The document beside it is laid out live, as in a browser:
+Two timings, and a change animates only what it changes. Whatever opens one way closes the same way
+in reverse, however it is closed.
+
+- **120ms ease-out** for a state change: hover, press, selection and focus fade fill and ink; a mark
+  that comes and goes fades (a tab's close button in place of its glyph, a field's focus ring, the
+  tab strip's edge shadows, a selected segment's chip, stale search results dimming); a disclosure
+  chevron turns a quarter; a switch's knob slides. Only that property animates: controls use
+  `monknotStateStyle` and `monknotStateOpacity` (`MonknotMotion.swift`), or `.animation(_:body:)`
+  around the one modifier. A control never takes `.animation(_:value:)`, which animates everything
+  in it that changes in the same update, frames included: a chevron whose folder opens as its list
+  lays out drew one row lower and slid back. `MonknotMotionContractTests` keeps it out; the outline
+  rail's widening is the one exception.
+- **250ms ease-in-ease-out** for every pane movement, from the toolbar, the menu or the keyboard
+  alike: AppKit's own split-view transition, opening and closing alike. As the sidebar or terminal
+  shows or hides, the pane's content keeps its open width and slides under the window edge, so rows
+  never squeeze and the terminal is not resized frame by frame. The document beside it is laid out live, as in a browser:
   its column re-centres and its text rewraps on every frame, the outline rail, word count and scroll
   thumb ride the card's edges, and nothing jumps at the end because the last frame is the final
   layout. Preview's web view cannot follow a moving edge frame by frame (it lays out in another
@@ -1153,13 +1163,22 @@ it (112 pt at 1×); a narrower pane hides it rather than letting it cover text.
   top of the window stays put in both modes as the text rewraps. Nothing else moves: the titlebar's
   buttons stay put and the tab strip keeps to the card's leading edge until it meets them. A sidebar
   hidden when the window opened first opens at its default 240, never AppKit's minimum.
-- **fadeUp** for overlays, toasts and the outline peek card (120ms, 4pt). Preview's editing surfaces
+  The terminal taking the full width and giving it back is one transition run each way: the
+  document's card narrows toward the sidebar with its ring and corners intact while the document
+  inside keeps its width and the terminal slides over it, a 6pt gap on both sides on every frame,
+  and it returns exactly where it was with nothing settling after. While the document is collapsed
+  the split halves its dividers, so the two that meet beside the sidebar still make one gap; the
+  document card takes back what they give up, so no edge moves as they change.
+- **fadeUp** for toasts: in from 4pt below over 120ms and back out the same way, whether they time
+  out or are closed. The outline's panel fades in beside its rail over 120ms. Palettes and overlays
+  (Quick Open, Go to Symbol, Go to Line, Keyboard Shortcuts) appear and leave at once: they are
+  opened from the keyboard, and typing never waits for an animation. Preview's editing surfaces
   have their own rule (§10.10): grown from the trigger when the pointer opens them, instant from the
   keyboard.
-- Never animate size, position, elevation, border or weight except for the explicit terminal
-  fullscreen width transition and the side-pane transition above.
-- Honour Reduce Motion: entrances become instant opacity changes and side panes show and hide
-  instantly; hover colour transitions may stay.
+- Never animate size, position, elevation, border or weight except for the pane transitions above,
+  a switch's knob and the outline rail's widening.
+- Honour Reduce Motion: entrances become plain fades, side panes show and hide instantly, chevrons
+  and switch knobs jump; colour transitions stay.
 
 ---
 

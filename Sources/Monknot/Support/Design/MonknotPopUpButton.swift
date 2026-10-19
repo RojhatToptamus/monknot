@@ -158,22 +158,18 @@ struct MonknotPopUpLabel<Value: View>: View {
                     size: MonknotMetrics.interfaceGlyph(MonknotMetrics.chevronPointSizeBase, theme: theme, zoomScale: zoomScale),
                     weight: .semibold
                 ))
-                .foregroundStyle(disabled ? theme.disabledForegroundColor : theme.tertiaryForegroundColor)
+                .monknotStateStyle(disabled ? theme.disabledForegroundColor : theme.tertiaryForegroundColor)
                 .accessibilityHidden(true)
         }
         .padding(.leading, MonknotMetrics.interfaceDensity(leadingPaddingBase, theme: theme, zoomScale: zoomScale))
         .padding(.trailing, MonknotMetrics.interfaceDensity(Self.trailingPaddingBase, theme: theme, zoomScale: zoomScale))
         .frame(height: MonknotMetrics.interfaceControl(Self.heightBase, theme: theme, zoomScale: zoomScale))
         .background {
-            shape.fill(isOpen && !disabled ? theme.pressedFillColor : theme.controlTrackFillColor.opacity(disabled ? 0.5 : 1))
-            if isHovered, !isOpen, !disabled {
-                shape.fill(theme.hoverFillColor)
-            }
+            shape.monknotStateStyle(isOpen && !disabled ? theme.pressedFillColor : theme.controlTrackFillColor.opacity(disabled ? 0.5 : 1))
+            shape.monknotStateStyle(isHovered && !isOpen && !disabled ? theme.hoverFillColor : .clear)
         }
         .contentShape(shape)
         .environment(\.monknotPopUpDisabled, disabled)
-        .animation(MonknotMotion.hoverAnimation, value: isHovered)
-        .animation(MonknotMotion.hoverAnimation, value: isOpen)
     }
 }
 

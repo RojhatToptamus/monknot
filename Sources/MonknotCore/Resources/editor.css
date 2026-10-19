@@ -176,7 +176,7 @@
   border-bottom: 0.3em solid transparent;
   border-left: 0.44em solid currentColor;
   transform: translateX(0.06em);
-  transition: transform 180ms var(--mk-ease-out);
+  transition: transform 120ms var(--mk-ease-out);
 }
 
 .mk-editing .mk-toggle[data-open="true"] > .mk-toggle-head > .mk-toggle-arrow::before {

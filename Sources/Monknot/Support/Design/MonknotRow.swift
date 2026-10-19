@@ -53,10 +53,10 @@ struct MonknotRowButtonStyle: ButtonStyle {
         var body: some View {
             // Fill and ink changes animate colour only, never a frame.
             configuration.label
-                .animation(MonknotMotion.hoverAnimation) { $0.foregroundStyle(foreground) }
+                .monknotStateStyle(foreground)
                 .background {
                     RoundedRectangle(cornerRadius: cornerRadius)
-                        .animation(MonknotMotion.hoverAnimation) { $0.foregroundStyle(background) }
+                        .monknotStateStyle(background)
                 }
                 .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
                 .onHover { isHovered = $0 }
@@ -277,7 +277,7 @@ struct MonknotMenuRowButtonStyle: ButtonStyle {
             configuration.label
                 .background {
                     RoundedRectangle(cornerRadius: cornerRadius)
-                        .animation(MonknotMotion.hoverAnimation) { $0.foregroundStyle(fill) }
+                        .monknotStateStyle(fill)
                 }
                 .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
                 .onHover { isHovered = $0 }
@@ -371,7 +371,7 @@ struct MonknotListRowButtonStyle: ButtonStyle {
                 .environment(\.monknotRowIsHighlighted, isEnabled && (isHovered || configuration.isPressed))
                 .background {
                     RoundedRectangle(cornerRadius: cornerRadius)
-                        .animation(MonknotMotion.hoverAnimation) { $0.foregroundStyle(fill) }
+                        .monknotStateStyle(fill)
                 }
                 .onHover { isHovered = $0 }
                 .monknotPointerCursor(enabled: isEnabled)
@@ -391,7 +391,7 @@ struct MonknotListRowButtonStyle: ButtonStyle {
 }
 
 /// A folder or group's disclosure chevron in the 18 glyph column: one 10 pt chevron that turns a
-/// quarter as the folder opens (150 ms ease-out; none with Reduce Motion). It is centred in the
+/// quarter as the folder opens (120 ms ease-out; none with Reduce Motion). It is centred in the
 /// column with no nudge: measured, its ink already sits on the file glyphs' centre line, and any
 /// offset turns with it, so a nudge right would also drop the open chevron below the row's centre.
 struct MonknotDisclosureChevron: View {
@@ -407,8 +407,12 @@ struct MonknotDisclosureChevron: View {
     var body: some View {
         Image(systemName: "chevron.right")
             .font(.system(size: glyphScaled(MonknotMetrics.chevronPointSizeBase), weight: .semibold))
-            .rotationEffect(.degrees(isExpanded ? 90 : 0))
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: isExpanded)
+            // Only the turn animates. A value-keyed animation here would also animate the row's
+            // move when the list lays out the folder's children in the same transaction, so the
+            // chevron would draw at its old place and slide back.
+            .animation(MonknotMotion.disclosureAnimation(reduceMotion: reduceMotion)) {
+                $0.rotationEffect(.degrees(isExpanded ? 90 : 0))
+            }
             .frame(width: glyphScaled(MonknotMetrics.rowIconColumnWidthBase))
             .accessibilityHidden(true)
     }
@@ -445,12 +449,12 @@ struct MonknotListRowLabel<Trailing: View>: View {
     var body: some View {
         HStack(spacing: scaled(MonknotMetrics.rowGlyphGapBase)) {
             leadingGlyph
-                .animation(MonknotMotion.hoverAnimation) { $0.foregroundStyle(glyphColor) }
+                .monknotStateStyle(glyphColor)
                 .accessibilityHidden(true)
 
             Text(title)
                 .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
-                .animation(MonknotMotion.hoverAnimation) { $0.foregroundStyle(labelColor) }
+                .monknotStateStyle(labelColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)

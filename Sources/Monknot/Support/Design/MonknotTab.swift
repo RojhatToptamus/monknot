@@ -57,7 +57,6 @@ struct MonknotTab: View {
     let select: () -> Void
     var close: () -> Void = {}
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
     @State private var isPressed = false
 
@@ -87,7 +86,7 @@ struct MonknotTab: View {
                 // Already fitted by the owner where a cap applies; never truncated again here.
                 Text(title)
                     .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
-                    .foregroundStyle(textColor)
+                    .monknotStateStyle(textColor)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
 
@@ -113,8 +112,6 @@ struct MonknotTab: View {
         .fixedSize()
         .opacity(isDragging ? 0.45 : 1)
         .onHover { isHovered = $0 }
-        .animation(reduceMotion ? nil : MonknotMotion.hoverAnimation, value: isHovered)
-        .animation(reduceMotion ? nil : MonknotMotion.hoverAnimation, value: isSelected)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .modifier(MonknotTabCloseAction(label: isDisabled ? nil : closeLabel, close: close))
@@ -124,35 +121,44 @@ struct MonknotTab: View {
         glyph(MonknotMetrics.rowIconColumnWidthBase)
     }
 
-    @ViewBuilder
+    /// Under the pointer, close crossfades with the glyph in the same place. Only colour and
+    /// opacity animate, so a tab that moves as another opens or closes moves at once.
     private var glyphSlot: some View {
-        if showsClose, let closeLabel {
-            MonknotTabCloseButton(label: closeLabel, theme: theme, zoomScale: zoomScale, action: close)
-                .accessibilityHidden(true)
-        } else {
+        ZStack {
             MonknotDocumentGlyph(systemImage: systemImage, status: status, color: glyphColor, theme: theme, zoomScale: zoomScale)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
+                .monknotStateOpacity(showsClose ? 0 : 1)
+            if let closeLabel {
+                MonknotTabCloseButton(label: closeLabel, theme: theme, zoomScale: zoomScale, isVisible: showsClose, action: close)
+                    .accessibilityHidden(true)
+            }
         }
     }
 
-    @ViewBuilder
     private var background: some View {
-        if isSelected {
+        ZStack {
             switch placement {
             case .chrome:
                 shape
                     .fill(theme.chipFillColor)
                     .overlay { shape.strokeBorder(theme.chipRingColor, lineWidth: 1) }
                     .shadow(color: theme.chipShadowColor, radius: 0.75, y: 1)
+                    .monknotStateOpacity(isSelected ? 1 : 0)
             case .card:
-                shape.fill(theme.chromeSelectedFillColor)
+                shape.monknotStateStyle(isSelected ? theme.chromeSelectedFillColor : .clear)
             }
-        } else if isPressed, !isDisabled {
-            shape.fill(theme.pressedFillColor)
-        } else if isHovered, !isDisabled {
-            shape.fill(theme.hoverFillColor)
+            shape.monknotStateStyle(stateFill)
         }
+    }
+
+    /// Hover and pressed tint a tab that is not the current one.
+    private var stateFill: Color {
+        guard !isSelected, !isDisabled else { return .clear }
+        if isPressed {
+            return theme.pressedFillColor
+        }
+        return isHovered ? theme.hoverFillColor : .clear
     }
 
     /// design.md §1.4: the label rests at `ink2` and goes to `ink` hovered or active; `ink4` disabled.
@@ -252,7 +258,7 @@ struct MonknotDocumentGlyph: View {
             case .clean, .edited:
                 // Ink changes fade over the hover duration, as a row's label does (design.md §5.6).
                 MonknotFileKindGlyph(systemImage: systemImage, theme: theme, zoomScale: zoomScale)
-                    .animation(MonknotMotion.hoverAnimation) { $0.foregroundStyle(color) }
+                    .monknotStateStyle(color)
                     .frame(width: column, height: column)
                     .monknotDirtyDot(isVisible: status == .edited, theme: theme, zoomScale: zoomScale)
             }

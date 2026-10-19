@@ -46,17 +46,15 @@ private struct MonknotFieldModifier: ViewModifier {
             .frame(height: MonknotMetrics.interfaceControl(MonknotMetrics.iconButtonSizeBase, theme: theme, zoomScale: zoomScale))
             .background(theme.surfaceColor, in: shape)
             .overlay {
-                shape.strokeBorder(strokeColor, lineWidth: 1)
+                shape.strokeBorder(lineWidth: 1).monknotStateStyle(strokeColor)
             }
             .overlay {
-                if isFocused, !isDisabled {
-                    RoundedRectangle(cornerRadius: radius + 1.5)
-                        .stroke(theme.accentSoftFillColor, lineWidth: 3)
-                        .padding(-1.5)
-                        .allowsHitTesting(false)
-                }
+                RoundedRectangle(cornerRadius: radius + 1.5)
+                    .stroke(theme.accentSoftFillColor, lineWidth: 3)
+                    .padding(-1.5)
+                    .allowsHitTesting(false)
+                    .monknotStateOpacity(isFocused && !isDisabled ? 1 : 0)
             }
-            .animation(MonknotMotion.hoverAnimation, value: isFocused)
     }
 
     private var strokeColor: Color {
