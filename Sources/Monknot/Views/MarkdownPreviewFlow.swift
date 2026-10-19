@@ -2,13 +2,13 @@ import AppKit
 import MonknotCore
 import SwiftUI
 
-// Writing assistance (Flow) while Preview edits Markdown in place. Source runs it in
-// `MarkdownTextEditor.Coordinator` over its text view; Preview runs the same pipeline here, over the
-// page's Markdown source and the caret the page reports as a source offset. The checker, the
-// planners, Apple's on-device models and every repair decision (`EditorFlowRepairPolicy`) are
-// Source's; only the presentation differs. The page shows what this coordinator sends and reports
-// the keys that act on it, and whatever the user takes reaches the page as a source patch, like any
-// edit the app makes, so it is one step in Preview's undo history.
+// Writing assistance (Flow) while Preview edits Markdown in place. Source and Preview run one
+// pipeline (`EditorFlowPipeline`): Source over its text view, Preview here, over the page's Markdown
+// source and the caret the page reports as a source offset. The checker, the planners, Apple's
+// on-device models and every repair decision (`EditorFlowRepairPolicy`) are the same; only the
+// presentation differs. The page shows what this coordinator sends and reports the keys that act
+// on it, and whatever the user takes reaches the page as a source patch, like any edit the app
+// makes, so it is one step in Preview's undo history.
 
 /// What Preview's writing assistance runs with: macOS spelling and grammar and Apple's on-device
 /// models in the app, fakes in tests. The environment carries it to the preview, the way Source's
@@ -37,6 +37,21 @@ struct MarkdownPreviewFlowDependencies {
     }
 
     static let system = MarkdownPreviewFlowDependencies()
+
+    /// What the shared pipeline runs with.
+    var pipelineConfiguration: EditorFlowPipeline.Configuration {
+        EditorFlowPipeline.Configuration(
+            checkingClient: checkingClient,
+            proseCompletionService: proseCompletionService,
+            sentenceRepairService: sentenceRepairService,
+            protectedRangeProvider: protectedRangeProvider,
+            checkDelayNanoseconds: checkDelayNanoseconds,
+            proseCompletionDelayNanoseconds: proseCompletionDelayNanoseconds,
+            proseOfferDelayNanoseconds: proseOfferDelayNanoseconds,
+            checkingTimeoutNanoseconds: checkingTimeoutNanoseconds,
+            protectedRangesDelayNanoseconds: protectedRangesDelayNanoseconds
+        )
+    }
 }
 
 private struct MarkdownPreviewFlowDependenciesKey: EnvironmentKey {
@@ -63,47 +78,6 @@ protocol MarkdownPreviewFlowHost: AnyObject {
 
 @MainActor
 final class MarkdownPreviewFlowCoordinator {
-    private enum SentenceRepairGate: Equatable {
-        case blocked
-        case clear
-        /// Apple found something Flow cannot resolve: no completion until the sentence changes.
-        case nativeFallback
-
-        var allowsAutocomplete: Bool { self == .clear }
-    }
-
-    private struct ProtectedRangesSnapshot {
-        let revision: Int
-        let ranges: [NSRange]
-    }
-
-    private struct PendingProtectedRangesRetry {
-        let snapshot: EditorFlowCheckSnapshot
-        let token: Int
-    }
-
-    private struct ProseCompletionSnapshot {
-        let documentID: String
-        let revision: Int
-        let sourceUTF16Length: Int
-        let selectedRange: NSRange
-        let context: EditorFlowProseContext
-        let options: EditorTextCheckingOptions
-    }
-
-    private struct PendingProseCompletionRetry {
-        let token: Int
-        let expiresAt: Date
-    }
-
-    private struct PendingProseRemainder {
-        let documentID: String
-        let revision: Int
-        let sourceUTF16Length: Int
-        let selectedRange: NSRange
-        let continuation: String
-    }
-
     /// A correction the page shows for review, with the suggestion each alternative makes of it.
     private struct PresentedRepair {
         let serial: Int
@@ -149,6 +123,8 @@ final class MarkdownPreviewFlowCoordinator {
 
     weak var host: MarkdownPreviewFlowHost?
     let dependencies: MarkdownPreviewFlowDependencies
+    /// Writing assistance over the page's source; this coordinator is its host.
+    private let flow: EditorFlowPipeline
     private let mode = FlowSourceMode.markdown
     private(set) var documentID: String?
     private(set) var options = EditorTextCheckingOptions.defaultValue
@@ -171,22 +147,6 @@ final class MarkdownPreviewFlowCoordinator {
     private var observers: [NSObjectProtocol] = []
 
     private var serial = 0
-    private var gate = SentenceRepairGate.blocked
-    private var flowRequestToken = 0
-    private var flowCheckTask: Task<Void, Never>?
-    private var flowSentenceRepairTask: Task<Void, Never>?
-    private var pendingProtectedRangesRetry: PendingProtectedRangesRetry?
-    private var protectedRangesSnapshot: ProtectedRangesSnapshot?
-    private var protectedRangesTask: Task<Void, Never>?
-    private var protectedRangesGeneration = 0
-    private var protectedRangesDelayNanoseconds: UInt64 = 0
-    private var flowProseCompletionTask: Task<Void, Never>?
-    private var flowProseRequestToken = 0
-    private var pendingProseCompletionRetry: PendingProseCompletionRetry?
-    private var pendingProseRemainder: PendingProseRemainder?
-    private var proseCompletionCooldown = EditorFlowModelCooldown()
-    private var sentenceRepairCooldown = EditorFlowModelCooldown()
-    private var suppressedFlowSuggestion: EditorFlowSuggestionSuppression?
     private var presentedRepair: PresentedRepair?
     private var presentedProse: PresentedProse?
     private var pendingApply: PendingApply?
@@ -194,7 +154,8 @@ final class MarkdownPreviewFlowCoordinator {
 
     init(dependencies: MarkdownPreviewFlowDependencies) {
         self.dependencies = dependencies
-        protectedRangesDelayNanoseconds = dependencies.protectedRangesDelayNanoseconds
+        flow = EditorFlowPipeline(configuration: dependencies.pipelineConfiguration)
+        flow.host = self
         let center = NotificationCenter.default
         observers.append(center.addObserver(
             forName: NSWindow.didResignKeyNotification,
@@ -222,12 +183,10 @@ final class MarkdownPreviewFlowCoordinator {
     func tearDown() {
         guard !isTornDown else { return }
         cancelFlowSuggestion(notifyPage: false)
-        protectedRangesTask?.cancel()
-        protectedRangesTask = nil
-        protectedRangesSnapshot = nil
+        flow.stopProtectedRangeScan()
         pendingApply = nil
         settlement = nil
-        suppressedFlowSuggestion = nil
+        flow.suppression = nil
         isTornDown = true
         for observer in observers {
             NotificationCenter.default.removeObserver(observer)
@@ -254,18 +213,14 @@ final class MarkdownPreviewFlowCoordinator {
         guard self.documentID != documentID else { return }
         resetPageState()
         self.documentID = documentID
-        suppressedFlowSuggestion = nil
-        proseCompletionCooldown.end()
-        sentenceRepairCooldown.end()
+        flow.forgetDecisions()
     }
 
     func configure(options: EditorTextCheckingOptions) {
         guard self.options != options else { return }
         self.options = options
-        suppressedFlowSuggestion = nil
-        proseCompletionCooldown.end()
-        sentenceRepairCooldown.end()
-        gate = .blocked
+        flow.forgetDecisions()
+        flow.gate = .blocked
         cancelFlowSuggestion()
         clearSettlement()
         sendConfiguration()
@@ -310,11 +265,11 @@ final class MarkdownPreviewFlowCoordinator {
         pageMenuOpen = open
         guard isActive else { return }
         if assisted, !assistsAtCaret {
-            gate = .blocked
+            flow.gate = .blocked
             cancelFlowSuggestion()
         } else if !assisted, assistsAtCaret {
             cancelFlowSuggestion()
-            scheduleFlowCheck()
+            flow.scheduleCheck()
         }
     }
 
@@ -341,8 +296,8 @@ final class MarkdownPreviewFlowCoordinator {
         settlement = nil
         pendingApply = nil
         cancelFlowSuggestion()
-        refreshSuppressedFlowSuggestion()
-        scheduleFlowCheck()
+        flow.refreshSuppression()
+        flow.scheduleCheck()
     }
 
     /// One patch the page applied, and the text it leaves: every edit, the page's own and the ones
@@ -356,9 +311,7 @@ final class MarkdownPreviewFlowCoordinator {
         let previousRevision = revision
         let previousLength = textLength
         let previousSelection = selection
-        let previousProtectedRanges = protectedRangesSnapshot.flatMap {
-            $0.revision == previousRevision ? $0.ranges : nil
-        }
+        let previousProtectedRanges = flow.currentProtectedRanges
         adopt(text: newText, version: version)
         if let after = change.selectionAfter {
             selection = after.range
@@ -390,7 +343,7 @@ final class MarkdownPreviewFlowCoordinator {
         ) {
             // Typing what the completion shows keeps the rest of it, as in Source.
             cancelFlowSuggestion(notifyPage: false)
-            gate = .clear
+            flow.gate = .clear
             settlement = nil
             scheduleProtectedRangesRefresh()
             rebaseProtectedRanges(
@@ -408,32 +361,27 @@ final class MarkdownPreviewFlowCoordinator {
             previousProtectedRanges: previousProtectedRanges
         ) {
             // A space right after the reviewed sentence keeps the review, as in Source.
-            flowRequestToken &+= 1
-            flowCheckTask?.cancel()
-            flowCheckTask = nil
-            flowSentenceRepairTask?.cancel()
-            flowSentenceRepairTask = nil
-            pendingProtectedRangesRetry = nil
-            _ = cancelProseCompletion()
+            flow.cancelChecks()
+            cancelProseCompletion()
             settlement = nil
             scheduleProtectedRangesRefresh()
             rebaseProtectedRanges(previousProtectedRanges, insertingAt: change.range.location, length: 1)
             presentedRepair = kept
-            gate = .blocked
+            flow.gate = .blocked
             return
         }
 
         settlement = nil
         let requestsAutocompleteAfterClear = change.kind == .typing
             && EditorFlowRepairPolicy.isFlowAutocompleteTrigger(change.inserted)
-        gate = .blocked
+        flow.gate = .blocked
         cancelFlowSuggestion()
-        refreshSuppressedFlowSuggestion()
+        flow.refreshSuppression()
         scheduleProtectedRangesRefresh()
         if let end = completedSentenceEnd(for: change, previousLength: previousLength) {
-            scheduleCompletedSentenceFlowCheck(endingAt: end)
+            flow.scheduleCompletedSentenceCheck(endingAt: end)
         } else {
-            scheduleFlowCheck(requestsAutocompleteAfterClear: requestsAutocompleteAfterClear)
+            flow.scheduleCheck(requestsAutocompleteAfterClear: requestsAutocompleteAfterClear)
         }
     }
 
@@ -444,7 +392,7 @@ final class MarkdownPreviewFlowCoordinator {
         if !pending.isAutomatic {
             NSSound.beep()
         }
-        gate = .blocked
+        flow.gate = .blocked
         cancelFlowSuggestion(notifyPage: false)
         // The review or completion it would have replaced may still be on the page.
         host?.sendFlow(["type": "clear"])
@@ -478,11 +426,11 @@ final class MarkdownPreviewFlowCoordinator {
             switch body["scope"] as? String {
             case "repair":
                 guard presentedRepair?.serial == messageSerial else { return }
-                gate = .blocked
+                flow.gate = .blocked
                 cancelFlowSuggestion(notifyPage: false)
             case "completion":
                 guard presentedProse?.serial == messageSerial else { return }
-                _ = cancelProseCompletion(notifyPage: false)
+                cancelProseCompletion(notifyPage: false)
             default:
                 cancelFlowForFocusLoss(notifyPage: false)
             }
@@ -490,20 +438,20 @@ final class MarkdownPreviewFlowCoordinator {
             if presentedRepair?.serial == messageSerial {
                 // As a repair whose sentence is out of view in Source.
                 presentedRepair = nil
-                finishSentenceRepairUnresolved()
+                flow.finishSentenceRepairUnresolved()
             } else if presentedProse?.serial == messageSerial {
-                _ = cancelProseCompletion(notifyPage: false)
+                cancelProseCompletion(notifyPage: false)
             }
         case "declined":
             guard let pending = pendingApply, pending.serial == messageSerial else { return }
             pendingApply = nil
             if pending.isAutomatic {
                 // As a fix whose sentence is out of view in Source: left for the user.
-                finishSentenceRepairUnresolved()
+                flow.finishSentenceRepairUnresolved()
             } else {
                 // The text or caret moved before the patch arrived.
                 NSSound.beep()
-                gate = .blocked
+                flow.gate = .blocked
                 cancelFlowSuggestion(notifyPage: false)
                 host?.sendFlow(["type": "clear"])
             }
@@ -537,7 +485,7 @@ final class MarkdownPreviewFlowCoordinator {
         guard canCheckDocumentNow, let selection else { return false }
         clearSettlement()
         cancelFlowSuggestion()
-        scheduleFlowCheck(completedSentenceEndingAt: NSMaxRange(selection), immediate: true)
+        flow.scheduleCheck(completedSentenceEndingAt: NSMaxRange(selection), immediate: true)
         return true
     }
 
@@ -573,24 +521,13 @@ final class MarkdownPreviewFlowCoordinator {
         let assisted = assistsAtCaret
         caretInTableCell = inTableCell
         if assisted, !assistsAtCaret, isActive {
-            gate = .blocked
+            flow.gate = .blocked
             cancelFlowSuggestion()
         }
     }
 
     private var currentProtectedRanges: [NSRange]? {
-        guard let snapshot = protectedRangesSnapshot, snapshot.revision == revision else { return nil }
-        return snapshot.ranges
-    }
-
-    private var onDeviceProseCompletionIsAvailable: Bool {
-        options.inlinePredictions
-            && options.onDeviceProseCompletions
-            && dependencies.proseCompletionService.isAvailable(for: .current)
-    }
-
-    private var isProseCompletionCoolingDown: Bool {
-        proseCompletionCooldown.applies()
+        flow.currentProtectedRanges
     }
 
     private func adopt(text newText: String, version: Int) {
@@ -601,11 +538,10 @@ final class MarkdownPreviewFlowCoordinator {
 
     private func resetPageState() {
         cancelFlowSuggestion(notifyPage: false)
-        protectedRangesGeneration &+= 1
-        protectedRangesSnapshot = nil
+        flow.invalidateProtectedRanges()
         pendingApply = nil
         settlement = nil
-        gate = .blocked
+        flow.gate = .blocked
         isPageReady = false
         selection = nil
         caretInTableCell = false
@@ -618,9 +554,9 @@ final class MarkdownPreviewFlowCoordinator {
 
     private func externalTextDidChange() {
         clearSettlement()
-        gate = .blocked
+        flow.gate = .blocked
         cancelFlowSuggestion()
-        refreshSuppressedFlowSuggestion()
+        flow.refreshSuppression()
         scheduleProtectedRangesRefresh()
     }
 
@@ -631,67 +567,42 @@ final class MarkdownPreviewFlowCoordinator {
     }
 
     func cancelFlowForFocusLoss(notifyPage: Bool = true) {
-        gate = .blocked
+        flow.gate = .blocked
         cancelFlowSuggestion(notifyPage: notifyPage)
     }
 
     private func cancelFlowSuggestion(notifyPage: Bool = true) {
         let hadRepair = presentedRepair != nil
         let hadProse = presentedProse != nil
-        _ = cancelProseCompletion(notifyPage: false)
-        flowRequestToken &+= 1
-        flowCheckTask?.cancel()
-        flowCheckTask = nil
-        flowSentenceRepairTask?.cancel()
-        flowSentenceRepairTask = nil
-        pendingProtectedRangesRetry = nil
+        // One `clear` below takes both off the page.
+        presentedProse = nil
+        flow.cancel()
         presentedRepair = nil
         if notifyPage, hadRepair || hadProse {
             host?.sendFlow(["type": "clear"])
         }
     }
 
-    @discardableResult
-    private func cancelProseCompletion(notifyPage: Bool = true) -> Bool {
-        let hadCompletion = flowProseCompletionTask != nil
-            || presentedProse != nil
-            || pendingProseCompletionRetry != nil
-            || pendingProseRemainder != nil
-        let hadPresentation = presentedProse != nil
-        flowProseRequestToken &+= 1
-        flowProseCompletionTask?.cancel()
-        flowProseCompletionTask = nil
-        pendingProseCompletionRetry = nil
-        pendingProseRemainder = nil
-        presentedProse = nil
-        if notifyPage, hadPresentation {
-            host?.sendFlow(["type": "clear", "scope": "completion"])
+    /// Ends the completion asked for or shown; `notifyPage` false when the page dropped it itself.
+    private func cancelProseCompletion(notifyPage: Bool = true) {
+        if !notifyPage {
+            presentedProse = nil
         }
-        return hadCompletion
+        flow.cancelProseCompletion()
     }
 
     private func dismissFlowSuggestion() {
         if let presentedRepair {
-            suppressedFlowSuggestion = EditorFlowSuggestionSuppression(
+            flow.suppression = EditorFlowSuggestionSuppression(
                 presentedRepair.suggestion,
                 accepted: false
             )
-            gate = .blocked
+            flow.gate = .blocked
         } else if presentedProse != nil {
             // Esc dismisses the completion lane for this revision.
-            gate = .blocked
+            flow.gate = .blocked
         }
         cancelFlowSuggestion()
-    }
-
-    private func refreshSuppressedFlowSuggestion() {
-        guard let suppression = suppressedFlowSuggestion else { return }
-        guard suppression.documentID == documentID,
-              suppression.targetStillExists(in: text)
-        else {
-            suppressedFlowSuggestion = nil
-            return
-        }
     }
 
     private func caretIsOutsideProtectedRanges(_ ranges: [NSRange]) -> Bool {
@@ -707,11 +618,11 @@ final class MarkdownPreviewFlowCoordinator {
 
     private func didApply(_ pending: PendingApply) {
         if case let .repair(accepted) = pending.kind {
-            suppressedFlowSuggestion = EditorFlowSuggestionSuppression(accepted, accepted: true)
+            flow.suppression = EditorFlowSuggestionSuppression(accepted, accepted: true)
         }
-        gate = .blocked
+        flow.gate = .blocked
         cancelFlowSuggestion(notifyPage: false)
-        refreshSuppressedFlowSuggestion()
+        flow.refreshSuppression()
         scheduleProtectedRangesRefresh()
         switch pending.kind {
         case let .repair(suggestion):
@@ -723,22 +634,23 @@ final class MarkdownPreviewFlowCoordinator {
                 actionName: pending.label,
                 suggestion: suggestion
             )
-            scheduleFlowCheck()
+            flow.scheduleCheck()
         case let .prose(remainder):
             settlement = nil
             if let ranges = pending.rebasedProtectedRanges {
-                protectedRangesSnapshot = ProtectedRangesSnapshot(revision: revision, ranges: ranges)
+                flow.adoptProtectedRanges(ranges)
             }
-            scheduleFlowCheck()
+            flow.scheduleCheck()
             guard !remainder.isEmpty, let documentID else { return }
-            pendingProseRemainder = PendingProseRemainder(
+            // The completion was on the page, so its rest counts as seen.
+            flow.showProseRemainder(EditorFlowPendingProseRemainder(
                 documentID: documentID,
                 revision: revision,
                 sourceUTF16Length: textLength,
                 selectedRange: pending.selection,
-                continuation: remainder
-            )
-            _ = presentPendingProseRemainderIfReady()
+                continuation: remainder,
+                wasShown: true
+            ))
         }
     }
 
@@ -838,9 +750,8 @@ final class MarkdownPreviewFlowCoordinator {
     /// be taken before the next scan, as Source rebases its ranges after its own edits.
     private func rebaseProtectedRanges(_ ranges: [NSRange]?, insertingAt location: Int, length: Int) {
         guard let ranges else { return }
-        protectedRangesSnapshot = ProtectedRangesSnapshot(
-            revision: revision,
-            ranges: EditorFlowRepairPolicy.rebasedProtectedRanges(ranges, insertingAt: location, length: length)
+        flow.adoptProtectedRanges(
+            EditorFlowRepairPolicy.rebasedProtectedRanges(ranges, insertingAt: location, length: length)
         )
     }
 
@@ -850,994 +761,106 @@ final class MarkdownPreviewFlowCoordinator {
     /// With every part of the writing assistance off nothing reads it, so nothing is scanned;
     /// `configure` scans again when one is turned on.
     private func scheduleProtectedRangesRefresh(delayNanoseconds: UInt64? = nil) {
-        protectedRangesGeneration &+= 1
-        protectedRangesDelayNanoseconds = delayNanoseconds ?? dependencies.protectedRangesDelayNanoseconds
-        protectedRangesSnapshot = nil
-        guard isActive, assistsAtAll, protectedRangesTask == nil else { return }
-
-        let provider = dependencies.protectedRangeProvider
-        let mode = self.mode
-        protectedRangesTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                guard let self, self.isActive else {
-                    self?.protectedRangesTask = nil
-                    return
-                }
-                let generation = self.protectedRangesGeneration
-                let delay = self.protectedRangesDelayNanoseconds
-                if delay > 0 {
-                    do {
-                        try await Task.sleep(nanoseconds: delay)
-                    } catch {
-                        self.protectedRangesTask = nil
-                        return
-                    }
-                }
-                guard !Task.isCancelled else {
-                    self.protectedRangesTask = nil
-                    return
-                }
-                guard generation == self.protectedRangesGeneration else { continue }
-                guard self.isActive else {
-                    self.protectedRangesTask = nil
-                    return
-                }
-                let text = self.text
-                let capturedRevision = self.revision
-                let worker = Task.detached(priority: .utility) {
-                    provider(text, mode)
-                }
-                let ranges = await withTaskCancellationHandler {
-                    await worker.value
-                } onCancel: {
-                    worker.cancel()
-                }
-                guard !Task.isCancelled else {
-                    self.protectedRangesTask = nil
-                    return
-                }
-                guard generation == self.protectedRangesGeneration,
-                      capturedRevision == self.revision
-                else { continue }
-                self.protectedRangesSnapshot = ProtectedRangesSnapshot(
-                    revision: capturedRevision,
-                    ranges: ranges
-                )
-                self.protectedRangesTask = nil
-                if let retry = self.pendingProtectedRangesRetry,
-                   retry.snapshot.revision == capturedRevision,
-                   self.isCurrentFlowSnapshot(retry.snapshot, token: retry.token) {
-                    self.pendingProtectedRangesRetry = nil
-                    self.requestFlowCorrection(for: retry.snapshot, token: retry.token)
-                } else if self.gate.allowsAutocomplete {
-                    self.resumePendingProseCompletionIfReady()
-                }
-                return
-            }
-            self?.protectedRangesTask = nil
-        }
-    }
-
-    private func protectedRanges(for snapshot: EditorFlowCheckSnapshot) -> [NSRange]? {
-        guard let protectedSnapshot = protectedRangesSnapshot,
-              protectedSnapshot.revision == snapshot.revision,
-              snapshot.sourceMode == mode
-        else { return nil }
-        return protectedSnapshot.ranges
+        flow.scheduleProtectedRangesRefresh(delayNanoseconds: delayNanoseconds, scans: assistsAtAll)
     }
 }
 
-// MARK: - Sentence repair: Source's pipeline, over the page's source
+// MARK: - The shared pipeline, over the page's source
 
-extension MarkdownPreviewFlowCoordinator {
-    private func isCurrentFlowSnapshot(_ snapshot: EditorFlowCheckSnapshot, token: Int) -> Bool {
-        guard token == flowRequestToken,
-              isActive,
-              mode == snapshot.sourceMode,
-              options == snapshot.options,
-              documentID == snapshot.documentID,
-              revision == snapshot.revision,
-              let selection,
-              selection == snapshot.selectedRange,
-              snapshot.caretUTF16Offset == NSMaxRange(snapshot.selectedRange),
-              snapshot.checkedRange.location >= 0,
-              NSMaxRange(snapshot.checkedRange) <= textLength,
-              (text as NSString).substring(with: snapshot.checkedRange) == snapshot.checkedText,
-              hasFocus,
-              assistsAtCaret
-        else { return false }
+/// Preview runs the shared pipeline over the source the page reports. It holds Flow back while
+/// the page is not focused, the caret is in a table cell or a menu is open, and a patch is on its
+/// way; what the pipeline finds reaches the page as messages, and a certain fix as a patch.
+extension MarkdownPreviewFlowCoordinator: EditorFlowPipelineHost {
+    var flowDocumentID: String? { documentID }
+    var flowSourceMode: FlowSourceMode? { mode }
+    var flowOptions: EditorTextCheckingOptions { options }
+    var flowText: String { text }
+    var flowRevision: Int { revision }
+    var flowSelection: NSRange? { selection }
+    var flowSpellDocumentTag: Int { spellDocumentTag }
+
+    var flowTextStamp: EditorFlowTextStamp? {
+        EditorFlowTextStamp(revision: revision, editCount: 0, mode: mode, storage: nil)
+    }
+
+    var flowHold: EditorFlowHold {
+        var hold: EditorFlowHold = []
+        if !isActive {
+            hold.insert(.suspended)
+        }
+        if !assistsAtCaret {
+            hold.insert(.paused)
+        }
+        if !hasFocus {
+            hold.insert(.unfocused)
+        }
+        if pendingApply != nil {
+            hold.insert(.completionsDeferred)
+        }
+        if presentedRepair != nil {
+            hold.insert(.repairShown)
+        }
+        return hold
+    }
+
+    /// The page brings a review into view itself, and reports one it cannot draw (`unrendered`).
+    func flowRepairIsVisible(_ suggestion: EditorFlowSuggestion) -> Bool {
+        true
+    }
+
+    func flowPresentRepair(_ suggestion: EditorFlowSuggestion) -> Bool {
+        switch suggestion.acceptance {
+        case .direct:
+            // A certain fix applies at once, as in Source; Delete right after takes it back.
+            return acceptFlowSuggestion(suggestion, isAutomatic: true)
+        case .reviewOnly:
+            let variants = reviewVariants(of: suggestion)
+            let presented = PresentedRepair(serial: nextSerial(), suggestion: suggestion, variants: variants)
+            presentedRepair = presented
+            announce(suggestion.accessibilityAnnouncementText, priority: .medium)
+            host?.sendFlow([
+                "type": "review",
+                "serial": presented.serial,
+                "v": revision,
+                "caret": suggestion.caretUTF16Offset,
+                "sentence": [suggestion.sentenceRange.location, NSMaxRange(suggestion.sentenceRange)],
+                "index": variants.firstIndex(of: suggestion) ?? 0,
+                "variants": variants.map { ["changes": Self.reviewChanges(of: $0)] }
+            ])
+            return true
+        }
+    }
+
+    /// The page shows any one-line completion; one it cannot draw comes back as `unrendered`.
+    func flowVisibleCompletion(_ continuation: String, at location: Int) -> String? {
+        continuation.isEmpty || continuation.containsNewline ? nil : continuation
+    }
+
+    func flowPresentCompletion(_ suggestion: EditorFlowProseSuggestion, alreadyShown: Bool) {
+        presentProse(suggestion, alreadySeen: alreadyShown)
+    }
+
+    func flowWithdrawCompletion() -> Bool {
+        guard presentedProse != nil else { return false }
+        presentedProse = nil
+        host?.sendFlow(["type": "clear", "scope": "completion"])
         return true
     }
 
-    private func scheduleFlowCheck(
-        completedSentenceEndingAt endOffset: Int? = nil,
-        requestsAutocompleteAfterClear: Bool = false,
-        immediate: Bool = false
-    ) {
-        guard isActive else { return }
-        guard assistsAtCaret else {
-            gate = .blocked
-            _ = cancelProseCompletion()
-            return
-        }
-        guard options.checksSpelling || options.checksGrammar else {
-            finishSentenceRepairClear(requestsAutocomplete: requestsAutocompleteAfterClear)
-            return
-        }
-        guard hasFocus,
-              let documentID,
-              let selection,
-              let plan = EditorFlowCheckPlanner.plan(
-                in: text,
-                selectedRange: endOffset.map { NSRange(location: $0, length: 0) } ?? selection
-              )
-        else {
-            gate = .blocked
-            return
-        }
+    func flowDidScanProtectedRanges(_ ranges: [NSRange]) {}
 
-        let offersSentenceBatch = plan.isBatchSafe
-            && (endOffset != nil || plan.offersSentenceBatch)
-        gate = .blocked
-        _ = cancelProseCompletion()
+    func flowAvailabilityDidChange() {}
 
-        let token = flowRequestToken
-        let checkedText = (text as NSString).substring(with: plan.range)
-        let snapshot = EditorFlowCheckSnapshot(
-            documentID: documentID,
-            revision: revision,
-            checkedText: checkedText,
-            checkedRange: plan.range,
-            selectedRange: selection,
-            caretUTF16Offset: NSMaxRange(selection),
-            options: options,
-            sourceMode: mode,
-            coversWholeCurrentSentence: plan.coversWholeCurrentSentence,
-            offersSentenceBatch: offersSentenceBatch,
-            checksCompletedStructuralSentence: endOffset != nil,
-            requestsAutocompleteAfterClear: requestsAutocompleteAfterClear
-        )
-        let delayNanoseconds = immediate ? 0 : dependencies.checkDelayNanoseconds ?? plan.delayNanoseconds
-        flowCheckTask = Task { @MainActor [weak self] in
-            if delayNanoseconds > 0 {
-                do {
-                    try await Task.sleep(nanoseconds: delayNanoseconds)
-                } catch {
-                    return
-                }
-            }
-            guard let self, !Task.isCancelled,
-                  self.isCurrentFlowSnapshot(snapshot, token: token)
-            else { return }
-            self.requestFlowCorrection(for: snapshot, token: token)
-        }
-    }
+    // Preview keeps no diagnostics, so attempts and their reasons go unrecorded.
 
-    /// Return finished a sentence: check it as complete, as Source does after a line break.
-    private func scheduleCompletedSentenceFlowCheck(endingAt endOffset: Int) {
-        guard endOffset > 0, endOffset <= textLength else { return }
-        flowRequestToken &+= 1
-        flowCheckTask?.cancel()
-        flowCheckTask = nil
-        flowSentenceRepairTask?.cancel()
-        flowSentenceRepairTask = nil
-        pendingProtectedRangesRetry = nil
-        scheduleFlowCheck(completedSentenceEndingAt: endOffset)
-    }
+    func flowAttemptDidStart(_ owner: EditorFlowDiagnosticOwner, token: Int) {}
 
-    private func requestFlowCorrection(for snapshot: EditorFlowCheckSnapshot, token: Int) {
-        guard isCurrentFlowSnapshot(snapshot, token: token) else { return }
-        let documentTag = spellDocumentTag
-        armSentenceRepairCheckingDeadline(snapshot: snapshot, token: token)
-        dependencies.checkingClient.request(
-            snapshot.checkedText,
-            NSRange(location: 0, length: (snapshot.checkedText as NSString).length),
-            EditorFlowCheckingTypes.value(for: snapshot.options),
-            documentTag
-        ) { [weak self] results, orthography in
-            DispatchQueue.main.async { [weak self] in
-                self?.receiveFlowResults(
-                    results,
-                    orthography: orthography,
-                    snapshot: snapshot,
-                    token: token,
-                    documentTag: documentTag
-                )
-            }
-        }
-    }
-
-    private func receiveFlowResults(
-        _ results: [NSTextCheckingResult],
-        orthography: NSOrthography?,
-        snapshot: EditorFlowCheckSnapshot,
-        token: Int,
-        documentTag: Int
-    ) {
-        guard isCurrentFlowSnapshot(snapshot, token: token) else { return }
-        guard let ranges = protectedRanges(for: snapshot) else {
-            // The scan for this text is still running; it retries with the same token.
-            pendingProtectedRangesRetry = PendingProtectedRangesRetry(snapshot: snapshot, token: token)
-            return
-        }
-        flowCheckTask?.cancel()
-        flowCheckTask = nil
-        pendingProtectedRangesRetry = nil
-        let repairLocale = EditorFlowRepairPolicy.repairLocale(from: orthography)
-        let detectedIssues: [EditorFlowDetectedIssue]
-        switch EditorFlowRepairPolicy.step(afterChecking: results, snapshot: snapshot, protectedRanges: ranges) {
-        case let .end(end):
-            finish(end, snapshot: snapshot)
-            return
-        case .modelRepair:
-            attemptAISentenceRepair(
-                appleFoundIssues: false,
-                snapshot: snapshot,
-                token: token,
-                documentTag: documentTag,
-                locale: repairLocale
-            )
-            return
-        case let .resolve(issues):
-            detectedIssues = issues
-        }
-        let candidates = EditorFlowRepairPolicy.appleCandidates(in: results, snapshot: snapshot)
-        guard !candidates.spellingLookups.isEmpty else {
-            finishAppleCandidateResolution(
-                concreteCandidates: candidates.concrete,
-                alternativeCandidates: candidates.alternatives,
-                detectedIssues: detectedIssues,
-                snapshot: snapshot,
-                token: token,
-                documentTag: documentTag,
-                repairLocale: repairLocale,
-                protectedRanges: ranges
-            )
-            return
-        }
-        armSentenceRepairCheckingDeadline(snapshot: snapshot, token: token)
-        requestSpellingCandidates(
-            candidates,
-            nextIndex: 0,
-            spellingAlternatives: [],
-            detectedIssues: detectedIssues,
-            snapshot: snapshot,
-            token: token,
-            documentTag: documentTag,
-            repairLocale: repairLocale,
-            protectedRanges: ranges
-        )
-    }
-
-    private func requestSpellingCandidates(
-        _ candidates: EditorFlowAppleCandidates,
-        nextIndex: Int,
-        spellingAlternatives: [EditorFlowAlternativeCandidate],
-        detectedIssues: [EditorFlowDetectedIssue],
-        snapshot: EditorFlowCheckSnapshot,
-        token: Int,
-        documentTag: Int,
-        repairLocale: Locale,
-        protectedRanges: [NSRange]
-    ) {
-        guard isCurrentFlowSnapshot(snapshot, token: token) else { return }
-        guard nextIndex < candidates.spellingLookups.count else {
-            finishAppleCandidateResolution(
-                concreteCandidates: candidates.concrete,
-                alternativeCandidates: spellingAlternatives + candidates.alternatives,
-                detectedIssues: detectedIssues,
-                snapshot: snapshot,
-                token: token,
-                documentTag: documentTag,
-                repairLocale: repairLocale,
-                protectedRanges: protectedRanges
-            )
-            return
-        }
-        let lookup = candidates.spellingLookups[nextIndex]
-        dependencies.checkingClient.requestCandidates(
-            snapshot.checkedText,
-            lookup.range,
-            EditorFlowCheckingTypes.spellingCandidates,
-            documentTag
-        ) { [weak self] candidateResults in
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.isCurrentFlowSnapshot(snapshot, token: token) else { return }
-                var nextAlternatives = spellingAlternatives
-                if let alternative = EditorFlowRepairPolicy.spellingAlternative(
-                    for: lookup,
-                    candidateResults: candidateResults,
-                    in: snapshot.checkedText
-                ) {
-                    nextAlternatives.append(alternative)
-                }
-                self.requestSpellingCandidates(
-                    candidates,
-                    nextIndex: nextIndex + 1,
-                    spellingAlternatives: nextAlternatives,
-                    detectedIssues: detectedIssues,
-                    snapshot: snapshot,
-                    token: token,
-                    documentTag: documentTag,
-                    repairLocale: repairLocale,
-                    protectedRanges: protectedRanges
-                )
-            }
-        }
-    }
-
-    private func finishAppleCandidateResolution(
-        concreteCandidates: [EditorFlowCorrectionCandidate],
-        alternativeCandidates: [EditorFlowAlternativeCandidate],
-        detectedIssues: [EditorFlowDetectedIssue],
-        snapshot: EditorFlowCheckSnapshot,
-        token: Int,
-        documentTag: Int,
-        repairLocale: Locale,
-        protectedRanges: [NSRange]
-    ) {
-        guard isCurrentFlowSnapshot(snapshot, token: token) else { return }
-        switch EditorFlowRepairPolicy.step(
-            concreteCandidates: concreteCandidates,
-            alternatives: alternativeCandidates,
-            detectedIssues: detectedIssues,
-            snapshot: snapshot,
-            protectedRanges: protectedRanges,
-            sourceUTF16Length: textLength
-        ) {
-        case let .validate(candidate, remainingCandidates, forcesReview):
-            if flowCheckTask == nil {
-                armSentenceRepairCheckingDeadline(snapshot: snapshot, token: token)
-            }
-            validateAlternatives(
-                candidate,
-                nextIndex: 0,
-                cleanReplacements: [],
-                concreteCandidates: remainingCandidates,
-                detectedIssues: detectedIssues,
-                snapshot: snapshot,
-                token: token,
-                documentTag: documentTag,
-                repairLocale: repairLocale,
-                forcesReview: forcesReview
-            )
-        case let .present(candidates):
-            flowCheckTask?.cancel()
-            flowCheckTask = nil
-            if !presentFlowCandidates(candidates, detectedIssues: detectedIssues, snapshot: snapshot, token: token) {
-                finishAppleCandidatesUnresolved(
-                    candidates,
-                    snapshot: snapshot,
-                    token: token,
-                    documentTag: documentTag,
-                    repairLocale: repairLocale
-                )
-            }
-        }
-    }
-
-    private func finishAppleCandidatesUnresolved(
-        _ candidates: [EditorFlowCorrectionCandidate],
-        snapshot: EditorFlowCheckSnapshot,
-        token: Int,
-        documentTag: Int,
-        repairLocale: Locale
-    ) {
-        guard gate != .nativeFallback else { return }
-        if let end = EditorFlowRepairPolicy.end(
-            afterUnresolvedFixes: candidates,
-            snapshot: snapshot,
-            suppression: suppressedFlowSuggestion
-        ) {
-            finish(end, snapshot: snapshot)
-        } else {
-            attemptAISentenceRepair(
-                appleFoundIssues: true,
-                snapshot: snapshot,
-                token: token,
-                documentTag: documentTag,
-                locale: repairLocale
-            )
-        }
-    }
-
-    @discardableResult
-    private func presentFlowCandidates(
-        _ localCandidates: [EditorFlowCorrectionCandidate],
-        detectedIssues: [EditorFlowDetectedIssue],
-        snapshot: EditorFlowCheckSnapshot,
-        token: Int,
-        reviewAlternatives: EditorFlowReviewAlternatives? = nil,
-        forcesReview: Bool = false
-    ) -> Bool {
-        guard isCurrentFlowSnapshot(snapshot, token: token),
-              let ranges = protectedRanges(for: snapshot),
-              let suggestion = EditorFlowRepairPolicy.deterministicSuggestion(
-                candidates: localCandidates,
-                detectedIssues: detectedIssues,
-                snapshot: snapshot,
-                protectedRanges: ranges,
-                sourceUTF16Length: textLength,
-                suppression: suppressedFlowSuggestion,
-                reviewAlternatives: reviewAlternatives,
-                forcesReview: forcesReview
-              ),
-              suggestion.matches(
-                documentID: snapshot.documentID,
-                revision: snapshot.revision,
-                text: text,
-                selectedRange: snapshot.selectedRange
-              )
-        else { return false }
-        _ = cancelProseCompletion()
-        gate = .blocked
-        present(suggestion)
-        return true
-    }
-
-    private func validateAlternatives(
-        _ candidate: EditorFlowAlternativeCandidate,
-        nextIndex: Int,
-        cleanReplacements: [String],
-        concreteCandidates: [EditorFlowCorrectionCandidate],
-        detectedIssues: [EditorFlowDetectedIssue],
-        snapshot: EditorFlowCheckSnapshot,
-        token: Int,
-        documentTag: Int,
-        repairLocale: Locale,
-        forcesReview: Bool
-    ) {
-        guard isCurrentFlowSnapshot(snapshot, token: token) else { return }
-        if nextIndex >= candidate.replacementTexts.count {
-            finishAlternativeValidation(
-                candidate,
-                cleanReplacements: cleanReplacements,
-                concreteCandidates: concreteCandidates,
-                detectedIssues: detectedIssues,
-                snapshot: snapshot,
-                token: token,
-                documentTag: documentTag,
-                repairLocale: repairLocale,
-                forcesReview: forcesReview
-            )
-            return
-        }
-        let replacement = candidate.replacementTexts[nextIndex]
-        guard let validation = EditorFlowRepairPolicy.validationSentence(
-            snapshot.checkedText,
-            alternativeCandidate: candidate,
-            alternativeReplacement: replacement,
-            concreteCandidates: concreteCandidates
-        ) else {
-            validateAlternatives(
-                candidate,
-                nextIndex: nextIndex + 1,
-                cleanReplacements: cleanReplacements,
-                concreteCandidates: concreteCandidates,
-                detectedIssues: detectedIssues,
-                snapshot: snapshot,
-                token: token,
-                documentTag: documentTag,
-                repairLocale: repairLocale,
-                forcesReview: forcesReview
-            )
-            return
-        }
-        dependencies.checkingClient.request(
-            validation.text,
-            NSRange(location: 0, length: (validation.text as NSString).length),
-            EditorFlowCheckingTypes.validation,
-            documentTag
-        ) { [weak self] results, orthography in
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.isCurrentFlowSnapshot(snapshot, token: token) else { return }
-                var nextCleanReplacements = cleanReplacements
-                if EditorFlowRepairPolicy.checkingValidationIsClean(
-                       results,
-                       orthography: orthography,
-                       options: snapshot.options,
-                       requiredSpellingRange: validation.replacementRange,
-                       checkedUTF16Length: (validation.text as NSString).length
-                   ),
-                   !nextCleanReplacements.contains(replacement) {
-                    nextCleanReplacements.append(replacement)
-                }
-                self.validateAlternatives(
-                    candidate,
-                    nextIndex: nextIndex + 1,
-                    cleanReplacements: nextCleanReplacements,
-                    concreteCandidates: concreteCandidates,
-                    detectedIssues: detectedIssues,
-                    snapshot: snapshot,
-                    token: token,
-                    documentTag: documentTag,
-                    repairLocale: repairLocale,
-                    forcesReview: forcesReview
-                )
-            }
-        }
-    }
-
-    private func finishAlternativeValidation(
-        _ candidate: EditorFlowAlternativeCandidate,
-        cleanReplacements: [String],
-        concreteCandidates: [EditorFlowCorrectionCandidate],
-        detectedIssues: [EditorFlowDetectedIssue],
-        snapshot: EditorFlowCheckSnapshot,
-        token: Int,
-        documentTag: Int,
-        repairLocale: Locale,
-        forcesReview: Bool
-    ) {
-        guard isCurrentFlowSnapshot(snapshot, token: token) else { return }
-        flowCheckTask?.cancel()
-        flowCheckTask = nil
-        let (resolvedCandidates, reviewAlternatives) = EditorFlowRepairPolicy.resolvedAlternativeCandidates(
-            candidate,
-            cleanReplacements: cleanReplacements,
-            concreteCandidates: concreteCandidates,
-            checkedRange: snapshot.checkedRange
-        )
-        if !presentFlowCandidates(
-            resolvedCandidates,
-            detectedIssues: detectedIssues,
-            snapshot: snapshot,
-            token: token,
-            reviewAlternatives: reviewAlternatives,
-            forcesReview: forcesReview
-        ) {
-            finishAppleCandidatesUnresolved(
-                resolvedCandidates,
-                snapshot: snapshot,
-                token: token,
-                documentTag: documentTag,
-                repairLocale: repairLocale
-            )
-        }
-    }
-
-    private func armSentenceRepairCheckingDeadline(
-        snapshot: EditorFlowCheckSnapshot,
-        token: Int,
-        recordsModelFailureCooldown: Bool = false
-    ) {
-        flowCheckTask?.cancel()
-        let timeout = dependencies.checkingTimeoutNanoseconds
-        flowCheckTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: timeout)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled,
-                  let self,
-                  self.isCurrentFlowSnapshot(snapshot, token: token)
-            else { return }
-            if recordsModelFailureCooldown {
-                self.sentenceRepairCooldown.start(for: snapshot.checkedText)
-            }
-            self.flowRequestToken &+= 1
-            self.flowCheckTask = nil
-            self.flowSentenceRepairTask?.cancel()
-            self.flowSentenceRepairTask = nil
-            self.pendingProtectedRangesRetry = nil
-            self.gate = .nativeFallback
-            _ = self.cancelProseCompletion()
-        }
-    }
-
-    private func finishSentenceRepairClear(requestsAutocomplete: Bool) {
-        sentenceRepairCooldown.end()
-        gate = .clear
-        if pendingProseRemainder != nil {
-            if presentPendingProseRemainderIfReady() { return }
-            pendingProseRemainder = nil
-        }
-        if requestsAutocomplete {
-            scheduleProseCompletion()
-        }
-    }
-
-    private func finishSentenceRepairUnresolved() {
-        gate = .nativeFallback
-        _ = cancelProseCompletion()
-    }
-
-    private func finishSentenceRepairBlocked() {
-        gate = .blocked
-        _ = cancelProseCompletion()
-    }
-
-    /// Ends a sentence check that shows nothing, as `EditorFlowRepairPolicy` decided. Preview keeps
-    /// no diagnostics, so the reasons go unrecorded.
-    private func finish(_ end: EditorFlowRepairEnd, snapshot: EditorFlowCheckSnapshot) {
-        switch end {
-        case .clear:
-            finishSentenceRepairClear(requestsAutocomplete: snapshot.requestsAutocompleteAfterClear)
-        case .unresolved:
-            finishSentenceRepairUnresolved()
-        case .blocked:
-            finishSentenceRepairBlocked()
-        }
-    }
-}
-
-// MARK: - On-device sentence repair
-
-extension MarkdownPreviewFlowCoordinator {
-    private func attemptAISentenceRepair(
-        appleFoundIssues: Bool,
-        snapshot: EditorFlowCheckSnapshot,
-        token: Int,
-        documentTag: Int,
-        locale: Locale
-    ) {
-        guard !sentenceRepairCooldown.applies(to: snapshot.checkedText) else {
-            finishAISentenceRepairWithoutSuggestion(
-                EditorFlowModelFailure(.retryCoolingDown),
-                appleFoundIssues: appleFoundIssues,
-                snapshot: snapshot
-            )
-            return
-        }
-        guard snapshot.offersSentenceBatch,
-              options.onDeviceProseCompletions,
-              isCurrentFlowSnapshot(snapshot, token: token),
-              protectedRanges(for: snapshot) != nil,
-              let request = FlowSentenceRepairRequest(sentence: snapshot.checkedText, locale: locale),
-              dependencies.sentenceRepairService.isAvailable(for: locale)
-        else {
-            finishAISentenceRepairWithoutSuggestion(
-                EditorFlowModelFailure(.unresolvedAppleResult),
-                appleFoundIssues: appleFoundIssues,
-                snapshot: snapshot
-            )
-            return
-        }
-        gate = .blocked
-        _ = cancelProseCompletion()
-        flowSentenceRepairTask?.cancel()
-        let service = dependencies.sentenceRepairService
-        flowSentenceRepairTask = Task { @MainActor [weak self] in
-            let outcome = await service.repair(for: request)
-            guard !Task.isCancelled else { return }
-            self?.receiveAISentenceRepair(
-                outcome,
-                appleFoundIssues: appleFoundIssues,
-                snapshot: snapshot,
-                token: token,
-                documentTag: documentTag
-            )
-        }
-    }
-
-    private func receiveAISentenceRepair(
-        _ outcome: FlowModelOutcome,
-        appleFoundIssues: Bool,
-        snapshot: EditorFlowCheckSnapshot,
-        token: Int,
-        documentTag: Int
-    ) {
-        guard isCurrentFlowSnapshot(snapshot, token: token) else { return }
-        flowSentenceRepairTask = nil
-        let candidateSentence: String
-        let validatedEdits: [EditorFlowCorrectionEdit]
-        switch EditorFlowRepairPolicy.modelRepairAnswer(outcome, snapshot: snapshot) {
-        case let .failure(failure):
-            finishAISentenceRepairWithoutSuggestion(failure, appleFoundIssues: appleFoundIssues, snapshot: snapshot)
-            return
-        case .unchanged:
-            sentenceRepairCooldown.end()
-            finish(
-                EditorFlowRepairPolicy.end(forUnchangedSentenceAfterAppleFoundIssues: appleFoundIssues),
-                snapshot: snapshot
-            )
-            return
-        case let .candidate(sentence, edits):
-            candidateSentence = sentence
-            validatedEdits = edits
-        }
-        // The model's sentence must check clean with Apple's checker before anyone sees it.
-        armSentenceRepairCheckingDeadline(snapshot: snapshot, token: token, recordsModelFailureCooldown: true)
-        dependencies.checkingClient.request(
-            candidateSentence,
-            NSRange(location: 0, length: (candidateSentence as NSString).length),
-            EditorFlowCheckingTypes.validation,
-            documentTag
-        ) { [weak self] results, orthography in
-            DispatchQueue.main.async { [weak self] in
-                self?.finishAISentenceRepairValidation(
-                    candidateSentence: candidateSentence,
-                    validatedEdits: validatedEdits,
-                    appleFoundIssues: appleFoundIssues,
-                    results: results,
-                    orthography: orthography,
-                    snapshot: snapshot,
-                    token: token
-                )
-            }
-        }
-    }
-
-    private func finishAISentenceRepairValidation(
-        candidateSentence: String,
-        validatedEdits: [EditorFlowCorrectionEdit],
-        appleFoundIssues: Bool,
-        results: [NSTextCheckingResult],
-        orthography: NSOrthography?,
-        snapshot: EditorFlowCheckSnapshot,
-        token: Int
-    ) {
-        guard isCurrentFlowSnapshot(snapshot, token: token) else { return }
-        flowCheckTask?.cancel()
-        flowCheckTask = nil
-        guard let protectedRanges = protectedRanges(for: snapshot) else {
-            finishAISentenceRepairWithoutSuggestion(
-                EditorFlowModelFailure(.validationRejected, startsCooldown: true),
-                appleFoundIssues: appleFoundIssues,
-                snapshot: snapshot
-            )
-            return
-        }
-        switch EditorFlowRepairPolicy.modelSuggestion(
-            sentence: candidateSentence,
-            edits: validatedEdits,
-            checkResults: results,
-            orthography: orthography,
-            appleFoundIssues: appleFoundIssues,
-            snapshot: snapshot,
-            protectedRanges: protectedRanges,
-            suppression: suppressedFlowSuggestion
-        ) {
-        case let .rejected(end, startsCooldown):
-            if startsCooldown {
-                sentenceRepairCooldown.start(for: snapshot.checkedText)
-            }
-            finish(end, snapshot: snapshot)
-        case let .review(suggestion):
-            sentenceRepairCooldown.end()
-            gate = .blocked
-            present(suggestion)
-        }
-    }
-
-    private func finishAISentenceRepairWithoutSuggestion(
-        _ failure: EditorFlowModelFailure,
-        appleFoundIssues: Bool,
-        snapshot: EditorFlowCheckSnapshot
-    ) {
-        let outcome = EditorFlowRepairPolicy.end(withoutModelRepair: failure, appleFoundIssues: appleFoundIssues)
-        if outcome.startsCooldown {
-            sentenceRepairCooldown.start(for: snapshot.checkedText)
-        }
-        finish(outcome.end, snapshot: snapshot)
-    }
-}
-
-// MARK: - On-device completion
-
-extension MarkdownPreviewFlowCoordinator {
-    private func scheduleProseCompletion(delayNanoseconds: UInt64? = nil, reusingToken: Int? = nil) {
-        guard isActive,
-              onDeviceProseCompletionIsAvailable,
-              !isProseCompletionCoolingDown,
-              gate.allowsAutocomplete,
-              presentedRepair == nil,
-              pendingApply == nil,
-              hasFocus,
-              assistsAtCaret,
-              let selection,
-              EditorFlowProseContextPlanner.context(in: text, selectedRange: selection, protectedRanges: []) != nil
-        else { return }
-
-        let token: Int
-        if let reusingToken {
-            guard reusingToken == flowProseRequestToken else { return }
-            token = reusingToken
-        } else {
-            flowProseRequestToken &+= 1
-            token = flowProseRequestToken
-        }
-        let delay = delayNanoseconds ?? dependencies.proseCompletionDelayNanoseconds
-        let offerDelay = Double(dependencies.proseOfferDelayNanoseconds) / 1_000_000_000
-        flowProseCompletionTask?.cancel()
-        pendingProseCompletionRetry = nil
-        flowProseCompletionTask = Task { @MainActor [weak self] in
-            if delay > 0 {
-                do {
-                    try await Task.sleep(nanoseconds: delay)
-                } catch {
-                    return
-                }
-            }
-            guard !Task.isCancelled, let self else { return }
-            if self.currentProtectedRanges == nil {
-                self.deferProseCompletionUntilProtectedRanges(token: token)
-                return
-            }
-            guard let (snapshot, request) = self.prepareProseCompletion(token: token) else {
-                if token == self.flowProseRequestToken {
-                    self.flowProseCompletionTask = nil
-                }
-                return
-            }
-            let service = self.dependencies.proseCompletionService
-            let requestStartedAt = Date()
-            let outcome = await service.completion(for: request)
-            guard !Task.isCancelled else { return }
-            // A completion never appears sooner than this after it was asked for, as in Source.
-            let elapsed = Date().timeIntervalSince(requestStartedAt)
-            if elapsed < offerDelay {
-                do {
-                    try await Task.sleep(nanoseconds: UInt64((offerDelay - elapsed) * 1_000_000_000))
-                } catch {
-                    return
-                }
-            }
-            guard !Task.isCancelled else { return }
-            self.receiveProseCompletion(outcome, snapshot: snapshot, token: token)
-        }
-    }
-
-    private func deferProseCompletionUntilProtectedRanges(token: Int) {
-        guard token == flowProseRequestToken else { return }
-        let retryNanoseconds = EditorFlowTiming.protectedRangesRetryNanoseconds
-        pendingProseCompletionRetry = PendingProseCompletionRetry(
-            token: token,
-            expiresAt: Date().addingTimeInterval(Double(retryNanoseconds) / 1_000_000_000)
-        )
-        flowProseCompletionTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: retryNanoseconds)
-            } catch {
-                return
-            }
-            guard let self,
-                  token == self.flowProseRequestToken,
-                  self.pendingProseCompletionRetry?.token == token
-            else { return }
-            self.pendingProseCompletionRetry = nil
-            self.flowProseCompletionTask = nil
-        }
-    }
-
-    private func resumePendingProseCompletionIfReady() {
-        guard let retry = pendingProseCompletionRetry else { return }
-        pendingProseCompletionRetry = nil
-        guard retry.token == flowProseRequestToken else { return }
-        guard retry.expiresAt >= Date() else {
-            flowProseCompletionTask?.cancel()
-            flowProseCompletionTask = nil
-            return
-        }
-        scheduleProseCompletion(delayNanoseconds: 0, reusingToken: retry.token)
-    }
-
-    private func prepareProseCompletion(token: Int) -> (ProseCompletionSnapshot, FlowProseCompletionRequest)? {
-        guard token == flowProseRequestToken,
-              onDeviceProseCompletionIsAvailable,
-              !isProseCompletionCoolingDown,
-              gate.allowsAutocomplete,
-              let documentID,
-              hasFocus,
-              assistsAtCaret,
-              presentedRepair == nil,
-              pendingApply == nil,
-              let protectedRanges = currentProtectedRanges,
-              let selection,
-              let context = EditorFlowProseContextPlanner.context(
-                in: text,
-                selectedRange: selection,
-                protectedRanges: protectedRanges
-              ),
-              let request = FlowProseCompletionRequest(context: context.text, locale: .current)
-        else { return nil }
-        return (
-            ProseCompletionSnapshot(
-                documentID: documentID,
-                revision: revision,
-                sourceUTF16Length: textLength,
-                selectedRange: selection,
-                context: context,
-                options: options
-            ),
-            request
-        )
-    }
-
-    private func receiveProseCompletion(
-        _ outcome: FlowModelOutcome,
-        snapshot: ProseCompletionSnapshot,
-        token: Int
-    ) {
-        guard token == flowProseRequestToken else { return }
-        flowProseCompletionTask = nil
-        guard isCurrentProseCompletionSnapshot(snapshot) else { return }
-        if let failure = EditorFlowModelFailure(outcome) {
-            if failure.startsCooldown {
-                proseCompletionCooldown.start()
-            }
-            return
-        }
-        guard case let .success(continuation) = outcome,
-              !continuation.isEmpty,
-              !continuation.containsNewline,
-              EditorFlowRepairPolicy.insertionRemainsOutsideProtectedSyntax(
-                in: text as NSString,
-                insertionLocation: snapshot.selectedRange.location,
-                replacement: continuation,
-                mode: mode
-              )
-        else { return }
-        proseCompletionCooldown.end()
-        presentProse(
-            EditorFlowProseSuggestion(
-                documentID: snapshot.documentID,
-                revision: snapshot.revision,
-                sourceUTF16Length: snapshot.sourceUTF16Length,
-                selectedRange: snapshot.selectedRange,
-                continuation: continuation
-            ),
-            alreadySeen: false
-        )
-    }
-
-    private func isCurrentProseCompletionSnapshot(_ snapshot: ProseCompletionSnapshot) -> Bool {
-        guard isActive,
-              gate.allowsAutocomplete,
-              documentID == snapshot.documentID,
-              revision == snapshot.revision,
-              options == snapshot.options,
-              textLength == snapshot.sourceUTF16Length,
-              selection == snapshot.selectedRange,
-              presentedRepair == nil,
-              pendingApply == nil,
-              hasFocus,
-              assistsAtCaret,
-              let protectedRanges = currentProtectedRanges,
-              EditorFlowProseContextPlanner.context(
-                in: text,
-                selectedRange: snapshot.selectedRange,
-                protectedRanges: protectedRanges
-              ) == snapshot.context
-        else { return false }
-        return true
-    }
-
-    @discardableResult
-    private func presentPendingProseRemainderIfReady() -> Bool {
-        guard gate.allowsAutocomplete,
-              let pending = pendingProseRemainder,
-              pendingApply == nil,
-              presentedRepair == nil,
-              documentID == pending.documentID,
-              revision == pending.revision,
-              textLength == pending.sourceUTF16Length,
-              selection == pending.selectedRange,
-              hasFocus,
-              assistsAtCaret,
-              let protectedRanges = currentProtectedRanges,
-              caretIsOutsideProtectedRanges(protectedRanges),
-              EditorFlowRepairPolicy.insertionRemainsOutsideProtectedSyntax(
-                in: text as NSString,
-                insertionLocation: pending.selectedRange.location,
-                replacement: pending.continuation,
-                mode: mode
-              )
-        else { return false }
-        pendingProseRemainder = nil
-        presentProse(
-            EditorFlowProseSuggestion(
-                documentID: pending.documentID,
-                revision: pending.revision,
-                sourceUTF16Length: pending.sourceUTF16Length,
-                selectedRange: pending.selectedRange,
-                continuation: pending.continuation
-            ),
-            alreadySeen: true
-        )
-        return true
-    }
+    func flowAttemptDidEnd(
+        _ owner: EditorFlowDiagnosticOwner,
+        reason: EditorFlowTerminalReason,
+        token: Int?,
+        refreshingAvailability: Bool
+    ) {}
 }
 
 // MARK: - What the page shows, and taking it
@@ -1859,30 +882,6 @@ extension MarkdownPreviewFlowCoordinator {
                 .priority: priority.rawValue,
             ]
         )
-    }
-
-    private func present(_ suggestion: EditorFlowSuggestion) {
-        switch suggestion.acceptance {
-        case .direct:
-            // A certain fix applies at once, as in Source; Delete right after takes it back.
-            if !acceptFlowSuggestion(suggestion, isAutomatic: true) {
-                gate = .nativeFallback
-            }
-        case .reviewOnly:
-            let variants = reviewVariants(of: suggestion)
-            let presented = PresentedRepair(serial: nextSerial(), suggestion: suggestion, variants: variants)
-            presentedRepair = presented
-            announce(suggestion.accessibilityAnnouncementText, priority: .medium)
-            host?.sendFlow([
-                "type": "review",
-                "serial": presented.serial,
-                "v": revision,
-                "caret": suggestion.caretUTF16Offset,
-                "sentence": [suggestion.sentenceRange.location, NSMaxRange(suggestion.sentenceRange)],
-                "index": variants.firstIndex(of: suggestion) ?? 0,
-                "variants": variants.map { ["changes": Self.reviewChanges(of: $0)] }
-            ])
-        }
     }
 
     private func presentProse(_ suggestion: EditorFlowProseSuggestion, alreadySeen: Bool) {
@@ -1989,7 +988,7 @@ extension MarkdownPreviewFlowCoordinator {
               let firstEdit = accepted.edits.first,
               let lastEdit = accepted.edits.last
         else {
-            gate = .blocked
+            flow.gate = .blocked
             cancelFlowSuggestion()
             return false
         }
@@ -2050,7 +1049,7 @@ extension MarkdownPreviewFlowCoordinator {
     @discardableResult
     private func acceptFlowProseSuggestion(_ suggestion: EditorFlowProseSuggestion, nextWordOnly: Bool) -> Bool {
         guard pendingApply == nil,
-              gate.allowsAutocomplete,
+              flow.gate.allowsAutocomplete,
               presentedRepair == nil,
               presentedProse?.suggestion == suggestion,
               let selection,

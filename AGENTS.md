@@ -228,12 +228,12 @@ Shorter and more specific is preferable to polished but meaningless copy.
   `WikilinkAutocompleteService` off the main actor and answers `MonknotEditor.wikilinkSuggestions`
   with the query's serial, so Preview lists the same notes, in the same order, as Source completes.
 - Writing assistance (Flow) works while Preview edits: `MarkdownPreviewFlowCoordinator`
-  (`MarkdownPreviewFlow.swift`, owned and torn down by `MarkdownPreviewView.Coordinator`) runs Source's
-  pipeline (`EditorFlowCheckPlanner`, the `EditorFlowCheckingClient` checker, `FlowSentenceRepairService`,
-  `FlowProseCompletionService`, cooldowns and suppression) on the coordinator's mirror of the source and
-  the caret's source offset, and every repair decision, the timings (`EditorFlowTiming`) and the model
-  cooldowns (`EditorFlowModelCooldown`) come from `EditorFlowRepairPolicy.swift`, which Source uses too;
-  only the async pipeline and the presentation are per editor. Preview scans for protected Markdown
+  (`MarkdownPreviewFlow.swift`, owned and torn down by `MarkdownPreviewView.Coordinator`) hosts the
+  `EditorFlowPipeline` Source runs (`EditorFlowCheckPlanner`, the `EditorFlowCheckingClient` checker,
+  `FlowSentenceRepairService`, `FlowProseCompletionService`, cooldowns and suppression) on the
+  coordinator's mirror of the source and the caret's source offset, and every repair decision, the
+  timings (`EditorFlowTiming`) and the model cooldowns (`EditorFlowModelCooldown`) come from
+  `EditorFlowRepairPolicy.swift`; only the presentation is per editor. Preview scans for protected Markdown
   only while a Flow setting is on, and its context menu's Ignore Spelling also reaches Flow's spell
   document tag. The page reports `focus`, its version and focus with each `selection`, and `flow` messages
   (accept, dismiss, cancel, unrendered, declined, settled, revert); the coordinator answers with
@@ -313,7 +313,7 @@ App-layer code should stay in `Sources/Monknot` when it uses SwiftUI state, AppK
 - `TerminalSessionStore`: owns one terminal's transcript, working directory, lifecycle, resize, and PTY interaction.
 - `TerminalPTYSession`: low-level `/bin/zsh` PTY process management using `forkpty`, dispatch read sources, and wait handling.
 - `MarkdownPDFExportService`: uses an offscreen `WKWebView`, `WKPDFConfiguration`, and `PDFKit.PDFDocument` to export paginated PDFs.
-- Writing assistance: `MarkdownTextEditor.Coordinator` runs it for Source, `MarkdownPreviewFlowCoordinator` for Preview; both take their repair decisions from `EditorFlowRepairPolicy` (`Support/EditorFlowRepairPolicy.swift`) and `EditorFlowAIRepairValidator`, and their timings and cooldowns from `EditorFlowTiming` / `EditorFlowModelCooldown` in the same file. Change a decision there, not in one editor; only the async pipeline around those decisions (request tokens, deadlines, the checker and model calls, Source's diagnostics) is still written once per editor.
+- Writing assistance: `EditorFlowPipeline` (`Support/EditorFlowPipeline.swift`) runs it once for both editors: request tokens, tasks and deadlines, the checker → candidates → validation chain, the model's repairs and completions, and the protected-range scan. `MarkdownTextEditor.Coordinator` (Source) and `MarkdownPreviewFlowCoordinator` (Preview) host it through `EditorFlowPipelineHost`: each supplies its text, selection, revision, what holds Flow back (`EditorFlowHold`) and how a fix or completion is shown, and records how each attempt ended (Source in its diagnostics and AppKit's inline predictions; Preview records nothing). Repair decisions come from `EditorFlowRepairPolicy` (`Support/EditorFlowRepairPolicy.swift`) and `EditorFlowAIRepairValidator`, timings and cooldowns from `EditorFlowTiming` / `EditorFlowModelCooldown` in the same file. Change a decision there and the async flow in the pipeline, not in one editor.
 
 ## Platform API Usage
 
@@ -512,6 +512,7 @@ Current XCTest coverage focuses on `MonknotCore`:
 - `MarkdownRendererJavaScriptTests`: renderer output in JavaScriptCore.
 - `MarkdownPreviewFlowTests` (app target): writing assistance in Preview in real WebKit with fake checker and models: a certain fix as one undo step that ⌫ takes back (only while its hint shows; a refused revert still deletes), a declined fix offered again, fixes after emoji and in list items and headings, reviewed repairs (Tab, →, Esc, a trailing space), Apple Intelligence's reviewed repair, completions (gating by setting and availability, Tab word and hold, typing that consumes, Esc, a dead-key composition right after a taken word), stale checks, Return, code, link addresses and table cells, nothing checked or asked of the models while a menu is open, a decline for an old caret, Ignore Spelling in the page's menu, Tab's list/table/menu meanings, settings off, Check Document Now and Show Writing Tools.
 - `EditorFlowRepairPolicyTests` (app target): the shared repair decisions without an editor: which fixes wait for review, issues overlapping protected Markdown, validation sentence offsets, routing after a check, the model cooldowns and the protected-range rebase.
+- `EditorFlowPipelineTests` (app target): the shared pipeline with a stand-in host: protected ranges count only for the text they were scanned from, a paused or suspended editor asks the checker nothing, a clean check clears the gate, and a check whose sentence changed ends stale for its own token.
 - `MarkdownVisualEditorTests` (app target): Preview editing in real WebKit: typing, Return and Delete, Markdown shortcuts, Edit-menu undo and redo (also across a switch to Source, after a Source edit or a change on disk, and refused without half-applying), an outside change racing a typed character, composition through `NSTextInputClient`, a click below the last block, smart dashes in code, a dropped file, formatting, tasks, links, paste and copy, composition, tables, external changes, the slash rule, toggles, callouts, the + handle, drag-and-drop, the block menu and its shortcuts, 50 KB and 1 MB keystroke timing, and theme and narrow-window snapshots of the page, menus and handles (written to `MONKNOT_EDITOR_SNAPSHOT_DIR` when set).
 - `MarkdownEditorMenuTests` (app target): the Preview editor's menus in real WebKit: one menu at a time, the table menu and bar, the code language, the link card, Turn Into's timing and every surface following a moved column.
 - `MonknotControlTests` (app target): every 28 pt control measures 28 at each zoom, the bar insets, icon-button open state, pop-up and menu-button commands, slider and stepper values, the switch's disabled state, the zoom level mapping and the danger tokens. `MonknotMotionContractTests` keeps `.animation(_:value:)` out of the app.
