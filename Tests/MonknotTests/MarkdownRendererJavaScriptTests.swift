@@ -249,6 +249,67 @@ final class MarkdownRendererJavaScriptTests: XCTestCase {
         XCTAssertEqual(try code("`a`"), [0, 3, 1, 2])
     }
 
+    /// CommonMark backslash escapes (6.1): a backslash before ASCII punctuation shows that character
+    /// as text, so it starts no emphasis, code, link, heading or list; before anything else the
+    /// backslash is text. Code spans and angle autolinks keep their backslashes, an escaped backtick
+    /// opens no code span, and a link's destination and title lose theirs.
+    func testBackslashEscapesShowThePunctuationAsText() throws {
+        func paragraph(_ markdown: String) throws -> String {
+            let html = try renderMarkdown(markdown)
+            let prefix = #"<p data-source-line="1">"#
+            XCTAssertTrue(html.hasPrefix(prefix) && html.hasSuffix("</p>"), html)
+            return String(html.dropFirst(prefix.count).dropLast("</p>".count))
+        }
+        XCTAssertEqual(try paragraph(#"\*not emphasized*"#), "*not emphasized*")
+        XCTAssertEqual(try paragraph(##"\# not a heading"##), "# not a heading")
+        XCTAssertEqual(try paragraph(#"1\. not a list"#), "1. not a list")
+        XCTAssertEqual(try paragraph(#"\- not an item"#), "- not an item")
+        XCTAssertEqual(try paragraph(#"\> not a quote"#), "&gt; not a quote")
+        XCTAssertEqual(try paragraph(#"\`not code\`"#), "`not code`")
+        XCTAssertEqual(try paragraph(#"\[[wiki]] \[x](y)"#), "[[wiki]] [x](y)")
+        XCTAssertEqual(try paragraph(#"**a\*b**"#), "<strong>a*b</strong>")
+        XCTAssertEqual(try paragraph(#"\\*emphasis*"#), #"\<em>emphasis</em>"#)
+        XCTAssertEqual(try paragraph(#"a \ b \q"#), #"a \ b \q"#)
+        XCTAssertEqual(try paragraph(#"`foo\`bar`"#), #"<code>foo\</code>bar`"#)
+        XCTAssertEqual(try paragraph(#"\``a`"#), "`<code>a</code>")
+        XCTAssertEqual(try paragraph(#"\<http://a.b>"#), "&lt;http://a.b&gt;")
+        XCTAssertTrue(try paragraph(#"<http://a.b/c\_d>"#).contains(#"href="http://a.b/c\_d""#))
+        XCTAssertTrue(try paragraph(#"[a](b\)c "t\"x")"#).hasPrefix(#"<a href="b)c" data-monknot-link-kind="markdown" data-monknot-destination="b)c" title="t&quot;x">a</a>"#))
+        XCTAssertEqual(try paragraph(#"![a\]b](i\_x.png)"#), #"<img src="i_x.png" alt="a]b">"#)
+        XCTAssertTrue(try renderMarkdown("[x][r]\n\n[r]: http://a/b\\_c").contains(#"href="http://a/b_c""#))
+        // A backslash ending a line is a hard break; an escaped backslash there is text and a space.
+        XCTAssertEqual(try paragraph("a\\\nb"), "a<br>b")
+        XCTAssertEqual(try paragraph("a\\\\\nb"), #"a\ b"#)
+        XCTAssertEqual(try renderMarkdown(#"# 1\. Intro"#), #"<h1 data-source-line="1" id="1-intro">1. Intro</h1>"#)
+        XCTAssertTrue(try renderMarkdown("[TOC]\n\n# a \\* b").contains(#"data-mk-toc="0">a * b</a>"#))
+        XCTAssertTrue(try renderMarkdown("| a\\*b | c |\n| --- | --- |\n| 1 | 2 |").contains("<th>a*b</th>"))
+    }
+
+    /// The editor maps an escaped character to the source through these ranges: the escape covers its
+    /// backslash and character, its text is the character alone, and the backslash is markup that
+    /// typing at the character's start stays outside of.
+    func testBackslashEscapeSourceRangesCoverTheBackslash() throws {
+        let context = try rendererContext(markdown: "")
+        func evaluate(_ script: String) throws -> String {
+            try XCTUnwrap(context.evaluateScript(script)?.toString())
+        }
+        func nodes(_ text: String) throws -> String {
+            try evaluate("JSON.stringify(window.MonknotMarkdown.parseInline(\(try javascriptStringLiteral(text)), { editing: true }))")
+        }
+        XCTAssertEqual(try nodes(#"a\*b"#), #"[{"t":"text","s":0,"e":1},{"t":"esc","s":1,"e":3,"cs":2,"ce":3},{"t":"text","s":3,"e":4}]"#)
+        XCTAssertEqual(try nodes(#"\\"#), #"[{"t":"esc","s":0,"e":2,"cs":1,"ce":2}]"#)
+        XCTAssertEqual(try nodes(#"**\*x**"#), #"[{"t":"strong","s":0,"e":7,"cs":2,"ce":5,"kids":[{"t":"esc","s":2,"e":4,"cs":3,"ce":4},{"t":"text","s":4,"e":5}]}]"#)
+        XCTAssertEqual(try nodes(#"`a\`"#), #"[{"t":"code","s":0,"e":4,"cs":1,"ce":3,"kids":[{"t":"text","s":1,"e":3}]}]"#)
+        let map = try evaluate("""
+        (() => {
+          const unit = { kind: "inline", region: { j: \(try javascriptStringLiteral(#"a\*b"#)) } };
+          const map = window.MonknotMarkdown.unitMap(unit, {});
+          return JSON.stringify({ visible: map.visible, segments: map.segments, constructs: map.constructs });
+        })()
+        """)
+        XCTAssertEqual(map, #"{"visible":"a*b","segments":[{"v":0,"len":1,"j":0},{"v":1,"len":1,"j":2},{"v":2,"len":1,"j":3}],"constructs":[{"type":"escape","s":1,"e":3,"cs":2,"ce":3,"inclusive":false}]}"#)
+    }
+
     // MARK: - What the read-only Preview and PDF export show
 
     func testTogglesRenderAsDetailsKeepingTheFilesOpenState() throws {

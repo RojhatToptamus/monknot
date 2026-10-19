@@ -415,7 +415,8 @@
     return map.v;
   }
 
-  /// Source ranges covering exactly the visible characters [v0, v1).
+  /// Source ranges covering exactly the visible characters [v0, v1). An escaped character's
+  /// range starts at its backslash: the backslash goes with the character.
   function visibleRangeToRaw(model, unit, v0, v1) {
     const map = visibleMap(model, unit);
     let start = null;
@@ -425,7 +426,7 @@
       if (segmentEnd <= v0 || segment.v >= v1) continue;
       const from = Math.max(v0, segment.v);
       const to = Math.min(v1, segmentEnd);
-      const rawFrom = segment.atom ? rawOf(unit, segment.s) : rawOf(unit, segment.j + (from - segment.v));
+      const rawFrom = segment.atom ? rawOf(unit, segment.s) : rawOf(unit, escapeStart(map, segment.j + (from - segment.v)));
       const rawTo = segment.atom ? rawOf(unit, segment.e) : rawOf(unit, segment.j + (to - segment.v));
       if (start === null) start = rawFrom;
       end = rawTo;
@@ -435,6 +436,12 @@
       return [position, position];
     }
     return [start, end];
+  }
+
+  /// Where the source of the visible character at `j` starts: its backslash when it is escaped.
+  function escapeStart(map, j) {
+    const escape = map.constructs.find((construct) => construct.type === "escape" && construct.cs === j);
+    return escape ? escape.s : j;
   }
 
   function unitsOf(block) {
@@ -720,10 +727,11 @@
     }
     const kept = [];
     for (const construct of constructs) {
-      const openInside = start <= construct.s && construct.cs <= end && construct.cs > construct.s;
-      const closeInside = start <= construct.ce && construct.e <= end && construct.e > construct.ce;
-      if (openInside && !closeInside) kept.push([construct.s, construct.cs]);
-      if (closeInside && !openInside) kept.push([construct.ce, construct.e]);
+      // An escape's backslash has no closing partner: it goes with its character.
+      const openInside = start <= construct.s && construct.cs <= end;
+      const closeInside = start <= construct.ce && construct.e <= end;
+      if (openInside && !closeInside && construct.cs > construct.s) kept.push([construct.s, construct.cs]);
+      if (closeInside && !openInside && construct.e > construct.ce) kept.push([construct.ce, construct.e]);
     }
     kept.sort((a, b) => a[0] - b[0]);
     const keep = kept.map(([from, to]) => model.source.slice(from, to)).join("");
@@ -1241,13 +1249,18 @@
     if (unit.role !== "paragraph") return planEnter(model, selection);
     if (rawToVisible(model, unit, position, "left") >= visibleText(model, unit).length) return planEnter(model, selection);
     const source = model.source;
+    // After a backslash shown as text, the break's backslash would make the two one escaped
+    // backslash and no break: another backslash keeps the text and the break.
+    let backslashes = 0;
+    while (source[position - backslashes - 1] === "\\") backslashes += 1;
+    const marker = backslashes % 2 ? "\\\\" : "\\";
     // Before a soft break the line ending is there already and becomes a hard one.
     const lineEnd = lineEndOf(source, position);
     if (lineEnd < unitEnd(unit) && /^[ \t]*$/.test(source.slice(position, lineEnd))) {
       const next = unit.block.lines.find((view) => S(unit, view.start) > lineEnd);
-      return { from: position, to: lineEnd, insert: "\\", select: caretAt(S(unit, next.start) + 1 - (lineEnd - position)), kind: "typing" };
+      return { from: position, to: lineEnd, insert: marker, select: caretAt(S(unit, next.start) + marker.length - (lineEnd - position)), kind: "typing" };
     }
-    const insert = "\\" + model.eol + quotePrefixOfLine(source, position);
+    const insert = marker + model.eol + quotePrefixOfLine(source, position);
     return { from: position, to: position, insert, select: caretAt(position + insert.length), kind: "typing" };
   }
 
@@ -1482,6 +1495,9 @@
               items.push({ char: j[index], raw: rawSlice(index, index + 1), styles });
             }
             break;
+          case "esc":
+            items.push({ char: j[node.cs], raw: rawSlice(node.s, node.e), escaped: true, styles });
+            break;
           case "strong":
           case "em":
           case "del":
@@ -1513,7 +1529,8 @@
     return { items, outer };
   }
 
-  /// Expands [js, je) until no inline construct crosses its edges.
+  /// Expands [js, je) until no inline construct crosses its edges. An escaped character is taken
+  /// with its backslash.
   function alignToConstructs(model, unit, js, je) {
     const constructs = visibleMap(model, unit).constructs;
     let start = js;
@@ -1523,7 +1540,7 @@
       grew = false;
       for (const construct of constructs) {
         const overlaps = construct.e > start && construct.s < end;
-        const contains = construct.s <= start && construct.e >= end && (construct.cs <= start && construct.ce >= end);
+        const contains = construct.type !== "escape" && construct.s <= start && construct.e >= end && (construct.cs <= start && construct.ce >= end);
         if (overlaps && !contains && (construct.s < start || construct.e > end)) {
           start = Math.min(start, construct.s);
           end = Math.max(end, construct.e);
@@ -1623,7 +1640,8 @@
         out += entry.open;
         stack.push(entry);
       }
-      out += item.raw;
+      // A backslash escapes nothing in code, so an escaped character goes in as itself.
+      out += item.escaped && item.styles.code ? item.char : item.raw;
     });
     while (stack.length) out += stack.pop().close;
     return out;
@@ -2383,7 +2401,7 @@
         const cs = rawOf(first, construct.cs);
         const ce = rawOf(first, construct.ce);
         const e = rawOf(first, construct.e);
-        if (cs <= from && to <= ce && (cs < from || to < ce) && construct.type !== "link" && construct.type !== "wikilink" && construct.type !== "autolink") {
+        if (cs <= from && to <= ce && (cs < from || to < ce) && !["link", "wikilink", "autolink", "escape"].includes(construct.type)) {
           prefix.unshift(source.slice(s, cs));
           suffix.push(source.slice(ce, e));
         }
@@ -2754,8 +2772,9 @@
     const blocks = [];
     let inline = "";
     const flush = () => {
-      const text = inline.replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").trim();
-      if (text) blocks.push(text);
+      // A line break at either end of a block breaks nothing; Markdown would show its backslash.
+      const text = inline.replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/^(?:\\\n)+|(?:\\\n)+$/g, "").trim();
+      if (text) blocks.push(text.split("\n").map(escapeLineStart).join("\n"));
       inline = "";
     };
     for (const node of Array.from(element.childNodes)) {
@@ -2783,7 +2802,8 @@
     const tag = element.tagName;
     switch (tag) {
       case "H1": case "H2": case "H3": case "H4": case "H5": case "H6":
-        return "#".repeat(Number(tag[1])) + " " + inlineOf(element).replace(/\s+/g, " ").trim();
+        // A closing run of `#` would end the heading's text, so a trailing `#` stays text.
+        return "#".repeat(Number(tag[1])) + " " + oneLine(inlineOf(element)).replace(/([ \t])(#+)$/, "$1\\$2");
       case "UL":
       case "OL":
         return convertList(element, "");
@@ -2824,14 +2844,14 @@
         else text += convertInline(child);
       }
       const task = checkbox ? (checkbox.checked ? "[x] " : "[ ] ") : "";
-      lines.push(indent + marker + task + text.replace(/\s+/g, " ").trim());
+      lines.push(indent + marker + task + escapeLineStart(oneLine(text)));
       lines.push(...nested);
     }
     return lines.join("\n");
   }
 
   function convertTable(element) {
-    const rows = Array.from(element.querySelectorAll("tr")).map((row) => Array.from(row.children).map((cell) => inlineOf(cell).replace(/\s+/g, " ").trim().replace(/\|/g, "\\|")));
+    const rows = Array.from(element.querySelectorAll("tr")).map((row) => Array.from(row.children).map((cell) => oneLine(inlineOf(cell)).replace(/\|/g, "\\|")));
     if (rows.length === 0) return "";
     const width = Math.max(...rows.map((row) => row.length));
     const line = (cells) => "| " + Array.from({ length: width }, (_, index) => cells[index] || "").join(" | ") + " |";
@@ -2844,6 +2864,31 @@
     return Array.from(element.childNodes).map(convertInline).join("");
   }
 
+  /// Inline Markdown on one line, as a heading, list item or table cell holds it: a line break
+  /// becomes a space, or its backslash would show.
+  function oneLine(text) {
+    return text.replace(/\\\n/g, " ").replace(/\s+/g, " ").trim();
+  }
+
+  /// Text as Markdown that reads back as the same text: a backslash goes before a character that
+  /// would open emphasis, code or a link, before a backslash, and before a `~~` run.
+  function escapeText(text) {
+    return text.replace(/[\\`*_[\]]/g, "\\$&").replace(/~(?=~)|(?<=~)~/g, "\\~");
+  }
+
+  /// A line of text that Markdown would read as the start of a heading, quote, list item or
+  /// divider keeps reading as text: `2020. A year` becomes `2020\. A year`.
+  function escapeLineStart(line) {
+    return line
+      .replace(/^(?=#{1,6}(?:[ \t]|$)|[-+](?:[ \t]|$)|>|-(?:[ \t]*-){2,}[ \t]*$)/, "\\")
+      .replace(/^(\d{1,9})([.)])(?=[ \t]|$)/, "$1\\$2");
+  }
+
+  /// A URL as a link destination: spaces encoded, parentheses escaped so they cannot end it.
+  function linkDestination(url) {
+    return url.replace(/\s/g, "%20").replace(/[()]/g, "\\$&");
+  }
+
   function wrap(marker, text, closing = marker) {
     const match = /^(\s*)([\s\S]*?)(\s*)$/.exec(text);
     if (!match[2]) return text;
@@ -2851,7 +2896,7 @@
   }
 
   function convertInline(node) {
-    if (node.nodeType === 3) return node.nodeValue.replace(/\s+/g, " ");
+    if (node.nodeType === 3) return escapeText(node.nodeValue.replace(/\s+/g, " "));
     if (node.nodeType !== 1) return "";
     const tag = node.tagName;
     const style = node.getAttribute("style") || "";
@@ -2876,11 +2921,11 @@
         const href = node.getAttribute("href") || "";
         const text = inner().trim();
         if (!href || href.startsWith("javascript:")) return text;
-        return `[${text || href}](${href.replace(/\s/g, "%20")})`;
+        return `[${text || href}](${linkDestination(href)})`;
       }
       case "IMG": {
         const src = node.getAttribute("src") || "";
-        return src ? `![${(node.getAttribute("alt") || "").replace(/[[\]]/g, "")}](${src.replace(/\s/g, "%20")})` : "";
+        return src ? `![${(node.getAttribute("alt") || "").replace(/[[\]]/g, "")}](${linkDestination(src)})` : "";
       }
       case "BR":
         return "\\\n";

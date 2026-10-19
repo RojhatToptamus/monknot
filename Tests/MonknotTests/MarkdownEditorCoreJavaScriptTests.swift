@@ -25,7 +25,7 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
         let result = try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any]
         let failures = result?["failures"] as? [String] ?? ["no result"]
         XCTAssertEqual(failures, [], failures.joined(separator: "\n"))
-        XCTAssertEqual(result?["passed"] as? Int, 7)
+        XCTAssertEqual(result?["passed"] as? Int, 19)
     }
 
     /// Random documents and random patches, including CRLF line endings: after every patch the
@@ -88,7 +88,7 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
       let seed = 20261017;
       const random = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
       const pick = (list) => list[Math.floor(random() * list.length)];
-      const snippets = ["<details>\n<summary>T</summary>\n\nbody [^n]\n\n</details>", "> [!NOTE]", "> [!TIP]", "<details>", "<details open>", "<summary>Title</summary>", "<summary></summary>", "</details>", "[TOC]", "![v](a.mp4)", "# Title", "## Sub", "para text", "more *em* and **bold**", "- item", "- [ ] task", "1. one", "  - nested", "> quote", "> > deep", "```js", "```", "code line", "| a | b |", "| --- | --- |", "| 1 | 2 |", "---", "[ref]: http://x", "[^n]: note", "see [^n] and [l][ref]", "", "", "text with [link](u) end", "~~del~~", "`code`", "line  ", "next"];
+      const snippets = ["<details>\n<summary>T</summary>\n\nbody [^n]\n\n</details>", "> [!NOTE]", "> [!TIP]", "<details>", "<details open>", "<summary>Title</summary>", "<summary></summary>", "</details>", "[TOC]", "![v](a.mp4)", "# Title", "## Sub", "para text", "more *em* and **bold**", "- item", "- [ ] task", "1. one", "  - nested", "> quote", "> > deep", "```js", "```", "code line", "| a | b |", "| --- | --- |", "| 1 | 2 |", "---", "[ref]: http://x", "[^n]: note", "see [^n] and [l][ref]", "", "", "text with [link](u) end", "~~del~~", "`code`", "line  ", "next", "esc \\* and \\\\", "tail\\", "pair\\\\"];
       const describe = (model) => model.blocks.map((b) => [b.type, E.bStart(b), E.bEnd(b), E.bLine(b)].join("|")).join("\n")
         + "\n--\n" + E.allUnits(model).map((u) => [u.kind, u.role, u.region.j, E.unitStart(u), E.unitEnd(u)].join("|")).join("\n")
         + "\n--\n" + JSON.stringify([[...model.doc.footnotes], [...model.doc.references], model.doc.footnoteOrder]);
@@ -110,7 +110,7 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
         for (let step = 0; step < 6; step += 1) {
           const from = Math.floor(random() * (text.length + 1));
           const to = Math.min(text.length, from + (random() < 0.5 ? 0 : Math.floor(random() * 12)));
-          const insert = random() < 0.3 ? "" : pick(["<details>\n", "<summary>S</summary>\n", "</details>", "> [!NOTE]\n", "[TOC]\n", "x", "\n", "\n\n", "# ", "- ", "**", "`", "```", "> ", "|", " ", "[a](b)", pick(snippets) + "\n"]);
+          const insert = random() < 0.3 ? "" : pick(["<details>\n", "<summary>S</summary>\n", "</details>", "> [!NOTE]\n", "[TOC]\n", "x", "\n", "\n\n", "# ", "- ", "**", "`", "```", "> ", "|", " ", "[a](b)", "\\", pick(snippets) + "\n"]);
           // Open or close some toggles, as a click on the page does; the state should follow each
           // toggle that still starts where it did, moved by the patch.
           const expectedOpen = new Map();
@@ -140,7 +140,7 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
     })()
     """#
 
-    private static let paste = #"""
+    private static let paste = ##"""
     (() => {
     (() => {
       // A small stand-in for WebKit's DOMParser: elements, text and the selectors the converter uses.
@@ -197,9 +197,29 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
     check("list nested under a numbered item", "<ol><li>a<ul><li>b</li></ul></li><li>c</li></ol>", "1. a\n   - b\n2. c");
     check("list nested under a bullet", "<ul><li>a<ol start=\"9\"><li>b</li><li>c<ul><li>d</li></ul></li></ol></li></ul>", "- a\n  9. b\n  10. c\n      - d");
     check("tasks", "<ul><li><input type=\"checkbox\" checked>done</li><li><input type=\"checkbox\">todo</li></ul>", "- [x] done\n- [ ] todo");
+    // Text that would read as Markdown keeps reading as text: a backslash goes before what would
+    // start a block at a line's start, and before emphasis, code and link characters anywhere.
+    check("a number and a period", "<p>2020. A year</p>", "2020\\. A year");
+    check("block starts", "<p>- a</p><p>+ b</p><p># c</p><p>&gt; d</p><p>---</p><p>1) e</p>", "\\- a\n\n\\+ b\n\n\\# c\n\n\\> d\n\n\\---\n\n1\\) e");
+    check("inline markup characters", "<p>a *b* _c_ `d` [e](f) \\ g ~~h~~ ~5</p>", "a \\*b\\* \\_c\\_ \\`d\\` \\[e\\](f) \\\\ g \\~\\~h\\~\\~ ~5");
+    check("lines after a line break", "<p>one<br>2. two<br>- three</p>", "one\\\n2\\. two\\\n\\- three");
+    check("list item text", "<ul><li>1. x</li><li>[ ] not a task</li></ul>", "- 1\\. x\n- \\[ \\] not a task");
+    check("heading ending in a hash", "<h2>Item #</h2>", "## Item \\#");
+    check("emphasis holding markup characters", "<p><b>2020. *</b> <code>a*b</code></p>", "**2020. \\*** `a*b`");
+    // A line break where a line cannot break becomes a space, and one at a block's end goes.
+    check("line breaks that break nothing", "<h1>a<br>b</h1><ul><li>c<br>d</li></ul><div>e<br></div><div><br></div>", "# a b\n\n- c d\n\ne");
+    check("parentheses in a link", "<p><a href=\"https://en.wikipedia.org/wiki/Foo_(bar)\">Foo</a></p>", "[Foo](https://en.wikipedia.org/wiki/Foo_\\(bar\\))");
+    const reads = (name, html, expected) => {
+      const got = window.MonknotMarkdown.renderMarkdown(E.htmlToMarkdown(html));
+      if (got === expected) passed += 1;
+      else failures.push(name + ": renders " + JSON.stringify(got) + ", expected " + JSON.stringify(expected));
+    };
+    reads("a number and a period reads as text", "<p>2020. A year</p>", "<p data-source-line=\"1\">2020. A year</p>");
+    reads("markup characters read as text", "<p>a *b* _c_ `d` [e](f) \\ g ~~h~~</p><p>&gt; q</p>", "<p data-source-line=\"1\">a *b* _c_ `d` [e](f) \\ g ~~h~~</p>\n<p data-source-line=\"3\">&gt; q</p>");
+    reads("a link with parentheses reads whole", "<p><a href=\"https://x.org/Foo_(bar)\">Foo</a></p>", "<p data-source-line=\"1\"><a href=\"https://x.org/Foo_(bar)\" data-monknot-link-kind=\"markdown\" data-monknot-destination=\"https://x.org/Foo_(bar)\">Foo</a></p>");
     return JSON.stringify({ passed, failures });
     })()
-    """#
+    """##
 
     private static let scenarios = #"""
     (() => {
@@ -489,6 +509,53 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
       const at = toggleDoc.indexOf("note") + 2;
       E.applyPatch(model, at, at, "w");
       expectEqual("footnote text in the document", model.doc.footnotes.get("n"), "nowte");
+    })();
+
+    // A backslash escape shows its character; the backslash is markup that goes with it. The page
+    // types at the caret's left side and removes visible characters, as these helpers do.
+    const caretAtVisible = (m, v) => { const u = E.allUnits(m)[0]; const p = E.visibleToRaw(m, u, v, "left"); return { anchor: p, head: p, from: p, to: p }; };
+    const typeAt = (v, text) => (m) => E.planInsertText(m, caretAtVisible(m, v), text, { typing: true });
+    const enterAt = (v) => (m) => E.planEnter(m, caretAtVisible(m, v), {});
+    const removeVisible = (v0, v1) => (m) => { const u = E.allUnits(m)[0]; const [from, to] = E.visibleRangeToRaw(m, u, v0, v1); return E.planDelete(m, from, to); };
+    const backspaceAt = (v) => removeVisible(v - 1, v);
+    const deleteForwardAt = (v) => removeVisible(v, v + 1);
+    const replaceVisible = (v0, v1, text) => (m) => {
+      const u = E.allUnits(m)[0];
+      const from = E.visibleToRaw(m, u, v0, "right");
+      const to = E.visibleToRaw(m, u, v1, "left");
+      return E.planInsertText(m, { anchor: from, head: to, from, to }, text, { typing: true });
+    };
+    check("type before an escaped character", "a\\*b", typeAt(1, "x"), "ax‸\\*b");
+    check("type after an escaped character", "a\\*b", typeAt(2, "x"), "a\\*x‸b");
+    check("type before an escape that starts the line", "\\*b", typeAt(0, "x"), "x‸\\*b");
+    check("type before an escape that starts bold", "**\\*x**", typeAt(0, "y"), "**y‸\\*x**");
+    check("type after an escaped backslash", "a\\\\b", typeAt(2, "x"), "a\\\\x‸b");
+    check("backspace an escaped character", "a\\*b", backspaceAt(2), "a‸b");
+    check("backspace before an escape", "a\\*b", backspaceAt(1), "‸\\*b");
+    check("backspace after an escape", "a\\*b", backspaceAt(3), "a\\*‸");
+    check("delete forward an escaped character", "a\\*b", deleteForwardAt(1), "a‸b");
+    check("backspace an escape in bold", "**\\*x**", backspaceAt(1), "**‸x**");
+    check("backspace an escaped backslash", "a\\\\b", backspaceAt(2), "a‸b");
+    check("replace an escaped character", "a\\*b", replaceVisible(1, 2, "x"), "ax‸b");
+    check("enter before an escaped character", "a\\*b", enterAt(1), "a\n\n‸\\*b");
+    check("bold over an escape", "a «\\*b» c", style("strong"), "a **«\\*b»** c");
+    // A backslash escapes nothing in code, so the character goes in as itself.
+    check("code over an escape", "a «\\*b» c", style("code"), "a `«*b»` c");
+    check("bold one escaped character", "a«\\*»b", style("strong"), "a**«\\*»**b");
+    check("code one escaped character", "a«\\*»b", style("code"), "a`«*»`b");
+    // ⇧↩ after a backslash shown as text: the break's backslash would escape it and break nothing.
+    check("line break after a backslash shown as text", "C:\\‸x", lineBreak, "C:\\\\\\\n‸x");
+    check("line break after an escaped backslash", "C:\\\\‸x", lineBreak, "C:\\\\\\\n‸x");
+    check("line break before a soft break after a backslash", "C:\\‸\nx", lineBreak, "C:\\\\\\\n‸x");
+    (() => {
+      const model = E.createModel("a\\*b");
+      const unit = E.allUnits(model)[0];
+      expectEqual("escape visible text", E.visibleText(model, unit), "a*b");
+      expectEqual("escape caret to source", JSON.stringify([0, 1, 2, 3].map((v) => [E.visibleToRaw(model, unit, v, "left"), E.visibleToRaw(model, unit, v, "right")])), "[[0,0],[1,1],[3,3],[4,4]]");
+      expectEqual("escape source to caret", JSON.stringify([0, 1, 2, 3, 4].map((raw) => [E.rawToVisible(model, unit, raw, "left"), E.rawToVisible(model, unit, raw, "right")])), "[[0,0],[1,1],[1,1],[2,2],[3,3]]");
+      expectEqual("escaped character with its backslash", JSON.stringify(E.visibleRangeToRaw(model, unit, 1, 2)), "[1,3]");
+      expectEqual("copied escape", E.balancedMarkdown(model, 1, 3), "\\*");
+      expectEqual("line break render", window.MonknotMarkdown.renderMarkdown("C:\\\\\\\nx"), "<p data-source-line=\"1\">C:\\<br>x</p>");
     })();
     return JSON.stringify({ passed, failures });
     })()

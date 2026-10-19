@@ -194,6 +194,10 @@ Shorter and more specific is preferable to polished but meaningless copy.
   blocks are re-parsed (resynchronising at the next unchanged block) and replaced in the page; an edit
   inside a top-level toggle, list or quote re-renders that whole block, a footnote's text is updated in
   place, and only a changed link reference or footnote key renders the whole document again.
+- `renderer.js` reads CommonMark backslash escapes: `\*` shows `*`, and its backslash is markup that
+  typing stays outside of and that is deleted, styled and copied with its character. HTML pasted from
+  other apps (`htmlToMarkdown`) escapes text that would otherwise read as Markdown, such as
+  `2020\. A year` or `snake\_case`.
 - The page is the single writer while Preview is editable. It posts each patch with a version number
   to `MarkdownPreviewView.Coordinator` (`monknotEditor` message), which mirrors the page's text,
   moves local edits past app patches the page has not applied yet, applies the patch through

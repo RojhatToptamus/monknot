@@ -141,8 +141,8 @@
       return {
         kind: "reference",
         key: normalizeReferenceLabel(reference[1]),
-        destination,
-        title: reference[3] ?? reference[4] ?? reference[5] ?? ""
+        destination: unescapeText(destination),
+        title: unescapeText(reference[3] ?? reference[4] ?? reference[5] ?? "")
       };
     }
     return null;
@@ -662,6 +662,7 @@
   /// so later passes can span it but never split it.
   const PASSES = [
     { name: "code", scan: codeSpans, needs: ["`"] },
+    { name: "escape", scan: escapes, needs: ["\\"] },
     { name: "wikilink", re: /\[\[([^\]\n]+)\]\]/dg, needs: ["[["] },
     { name: "reflink", re: /(?<!!)\[([^\]\n]+)\]\[([^\]\n]*)\]/dg, needs: ["]["] },
     { name: "br", re: /(?: {2,}|\\)\n/dg, needs: ["\n"] },
@@ -676,7 +677,12 @@
     { name: "em", re: /(^|[^*])\*([^*\s][^*]*?)\*/dg, needs: ["*"] },
     { name: "emu", re: /(^|[^_])_([^_\s][^_]*?)_/dg, needs: ["_"] }
   ];
-  const INLINE_TRIGGER = /[`[\n!:<*_~\uE000-\uF8FF]/;
+  const INLINE_TRIGGER = /[`[\n!:<*_~\\\uE000-\uF8FF]/;
+  /// A backslash before ASCII punctuation (CommonMark 6.1), or an angle autolink, which keeps its
+  /// backslashes as CommonMark reads autolinks before escapes. The second alternative is the
+  /// `anglelink` pass's expression.
+  const RE_ESCAPE_SCAN = /\\([!-\/:-@[-`{-~])|<https?:\/\/[^&\s>\uE000-\uF8FF]+>/dg;
+  const RE_ESCAPED = /\\([!-\/:-@[-`{-~])/g;
 
   /// Tokenizes inline Markdown in `j` into nodes that carry `j` offsets.
   function parseInline(j, context) {
@@ -819,13 +825,23 @@
   /// Code spans as CommonMark reads them (6.1): a run of N backticks opens one and the next run of
   /// exactly N closes it, so ``a`b`` holds a backtick; a run nothing closes is literal. When the content
   /// starts and ends with a space and is not all spaces, one space each side is markup, not text.
+  /// A backslash escapes a backtick that would open a span, never one that closes it (2.4).
   /// Returns matches shaped as `matchAll`'s: the span, then its content.
   function codeSpans(w) {
     const matches = [];
     // Run lengths with no closing run after the position last searched: later openers have none either.
     const unclosed = new Set();
+    // Backslashes inside the last span escape nothing after it.
+    let floor = 0;
     let open = w.indexOf("`");
     while (open >= 0) {
+      let slashes = 0;
+      while (open - slashes > floor && w[open - slashes - 1] === "\\") slashes += 1;
+      if (slashes % 2 === 1) {
+        // That backtick is text; the rest of its run can still open a span.
+        open = w.indexOf("`", open + 1);
+        continue;
+      }
       let after = open;
       while (w[after] === "`") after += 1;
       const length = after - open;
@@ -854,9 +870,21 @@
       }
       const end = close + length;
       matches.push({ 0: w.slice(open, end), indices: [[open, end], [cs, ce]] });
+      floor = end;
       open = w.indexOf("`", end);
     }
     return matches;
+  }
+
+  /// Backslash escapes (CommonMark 6.1): a backslash before ASCII punctuation makes that character
+  /// text, so `\*` is an asterisk and `\\` one backslash. Code spans are tokens by now, and an angle
+  /// autolink keeps its backslashes. Returns the escapes, each with its character as group 1.
+  function escapes(w) {
+    return Array.from(w.matchAll(RE_ESCAPE_SCAN)).filter((match) => match[1] !== undefined);
+  }
+
+  function unescapeText(text) {
+    return text.replace(RE_ESCAPED, "$1");
   }
 
   function trimRange(text, from, to) {
@@ -881,6 +909,9 @@
           node: { t: "code", s, e, cs: jStart(state, view, cs), ce: jEnd(state, view, ce - 1), kids: children(state, view, cs, ce) }
         };
       }
+      case "escape":
+        // The backslash is markup; the character after it is the text.
+        return { from, to, node: { t: "esc", s, e, cs: jStart(state, view, from + 1), ce: e } };
       case "wikilink": {
         const [cs, ce] = group(1);
         const separator = view.w.indexOf("|", cs);
@@ -930,17 +961,17 @@
       case "br":
         return { from, to, node: { t: "br", s, e } };
       case "image": {
-        const alt = group(1) ? textOf(state, view, group(1)[0], group(1)[1]) : "";
-        const url = textOf(state, view, group(2)[0], group(2)[1]);
-        const title = group(3) ? textOf(state, view, group(3)[0], group(3)[1]) : "";
+        const alt = group(1) ? unescapeText(textOf(state, view, group(1)[0], group(1)[1])) : "";
+        const url = unescapeText(textOf(state, view, group(2)[0], group(2)[1]));
+        const title = group(3) ? unescapeText(textOf(state, view, group(3)[0], group(3)[1])) : "";
         const safe = sanitizeURL(url, true);
         if (!safe && context.editing) return null;
         return { from, to, node: { t: "img", s, e, src: safe, alt, title } };
       }
       case "link": {
         const [ls, le] = group(1);
-        const url = textOf(state, view, group(2)[0], group(2)[1]);
-        const title = group(3) ? textOf(state, view, group(3)[0], group(3)[1]) : "";
+        const url = unescapeText(textOf(state, view, group(2)[0], group(2)[1]));
+        const title = group(3) ? unescapeText(textOf(state, view, group(3)[0], group(3)[1])) : "";
         return {
           from,
           to,
@@ -1050,6 +1081,11 @@
         if (collector) collector.constructs.push({ type: "code", s: node.s, e: node.e, cs: node.cs, ce: node.ce, inclusive: true });
         return `<code>${renderInlineNodes(node.kids, j, render, collector)}</code>`;
       }
+      case "esc": {
+        // Typing at the escaped character's start goes before its backslash.
+        if (collector) collector.constructs.push({ type: "escape", s: node.s, e: node.e, cs: node.cs, ce: node.ce, inclusive: false });
+        return renderInlineNode({ t: "text", s: node.cs, e: node.ce }, j, render, collector);
+      }
       case "wiki": {
         if (collector) collector.constructs.push({ type: "wikilink", s: node.s, e: node.e, cs: node.cs, ce: node.ce, inclusive: false, destination: node.destination });
         const label = renderInlineNodes(node.kids, j, render, collector);
@@ -1140,11 +1176,12 @@
   }
 
   /// Consecutive line views joined into one paragraph: soft breaks read as a
-  /// space, hard breaks keep their newline.
+  /// space, hard breaks keep their newline. A line ending in `\\` ends in an escaped backslash,
+  /// not a break.
   function paragraphRegion(lines) {
     let j = "";
     lines.forEach((view, index) => {
-      if (index > 0) j += /(?: {2,}|\\)$/.test(j) ? "\n" : " ";
+      if (index > 0) j += /(?: {2,}|(?:^|[^\\])(?:\\\\)*\\)$/.test(j) ? "\n" : " ";
       j += view.text;
     });
     return { kind: "lines", lines, j, map: null };
@@ -1467,11 +1504,15 @@
   }
 
   function stripInline(text) {
+    // Escaped characters are text: they sit out the markup stripping and lose their backslash.
+    const escaped = [];
     return text
+      .replace(RE_ESCAPED, (_, character) => `\u0000${escaped.push(character) - 1}\u0001`)
       .replace(/`([^`]+)`/g, "$1")
       .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
       .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-      .replace(/[*_~#]/g, "");
+      .replace(/[*_~#]/g, "")
+      .replace(/\u0000(\d+)\u0001/g, (_, index) => escaped[index]);
   }
 
   function normalizeReferenceLabel(label) {
