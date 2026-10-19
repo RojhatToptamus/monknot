@@ -282,7 +282,31 @@ final class MarkdownRendererJavaScriptTests: XCTestCase {
         XCTAssertEqual(try paragraph("a\\\\\nb"), #"a\ b"#)
         XCTAssertEqual(try renderMarkdown(#"# 1\. Intro"#), #"<h1 data-source-line="1" id="1-intro">1. Intro</h1>"#)
         XCTAssertTrue(try renderMarkdown("[TOC]\n\n# a \\* b").contains(#"data-mk-toc="0">a * b</a>"#))
+        // A code span keeps its backslashes in a contents label too, and an escaped backtick opens none.
+        XCTAssertTrue(try renderMarkdown("[TOC]\n\n# `a\\*` b \\`x\\`").contains(#"data-mk-toc="0">a\* b `x`</a>"#))
         XCTAssertTrue(try renderMarkdown("| a\\*b | c |\n| --- | --- |\n| 1 | 2 |").contains("<th>a*b</th>"))
+    }
+
+    /// Whether a paragraph line ends in a hard break depends on that line alone, so rendering a long
+    /// paragraph (the editor renders on every keystroke) takes time in proportion to its length.
+    func testLongParagraphRendersInLinearTime() throws {
+        let context = try rendererContext(markdown: "")
+        // Every thousandth line ends in a hard break, and the line after it in an escaped backslash.
+        let script = #"""
+        (() => {
+          const ending = (index) => (index % 1000 === 0 ? "\\" : index % 1000 === 1 ? "\\\\" : "");
+          const lines = Array.from({ length: 20000 }, (_, index) => "word " + index + ending(index));
+          const started = Date.now();
+          const html = window.MonknotMarkdown.renderMarkdown(lines.join("\n"));
+          return JSON.stringify({ elapsed: Date.now() - started, breaks: (html.match(/<br>/g) || []).length, escaped: html.includes("word 1001\\ word 1002"), last: html.includes("word 19999</p>") });
+        })()
+        """#
+        let output = try XCTUnwrap(context.evaluateScript(script)?.toString())
+        let result = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
+        XCTAssertEqual(result["breaks"] as? Int, 20, output)
+        XCTAssertEqual(result["escaped"] as? Bool, true, "A line ending in an escaped backslash is no hard break: \(output)")
+        XCTAssertEqual(result["last"] as? Bool, true, output)
+        XCTAssertLessThan(result["elapsed"] as? Int ?? .max, 1000, "A 20,000-line paragraph rendered in quadratic time: \(output)")
     }
 
     /// The editor maps an escaped character to the source through these ranges: the escape covers its
