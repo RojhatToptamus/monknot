@@ -279,17 +279,11 @@ private struct TerminalTabChip: View {
             close: kill
         )
         .contextMenu {
-            Button {
-                restart()
-            } label: {
-                Label("Restart Terminal", systemImage: "arrow.clockwise")
-            }
+            MonknotMenuCommandButton(.restartTerminal, action: restart)
 
-            Button(role: .destructive) {
-                kill()
-            } label: {
-                Label("Kill Terminal", systemImage: "trash")
-            }
+            Divider()
+
+            MonknotMenuCommandButton(.killTerminal, action: kill)
         }
         .help(session.workingDirectory.path)
         .accessibilityLabel(accessibilityLabel)

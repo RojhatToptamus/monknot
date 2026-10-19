@@ -63,6 +63,15 @@ struct DocumentTabMetrics {
     }
 }
 
+/// What a document tab's context menu offers besides Close and Pin (design.md §5.8): closing the
+/// other tabs, and the location items every file's menu has.
+struct DocumentTabMenuActions {
+    var closeOtherTabs: (String) -> Void = { _ in }
+    var location: ((String) -> (copyPath: () -> Void, copyRelativePath: () -> Void, revealInFinder: () -> Void))?
+
+    static let none = DocumentTabMenuActions()
+}
+
 struct DocumentTabBar: View {
     let tabs: [WorkspaceTabItem]
     let selectedDocumentID: String?
@@ -75,6 +84,7 @@ struct DocumentTabBar: View {
     let closeTab: (String) -> Void
     let togglePin: (String) -> Void
     let reorderTab: (String, String?) -> Void
+    var menu: DocumentTabMenuActions = .none
 
     @State private var viewportTabFrames: [String: CGRect] = [:]
     @State private var revealRequest = HorizontalTabRevealRequest()
@@ -107,6 +117,7 @@ struct DocumentTabBar: View {
                                 closeTab: closeTab,
                                 togglePin: togglePin,
                                 reorderTab: reorderTab,
+                                menu: menu,
                                 minimumContentWidth: viewportWidth
                             )
                             .background(HorizontalTabWheelScrolling())
@@ -175,6 +186,7 @@ private struct DocumentTabStripContent: View {
     let closeTab: (String) -> Void
     let togglePin: (String) -> Void
     let reorderTab: (String, String?) -> Void
+    var menu: DocumentTabMenuActions = .none
     let minimumContentWidth: CGFloat
 
     @State private var draggedDocumentID: String?
@@ -204,7 +216,11 @@ private struct DocumentTabStripContent: View {
                     isDragging: draggedDocumentID == tab.documentID,
                     select: { selectTab(tab.documentID) },
                     close: { closeTab(tab.documentID) },
-                    togglePin: { togglePin(tab.documentID) }
+                    togglePin: { togglePin(tab.documentID) },
+                    closeOthers: tabs.contains { $0.documentID != tab.documentID && !$0.isPinned }
+                        ? { menu.closeOtherTabs(tab.documentID) }
+                        : nil,
+                    location: menu.location?(tab.documentID)
                 )
                 .id(tab.documentID)
                 .background(TabFrameReader(documentID: tab.documentID))
@@ -277,6 +293,9 @@ private struct DocumentTabItemView: View {
     let select: () -> Void
     let close: () -> Void
     let togglePin: () -> Void
+    /// Close Other Tabs, while there is an unpinned tab besides this one.
+    var closeOthers: (() -> Void)?
+    var location: (copyPath: () -> Void, copyRelativePath: () -> Void, revealInFinder: () -> Void)?
 
     var body: some View {
         let metrics = DocumentTabMetrics(theme: theme, zoomScale: zoomScale)
@@ -299,19 +318,26 @@ private struct DocumentTabItemView: View {
         )
         .frame(height: MonknotMetrics.chromeHeight(theme: theme, zoomScale: zoomScale))
         .contextMenu {
-            Button {
-                togglePin()
-            } label: {
-                Label(tab.isPinned ? "Unpin Tab" : "Pin Tab", systemImage: tab.isPinned ? "pin.slash" : "pin")
-            }
-            .disabled(isDisabled)
+            MonknotMenuCommandButton(.closeTab, action: close)
+                .disabled(isDisabled)
 
-            Button {
-                close()
-            } label: {
-                Label("Close Tab", systemImage: "xmark")
+            if let closeOthers {
+                MonknotMenuCommandButton(.closeOtherTabs, action: closeOthers)
+                    .disabled(isDisabled)
             }
-            .disabled(isDisabled)
+
+            Divider()
+
+            MonknotMenuCommandButton(tab.isPinned ? .unpinTab : .pinTab, action: togglePin)
+                .disabled(isDisabled)
+
+            if let location {
+                Divider()
+
+                MonknotMenuCommandButton(.copyPath, action: location.copyPath)
+                MonknotMenuCommandButton(.copyRelativePath, action: location.copyRelativePath)
+                MonknotMenuCommandButton(.revealInFinder, action: location.revealInFinder)
+            }
         }
         .monknotHelp(isSelected ? nil : helpText)
         .accessibilityLabel(accessibilityLabel)

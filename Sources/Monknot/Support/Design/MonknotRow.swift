@@ -5,6 +5,8 @@ import SwiftUI
 enum MonknotMenuRowLeading {
     case none
     case glyph(String)
+    /// An empty glyph column, so a row without a glyph keeps its label on its siblings' edge.
+    case blank
     /// A short text in the glyph column, such as a line number.
     case tag(String)
 }
@@ -41,6 +43,9 @@ struct MonknotMenuRowLabel<Trailing: View>: View {
     /// rises the same way through `MonknotMenuRowButtonStyle`.
     var isHighlighted = false
     var isDisabled = false
+    /// A command that destroys something (Move to Trash): highlighted, its label and glyph are
+    /// `danger`, as in the editor's menus.
+    var isDestructive = false
     let theme: AppTheme
     let zoomScale: Double
     @ViewBuilder var trailing: () -> Trailing
@@ -59,6 +64,9 @@ struct MonknotMenuRowLabel<Trailing: View>: View {
                 MonknotFileKindGlyph(systemImage: systemImage, theme: theme, zoomScale: zoomScale)
                     .foregroundStyle(glyphColor)
                     .accessibilityHidden(true)
+            case .blank:
+                Color.clear
+                    .frame(width: MonknotMetrics.interfaceGlyph(MonknotMetrics.rowIconColumnWidthBase, theme: theme, zoomScale: zoomScale), height: 1)
             case .tag(let tag):
                 Text(tag)
                     .font(MonknotTypography.rowDetail(theme: theme, zoomScale: zoomScale))
@@ -105,13 +113,20 @@ struct MonknotMenuRowLabel<Trailing: View>: View {
     private var titleText: some View {
         Text(title)
             .font(MonknotTypography.rowTitle(theme: theme, zoomScale: zoomScale))
-            .foregroundStyle(isDisabled ? theme.disabledForegroundColor : theme.foregroundColor)
+            .foregroundStyle(isDisabled ? theme.disabledForegroundColor : showsDanger ? theme.dangerColor : theme.foregroundColor)
             .lineLimit(1)
+    }
+
+    private var showsDanger: Bool {
+        isDestructive && !isDisabled && (isHighlighted || isRowHighlighted)
     }
 
     private var glyphColor: Color {
         if isDisabled {
             return theme.disabledForegroundColor
+        }
+        if showsDanger {
+            return theme.dangerColor
         }
         if isCurrent {
             return theme.accentColor
@@ -130,6 +145,7 @@ extension MonknotMenuRowLabel where Trailing == EmptyView {
         isCurrent: Bool = false,
         isHighlighted: Bool = false,
         isDisabled: Bool = false,
+        isDestructive: Bool = false,
         theme: AppTheme,
         zoomScale: Double
     ) {
@@ -142,6 +158,7 @@ extension MonknotMenuRowLabel where Trailing == EmptyView {
             isCurrent: isCurrent,
             isHighlighted: isHighlighted,
             isDisabled: isDisabled,
+            isDestructive: isDestructive,
             theme: theme,
             zoomScale: zoomScale,
             trailing: { EmptyView() }
@@ -252,6 +269,8 @@ struct MonknotListRowButtonStyle: ButtonStyle {
     /// Its popover or menu is showing (the workspace switcher): `press` and `ink` until it closes, as an
     /// open icon button or pop-up (design.md §5.1).
     var isOpen = false
+    /// The row has a context menu: right-clicked, it holds its open state while the menu shows.
+    var hasContextMenu = false
 
     /// design.md §1.4: the neutral `selected` fill when selected, otherwise `press` while held or open,
     /// then `hover`. A disabled row draws neither, so it never looks clickable, but keeps its selection.
@@ -279,6 +298,7 @@ struct MonknotListRowButtonStyle: ButtonStyle {
             theme: theme,
             isSelected: isSelected,
             isOpen: isOpen,
+            hasContextMenu: hasContextMenu,
             cornerRadius: theme.chromeRadius(MonknotMetrics.iconCornerRadiusBase, zoomScale: zoomScale)
         )
     }
@@ -288,28 +308,39 @@ struct MonknotListRowButtonStyle: ButtonStyle {
         let theme: AppTheme
         let isSelected: Bool
         let isOpen: Bool
+        let hasContextMenu: Bool
         let cornerRadius: CGFloat
         @Environment(\.isEnabled) private var isEnabled
         @State private var isHovered = false
+        @State private var holdsContextMenu = false
+        @ObservedObject private var contextMenu = MonknotContextMenuController.shared
 
         var body: some View {
             // Fill and ink changes animate colour only, here and in the row's label, never a frame.
             configuration.label
-                .environment(\.monknotRowIsHighlighted, isEnabled && (isHovered || configuration.isPressed || isOpen))
+                .environment(\.monknotRowIsHighlighted, isEnabled && (isHovered || configuration.isPressed || isShowingOpen))
                 .background {
                     RoundedRectangle(cornerRadius: cornerRadius)
                         .monknotStateStyle(fill)
                 }
                 .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
                 .onHover { isHovered = $0 }
+                .onChange(of: contextMenu.presentationID) { _, id in
+                    // The row under the pointer as its menu opens is the one the menu acts on.
+                    holdsContextMenu = hasContextMenu && id != nil && isHovered
+                }
                 .monknotPointerCursor(enabled: isEnabled)
+        }
+
+        private var isShowingOpen: Bool {
+            isOpen || holdsContextMenu
         }
 
         private var fill: Color {
             MonknotListRowButtonStyle.fill(
                 theme: theme,
                 isSelected: isSelected,
-                isOpen: isOpen,
+                isOpen: isShowingOpen,
                 isHovered: isHovered,
                 isPressed: configuration.isPressed,
                 isEnabled: isEnabled

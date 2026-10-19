@@ -40,6 +40,7 @@ struct TopNavigationBar: View {
     let closeTab: (String) -> Void
     let togglePinTab: (String) -> Void
     let reorderTab: (String, String?) -> Void
+    var tabMenu: DocumentTabMenuActions = .none
     /// Where the document card starts; the tab strip starts there while the sidebar is open.
     var chromeAlignment: ChromeAlignmentModel? = nil
     var navigateBack: () -> Void = {}
@@ -199,7 +200,8 @@ struct TopNavigationBar: View {
                 selectTab: selectTab,
                 closeTab: closeTab,
                 togglePin: togglePinTab,
-                reorderTab: reorderTab
+                reorderTab: reorderTab,
+                menu: tabMenu
             )
             .frame(maxWidth: .infinity, alignment: .leading)
             .allowsTopBarWindowActivationEvents()

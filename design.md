@@ -17,6 +17,7 @@ sections for what you are touching:
 |---|---|
 | a colour, a fill, a theme | §1, §2, §3, §14 |
 | a control: button, tab, row, field, menu, pop-up, segmented control | §0, §4, §5, §6, §7, §8 |
+| a right-click menu, or dragging files in the sidebar | §5.8, §10.4 (Moving files), §11 |
 | anything that changes size with zoom | §9 |
 | the window, a pane, a bar, the titlebar | §10.0–§10.7a |
 | Preview editing, its menus and surfaces | §10.10, §10.11 |
@@ -223,6 +224,7 @@ Accent marks state, in exactly these places:
    `folder.fill` in the switcher
 5. A search match option that is on
 6. The outline rail's current heading
+7. Where a drag in the sidebar will land, and the row that just landed: `accsoft` (§10.4)
 
 Controls use it only for focus (a focused field's hairline, the keyboard ring) and for on or primary
 (a switch that is on, a slider's fill, a primary button). `ok` and `danger` appear only as state: a
@@ -405,7 +407,8 @@ inside a row or a field (match options, a row's Remove, a stepper's − and +) i
 box, radius 6, a 13pt symbol. No padding value — the box and the centring do it. Back and forward are
 two regular buttons 2 apart, with no shell around them. A button that shows or hides a panel has no
 on state (§1.3). A button that opens a menu of commands (More) is the same button (`MonknotMenuButton`),
-holding `press` while its menu shows.
+holding `press` while its menu shows; the menu is Monknot's menu (§5.8), below the button and 4 clear of
+it, above it where the screen ends.
 A disabled container (a PDF bar while its document loads) disables its buttons, and they draw
 themselves at `ink4`; nothing dims the bar.
 
@@ -525,6 +528,46 @@ edge. It takes its colour from the theme's `ink`.
   The lane stays laid out while the document fits, so text never rewraps when it grows past one
   screen. An HTML file's preview is the file's own page and keeps WebKit's scroller.
 - **The terminal** draws the thumb always (§10.6).
+
+### 5.8 Context menus
+
+Every right-click (or Control-click) in the chrome opens Monknot's menu, never the system's: a sidebar
+row, the tree's empty space, a Recents row, a document tab, a terminal session, and the PDF bar's More
+button. It is the menu row on a floating surface, the same as Preview's menus and the workspace
+switcher, so a menu looks the same wherever it opens (`MonknotContextMenuController`,
+`MonknotContextMenuSurface`).
+
+- **Surface:** `surf2`, radius 12, `e2`, the 6 list inset. 232 wide, as Preview's narrow menus; a
+  longer label widens it, up to 320. Rows 30, 1 apart, 8 padding, a 15 glyph in the 18 column at
+  `ink2`, a 10 gap, a 13 label in `ink`. A separator is `line2`, 4 inside the inset, 6 above and below.
+- **Every row has a glyph.** The commands and their glyphs are one list (`MonknotMenuCommand`): a call
+  site builds its buttons from it and the menu reads the glyph and role back from the title, so they
+  cannot drift. No two commands in a menu share a glyph.
+- **No shortcuts.** A context menu acts on what was clicked; a shortcut acts on the selection. Showing
+  ⌘D beside Duplicate would promise that ⌘D duplicates the clicked row, which it does only when that
+  row is also selected. The menu bar teaches shortcuts.
+- **States:** one highlight, moved by the pointer and the keyboard alike: the `selected` fill with
+  `ink` label and glyph, at once, never animated. Held, `press`. A destructive command (Move to Trash,
+  Kill Terminal) turns its label and glyph `danger` while highlighted, and only then. Disabled: `ink4`,
+  skipped by the keys, no highlight.
+- **The clicked row** holds its open state (`press`, `ink`) while its menu shows, as a control does
+  while its menu is open (§5.1), so the menu visibly belongs to it.
+- **Where:** the surface's top-left corner at the pointer; flipped left or up where the screen ends,
+  6 clear of its edge. It floats in a panel that never takes focus, so the window keeps its key
+  appearance and its selection.
+- **Motion:** grows in from the pointer's corner, scale 0.97 → 1 with opacity over 150 ms
+  `cubic-bezier(0.23, 1, 0.32, 1)`; leaves in a 90 ms fade, a chosen row's action running as it starts.
+  With Reduce Motion it fades in over 120 ms.
+- **Keys:** ↑ ↓ (and ⌃P ⌃N) move over enabled rows without wrapping; Home and End jump; typing
+  highlights the first row that starts with what was typed; ↩ or Space chooses; Esc closes.
+- **Pointer:** a click chooses on release over an enabled row; a right-press held onto a row and
+  released there chooses it; a quick right-click leaves the menu open.
+- **Closing:** a click elsewhere closes it and does nothing else; a right-click elsewhere opens that
+  place's menu; scrolling, another app, the window moving, resizing or losing focus close it.
+- **What keeps the system's menu:** text in Source, Preview, a PDF and the terminal, the media player,
+  and a value pop-up (§5.3). Their menus carry spelling, Writing Tools, Look Up, Translate and
+  Services, which only the system's menu has. A menu with a submenu also stays the system's, and so
+  does VoiceOver's Show Menu, which reaches the same items.
 
 ---
 
@@ -938,8 +981,43 @@ user picks it.
 
 **Row menus.** Folder and file rows start with New File and New Folder (in the folder, or beside the
 file), then Rename and the location items, then Copy, Cut, Paste and Duplicate, then Move to Trash.
-Paste is enabled only while the clipboard holds something to paste. Dragging a row moves the item, and
-holding Option as the drag ends copies it.
+Paste is enabled only while the clipboard holds something to paste.
+
+**Moving files.** Dragging a row moves its item; the whole drag is designed, frame by frame
+(`SidebarDragSession`):
+
+- **Start.** 4 pt with the button down starts a drag; anything shorter is a click, which opens the
+  file as it always has.
+- **The row and its copy.** The row stays where it is at 35 % (a 120 ms fade); a copy of it — its glyph
+  (`folder` for a folder) and name on `surf2`, radius 8, `e2`, 28 tall, at most 240 wide — lifts off in
+  place and rides under the pointer, the name kept under it.
+- **The target** is a folder: a folder row, or any row inside an open folder, means that folder; a file
+  at the top level or the empty space below the rows means the workspace root. The folder's row and its
+  open rows tint `accsoft` as one region, on the row radius inside the list inset (the whole tree for
+  the root): the place it lands, not a line between rows, since the tree sorts itself. A new target
+  cross-fades with the last over 120 ms; nothing slides.
+- **Not here.** The folder it is already in, the item itself, or a folder inside it tint nothing, and a
+  drop there changes nothing. Over the sidebar's header the list scrolls rather than targeting.
+- **Option** copies: the cursor takes the system's copy badge and the row returns to full strength,
+  because it stays; the folder it is in becomes a target, where the copy is a duplicate, as in Finder.
+  Letting go of Option makes it a move again.
+- **Spring-loading.** Resting on a closed folder for the system's spring-loading delay (0.5 s unless
+  changed in Accessibility; none when it is off) opens it, the chevron turning as a click turns it.
+  Folders the drag opened close again unless the drop lands in them.
+- **Auto-scroll.** Within one row of the list's top or bottom edge, and beyond it, the tree scrolls:
+  from nothing at the zone's inner edge to 12 rows a second at the edge. The target updates under a
+  pointer that holds still.
+- **Landing.** The destination opens, the tree scrolls the item into view by its nearest edge, and its
+  row holds the `accsoft` tint and lets it go over 900 ms (none with Reduce Motion). A moved file is
+  not opened and the selection stays where it was; a copy is selected, as Duplicate selects it. A move
+  that would rewrite links asks first (Update Links Before Moving?), and the landing waits for it.
+- **Esc, or a drop on no target**: the copy glides back to its row over 250 ms ease-in-ease-out and the
+  row returns to full strength. Nothing changes on disk.
+- **Out of the sidebar** the drag becomes a system file drag with the same copy as its image: the
+  terminal types the path, Source and Preview link the file, Finder copies it — never moves it out of
+  the workspace. Brought back over the tree, it targets as a drag from Finder does.
+- **From Finder** (or another window): the same targets, tint, spring-loading and refusals; files from
+  outside are copied in, files already in the workspace are moved.
 
 **Recents** is a collapsible group between the tree and the footer: the chevron in the glyph column, a
 group header (§4.3) and a trailing count in 12 `ink3`. Its entries are file rows one level in, whose
@@ -1015,6 +1093,8 @@ fill its box.** If an icon looks small, that is correct — macOS chrome glyphs 
 | Tab | 28 · padding-x 10 · kind glyph 15 in the 18 column · gap 8 · label 13/400 · close 9 in 16, in the glyph column on hover · unsaved dot 6 on the glyph · pin or warning badge 10 · max width 220 · no minimum |
 | Bar | 40 · padding 6 (10 for a header over a list) · 28 controls 2 apart, groups 8 apart · no rule (terminal, PDF, panel headers, banners) |
 | Sidebar | width 240 (196 minimum) · header 40: monogram 18 (radius 6, initial 10.5/600), name 13/600, chevron 10, search and New Markdown 28/17 · row 28 · padding-x 8 · disclosure chevron 10 or file glyph 15 in the 18 column · gap 8 · label 13/400 · indent 14 · list inset 10, top 4 · no gap between rows · Recents header: chevron, group header, count 12 · footer 28 |
+| Context menu | width 232, up to 320 · list inset 6 · row 30, 1 apart · glyph 15 in 18 · gap 10 · label 13 `ink` · separator `line2` 4 inside the inset, 6 each side · no shortcuts · radius 12, `e2` |
+| Sidebar drag | start 4 · source row 35 % · copy 28 tall, ≤ 240, radius 8, `e2`, glyph and name · target region `accsoft`, radius 8 · auto-scroll zone one row, ≤ 12 rows/s · landing tint 900 ms |
 | Menus | popover 340 (switcher) · list inset 6 · row 30 (34 in an overlay), rows 1 apart · glyph 15 in 18 · gap 10 · label 13 `ink` · detail 12 `ink3` · group header 12 `ink3` · separator `line2` 4 inside the inset · overlay header 44, footer 32 |
 | Preview editing | format bar: 28 buttons / 17 glyph, 2 between, 4 padding, dividers 1×16, block selector label 13 with an 11 `chevron.down`; a callout's title the same 11 `chevron.down` · menus: width 272 (232 for Turn Into, callout kinds, table actions and languages), list padding 6, row 30 / 15 glyph (or a 12/600 `H1` tag) in the 18 column, gap 10, label 13 on a 1.35 line, hint 12 rounded `ink3`, section header 12 `ink3` sentence case, footer 32 with 12 `ink3` actions and 12 rounded `ink3` keys, submenu chevron 11, at most 380 tall; a menu of plain names (languages) has no glyph column · handles: + 22×24 and grip 18×24, the + a 16 × 16 glyph and the grip 10 × 16 (§8.9), radius 6, 1 apart, `ink3` at rest and `hover` fill with `ink2` on hover, 6 left of the block (left of the marker for a list item), centred on its first line · drop line 3 tall, radius 2, caret colour at 70 % · tooltip 12 on 1.45, inverted surface, padding 8 × 5, radius 6 · link editor: field 28, width 340 · code language label 22 tall / 12, top-left · all on radius 12 surfaces, rows radius 8 |
 | Terminal | the bar (40) · session tabs 28, hugging glyph + number · Expand, New, Hide 28/17 |
@@ -1321,6 +1401,8 @@ in reverse, however it is closed.
   and it returns exactly where it was with nothing settling after. While the document is collapsed
   the split halves its dividers, so the two that meet beside the sidebar still make one gap; the
   document card takes back what they give up, so no edge moves as they change.
+- **Context menus** grow in from the pointer over 150 ms and leave in 90 ms (§5.8); a sidebar drag's
+  copy glides back over 250 ms on Esc, and a landed row lets go of its tint over 900 ms (§10.4).
 - **fadeUp** for toasts: in from 4pt below over 120ms and back out the same way, whether they time
   out or are closed. The outline's panel fades in beside its rail over 120ms. Palettes and overlays
   (Quick Open, Go to Symbol, Go to Line, Keyboard Shortcuts) appear and leave at once: they are
@@ -1329,7 +1411,8 @@ in reverse, however it is closed.
   keyboard.
 - Never animate size, position, elevation, border or weight except for the pane transitions above,
   a switch's knob, the outline rail's widening, the toast's 4 pt rise, a disclosure chevron's turn,
-  and Preview's grow-in and press (§10.10).
+  Preview's grow-in and press (§10.10), a context menu's grow-in (§5.8) and a dragged row's copy
+  gliding back (§10.4).
 - Honour Reduce Motion: entrances become plain fades, side panes show and hide instantly, chevrons
   and switch knobs jump; colour transitions stay.
 
@@ -1493,6 +1576,10 @@ Before calling any UI work done:
 - [ ] Anything that moves recorded frame by frame: nothing jumps, flashes or settles, and it closes
       the way it opened. Reduce Motion makes it instant or a fade; colours still fade.
 - [ ] A value the page and the chrome share (a token, a metric) is written once, in Swift.
+- [ ] A right-click in the chrome opens Monknot's menu (§5.8), its commands from `MonknotMenuCommand`;
+      only text, media and value pop-ups keep the system's.
+- [ ] A drag shows where it lands with a fill (`accsoft`), never an outline; Esc and a drop on no
+      target return the item; the result is shown where it landed.
 
 ---
 
@@ -1537,3 +1624,8 @@ symptom, so they are worth checking deliberately rather than hoping to notice.
     the parts from it (§9.3).
 16. **One value written in two places** — a token in CSS and in Swift, a metric in two components:
     they drift apart. Keep one source; the page takes its values from Swift.
+17. **An outline as a drop target** — a 2 pt accent ring, a dashed border: an outline is a control
+    nobody can press, and a dashed one is a placeholder. A drag's target is a fill (§10.4).
+18. **The system's menu in the chrome** — a native context menu beside Monknot's rows reads as a
+    second app, and shows shortcuts that act on something else. Build it from `MonknotMenuCommand`
+    and let `MonknotContextMenuController` draw it (§5.8).

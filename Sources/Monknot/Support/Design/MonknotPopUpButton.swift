@@ -328,6 +328,21 @@ struct MonknotMenuPresenter: NSViewRepresentable {
         func presentMenu(from anchor: NSView) {
             guard !isTracking else { return }
 
+            // A menu of commands (More) is Monknot's own menu, as a context menu is (design.md §5.8);
+            // a pop-up's values stay the system's menu, placed over the control.
+            if parent.items.isEmpty, parent.selection == nil,
+               MonknotContextMenuController.shared.presentCommands(
+                   parent.actionGroups,
+                   below: anchor,
+                   onClose: { [weak self] in
+                       self?.isTracking = false
+                       self?.finishTracking()
+                   }
+               ) {
+                isTracking = true
+                return
+            }
+
             let menu = makeMenu(minimumWidth: anchor.bounds.width)
             // The current value opens over the control; with none (a zoom between presets, a command
             // menu) the menu drops below it.

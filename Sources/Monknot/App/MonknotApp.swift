@@ -282,6 +282,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        // Context menus in the chrome are Monknot's own (design.md §5.8).
+        MonknotContextMenuController.shared.install()
         openLaunchCaptureIfPresent()
     }
 

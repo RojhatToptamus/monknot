@@ -57,8 +57,11 @@ struct MonknotTab: View {
     let select: () -> Void
     var close: () -> Void = {}
 
+    /// Every tab has a context menu: right-clicked, it holds its open state while the menu shows.
     @State private var isHovered = false
     @State private var isPressed = false
+    @State private var holdsContextMenu = false
+    @ObservedObject private var contextMenu = MonknotContextMenuController.shared
 
     private func density(_ base: CGFloat) -> CGFloat {
         MonknotMetrics.interfaceDensity(base, theme: theme, zoomScale: zoomScale)
@@ -112,6 +115,9 @@ struct MonknotTab: View {
         .fixedSize()
         .opacity(isDragging ? 0.45 : 1)
         .onHover { isHovered = $0 }
+        .onChange(of: contextMenu.presentationID) { _, id in
+            holdsContextMenu = id != nil && isHovered
+        }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .modifier(MonknotTabCloseAction(label: isDisabled ? nil : closeLabel, close: close))
@@ -155,10 +161,14 @@ struct MonknotTab: View {
     /// Hover and pressed tint a tab that is not the current one.
     private var stateFill: Color {
         guard !isSelected, !isDisabled else { return .clear }
-        if isPressed {
+        if isPressed || holdsContextMenu {
             return theme.pressedFillColor
         }
         return isHovered ? theme.hoverFillColor : .clear
+    }
+
+    private var isRaised: Bool {
+        isHovered || holdsContextMenu
     }
 
     /// design.md §1.4: the label rests at `ink2` and goes to `ink` hovered or active; `ink4` disabled.
@@ -169,7 +179,7 @@ struct MonknotTab: View {
         if isDisabled {
             return theme.disabledForegroundColor
         }
-        return isHovered ? theme.foregroundColor : theme.mutedForegroundColor
+        return isRaised ? theme.foregroundColor : theme.mutedForegroundColor
     }
 
     /// The glyph rests at `ink3` and goes to `ink` hovered; the active file tab's glyph is `accent`
@@ -184,7 +194,7 @@ struct MonknotTab: View {
         if isDisabled {
             return theme.disabledForegroundColor
         }
-        return isHovered ? theme.foregroundColor : theme.tertiaryForegroundColor
+        return isRaised ? theme.foregroundColor : theme.tertiaryForegroundColor
     }
 
     private func badgeColor(_ badge: Badge) -> Color {

@@ -326,8 +326,75 @@ final class SidebarContextMenuTests: FileOperationsTestCase {
         }
         menu?.update()
         let items = try XCTUnwrap(menu).items
-        XCTAssertEqual(items.map(\.title), ["Pin Tab", "Close Tab"])
-        XCTAssertEqual(items.map(\.isEnabled), [false, false])
+        XCTAssertEqual(items.map(\.title), ["Close Tab", "Close Other Tabs", "", "Pin Tab"])
+        XCTAssertEqual(items.map(\.isEnabled), [false, false, false, false])
         _ = (closed, pinned)
+    }
+
+    /// A tab's menu: Close Tab, Close Other Tabs while another unpinned tab is open, Pin Tab, then the
+    /// location items every file's menu has, each acting on the right-clicked tab.
+    func testTabMenuClosesOthersAndOffersTheLocationItemsOfItsFile() async throws {
+        let theme = AppTheme.defaultDark
+        let chrome = MonknotMetrics.chromeHeight(theme: theme, zoomScale: 1)
+        var closedOthers: [String] = []
+        var copied: [String] = []
+        func makeBar(otherIsPinned: Bool) -> some View {
+            DocumentTabBar(
+                tabs: [
+                    WorkspaceTabItem(documentID: "/w/a.md", displayName: "a.md", relativePath: "a.md", kind: .markdown),
+                    WorkspaceTabItem(documentID: "/w/b.md", displayName: "b.md", relativePath: "b.md", kind: .markdown, isPinned: otherIsPinned),
+                ],
+                selectedDocumentID: "/w/b.md",
+                missingDocumentIDs: [],
+                theme: theme,
+                zoomScale: 1,
+                isDisabled: false,
+                saveState: { _ in .clean },
+                selectTab: { _ in },
+                closeTab: { _ in },
+                togglePin: { _ in },
+                reorderTab: { _, _ in },
+                menu: DocumentTabMenuActions(
+                    closeOtherTabs: { closedOthers.append($0) },
+                    location: { id in (copyPath: { copied.append(id) }, copyRelativePath: {}, revealInFinder: {}) }
+                )
+            )
+            .frame(width: 600, height: chrome)
+        }
+
+        func menu(otherIsPinned: Bool) async throws -> NSMenu {
+            let host = NSHostingView(rootView: makeBar(otherIsPinned: otherIsPinned))
+            host.frame = NSRect(x: 0, y: 0, width: 600, height: chrome)
+            let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            window.makeKeyAndOrderFront(nil)
+            addTeardownBlock { @MainActor in window.orderOut(nil); window.contentView = nil }
+            try await Task.sleep(nanoseconds: 400_000_000)
+            // The first tab, a.md.
+            let point = host.convert(NSPoint(x: 40, y: chrome / 2), to: nil)
+            let event = try XCTUnwrap(NSEvent.mouseEvent(
+                with: .rightMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1
+            ))
+            var view: NSView? = host.hitTest(host.superview?.convert(point, from: nil) ?? point)
+            var menu: NSMenu?
+            while let current = view, menu == nil {
+                menu = current.menu(for: event)
+                view = current.superview
+            }
+            menu?.update()
+            return try XCTUnwrap(menu)
+        }
+
+        let open = try await menu(otherIsPinned: false)
+        XCTAssertEqual(open.items.map(\.title), ["Close Tab", "Close Other Tabs", "", "Pin Tab", "", "Copy Path", "Copy Relative Path", "Reveal in Finder"])
+        open.performActionForItem(at: 1)
+        XCTAssertEqual(closedOthers, ["/w/a.md"], "Close Other Tabs keeps the right-clicked tab")
+        open.performActionForItem(at: 5)
+        XCTAssertEqual(copied, ["/w/a.md"], "Copy Path copies the right-clicked tab's file")
+
+        let pinnedOther = try await menu(otherIsPinned: true)
+        XCTAssertFalse(pinnedOther.items.map(\.title).contains("Close Other Tabs"), "Pinned tabs are never closed by Close Other Tabs")
     }
 }

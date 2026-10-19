@@ -529,6 +529,7 @@ struct ContentView: View {
                 shouldClose: { await prepareForWindowClose() }
             ))
             .background(KeyboardShortcutMonitor(handler: handleKeyDown))
+            .background(MonknotContextMenuAppearance(theme: activeTheme, zoomScale: zoomScale))
             .accentColor(activeTheme.accentColor)
         )
     }
@@ -943,6 +944,17 @@ struct ContentView: View {
             closeTab: closeTab(id:),
             togglePinTab: togglePinTab(id:),
             reorderTab: reorderTab(draggedID:targetID:),
+            tabMenu: DocumentTabMenuActions(
+                closeOtherTabs: closeOtherTabs(keeping:),
+                location: { documentID in
+                    let url = URL(fileURLWithPath: documentID)
+                    return (
+                        copyPath: { copyPath(url) },
+                        copyRelativePath: { copyRelativePath(url) },
+                        revealInFinder: { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                    )
+                }
+            ),
             chromeAlignment: chromeAlignment,
             navigateBack: navigateBack,
             navigateForward: navigateForward,
@@ -1518,6 +1530,29 @@ struct ContentView: View {
 
             guard await resolveUnsavedChangesIfNeeded(for: documentID) else { return }
             closeResolvedTab(id: documentID)
+        }
+    }
+
+    /// Closes every unpinned tab but `documentID`'s, asking about each one's unsaved changes in turn;
+    /// Cancel stops there and leaves the rest open. The kept tab becomes the active one.
+    private func closeOtherTabs(keeping documentID: String) {
+        guard !store.isBusy, !isResolvingUnsavedChanges else { return }
+        let others = tabState.tabs
+            .filter { $0.documentID != documentID && !$0.isPinned }
+            .map(\.documentID)
+        guard !others.isEmpty else { return }
+        if tabState.selectedDocumentID != documentID {
+            activateTab(id: documentID)
+        }
+
+        Task { @MainActor in
+            isResolvingUnsavedChanges = true
+            defer { isResolvingUnsavedChanges = false }
+
+            for otherID in others where tabState.tab(for: otherID) != nil {
+                guard await resolveUnsavedChangesIfNeeded(for: otherID) else { return }
+                closeResolvedTab(id: otherID)
+            }
         }
     }
 
