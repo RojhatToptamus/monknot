@@ -141,9 +141,8 @@ enum EditorFlowModelSuggestion: Equatable {
 /// Decisions writing assistance (Flow) makes the same way in Source and in Preview: which checker
 /// results become a fix, whether a fix applies at once or waits for review, when the on-device
 /// model is asked and what its answers lead to, and which edits keep clear of Markdown syntax.
-/// Source's `MarkdownTextEditor.Coordinator` and Preview's `MarkdownPreviewFlowCoordinator` run the
-/// same checker, planners and models through these; only how a suggestion is shown and taken
-/// differs between the two editors.
+/// `EditorFlowPipeline` runs the checker, planners and models through these for both editors; only
+/// how a suggestion is shown and taken differs between Source and Preview.
 enum EditorFlowRepairPolicy {
     // MARK: - Routing a check
 

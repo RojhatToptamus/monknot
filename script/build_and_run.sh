@@ -404,6 +404,7 @@ APP_SOURCES=(
   "Sources/Monknot/Support/Color+Theme.swift"
   "Sources/Monknot/Support/CursorSupport.swift"
   "Sources/Monknot/Support/DocumentSplitViewRatioAccessor.swift"
+  "Sources/Monknot/Support/EditorFlowPipeline.swift"
   "Sources/Monknot/Support/EditorFlowRepairPolicy.swift"
   "Sources/Monknot/Support/EditorSentenceRepairPolicy.swift"
   "Sources/Monknot/Support/WorkspaceSplitView.swift"
