@@ -852,6 +852,50 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
       const html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       expectEqual("item text reads as text: " + text, window.MonknotMarkdown.renderMarkdown(model.source), "<p data-source-line=\"1\">" + html + "</p>");
     }
+    // ↩ and ⇧↩ in a paragraph or heading start a line with the text after the caret, and so does a
+    // deletion at a line's start with what follows it.
+    check("enter splitting text escapes a number", "In ‸2020. A year", enter, "In \n\n‸2020\\. A year");
+    check("enter splitting a heading escapes a list marker", "# Title ‸- x", enter, "# Title \n\n‸\\- x");
+    check("enter escapes past the moved text's indentation", "In‸ 2020. A year", enter, "In\n\n‸ 2020\\. A year");
+    check("enter escapes a definition", "In ‸[x]: https://x.org", enter, "In \n\n‸[x]\\: https://x.org");
+    check("enter in a quote escapes a number", "> In ‸2020. A year", enter, "> In \n>\n> ‸2020\\. A year");
+    check("enter in a quote keeps a definition", "> In ‸[x]: https://x.org", enter, "> In \n>\n> ‸[x]: https://x.org");
+    check("enter in bold leaves the reopened bold", "**In ‸2020. A** year", enter, "**In **\n\n**‸2020. A** year");
+    check("enter in an item keeps text after the marker", "- In ‸2020. A year", enter, "- In \n- ‸2020. A year");
+    check("line break escapes a number", "In ‸2020. A year", lineBreak, "In \\\n‸2020\\. A year");
+    check("line break escapes a definition", "In ‸[x]: https://x.org", lineBreak, "In \\\n‸[x]\\: https://x.org");
+    check("line break in a quote escapes a list marker", "> In ‸- x", lineBreak, "> In \\\n> ‸\\- x");
+    check("line break in a quote keeps a definition", "> In ‸[x]: https://x.org", lineBreak, "> In \\\n> ‸[x]: https://x.org");
+    check("delete before a marker escapes it", "«x»- y", del, "‸\\- y");
+    check("delete at a later line's start escapes a marker", "a\n«x»- y", del, "a\n‸\\- y");
+    check("delete bold before a number escapes it", "«**x**»2020. y", del, "‸2020\\. y");
+    check("delete into a heading escapes its text", "«x\n\n# »- y", del, "‸\\- y");
+    check("delete at an item's later line escapes a marker", "- a\n  «x»- y", del, "- a\n  ‸\\- y");
+    check("delete after an item's marker keeps the text", "- «x»- y", del, "- ‸- y");
+    check("delete escapes a definition", "«x»[y]: z", del, "‸[y]\\: z");
+    check("delete in a quote keeps a definition", "> «x»[y]: z", del, "> ‸[y]: z");
+    // Typing at a line's start still writes Markdown: a typed `-` and space make a list item.
+    check("delete after a typed marker keeps it", "-«x»", del, "-‸");
+    check("space after a typed marker makes an item", "-‸x", type(" "), "- ‸x");
+    // A toggle's body never reads a definition; unwrapping it at the top level escapes its text lines.
+    check("unwrap toggle escapes a definition", "<details>\n<summary>‸T</summary>\n\na\n[x]: https://x.org\n\n- [y]: z\n\n</details>", backspaceAtStart, "‸T\n\na\n[x]\\: https://x.org\n\n- [y]: z");
+    check("unwrap unclosed toggle escapes a definition", "<details>\n<summary>‸T</summary>\n\n[x]: https://x.org", backspaceAtStart, "‸T\n\n[x]\\: https://x.org");
+    check("unwrap toggle in a toggle keeps a definition", "<details open>\n<summary>A</summary>\n\n<details>\n<summary>‸T</summary>\n\n[x]: https://x.org\n\n</details>\n\n</details>", backspaceAtStart, "<details open>\n<summary>A</summary>\n\n‸T\n\n[x]: https://x.org\n\n</details>");
+    // Whatever follows reads as the same text once ↩, ⇧↩ or a deletion brings it to a line's start.
+    const withoutLines = (html) => html.replace(/ data-source-line="\d+"/g, "");
+    for (const text of ["2020. A year", "1) x", "- x", "+ x", "* x", "# x", "> x", "***", "___", "```js", "~~~", "<details>", "[TOC]", "[a]: b", "[^1]: note"]) {
+      const html = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      for (const [name, marked, plan, expected] of [
+        ["enter", "In ‸", enter, "<p>In </p>\n<p>" + html + "</p>"],
+        ["line break", "In ‸", lineBreak, "<p>In <br>" + html + "</p>"],
+        ["delete", "«x»", del, "<p>" + html + "</p>"]
+      ]) {
+        const { source, sel } = parse(marked + text);
+        const model = E.createModel(source);
+        applyOp(model, plan(model, sel));
+        expectEqual(name + " keeps text reading as text: " + text, withoutLines(window.MonknotMarkdown.renderMarkdown(model.source)), expected);
+      }
+    }
     return JSON.stringify({ passed, failures });
     })()
     """#

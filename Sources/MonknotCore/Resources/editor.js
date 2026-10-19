@@ -1487,7 +1487,19 @@
     const op = compose(model.source, parts);
     if (!op) return null;
     op.kind = "delete";
-    return keepingBackslashes(model, op);
+    // What follows a deletion at the start of a line comes to start that line, where it must not
+    // read as a block: `«x»- y` leaves `\- y`.
+    const unit = unitAt(model, op.from, "right");
+    const kept = keepingBackslashes(model, op);
+    return startsTextLine(model, unit, op.from) ? escapingLineStart(model, unit, kept, kept.insert.length) : kept;
+  }
+
+  /// Whether `raw` is where one of `unit`'s lines of text starts, its indentation aside: any line of a
+  /// paragraph, or an item's lines after its first, which starts after the marker.
+  function startsTextLine(model, unit, raw) {
+    if (!unit || unit.kind !== "inline") return false;
+    const lines = unit.role === "paragraph" ? unit.block.lines : unit.role === "item" ? unit.item.lines.slice(1) : [];
+    return lines.some((view) => S(unit, view.start) <= raw && /^[ \t]*$/.test(model.source.slice(S(unit, view.start), raw)));
   }
 
   /// A deletion or join that brings punctuation up to a backslash the page shows keeps it shown; the
@@ -1663,7 +1675,8 @@
       .sort((a, b) => a.s - b.s || b.e - a.e);
   }
 
-  function splitAt(model, unit, position, separator) {
+  /// With `startsLine`, the text after the caret starts a paragraph's line of its own.
+  function splitAt(model, unit, position, separator, startsLine = false) {
     const open = constructsOpenAt(model, unit, position);
     const source = model.source;
     const closers = open.slice().reverse().map((construct) => source.slice(rawOf(unit, construct.ce), rawOf(unit, construct.e))).join("");
@@ -1671,7 +1684,8 @@
     let insert = closers + separator + openers;
     // Closing markers after a shown backslash; in code the backslash escapes nothing.
     if (writesMarkdownText(model, unit, position)) insert = keepBackslashes(source, position, insert, source.charAt(position));
-    return { from: position, to: position, insert, select: caretAt(position + insert.length) };
+    const op = { from: position, to: position, insert, select: caretAt(position + insert.length) };
+    return startsLine ? escapingLineStart(model, unit, op, openers.length) : op;
   }
 
   function lineEndOfUnit(model, unit) {
@@ -1767,7 +1781,7 @@
     if (after === "" || options.exitBlock) return { ...insertEmptyAfter(model, unit), kind: "enter" };
     if (before === "") return { ...insertEmptyBefore(model, unit, position), kind: "enter" };
     const separator = prefix ? eol + blank + eol + prefix : eol + eol;
-    return { ...splitAt(model, unit, position, separator), kind: "enter" };
+    return { ...splitAt(model, unit, position, separator, true), kind: "enter" };
   }
 
   function enterOnEmpty(model, unit) {
@@ -1935,7 +1949,8 @@
       return { from: position, to: lineEnd, insert: marker, select: caretAt(S(unit, next.start) + marker.length - (lineEnd - position)), kind: "typing" };
     }
     const insert = marker + model.eol + quotePrefixOfLine(source, position);
-    return { from: position, to: position, insert, select: caretAt(position + insert.length), kind: "typing" };
+    // The text after the caret starts a line, where a block start would end the paragraph.
+    return escapingLineStart(model, unit, { from: position, to: position, insert, select: caretAt(position + insert.length), kind: "typing" }, 0);
   }
 
   // Backspace and forward delete at unit edges -----------------------
@@ -2137,13 +2152,16 @@
     const title = escapeLineStart(source.slice(S(unit, toggle.summaryStart), S(unit, toggle.summaryEnd)));
     const lines = nodeLines(model, toggle, lineAfter(source, S(unit, toggle.summaryView.end)), containerLinesEnd(source, toggle))
       .filter((view) => !MD.isBlank(view.text));
-    let insert = title;
-    if (lines.length) {
-      const bodyStart = lines[0].prefixStart ?? lines[0].start;
-      const bodyEnd = lines[lines.length - 1].end;
-      insert += eol + eol + source.slice(bodyStart, bodyEnd);
-    }
-    return { from, to, insert, select: caretAt(from), kind: "format", label: "Paragraph" };
+    if (!lines.length) return { from, to, insert: title, select: caretAt(from), kind: "format", label: "Paragraph" };
+    const bodyStart = lines[0].prefixStart ?? lines[0].start;
+    const bodyEnd = lines[lines.length - 1].end;
+    // A toggle's body never reads a line as a definition, so its text lines are escaped to stay text
+    // out of it. Its other blocks read the same anywhere.
+    const definitions = readsDefinitions(unit);
+    const escapes = toggle.children.filter((child) => child.type === "paragraph")
+      .flatMap((child) => child.lines.map((view) => lineStartEscape(source, atNode(child, view.start), atNode(child, view.end), definitions)));
+    const op = compose(source, [{ s: from, e: bodyStart, keep: title + eol + eol }, ...escapes, { s: bodyEnd, e: to, keep: "" }]);
+    return { ...op, select: caretAt(from), kind: "format", label: "Paragraph" };
   }
 
   function closestUnitPosition(model, raw) {
@@ -3514,7 +3532,7 @@
     const flush = () => {
       // A line break at either end of a block breaks nothing; Markdown would show its backslash.
       const text = inline.replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/^(?:\\\n)+|(?:\\\n)+$/g, "").trim();
-      if (text) blocks.push(text.split("\n").map(escapeLineStart).join("\n"));
+      if (text) blocks.push(text.split("\n").map((line) => escapeLineStart(line)).join("\n"));
       inline = "";
     };
     for (const node of Array.from(element.childNodes)) {
@@ -3618,17 +3636,18 @@
 
   /// A line of text that Markdown would read as the start of a heading, quote, list item, divider,
   /// code fence, toggle, table of contents or definition keeps reading as text: `2020. A year`
-  /// becomes `2020\. A year`, and `[a]: b` becomes `[a]\: b`.
-  function escapeLineStart(line) {
-    return line
+  /// becomes `2020\. A year`, and `[a]: b` becomes `[a]\: b`. With `definitions` false, for a line
+  /// in a quote or toggle, which never reads one, a definition stays as it is.
+  function escapeLineStart(line, definitions = true) {
+    const escaped = line
       .replace(/^([ \t]*)(?=#{1,6}(?:[ \t]|$)|[-+*](?:[ \t]|$)|>|([-*_])(?:[ \t]*\2){2,}[ \t]*$|(?:`{3,}|~{3,})[ \t]*[\w.+-]*[ \t]*$|<details(?:[ \t]+open)?[ \t]*>[ \t]*$|\[toc\][ \t]*$)/i, "$1\\")
-      .replace(/^([ \t]*\d+)([.)])(?=[ \t]|$)/, "$1\\$2")
-      .replace(/^([ \t]*\[[^\]\r\n]+\]):/, "$1\\:");
+      .replace(/^([ \t]*\d+)([.)])(?=[ \t]|$)/, "$1\\$2");
+    return definitions ? escaped.replace(/^([ \t]*\[[^\]\r\n]+\]):/, "$1\\:") : escaped;
   }
 
   /// Where `escapeLineStart` puts its backslash in `line`, or -1 when the line needs none.
-  function lineEscapeAt(line) {
-    const escaped = escapeLineStart(line);
+  function lineEscapeAt(line, definitions = true) {
+    const escaped = escapeLineStart(line, definitions);
     if (escaped === line) return -1;
     let at = 0;
     while (escaped[at] === line[at]) at += 1;
@@ -3636,9 +3655,28 @@
   }
 
   /// A `compose` part giving the text in [start, end) the backslash it needs where it starts a line.
-  function lineStartEscape(source, start, end) {
-    const at = lineEscapeAt(source.slice(start, end));
+  function lineStartEscape(source, start, end, definitions = true) {
+    const at = lineEscapeAt(source.slice(start, end), definitions);
     return at < 0 ? null : { s: start + at, e: start + at, keep: "\\" };
+  }
+
+  /// Whether a line starting a paragraph where `unit` is reads as a definition: not in a quote or a
+  /// toggle's body, which parse their blocks without them.
+  function readsDefinitions(unit) {
+    return !unit.container;
+  }
+
+  /// `op` with a backslash before what would read as a block in the text it brings to the start of
+  /// a line of `unit`'s text: ↩ in `In ‸2020. A year` gives `2020\. A year`. That line starts with
+  /// the last `lead` characters `op` writes, then the source from `op.to`.
+  function escapingLineStart(model, unit, op, lead) {
+    const source = model.source;
+    const written = op.insert.slice(op.insert.length - lead);
+    const at = lineEscapeAt(written + source.slice(op.to, lineEndOf(source, op.to)), readsDefinitions(unit));
+    // Only text that moves gets one, never markup `op` writes before it (a style reopened after a split).
+    if (at < lead) return op;
+    const s = op.to + at - lead;
+    return { ...op, to: s, insert: op.insert + source.slice(op.to, s) + "\\" };
   }
 
   /// The text of an item or heading, which its marker kept from reading as a block, escaped for
