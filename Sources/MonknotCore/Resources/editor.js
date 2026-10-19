@@ -40,11 +40,12 @@
     return model;
   }
 
+  /// Renders top-level blocks just parsed. `block.units` holds every unit inside the block, and each
+  /// unit's `top` is the top-level block it is in.
   function renderBlocks(model, blocks) {
     const render = MD.newRender(model.doc, { editing: true, unitSequence: model.unitSequence });
     for (const block of blocks) {
-      block.shift = 0;
-      block.lineShift = 0;
+      linkNodes(block, null);
       const first = render.units.length;
       block.html = MD.renderBlock(block, render, null);
       block.units = render.units.slice(first);
@@ -56,10 +57,63 @@
     model.unitSequence = render.unitSequence;
   }
 
-  const bStart = (block) => block.start + block.shift;
-  const bEnd = (block) => block.end + block.shift;
-  const bLine = (block) => block.line + block.lineShift;
-  const S = (unit, offset) => offset + unit.top.shift;
+  // Every node (a block at any depth, or a list item) keeps the offsets and line numbers it was
+  // parsed with. `shift` and `lineShift` say how far its text has moved since, on top of what its
+  // `parent` moved, so an edit moves everything after it by changing a few of those numbers.
+
+  const NO_NODES = [];
+
+  /// The nodes right under one: a quote's or toggle's blocks, a list's items, an item's lists.
+  function childNodes(node) {
+    return node.items || node.children || NO_NODES;
+  }
+
+  function linkNodes(node, parent) {
+    node.parent = parent;
+    node.shift = 0;
+    node.lineShift = 0;
+    for (const child of childNodes(node)) linkNodes(child, node);
+  }
+
+  function nodeShift(node) {
+    let shift = 0;
+    for (let current = node; current; current = current.parent) shift += current.shift;
+    return shift;
+  }
+
+  function nodeLineShift(node) {
+    let shift = 0;
+    for (let current = node; current; current = current.parent) shift += current.lineShift;
+    return shift;
+  }
+
+  /// Where `offset`, read from `node`'s fields, is in the source now.
+  const atNode = (node, offset) => offset + nodeShift(node);
+  const bStart = (block) => block.start + nodeShift(block);
+  const bEnd = (block) => block.end + nodeShift(block);
+  const bLine = (block) => block.line + nodeLineShift(block);
+  /// The node a unit's region and fields are read from: its list item, or its block.
+  const ownerOf = (unit) => unit.item || unit.block;
+  const S = (unit, offset) => offset + nodeShift(ownerOf(unit));
+
+  /// Where an item's text and the items nested under it end.
+  function itemSubtreeEnd(item) {
+    const end = atNode(item, item.end);
+    const last = item.children[item.children.length - 1];
+    return last ? Math.max(end, bEnd(last)) : end;
+  }
+
+  function nodeStart(node) {
+    return node.type ? bStart(node) : atNode(node, node.view.start);
+  }
+
+  function nodeEnd(node) {
+    return node.type ? bEnd(node) : itemSubtreeEnd(node);
+  }
+
+  function nodeLine(node) {
+    return node.type ? bLine(node) : node.view.line + nodeLineShift(node);
+  }
 
   function countLineBreaks(text) {
     const matches = text.match(/\r\n|\r|\n/g);
@@ -107,6 +161,7 @@
     if (bStart(oldBlock) + delta !== newBlock.start) return false;
     if (oldBlock.type === "empty") {
       return oldBlock.position === newBlock.position
+        && Boolean(oldBlock.view) === Boolean(newBlock.view)
         && oldBlock.needsSeparatorBefore === newBlock.needsSeparatorBefore
         && oldBlock.needsSeparatorAfter === newBlock.needsSeparatorAfter
         && bEnd(oldBlock) + delta === newBlock.end;
@@ -121,7 +176,8 @@
   }
 
   /// Applies `insert` over [from, to) and re-parses only the blocks the change
-  /// can affect. Returns what changed so the page can replace just those blocks.
+  /// can affect. Returns what changed so the page can replace just those blocks:
+  /// top-level blocks, or with `container` set, the blocks or items right under it.
   function applyPatch(model, from, to, insert) {
     const oldSource = model.source;
     const source = oldSource.slice(0, from) + insert + oldSource.slice(to);
@@ -133,6 +189,15 @@
       - countLineBreaks(oldSource.slice(windowStart, Math.min(oldSource.length, to + 1)));
     const blocks = model.blocks;
     const hasCR = model.hasCR || insert.indexOf("\r") >= 0;
+
+    model.doc.source = source;
+    const edit = { from, to, insertEnd: from + insert.length, delta, lineDelta, oldSource, source, hasCR };
+    const inside = applyInside(model, edit);
+    if (inside) {
+      model.source = source;
+      model.hasCR = hasCR;
+      return inside;
+    }
 
     const first = firstBlockEndingAtOrAfter(blocks, from);
     let restart = Math.min(first, blocks.length) - 1;
@@ -156,7 +221,6 @@
       return false;
     };
 
-    model.doc.source = source;
     const reader = MD.streamReader(source, parseStart, parseLine, hasCR);
     const context = { definitions: true, top: true, editing: true, anchor: 0 };
     const added = MD.parseBlockList(reader, context, true, stop).blocks;
@@ -214,15 +278,15 @@
   /// state moves to the new toggle that starts where the old one did.
   function carryToggleState(model, removed, inserted, from, to, delta) {
     const states = new Map();
-    const collect = (block, shift) => {
+    const collect = (block) => {
       if (block.type === "toggle" && block.viewOpen !== undefined) {
-        const start = block.start + shift;
+        const start = bStart(block);
         if (start < from) states.set(start, block.viewOpen);
         else if (start >= to) states.set(start + delta, block.viewOpen);
       }
-      for (const child of block.children || []) if (child.type === "toggle" || child.type === "quote") collect(child, shift);
+      for (const child of block.children || []) if (child.type === "toggle" || child.type === "quote") collect(child);
     };
-    for (const block of removed) collect(block, block.shift);
+    removed.forEach(collect);
     // A toggle just inserted from a menu opens, so its body is there to type into.
     if (model.pendingToggleOpen !== undefined && model.pendingToggleOpen !== null) {
       states.set(model.pendingToggleOpen, true);
@@ -271,6 +335,551 @@
     renderBlocks(model, model.blocks);
   }
 
+  /// Parses and renders again each top-level block an edit inside it re-rendered in parts, for a
+  /// page drawn whole. Its toggles keep their state; its units are new.
+  function redrawStaleBlocks(model) {
+    const blocks = model.blocks;
+    const context = { definitions: true, top: true, editing: true, anchor: 0 };
+    for (let index = 0; index < blocks.length; index += 1) {
+      const old = blocks[index];
+      if (old.html !== null) continue;
+      const reader = MD.streamReader(model.source, parsedLineStart(model.source, bStart(old)), bLine(old), model.hasCR);
+      const block = MD.parseBlockList(reader, context, true, (view, parsed) => parsed.length > 0).blocks[0];
+      if (!block || block.type !== old.type || block.start !== bStart(old) || block.end !== bEnd(old)) {
+        rebuild(model, 0, 0, 0);
+        return;
+      }
+      for (const unit of old.units) model.units.delete(unit.id);
+      carryToggleState(model, [old], [block], 0, 0, 0);
+      renderBlocks(model, [block]);
+      blocks[index] = block;
+    }
+  }
+
+  // Edits inside a container -------------------------------------------
+  //
+  // An edit whose changed lines lie inside a toggle's body, a quote or a list re-parses only the
+  // blocks or items there it can affect, resynchronising at the next one it left alone, as the top
+  // level does between its blocks. Lines that would change where the container itself ends (a
+  // `</details>`, a line without `>`) send the edit out to the level above.
+
+  /// The start of the line holding `position`, as the parser splits lines (a CRLF is one break).
+  function parsedLineStart(source, position) {
+    let index = Math.max(0, Math.min(position, source.length));
+    while (index > 0) {
+      const code = source.charCodeAt(index - 1);
+      if (code === 10 || (code === 13 && source.charCodeAt(index) !== 10)) break;
+      index -= 1;
+    }
+    return index;
+  }
+
+  /// The start of the line after the one whose text ends at `end`.
+  function lineAfter(source, end) {
+    const code = source.charCodeAt(end);
+    if (code === 13) return source.charCodeAt(end + 1) === 10 ? end + 2 : end + 1;
+    return code === 10 ? end + 1 : end;
+  }
+
+  /// A line as a quote's blocks see it: without its `>` marker.
+  function insideQuote(view) {
+    const match = MD.patterns.quote.exec(view.text);
+    const prefix = match ? match[0].length : 0;
+    return { text: view.text.slice(prefix), start: view.start + prefix, end: view.end, next: view.next, line: view.line, prefixStart: view.start };
+  }
+
+  function seenThrough(quotes, view) {
+    let seen = view;
+    for (let index = 0; index < quotes.length; index += 1) seen = insideQuote(seen);
+    return seen;
+  }
+
+  /// The quotes `node` sits in, outermost first.
+  function quotesAround(node) {
+    const quotes = [];
+    for (let current = node.parent; current; current = current.parent) if (current.type === "quote") quotes.unshift(current);
+    return quotes;
+  }
+
+  /// The source lines [start, end) as `quotes`' blocks see them: what the parser read them as.
+  function linesInside(source, start, line, hasCR, end, quotes) {
+    const raw = MD.streamReader(source, start, line, hasCR);
+    const lines = [];
+    return {
+      at(index) {
+        while (lines.length <= index) {
+          const view = raw.at(lines.length);
+          if (!view || view.start >= end) return null;
+          lines.push(seenThrough(quotes, view));
+        }
+        return lines[index];
+      }
+    };
+  }
+
+  /// The source lines [start, end) as `node` reads them, from the source as it is now: a toggle's or
+  /// quote's own lists of its lines are not kept up to date by edits re-parsed inside it.
+  function nodeLines(model, node, start, end) {
+    const reader = linesInside(model.source, start, 0, model.hasCR, end, quotesAround(node));
+    const lines = [];
+    for (let line = reader.at(0); line; line = reader.at(lines.length)) lines.push(line);
+    return lines;
+  }
+
+  /// The lines the edit changed, as they were and as they are: whole lines, at least one past each
+  /// end of the patch, less the ones at either end it left as they were.
+  function changedLines(model, edit) {
+    const { from, to, delta, oldSource, source } = edit;
+    const start = parsedLineStart(oldSource, Math.max(0, from - 1));
+    const oldReader = MD.streamReader(oldSource, start, 0, model.hasCR);
+    const oldLines = [];
+    for (let line = oldReader.at(0); line && line.start <= to; line = oldReader.at(oldLines.length)) oldLines.push(line);
+    const oldEnd = oldLines.length ? oldLines[oldLines.length - 1].next : start;
+    const newReader = MD.streamReader(source, start, 0, edit.hasCR);
+    const newLines = [];
+    for (let line = newReader.at(0); line && line.start < oldEnd + delta; line = newReader.at(newLines.length)) newLines.push(line);
+    if ((newLines.length ? newLines[newLines.length - 1].next : start) !== oldEnd + delta) return null;
+    const same = (a, b) => a.text === b.text && a.next - a.end === b.next - b.end;
+    let lead = 0;
+    while (lead < oldLines.length && lead < newLines.length && same(oldLines[lead], newLines[lead])) lead += 1;
+    let tail = 0;
+    while (tail < oldLines.length - lead && tail < newLines.length - lead
+      && same(oldLines[oldLines.length - 1 - tail], newLines[newLines.length - 1 - tail])) tail += 1;
+    const changedOld = oldLines.slice(lead, oldLines.length - tail);
+    const changedNew = newLines.slice(lead, newLines.length - tail);
+    if (changedOld.length === 0 && changedNew.length === 0) return null;
+    const regionStart = lead > 0 ? oldLines[lead - 1].next : start;
+    const regionEnd = tail > 0 ? oldLines[oldLines.length - tail].start : oldEnd;
+    return { start: regionStart, oldEnd: regionEnd, oldLines: changedOld, newLines: changedNew };
+  }
+
+  /// The last of `nodes` whose first line starts at or before `position`, or null.
+  function nodeOnLine(source, nodes, position) {
+    let low = 0;
+    let high = nodes.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (parsedLineStart(source, nodeStart(nodes[middle])) <= position) low = middle + 1;
+      else high = middle;
+    }
+    return low > 0 ? nodes[low - 1] : null;
+  }
+
+  function firstNodeEndingAtOrAfter(nodes, offset) {
+    let low = 0;
+    let high = nodes.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (nodeEnd(nodes[middle]) < offset) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  }
+
+  function lastNodeStartingAtOrBefore(nodes, offset) {
+    let low = 0;
+    let high = nodes.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (nodeStart(nodes[middle]) <= offset) low = middle + 1;
+      else high = middle;
+    }
+    return low - 1;
+  }
+
+  /// Where a toggle's body lines or a quote's lines end, the line after them: a toggle's
+  /// `</details>`, or the line after the last.
+  function containerLinesEnd(source, node) {
+    if (node.type === "toggle" && node.close) return parsedLineStart(source, atNode(node, node.close.start));
+    return lineAfter(source, bEnd(node));
+  }
+
+  /// The containers holding the changed lines, outermost first, with the list items between a list
+  /// and a list nested in it. Each one keeps its extent whatever the edit did to its lines.
+  function containersHolding(model, edit, region) {
+    const chain = [];
+    let nodes = model.blocks;
+    for (;;) {
+      const node = nodeOnLine(model.source, nodes, region.start);
+      if (!node) break;
+      if (node.type && !holdsRegion(model, edit, node, region, chain)) break;
+      chain.push(node);
+      nodes = childNodes(node);
+    }
+    // An item at the end holds the lines in its own text, which its list re-parses.
+    while (chain.length && !chain[chain.length - 1].type) chain.pop();
+    return chain;
+  }
+
+  /// Whether the changed lines lie inside `node`'s blocks or items, and leave `node` where it is.
+  function holdsRegion(model, edit, node, region, chain) {
+    const source = model.source;
+    const P = MD.patterns;
+    const quotes = chain.filter((ancestor) => ancestor.type === "quote");
+    const seen = (line) => seenThrough(quotes, line).text;
+    const lines = region.oldLines.concat(region.newLines);
+    // A quote or list starts after the `>` of the quotes around it on its first line: when that line
+    // changed, those markers have to take as many characters as they did.
+    const startStays = () => !quotes.length
+      || (region.oldLines.length > 0 && region.newLines.length > 0
+        && seenThrough(quotes, region.oldLines[0]).start === seenThrough(quotes, region.newLines[0]).start);
+    if (node.type === "toggle") {
+      if (node.children.length === 1 && node.children[0].virtual) return false;
+      const bodyStart = lineAfter(source, atNode(node, node.summaryView.end));
+      const bodyEnd = containerLinesEnd(source, node);
+      if (region.start < bodyStart || region.oldEnd > bodyEnd) return false;
+      if (region.start === bodyStart && region.oldEnd === bodyEnd && region.newLines.length === 0) return false;
+      // A fence or a `<details>` line changes which `</details>` closes the toggle.
+      return !lines.some((line) => {
+        const text = seen(line);
+        return P.fenceMarker.test(text) || P.detailsOpen.test(text) || P.detailsClose.test(text);
+      });
+    }
+    if (node.type === "quote") {
+      if (node.callout && node.children.some((child) => child.virtual)) return false;
+      const first = parsedLineStart(source, bStart(node));
+      if (region.start < first || region.oldEnd > lineAfter(source, bEnd(node))) return false;
+      // The first line decides whether the quote is a callout.
+      if (region.start === first && (node.callout || region.newLines.length === 0 || !startStays())) return false;
+      if (!stillStarts(node, edit, first, quotes)) return false;
+      // Every changed line stays quoted, and none reads as a callout's `[!KIND]` line, which after
+      // a blank line would start a quote of its own.
+      const quoted = (line) => {
+        const text = seen(line);
+        const match = P.quote.exec(text);
+        return Boolean(match) && !P.callout.test(text.slice(match[0].length));
+      };
+      if (!lines.every(quoted)) return false;
+      if (region.newLines.length === 0) {
+        // Lines only went: the line now before the next one has to be quoted too.
+        const before = parsedLineStart(source, region.start - 1);
+        return quoted({ text: source.slice(before, lineEndOf(source, before)), start: before });
+      }
+      return true;
+    }
+    if (node.type === "list") {
+      const first = parsedLineStart(source, bStart(node));
+      if (region.start < first || region.oldEnd > lineAfter(source, bEnd(node))) return false;
+      if (region.start === first) {
+        // The first item's indent and marker make the list what it is, and a first line of hyphens
+        // and pipes would make the line above it a table's header.
+        if (!region.oldLines.length || !region.newLines.length) return false;
+        const before = P.item.exec(seen(region.oldLines[0]));
+        const after = P.item.exec(seen(region.newLines[0]));
+        if (!before || !after || before[1] !== after[1] || before[2] !== after[2]) return false;
+        if (MD.isTableDelimiter(seen(region.newLines[0])) || !startStays()) return false;
+      }
+      return stillStarts(node, edit, first, quotes);
+    }
+    return false;
+  }
+
+  /// Whether the parser still begins a quote or list at its first line after the edit: it reads a
+  /// line with pipes over a row of hyphens as a table's header, and a list's `- - -` as a divider,
+  /// before it looks for either.
+  function stillStarts(node, edit, first, quotes) {
+    const reader = linesInside(edit.source, first, 0, edit.hasCR, edit.source.length, quotes);
+    const line = reader.at(0);
+    if (!line || MD.isTableStart(reader, 0)) return false;
+    return node.type !== "list" || !MD.patterns.thematic.test(line.text);
+  }
+
+  /// The parser's context for the blocks right under `chain[depth]`.
+  function contextInside(chain, depth) {
+    let context = { definitions: true, top: true, editing: true, anchor: 0 };
+    for (let index = 0; index <= depth; index += 1) {
+      const node = chain[index];
+      if (node.type === "toggle") context = { ...context, definitions: false, top: false, separators: true, virtual: null };
+      else if (node.type === "quote") context = { ...context, definitions: false, top: false, separators: false, virtual: null };
+    }
+    return context;
+  }
+
+  function applyInside(model, edit) {
+    if (model.blocks.length === 0) return null;
+    const region = changedLines(model, edit);
+    if (!region) return null;
+    const chain = containersHolding(model, edit, region);
+    for (let depth = chain.length - 1; depth >= 0; depth -= 1) {
+      const node = chain[depth];
+      if (!node.type) continue;
+      const parsed = node.type === "list"
+        ? reparseItems(model, edit, region, chain, depth)
+        : reparseBlocks(model, edit, chain, depth);
+      if (parsed) return commitInside(model, edit, region, chain, depth, parsed);
+    }
+    return null;
+  }
+
+  /// The source end of the lines the blocks of `chain[depth]` were read from (the end of the
+  /// toggle's body or the quote holding a list), after the edit.
+  function linesEndAfter(model, edit, chain, depth) {
+    for (let index = depth; index >= 0; index -= 1) {
+      const node = chain[index];
+      if (node.type === "toggle" || node.type === "quote") return containerLinesEnd(model.source, node) + edit.delta;
+    }
+    return edit.source.length;
+  }
+
+  /// Re-parses the blocks of the toggle or quote `chain[depth]` from the block before the edit.
+  function reparseBlocks(model, edit, chain, depth) {
+    const container = chain[depth];
+    const kids = container.children;
+    const { from, to, delta, insertEnd } = edit;
+    const source = model.source;
+    const first = firstNodeEndingAtOrAfter(kids, from);
+    let restart = Math.min(first, kids.length) - 1;
+    while (restart >= 0 && kids[restart].type === "empty") restart -= 1;
+    let parseStart;
+    let parseLine;
+    if (restart >= 0) {
+      parseStart = parsedLineStart(source, bStart(kids[restart]));
+      parseLine = bLine(kids[restart]);
+    } else if (container.type === "toggle") {
+      parseStart = lineAfter(source, atNode(container, container.summaryView.end));
+      parseLine = container.summaryView.line + nodeLineShift(container) + 1;
+    } else {
+      parseStart = parsedLineStart(source, bStart(container));
+      parseLine = bLine(container);
+      if (container.callout) {
+        parseStart = lineAfter(source, atNode(container, container.callout.marker.end));
+        parseLine += 1;
+      }
+    }
+    const replaceFrom = Math.max(0, restart);
+    let cursor = replaceFrom + 1;
+    let resync = -1;
+    const stop = (view) => {
+      if (view.start < insertEnd) return false;
+      const oldStart = view.start - delta;
+      if (oldStart < to) return false;
+      while (cursor < kids.length && (kids[cursor].type === "empty" || bStart(kids[cursor]) < oldStart)) cursor += 1;
+      if (cursor < kids.length && bStart(kids[cursor]) === oldStart) {
+        resync = cursor;
+        return true;
+      }
+      return false;
+    };
+    const quotes = chain.slice(0, depth + 1).filter((node) => node.type === "quote");
+    const reader = linesInside(edit.source, parseStart, parseLine, edit.hasCR, linesEndAfter(model, edit, chain, depth), quotes);
+    const added = MD.parseBlockList(reader, contextInside(chain, depth), false, stop).blocks;
+    const replaceTo = resync >= 0 ? resync : kids.length;
+    let keepFront = 0;
+    while (keepFront < added.length
+      && replaceFrom + keepFront < replaceTo
+      && sameBlock(kids[replaceFrom + keepFront], edit.oldSource, added[keepFront], edit.source, 0)
+      && bEnd(kids[replaceFrom + keepFront]) <= from) {
+      keepFront += 1;
+    }
+    let keepBack = 0;
+    while (keepBack < added.length - keepFront
+      && replaceTo - keepBack - 1 >= replaceFrom + keepFront
+      && bStart(kids[replaceTo - keepBack - 1]) >= to
+      && sameBlock(kids[replaceTo - keepBack - 1], edit.oldSource, added[added.length - keepBack - 1], edit.source, delta)) {
+      keepBack += 1;
+    }
+    const index = replaceFrom + keepFront;
+    return { index, removed: kids.slice(index, replaceTo - keepBack), inserted: added.slice(keepFront, added.length - keepBack) };
+  }
+
+  /// Re-parses the items of the list `chain[depth]` from the item holding the line before the edit.
+  /// Null when the list would end anywhere else: the level above re-parses it then.
+  function reparseItems(model, edit, region, chain, depth) {
+    const list = chain[depth];
+    const items = list.items;
+    const { from, to, delta, insertEnd } = edit;
+    const source = model.source;
+    const restart = region.start > parsedLineStart(source, bStart(list))
+      ? Math.max(0, lastNodeStartingAtOrBefore(items, region.start - 1))
+      : 0;
+    let cursor = restart + 1;
+    let resync = -1;
+    const stop = (view) => {
+      if (view.start < insertEnd) return false;
+      const oldStart = view.start - delta;
+      if (oldStart < to) return false;
+      while (cursor < items.length && nodeStart(items[cursor]) < oldStart) cursor += 1;
+      if (cursor < items.length && nodeStart(items[cursor]) === oldStart) {
+        resync = cursor;
+        return true;
+      }
+      return false;
+    };
+    const quotes = chain.slice(0, depth).filter((node) => node.type === "quote");
+    const linesEnd = linesEndAfter(model, edit, chain, depth);
+    const reader = linesInside(edit.source, parsedLineStart(source, nodeStart(items[restart])), nodeLine(items[restart]), edit.hasCR, linesEnd, quotes);
+    const parsed = MD.parseList(reader, 0, contextInside(chain, depth), { baseIndent: items[0].indent, ordered: list.ordered, stop });
+    if (!parsed.stopped) {
+      // The list has to end before the same line as it did.
+      const next = reader.at(parsed.next);
+      const after = next ? parsedLineStart(edit.source, next.start) : linesEnd;
+      if (after !== lineAfter(source, bEnd(list)) + delta) return null;
+    }
+    const added = parsed.list.items;
+    const replaceTo = resync >= 0 ? resync : items.length;
+    const subtreeEnd = (item) => (item.children.length ? Math.max(item.end, item.children[item.children.length - 1].end) : item.end);
+    const sameItem = (old, item, shift) => nodeStart(old) + shift === item.view.start
+      && edit.oldSource.slice(nodeStart(old), nodeEnd(old)) === edit.source.slice(item.view.start, subtreeEnd(item));
+    let keepFront = 0;
+    while (keepFront < added.length
+      && restart + keepFront < replaceTo
+      && nodeEnd(items[restart + keepFront]) <= from
+      && sameItem(items[restart + keepFront], added[keepFront], 0)) {
+      keepFront += 1;
+    }
+    let keepBack = 0;
+    while (keepBack < added.length - keepFront
+      && replaceTo - keepBack - 1 >= restart + keepFront
+      && nodeStart(items[replaceTo - keepBack - 1]) >= to
+      && sameItem(items[replaceTo - keepBack - 1], added[added.length - keepBack - 1], delta)) {
+      keepBack += 1;
+    }
+    const index = restart + keepFront;
+    return { index, removed: items.slice(index, replaceTo - keepBack), inserted: added.slice(keepFront, added.length - keepBack) };
+  }
+
+  /// Puts re-parsed nodes in place of `removed` under `chain[depth]`, renders them, and moves
+  /// everything after them by the edit.
+  function commitInside(model, edit, region, chain, depth, parsed) {
+    const { index, removed, inserted } = parsed;
+    const { from, to, delta, lineDelta } = edit;
+    const source = model.source;
+    const container = chain[depth];
+    const top = chain[0];
+    const kids = childNodes(container);
+
+    // How a toggle's or quote's last line ends now: further along by the edit, or where the last
+    // changed line ends when it was that line.
+    const endAfter = (node) => {
+      const end = bEnd(node);
+      if (parsedLineStart(source, end) >= region.oldEnd) return node.end + delta;
+      const last = region.newLines[region.newLines.length - 1];
+      const now = last ? last.end : lineEndOf(edit.source, parsedLineStart(edit.source, region.start - 1));
+      return now - nodeShift(node);
+    };
+    const ends = new Map();
+    for (let level = 0; level <= depth; level += 1) {
+      const node = chain[level];
+      if (node.type === "toggle" || node.type === "quote") ends.set(node, endAfter(node));
+    }
+
+    // The removed nodes' units: a run of the top block's, which are in the order they render in.
+    const units = top.units;
+    const removedSet = new Set(removed);
+    const childOf = (unit) => {
+      for (let node = ownerOf(unit); node; node = node.parent) if (node.parent === container) return node;
+      return null;
+    };
+    const anchor = removed[0] || kids[index] || null;
+    let firstUnit;
+    if (anchor) {
+      firstUnit = unitsFrom(units, nodeStart(anchor), false);
+      // An empty code block's unit waits at the start of the line after it, which can be where the
+      // next block starts: that unit still belongs before.
+      while (firstUnit < units.length) {
+        const child = childOf(units[firstUnit]);
+        if (!child || child === anchor || removedSet.has(child) || nodeStart(child) >= nodeStart(anchor)) break;
+        firstUnit += 1;
+      }
+    } else {
+      firstUnit = unitsFrom(units, nodeEnd(container), true);
+    }
+    let lastUnit = firstUnit;
+    while (lastUnit < units.length && removedSet.has(childOf(units[lastUnit]))) lastUnit += 1;
+    const removedUnits = units.slice(firstUnit, lastUnit);
+
+    carryToggleState(model, removed, inserted, from, to, delta);
+
+    const base = nodeShift(container);
+    const lineBase = nodeLineShift(container);
+    for (const node of inserted) {
+      linkNodes(node, container);
+      node.shift = -base;
+      node.lineShift = -lineBase;
+    }
+    spliceInPlace(kids, index, removed.length, inserted);
+    for (let position = index + inserted.length; position < kids.length; position += 1) {
+      kids[position].shift += delta;
+      kids[position].lineShift += lineDelta;
+    }
+    // Then each container up to the top: what follows the edit in it moves, and it ends further on.
+    for (let level = depth; level >= 0; level -= 1) {
+      const node = chain[level];
+      if (level < depth) {
+        const siblings = childNodes(node);
+        for (let position = siblings.indexOf(chain[level + 1]) + 1; position < siblings.length; position += 1) {
+          siblings[position].shift += delta;
+          siblings[position].lineShift += lineDelta;
+        }
+      }
+      if (node.type === "list") {
+        node.end = itemSubtreeEnd(node.items[node.items.length - 1]) - nodeShift(node);
+      } else if (ends.has(node)) {
+        node.end = ends.get(node);
+        if (node.type === "toggle" && node.close) {
+          const close = node.close;
+          node.close = { ...close, start: close.start + delta, end: close.end + delta, next: close.next + delta, line: close.line + lineDelta };
+        }
+      }
+    }
+    const blocks = model.blocks;
+    for (let position = blockIndex(model, top) + 1; position < blocks.length; position += 1) {
+      blocks[position].shift += delta;
+      blocks[position].lineShift += lineDelta;
+    }
+
+    // Rendered once everything is where it is now: a table of contents reads the headings after it.
+    const render = MD.newRender(model.doc, { editing: true, unitSequence: model.unitSequence });
+    let scope = null;
+    let outer = null;
+    for (let level = depth; level >= 0 && (!scope || !outer); level -= 1) {
+      const node = chain[level];
+      if (!scope && node.type === "toggle") scope = node;
+      if (!outer && level < depth && (node.type === "toggle" || node.type === "quote")) outer = node;
+    }
+    render.scope = scope;
+    for (const node of inserted) {
+      node.html = container.type === "list"
+        ? MD.renderListItem(node, container, render, outer)
+        : MD.renderBlock(node, render, container);
+    }
+    for (const unit of removedUnits) model.units.delete(unit.id);
+    for (const unit of render.units) {
+      unit.top = top;
+      model.units.set(unit.id, unit);
+    }
+    model.unitSequence = render.unitSequence;
+    spliceInPlace(units, firstUnit, lastUnit - firstUnit, render.units);
+    // The page holds the markup of the containers now; the top block is drawn again from a parse
+    // when the page is drawn whole.
+    for (const node of chain) node.html = null;
+    return { full: false, container, index, removed, inserted, top };
+  }
+
+  /// The index of the first unit starting at `position` or later, or, with `after`, later.
+  function unitsFrom(units, position, after) {
+    let low = 0;
+    let high = units.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      const start = unitStart(units[middle]);
+      if (start < position || (after && start === position)) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  }
+
+  function spliceInPlace(array, start, count, items) {
+    if (items.length < 10000) {
+      array.splice(start, count, ...items);
+      return;
+    }
+    const tail = array.slice(start + count);
+    array.length = start;
+    for (const item of items) array.push(item);
+    for (const item of tail) array.push(item);
+  }
+
   // ---------------------------------------------------------------------
   // Units and the visible text
   // ---------------------------------------------------------------------
@@ -281,7 +890,7 @@
 
   function rawOf(unit, j) {
     const map = regionMap(unit);
-    return map[Math.max(0, Math.min(j, map.length - 1))] + unit.top.shift;
+    return S(unit, map[Math.max(0, Math.min(j, map.length - 1))]);
   }
 
   function unitStart(unit) {
@@ -295,7 +904,7 @@
   /// The `j` offset whose source span holds `raw`.
   function jOf(unit, raw) {
     const map = regionMap(unit);
-    const target = raw - unit.top.shift;
+    const target = raw - nodeShift(ownerOf(unit));
     let low = 0;
     let high = map.length - 1;
     if (target <= map[0]) return 0;
@@ -458,18 +1067,27 @@
         ? lastUnitUpTo(model, index - 1) || firstUnitFrom(model, index + 1)
         : firstUnitFrom(model, index + 1) || lastUnitUpTo(model, index - 1);
     }
-    let before = null;
-    let after = null;
-    let inside = [];
-    for (const unit of units) {
-      const start = unitStart(unit);
-      const end = unitEnd(unit);
-      if (start <= raw && raw <= end) inside.push(unit);
-      else if (end < raw) before = unit;
-      else if (!after && start > raw) after = unit;
+    // A block's units run in document order, and neither their starts nor their ends go back, so
+    // the ones holding `raw` are a run found by two binary searches: a toggle or list can hold
+    // thousands.
+    let count = 0;
+    let high = units.length;
+    while (count < high) {
+      const middle = (count + high) >> 1;
+      if (unitStart(units[middle]) <= raw) count = middle + 1;
+      else high = middle;
     }
-    if (inside.length === 1) return inside[0];
-    if (inside.length > 1) return side === "left" ? inside[0] : inside[inside.length - 1];
+    let first = 0;
+    high = count;
+    while (first < high) {
+      const middle = (first + high) >> 1;
+      if (unitEnd(units[middle]) < raw) first = middle + 1;
+      else high = middle;
+    }
+    if (count - first === 1) return units[first];
+    if (count - first > 1) return side === "left" ? units[first] : units[count - 1];
+    const before = first > 0 ? units[first - 1] : null;
+    const after = count < units.length ? units[count] : null;
     return side === "left" ? before || after : after || before;
   }
 
@@ -1106,7 +1724,7 @@
       const isLast = units[units.length - 1] === unit;
       if (isLast) {
         // Enter on the quote's last, empty line leaves the quote.
-        const end = S(unit, container.end);
+        const end = bEnd(container);
         let firstBlank = lineStart;
         for (let previous = previousLineEnd(source, lineStart); previous >= 0;) {
           const start = lineStartOf(source, previous);
@@ -1153,7 +1771,7 @@
     const toggle = unit.scope;
     const source = model.source;
     const eol = model.eol;
-    const end = S(unit, toggle.end);
+    const end = bEnd(toggle);
     const parts = [];
     const previous = previousUnit(model, unit);
     const onlyLine = !previous || previous.role === "summary";
@@ -1423,11 +2041,12 @@
   function calloutToQuote(model, unit, callout) {
     const source = model.source;
     const marker = callout.callout.marker;
-    const lineStart = lineStartOf(source, S(unit, marker.start));
-    const hasChildren = callout.inner.length > 1;
+    const lineStart = lineStartOf(source, atNode(callout, marker.start));
+    // Only the marker line: the callout's one block is the empty line standing in for its text.
+    const hasChildren = !callout.children.some((child) => child.virtual);
     if (!hasChildren) {
-      const from = S(unit, marker.start);
-      return { from, to: S(unit, marker.end), insert: "", select: (next) => caretAt(closestUnitPosition(next, from)), kind: "format", label: "Quote" };
+      const from = atNode(callout, marker.start);
+      return { from, to: atNode(callout, marker.end), insert: "", select: (next) => caretAt(closestUnitPosition(next, from)), kind: "format", label: "Quote" };
     }
     const to = nextLineStart(source, lineStart);
     return { from: lineStart, to, insert: "", select: caretAt(unitStart(unit) - (to - lineStart)), kind: "format", label: "Quote" };
@@ -1441,11 +2060,12 @@
     const from = S(unit, toggle.start);
     const to = S(unit, toggle.end);
     const title = source.slice(S(unit, toggle.summaryStart), S(unit, toggle.summaryEnd));
-    const lines = toggle.body.filter((view) => !MD.isBlank(view.text));
+    const lines = nodeLines(model, toggle, lineAfter(source, S(unit, toggle.summaryView.end)), containerLinesEnd(source, toggle))
+      .filter((view) => !MD.isBlank(view.text));
     let insert = title;
     if (lines.length) {
-      const bodyStart = S(unit, lines[0].prefixStart ?? lines[0].start);
-      const bodyEnd = S(unit, lines[lines.length - 1].end);
+      const bodyStart = lines[0].prefixStart ?? lines[0].start;
+      const bodyEnd = lines[lines.length - 1].end;
       insert += eol + eol + source.slice(bodyStart, bodyEnd);
     }
     return { from, to, insert, select: caretAt(from), kind: "format", label: "Paragraph" };
@@ -2027,18 +2647,6 @@
 
   // Lists: indent and outdent -----------------------------------------
 
-  function itemSubtreeEnd(list, item) {
-    let end = item.end;
-    const visit = (child) => {
-      for (const nested of child.items) {
-        end = Math.max(end, nested.end);
-        nested.children.forEach(visit);
-      }
-    };
-    item.children.forEach(visit);
-    return end;
-  }
-
   function planIndent(model, selection, direction) {
     const units = unitsBetween(model, selection.from, selection.to).filter((unit) => unit.role === "item");
     if (units.length === 0) return null;
@@ -2046,7 +2654,7 @@
     const first = units[0];
     const last = units[units.length - 1];
     const start = lineStartOf(source, S(first, first.item.view.start));
-    const end = S(last, itemSubtreeEnd(last.list, last.item));
+    const end = itemSubtreeEnd(last.item);
     // A list's first item has no item above to go under.
     if (direction > 0 && first.list.items[0] === first.item) return null;
     const prefix = quotePrefixOfLine(source, start);
@@ -2120,7 +2728,7 @@
     const table = unit.table;
     const source = model.source;
     const eol = model.eol;
-    const shift = unit.top.shift;
+    const shift = nodeShift(table);
     const prefix = quotePrefixOfLine(source, table.start + shift);
     const rowIndex = unit.rowIndex + 1;
     const column = unit.column;
@@ -2453,17 +3061,15 @@
   }
 
   function itemRange(model, target) {
-    const shift = target.top.shift;
-    return [lineStartOf(model.source, target.item.view.start + shift), itemSubtreeEnd(target.list, target.item) + shift];
+    return [lineStartOf(model.source, atNode(target.item, target.item.view.start)), itemSubtreeEnd(target.item)];
   }
 
   /// Rewrites a list with its items in `order` (indexes into its items). Markers keep their
   /// places, so an ordered list still counts from its first number.
   function rebuildList(model, top, list, order, selection, label, moved) {
     const source = model.source;
-    const shift = top.shift;
     const items = list.items;
-    const ranges = items.map((item) => [lineStartOf(source, item.view.start + shift), itemSubtreeEnd(list, item) + shift]);
+    const ranges = items.map((item) => [lineStartOf(source, atNode(item, item.view.start)), itemSubtreeEnd(item)]);
     const gaps = ranges.slice(1).map((range, index) => source.slice(ranges[index][1], range[0]));
     const from = ranges[0][0];
     const to = ranges[ranges.length - 1][1];
@@ -2473,7 +3079,7 @@
       if (position > 0) insert += gaps[position - 1];
       let chunk = source.slice(ranges[original][0], ranges[original][1]);
       let markerDelta = 0;
-      const markerOffset = items[original].markerStart + shift - ranges[original][0];
+      const markerOffset = atNode(items[original], items[original].markerStart) - ranges[original][0];
       if (list.ordered && items[position].marker !== items[original].marker) {
         chunk = chunk.slice(0, markerOffset) + items[position].marker + chunk.slice(markerOffset + items[original].marker.length);
         markerDelta = items[position].marker.length - items[original].marker.length;
@@ -2648,7 +3254,7 @@
     if (calloutOf(unit)) return null;
     if (unit.container && unit.container.type === "quote" && !unit.container.callout) {
       const quote = unit.container;
-      const lineStart = lineStartOf(source, S(unit, quote.lines[0].start));
+      const lineStart = lineStartOf(source, bStart(quote));
       const prefix = (QUOTE_PREFIX.exec(source.slice(lineStart, lineEndOf(source, lineStart))) || ["> "])[0];
       const insert = prefix + marker + eol;
       return { from: lineStart, to: lineStart, insert, select: caretAt(selection.head + insert.length), kind: "format", label: "Callout" };
@@ -2671,15 +3277,16 @@
     if (!quote || quote.type !== "quote") return null;
     const source = model.source;
     const eol = model.eol;
-    const from = S(unit, quote.lines[0].start);
-    const to = S(unit, quote.lines[quote.lines.length - 1].end);
+    const from = bStart(quote);
+    const to = bEnd(quote);
+    const quoteLines = nodeLines(model, quote, parsedLineStart(source, from), lineAfter(source, to));
     const first = quote.callout ? 1 : 0;
     const lines = [];
-    for (let index = first; index < quote.inner.length; index += 1) {
-      const view = quote.inner[index];
-      let text = source.slice(S(unit, view.start), S(unit, view.end));
+    for (let index = first; index < quoteLines.length; index += 1) {
+      const view = insideQuote(quoteLines[index]);
+      let text = source.slice(view.start, view.end);
       if (lines.length > 0) {
-        const lineStart = S(unit, quote.lines[index].start);
+        const lineStart = quoteLines[index].start;
         text = source.slice(lineStartOf(source, lineStart), lineStart) + text;
       }
       lines.push(text);
@@ -2710,18 +3317,17 @@
     const source = model.source;
     const eol = model.eol;
     const item = target.item;
-    const shift = target.top.shift;
-    const contentLineStart = item.view.start + shift;
+    const contentLineStart = atNode(item, item.view.start);
     const prefix = quotePrefixOfLine(source, contentLineStart);
-    const indent = source.slice(contentLineStart, item.markerStart + shift);
+    const indent = source.slice(contentLineStart, atNode(item, item.markerStart));
     if (above) {
       const at = lineStartOf(source, contentLineStart);
       const insert = prefix + indent + item.marker + " " + (item.task ? "[ ] " : "") + eol;
       return { from: at, to: at, insert, select: caretAt(at + insert.length - eol.length) };
     }
-    const at = itemSubtreeEnd(target.list, item) + shift;
+    const end = itemSubtreeEnd(item);
     const insert = eol + prefix + indent + nextMarker(item);
-    return { from: at, to: at, insert, select: caretAt(at + insert.length) };
+    return { from: end, to: end, insert, select: caretAt(end + insert.length) };
   }
 
   /// Sets a callout's kind: `[!NOTE]` becomes `[!TIP]` and so on.
@@ -2729,8 +3335,8 @@
     const callout = unit && calloutOf(unit);
     if (!callout) return null;
     const marker = callout.callout.marker;
-    const from = S(unit, marker.start);
-    const to = S(unit, marker.end);
+    const from = atNode(callout, marker.start);
+    const to = atNode(callout, marker.end);
     const insert = `[!${kind.toUpperCase()}]`;
     return { from, to, insert, select: null, kind: "format", label: "Callout" };
   }
@@ -2899,6 +3505,7 @@
   const Core = {
     createModel,
     applyPatch,
+    redrawStaleBlocks,
     unitAt,
     unitStart,
     unitEnd,
@@ -2934,6 +3541,10 @@
     bStart,
     bEnd,
     bLine,
+    nodeShift,
+    nodeLineShift,
+    childNodes,
+    itemSubtreeEnd,
     lineStartOf,
     lineEndOf,
     handleTargetOf,
@@ -3115,10 +3726,11 @@
 
   function fullRender() {
     Flow.forget();
+    redrawStaleBlocks(model);
     root.innerHTML = model.blocks.map((block) => block.html).join("");
     const children = Array.from(root.children);
     model.blocks.forEach((block, index) => {
-      block.el = children[index];
+      bindElements(block, children[index]);
       bindUnits(block);
     });
     footnotesElement = null;
@@ -3137,9 +3749,34 @@
     }
   }
 
+  /// Gives a node and every node under it its element: each block in a quote or toggle, each list
+  /// and item renders as one element, in order, so an edit inside replaces only its own.
+  function bindElements(node, element) {
+    node.el = element || null;
+    if (!element) return;
+    const kids = childNodes(node);
+    if (kids.length === 0) return;
+    const elements = childElements(node);
+    for (let index = 0; index < kids.length; index += 1) bindElements(kids[index], elements[index]);
+  }
+
+  /// The elements of a node's children: in a toggle's body, a quote (after a callout's title), a
+  /// list, or after an item's text (and a to-do's box).
+  function childElements(node) {
+    const element = node.el;
+    if (node.type === "toggle") return element.lastElementChild ? element.lastElementChild.children : [];
+    if (node.type === "quote") return node.callout ? Array.prototype.slice.call(element.children, 1) : element.children;
+    if (node.type === "list") return element.children;
+    return Array.prototype.slice.call(element.children, node.task ? 2 : 1);
+  }
+
   function applyUpdate(update) {
     if (update.full) {
       fullRender();
+      return;
+    }
+    if (update.container) {
+      applyUpdateInside(update);
       return;
     }
     const { index, removed, inserted } = update;
@@ -3148,9 +3785,7 @@
       const template = document.createElement("template");
       template.innerHTML = inserted.map((block) => block.html).join("");
       const elements = Array.from(template.content.children);
-      inserted.forEach((block, position) => {
-        block.el = elements[position];
-      });
+      inserted.forEach((block, position) => bindElements(block, elements[position]));
       const next = model.blocks[index + inserted.length];
       root.insertBefore(template.content, next?.el || footnotesElement || null);
       inserted.forEach(bindUnits);
@@ -3161,15 +3796,55 @@
     markEmptyDocument();
   }
 
+  /// An edit re-parsed inside a toggle, quote or list: only the blocks or items it replaced change
+  /// on the page. A heading in there is not in a table of contents, which lists the top level's.
+  function applyUpdateInside(update) {
+    const { container, index, removed, inserted } = update;
+    const kids = childNodes(container);
+    const next = kids[index + inserted.length];
+    const host = container.type === "toggle" ? container.el && container.el.lastElementChild : container.el;
+    if (!host || (next && !next.el) || removed.some((node) => !node.el)) {
+      fullRender();
+      return;
+    }
+    const template = document.createElement("template");
+    template.innerHTML = inserted.map((node) => node.html).join("");
+    const elements = Array.from(template.content.children);
+    // An item replaced by an item keeps its <li>: a new one would have WebKit number and lay out
+    // every item after it again, which in a long list costs far more than the edit.
+    const kept = container.type === "list" ? Math.min(removed.length, inserted.length) : 0;
+    for (let position = 0; position < kept; position += 1) {
+      const element = removed[position].el;
+      const replacement = elements[position];
+      for (const attribute of Array.from(element.attributes)) {
+        if (!replacement.hasAttribute(attribute.name)) element.removeAttribute(attribute.name);
+      }
+      for (const attribute of Array.from(replacement.attributes)) element.setAttribute(attribute.name, attribute.value);
+      element.replaceChildren(...replacement.childNodes);
+      replacement.remove();
+      bindElements(inserted[position], element);
+    }
+    for (let position = kept; position < removed.length; position += 1) removed[position].el?.remove();
+    for (let position = kept; position < inserted.length; position += 1) bindElements(inserted[position], elements[position]);
+    host.insertBefore(template.content, next ? next.el : null);
+    inserted.forEach(bindUnits);
+    if (container.type === "list") host.classList.toggle("contains-task-list", container.items.some((item) => item.task));
+    Handles.hide();
+    if (removed.some(holdsFootnotes) || inserted.some(holdsFootnotes)) refreshFootnotes();
+    markEmptyDocument();
+  }
+
   function changesContents(block) {
     return block.type === "heading" || block.type === "toc";
   }
 
   /// Only an edit to a block with a footnote reference, or to a footnote's definition, can change
-  /// the numbers or the notes under the document.
+  /// the numbers or the notes under the document. A block an edit inside re-rendered in parts, or
+  /// one rendered as part of its container, is asked its element.
   function holdsFootnotes(block) {
     if (block.type === "definition") return Boolean(block.definition && block.definition.kind === "footnote");
-    return typeof block.html === "string" && block.html.includes("footnote-ref");
+    if (typeof block.html === "string") return block.html.includes("footnote-ref");
+    return Boolean(block.el && block.el.querySelector("sup.footnote-ref"));
   }
 
   /// A table of contents lists the headings as they are now; after a heading changes it is drawn

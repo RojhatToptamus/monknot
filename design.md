@@ -1105,7 +1105,8 @@ assistance on, Preview offers its own completion instead; Source never shows the
 |---|---|---|
 | Keystroke, 50 KB note, handler | p95 ≤ 4 ms | ≤ 1 ms |
 | Keystroke, 1 MB document, including layout | p95 ≤ 16 ms (one frame) | median 5–8 ms, p95 8–9 ms (most of it WebKit laying out the caret) |
-| Source re-parsed per keystroke | the edited blocks only | resynchronises at the next unchanged top-level block: an edit inside a toggle, list or quote re-renders that block; a changed link reference renders the document again |
+| Keystroke in a 5,000-paragraph toggle, a 5,000-item list or a long quote, including layout | what a keystroke in a plain paragraph costs | median 1–2 ms, p95 ≤ 2 ms, as in a plain paragraph of the same note; about 0.2 ms re-parsing and under 0.4 ms redrawing (28 ms before, re-rendering the whole container) |
+| Source re-parsed per keystroke | the edited blocks only | resynchronises at the next unchanged block, at the top level or inside the toggle body, quote or list holding the edit; only the blocks or items it changed are drawn again. A change that moves where the container ends (a `</details>`, a line losing its `>`, a list's first marker) re-parses the container; a changed link reference renders the document again |
 | Render of a 1 MB document | within 10 % of the read-only preview | ~100 ms in JavaScriptCore |
 | Opening a 1 MB document editable | ≤ 1 s | 0.6–0.9 s |
 

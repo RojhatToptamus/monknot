@@ -668,6 +668,282 @@ final class MarkdownVisualEditorTests: WorkspaceStoreTestCase {
         XCTAssertEqual(numbers, "1,2,3|fn-n150", "The new first reference is note 1 and the notes follow it")
     }
 
+    /// A toggle holding 5,000 paragraphs: a keystroke in its body re-parses and redraws the paragraph
+    /// it is in, as in a paragraph outside any toggle, instead of the whole toggle.
+    func testKeystrokeCostInALongToggle() async throws {
+        let paragraph = "Paragraph with **bold** text and a [link](https://example.com).\n\n"
+        var markdown = "# Notes\n\n<details open>\n<summary>Archive</summary>\n\n"
+        for index in 1...5000 { markdown += "Number \(index): \(paragraph)" }
+        markdown += "</details>\n\nA plain paragraph after the toggle.\n"
+        let fixture = try await makeFixture(markdown: markdown, timeout: 30)
+        let source = markdown as NSString
+
+        try await fixture.setSelection(source.range(of: "Number 2500: ").location + 3)
+        let inside = try await measureKeystrokes(fixture)
+        try await fixture.setSelection(source.range(of: "A plain paragraph").location + 2)
+        let plain = try await measureKeystrokes(fixture)
+        print("Long toggle: keystroke in the toggle median \(inside.median) ms, p95 \(inside.p95) ms (patch \(inside.patch), dom \(inside.dom)); in a plain paragraph median \(plain.median) ms, p95 \(plain.p95) ms")
+        XCTAssertLessThan(inside.p95, 8, "A keystroke in a long toggle costs what it does in a short note")
+        XCTAssertLessThan(inside.median, plain.median * 3 + 0.5, "A keystroke in the toggle costs about what one in a plain paragraph does")
+        let stored = await waitUntil(timeout: 10) { fixture.store.documentText.count == markdown.count + 80 }
+        XCTAssertTrue(stored, "Every keystroke reached the store")
+    }
+
+    /// A list of 5,000 items and a quote of 2,000 lines: a keystroke in an item or a quoted line
+    /// re-parses only the items or blocks around it.
+    func testKeystrokeCostInALongListAndALongQuote() async throws {
+        var markdown = "# Notes\n\n"
+        for index in 1...5000 {
+            markdown += "- Item \(index) with **bold** text\n"
+            if index % 10 == 0 { markdown += "  - A nested item under \(index)\n" }
+        }
+        markdown += "\n"
+        for index in 1...2000 { markdown += "> Quoted line \(index) with *emphasis*.\n>\n" }
+        markdown += "\nA plain paragraph after the quote.\n"
+        let fixture = try await makeFixture(markdown: markdown, timeout: 30)
+        let source = markdown as NSString
+
+        try await fixture.setSelection(source.range(of: "Item 2500 ").location + 3)
+        let item = try await measureKeystrokes(fixture)
+        try await fixture.setSelection(source.range(of: "A nested item under 3000").location + 3)
+        let nested = try await measureKeystrokes(fixture)
+        try await fixture.setSelection(source.range(of: "Quoted line 1000 ").location + 3)
+        let quote = try await measureKeystrokes(fixture)
+        try await fixture.setSelection(source.range(of: "A plain paragraph").location + 2)
+        let plain = try await measureKeystrokes(fixture)
+        print("Long list: item median \(item.median) ms, p95 \(item.p95) ms (patch \(item.patch), dom \(item.dom), selection \(item.selection)); nested item median \(nested.median) ms, p95 \(nested.p95) ms; long quote median \(quote.median) ms, p95 \(quote.p95) ms; plain paragraph median \(plain.median) ms, p95 \(plain.p95) ms")
+        for (name, timing) in [("an item", item), ("a nested item", nested), ("a quote", quote)] {
+            XCTAssertLessThan(timing.p95, 8, "A keystroke in \(name) of a long container costs what it does in a short note")
+            XCTAssertLessThan(timing.median, plain.median * 3 + 0.5, "A keystroke in \(name) costs about what one in a plain paragraph does")
+        }
+        let stored = await waitUntil(timeout: 10) { fixture.store.documentText.count == markdown.count + 160 }
+        XCTAssertTrue(stored, "Every keystroke reached the store")
+    }
+
+    /// Typing inside a toggle, list item or quote replaces only the element of the text it changed:
+    /// the container, the blocks and items beside it, and the item's own <li> stay the same elements.
+    func testAnEditInsideAContainerReplacesOnlyWhatItChanged() async throws {
+        let markdown = """
+        <details open>
+        <summary>Toggle</summary>
+
+        First in the toggle.
+
+        Second in the toggle.
+
+        - Listed in the toggle
+        - Also listed
+
+        Third in the toggle.
+
+        </details>
+
+        - One
+        - Two
+          - Under two
+        - Three
+
+        > Quoted first.
+        >
+        > Quoted second.
+
+        """
+        let fixture = try await makeFixture(markdown: markdown)
+        _ = try await fixture.evaluate("""
+        (() => {
+          window.__tagged = [...document.querySelectorAll('#content [data-mk-u], #content p, #content li, #content ul, #content blockquote, #content .mk-toggle')];
+          window.__tagged.forEach((element, index) => { element.__mkTag = index; });
+          return true;
+        })()
+        """)
+        for needle in ["Second in the toggle", "Also listed", "Under two", "Quoted second"] {
+            let current = fixture.store.documentText as NSString
+            try await fixture.setSelection(current.range(of: needle).location + 3)
+            fixture.type("x")
+            let replaced = try await fixture.evaluate("""
+            (() => {
+              const replaced = window.__tagged.filter((element) => !element.isConnected).map((element) => element.textContent.trim());
+              window.__tagged = window.__tagged.filter((element) => element.isConnected);
+              return replaced;
+            })()
+            """) as? [String]
+            // The item under "Two" goes alone: "Two" and its list stay.
+            XCTAssertEqual(replaced?.count, 1, "Typing in \(needle) replaced only its own element: \(replaced ?? [])")
+            XCTAssertTrue(replaced?.first?.hasPrefix(needle) == true, "Typing in \(needle) replaced only its own element: \(replaced ?? [])")
+        }
+        let edited = await waitUntil { fixture.store.documentText.contains("Quoxted second") }
+        XCTAssertTrue(edited, "Every keystroke reached the store")
+        for changed in ["Secxond in the toggle.", "Alsxo listed", "Undxer two"] {
+            XCTAssertTrue(fixture.store.documentText.contains(changed), "The store has \(changed)")
+        }
+    }
+
+    /// Random typing, returns and deletions inside toggles, lists, quotes and callouts: after each
+    /// one the page is what a fresh render of the new Markdown draws.
+    func testEditsInsideContainersLeaveThePageAsAFreshRenderDrawsIt() async throws {
+        let markdown = """
+        # Title
+
+        <details open>
+        <summary>Toggle</summary>
+
+        A paragraph in the toggle with **bold**.
+
+        - An item
+        - [ ] A task
+          - Nested under the task
+
+        > A quote in the toggle.
+
+        </details>
+
+        - Top item one
+        - Top item two
+          wrapped onto a second line
+          1. Numbered under two
+          2. Numbered again
+        - Top item three
+
+        > [!NOTE]
+        > A callout's text.
+        >
+        > - A list in the callout
+
+        > A plain quote,
+        > on two lines.
+        >
+        > <details>
+        > <summary>Nested toggle</summary>
+        >
+        > Inside the nested toggle.
+        >
+        > </details>
+
+        Closing paragraph.
+
+        """
+        let fixture = try await makeFixture(markdown: markdown)
+        let result = try await fixture.evaluate(Self.containerEditFuzz) as? String
+        XCTAssertEqual(result, "ok")
+        let synced = await waitUntil(timeout: 10) {
+            ((try? await fixture.evaluate("window.MonknotEditor.source()")) as? String) == fixture.store.documentText
+        }
+        XCTAssertTrue(synced, "The store has every edit the page made")
+    }
+
+    private struct KeystrokeTiming {
+        let median: Double
+        let p95: Double
+        let patch: Double
+        let dom: Double
+        let selection: Double
+    }
+
+    /// 40 typed characters at the caret, each timed from `beforeinput` to the page drawn.
+    private func measureKeystrokes(_ fixture: Fixture) async throws -> KeystrokeTiming {
+        let timing = try await fixture.evaluate("""
+        (() => {
+          const root = document.getElementById('content');
+          window.MonknotEditor.profile = [];
+          const times = [];
+          for (let i = 0; i < 40; i += 1) {
+            const start = performance.now();
+            root.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: 'x', bubbles: true, cancelable: true }));
+            times.push(performance.now() - start);
+          }
+          times.sort((a, b) => a - b);
+          const profile = window.MonknotEditor.profile;
+          window.MonknotEditor.profile = null;
+          const mean = (key) => profile.reduce((total, entry) => total + entry[key], 0) / Math.max(1, profile.length);
+          return { median: times[20], p95: times[37], patch: mean('patch'), dom: mean('dom'), selection: mean('selection') };
+        })()
+        """) as? [String: Any]
+        let round = { (value: Double) in (value * 1000).rounded() / 1000 }
+        return KeystrokeTiming(
+            median: round(try XCTUnwrap(timing?["median"] as? Double)),
+            p95: round(try XCTUnwrap(timing?["p95"] as? Double)),
+            patch: round(timing?["patch"] as? Double ?? 0),
+            dom: round(timing?["dom"] as? Double ?? 0),
+            selection: round(timing?["selection"] as? Double ?? 0)
+        )
+    }
+
+    /// Edits at random places, through the page's own input handling; after each the page's markup,
+    /// read as a tree of elements, must be a fresh render's, aside from unit ids, line numbers,
+    /// toggles' open state and the page's own marks (the current line, an empty document).
+    private static let containerEditFuzz = #"""
+    (() => {
+      const root = document.getElementById('content');
+      const E = window.MonknotEditorCore;
+      let seed = 4242;
+      const random = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+      const canonical = (container) => {
+        const ids = new Map();
+        const out = [];
+        const walk = (node) => {
+          if (node.nodeType === 3) {
+            if (node.nodeValue.trim()) out.push(JSON.stringify(node.nodeValue));
+            return;
+          }
+          if (node.nodeType !== 1) return;
+          if (node.classList.contains("footnotes")) return;
+          const attributes = [];
+          for (const attribute of [...node.attributes].sort((a, b) => a.name.localeCompare(b.name))) {
+            const name = attribute.name;
+            if (name === "data-source-line" || name === "data-open" || name === "aria-expanded" || name === "contenteditable" && node === root) continue;
+            if (name === "aria-label" && /^(Collapse|Expand)$/.test(attribute.value)) continue;
+            let value = attribute.value;
+            if (name === "data-mk-u") {
+              if (!ids.has(value)) ids.set(value, ids.size);
+              value = String(ids.get(value));
+            }
+            if (name === "class") value = value.split(/\s+/).filter((name) => name && !/^mk-(current|only|block-moved)$/.test(name)).join(" ");
+            if (name === "class" && !value) continue;
+            attributes.push(name + "=" + value);
+          }
+          out.push("<" + node.tagName + " " + attributes.join(" ") + ">");
+          for (const child of node.childNodes) walk(child);
+          out.push("</" + node.tagName + ">");
+        };
+        for (const child of container.childNodes) walk(child);
+        return out.join("");
+      };
+      const fresh = (source) => {
+        const template = document.createElement("template");
+        template.innerHTML = E.createModel(source).blocks.map((block) => block.html).join("");
+        return canonical(template.content);
+      };
+      const typed = ["x", "x", "ab", " ", "*", "-", ">", "`"];
+      let inside = 0;
+      const steps = 600;
+      for (let step = 0; step < steps; step += 1) {
+        const source = window.MonknotEditor.source();
+        const position = Math.floor(random() * (source.length + 1));
+        window.MonknotEditor.setSelection(position, position);
+        const caret = window.getSelection().anchorNode;
+        const element = caret && (caret.nodeType === 1 ? caret : caret.parentElement);
+        if (element && element.closest("#content li, #content blockquote, #content .callout, #content .mk-toggle-body")) inside += 1;
+        const roll = random();
+        let event;
+        if (roll < 0.6) event = new InputEvent("beforeinput", { inputType: "insertText", data: typed[Math.floor(random() * typed.length)], bubbles: true, cancelable: true });
+        else if (roll < 0.75) event = new InputEvent("beforeinput", { inputType: "insertParagraph", bubbles: true, cancelable: true });
+        else event = new InputEvent("beforeinput", { inputType: "deleteContentBackward", bubbles: true, cancelable: true });
+        root.dispatchEvent(event);
+        const after = window.MonknotEditor.source();
+        const page = canonical(root);
+        const expected = fresh(after);
+        if (page !== expected) {
+          let index = 0;
+          while (index < page.length && page[index] === expected[index]) index += 1;
+          return "step " + step + " (" + event.inputType + " at " + position + ") in " + JSON.stringify(after) + ": page " + page.slice(Math.max(0, index - 120), index + 160) + " | fresh " + expected.slice(Math.max(0, index - 120), index + 160);
+        }
+        const ids = [...root.querySelectorAll("[data-mk-u]")].map((element) => element.getAttribute("data-mk-u"));
+        if (new Set(ids).size !== ids.length) return "step " + step + ": a unit id is on the page twice";
+      }
+      return inside > steps / 3 ? "ok" : "only " + inside + " of " + steps + " edits were inside a container";
+    })()
+    """#
+
     // MARK: - Clicks below the text
 
     /// A click below the last block is no edit: the file stays clean and there is nothing to undo.

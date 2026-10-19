@@ -119,9 +119,11 @@
     if (!line || !next) return false;
     if (!/\|/.test(line.text)) return false;
     // GitHub's rule: any run of hyphens, with optional colons, and as many cells as the header.
-    const delimiter = splitTableRow(next.text);
-    return delimiter.length === splitTableRow(line.text).length
-      && delimiter.every((cell) => /^:?-+:?$/.test(cell.trim()));
+    return isTableDelimiter(next.text) && splitTableRow(next.text).length === splitTableRow(line.text).length;
+  }
+
+  function isTableDelimiter(text) {
+    return splitTableRow(text).every((cell) => /^:?-+:?$/.test(cell.trim()));
   }
 
   function definitionOf(text) {
@@ -394,15 +396,23 @@
     return width;
   }
 
-  function parseList(reader, start, context) {
+  /// `resume` continues a list the editor re-parses from one of its items: the list's indent and
+  /// kind, and `stop`, asked at each line before it is read, to end the list where the old parse
+  /// of the same line can be kept.
+  function parseList(reader, start, context, resume) {
     const firstMatch = RE_ITEM.exec(reader.at(start).text);
-    const baseIndent = indentWidth(firstMatch[1]);
-    const ordered = /\d/.test(firstMatch[2]);
+    const baseIndent = resume ? resume.baseIndent : indentWidth(firstMatch[1]);
+    const ordered = resume ? resume.ordered : /\d/.test(firstMatch[2]);
     const items = [];
     let index = start;
+    let stopped = false;
 
     while (reader.at(index)) {
       const view = reader.at(index);
+      if (resume && items.length > 0 && resume.stop(view)) {
+        stopped = true;
+        break;
+      }
       const match = RE_ITEM.exec(view.text);
       if (!match) break;
       const indent = indentWidth(match[1]);
@@ -468,7 +478,8 @@
         end,
         line: reader.at(start).line
       },
-      next: index
+      next: index,
+      stopped
     };
   }
 
@@ -1299,31 +1310,34 @@
     const hasTasks = list.items.some((item) => item.task);
     const listClass = hasTasks ? ` class="contains-task-list"` : "";
     const startAttr = list.ordered && list.startNumber !== 1 && Number.isFinite(list.startNumber) ? ` start="${list.startNumber}"` : "";
-    const items = list.items.map((item) => {
-      const line = item.view.line;
-      const region = paragraphRegion(item.lines);
-      const unit = makeUnit(render, "inline", { block: list, container, region, role: "item", item, list });
-      let content;
-      if (unit) {
-        const empty = region.j.length === 0;
-        const placeholder = item.task ? "To-do" : "List";
-        const attributes = `${unitAttributes(unit)} class="mk-item-text"${empty ? ` data-mk-empty data-placeholder="${placeholder}"` : ""}`;
-        content = `<span${attributes}>${empty ? "<br data-mk-filler>" : renderInline(region.j, render)}</span>`;
-      } else {
-        content = renderInline(region.j, render);
-      }
-      let className = "";
-      if (item.task) {
-        className = ` class="task-list-item"`;
-        const checked = item.task.checked ? " checked" : "";
-        const extra = render.editing ? ` contenteditable="false" data-mk-skip tabindex="-1"` : "";
-        const wrapped = render.editing ? content : `<span>${content}</span>`;
-        content = `<input type="checkbox" data-monknot-task data-source-line="${line + 1}" data-task-checked="${item.task.checked}" aria-label="Toggle task"${checked}${extra}>${wrapped}`;
-      }
-      const nested = item.children.map((child) => renderList(child, render, container)).join("");
-      return `<li data-source-line="${line + 1}"${className}>${content}${nested}</li>`;
-    }).join("");
+    const items = list.items.map((item) => renderListItem(item, list, render, container)).join("");
     return `${openTag(tag, list.line, `${listClass}${startAttr}`)}${items}</${tag}>`;
+  }
+
+  /// One `<li>`, with the lists nested under it; the editor renders items it re-parsed this way.
+  function renderListItem(item, list, render, container) {
+    const line = item.view.line;
+    const region = paragraphRegion(item.lines);
+    const unit = makeUnit(render, "inline", { block: list, container, region, role: "item", item, list });
+    let content;
+    if (unit) {
+      const empty = region.j.length === 0;
+      const placeholder = item.task ? "To-do" : "List";
+      const attributes = `${unitAttributes(unit)} class="mk-item-text"${empty ? ` data-mk-empty data-placeholder="${placeholder}"` : ""}`;
+      content = `<span${attributes}>${empty ? "<br data-mk-filler>" : renderInline(region.j, render)}</span>`;
+    } else {
+      content = renderInline(region.j, render);
+    }
+    let className = "";
+    if (item.task) {
+      className = ` class="task-list-item"`;
+      const checked = item.task.checked ? " checked" : "";
+      const extra = render.editing ? ` contenteditable="false" data-mk-skip tabindex="-1"` : "";
+      const wrapped = render.editing ? content : `<span>${content}</span>`;
+      content = `<input type="checkbox" data-monknot-task data-source-line="${line + 1}" data-task-checked="${item.task.checked}" aria-label="Toggle task"${checked}${extra}>${wrapped}`;
+    }
+    const nested = item.children.map((child) => renderList(child, render, container)).join("");
+    return `<li data-source-line="${line + 1}"${className}>${content}${nested}</li>`;
   }
 
   function renderToggle(block, render, container) {
@@ -1555,8 +1569,10 @@
   const MonknotMarkdown = {
     parseDocument,
     parseBlockList,
+    parseList,
     streamReader,
     renderBlock,
+    renderListItem,
     renderFootnotes,
     parseInline,
     collectDefinitions,
@@ -1565,8 +1581,20 @@
     regionMap,
     renderMarkdown,
     isBlank,
+    isTableStart,
+    isTableDelimiter,
     tableRow,
-    slug
+    slug,
+    // The line patterns that decide where a quote, toggle or list ends, for the editor's re-parse.
+    patterns: {
+      quote: RE_QUOTE,
+      callout: RE_CALLOUT,
+      thematic: RE_THEMATIC,
+      item: RE_ITEM,
+      fenceMarker: RE_FENCE_MARKER,
+      detailsOpen: RE_DETAILS_OPEN,
+      detailsClose: RE_DETAILS_CLOSE
+    }
   };
   window.MonknotMarkdown = MonknotMarkdown;
 
@@ -1594,7 +1622,8 @@
   let heldScrollTop = -1;
   // Every [data-source-line] element of the read-only page, in document order; rebuilt after a render.
   let lineElements = null;
-  // An edit that replaces the block holding the anchor records a new one (editor.js swaps whole blocks).
+  // An edit that replaces the block holding the anchor records a new one (editor.js swaps the
+  // elements of the blocks and list items an edit changed).
   const blockObserver = typeof MutationObserver === "function"
     ? new MutationObserver(() => {
       if (readingAnchor && readingAnchor.node && !readingAnchor.node.isConnected) scheduleReadingAnchor();

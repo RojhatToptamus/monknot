@@ -189,11 +189,20 @@ Shorter and more specific is preferable to polished but meaningless copy.
 - The Markdown source is the only document. `editor.js` renders it with `renderer.js` and turns every
   edit on the page into one patch `{from, to, inserted}` on the source; it never converts HTML back to
   Markdown. Unrendered Markdown therefore survives byte for byte.
-- Each top-level block and each editable unit (paragraph, heading, item text, table cell, code block,
-  raw block, empty line) maps visible text offsets to source offsets. After a patch only the affected
-  blocks are re-parsed (resynchronising at the next unchanged block) and replaced in the page; an edit
-  inside a top-level toggle, list or quote re-renders that whole block, a footnote's text is updated in
-  place, and only a changed link reference or footnote key renders the whole document again.
+- Each editable unit (paragraph, heading, item text, table cell, code block, raw block, empty line)
+  maps visible text offsets to source offsets. Every node (a block at any depth, or a list item) keeps
+  the offsets it was parsed at plus a `shift` relative to its `parent`, so an edit moves what follows
+  it by changing a few numbers; read a node's offsets with `atNode`/`bStart`/`bEnd`, and a unit's own
+  with `S`. A unit's `top` is its top-level block (handles, `blockIndex`, list targets).
+- After a patch only the affected blocks are re-parsed, resynchronising at the next unchanged block:
+  at the top level, or inside the toggle body, quote or list holding the changed lines
+  (`applyInside`), so typing in a 5,000-paragraph toggle costs what a plain paragraph does. A change
+  that would move where that container ends (a fence or `<details>` line in a toggle, a line losing
+  its `>`, a list's first marker) re-parses at the level above. The page replaces only the changed
+  blocks' or items' elements; an item keeps its `<li>`, since a new one makes WebKit renumber every
+  item after it. A container's own line lists (`body`, `lines`, `inner`) go stale after edits inside
+  it, so they are read from the source (`nodeLines`). A footnote's text is updated in place, and only
+  a changed link reference or footnote key renders the whole document again.
 - The page is the single writer while Preview is editable. It posts each patch with a version number
   to `MarkdownPreviewView.Coordinator` (`monknotEditor` message), which mirrors the page's text,
   moves local edits past app patches the page has not applied yet, applies the patch through

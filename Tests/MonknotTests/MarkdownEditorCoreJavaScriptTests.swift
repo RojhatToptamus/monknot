@@ -89,28 +89,233 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
       const random = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
       const pick = (list) => list[Math.floor(random() * list.length)];
       const snippets = ["<details>\n<summary>T</summary>\n\nbody [^n]\n\n</details>", "> [!NOTE]", "> [!TIP]", "<details>", "<details open>", "<summary>Title</summary>", "<summary></summary>", "</details>", "[TOC]", "![v](a.mp4)", "# Title", "## Sub", "para text", "more *em* and **bold**", "- item", "- [ ] task", "1. one", "  - nested", "> quote", "> > deep", "```js", "```", "code line", "| a | b |", "| --- | --- |", "| 1 | 2 |", "---", "[ref]: http://x", "[^n]: note", "see [^n] and [l][ref]", "", "", "text with [link](u) end", "~~del~~", "`code`", "line  ", "next"];
-      const describe = (model) => model.blocks.map((b) => [b.type, E.bStart(b), E.bEnd(b), E.bLine(b)].join("|")).join("\n")
-        + "\n--\n" + E.allUnits(model).map((u) => [u.kind, u.role, u.region.j, E.unitStart(u), E.unitEnd(u)].join("|")).join("\n")
-        + "\n--\n" + JSON.stringify([[...model.doc.footnotes], [...model.doc.references], model.doc.footnoteOrder]);
+      // Every node at every depth and every unit, with each offset where it is now: an edit inside a
+      // container moves the nodes after it by their own shifts, so those have to add up.
+      const describe = (model) => {
+        const out = [];
+        const where = (node, offset) => offset + E.nodeShift(node);
+        const walk = (node, depth) => {
+          if (!node.type) {
+            out.push([depth, "item", where(node, node.view.start), where(node, node.markerStart), where(node, node.contentStart), where(node, node.end), E.itemSubtreeEnd(node), node.view.line + E.nodeLineShift(node), node.task ? node.task.checked : "-"].join("|"));
+          } else {
+            // An empty line with no line of its own (in an empty toggle or callout) has no line number.
+            const fields = [depth, node.type, E.bStart(node), E.bEnd(node), node.type === "empty" && !node.view ? "-" : E.bLine(node)];
+            if (node.type === "toggle") fields.push(node.open, where(node, node.summaryStart), where(node, node.summaryEnd), where(node, node.summaryView.end), node.close ? [where(node, node.close.start), where(node, node.close.end), node.close.line + E.nodeLineShift(node)].join(",") : "-");
+            if (node.type === "quote") fields.push(node.callout ? node.callout.kind : "-");
+            if (node.type === "list") fields.push(node.ordered, node.startNumber);
+            if (node.type === "empty") fields.push(node.position, node.needsSeparatorBefore, node.needsSeparatorAfter, where(node, node.anchor), Boolean(node.virtual));
+            if (node.type === "heading") fields.push(where(node, node.contentStart), where(node, node.contentEnd));
+            out.push(fields.join("|"));
+          }
+          for (const child of E.childNodes(node)) {
+            if (child.parent !== node) out.push("parent differs");
+            walk(child, depth + 1);
+          }
+        };
+        model.blocks.forEach((block) => {
+          if (block.parent) out.push("top-level parent");
+          walk(block, 0);
+        });
+        out.push("--");
+        const tops = new Map(model.blocks.map((block, index) => [block, index]));
+        for (const unit of E.allUnits(model)) {
+          const length = unit.region.j.length;
+          const map = [0, 1, length >> 1, length - 1, length].filter((j) => j >= 0 && j <= length).map((j) => E.rawOf(unit, j));
+          const container = unit.container ? unit.container.type + "@" + E.bStart(unit.container) : "-";
+          const scope = unit.scope ? E.bStart(unit.scope) : "-";
+          out.push([unit.kind, unit.role, unit.region.j, map.join(","), tops.get(unit.top), container, scope].join("|"));
+        }
+        out.push("--", JSON.stringify([[...model.doc.footnotes], [...model.doc.references], model.doc.footnoteOrder]));
+        return out.join("\n");
+      };
+      const unitAtByScan = (model, raw, side) => {
+        const blocks = model.blocks;
+        if (blocks.length === 0) return null;
+        const firstFrom = (index) => {
+          for (let position = Math.max(0, index); position < blocks.length; position += 1) if (blocks[position].units.length) return blocks[position].units[0];
+          return null;
+        };
+        const lastUpTo = (index) => {
+          for (let position = Math.min(index, blocks.length - 1); position >= 0; position -= 1) {
+            const list = blocks[position].units;
+            if (list.length) return list[list.length - 1];
+          }
+          return null;
+        };
+        let index = -1;
+        blocks.forEach((block, position) => { if (E.bStart(block) <= raw) index = position; });
+        if (index < 0) return firstFrom(0);
+        const block = blocks[index];
+        if (raw > E.bEnd(block)) return side === "left" ? lastUpTo(index) || firstFrom(index + 1) : firstFrom(index + 1) || lastUpTo(index);
+        if (block.units.length === 0) return side === "left" ? lastUpTo(index - 1) || firstFrom(index + 1) : firstFrom(index + 1) || lastUpTo(index - 1);
+        let before = null;
+        let after = null;
+        const inside = [];
+        for (const unit of block.units) {
+          const start = E.unitStart(unit);
+          const end = E.unitEnd(unit);
+          if (start <= raw && raw <= end) inside.push(unit);
+          else if (end < raw) before = unit;
+          else if (!after && start > raw) after = unit;
+        }
+        if (inside.length === 1) return inside[0];
+        if (inside.length > 1) return side === "left" ? inside[0] : inside[inside.length - 1];
+        return side === "left" ? before || after : after || before;
+      };
+      // What every planner makes of a caret or selection at `raw`: an edited model, whose nodes have
+      // shifts of their own, has to plan the same patches as a fresh parse of its text.
+      const plans = (model, raw, to) => {
+        const unit = E.unitAt(model, raw, "left");
+        const caret = { anchor: raw, head: raw, from: raw, to: raw };
+        const range = { anchor: raw, head: to, from: raw, to };
+        const out = [];
+        const add = (name, run) => {
+          let result;
+          try { result = run(); } catch (error) { result = "threw " + error.message; }
+          out.push(name + " " + JSON.stringify(result, (key, value) => {
+            if (typeof value === "function") return "fn";
+            if (value && typeof value === "object" && "region" in value && "kind" in value) return "unit at " + E.unitStart(value);
+            return ["top", "list", "item", "block", "table", "row", "container", "scope", "parent"].includes(key) ? undefined : value;
+          }));
+        };
+        add("unit", () => unit && [unit.kind, unit.role, E.unitStart(unit), E.unitEnd(unit)]);
+        add("type", () => E.planInsertText(model, caret, "x", { typing: true }));
+        add("replace", () => E.planInsertText(model, range, "y"));
+        add("delete", () => E.planDelete(model, raw, to));
+        add("enter", () => E.planEnter(model, caret));
+        add("exit", () => E.planEnter(model, caret, { exitBlock: true }));
+        add("break", () => E.planLineBreak(model, caret));
+        add("indent", () => E.planIndent(model, range, 1));
+        add("outdent", () => E.planIndent(model, range, -1));
+        add("heading", () => E.planBlockType(model, range, "heading2", { toggle: true }));
+        add("todo", () => E.planBlockType(model, range, "todo", { toggle: true }));
+        add("bold", () => E.planInlineStyle(model, range, "strong"));
+        add("toggle", () => E.planWrapToggle(model, caret));
+        add("callout", () => E.planWrapCallout(model, caret));
+        add("markdown", () => E.balancedMarkdown(model, raw, to));
+        if (unit) {
+          add("backspace", () => E.planBackspaceAtStart(model, unit));
+          add("forward", () => E.planDeleteForwardAtEnd(model, unit));
+          add("task", () => E.planToggleTask(model, unit));
+          add("kind", () => E.planCalloutKind(model, unit, "tip"));
+          add("unquote", () => E.planUnwrapQuote(model, unit, caret));
+          for (const action of ["rowBelow", "deleteRow", "columnRight", "deleteColumn"]) add(action, () => E.planTable(model, unit, action));
+          const target = E.handleTargetOf(model, unit);
+          add("target", () => target && [target.kind, target.index]);
+          add("move", () => E.planMoveByStep(model, target, 1, caret));
+          add("moveUp", () => E.planMoveByStep(model, target, -1, caret));
+          add("duplicate", () => E.planDuplicateBlock(model, target));
+          add("remove", () => E.planDeleteBlock(model, target));
+          add("copy", () => E.blockMarkdown(model, target));
+          add("selectBlock", () => E.targetSelection(model, target));
+          add("itemBelow", () => target && target.kind === "item" ? E.insertItemNear(model, target, false) : null);
+          add("itemAbove", () => target && target.kind === "item" ? E.insertItemNear(model, target, true) : null);
+        }
+        return out.join("\n");
+      };
       const toggles = (model) => {
         const list = [];
-        const walk = (block, shift) => {
-          if (block.type === "toggle") list.push({ block, start: block.start + shift });
-          for (const child of block.children || []) walk(child, shift);
+        const walk = (block) => {
+          if (block.type === "toggle") list.push({ block, start: E.bStart(block) });
+          for (const child of block.children || []) walk(child);
         };
-        for (const block of model.blocks) walk(block, block.shift);
+        model.blocks.forEach(walk);
         return list;
       };
-      for (let run = 0; run < 1500; run += 1) {
-        const lines = [];
-        const count = 3 + Math.floor(random() * 20);
-        for (let index = 0; index < count; index += 1) lines.push(pick(snippets));
-        let text = lines.join(random() < 0.15 ? "\r\n" : "\n") + (random() < 0.5 ? "\n" : "");
+      // Documents of nested toggles, quotes, callouts and lists, where most edits land inside a container.
+      const leaf = () => pick(["para text", "more *em* and **bold**", "## Sub", "- item", "- [ ] task", "1. one", "```\ncode\n```", "| a | b |\n| --- | --- |\n| 1 | 2 |", "---", "[TOC]", "text [^n] end", ""]);
+      const inner = (depth) => {
+        const roll = random();
+        if (depth > 2 || roll < 0.35) return leaf();
+        if (roll < 0.5) return "<details" + (random() < 0.5 ? " open" : "") + ">\n<summary>T" + depth + "</summary>\n\n" + body(depth + 1) + "\n\n</details>";
+        if (roll < 0.65) return (random() < 0.4 ? "[!NOTE]\n" : "") + body(depth + 1);
+        if (roll < 0.85) {
+          const items = [];
+          const count = 1 + Math.floor(random() * 6);
+          for (let index = 0; index < count; index += 1) items.push(pick(["- ", "- ", "- [ ] ", "- [x] "]) + "item " + index + (random() < 0.2 ? "\n  wrapped" : "") + (random() < 0.3 ? "\n  - nested " + index + (random() < 0.3 ? "\n    - deeper" : "") : ""));
+          return items.join("\n");
+        }
+        const items = [];
+        const count = 1 + Math.floor(random() * 4);
+        for (let index = 0; index < count; index += 1) items.push((index + 1) + ". step " + index);
+        return items.join("\n");
+      };
+      const quoted = (text) => text.split("\n").map((line) => (line ? "> " + line : ">")).join("\n");
+      const body = (depth) => {
+        const parts = [];
+        const count = 1 + Math.floor(random() * 5);
+        for (let index = 0; index < count; index += 1) {
+          const part = inner(depth);
+          parts.push(random() < 0.25 && depth < 3 ? quoted(part) : part);
+        }
+        return parts.join(random() < 0.8 ? "\n\n" : "\n");
+      };
+      const inserts = ["<details>\n", "<summary>S</summary>\n", "</details>", "> [!NOTE]\n", "[TOC]\n", "x", "x", "x", "ab", " ", "\n", "\n\n", "\n> ", "\n- ", "\n  - ", "# ", "- ", "  ", "**", "`", "```", "> ", "|", "[ ] ", "1. ", "[a](b)", "[^n]"];
+      let steps = 0;
+      let inside = 0;
+      let nested = 0;
+      const check = (run, step, model, text, expectedOpen, unitsBefore, lastId, patch) => {
+        if (model.source !== text) return "source differs at run " + run;
+        const parsed = E.createModel(text);
+        const incremental = describe(model);
+        const full = describe(parsed);
+        if (incremental !== full) {
+          const a = incremental.split("\n");
+          const b = full.split("\n");
+          let line = 0;
+          while (line < a.length && a[line] === b[line]) line += 1;
+          return "run " + run + " step " + step + " differs for " + JSON.stringify(text) + " after " + JSON.stringify(patch) + " at line " + line + ":\n" + a[line] + "\n" + b[line];
+        }
+        for (const toggle of toggles(model)) {
+          if (toggle.block.viewOpen !== expectedOpen.get(toggle.start)) return "run " + run + " step " + step + " toggle at " + toggle.start + " is " + toggle.block.viewOpen + " in " + JSON.stringify(text);
+        }
+        const units = E.allUnits(model);
+        if (model.units.size !== units.length || units.some((unit) => model.units.get(unit.id) !== unit)) return "run " + run + " step " + step + " unit map differs";
+        // Toggles opened or closed on the page plan as they show, and new lines keep the line ending
+        // the document had when it opened.
+        parsed.eol = model.eol;
+        const states = new Map(toggles(model).map((toggle) => [toggle.start, toggle.block.viewOpen]));
+        for (const toggle of toggles(parsed)) toggle.block.viewOpen = states.get(toggle.start);
+        if (run >= 1000) {
+          const raw = Math.floor(random() * (text.length + 1));
+          const to = Math.min(text.length, raw + Math.floor(random() * 8));
+          const edited = plans(model, raw, to);
+          const fresh = plans(parsed, raw, to);
+          if (edited !== fresh) {
+            const a = edited.split("\n");
+            const b = fresh.split("\n");
+            let line = 0;
+            while (line < a.length && a[line] === b[line]) line += 1;
+            return "run " + run + " step " + step + " plans differently at " + raw + "-" + to + " in " + JSON.stringify(text) + ":\n" + a[line] + "\n" + b[line];
+          }
+        }
+        // unitAt searches a block's units by halves; it finds what looking at each of them finds.
+        for (let probe = 0; probe < 2; probe += 1) {
+          const raw = Math.floor(random() * (text.length + 1));
+          for (const side of ["left", "right"]) {
+            if (E.unitAt(model, raw, side) !== unitAtByScan(model, raw, side)) return "run " + run + " step " + step + " unitAt " + raw + " " + side + " differs in " + JSON.stringify(text);
+          }
+        }
+        if (units.some((unit) => !unitsBefore.has(unit) && unit.id <= lastId)) return "run " + run + " step " + step + " reuses a unit id";
+        return null;
+      };
+      for (let run = 0; run < 2000; run += 1) {
+        let text;
+        if (run < 1000) {
+          const lines = [];
+          const count = 3 + Math.floor(random() * 20);
+          for (let index = 0; index < count; index += 1) lines.push(pick(snippets));
+          text = lines.join("\n");
+        } else {
+          text = body(0);
+        }
+        if (random() < 0.15) text = text.replace(/\n/g, "\r\n");
+        if (random() < 0.5) text += random() < 0.15 && text.indexOf("\r") >= 0 ? "\r\n" : "\n";
         const model = E.createModel(text);
         for (let step = 0; step < 6; step += 1) {
           const from = Math.floor(random() * (text.length + 1));
-          const to = Math.min(text.length, from + (random() < 0.5 ? 0 : Math.floor(random() * 12)));
-          const insert = random() < 0.3 ? "" : pick(["<details>\n", "<summary>S</summary>\n", "</details>", "> [!NOTE]\n", "[TOC]\n", "x", "\n", "\n\n", "# ", "- ", "**", "`", "```", "> ", "|", " ", "[a](b)", pick(snippets) + "\n"]);
+          const to = Math.min(text.length, from + (random() < 0.6 ? 0 : Math.floor(random() * 12)));
+          const insert = random() < 0.25 ? "" : run < 1000 ? pick(["<details>\n", "<summary>S</summary>\n", "</details>", "> [!NOTE]\n", "[TOC]\n", "x", "\n", "\n\n", "# ", "- ", "**", "`", "```", "> ", "|", " ", "[a](b)", pick(snippets) + "\n"]) : pick(inserts);
           // Open or close some toggles, as a click on the page does; the state should follow each
           // toggle that still starts where it did, moved by the patch.
           const expectedOpen = new Map();
@@ -122,20 +327,38 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
           }
           const unitsBefore = new Set(E.allUnits(model));
           const lastId = Math.max(0, ...[...unitsBefore].map((unit) => unit.id));
+          const patch = [text, from, to, insert];
           text = text.slice(0, from) + insert + text.slice(to);
-          E.applyPatch(model, from, to, insert);
-          if (model.source !== text) return "source differs at run " + run;
-          const incremental = describe(model);
-          const full = describe(E.createModel(text));
-          if (incremental !== full) return "run " + run + " step " + step + " differs for " + JSON.stringify(text);
-          for (const toggle of toggles(model)) {
-            if (toggle.block.viewOpen !== expectedOpen.get(toggle.start)) return "run " + run + " step " + step + " toggle at " + toggle.start + " is " + toggle.block.viewOpen + " in " + JSON.stringify(text);
+          const update = E.applyPatch(model, from, to, insert);
+          if (run >= 1000) {
+            steps += 1;
+            if (update.container) inside += 1;
+            if (update.container && update.container !== update.top) nested += 1;
           }
-          const units = E.allUnits(model);
-          if (model.units.size !== units.length || units.some((unit) => model.units.get(unit.id) !== unit)) return "run " + run + " step " + step + " unit map differs";
-          if (units.some((unit) => !unitsBefore.has(unit) && unit.id <= lastId)) return "run " + run + " step " + step + " reuses a unit id";
+          const failure = check(run, step, model, text, expectedOpen, unitsBefore, lastId, patch);
+          if (failure) return failure;
         }
+        // A page drawn whole draws again the blocks an edit inside re-rendered in parts: the same
+        // markup as a fresh render, aside from unit ids, toggles' open state, line numbers, which
+        // blocks after an edit keep (the page reads lines from the model), and tables of contents,
+        // which the page draws again as headings change.
+        E.redrawStaleBlocks(model);
+        const markup = (blocks) => {
+          const ids = new Map();
+          return blocks.map((block) => block.html).join("")
+            .replace(/<nav[^>]* class="toc[^"]*"[^>]*>[\s\S]*?<\/nav>/g, "<nav>")
+            .replace(/ data-open="\w+"| aria-expanded="\w+"| aria-label="(?:Collapse|Expand)"| data-source-line="\d+"/g, "")
+            .replace(/data-mk-u="(\d+)"/g, (match, id) => {
+              if (!ids.has(id)) ids.set(id, ids.size);
+              return `data-mk-u="${ids.get(id)}"`;
+            });
+        };
+        const fresh = E.createModel(text);
+        if (markup(model.blocks) !== markup(fresh.blocks)) return "run " + run + " draws differently whole for " + JSON.stringify(text);
+        if (describe(model) !== describe(fresh)) return "run " + run + " differs once drawn whole for " + JSON.stringify(text);
       }
+      // Most edits in the documents of containers have to stay inside one, some of them deep.
+      if (inside < steps * 0.25 || nested < steps * 0.05) return "too few edits re-parsed inside a container: " + inside + " of " + steps + ", " + nested + " nested";
       return "ok";
     })()
     """#
@@ -481,7 +704,9 @@ final class MarkdownEditorCoreJavaScriptTests: XCTestCase {
     }
     const toggleDoc = "Intro [x][ref]\n\n<details>\n<summary>T</summary>\n\nBody\n\n</details>\n\n[ref]: http://a\n\n[^n]: note";
     const expectEqual = (name, got, expected) => { if (got === expected) passed += 1; else failures.push(name + ": got " + JSON.stringify(got) + ", expected " + JSON.stringify(expected)); };
-    expectEqual("toggle state across a re-parse", toggleAfter(toggleDoc, "Bo", "x"), "partial, parsed again, open, ids count up");
+    // Typing in the body re-parses only the body's blocks; typing in the title parses the toggle again.
+    expectEqual("toggle kept by an edit in its body", toggleAfter(toggleDoc, "Bo", "x"), "partial, kept, open, ids count up");
+    expectEqual("toggle state across a re-parse", toggleAfter(toggleDoc, "<summary>T", "x"), "partial, parsed again, open, ids count up");
     expectEqual("toggle state across a rebuild", toggleAfter(toggleDoc, "http://a", "x"), "full, parsed again, open, ids count up");
     expectEqual("footnote text edits in place", toggleAfter(toggleDoc, "note", "x"), "partial, kept, open, ids count up");
     (() => {
